@@ -60,6 +60,7 @@ class ChatService(ChatServiceBase):
         tools: list[Tool] | None = None,
         subtask_id: int | None = None,
         task_id: int | None = None,
+        is_group_chat: bool = False,
     ) -> StreamingResponse:
         """
         Stream chat response from LLM API with tool calling support.
@@ -79,6 +80,7 @@ class ChatService(ChatServiceBase):
             tools: Optional list of Tool instances (web search, etc.)
             subtask_id: Optional subtask ID (None for simple mode)
             task_id: Optional task ID (None for simple mode)
+            is_group_chat: Whether this is a group chat (uses special history truncation)
 
         Returns:
             StreamingResponse with SSE events
@@ -115,6 +117,12 @@ class ChatService(ChatServiceBase):
 
                 # Build messages and initialize components
                 history = await session_manager.get_chat_history(task_id)
+
+                # For group chat, apply special history truncation:
+                # Keep first N messages + last M messages (no duplicates)
+                if is_group_chat:
+                    history = self._truncate_group_chat_history(history, task_id)
+
                 messages = message_builder.build_messages(
                     history, message, system_prompt
                 )
@@ -316,6 +324,49 @@ class ChatService(ChatServiceBase):
                 ToolHandler.build_assistant_message(accumulated_content, tool_calls)
             )
             messages.extend(await tool_handler.execute_all(tool_calls))
+
+    def _truncate_group_chat_history(
+        self, history: list[dict[str, str]], task_id: int
+    ) -> list[dict[str, str]]:
+        """
+        Truncate chat history for group chat mode.
+
+        In group chat mode, AI-bot sees:
+        - First N messages (for context about the conversation start)
+        - Last M messages (for recent context)
+        - No duplicate messages
+
+        If total messages < N + M, all messages are kept.
+
+        Args:
+            history: Full chat history
+            task_id: Task ID for logging
+
+        Returns:
+            Truncated history list
+        """
+        first_count = settings.GROUP_CHAT_HISTORY_FIRST_MESSAGES
+        last_count = settings.GROUP_CHAT_HISTORY_LAST_MESSAGES
+        total_count = len(history)
+
+        # If total messages <= first + last, keep all messages
+        if total_count <= first_count + last_count:
+            return history
+
+        # Get first N messages and last M messages
+        first_messages = history[:first_count]
+        last_messages = history[-last_count:]
+
+        # Combine without duplicates (in case of overlap, which shouldn't happen
+        # given the check above, but we handle it for safety)
+        truncated_history = first_messages + last_messages
+
+        logger.info(
+            f"Group chat mode: truncated history for task {task_id} from {total_count} "
+            f"to {len(truncated_history)} messages (first {first_count} + last {last_count})"
+        )
+
+        return truncated_history
 
     async def chat_completion(
         self,

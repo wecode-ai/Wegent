@@ -6,7 +6,7 @@
  * Knowledge base and document API client
  */
 
-import { apiClient } from './client'
+import { apiClient } from './client';
 import type {
   AccessibleKnowledgeResponse,
   KnowledgeBase,
@@ -18,7 +18,7 @@ import type {
   KnowledgeDocumentListResponse,
   KnowledgeDocumentUpdate,
   KnowledgeResourceScope,
-} from '@/types/knowledge'
+} from '@/types/knowledge';
 
 // ============== Knowledge Base APIs ==============
 
@@ -29,27 +29,25 @@ export async function listKnowledgeBases(
   scope: KnowledgeResourceScope = 'all',
   groupName?: string
 ): Promise<KnowledgeBaseListResponse> {
-  let endpoint = `/knowledge-bases?scope=${scope}`
+  let endpoint = `/knowledge-bases?scope=${scope}`;
   if (scope === 'group' && groupName) {
-    endpoint += `&group_name=${encodeURIComponent(groupName)}`
+    endpoint += `&group_name=${encodeURIComponent(groupName)}`;
   }
-  return apiClient.get<KnowledgeBaseListResponse>(endpoint)
+  return apiClient.get<KnowledgeBaseListResponse>(endpoint);
 }
 
 /**
  * Get a knowledge base by ID
  */
 export async function getKnowledgeBase(id: number): Promise<KnowledgeBase> {
-  return apiClient.get<KnowledgeBase>(`/knowledge-bases/${id}`)
+  return apiClient.get<KnowledgeBase>(`/knowledge-bases/${id}`);
 }
 
 /**
  * Create a new knowledge base
  */
-export async function createKnowledgeBase(
-  data: KnowledgeBaseCreate
-): Promise<KnowledgeBase> {
-  return apiClient.post<KnowledgeBase>('/knowledge-bases', data)
+export async function createKnowledgeBase(data: KnowledgeBaseCreate): Promise<KnowledgeBase> {
+  return apiClient.post<KnowledgeBase>('/knowledge-bases', data);
 }
 
 /**
@@ -59,14 +57,14 @@ export async function updateKnowledgeBase(
   id: number,
   data: KnowledgeBaseUpdate
 ): Promise<KnowledgeBase> {
-  return apiClient.put<KnowledgeBase>(`/knowledge-bases/${id}`, data)
+  return apiClient.put<KnowledgeBase>(`/knowledge-bases/${id}`, data);
 }
 
 /**
  * Delete a knowledge base
  */
 export async function deleteKnowledgeBase(id: number): Promise<void> {
-  return apiClient.delete(`/knowledge-bases/${id}`)
+  return apiClient.delete(`/knowledge-bases/${id}`);
 }
 
 // ============== Knowledge Document APIs ==============
@@ -79,7 +77,7 @@ export async function listDocuments(
 ): Promise<KnowledgeDocumentListResponse> {
   return apiClient.get<KnowledgeDocumentListResponse>(
     `/knowledge-bases/${knowledgeBaseId}/documents`
-  )
+  );
 }
 
 /**
@@ -89,10 +87,7 @@ export async function createDocument(
   knowledgeBaseId: number,
   data: KnowledgeDocumentCreate
 ): Promise<KnowledgeDocument> {
-  return apiClient.post<KnowledgeDocument>(
-    `/knowledge-bases/${knowledgeBaseId}/documents`,
-    data
-  )
+  return apiClient.post<KnowledgeDocument>(`/knowledge-bases/${knowledgeBaseId}/documents`, data);
 }
 
 /**
@@ -102,17 +97,14 @@ export async function updateDocument(
   documentId: number,
   data: KnowledgeDocumentUpdate
 ): Promise<KnowledgeDocument> {
-  return apiClient.put<KnowledgeDocument>(
-    `/knowledge-documents/${documentId}`,
-    data
-  )
+  return apiClient.put<KnowledgeDocument>(`/knowledge-documents/${documentId}`, data);
 }
 
 /**
  * Delete a document
  */
 export async function deleteDocument(documentId: number): Promise<void> {
-  return apiClient.delete(`/knowledge-documents/${documentId}`)
+  return apiClient.delete(`/knowledge-documents/${documentId}`);
 }
 
 // ============== Batch Document Operations ==============
@@ -121,43 +113,37 @@ export async function deleteDocument(documentId: number): Promise<void> {
  * Batch operation result type
  */
 export interface BatchOperationResult {
-  success_count: number
-  failed_count: number
-  failed_ids: number[]
-  message: string
+  success_count: number;
+  failed_count: number;
+  failed_ids: number[];
+  message: string;
 }
 
 /**
  * Batch delete multiple documents
  */
-export async function batchDeleteDocuments(
-  documentIds: number[]
-): Promise<BatchOperationResult> {
+export async function batchDeleteDocuments(documentIds: number[]): Promise<BatchOperationResult> {
   return apiClient.post<BatchOperationResult>('/knowledge-documents/batch/delete', {
     document_ids: documentIds,
-  })
+  });
 }
 
 /**
  * Batch enable multiple documents
  */
-export async function batchEnableDocuments(
-  documentIds: number[]
-): Promise<BatchOperationResult> {
+export async function batchEnableDocuments(documentIds: number[]): Promise<BatchOperationResult> {
   return apiClient.post<BatchOperationResult>('/knowledge-documents/batch/enable', {
     document_ids: documentIds,
-  })
+  });
 }
 
 /**
  * Batch disable multiple documents
  */
-export async function batchDisableDocuments(
-  documentIds: number[]
-): Promise<BatchOperationResult> {
+export async function batchDisableDocuments(documentIds: number[]): Promise<BatchOperationResult> {
   return apiClient.post<BatchOperationResult>('/knowledge-documents/batch/disable', {
     document_ids: documentIds,
-  })
+  });
 }
 
 // ============== Accessible Knowledge API ==============
@@ -167,5 +153,5 @@ export async function batchDisableDocuments(
  * (For AI chat integration)
  */
 export async function getAccessibleKnowledge(): Promise<AccessibleKnowledgeResponse> {
-  return apiClient.get<AccessibleKnowledgeResponse>('/knowledge-bases/accessible')
+  return apiClient.get<AccessibleKnowledgeResponse>('/knowledge-bases/accessible');
 }
