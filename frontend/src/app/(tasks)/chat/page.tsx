@@ -64,7 +64,6 @@ export default function ChatPage() {
   // Check for share_id and taskId in URL
   const searchParams = useSearchParams();
   const hasShareId = !!searchParams.get('share_id');
-  const taskId = searchParams.get('taskId');
 
   // Check if a task is currently open (support multiple parameter formats)
   const taskId =
