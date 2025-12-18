@@ -1442,6 +1442,11 @@ export default function ChatArea({
                         badge={selectedTeam ? <SelectedTeamBadge team={selectedTeam} /> : undefined}
                         isGroupChat={selectedTaskDetail?.is_group_chat || false}
                         team={selectedTeam}
+                        onPasteFile={
+                          isChatShell(selectedTeam) && !attachmentState.attachment
+                            ? handleFileSelect
+                            : undefined
+                        }
                       />
                     </div>
                   )}
@@ -1703,6 +1708,11 @@ export default function ChatArea({
                       tipText={randomTip}
                       isGroupChat={selectedTaskDetail?.is_group_chat || false}
                       team={selectedTeam}
+                      onPasteFile={
+                        isChatShell(selectedTeam) && !attachmentState.attachment
+                          ? handleFileSelect
+                          : undefined
+                      }
                     />
                   </div>
                 )}
