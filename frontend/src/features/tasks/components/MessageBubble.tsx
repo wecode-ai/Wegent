@@ -17,6 +17,7 @@ import {
   CheckCircle2,
   XCircle,
   Ban,
+  User,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -1285,7 +1286,7 @@ const MessageBubble = memo(
             className={`${bubbleBaseClasses} ${bubbleTypeClasses}`}
             onMouseUp={handleTextSelection}
           >
-            {/* Show header for AI messages OR for other users' messages in group chat (left-aligned user messages) */}
+            {/* Show header for AI messages */}
             {!isUserTypeMessage && (
               <div className="flex items-center gap-2 mb-2 text-xs opacity-80">
                 {headerIcon}
@@ -1298,23 +1299,14 @@ const MessageBubble = memo(
                 )}
               </div>
             )}
-            {/* Show sender user name for user messages that are left-aligned (other users in group chat) */}
-            {isUserTypeMessage && !shouldAlignRight && msg.senderUserName && (
+            {/* Show header for other users' messages in group chat (left-aligned user messages) */}
+            {isUserTypeMessage && !shouldAlignRight && msg.shouldShowSender && (
               <div className="flex items-center gap-2 mb-2 text-xs opacity-80">
-                <span className="font-semibold">{msg.senderUserName}</span>
+                <User className="w-4 h-4" />
+                <span className="font-semibold">{msg.senderUserName || 'Unknown User'}</span>
                 {timestampLabel && <span>{timestampLabel}</span>}
               </div>
             )}
-            {/* Show sender user name for current user's messages (right-aligned) in group chat or chat agent type */}
-            {isUserTypeMessage &&
-              shouldAlignRight &&
-              msg.senderUserName &&
-              msg.shouldShowSender && (
-                <div className="flex items-center gap-2 mb-2 text-xs opacity-80">
-                  <span className="font-semibold">{msg.senderUserName}</span>
-                  {timestampLabel && <span>{timestampLabel}</span>}
-                </div>
-              )}
             {isUserTypeMessage && renderAttachments(msg.attachments)}
             {/* Show waiting indicator when streaming but no content yet */}
             {isWaiting || msg.isWaiting ? (
