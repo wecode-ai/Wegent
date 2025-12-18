@@ -294,7 +294,7 @@ async def create_response(
                     Kind.name == bot_name,
                     Kind.namespace == bot_namespace,
                     Kind.kind == "Bot",
-                    Kind.user_id == current_user.id,
+                    Kind.user_id == team.user_id,
                     Kind.is_active == True,
                 )
                 .first()
