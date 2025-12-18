@@ -94,7 +94,7 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
         teamId: selectedTeam.id,
         teamName: selectedTeam.name,
         title: title,
-        modelId: selectedModel?.modelId || null,
+        modelName: selectedModel?.name || null,
         forceOverride: forceOverride,
       });
 
@@ -106,7 +106,7 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
           team_id: selectedTeam.id,
           task_id: undefined, // Let streaming API create the task
           title: title, // Pass custom title for the group chat
-          model_id: selectedModel?.modelId || undefined,
+          model_id: selectedModel?.name || undefined,
           force_override_bot_model: forceOverride,
         },
         {
