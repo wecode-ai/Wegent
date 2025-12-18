@@ -41,7 +41,7 @@ class TestShutdownManager:
     @pytest.mark.asyncio
     async def test_initiate_shutdown(self, shutdown_manager):
         """Test initiating shutdown."""
-        with patch("app.core.shutdown.cache_manager") as mock_cache:
+        with patch("app.core.cache.cache_manager") as mock_cache:
             mock_cache.set = AsyncMock(return_value=True)
 
             await shutdown_manager.initiate_shutdown()
@@ -52,7 +52,7 @@ class TestShutdownManager:
     @pytest.mark.asyncio
     async def test_initiate_shutdown_idempotent(self, shutdown_manager):
         """Test that initiating shutdown multiple times is safe."""
-        with patch("app.core.shutdown.cache_manager") as mock_cache:
+        with patch("app.core.cache.cache_manager") as mock_cache:
             mock_cache.set = AsyncMock(return_value=True)
 
             await shutdown_manager.initiate_shutdown()
@@ -76,7 +76,7 @@ class TestShutdownManager:
     @pytest.mark.asyncio
     async def test_register_stream_during_shutdown(self, shutdown_manager):
         """Test that registering a stream during shutdown fails."""
-        with patch("app.core.shutdown.cache_manager") as mock_cache:
+        with patch("app.core.cache.cache_manager") as mock_cache:
             mock_cache.set = AsyncMock(return_value=True)
 
             await shutdown_manager.initiate_shutdown()
@@ -109,7 +109,7 @@ class TestShutdownManager:
     @pytest.mark.asyncio
     async def test_wait_for_streams_completes(self, shutdown_manager):
         """Test waiting for streams that complete in time."""
-        with patch("app.core.shutdown.cache_manager") as mock_cache:
+        with patch("app.core.cache.cache_manager") as mock_cache:
             mock_cache.set = AsyncMock(return_value=True)
 
             await shutdown_manager.register_stream(123)
@@ -128,7 +128,7 @@ class TestShutdownManager:
     @pytest.mark.asyncio
     async def test_wait_for_streams_timeout(self, shutdown_manager):
         """Test waiting for streams that don't complete in time."""
-        with patch("app.core.shutdown.cache_manager") as mock_cache:
+        with patch("app.core.cache.cache_manager") as mock_cache:
             mock_cache.set = AsyncMock(return_value=True)
 
             await shutdown_manager.register_stream(123)
@@ -143,7 +143,7 @@ class TestShutdownManager:
     async def test_cancel_all_streams(self, shutdown_manager):
         """Test cancelling all active streams."""
         with patch(
-            "app.core.shutdown.session_manager"
+            "app.services.chat.session_manager.session_manager"
         ) as mock_session:
             mock_session.cancel_stream = AsyncMock(return_value=True)
 
@@ -171,7 +171,7 @@ class TestShutdownManager:
     @pytest.mark.asyncio
     async def test_reset(self, shutdown_manager):
         """Test resetting shutdown manager state."""
-        with patch("app.core.shutdown.cache_manager") as mock_cache:
+        with patch("app.core.cache.cache_manager") as mock_cache:
             mock_cache.set = AsyncMock(return_value=True)
 
             await shutdown_manager.register_stream(123)
@@ -192,7 +192,7 @@ class TestShutdownIntegration:
         """Test the complete shutdown flow."""
         manager = ShutdownManager()
 
-        with patch("app.core.shutdown.cache_manager") as mock_cache:
+        with patch("app.core.cache.cache_manager") as mock_cache:
             mock_cache.set = AsyncMock(return_value=True)
 
             # Register some streams
