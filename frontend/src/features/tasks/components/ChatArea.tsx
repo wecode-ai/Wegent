@@ -5,9 +5,10 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Send, CircleStop, Upload } from 'lucide-react';
+import { CircleStop, Upload } from 'lucide-react';
 import MessagesArea from './MessagesArea';
 import ChatInput from './ChatInput';
+import SendButton from './SendButton';
 import SearchEngineSelector from './SearchEngineSelector';
 import ClarificationToggle from './ClarificationToggle';
 import ModelSelector, {
@@ -38,7 +39,6 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useTaskContext } from '../contexts/taskContext';
 import { useChatStreamContext } from '../contexts/chatStreamContext';
 import { Button } from '@/components/ui/button';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import QuotaUsage from './QuotaUsage';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { saveLastTeamByMode, getLastTeamIdByMode, saveLastRepo } from '@/utils/userPreferences';
@@ -1501,35 +1501,17 @@ export default function ChatArea({
                           <CircleStop className="h-5 w-5 text-orange-500" />
                         </div>
                       ) : (
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => handleSendMessage()}
-                                disabled={
-                                  isLoading ||
-                                  isStreaming ||
-                                  isModelSelectionRequired ||
-                                  !isAttachmentReadyToSend ||
-                                  (shouldHideChatInput ? false : !taskInputMessage.trim())
-                                }
-                                className="h-6 w-6 rounded-full hover:bg-primary/10 flex-shrink-0 translate-y-0.5"
-                                data-tour="send-button"
-                              >
-                                {isLoading ? (
-                                  <LoadingDots />
-                                ) : (
-                                  <Send className="h-5 w-5 text-text-muted" />
-                                )}
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent side="top">
-                              <p>Enter</p>
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
+                        <SendButton
+                          onClick={() => handleSendMessage()}
+                          disabled={
+                            isLoading ||
+                            isStreaming ||
+                            isModelSelectionRequired ||
+                            !isAttachmentReadyToSend ||
+                            (shouldHideChatInput ? false : !taskInputMessage.trim())
+                          }
+                          isLoading={isLoading}
+                        />
                       )}
                     </div>
                   </div>
@@ -1621,6 +1603,7 @@ export default function ChatArea({
                       taskType={taskType}
                       canSubmit={canSubmit}
                       tipText={randomTip}
+                      badge={selectedTeam ? <SelectedTeamBadge team={selectedTeam} /> : undefined}
                     />
                   </div>
                 )}
@@ -1750,34 +1733,17 @@ export default function ChatArea({
                         <CircleStop className="h-5 w-5 text-orange-500" />
                       </div>
                     ) : (
-                      <TooltipProvider>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => handleSendMessage()}
-                              disabled={
-                                isLoading ||
-                                isStreaming ||
-                                isModelSelectionRequired ||
-                                !isAttachmentReadyToSend ||
-                                (shouldHideChatInput ? false : !taskInputMessage.trim())
-                              }
-                              className="h-6 w-6 rounded-full hover:bg-primary/10 flex-shrink-0 translate-y-0.5"
-                            >
-                              {isLoading ? (
-                                <LoadingDots />
-                              ) : (
-                                <Send className="h-5 w-5 text-text-muted" />
-                              )}
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent side="top">
-                            <p>Enter</p>
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
+                      <SendButton
+                        onClick={() => handleSendMessage()}
+                        disabled={
+                          isLoading ||
+                          isStreaming ||
+                          isModelSelectionRequired ||
+                          !isAttachmentReadyToSend ||
+                          (shouldHideChatInput ? false : !taskInputMessage.trim())
+                        }
+                        isLoading={isLoading}
+                      />
                     )}
                   </div>
                 </div>
