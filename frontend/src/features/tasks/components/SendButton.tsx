@@ -147,6 +147,8 @@ export default function SendButton({
           type="button"
           onClick={handleMainClick}
           disabled={disabled || isLoading}
+          data-tour="send-button"
+          data-testid="send-button"
           className={`
             flex items-center justify-center px-2.5 h-full
             transition-colors duration-150
