@@ -7,6 +7,7 @@ Models package
 """
 from app.models.api_key import APIKey
 from app.models.kind import Kind
+from app.models.knowledge import KnowledgeDocument
 from app.models.namespace import Namespace
 from app.models.namespace_member import NamespaceMember
 from app.models.shared_team import SharedTeam
@@ -30,4 +31,5 @@ __all__ = [
     "NamespaceMember",
     "APIKey",
     "TaskMember",
+    "KnowledgeDocument",
 ]

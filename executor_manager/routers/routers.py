@@ -15,17 +15,21 @@ import time
 import uuid
 from typing import Any, Dict, Optional
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel
-
 from executor_manager.clients.task_api_client import TaskApiClient
 from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
 from executor_manager.executors.dispatcher import ExecutorDispatcher
 from executor_manager.tasks.task_processor import TaskProcessor
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel
 from shared.logger import setup_logger
 from shared.models.task import TasksRequest
 from shared.telemetry.config import get_otel_config
+from shared.telemetry.context import (
+    set_request_context,
+    set_task_context,
+    set_user_context,
+)
 
 # Setup logger
 logger = setup_logger(__name__)
@@ -54,12 +58,17 @@ async def log_requests(request: Request, call_next):
     if request.url.path == "/health":
         return await call_next(request)
 
-    # Generate a unique request ID
-    request_id = str(uuid.uuid4())[:8]
+    # Get request_id from header (propagated from upstream service) or generate new one
+    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())[:8]
     request.state.request_id = request_id
 
     start_time = time.time()
     client_ip = request.client.host if request.client else "unknown"
+
+    # Always set request context for logging (works even without OTEL)
+    from shared.telemetry.context import set_request_context
+
+    set_request_context(request_id)
 
     # Get OTEL config
     otel_config = get_otel_config()
@@ -89,13 +98,9 @@ async def log_requests(request: Request, call_next):
     if otel_config.enabled:
         try:
             from opentelemetry import trace
-
-            from shared.telemetry.context import set_request_context
             from shared.telemetry.core import is_telemetry_enabled
 
             if is_telemetry_enabled():
-                set_request_context(request_id)
-
                 if request_body:
                     current_span = trace.get_current_span()
                     if current_span and current_span.is_recording():
@@ -118,7 +123,6 @@ async def log_requests(request: Request, call_next):
     if otel_config.enabled:
         try:
             from opentelemetry import trace
-
             from shared.telemetry.core import is_telemetry_enabled
 
             if is_telemetry_enabled():
@@ -217,6 +221,9 @@ async def callback_handler(request: CallbackRequest, http_request: Request):
     try:
         client_ip = http_request.client.host if http_request.client else "unknown"
         logger.info(f"Received callback: body={request} from {client_ip}")
+
+        # Set task context for tracing (function handles OTEL enabled check internally)
+        set_task_context(task_id=request.task_id, subtask_id=request.subtask_id)
 
         # Check if this is a validation task callback
         # Primary check: task_type == "validation"
@@ -340,6 +347,18 @@ async def receive_tasks(request: TasksRequest, http_request: Request):
         logger.info(
             f"Received {len(request.tasks)} tasks, first task: {request.tasks[0].task_title if request.tasks else 'None'} from {client_ip}"
         )
+
+        # Set task context for tracing (use first task's context)
+        # Functions handle OTEL enabled check internally
+        if request.tasks:
+            first_task = request.tasks[0]
+            set_task_context(
+                task_id=first_task.task_id, subtask_id=first_task.subtask_id
+            )
+            set_user_context(
+                user_id=str(first_task.user.id), user_name=first_task.user.name
+            )
+
         # Call the task processor to handle the tasks
         task_processor.process_tasks([task.dict() for task in request.tasks])
         return {"code": 0}
@@ -543,6 +562,9 @@ async def cancel_task(request: CancelTaskRequest, http_request: Request):
         logger.info(
             f"Received request to cancel task {request.task_id} from {client_ip}"
         )
+
+        # Set task context for tracing (function handles OTEL enabled check internally)
+        set_task_context(task_id=request.task_id)
 
         executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
         result = executor.cancel_task(request.task_id)

@@ -678,7 +678,8 @@ async def generate_admin_token(
     """
     # Create a permanent token (set very long expiration time)
     access_token = create_access_token(
-        data={"sub": current_user.user_name}, expires_delta=262800000  # 500 years
+        data={"sub": current_user.user_name, "user_id": current_user.id},
+        expires_delta=262800000,  # 500 years
     )
 
     return Token(access_token=access_token, token_type="bearer")

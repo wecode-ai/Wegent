@@ -241,6 +241,74 @@ cd <module> && pytest tests/ --cov
 - Test edge cases and error conditions
 - Keep tests independent and isolated
 
+### E2E Testing Guidelines
+
+**⚠️ CRITICAL: E2E tests MUST NOT fail gracefully**
+
+E2E tests exist to ensure all features work correctly. A test case exists because the functionality it tests MUST work. Therefore:
+
+1. **No graceful degradation**: DO NOT use `test.skip()`, `test.fixme()`, or conditional skips based on environment detection to hide failures
+2. **No silent failures**: DO NOT catch errors and return early without failing the test
+3. **No optional assertions**: Every assertion in a test MUST pass for the test to be considered successful
+4. **Fix, don't skip**: If a test fails, FIX the underlying issue or the test itself - never skip it to make CI pass
+
+**⚠️ CRITICAL: Real API requests required - NO frontend mocking of backend APIs**
+
+E2E tests must send real HTTP requests to the backend. DO NOT mock backend API responses in the frontend test code.
+
+5. **No frontend API mocking**: DO NOT use `page.route()` or similar to intercept and mock backend API calls
+6. **Real backend integration**: Frontend must actually communicate with the backend service
+7. **Backend mocking allowed**: If external services (LLM APIs, third-party services) need mocking, do it at the backend level, not frontend
+
+**❌ FORBIDDEN patterns:**
+```typescript
+// DON'T: Skip tests to avoid failures
+test.skip('feature should work', async () => { ... })
+
+// DON'T: Conditional early returns
+if (!elementExists) {
+  console.log('Element not found, skipping...')
+  return  // This hides a real failure!
+}
+
+// DON'T: Try-catch that swallows failures
+try {
+  await expect(element).toBeVisible()
+} catch {
+  console.log('Element not visible, continuing anyway...')
+}
+
+// DON'T: Mock backend API responses in frontend
+await page.route('**/api/tasks', route => {
+  route.fulfill({ json: mockData })  // FORBIDDEN - bypasses real backend!
+})
+```
+
+**✅ CORRECT patterns:**
+```typescript
+// DO: Let tests fail when features don't work
+test('feature should work', async ({ page }) => {
+  await expect(page.locator('.feature')).toBeVisible()
+  // If this fails, the test fails - as it should
+})
+
+// DO: Use proper test fixtures for setup/teardown
+test.beforeEach(async ({ page }) => {
+  await page.goto('/login')
+  await login(page)  // If login fails, all tests fail - correct behavior
+})
+
+// DO: Assert preconditions explicitly
+await expect(page.locator('.prerequisite')).toBeVisible()
+// Test continues only if prerequisite is met
+
+// DO: Let frontend send real requests to backend
+// Backend can mock external services (e.g., LLM APIs) if needed
+// Example: Backend uses mock LLM server for testing, but frontend-backend communication is real
+```
+
+**Rationale:** The purpose of E2E tests is to catch regressions and ensure features work. A "passing" test suite that skips broken features provides false confidence and defeats the purpose of testing. Mocking backend APIs in frontend tests defeats the purpose of E2E testing - it only tests the frontend in isolation, missing integration issues between frontend and backend.
+
 ---
 
 ## 💻 Code Style

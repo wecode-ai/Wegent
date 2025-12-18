@@ -28,6 +28,7 @@ import {
   SearchBox,
   KnowledgeTabs,
   KnowledgeTabType,
+  KnowledgeDocumentPage,
 } from '@/features/knowledge';
 
 export default function KnowledgePage() {
@@ -194,11 +195,7 @@ export default function KnowledgePage() {
             </>
           )}
 
-          {activeTab === 'document' && (
-            <div className="flex items-center justify-center h-full text-text-muted">
-              <p>{t('common.coming_soon')}</p>
-            </div>
-          )}
+          {activeTab === 'document' && <KnowledgeDocumentPage />}
         </div>
       </div>
 
