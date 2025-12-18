@@ -33,6 +33,11 @@ ENV OTEL_CAPTURE_REQUEST_BODY=true
 ENV OTEL_TRACES_SAMPLER_ARG=1.0
 ENV OTEL_EXPORTER_OTLP_ENDPOINT=http://wegent-otel-web.wb-plat-ide.svc.cluster.local:4317
 
+# Wait up to 10 minutes for active streaming requests to complete
+ENV GRACEFUL_SHUTDOWN_TIMEOUT=600
+# Reject new requests during shutdown with 503 Service Unavailable
+ENV SHUTDOWN_REJECT_NEW_REQUESTS=true
+
 RUN uv pip install --system --no-cache -r pyproject.toml
 
 # Copy application code
@@ -46,6 +51,7 @@ ENV PORT=8000
 # Expose port
 EXPOSE ${PORT}
 
-
-# Start command
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --workers 1"]
+# Start command with graceful shutdown support
+# --timeout-graceful-shutdown: Time to wait for active connections to close
+# Using exec form to ensure proper signal handling (SIGTERM)
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --workers 1 --timeout-graceful-shutdown ${GRACEFUL_SHUTDOWN_TIMEOUT}"]
