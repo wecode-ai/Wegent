@@ -660,7 +660,7 @@ export default function MessagesArea({
     const pendingTrimmed = pendingUserMessage.trim();
     // Check all user messages for a match
     // Use includes() as a fallback in case of minor formatting differences
-    const isDisplayed = userMessages.some(msg => {
+    const matchingMessage = userMessages.find(msg => {
       const msgTrimmed = msg.content.trim();
       // Exact match
       if (msgTrimmed === pendingTrimmed) return true;
@@ -669,11 +669,23 @@ export default function MessagesArea({
       return false;
     });
 
+    if (!matchingMessage) return false;
+
+    // If we have a pending attachment, also check if the backend message has the attachment
+    // This prevents hiding the pending message before the attachment is properly saved
+    if (pendingAttachment) {
+      const hasMatchingAttachment = matchingMessage.attachments?.some(
+        att => att.id === pendingAttachment.id
+      );
+      // Only consider the message as "already displayed" if the attachment is also present
+      return hasMatchingAttachment === true;
+    }
+
     // If the message is already displayed in displayMessages, hide the pending message
     // This prevents duplicate bubbles in group chat scenarios where the backend
     // returns the user message quickly while AI is still streaming
-    return isDisplayed;
-  }, [displayMessages, pendingUserMessage]);
+    return true;
+  }, [displayMessages, pendingUserMessage, pendingAttachment]);
   // Check if streaming content is already in displayMessages (to avoid duplication)
   // This happens when the stream completes and the backend returns the AI response
   const isStreamingContentAlreadyDisplayed = useMemo(() => {
