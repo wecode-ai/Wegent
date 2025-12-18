@@ -163,6 +163,12 @@ class Settings(BaseSettings):
     # }
     CHAT_MCP_SERVERS: str = "{}"
 
+    # Maximum time to wait for active streaming requests to complete (seconds)
+    # Default: 600 seconds (10 minutes) to allow long-running streaming requests to complete
+    GRACEFUL_SHUTDOWN_TIMEOUT: int = 600
+    # Whether to reject new requests during shutdown (503 Service Unavailable)
+    SHUTDOWN_REJECT_NEW_REQUESTS: bool = True
+
     # OpenTelemetry configuration is centralized in shared/telemetry/config.py
     # Use: from shared.telemetry.config import get_otel_config
     # All OTEL_* environment variables are read from there
