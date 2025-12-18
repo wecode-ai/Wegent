@@ -46,6 +46,9 @@ class BotInDB(BaseModel):
     id: int
     user_id: int
     name: str
+    namespace: Optional[str] = (
+        "default"  # Namespace for group bots (default: 'default')
+    )
     shell_name: str  # Shell name (the name user selected, e.g., 'ClaudeCode', 'my-custom-shell')
     shell_type: str  # Actual agent type (e.g., 'ClaudeCode', 'Agno', 'Dify')
     agent_config: dict[str, Any]
@@ -65,6 +68,9 @@ class BotDetail(BaseModel):
 
     id: int
     name: str
+    namespace: Optional[str] = (
+        "default"  # Namespace for group bots (default: 'default')
+    )
     shell_name: str  # Shell name (the name user selected, e.g., 'ClaudeCode', 'my-custom-shell')
     shell_type: str  # Actual agent type (e.g., 'ClaudeCode', 'Agno', 'Dify')
     agent_config: dict[str, Any]

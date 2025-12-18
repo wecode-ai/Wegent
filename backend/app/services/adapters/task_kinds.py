@@ -618,7 +618,6 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             db.query(Kind)
             .filter(
                 Kind.id == task_id,
-                Kind.user_id == user_id,
                 Kind.kind == "Task",
                 Kind.is_active == True,
                 text("JSON_EXTRACT(json, '$.status.status') != 'DELETE'"),
@@ -629,7 +628,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
 
-        return self._convert_to_task_dict(task, db, user_id)
+        return self._convert_to_task_dict(task, db, task.user_id)
 
     def get_task_detail(
         self, db: Session, *, task_id: int, user_id: int
@@ -669,7 +668,6 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 db.query(Kind)
                 .filter(
                     Kind.id.in_(list(all_bot_ids)),
-                    Kind.user_id == user_id,
                     Kind.kind == "Bot",
                     Kind.is_active == True,
                 )
@@ -833,7 +831,6 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             db.query(Kind)
             .filter(
                 Kind.id == task_id,
-                Kind.user_id == user_id,
                 Kind.kind == "Task",
                 Kind.is_active == True,
             )
@@ -974,7 +971,6 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             db.query(Kind)
             .filter(
                 Kind.id == task_id,
-                Kind.user_id == user_id,
                 Kind.kind == "Task",
                 Kind.is_active == True,
             )
@@ -1085,7 +1081,6 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             db.query(Kind)
             .filter(
                 Kind.id == task_id,
-                Kind.user_id == user_id,
                 Kind.kind == "Task",
                 Kind.is_active == True,
             )
@@ -1527,7 +1522,8 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
 
         if not bot_ids:
             raise HTTPException(
-                status_code=400, detail="No valid bots found in team configuration"
+                status_code=400,
+                detail="No valid bots found in team configuration, please check that the bots referenced by the team exist and are active",
             )
 
         # For followup tasks: query existing subtasks and add one more
