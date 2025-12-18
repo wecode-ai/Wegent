@@ -253,9 +253,17 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
                 status_code=403, detail="Not authorized to access this task"
             )
 
-        # Build query
+        # Build query with attachment loading
+        from sqlalchemy.orm import subqueryload, undefer
+
         query = (
             db.query(Subtask, User.user_name.label("sender_username"))
+            .options(
+                subqueryload(Subtask.attachments),
+                undefer(Subtask.prompt),
+                undefer(Subtask.result),
+                undefer(Subtask.error_message),
+            )
             .outerjoin(User, Subtask.sender_user_id == User.id)
             .filter(Subtask.task_id == task_id)
         )
@@ -282,6 +290,26 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
         # Convert to dict format
         messages = []
         for subtask, sender_username in results:
+            # Serialize attachments
+            attachments_data = []
+            if subtask.attachments:
+                for attachment in subtask.attachments:
+                    attachments_data.append(
+                        {
+                            "id": attachment.id,
+                            "filename": attachment.original_filename,
+                            "file_size": attachment.file_size,
+                            "mime_type": attachment.mime_type,
+                            "status": attachment.status,
+                            "file_extension": attachment.file_extension,
+                            "created_at": (
+                                attachment.created_at.isoformat()
+                                if attachment.created_at
+                                else None
+                            ),
+                        }
+                    )
+
             message_dict = {
                 "id": subtask.id,
                 "task_id": subtask.task_id,
@@ -312,7 +340,7 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
                 ),
                 "user_id": subtask.user_id,
                 "executor_deleted_at": subtask.executor_deleted_at,
-                "attachments": [],  # Attachments not loaded in this query for performance
+                "attachments": attachments_data,
                 "sender_user_name": sender_username,
                 "reply_to_subtask_id": subtask.reply_to_subtask_id,
             }
