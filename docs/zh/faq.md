@@ -64,7 +64,6 @@
 **A:** 支持。除了 Docker Compose，还可以：
 
 - **源码部署**: 直接运行 Python 和 Node.js 服务
-- **Kubernetes**: 使用 K8s 部署（需要自行编写 manifests）
 - **二进制部署**: 构建后端为可执行文件（需要额外配置）
 
 ---

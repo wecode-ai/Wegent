@@ -63,10 +63,12 @@ class Subtask(Base):
 
     # Group chat fields
     sender_type = Column(
-        String(20), nullable=True
-    )  # VARCHAR instead of ENUM: USER or TEAM
-    sender_user_id = Column(Integer, nullable=True)  # User ID when sender_type=USER
-    reply_to_subtask_id = Column(Integer, nullable=True)  # Quoted message ID
+        String(20), nullable=False, default=""
+    )  # VARCHAR, empty string for non-group-chat messages
+    sender_user_id = Column(
+        Integer, nullable=False, default=0
+    )  # 0 for non-user senders
+    reply_to_subtask_id = Column(Integer, nullable=False, default=0)  # 0 for no reply
 
     # Relationship to SubtaskAttachment (no foreign key constraint, use primaryjoin)
     attachments = relationship(

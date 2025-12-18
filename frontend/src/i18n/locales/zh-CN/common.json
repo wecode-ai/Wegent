@@ -31,7 +31,8 @@
     "loading": "加载中...",
     "retry": "重试",
     "toggle_theme": "切换主题",
-    "upload": "上传"
+    "upload": "上传",
+    "view": "查看"
   },
   "validation": {
     "required": "此字段为必填项",
@@ -425,19 +426,21 @@
     "create_team": "创建智能体"
   },
   "onboarding": {
-    "step1_title": "选择工作模式",
-    "step1_description": "Chat 模式用于探索和发现,Code 模式让 AI 开发智能体帮你构建功能、修复错误、探索代码仓库。",
-    "step2_title": "输入你的任务",
-    "step2_description": "在这里输入你想让 AI 机器人完成的任务或问题。",
-    "step3_title": "功能选择",
-    "step3_description": "在这里可以上传附件、选择对话机器人和更改AI模型。",
-    "step3_description_no_team": "你还没有创建智能体。请先在设置页面创建你的第一个 AI 智能体。",
-    "step4_title": "发送任务",
-    "step4_description": "点击发送按钮,将你的任务发送给 AI 机器人执行。",
-    "step5_title": "查看历史任务",
-    "step5_description": "在这里查看所有历史任务,点击任务可以查看详情和对话记录。",
-    "step6_title": "配置你的智能体",
-    "step6_description": "在设置中创建和管理 AI 机器人、配置提示词、与外部系统集成等。",
+    "step1_title": "快速切换模式",
+    "step1_description": "点击「新对话」可以快速开始与AI对话，编码模式用于代码开发，知识模式可以管理和查询知识",
+    "step2_title": "快速切换智能体",
+    "step2_description": "点击这些卡片可以快速切换不同的智能体，不同智能体可以帮你快速完成特定的任务",
+    "step3_title": "输入你的任务",
+    "step3_description": "在这里输入你想让 AI 机器人完成的任务或问题。",
+    "step4_title": "功能选择",
+    "step4_description": "在这里可以上传附件、选择对话机器人和更改AI模型。",
+    "step4_description_no_team": "你还没有创建智能体。请先在设置页面创建你的第一个 AI 智能体。",
+    "step5_title": "发送任务",
+    "step5_description": "点击发送按钮,将你的任务发送给 AI 机器人执行。",
+    "step6_title": "查看历史任务",
+    "step6_description": "在这里查看所有历史任务,点击任务可以查看详情和对话记录。",
+    "step7_title": "配置你的智能体",
+    "step7_description": "在设置中创建和管理 AI 机器人、配置提示词、与外部系统集成等。",
     "next": "下一步",
     "previous": "上一步",
     "skip": "跳过",
@@ -665,6 +668,83 @@
     "tabs": {
       "code": "代码知识",
       "document": "文档知识"
+    },
+    "document": {
+      "title": "文档知识",
+      "personal": "个人知识",
+      "team": "团队知识",
+      "documents": "个文档",
+      "noTeamHint": "您还没有加入任何团队。创建或加入团队后，可在此查看团队知识库。",
+      "noGroupHint": "您还没有加入任何组。创建或加入组后，可在此查看组知识库。",
+      "tabs": {
+        "personal": "个人知识",
+        "group": "组知识",
+        "external": "外部知识库"
+      },
+      "knowledgeBase": {
+        "title": "知识库",
+        "create": "创建知识库",
+        "createDesc": "创建您的第一个知识库",
+        "edit": "编辑知识库",
+        "delete": "删除知识库",
+        "name": "知识库名称",
+        "namePlaceholder": "请输入知识库名称",
+        "nameRequired": "请输入知识库名称",
+        "nameTooLong": "名称不能超过100个字符",
+        "description": "描述",
+        "descriptionPlaceholder": "请输入描述（可选）",
+        "documentCount": "文档数量",
+        "empty": "暂无知识库",
+        "confirmDelete": "确定要删除这个知识库吗？删除后无法恢复。",
+        "deleteWarning": "这将同时删除该知识库中的 {{count}} 个文档。",
+        "search": "搜索知识库...",
+        "noResults": "没有匹配的知识库"
+      },
+      "document": {
+        "title": "文档",
+        "upload": "上传文件",
+        "edit": "编辑文档",
+        "enable": "启用",
+        "disable": "停用",
+        "delete": "删除",
+        "status": {
+          "enabled": "已启用",
+          "disabled": "已停用"
+        },
+        "columns": {
+          "name": "名称",
+          "type": "类型",
+          "size": "大小",
+          "date": "创建时间",
+          "status": "状态",
+          "actions": "操作"
+        },
+        "search": "搜索文档",
+        "empty": "暂无文档",
+        "noResults": "没有匹配的文档",
+        "filter": {
+          "all": "全部状态",
+          "enabled": "已启用",
+          "disabled": "已停用"
+        },
+        "confirmDelete": "确定要删除这个文档吗？",
+        "nameRequired": "请输入文档名称",
+        "namePlaceholder": "输入文档名称",
+        "updateFailed": "更新文档失败",
+        "dropzone": "拖放文件到此处或点击浏览",
+        "supportedTypes": "支持 PDF、Word、PPT、Excel、TXT、MD、图片（最大 20MB）",
+        "uploading": "上传中...",
+        "uploadSuccess": "文件上传成功",
+        "batch": {
+          "selected": "已选择 {{count}} 项",
+          "enable": "批量启用",
+          "disable": "批量停用",
+          "delete": "批量删除"
+        }
+      },
+      "permission": {
+        "noAccess": "您没有操作权限"
+      }
     }
   },
   "wiki": {

@@ -64,6 +64,11 @@ export const useOnboarding = ({
     localStorage.setItem(ONBOARDING_CURRENT_STEP_KEY, step.toString());
   };
 
+  const skipTour = useCallback(() => {
+    markOnboardingCompleted();
+    driverInstance.current?.destroy();
+  }, []);
+
   const startTour = useCallback(() => {
     if (isLoading) {
       return;
@@ -75,12 +80,20 @@ export const useOnboarding = ({
       showProgress: true,
       animate: true,
       overlayOpacity: 0.7,
-      allowClose: false,
+      allowClose: true,
       steps,
       nextBtnText: t('onboarding.next'),
       prevBtnText: t('onboarding.previous'),
       doneBtnText: t('onboarding.done'),
       showButtons: ['next', 'previous', 'close'] as AllowedButtons[],
+      popoverClass: 'onboarding-popover',
+      onPopoverRender: popover => {
+        // Customize close button text to show "Skip"
+        const closeBtn = popover.wrapper.querySelector('.driver-popover-close-btn');
+        if (closeBtn) {
+          closeBtn.textContent = t('onboarding.skip');
+        }
+      },
       onCloseClick: () => {
         markOnboardingCompleted();
         driverInstance.current?.destroy();
@@ -161,6 +174,7 @@ export const useOnboarding = ({
   return {
     startTour,
     restartTour,
+    skipTour,
     isOnboardingCompleted: isOnboardingCompleted(),
   };
 };

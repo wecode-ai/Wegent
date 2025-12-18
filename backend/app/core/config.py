@@ -120,8 +120,8 @@ class Settings(BaseSettings):
     EXECUTOR_ENV: str = '{"DEFAULT_HEADERS":{"user":"${task_data.user.name}"}}'
 
     # File upload configuration
-    MAX_UPLOAD_FILE_SIZE_MB: int = 50  # Maximum file size in MB
-    MAX_EXTRACTED_TEXT_LENGTH: int = 1000000  # Maximum extracted text length
+    MAX_UPLOAD_FILE_SIZE_MB: int = 100  # Maximum file size in MB
+    MAX_EXTRACTED_TEXT_LENGTH: int = 1500000  # Maximum extracted text length
 
     # Attachment storage backend configuration
     # Supported backends: "mysql" (default), "s3", "minio"
@@ -168,6 +168,12 @@ class Settings(BaseSettings):
     #     }
     # }
     CHAT_MCP_SERVERS: str = "{}"
+
+    # Maximum time to wait for active streaming requests to complete (seconds)
+    # Default: 600 seconds (10 minutes) to allow long-running streaming requests to complete
+    GRACEFUL_SHUTDOWN_TIMEOUT: int = 600
+    # Whether to reject new requests during shutdown (503 Service Unavailable)
+    SHUTDOWN_REJECT_NEW_REQUESTS: bool = True
 
     # OpenTelemetry configuration is centralized in shared/telemetry/config.py
     # Use: from shared.telemetry.config import get_otel_config

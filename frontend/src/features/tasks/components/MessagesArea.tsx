@@ -32,7 +32,7 @@ import { GroupChatMessageWrapper } from './MessageSenderBadge';
 import TaskShareModal from './TaskShareModal';
 import { taskApis } from '@/apis/tasks';
 import { type SelectableMessage } from './ExportPdfButton';
-import { generateChatPdf } from '@/utils/pdf-generator';
+import { generateChatPdf } from '@/utils/pdf';
 import { getAttachmentPreviewUrl, isImageExtension } from '@/apis/attachments';
 import { getToken } from '@/apis/user';
 import { TaskMembersPanel } from './group-chat';

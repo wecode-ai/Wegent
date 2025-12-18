@@ -505,3 +505,111 @@ button:focus-visible {
 .repository-selector.ant-select-open .ant-select-arrow {
   opacity: 1;
 }
+
+/* Driver.js Onboarding Tour Custom Styles */
+.driver-popover {
+  background-color: rgb(var(--color-bg-surface)) !important;
+  color: rgb(var(--color-text-primary)) !important;
+  border: 1px solid rgb(var(--color-border)) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.12) !important;
+  max-width: 320px !important;
+}
+
+[data-theme='dark'] .driver-popover {
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4) !important;
+}
+
+.driver-popover-title {
+  font-size: 16px !important;
+  font-weight: 600 !important;
+  color: rgb(var(--color-text-primary)) !important;
+  margin-bottom: 8px !important;
+}
+
+.driver-popover-description {
+  font-size: 14px !important;
+  color: rgb(var(--color-text-secondary)) !important;
+  line-height: 1.6 !important;
+}
+
+.driver-popover-progress-text {
+  font-size: 12px !important;
+  color: rgb(var(--color-text-muted)) !important;
+}
+
+.driver-popover-navigation-btns {
+  gap: 8px !important;
+}
+
+.driver-popover-prev-btn,
+.driver-popover-next-btn {
+  background-color: rgb(var(--color-primary)) !important;
+  color: rgb(var(--color-primary-contrast)) !important;
+  border: none !important;
+  border-radius: 8px !important;
+  padding: 8px 16px !important;
+  font-size: 14px !important;
+  font-weight: 500 !important;
+  cursor: pointer !important;
+  transition: all 0.2s ease !important;
+}
+
+.driver-popover-prev-btn:hover,
+.driver-popover-next-btn:hover {
+  opacity: 0.9 !important;
+}
+
+.driver-popover-prev-btn {
+  background-color: rgb(var(--color-bg-muted)) !important;
+  color: rgb(var(--color-text-primary)) !important;
+}
+
+.driver-popover-prev-btn:hover {
+  background-color: rgb(var(--color-bg-hover)) !important;
+}
+
+/* Close button (X) in top right - style as Skip button */
+.driver-popover-close-btn {
+  background-color: transparent !important;
+  color: rgb(var(--color-text-muted)) !important;
+  border: none !important;
+  font-size: 12px !important;
+  cursor: pointer !important;
+  position: absolute !important;
+  top: 12px !important;
+  right: 12px !important;
+  padding: 4px 8px !important;
+  border-radius: 4px !important;
+  transition: all 0.2s ease !important;
+}
+
+.driver-popover-close-btn:hover {
+  background-color: rgb(var(--color-bg-hover)) !important;
+  color: rgb(var(--color-text-primary)) !important;
+}
+
+/* Hide default X, show "Skip" text */
+.driver-popover-close-btn::before {
+  content: attr(data-skip-text);
+}
+
+.driver-popover-arrow {
+  border-color: rgb(var(--color-bg-surface)) !important;
+}
+
+.driver-popover-arrow-side-left {
+  border-right-color: rgb(var(--color-bg-surface)) !important;
+}
+
+.driver-popover-arrow-side-right {
+  border-left-color: rgb(var(--color-bg-surface)) !important;
+}
+
+.driver-popover-arrow-side-top {
+  border-bottom-color: rgb(var(--color-bg-surface)) !important;
+}
+
+.driver-popover-arrow-side-bottom {
+  border-top-color: rgb(var(--color-bg-surface)) !important;
+}
