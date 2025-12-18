@@ -507,6 +507,17 @@ export default function ChatArea({
     return appMode === 'workflow';
   }, [appMode]);
 
+  // Helper function to check if a team is compatible with the current mode
+  const isTeamCompatibleWithMode = useCallback(
+    (team: Team): boolean => {
+      // If bind_mode is not set or is an empty array, team is not compatible
+      if (!team.bind_mode || team.bind_mode.length === 0) return false;
+      // Otherwise, check if current mode is in bind_mode
+      return team.bind_mode.includes(taskType);
+    },
+    [taskType]
+  );
+
   // Restore user preferences from localStorage when teams load
   // Only runs for new tasks (no messages), not when switching to existing tasks
   useEffect(() => {
@@ -517,32 +528,36 @@ export default function ChatArea({
 
     if (lastTeamId) {
       const lastTeam = teams.find(team => team.id === lastTeamId);
-      if (lastTeam) {
+      // Only restore if the team is compatible with current mode
+      if (lastTeam && isTeamCompatibleWithMode(lastTeam)) {
         setSelectedTeam(lastTeam);
         setHasRestoredPreferences(true);
         return;
       } else {
         console.log(
-          '[ChatArea] â�Œ Team from localStorage not found in teams list, ID:',
+          '[ChatArea] ❌ Team from localStorage not found or not compatible with current mode, ID:',
           lastTeamId
         );
       }
     }
 
-    // No valid preference, use first team as default
-    if (teams.length > 0) {
+    // No valid preference, use first compatible team as default
+    const compatibleTeam = teams.find(team => isTeamCompatibleWithMode(team));
+    if (compatibleTeam) {
       console.log(
-        '[ChatArea] No valid preference, using first team as default:',
-        teams[0].name,
-        teams[0].id
+        '[ChatArea] No valid preference, using first compatible team as default:',
+        compatibleTeam.name,
+        compatibleTeam.id
       );
-      setSelectedTeam(teams[0]);
+      setSelectedTeam(compatibleTeam);
+    } else {
+      console.log('[ChatArea] No compatible team found for current mode:', taskType);
     }
     setHasRestoredPreferences(true);
     // Note: selectedTaskDetail is intentionally excluded from dependencies
     // This effect should only run when teams load, not when task detail changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [teams, hasRestoredPreferences, hasMessages]);
+  }, [teams, hasRestoredPreferences, hasMessages, isTeamCompatibleWithMode]);
 
   // Handle external team selection for new tasks (from team sharing)
   useEffect(() => {
