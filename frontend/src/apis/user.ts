@@ -36,6 +36,7 @@ export interface UpdateUserRequest {
 
 const TOKEN_KEY = 'auth_token';
 const TOKEN_EXPIRE_KEY = 'auth_token_expire';
+const TOKEN_COOKIE_NAME = 'auth_token';
 
 function getJwtExp(token: string): number | null {
   try {
@@ -43,6 +44,27 @@ function getJwtExp(token: string): number | null {
     return typeof payload.exp === 'number' ? payload.exp * 1000 : null; // convert to milliseconds
   } catch {
     return null;
+  }
+}
+
+/**
+ * Set cookie for Nginx routing (user-based load balancing)
+ * Cookie is readable by Nginx to extract user_id from JWT for routing
+ */
+function setTokenCookie(token: string, expMs: number | null) {
+  if (typeof document !== 'undefined') {
+    const expires = expMs ? new Date(expMs).toUTCString() : '';
+    const cookieValue = `${TOKEN_COOKIE_NAME}=${encodeURIComponent(token)}; path=/; SameSite=Lax${expires ? `; expires=${expires}` : ''}`;
+    document.cookie = cookieValue;
+  }
+}
+
+/**
+ * Remove token cookie
+ */
+function removeTokenCookie() {
+  if (typeof document !== 'undefined') {
+    document.cookie = `${TOKEN_COOKIE_NAME}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT`;
   }
 }
 
@@ -55,6 +77,8 @@ export function setToken(token: string) {
     } else {
       localStorage.removeItem(TOKEN_EXPIRE_KEY);
     }
+    // Also set cookie for Nginx routing
+    setTokenCookie(token, exp);
   }
 }
 
@@ -77,6 +101,8 @@ export function removeToken() {
   if (typeof window !== 'undefined') {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(TOKEN_EXPIRE_KEY);
+    // Also remove cookie for Nginx routing
+    removeTokenCookie();
   }
 }
 
