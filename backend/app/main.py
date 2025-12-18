@@ -16,7 +16,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.api import api_router
 from app.core.config import settings
-from app.core.shutdown import shutdown_manager
 from app.core.exceptions import (
     CustomHTTPException,
     RequestValidationError,
@@ -25,6 +24,7 @@ from app.core.exceptions import (
     validation_exception_handler,
 )
 from app.core.logging import setup_logging
+from app.core.shutdown import shutdown_manager
 from app.core.yaml_init import run_yaml_initialization
 from app.db.base import Base
 from app.db.session import SessionLocal, engine

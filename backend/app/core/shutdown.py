@@ -209,11 +209,11 @@ class ShutdownManager:
             try:
                 await session_manager.cancel_stream(subtask_id)
                 cancelled_count += 1
-                logger.info("Cancelled stream during shutdown: subtask_id=%d", subtask_id)
-            except Exception as e:
-                logger.error(
-                    "Failed to cancel stream subtask_id=%d: %s", subtask_id, e
+                logger.info(
+                    "Cancelled stream during shutdown: subtask_id=%d", subtask_id
                 )
+            except Exception as e:
+                logger.error("Failed to cancel stream subtask_id=%d: %s", subtask_id, e)
 
         return cancelled_count
 
