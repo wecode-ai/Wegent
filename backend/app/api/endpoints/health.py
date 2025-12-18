@@ -7,6 +7,8 @@ During graceful shutdown:
 - /health returns 200 (app is still alive)
 - /ready returns 503 (stop sending new traffic)
 - /startup returns 200 (startup is complete)
+- /shutdown/initiate (POST) triggers graceful shutdown manually
+- /shutdown/reset (POST) resets shutdown state to restore 200
 """
 
 from fastapi import APIRouter, Depends, Response
@@ -22,8 +24,6 @@ router = APIRouter()
 @router.get("/health")
 def health_check(db: Session = Depends(get_db)):
     """
-    Liveness probe endpoint for Kubernetes.
-
     This endpoint checks if the application is alive and responding.
     It should return 200 even during graceful shutdown (app is still alive,
     just not accepting new traffic).
@@ -122,3 +122,76 @@ def startup_check(db: Session = Depends(get_db)):
         from fastapi import HTTPException
 
         raise HTTPException(status_code=503, detail=f"Startup failed: {str(e)}")
+
+
+@router.post("/shutdown/initiate")
+async def initiate_shutdown():
+    """
+    Manually initiate graceful shutdown.
+
+    to trigger graceful shutdown before the pod is terminated.
+
+    After calling this endpoint:
+    - /ready will return 503 (stop receiving new traffic)
+    - /health will still return 200 (app is alive)
+    - Active streaming requests will be allowed to complete
+
+    Returns:
+        dict: Shutdown initiation status
+    """
+    if shutdown_manager.is_shutting_down:
+        return {
+            "status": "already_shutting_down",
+            "message": "Shutdown was already initiated",
+            "active_streams": shutdown_manager.get_active_stream_count(),
+            "shutdown_duration": shutdown_manager.shutdown_duration,
+        }
+
+    await shutdown_manager.initiate_shutdown()
+
+    return {
+        "status": "shutdown_initiated",
+        "message": "Graceful shutdown initiated. /ready will now return 503.",
+        "active_streams": shutdown_manager.get_active_stream_count(),
+    }
+
+
+@router.get("/shutdown/status")
+def shutdown_status(response: Response):
+    """
+    Get current shutdown status.
+
+    Returns:
+        dict: Current shutdown state information
+    """
+    if shutdown_manager.is_shutting_down:
+        response.status_code = 503
+        return {
+            "status": "shutting_down",
+            "message": "Service is shutting down, not accepting new traffic",
+        }
+    return {"is_shutting_down": shutdown_manager.is_shutting_down}
+
+
+@router.post("/shutdown/reset")
+def reset_shutdown():
+    """
+    Reset shutdown state to restore normal operation.
+
+    This endpoint resets the shutdown flag, allowing /ready to return 200 again.
+    Useful for testing or recovering from an accidental shutdown initiation.
+
+    WARNING: This should only be used for testing or emergency recovery.
+    In production, a pod in shutdown state should be terminated and replaced.
+
+    Returns:
+        dict: Reset status
+    """
+    was_shutting_down = shutdown_manager.is_shutting_down
+    shutdown_manager.reset()
+
+    return {
+        "status": "reset_complete",
+        "message": "Shutdown state reset. /ready will now return 200.",
+        "was_shutting_down": was_shutting_down,
+    }
