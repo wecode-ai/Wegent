@@ -991,15 +991,6 @@ const MessageBubble = memo(
         const markdownClarification = parseMarkdownClarification(contentToParse);
         if (markdownClarification) {
           const { data, prefixText, suffixText } = markdownClarification;
-          // Debug log for suffix text
-          console.log('[ClarificationForm] Parsed result:', {
-            questionsCount: data.questions.length,
-            prefixTextLength: prefixText.length,
-            suffixText: suffixText,
-            suffixTextLength: suffixText.length,
-            contentToParse: contentToParse,
-            contentLength: contentToParse.length,
-          });
           return (
             <div className="space-y-4">
               {/* Render prefix text (content before the clarification form) */}
@@ -1339,7 +1330,15 @@ const MessageBubble = memo(
   (prevProps, nextProps) => {
     // Custom comparison function for memo
     // Only re-render if the message content or status changes
-    return (
+    // Note: Compare thinking array length to detect updates (for executor tasks)
+    const prevThinkingLen = Array.isArray(prevProps.msg.thinking)
+      ? prevProps.msg.thinking.length
+      : 0;
+    const nextThinkingLen = Array.isArray(nextProps.msg.thinking)
+      ? nextProps.msg.thinking.length
+      : 0;
+
+    const shouldSkipRender =
       prevProps.msg.content === nextProps.msg.content &&
       prevProps.msg.subtaskStatus === nextProps.msg.subtaskStatus &&
       prevProps.msg.subtaskId === nextProps.msg.subtaskId &&
@@ -1352,8 +1351,10 @@ const MessageBubble = memo(
       prevProps.theme === nextProps.theme &&
       prevProps.onTextSelect === nextProps.onTextSelect &&
       prevProps.paragraphAction === nextProps.paragraphAction &&
-      prevProps.isCurrentUserMessage === nextProps.isCurrentUserMessage
-    );
+      prevProps.isCurrentUserMessage === nextProps.isCurrentUserMessage &&
+      prevThinkingLen === nextThinkingLen;
+
+    return shouldSkipRender;
   }
 );
 

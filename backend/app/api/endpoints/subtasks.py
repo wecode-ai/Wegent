@@ -32,19 +32,46 @@ def list_subtasks(
     task_id: int = Query(..., description="Task ID"),
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(10, ge=1, le=100, description="Items per page"),
+    from_latest: bool = Query(
+        True, description="If True, return latest N messages (default for group chat)"
+    ),
+    before_message_id: Optional[int] = Query(
+        None, description="Return messages before this message_id (for loading older)"
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
-    """Get subtasks for a specific task (paginated)"""
+    """Get subtasks for a specific task (paginated)
+
+    By default (from_latest=True), returns the latest N messages.
+    Use before_message_id to load older messages when scrolling up.
+    """
+    from app.services.task_member_service import task_member_service
+
     skip = (page - 1) * limit
     items = subtask_service.get_by_task(
-        db=db, task_id=task_id, user_id=current_user.id, skip=skip, limit=limit
+        db=db,
+        task_id=task_id,
+        user_id=current_user.id,
+        skip=skip,
+        limit=limit,
+        from_latest=from_latest,
+        before_message_id=before_message_id,
     )
-    total = (
-        db.query(Subtask)
-        .filter(Subtask.task_id == task_id, Subtask.user_id == current_user.id)
-        .count()
-    )
+
+    # Calculate total based on whether user is a group chat member
+    is_member = task_member_service.is_member(db, task_id, current_user.id)
+    if is_member:
+        # For group chat members, count all subtasks in the task
+        total = db.query(Subtask).filter(Subtask.task_id == task_id).count()
+    else:
+        # For non-members, count only user's own subtasks
+        total = (
+            db.query(Subtask)
+            .filter(Subtask.task_id == task_id, Subtask.user_id == current_user.id)
+            .count()
+        )
+
     return {"total": total, "items": items}
 
 

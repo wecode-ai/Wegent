@@ -956,7 +956,10 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             logger.info(f"[get_task_detail] task_id={task_id} has no team_id")
 
         # Get related subtasks
-        subtasks = subtask_service.get_by_task(db=db, task_id=task_id, user_id=user_id)
+        # Use from_latest=True to get the latest N messages (default behavior for group chat)
+        subtasks = subtask_service.get_by_task(
+            db=db, task_id=task_id, user_id=user_id, from_latest=True
+        )
 
         # Get all bot objects for the subtasks
         all_bot_ids = set()

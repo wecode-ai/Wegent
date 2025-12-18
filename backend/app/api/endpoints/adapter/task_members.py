@@ -6,10 +6,11 @@
 API endpoints for task members (group chat) management.
 """
 
+import asyncio
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -26,11 +27,48 @@ from app.schemas.task_member import (
     TaskMemberListResponse,
     TaskMemberResponse,
 )
+from app.services.chat.ws_emitter import get_ws_emitter
 from app.services.task_invite_service import task_invite_service
 from app.services.task_member_service import task_member_service
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+async def _emit_task_invited(
+    user_id: int,
+    task_id: int,
+    title: str,
+    team_id: int,
+    team_name: str,
+    invited_by_user_id: int,
+    invited_by_user_name: str,
+) -> None:
+    """
+    Emit task:invited event to notify user about group chat invitation.
+    This is called as a background task to avoid blocking the HTTP response.
+    """
+    ws_emitter = get_ws_emitter()
+    if ws_emitter:
+        try:
+            await ws_emitter.emit_task_invited(
+                user_id=user_id,
+                task_id=task_id,
+                title=title,
+                team_id=team_id,
+                team_name=team_name,
+                invited_by={
+                    "user_id": invited_by_user_id,
+                    "user_name": invited_by_user_name,
+                },
+            )
+            logger.debug(
+                f"Emitted task:invited event for user {user_id}, task {task_id}"
+            )
+        except Exception as e:
+            logger.error(f"Failed to emit task:invited event: {e}")
+    else:
+        logger.warning("WebSocket emitter not initialized, skipping task:invited event")
 
 
 # ============ Member Management API ============
@@ -87,7 +125,7 @@ def get_task_members(
 
 
 @router.post("/{task_id}/members", response_model=TaskMemberResponse)
-def add_task_member(
+async def add_task_member(
     task_id: int,
     request: AddMemberRequest,
     current_user: User = Depends(security.get_current_user),
@@ -122,6 +160,25 @@ def add_task_member(
 
     # Get user info for response
     inviter = task_member_service.get_user(db, current_user.id)
+
+    # Get task info for WebSocket notification
+    task = task_member_service.get_task(db, task_id)
+    task_json = task.json if task and isinstance(task.json, dict) else {}
+    spec = task_json.get("spec", {})
+    task_title = spec.get("title", task.name if task else "Untitled")
+    team_id = task_member_service.get_team_id(db, task_id)
+    team_name = task_member_service.get_team_name(db, task_id)
+
+    # Emit task:invited event to notify the invited user via WebSocket
+    await _emit_task_invited(
+        user_id=request.user_id,
+        task_id=task_id,
+        title=task_title,
+        team_id=team_id or 0,
+        team_name=team_name or "Unknown",
+        invited_by_user_id=current_user.id,
+        invited_by_user_name=inviter.user_name if inviter else "Unknown",
+    )
 
     return TaskMemberResponse(
         id=member.id,
@@ -293,7 +350,7 @@ def get_invite_info(
 
 
 @router.post("/invite/join", response_model=JoinByInviteResponse)
-def join_by_invite(
+async def join_by_invite(
     token: str = Query(..., description="Invite token"),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
@@ -335,6 +392,28 @@ def join_by_invite(
         task_id=task_id,
         user_id=current_user.id,
         invited_by=inviter_id,
+    )
+
+    # Get task info for WebSocket notification
+    task_json = task.json if isinstance(task.json, dict) else {}
+    spec = task_json.get("spec", {})
+    task_title = spec.get("title", task.name or "Untitled")
+    team_id = task_member_service.get_team_id(db, task_id)
+    team_name = task_member_service.get_team_name(db, task_id)
+
+    # Get inviter info
+    inviter = task_member_service.get_user(db, inviter_id)
+
+    # Emit task:invited event to notify the joining user via WebSocket
+    # This updates their task list in real-time
+    await _emit_task_invited(
+        user_id=current_user.id,
+        task_id=task_id,
+        title=task_title,
+        team_id=team_id or 0,
+        team_name=team_name or "Unknown",
+        invited_by_user_id=inviter_id,
+        invited_by_user_name=inviter.user_name if inviter else "Unknown",
     )
 
     return JoinByInviteResponse(

@@ -118,15 +118,29 @@ class ChatService(ChatServiceBase):
                 # Build messages and initialize components
                 if is_group_chat:
                     # For group chat, get history from database with user names
+                    logger.info(
+                        f"[CHAT_STREAM] Getting group chat history for task_id={task_id}, "
+                        f"subtask_id={subtask_id}, is_group_chat={is_group_chat}"
+                    )
                     history = await self._get_group_chat_history(task_id)
+                    logger.info(
+                        f"[CHAT_STREAM] Got history: count={len(history)}, "
+                        f"roles={[m.get('role') for m in history]}"
+                    )
                     # Apply truncation: first N + last M messages
                     history = self._truncate_group_chat_history(history, task_id)
+                    logger.info(f"[CHAT_STREAM] After truncation: count={len(history)}")
                 else:
                     # For regular chat, get history from Redis
                     history = await session_manager.get_chat_history(task_id)
 
                 messages = message_builder.build_messages(
                     history, message, system_prompt
+                )
+                logger.info(
+                    f"[CHAT_STREAM] Built messages: total={len(messages)}, "
+                    f"roles={[m.get('role') for m in messages]}, "
+                    f"current_message_preview={str(message)[:100]}..."
                 )
 
                 # Prepare all tools (passed tools + MCP tools)
@@ -360,6 +374,19 @@ class ChatService(ChatServiceBase):
 
         history: list[dict[str, Any]] = []
         with _db_session() as db:
+            # Query all subtasks for this task (for debugging)
+            all_subtasks = (
+                db.query(Subtask)
+                .filter(Subtask.task_id == task_id)
+                .order_by(Subtask.message_id.asc())
+                .all()
+            )
+            logger.info(
+                f"[GROUP_CHAT_HISTORY] task_id={task_id}, "
+                f"total_subtasks={len(all_subtasks)}, "
+                f"subtask_details=[{', '.join([f'(id={s.id}, role={s.role.value}, status={s.status.value}, msg_id={s.message_id})' for s in all_subtasks])}]"
+            )
+
             subtasks = (
                 db.query(Subtask, User.user_name)
                 .outerjoin(User, Subtask.sender_user_id == User.id)
@@ -371,13 +398,35 @@ class ChatService(ChatServiceBase):
                 .all()
             )
 
+            # Build completed details string separately to avoid f-string escaping issues
+            completed_details = ", ".join(
+                [
+                    f"(id={s.id}, role={s.role.value}, sender={u or 'N/A'})"
+                    for s, u in subtasks
+                ]
+            )
+            logger.info(
+                f"[GROUP_CHAT_HISTORY] task_id={task_id}, "
+                f"completed_subtasks={len(subtasks)}, "
+                f"completed_details=[{completed_details}]"
+            )
+
             for subtask, sender_username in subtasks:
                 msg = self._build_history_message(
                     db, subtask, sender_username, attachment_service
                 )
                 if msg:
                     history.append(msg)
+                    logger.debug(
+                        f"[GROUP_CHAT_HISTORY] Added message: role={msg.get('role')}, "
+                        f"content_preview={str(msg.get('content', ''))[:100]}..."
+                    )
 
+        logger.info(
+            f"[GROUP_CHAT_HISTORY] task_id={task_id}, "
+            f"final_history_count={len(history)}, "
+            f"history_roles=[{', '.join([m.get('role', 'unknown') for m in history])}]"
+        )
         return history
 
     def _build_history_message(

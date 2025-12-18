@@ -11,6 +11,7 @@ import uuid
 from contextlib import asynccontextmanager
 
 import redis
+import socketio
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -224,6 +225,16 @@ async def lifespan(app: FastAPI):
     logger.info("Starting background jobs...")
     start_background_jobs(app)
     logger.info("✓ Background jobs started")
+
+    # Initialize Socket.IO WebSocket emitter
+    # Note: Chat namespace is already registered in create_socketio_asgi_app()
+    logger.info("Initializing Socket.IO...")
+    from app.core.socketio import get_sio
+    from app.services.chat.ws_emitter import init_ws_emitter
+
+    sio = get_sio()
+    init_ws_emitter(sio)
+    logger.info("✓ Socket.IO initialized")
 
     logger.info("=" * 60)
     logger.info("Application startup completed successfully!")
@@ -543,11 +554,43 @@ def create_app():
     return app
 
 
-app = create_app()
+# Create FastAPI app
+_fastapi_app = create_app()
 
 
-# Root path
-@app.get("/")
+def create_socketio_asgi_app():
+    """
+    Create combined ASGI app with Socket.IO mounted.
+
+    Returns a combined app that routes Socket.IO traffic to Socket.IO server
+    and everything else to FastAPI.
+    """
+    from app.api.ws import register_chat_namespace
+    from app.core.socketio import create_socketio_app, get_sio
+
+    sio = get_sio()
+
+    # Register chat namespace before creating ASGI app
+    # This ensures the namespace is available when clients connect
+    register_chat_namespace(sio)
+    _logger.info("Chat namespace registered during ASGI app creation")
+
+    socketio_app = create_socketio_app(sio)
+
+    # Create combined ASGI app
+    return socketio.ASGIApp(
+        sio,
+        other_asgi_app=_fastapi_app,
+        socketio_path="/socket.io",
+    )
+
+
+# Combined ASGI app (Socket.IO + FastAPI)
+app = create_socketio_asgi_app()
+
+
+# Root path (registered on FastAPI app)
+@_fastapi_app.get("/")
 async def root():
     """
     Root path, returns API information
@@ -557,4 +600,5 @@ async def root():
         "version": settings.VERSION,
         "api_prefix": settings.API_PREFIX,
         "docs_url": f"{settings.API_PREFIX}/docs",
+        "socketio_path": "/socket.io",
     }

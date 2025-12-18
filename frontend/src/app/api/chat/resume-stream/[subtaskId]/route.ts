@@ -5,6 +5,11 @@
 /**
  * Next.js API Route for resuming streaming chat.
  *
+ * @deprecated This SSE-based resume-stream route is deprecated. Chat streaming now uses
+ * WebSocket via the global Socket.IO connection. For stream recovery, use the
+ * `getStreamingContent` API to fetch accumulated content, then reconnect via WebSocket.
+ * This route is kept for backward compatibility but will be removed in a future version.
+ *
  * This proxies requests to the backend's resume-stream endpoint,
  * allowing users to refresh the page and continue receiving streaming content.
  */

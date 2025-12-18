@@ -169,7 +169,16 @@ def _add_message(doc: Document, subtask: Subtask, task: Kind, user: User, db: Se
 
     # Sender name (support emoji in names)
     if is_user:
-        sender_name = user.user_name if user else "User"
+        # For group chat messages, check sender_user_id
+        if subtask.sender_user_id and subtask.sender_user_id > 0:
+            # Query the actual sender from database
+            actual_sender = (
+                db.query(User).filter(User.id == subtask.sender_user_id).first()
+            )
+            sender_name = actual_sender.user_name if actual_sender else "User"
+        else:
+            # Regular message from task owner
+            sender_name = user.user_name if user else "User"
     else:
         # Get team name from task
         task_data = task.json.get("spec", {})

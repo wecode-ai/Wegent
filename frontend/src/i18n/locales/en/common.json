@@ -364,6 +364,8 @@
   },
   "tasks": {
     "history_title": "History",
+    "group_chats": "Group Chats",
+    "conversations": "Conversations",
     "search_placeholder": "Search task",
     "search_placeholder_chat": "Search conversation",
     "new_task": "New Task",
@@ -1105,6 +1107,7 @@
     }
   },
   "groupChat": {
+    "leave": "Leave Group",
     "create": {
       "button": "Create Group Chat",
       "title": "Create Group Chat",

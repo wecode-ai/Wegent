@@ -139,7 +139,9 @@ def _should_use_direct_chat(db: Session, team: Kind, user_id: int) -> bool:
     return True
 
 
-def _should_trigger_ai_response(task_json: dict, prompt: str, team_name: str) -> bool:
+def _should_trigger_ai_response(
+    task_json: dict, prompt: str, team_name: str, request_is_group_chat: bool = False
+) -> bool:
     """
     Determine whether to trigger AI response based on task mode and prompt content.
 
@@ -150,12 +152,21 @@ def _should_trigger_ai_response(task_json: dict, prompt: str, team_name: str) ->
         task_json: Task's JSON spec
         prompt: User's input message
         team_name: Associated Team name
+        request_is_group_chat: Whether the request explicitly marks this as a group chat
+                              (used for new tasks where task_json is empty)
 
     Returns:
         True if AI response should be triggered, False if only save message
     """
     # Check if task is in group chat mode
+    # For existing tasks: check task_json.spec.is_group_chat
+    # For new tasks: use request_is_group_chat parameter
     is_group_chat = task_json.get("spec", {}).get("is_group_chat", False)
+
+    # If task_json doesn't have is_group_chat set, use the request parameter
+    # This handles the case of creating a new group chat task
+    if not is_group_chat and request_is_group_chat:
+        is_group_chat = True
 
     # Non-group-chat mode: always trigger AI
     if not is_group_chat:
@@ -445,6 +456,19 @@ async def _create_task_and_subtasks(
         )
         db.add(assistant_subtask)
 
+    # Update task.updated_at for group chat messages (even without AI trigger)
+    # This ensures the task list shows unread indicators for new messages
+    if request.is_group_chat or task.json.get("spec", {}).get("is_group_chat", False):
+        from sqlalchemy.orm.attributes import flag_modified
+
+        task.updated_at = datetime.now()
+        # Also update the JSON status.updatedAt for consistency
+        task_crd = Task.model_validate(task.json)
+        if task_crd.status:
+            task_crd.status.updatedAt = datetime.now()
+            task.json = task_crd.model_dump(mode="json")
+            flag_modified(task, "json")
+
     db.commit()
     db.refresh(task)
     db.refresh(user_subtask)
@@ -494,12 +518,82 @@ async def _create_task_and_subtasks(
                     f"Initialized {len(history_messages)} messages in Redis for task {task_id}"
                 )
 
+    # Notify all group chat members about the new message via WebSocket
+    # This allows their task list to show the unread indicator
+    if request.is_group_chat or task.json.get("spec", {}).get("is_group_chat", False):
+        await _notify_group_members_task_updated(db, task, user.id)
+
     return {
         "task": task,
         "user_subtask": user_subtask,
         "assistant_subtask": assistant_subtask,
         "ai_triggered": should_trigger_ai,
     }
+
+
+async def _notify_group_members_task_updated(
+    db: Session, task: Kind, sender_user_id: int
+) -> None:
+    """
+    Notify all group chat members about task update via WebSocket.
+
+    This sends a task:status event to each member's user room so their
+    task list can show the unread indicator for new messages.
+
+    Args:
+        db: Database session
+        task: Task Kind object
+        sender_user_id: User ID of the message sender (to exclude from notification)
+    """
+    from app.models.task_member import MemberStatus, TaskMember
+    from app.services.chat.ws_emitter import get_ws_emitter
+
+    ws_emitter = get_ws_emitter()
+    if not ws_emitter:
+        logger.warning(
+            f"[_notify_group_members_task_updated] WebSocket emitter not available"
+        )
+        return
+
+    try:
+        # Get all active members of this group chat
+        members = (
+            db.query(TaskMember)
+            .filter(
+                TaskMember.task_id == task.id,
+                TaskMember.status == MemberStatus.ACTIVE,
+            )
+            .all()
+        )
+
+        # Also include the task owner
+        member_user_ids = {m.user_id for m in members}
+        member_user_ids.add(task.user_id)
+
+        # Get current task status
+        task_crd = Task.model_validate(task.json)
+        current_status = task_crd.status.status if task_crd.status else "PENDING"
+
+        # Notify each member (except the sender) about the task update
+        for member_user_id in member_user_ids:
+            if member_user_id == sender_user_id:
+                # Skip the sender - they already know about their own message
+                continue
+
+            await ws_emitter.emit_task_status(
+                user_id=member_user_id,
+                task_id=task.id,
+                status=current_status,
+                progress=task_crd.status.progress if task_crd.status else 0,
+            )
+            logger.debug(
+                f"[_notify_group_members_task_updated] Notified user {member_user_id} about task {task.id} update"
+            )
+
+    except Exception as e:
+        logger.warning(
+            f"[_notify_group_members_task_updated] Failed to notify group members: {e}"
+        )
 
 
 @router.post("/stream")
@@ -655,8 +749,9 @@ async def stream_chat(
             task_json = task_kind.json or {}
 
     # Check if AI should be triggered (for group chat with @mention)
+    # Pass request.is_group_chat for new tasks where task_json is empty
     should_trigger_ai = _should_trigger_ai_response(
-        task_json, request.message, team_name
+        task_json, request.message, team_name, request.is_group_chat
     )
     logger.info(
         f"Group chat check: task_id={request.task_id}, "

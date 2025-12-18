@@ -215,6 +215,14 @@ class ExecutorKindsService(
                 # update task status to RUNNING
                 self._update_task_to_running(db, updated_subtask.task_id)
 
+                # Send chat:start WebSocket event for executor tasks
+                # This allows frontend to establish subtask-to-task mapping
+                # and prepare for receiving chat:done event later
+                self._emit_chat_start_ws_event(
+                    task_id=updated_subtask.task_id,
+                    subtask_id=updated_subtask.id,
+                )
+
         return updated_subtasks
 
     def _update_task_to_running(self, db: Session, task_id: int) -> None:
@@ -240,6 +248,14 @@ class ExecutorKindsService(
                     task.json = task_crd.model_dump(mode="json")
                     task.updated_at = datetime.now()
                     flag_modified(task, "json")
+
+                    # Send WebSocket event for task status update (PENDING -> RUNNING)
+                    self._emit_task_status_ws_event(
+                        user_id=task.user_id,
+                        task_id=task_id,
+                        status="RUNNING",
+                        progress=task_crd.status.progress if task_crd.status else 0,
+                    )
 
     def _get_model_config_from_public_model(
         self, db: Session, agent_config: Any
@@ -754,7 +770,11 @@ class ExecutorKindsService(
         self, db: Session, *, subtask_update: SubtaskExecutorUpdate
     ) -> Dict:
         """
-        Update subtask and automatically update associated task status using kinds table
+        Update subtask and automatically update associated task status using kinds table.
+
+        For streaming support:
+        - When status is RUNNING and result contains content, emit chat:chunk events
+        - Track previous content length to send only incremental updates
         """
         logger.info(
             f"update subtask subtask_id={subtask_update.subtask_id}, subtask_status={subtask_update.status}, subtask_progress={subtask_update.progress}"
@@ -764,6 +784,13 @@ class ExecutorKindsService(
         subtask = db.query(Subtask).get(subtask_update.subtask_id)
         if not subtask:
             raise HTTPException(status_code=404, detail="Subtask not found")
+
+        # Track previous content for streaming chunk calculation
+        previous_content = ""
+        if subtask.result and isinstance(subtask.result, dict):
+            prev_value = subtask.result.get("value", "")
+            if isinstance(prev_value, str):
+                previous_content = prev_value
 
         # Update subtask title (if provided)
         if subtask_update.subtask_title:
@@ -801,6 +828,48 @@ class ExecutorKindsService(
 
         db.add(subtask)
         db.flush()  # Ensure subtask update is complete
+
+        # Emit chat:chunk event for streaming content updates
+        # This allows frontend to display content in real-time during executor task execution
+        # For executor tasks, result contains thinking and workbench data, not just value
+        if subtask_update.status == SubtaskStatus.RUNNING and subtask_update.result:
+            if isinstance(subtask_update.result, dict):
+                # For executor tasks, send the full result (thinking, workbench)
+                # Calculate offset from value if present
+                new_content = ""
+                new_value = subtask_update.result.get("value", "")
+                if isinstance(new_value, str):
+                    new_content = new_value
+
+                # Calculate offset based on value content length
+                offset = len(new_content) if new_content else 0
+
+                # Check if there's any meaningful data to send (thinking or workbench)
+                has_thinking = bool(subtask_update.result.get("thinking"))
+                has_workbench = bool(subtask_update.result.get("workbench"))
+                has_new_content = new_content and len(new_content) > len(
+                    previous_content
+                )
+
+                if has_thinking or has_workbench or has_new_content:
+                    # Calculate chunk content for text streaming
+                    chunk_content = ""
+                    if has_new_content:
+                        chunk_content = new_content[len(previous_content) :]
+                        offset = len(previous_content)
+
+                    logger.info(
+                        f"[WS] Emitting chat:chunk for executor task={subtask.task_id} subtask={subtask.id} "
+                        f"offset={offset} has_thinking={has_thinking} has_workbench={has_workbench}"
+                    )
+
+                    self._emit_chat_chunk_ws_event(
+                        task_id=subtask.task_id,
+                        subtask_id=subtask.id,
+                        content=chunk_content,
+                        offset=offset,
+                        result=subtask_update.result,  # Send full result with thinking and workbench
+                    )
 
         # Update associated task status
         self._update_task_status_based_on_subtasks(db, subtask.task_id)
@@ -947,7 +1016,360 @@ class ExecutorKindsService(
         # Send notification when task is completed or failed
         self._send_task_completion_notification(db, task_id, task_crd)
 
+        # Send WebSocket event for task status update
+        if task_crd.status:
+            self._emit_task_status_ws_event(
+                user_id=task.user_id,
+                task_id=task_id,
+                status=task_crd.status.status,
+                progress=task_crd.status.progress,
+            )
+
+        # Send chat:done WebSocket event for completed/failed subtasks
+        # This allows frontend to receive message content in real-time via WebSocket
+        # instead of relying on polling
+        if last_non_pending_subtask and last_non_pending_subtask.status in [
+            SubtaskStatus.COMPLETED,
+            SubtaskStatus.FAILED,
+        ]:
+            self._emit_chat_done_ws_event(
+                task_id=task_id,
+                subtask_id=last_non_pending_subtask.id,
+                result=last_non_pending_subtask.result,
+            )
+
         db.add(task)
+
+    def _emit_task_status_ws_event(
+        self,
+        user_id: int,
+        task_id: int,
+        status: str,
+        progress: Optional[int] = None,
+    ) -> None:
+        """
+        Emit task:status WebSocket event to notify frontend of task status changes.
+
+        This method schedules the WebSocket event emission asynchronously to avoid
+        blocking the database transaction.
+
+        Args:
+            user_id: User ID who owns the task
+            task_id: Task ID
+            status: New task status
+            progress: Optional progress percentage
+        """
+        logger.info(
+            f"[WS] _emit_task_status_ws_event called for task={task_id} status={status} progress={progress} user_id={user_id}"
+        )
+
+        async def emit_async():
+            try:
+                from app.services.chat.ws_emitter import get_ws_emitter
+
+                ws_emitter = get_ws_emitter()
+                if ws_emitter:
+                    await ws_emitter.emit_task_status(
+                        user_id=user_id,
+                        task_id=task_id,
+                        status=status,
+                        progress=progress,
+                    )
+                    logger.info(
+                        f"[WS] Successfully emitted task:status event for task={task_id} status={status} progress={progress}"
+                    )
+                else:
+                    logger.warning(
+                        f"[WS] ws_emitter is None, cannot emit task:status event for task={task_id}"
+                    )
+            except Exception as e:
+                logger.error(
+                    f"[WS] Failed to emit task:status WebSocket event: {e}",
+                    exc_info=True,
+                )
+
+        # Schedule async execution
+        # First try to get the running event loop from the current context
+        try:
+            # Try to get the running event loop
+            loop = asyncio.get_running_loop()
+            # We're in an async context, use create_task directly
+            loop.create_task(emit_async())
+            logger.info(
+                f"[WS] Scheduled task:status event via loop.create_task for task={task_id}"
+            )
+        except RuntimeError:
+            # No running event loop in current thread
+            # Try to use the main event loop reference from ws_emitter
+            logger.info(
+                f"[WS] No running event loop in current thread, trying main event loop for task={task_id}"
+            )
+            try:
+                from app.services.chat.ws_emitter import get_main_event_loop
+
+                main_loop = get_main_event_loop()
+                if main_loop and main_loop.is_running():
+                    # Schedule the coroutine to run in the main event loop
+                    asyncio.run_coroutine_threadsafe(emit_async(), main_loop)
+                    logger.info(
+                        f"[WS] Scheduled task:status event via run_coroutine_threadsafe (main loop) for task={task_id}"
+                    )
+                else:
+                    # Fallback: try asyncio.get_event_loop()
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        asyncio.run_coroutine_threadsafe(emit_async(), loop)
+                        logger.info(
+                            f"[WS] Scheduled task:status event via run_coroutine_threadsafe (fallback) for task={task_id}"
+                        )
+                    else:
+                        logger.warning(
+                            f"[WS] No running event loop available, cannot emit task:status event for task={task_id}"
+                        )
+            except RuntimeError as e:
+                # No event loop available at all
+                logger.warning(
+                    f"[WS] Could not emit task:status event - no event loop available: {e}"
+                )
+
+    def _emit_chat_start_ws_event(
+        self,
+        task_id: int,
+        subtask_id: int,
+        bot_name: Optional[str] = None,
+    ) -> None:
+        """
+        Emit chat:start WebSocket event to notify frontend that AI response is starting.
+
+        This method is called when an executor task starts running. It allows the frontend
+        to establish the subtask-to-task mapping and prepare for receiving chat:done event.
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+            bot_name: Optional bot name
+        """
+        logger.info(
+            f"[WS] _emit_chat_start_ws_event called for task={task_id} subtask={subtask_id}"
+        )
+
+        async def emit_async():
+            try:
+                from app.services.chat.ws_emitter import get_ws_emitter
+
+                ws_emitter = get_ws_emitter()
+                if ws_emitter:
+                    await ws_emitter.emit_chat_start(
+                        task_id=task_id,
+                        subtask_id=subtask_id,
+                        bot_name=bot_name,
+                    )
+                    logger.info(
+                        f"[WS] Successfully emitted chat:start event for task={task_id} subtask={subtask_id}"
+                    )
+                else:
+                    logger.warning(
+                        f"[WS] ws_emitter is None, cannot emit chat:start event for task={task_id}"
+                    )
+            except Exception as e:
+                logger.error(
+                    f"[WS] Failed to emit chat:start WebSocket event: {e}",
+                    exc_info=True,
+                )
+
+        # Schedule async execution using the same pattern as _emit_task_status_ws_event
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(emit_async())
+            logger.info(
+                f"[WS] Scheduled chat:start event via loop.create_task for task={task_id}"
+            )
+        except RuntimeError:
+            logger.info(
+                f"[WS] No running event loop in current thread, trying main event loop for task={task_id}"
+            )
+            try:
+                from app.services.chat.ws_emitter import get_main_event_loop
+
+                main_loop = get_main_event_loop()
+                if main_loop and main_loop.is_running():
+                    asyncio.run_coroutine_threadsafe(emit_async(), main_loop)
+                    logger.info(
+                        f"[WS] Scheduled chat:start event via run_coroutine_threadsafe (main loop) for task={task_id}"
+                    )
+                else:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        asyncio.run_coroutine_threadsafe(emit_async(), loop)
+                        logger.info(
+                            f"[WS] Scheduled chat:start event via run_coroutine_threadsafe (fallback) for task={task_id}"
+                        )
+                    else:
+                        logger.warning(
+                            f"[WS] No running event loop available, cannot emit chat:start event for task={task_id}"
+                        )
+            except RuntimeError as e:
+                logger.warning(
+                    f"[WS] Could not emit chat:start event - no event loop available: {e}"
+                )
+
+    def _emit_chat_done_ws_event(
+        self,
+        task_id: int,
+        subtask_id: int,
+        result: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """
+        Emit chat:done WebSocket event to notify frontend of completed subtask with message content.
+
+        This method sends the message content to the frontend via WebSocket so that
+        the frontend can display the AI response in real-time without polling.
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+            result: Result data containing the message content
+        """
+        logger.info(
+            f"[WS] _emit_chat_done_ws_event called for task={task_id} subtask={subtask_id}"
+        )
+
+        async def emit_async():
+            try:
+                from app.services.chat.ws_emitter import get_ws_emitter
+
+                ws_emitter = get_ws_emitter()
+                if ws_emitter:
+                    # Calculate offset from result content length
+                    offset = 0
+                    if result and isinstance(result, dict):
+                        value = result.get("value", "")
+                        if isinstance(value, str):
+                            offset = len(value)
+
+                    await ws_emitter.emit_chat_done(
+                        task_id=task_id,
+                        subtask_id=subtask_id,
+                        offset=offset,
+                        result=result,
+                    )
+                    logger.info(
+                        f"[WS] Successfully emitted chat:done event for task={task_id} subtask={subtask_id}"
+                    )
+                else:
+                    logger.warning(
+                        f"[WS] ws_emitter is None, cannot emit chat:done event for task={task_id}"
+                    )
+            except Exception as e:
+                logger.error(
+                    f"[WS] Failed to emit chat:done WebSocket event: {e}",
+                    exc_info=True,
+                )
+
+        # Schedule async execution using the same pattern as _emit_task_status_ws_event
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(emit_async())
+            logger.info(
+                f"[WS] Scheduled chat:done event via loop.create_task for task={task_id}"
+            )
+        except RuntimeError:
+            logger.info(
+                f"[WS] No running event loop in current thread, trying main event loop for task={task_id}"
+            )
+            try:
+                from app.services.chat.ws_emitter import get_main_event_loop
+
+                main_loop = get_main_event_loop()
+                if main_loop and main_loop.is_running():
+                    asyncio.run_coroutine_threadsafe(emit_async(), main_loop)
+                    logger.info(
+                        f"[WS] Scheduled chat:done event via run_coroutine_threadsafe (main loop) for task={task_id}"
+                    )
+                else:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        asyncio.run_coroutine_threadsafe(emit_async(), loop)
+                        logger.info(
+                            f"[WS] Scheduled chat:done event via run_coroutine_threadsafe (fallback) for task={task_id}"
+                        )
+                    else:
+                        logger.warning(
+                            f"[WS] No running event loop available, cannot emit chat:done event for task={task_id}"
+                        )
+            except RuntimeError as e:
+                logger.warning(
+                    f"[WS] Could not emit chat:done event - no event loop available: {e}"
+                )
+
+    def _emit_chat_chunk_ws_event(
+        self,
+        task_id: int,
+        subtask_id: int,
+        content: str,
+        offset: int,
+        result: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """
+        Emit chat:chunk WebSocket event to notify frontend of streaming content update.
+
+        This method sends incremental content updates to the frontend via WebSocket
+        for real-time streaming display.
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+            content: Content chunk to send (for text streaming)
+            offset: Current offset in the full response
+            result: Optional full result data (for executor tasks with thinking/workbench)
+        """
+        logger.info(
+            f"[WS] _emit_chat_chunk_ws_event called for task={task_id} subtask={subtask_id} offset={offset}"
+        )
+
+        async def emit_async():
+            try:
+                from app.services.chat.ws_emitter import get_ws_emitter
+
+                ws_emitter = get_ws_emitter()
+                if ws_emitter:
+                    await ws_emitter.emit_chat_chunk(
+                        task_id=task_id,
+                        subtask_id=subtask_id,
+                        content=content,
+                        offset=offset,
+                        result=result,
+                    )
+                    logger.info(
+                        f"[WS] Successfully emitted chat:chunk event for task={task_id} subtask={subtask_id}"
+                    )
+                else:
+                    logger.warning(
+                        f"[WS] ws_emitter is None, cannot emit chat:chunk event for task={task_id}"
+                    )
+            except Exception as e:
+                logger.error(
+                    f"[WS] Failed to emit chat:chunk WebSocket event: {e}",
+                    exc_info=True,
+                )
+
+        # Schedule async execution
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(emit_async())
+        except RuntimeError:
+            try:
+                from app.services.chat.ws_emitter import get_main_event_loop
+
+                main_loop = get_main_event_loop()
+                if main_loop and main_loop.is_running():
+                    asyncio.run_coroutine_threadsafe(emit_async(), main_loop)
+                else:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        asyncio.run_coroutine_threadsafe(emit_async(), loop)
+            except RuntimeError:
+                pass  # Silently ignore if no event loop available for chunk events
 
     def _auto_delete_executors_if_enabled(
         self, db: Session, task_id: int, task_crd: Task, subtasks: List[Subtask]
