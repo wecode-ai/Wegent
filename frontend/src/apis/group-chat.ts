@@ -44,12 +44,8 @@ export interface PollMessagesResponse {
  * Streaming status response
  */
 export interface StreamingStatus {
-  is_streaming: boolean;
-  subtask_id?: number;
-  started_by_user_id?: number;
-  started_by_username?: string;
-  current_content?: string;
-  started_at?: string;
+  has_streaming: boolean;
+  streaming_subtask_id?: number;
 }
 
 /**

@@ -414,14 +414,10 @@ export default function ChatArea({
     setStreamingTaskId(null);
   }, [currentDisplayTaskId, streamingTaskId, contextResetStream]);
 
-  // Group chat streaming state (for other users to see streaming content)
-  const [groupChatStreamingContent, setGroupChatStreamingContent] = useState<string>('');
-  const [groupChatStreamingSubtaskId, setGroupChatStreamingSubtaskId] = useState<number | null>(
-    null
-  );
-  const [isGroupChatStreaming, setIsGroupChatStreaming] = useState(false);
-
   // Group chat message handlers
+  // Note: Group chat streaming from other users is now handled by useMultipleStreamingRecovery
+  // in MessagesArea, which detects RUNNING ASSISTANT subtasks and recovers their streaming content.
+  // This simplifies the architecture by using a single mechanism for all streaming recovery.
   const handleNewMessages = useCallback(
     (messages: SubtaskWithSender[]) => {
       if (messages.length > 0) {
@@ -431,33 +427,14 @@ export default function ChatArea({
     [refreshSelectedTaskDetail]
   );
 
-  const handleStreamContent = useCallback((content: string, subtaskId: number) => {
-    console.log('[GroupChat] Stream content:', { subtaskId, contentLength: content.length });
-    // Update group chat streaming state so MessagesArea can display it
-    setGroupChatStreamingContent(content);
-    setGroupChatStreamingSubtaskId(subtaskId);
-    setIsGroupChatStreaming(true);
-  }, []);
-
+  // When group chat stream completes, refresh to get the final message
   const handleStreamComplete = useCallback(
-    (subtaskId: number, result?: Record<string, unknown>) => {
-      console.log('[GroupChat] Stream complete:', { subtaskId, result });
-      // Clear group chat streaming state
-      setGroupChatStreamingContent('');
-      setGroupChatStreamingSubtaskId(null);
-      setIsGroupChatStreaming(false);
+    (_subtaskId: number, _result?: Record<string, unknown>) => {
       // Refresh to get the final message
       refreshSelectedTaskDetail();
     },
     [refreshSelectedTaskDetail]
   );
-
-  // Reset group chat streaming state when task changes
-  useEffect(() => {
-    setGroupChatStreamingContent('');
-    setGroupChatStreamingSubtaskId(null);
-    setIsGroupChatStreaming(false);
-  }, [selectedTaskDetail?.id]);
 
   // Clear streamingTaskId when the streaming task completes or when we switch to a different task
   useEffect(() => {
@@ -484,8 +461,26 @@ export default function ChatArea({
 
   // Reset streaming state when task ID changes (user switches tasks)
   // This ensures pending message from task A doesn't show up in task B
+  // IMPORTANT: Only reset when switching to a DIFFERENT task, not when the current task gets an ID
+  // This prevents clearing the pending message when a new task is created and gets its ID
+  const previousTaskIdRef = useRef<number | null | undefined>(undefined);
   useEffect(() => {
-    resetStreamingState();
+    const currentTaskId = selectedTaskDetail?.id;
+    const previousTaskId = previousTaskIdRef.current;
+
+    // Only reset if:
+    // 1. We had a previous task ID (not undefined, meaning this isn't the first render)
+    // 2. The task ID actually changed to a different value
+    // 3. We're not transitioning from null/undefined to a new ID (which happens when creating a new task)
+    if (
+      previousTaskId !== undefined &&
+      currentTaskId !== previousTaskId &&
+      previousTaskId !== null // Don't reset when going from null to a new ID
+    ) {
+      resetStreamingState();
+    }
+
+    previousTaskIdRef.current = currentTaskId;
   }, [selectedTaskDetail?.id, resetStreamingState]);
 
   // Try to resume streaming when task changes or on initial load
@@ -1013,7 +1008,9 @@ export default function ChatArea({
                     console.error('Failed to refresh task detail after stream:', error);
                   } finally {
                     contextResetStream(completedTaskId);
-                    setStreamingTaskId(null);
+                    // Clear local pending state after task detail is refreshed
+                    // This ensures the saved message appears before pending message disappears
+                    resetStreamingState();
                   }
                 } else if (selectedTaskDetail?.id) {
                   // For follow-up messages, the streaming content is already displayed
@@ -1356,14 +1353,14 @@ export default function ChatArea({
       className="flex-1 flex flex-col min-h-0 w-full relative"
       style={{ height: '100%', boxSizing: 'border-box' }}
     >
-      {/* Group Chat Sync Manager - zero UI, handles polling and streaming */}
+      {/* Group Chat Sync Manager - zero UI, handles polling for new messages */}
+      {/* Note: Streaming content recovery is handled by useMultipleStreamingRecovery in MessagesArea */}
       {selectedTaskDetail?.is_group_chat && selectedTaskDetail.id && (
         <GroupChatSyncManager
           taskId={selectedTaskDetail.id}
           isGroupChat={true}
           enabled={true}
           onNewMessages={handleNewMessages}
-          onStreamContent={handleStreamContent}
           onStreamComplete={handleStreamComplete}
         />
       )}
@@ -1404,9 +1401,6 @@ export default function ChatArea({
               onShareButtonRender={onShareButtonRender}
               onSendMessage={handleSendMessageFromChild}
               isGroupChat={selectedTaskDetail?.is_group_chat || false}
-              groupChatStreamingContent={groupChatStreamingContent}
-              groupChatStreamingSubtaskId={groupChatStreamingSubtaskId}
-              isGroupChatStreaming={isGroupChatStreaming}
             />
           </div>
         </div>
