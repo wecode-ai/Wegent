@@ -6,7 +6,7 @@
  * Custom hook for managing knowledge documents
  */
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect } from 'react';
 import {
   listDocuments,
   createDocument,
@@ -16,186 +16,177 @@ import {
   batchEnableDocuments,
   batchDisableDocuments,
   type BatchOperationResult,
-} from '@/apis/knowledge'
+} from '@/apis/knowledge';
 import type {
   KnowledgeDocument,
   KnowledgeDocumentCreate,
   KnowledgeDocumentUpdate,
-} from '@/types/knowledge'
-import { toast } from '@/hooks/use-toast'
+} from '@/types/knowledge';
+import { toast } from '@/hooks/use-toast';
 
 interface UseDocumentsOptions {
-  knowledgeBaseId: number | null
-  autoLoad?: boolean
+  knowledgeBaseId: number | null;
+  autoLoad?: boolean;
 }
 
 export function useDocuments(options: UseDocumentsOptions) {
-  const { knowledgeBaseId, autoLoad = true } = options
+  const { knowledgeBaseId, autoLoad = true } = options;
 
-  const [documents, setDocuments] = useState<KnowledgeDocument[]>([])
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchDocuments = useCallback(async () => {
     if (!knowledgeBaseId) {
-      setDocuments([])
-      return
+      setDocuments([]);
+      return;
     }
 
-    setLoading(true)
-    setError(null)
+    setLoading(true);
+    setError(null);
     try {
-      const response = await listDocuments(knowledgeBaseId)
-      setDocuments(response.items)
+      const response = await listDocuments(knowledgeBaseId);
+      setDocuments(response.items);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch documents')
+      setError(err instanceof Error ? err.message : 'Failed to fetch documents');
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }, [knowledgeBaseId])
+  }, [knowledgeBaseId]);
 
   const create = useCallback(
     async (data: KnowledgeDocumentCreate) => {
       if (!knowledgeBaseId) {
-        throw new Error('Knowledge base ID is required')
+        throw new Error('Knowledge base ID is required');
       }
 
-      setLoading(true)
-      setError(null)
+      setLoading(true);
+      setError(null);
       try {
-        const created = await createDocument(knowledgeBaseId, data)
-        setDocuments((prev) => [created, ...prev])
-        return created
+        const created = await createDocument(knowledgeBaseId, data);
+        setDocuments(prev => [created, ...prev]);
+        return created;
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Failed to create document'
-        toast({ title: message, variant: 'destructive' })
-        throw err
+        const message = err instanceof Error ? err.message : 'Failed to create document';
+        toast({ title: message, variant: 'destructive' });
+        throw err;
       } finally {
-        setLoading(false)
+        setLoading(false);
       }
     },
     [knowledgeBaseId]
-  )
+  );
 
   const update = useCallback(async (id: number, data: KnowledgeDocumentUpdate) => {
-    setLoading(true)
-    setError(null)
+    setLoading(true);
+    setError(null);
     try {
-      const updated = await updateDocument(id, data)
-      setDocuments((prev) =>
-        prev.map((doc) => (doc.id === id ? updated : doc))
-      )
-      return updated
+      const updated = await updateDocument(id, data);
+      setDocuments(prev => prev.map(doc => (doc.id === id ? updated : doc)));
+      return updated;
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to update document'
-      toast({ title: message, variant: 'destructive' })
-      throw err
+      const message = err instanceof Error ? err.message : 'Failed to update document';
+      toast({ title: message, variant: 'destructive' });
+      throw err;
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }, [])
+  }, []);
 
   const remove = useCallback(async (id: number) => {
-    setLoading(true)
-    setError(null)
+    setLoading(true);
+    setError(null);
     try {
-      await deleteDocument(id)
-      setDocuments((prev) => prev.filter((doc) => doc.id !== id))
+      await deleteDocument(id);
+      setDocuments(prev => prev.filter(doc => doc.id !== id));
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to delete document'
-      toast({ title: message, variant: 'destructive' })
-      throw err
+      const message = err instanceof Error ? err.message : 'Failed to delete document';
+      toast({ title: message, variant: 'destructive' });
+      throw err;
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }, [])
+  }, []);
 
   const toggleStatus = useCallback(
     async (doc: KnowledgeDocument) => {
-      const newStatus = doc.status === 'enabled' ? 'disabled' : 'enabled'
-      return update(doc.id, { status: newStatus })
+      const newStatus = doc.status === 'enabled' ? 'disabled' : 'enabled';
+      return update(doc.id, { status: newStatus });
     },
     [update]
-  )
+  );
 
   // Batch operations
-  const batchDelete = useCallback(
-    async (ids: number[]): Promise<BatchOperationResult> => {
-      setLoading(true)
-      setError(null)
-      try {
-        const result = await batchDeleteDocuments(ids)
-        // Remove successfully deleted documents from state
-        setDocuments((prev) => prev.filter((doc) => !ids.includes(doc.id) || result.failed_ids.includes(doc.id)))
-        return result
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Failed to batch delete documents'
-        toast({ title: message, variant: 'destructive' })
-        throw err
-      } finally {
-        setLoading(false)
-      }
-    },
-    []
-  )
+  const batchDelete = useCallback(async (ids: number[]): Promise<BatchOperationResult> => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await batchDeleteDocuments(ids);
+      // Remove successfully deleted documents from state
+      setDocuments(prev =>
+        prev.filter(doc => !ids.includes(doc.id) || result.failed_ids.includes(doc.id))
+      );
+      return result;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to batch delete documents';
+      toast({ title: message, variant: 'destructive' });
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  const batchEnable = useCallback(
-    async (ids: number[]): Promise<BatchOperationResult> => {
-      setLoading(true)
-      setError(null)
-      try {
-        const result = await batchEnableDocuments(ids)
-        // Update status for successfully enabled documents
-        setDocuments((prev) =>
-          prev.map((doc) =>
-            ids.includes(doc.id) && !result.failed_ids.includes(doc.id)
-              ? { ...doc, status: 'enabled' as const }
-              : doc
-          )
+  const batchEnable = useCallback(async (ids: number[]): Promise<BatchOperationResult> => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await batchEnableDocuments(ids);
+      // Update status for successfully enabled documents
+      setDocuments(prev =>
+        prev.map(doc =>
+          ids.includes(doc.id) && !result.failed_ids.includes(doc.id)
+            ? { ...doc, status: 'enabled' as const }
+            : doc
         )
-        return result
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Failed to batch enable documents'
-        toast({ title: message, variant: 'destructive' })
-        throw err
-      } finally {
-        setLoading(false)
-      }
-    },
-    []
-  )
+      );
+      return result;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to batch enable documents';
+      toast({ title: message, variant: 'destructive' });
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  const batchDisable = useCallback(
-    async (ids: number[]): Promise<BatchOperationResult> => {
-      setLoading(true)
-      setError(null)
-      try {
-        const result = await batchDisableDocuments(ids)
-        // Update status for successfully disabled documents
-        setDocuments((prev) =>
-          prev.map((doc) =>
-            ids.includes(doc.id) && !result.failed_ids.includes(doc.id)
-              ? { ...doc, status: 'disabled' as const }
-              : doc
-          )
+  const batchDisable = useCallback(async (ids: number[]): Promise<BatchOperationResult> => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await batchDisableDocuments(ids);
+      // Update status for successfully disabled documents
+      setDocuments(prev =>
+        prev.map(doc =>
+          ids.includes(doc.id) && !result.failed_ids.includes(doc.id)
+            ? { ...doc, status: 'disabled' as const }
+            : doc
         )
-        return result
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Failed to batch disable documents'
-        toast({ title: message, variant: 'destructive' })
-        throw err
-      } finally {
-        setLoading(false)
-      }
-    },
-    []
-  )
+      );
+      return result;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to batch disable documents';
+      toast({ title: message, variant: 'destructive' });
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (autoLoad && knowledgeBaseId) {
-      fetchDocuments()
+      fetchDocuments();
     }
-  }, [autoLoad, knowledgeBaseId, fetchDocuments])
+  }, [autoLoad, knowledgeBaseId, fetchDocuments]);
 
   return {
     documents,
@@ -209,5 +200,5 @@ export function useDocuments(options: UseDocumentsOptions) {
     batchDelete,
     batchEnable,
     batchDisable,
-  }
+  };
 }

@@ -6,6 +6,7 @@ import json
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -295,4 +296,56 @@ async def get_welcome_config(
             ChatTipItem(**tip)
             for tip in config_value.get("tips", DEFAULT_SLOGAN_TIPS_CONFIG["tips"])
         ],
+    )
+
+
+class UserSearchItem(BaseModel):
+    """User search result item"""
+
+    id: int
+    user_name: str
+    email: Optional[str] = None
+
+
+class SearchUsersResponse(BaseModel):
+    """User search response"""
+
+    users: list[UserSearchItem]
+    total: int
+
+
+@router.get("/search", response_model=SearchUsersResponse)
+async def search_users(
+    q: str = Query(..., min_length=1, description="Search query"),
+    limit: int = Query(
+        default=20, ge=1, le=100, description="Maximum results to return"
+    ),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Search users by username or email.
+    Used for adding members to group chats.
+    """
+    # Search users by username or email (case-insensitive)
+    query = db.query(User).filter(
+        User.is_active == True,
+        User.id != current_user.id,  # Exclude current user
+    )
+
+    # Search in username and email
+    search_pattern = f"%{q}%"
+    query = query.filter(
+        (User.user_name.ilike(search_pattern)) | (User.email.ilike(search_pattern))
+    )
+
+    # Get results with limit
+    users = query.limit(limit).all()
+
+    return SearchUsersResponse(
+        users=[
+            UserSearchItem(id=user.id, user_name=user.user_name, email=user.email)
+            for user in users
+        ],
+        total=len(users),
     )

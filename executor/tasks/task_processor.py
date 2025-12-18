@@ -8,20 +8,20 @@
 
 import json
 import os
-from typing import Dict, Tuple, Optional, Any
+from typing import Any, Dict, Optional, Tuple
 
-from executor.config import config
-from shared.status import TaskStatus
-from shared.logger import setup_logger
-from shared.telemetry.decorators import trace_sync, add_span_event, set_span_attribute
 from executor.agents import Agent, AgentFactory
-from executor.services.agent_service import AgentService
 from executor.callback.callback_handler import (
-    send_task_started_callback,
+    send_status_callback,
     send_task_completed_callback,
     send_task_failed_callback,
-    send_status_callback,
+    send_task_started_callback,
 )
+from executor.config import config
+from executor.services.agent_service import AgentService
+from shared.logger import setup_logger
+from shared.status import TaskStatus
+from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_sync
 
 logger = setup_logger("task_processor")
 
@@ -104,7 +104,7 @@ def _extract_task_attributes(task_data: Dict[str, Any]) -> Dict[str, Any]:
 @trace_sync(
     span_name="execute_task",
     tracer_name="executor.tasks",
-    extract_attributes=_extract_task_attributes
+    extract_attributes=_extract_task_attributes,
 )
 def process(task_data: Dict[str, Any]) -> TaskStatus:
     """
@@ -120,7 +120,9 @@ def process(task_data: Dict[str, Any]) -> TaskStatus:
 
     # Extract validation_id for validation tasks
     validation_params = task_data.get("validation_params", {})
-    validation_id = validation_params.get("validation_id") if validation_params else None
+    validation_id = (
+        validation_params.get("validation_id") if validation_params else None
+    )
 
     started_result = None
     if validation_id:
@@ -180,7 +182,9 @@ def process(task_data: Dict[str, Any]) -> TaskStatus:
                     "errors": [message] if message else [],
                 },
             }
-        send_task_failed_callback(error_message=message, result=fail_result, **callback_params)
+        send_task_failed_callback(
+            error_message=message, result=fail_result, **callback_params
+        )
         add_span_event("task_failed_callback_sent")
 
     return status
