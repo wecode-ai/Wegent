@@ -7,7 +7,6 @@
  */
 
 import client from './client';
-import { getToken } from './user';
 
 /**
  * Subtask with sender information
@@ -41,18 +40,6 @@ export interface PollMessagesResponse {
 }
 
 /**
- * Streaming status response
- */
-export interface StreamingStatus {
-  is_streaming: boolean;
-  subtask_id?: number;
-  started_by_user_id?: number;
-  started_by_username?: string;
-  current_content?: string;
-  started_at?: string;
-}
-
-/**
  * Poll for new messages in a group chat task
  *
  * @param taskId - Task ID
@@ -77,51 +64,4 @@ export async function pollNewMessages(
   return client.get<PollMessagesResponse>(
     `/subtasks/tasks/${taskId}/messages/poll?${params.toString()}`
   );
-}
-
-/**
- * Get current streaming status for a task
- *
- * @param taskId - Task ID
- * @returns Promise with streaming status
- */
-export async function getStreamingStatus(taskId: number): Promise<StreamingStatus> {
-  // client.get returns the data directly, not wrapped in { data: ... }
-  return client.get<StreamingStatus>(`/subtasks/tasks/${taskId}/streaming-status`);
-}
-
-/**
- * Subscribe to a group chat stream via SSE
- *
- * @param taskId - Task ID
- * @param subtaskId - Subtask ID to subscribe to
- * @param offset - Character offset for resuming (optional)
- * @returns EventSource instance
- */
-export function subscribeGroupStream(
-  taskId: number,
-  subtaskId: number,
-  offset: number = 0
-): EventSource {
-  // Get auth token from localStorage
-  const token = getToken();
-
-  const params = new URLSearchParams({
-    task_id: taskId.toString(),
-    subtask_id: subtaskId.toString(),
-    offset: offset.toString(),
-  });
-
-  // Pass token as query parameter since EventSource doesn't support custom headers
-  if (token) {
-    params.append('token', token);
-  }
-
-  // Use the Next.js API route proxy which reads token from query parameter
-  // and forwards it as Authorization header to the backend
-  const url = `/api/subtasks/stream/subscribe?${params.toString()}`;
-
-  return new EventSource(url, {
-    withCredentials: true,
-  });
 }

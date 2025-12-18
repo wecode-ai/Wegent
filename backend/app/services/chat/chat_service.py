@@ -16,7 +16,7 @@ from app.services.chat.base import ChatServiceBase, get_http_client
 from app.services.chat.db_handler import db_handler
 from app.services.chat.message_builder import message_builder
 from app.services.chat.providers import get_provider
-from app.services.chat.providers.base import ChunkType, ProviderConfig, StreamChunk
+from app.services.chat.providers.base import ChunkType, StreamChunk
 from app.services.chat.session_manager import session_manager
 from app.services.chat.stream_manager import StreamState, stream_manager
 from app.services.chat.tool_handler import ToolCallAccumulator, ToolHandler
@@ -116,12 +116,14 @@ class ChatService(ChatServiceBase):
                 await db_handler.update_subtask_status(subtask_id, "RUNNING")
 
                 # Build messages and initialize components
-                history = await session_manager.get_chat_history(task_id)
-
-                # For group chat, apply special history truncation:
-                # Keep first N messages + last M messages (no duplicates)
                 if is_group_chat:
+                    # For group chat, get history from database with user names
+                    history = await self._get_group_chat_history(task_id)
+                    # Apply truncation: first N + last M messages
                     history = self._truncate_group_chat_history(history, task_id)
+                else:
+                    # For regular chat, get history from Redis
+                    history = await session_manager.get_chat_history(task_id)
 
                 messages = message_builder.build_messages(
                     history, message, system_prompt
@@ -324,6 +326,65 @@ class ChatService(ChatServiceBase):
                 ToolHandler.build_assistant_message(accumulated_content, tool_calls)
             )
             messages.extend(await tool_handler.execute_all(tool_calls))
+
+    async def _get_group_chat_history(self, task_id: int) -> list[dict[str, str]]:
+        """
+        Get chat history for group chat mode from database.
+
+        In group chat mode, we need to include user names in the messages
+        so the AI can distinguish between different users.
+
+        User messages are formatted as: "User[username]: message content"
+        The "User" prefix indicates that the content in brackets is a username.
+        Assistant messages remain unchanged.
+
+        Args:
+            task_id: Task ID
+
+        Returns:
+            List of message dictionaries with role and content
+        """
+        from app.services.chat.db_handler import _db_session
+
+        def _get_history_sync() -> list[dict[str, str]]:
+            from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+            from app.models.user import User
+
+            history = []
+            with _db_session() as db:
+                # Get all completed subtasks for this task, ordered by message_id
+                subtasks = (
+                    db.query(Subtask, User.user_name)
+                    .outerjoin(User, Subtask.sender_user_id == User.id)
+                    .filter(
+                        Subtask.task_id == task_id,
+                        Subtask.status == SubtaskStatus.COMPLETED,
+                    )
+                    .order_by(Subtask.message_id.asc())
+                    .all()
+                )
+
+                for subtask, sender_username in subtasks:
+                    if subtask.role == SubtaskRole.USER:
+                        # User message - include "User[username]:" prefix
+                        content = subtask.prompt or ""
+                        if sender_username:
+                            content = f"User[{sender_username}]: {content}"
+                        history.append({"role": "user", "content": content})
+                    elif subtask.role == SubtaskRole.ASSISTANT:
+                        # Assistant message - use result.value
+                        content = ""
+                        if subtask.result and isinstance(subtask.result, dict):
+                            content = subtask.result.get("value", "")
+                        if content:
+                            history.append({"role": "assistant", "content": content})
+
+            return history
+
+        # Run in executor to avoid blocking
+        import asyncio
+
+        return await asyncio.get_event_loop().run_in_executor(None, _get_history_sync)
 
     def _truncate_group_chat_history(
         self, history: list[dict[str, str]], task_id: int

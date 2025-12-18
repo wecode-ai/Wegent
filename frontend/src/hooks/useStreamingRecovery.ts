@@ -222,7 +222,7 @@ export function useStreamingRecovery(options: UseStreamingRecoveryOptions): Reco
         offset: 0,
       });
     }
-  }, [subtaskId, status, role, teamId, enabled]);
+  }, [subtaskId, status, role, teamId, enabled, onStreamComplete]);
 
   useEffect(() => {
     recoverContent();
@@ -256,116 +256,88 @@ export function useMultipleStreamingRecovery(
 ): Map<number, RecoveryState> {
   const [recoveryMap, setRecoveryMap] = useState<Map<number, RecoveryState>>(new Map());
   const abortFunctionsRef = useRef<Map<number, () => void>>(new Map());
+  // Track which subtask IDs we've already started recovery for
+  const recoveredSubtaskIdsRef = useRef<Set<number>>(new Set());
 
   useEffect(() => {
     if (!subtasks || subtasks.length === 0) return;
 
     // Find RUNNING ASSISTANT subtasks that need recovery
     // Skip the subtask that is currently being actively streamed
+    // Skip subtasks that we've already started recovery for
     const runningAssistants = subtasks.filter(
       sub =>
-        sub.status === 'RUNNING' && sub.role === 'ASSISTANT' && sub.id !== activeStreamingSubtaskId
+        sub.status === 'RUNNING' &&
+        sub.role === 'ASSISTANT' &&
+        sub.id !== activeStreamingSubtaskId &&
+        !recoveredSubtaskIdsRef.current.has(sub.id)
     );
+
+    console.log('[useMultipleStreamingRecovery] Checking subtasks:', {
+      totalSubtasks: subtasks.length,
+      runningAssistants: runningAssistants.map(s => ({ id: s.id, status: s.status })),
+      activeStreamingSubtaskId,
+      alreadyRecovered: Array.from(recoveredSubtaskIdsRef.current),
+    });
 
     if (runningAssistants.length === 0) return;
 
     const recoverAll = async () => {
+      console.log(
+        '[useMultipleStreamingRecovery] Starting recovery for:',
+        runningAssistants.map(s => s.id)
+      );
+
+      // Mark these subtasks as being recovered to prevent duplicate recovery attempts
+      runningAssistants.forEach(sub => recoveredSubtaskIdsRef.current.add(sub.id));
+
+      // Create a new map to collect recovery states
       const newMap = new Map<number, RecoveryState>();
 
       for (const subtask of runningAssistants) {
         try {
+          console.log('[useMultipleStreamingRecovery] Fetching content for subtask:', subtask.id);
           const result = await chatApis.getStreamingContent(subtask.id);
+          console.log('[useMultipleStreamingRecovery] Got content for subtask:', subtask.id, {
+            hasContent: !!result.content,
+            contentLength: result.content?.length || 0,
+            streaming: result.streaming,
+            status: result.status,
+          });
           const currentOffset = result.content?.length || 0;
 
-          if (result.content) {
-            const initialState: RecoveryState = {
-              recovered: true,
-              content: result.content,
-              source: result.source,
-              streaming: result.streaming,
-              incomplete: result.incomplete,
-              error: null,
-              loading: false,
-              offset: currentOffset,
-            };
-            newMap.set(subtask.id, initialState);
+          // Set initial state even if content is empty - we'll start streaming from offset 0
+          const initialState: RecoveryState = {
+            recovered: true,
+            content: result.content || '',
+            source: result.source,
+            streaming: result.streaming || result.status === 'RUNNING',
+            incomplete: result.incomplete,
+            error: null,
+            loading: false,
+            offset: currentOffset,
+          };
+          newMap.set(subtask.id, initialState);
 
-            // Resume streaming if still RUNNING and we have teamId
-            if (result.streaming && result.status === 'RUNNING' && teamId) {
-              try {
-                const { abort } = await chatApis.resumeStreamWithOffset(
-                  subtask.id,
-                  currentOffset,
-                  teamId,
-                  {
-                    onMessage: (data: ChatStreamData) => {
-                      if (data.cached) return; // Skip cached content
+          // Resume streaming if still RUNNING and we have teamId
+          // Even if content is empty, we should try to resume streaming
+          if ((result.streaming || result.status === 'RUNNING') && teamId) {
+            try {
+              const { abort } = await chatApis.resumeStreamWithOffset(
+                subtask.id,
+                currentOffset,
+                teamId,
+                {
+                  onMessage: (data: ChatStreamData) => {
+                    if (data.cached) return; // Skip cached content
 
-                      // Handle content updates (including empty string check with !== undefined)
-                      if (
-                        data.content !== undefined &&
-                        data.content !== null &&
-                        data.content.length > 0
-                      ) {
-                        const contentLength = data.content.length;
-                        setRecoveryMap(prev => {
-                          const current = prev.get(subtask.id);
-                          if (!current) return prev;
-
-                          const updated = new Map(prev);
-                          updated.set(subtask.id, {
-                            ...current,
-                            content: current.content + data.content,
-                            streaming: !data.done,
-                            offset:
-                              data.offset !== undefined
-                                ? data.offset + contentLength
-                                : current.offset + contentLength,
-                          });
-                          return updated;
-                        });
-                      }
-
-                      // Handle stream completion (must be checked separately, not inside content block)
-                      if (data.done) {
-                        setRecoveryMap(prev => {
-                          const current = prev.get(subtask.id);
-                          if (!current) return prev;
-
-                          const updated = new Map(prev);
-                          updated.set(subtask.id, {
-                            ...current,
-                            streaming: false,
-                          });
-                          return updated;
-                        });
-                        abortFunctionsRef.current.delete(subtask.id);
-
-                        // Notify parent component to refresh task detail
-                        if (onStreamComplete) {
-                          onStreamComplete(subtask.id);
-                        }
-                      }
-
-                      // Handle errors
-                      if (data.error) {
-                        setRecoveryMap(prev => {
-                          const current = prev.get(subtask.id);
-                          if (!current) return prev;
-
-                          const updated = new Map(prev);
-                          updated.set(subtask.id, {
-                            ...current,
-                            streaming: false,
-                            error: data.error || 'Unknown error',
-                          });
-                          return updated;
-                        });
-                        abortFunctionsRef.current.delete(subtask.id);
-                      }
-                    },
-                    onError: (error: Error) => {
-                      console.error(`Stream error for subtask ${subtask.id}:`, error);
+                    // Handle content updates (including empty string check with !== undefined)
+                    if (
+                      data.content !== undefined &&
+                      data.content !== null &&
+                      data.content.length > 0
+                    ) {
+                      const contentLength = data.content.length;
                       setRecoveryMap(prev => {
                         const current = prev.get(subtask.id);
                         if (!current) return prev;
@@ -373,19 +345,19 @@ export function useMultipleStreamingRecovery(
                         const updated = new Map(prev);
                         updated.set(subtask.id, {
                           ...current,
-                          streaming: false,
-                          error: error.message,
+                          content: current.content + data.content,
+                          streaming: !data.done,
+                          offset:
+                            data.offset !== undefined
+                              ? data.offset + contentLength
+                              : current.offset + contentLength,
                         });
                         return updated;
                       });
-                      abortFunctionsRef.current.delete(subtask.id);
+                    }
 
-                      // Notify parent component to refresh task detail
-                      if (onStreamComplete) {
-                        onStreamComplete(subtask.id);
-                      }
-                    },
-                    onComplete: () => {
+                    // Handle stream completion (must be checked separately, not inside content block)
+                    if (data.done) {
                       setRecoveryMap(prev => {
                         const current = prev.get(subtask.id);
                         if (!current) return prev;
@@ -403,13 +375,70 @@ export function useMultipleStreamingRecovery(
                       if (onStreamComplete) {
                         onStreamComplete(subtask.id);
                       }
-                    },
-                  }
-                );
-                abortFunctionsRef.current.set(subtask.id, abort);
-              } catch (streamError) {
-                console.error(`Failed to resume stream for subtask ${subtask.id}:`, streamError);
-              }
+                    }
+
+                    // Handle errors
+                    if (data.error) {
+                      setRecoveryMap(prev => {
+                        const current = prev.get(subtask.id);
+                        if (!current) return prev;
+
+                        const updated = new Map(prev);
+                        updated.set(subtask.id, {
+                          ...current,
+                          streaming: false,
+                          error: data.error || 'Unknown error',
+                        });
+                        return updated;
+                      });
+                      abortFunctionsRef.current.delete(subtask.id);
+                    }
+                  },
+                  onError: (error: Error) => {
+                    console.error(`Stream error for subtask ${subtask.id}:`, error);
+                    setRecoveryMap(prev => {
+                      const current = prev.get(subtask.id);
+                      if (!current) return prev;
+
+                      const updated = new Map(prev);
+                      updated.set(subtask.id, {
+                        ...current,
+                        streaming: false,
+                        error: error.message,
+                      });
+                      return updated;
+                    });
+                    abortFunctionsRef.current.delete(subtask.id);
+
+                    // Notify parent component to refresh task detail
+                    if (onStreamComplete) {
+                      onStreamComplete(subtask.id);
+                    }
+                  },
+                  onComplete: () => {
+                    setRecoveryMap(prev => {
+                      const current = prev.get(subtask.id);
+                      if (!current) return prev;
+
+                      const updated = new Map(prev);
+                      updated.set(subtask.id, {
+                        ...current,
+                        streaming: false,
+                      });
+                      return updated;
+                    });
+                    abortFunctionsRef.current.delete(subtask.id);
+
+                    // Notify parent component to refresh task detail
+                    if (onStreamComplete) {
+                      onStreamComplete(subtask.id);
+                    }
+                  },
+                }
+              );
+              abortFunctionsRef.current.set(subtask.id, abort);
+            } catch (streamError) {
+              console.error(`Failed to resume stream for subtask ${subtask.id}:`, streamError);
             }
           }
         } catch (error) {
@@ -427,7 +456,17 @@ export function useMultipleStreamingRecovery(
         }
       }
 
-      setRecoveryMap(newMap);
+      // Merge new recovery states with existing ones
+      setRecoveryMap(prev => {
+        const merged = new Map(prev);
+        runningAssistants.forEach(sub => {
+          const state = newMap.get(sub.id);
+          if (state) {
+            merged.set(sub.id, state);
+          }
+        });
+        return merged;
+      });
     };
 
     recoverAll();
@@ -440,7 +479,36 @@ export function useMultipleStreamingRecovery(
       currentAbortFunctions.forEach(abort => abort());
       currentAbortFunctions.clear();
     };
-  }, [subtasks, teamId, activeStreamingSubtaskId]);
+  }, [subtasks, teamId, activeStreamingSubtaskId, onStreamComplete]);
+
+  // Clean up recovered subtask IDs when subtasks change (e.g., subtask completed)
+  useEffect(() => {
+    if (!subtasks) return;
+
+    const completedSubtaskIds: number[] = [];
+
+    // Find subtasks that are no longer RUNNING
+    recoveredSubtaskIdsRef.current.forEach(id => {
+      const subtask = subtasks.find(s => s.id === id);
+      if (!subtask || subtask.status !== 'RUNNING') {
+        completedSubtaskIds.push(id);
+      }
+    });
+
+    // Remove completed subtasks from tracking
+    completedSubtaskIds.forEach(id => {
+      recoveredSubtaskIdsRef.current.delete(id);
+      // Also remove from recoveryMap if the subtask is no longer RUNNING
+      setRecoveryMap(prev => {
+        const updated = new Map(prev);
+        const subtask = subtasks.find(s => s.id === id);
+        if (!subtask || subtask.status !== 'RUNNING') {
+          updated.delete(id);
+        }
+        return updated;
+      });
+    });
+  }, [subtasks]);
 
   return recoveryMap;
 }
