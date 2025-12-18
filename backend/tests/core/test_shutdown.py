@@ -142,10 +142,13 @@ class TestShutdownManager:
     @pytest.mark.asyncio
     async def test_cancel_all_streams(self, shutdown_manager):
         """Test cancelling all active streams."""
-        with patch(
-            "app.core.shutdown.session_manager"
-        ) as mock_session:
-            mock_session.cancel_stream = AsyncMock(return_value=True)
+        # Import the session_manager instance and patch its cancel_stream method
+        from app.services.chat.session_manager import session_manager
+
+        with patch.object(
+            session_manager, "cancel_stream", new_callable=AsyncMock
+        ) as mock_cancel:
+            mock_cancel.return_value = True
 
             await shutdown_manager.register_stream(123)
             await shutdown_manager.register_stream(456)
@@ -153,7 +156,7 @@ class TestShutdownManager:
             cancelled = await shutdown_manager.cancel_all_streams()
 
             assert cancelled == 2
-            assert mock_session.cancel_stream.call_count == 2
+            assert mock_cancel.call_count == 2
 
     @pytest.mark.asyncio
     async def test_multiple_streams(self, shutdown_manager):
