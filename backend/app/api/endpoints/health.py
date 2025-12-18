@@ -92,36 +92,7 @@ def readiness_check(response: Response, db: Session = Depends(get_db)):
 
 @router.get("/startup")
 def startup_check(db: Session = Depends(get_db)):
-    """
-    This endpoint checks if the application has finished starting up.
-    Unlike readiness, this doesn't return 503 during shutdown because
-    the startup phase is already complete.
-
-    Returns:
-        dict: Startup status
-    """
-    try:
-        # Check if database is accessible and has users
-        result = db.execute(text("SELECT COUNT(*) FROM users"))
-        user_count = result.scalar()
-
-        if user_count > 0:
-            return {
-                "status": "started",
-                "database": "initialized",
-                "user_count": user_count,
-            }
-        else:
-            from fastapi import HTTPException
-
-            raise HTTPException(
-                status_code=503,
-                detail="Startup not complete - database not initialized",
-            )
-    except Exception as e:
-        from fastapi import HTTPException
-
-        raise HTTPException(status_code=503, detail=f"Startup failed: {str(e)}")
+    return {"status": "started"}
 
 
 @router.post("/shutdown/initiate")
