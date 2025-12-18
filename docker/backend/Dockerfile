@@ -26,7 +26,6 @@ COPY shared /app/shared
 RUN if [ ! -f .env ]; then cp .env.example .env; fi
 
 ENV PORT=8000
-# Graceful shutdown timeout (should match K8s terminationGracePeriodSeconds - preStop delay)
 # Default: 600 seconds (10 minutes) for long-running streaming requests to complete
 ENV GRACEFUL_SHUTDOWN_TIMEOUT=600
 # Expose port

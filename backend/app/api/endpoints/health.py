@@ -3,13 +3,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Health check endpoints for Kubernetes probes.
-
-This module provides three separate endpoints for K8s health checks:
-- /health (liveness): Is the application alive?
-- /ready (readiness): Is the application ready to receive traffic?
-- /startup: Has the application finished starting up?
-
 During graceful shutdown:
 - /health returns 200 (app is still alive)
 - /ready returns 503 (stop sending new traffic)
@@ -34,9 +27,6 @@ def health_check(db: Session = Depends(get_db)):
     This endpoint checks if the application is alive and responding.
     It should return 200 even during graceful shutdown (app is still alive,
     just not accepting new traffic).
-
-    Used by K8s livenessProbe to determine if the container should be restarted.
-
     Returns:
         dict: Health status with details
     """
@@ -63,9 +53,6 @@ def readiness_check(response: Response, db: Session = Depends(get_db)):
 
     This endpoint checks if the application is ready to receive traffic.
     Returns 503 during graceful shutdown to stop receiving new requests.
-
-    Used by K8s readinessProbe to determine if the pod should receive traffic.
-
     Returns:
         dict: Readiness status
     """
@@ -111,8 +98,6 @@ def startup_check(db: Session = Depends(get_db)):
     Startup probe endpoint for Kubernetes.
 
     This endpoint checks if the application has finished starting up.
-    Used by K8s startupProbe to determine if the container has started.
-
     Unlike readiness, this doesn't return 503 during shutdown because
     the startup phase is already complete.
 
