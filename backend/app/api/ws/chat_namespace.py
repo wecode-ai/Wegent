@@ -429,6 +429,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             from app.api.endpoints.adapter.chat import (
                 StreamChatRequest,
                 _create_task_and_subtasks,
+                _should_trigger_ai_response,
                 _should_use_direct_chat,
             )
 
@@ -439,6 +440,38 @@ class ChatNamespace(socketio.AsyncNamespace):
                 logger.error(f"[WS] chat:send error: Team does not support direct chat")
                 return {"error": "This team does not support direct chat"}
 
+            # Get task JSON for group chat check
+            task_json = {}
+            if payload.task_id:
+                existing_task = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.id == payload.task_id,
+                        Kind.kind == "Task",
+                        Kind.is_active == True,
+                    )
+                    .first()
+                )
+                if existing_task:
+                    task_json = existing_task.json or {}
+
+            # Check if AI should be triggered (for group chat with @mention)
+            # For existing tasks: use task_json.spec.is_group_chat
+            # For new tasks: use payload.is_group_chat from frontend
+            team_name = team.name
+            should_trigger_ai = _should_trigger_ai_response(
+                task_json,
+                payload.message,
+                team_name,
+                request_is_group_chat=payload.is_group_chat,
+            )
+            logger.info(
+                f"[WS] chat:send group chat check: task_id={payload.task_id}, "
+                f"is_group_chat={task_json.get('spec', {}).get('is_group_chat', False)}, "
+                f"team_name={team_name}, "
+                f"should_trigger_ai={should_trigger_ai}"
+            )
+
             # Create StreamChatRequest
             request = StreamChatRequest(
                 message=payload.message,
@@ -448,13 +481,20 @@ class ChatNamespace(socketio.AsyncNamespace):
                 enable_web_search=payload.enable_web_search,
                 model_id=payload.force_override_bot_model,
                 force_override_bot_model=payload.force_override_bot_model is not None,
+                is_group_chat=payload.is_group_chat,
             )
             logger.info(f"[WS] chat:send StreamChatRequest created")
 
             # Create task and subtasks
             logger.info(f"[WS] chat:send calling _create_task_and_subtasks...")
             result = await _create_task_and_subtasks(
-                db, user, team, payload.message, request, payload.task_id
+                db,
+                user,
+                team,
+                payload.message,
+                request,
+                payload.task_id,
+                should_trigger_ai=should_trigger_ai,
             )
             logger.info(
                 f"[WS] chat:send _create_task_and_subtasks returned: ai_triggered={result.get('ai_triggered')}, task_id={result.get('task').id if result.get('task') else None}"
@@ -468,8 +508,13 @@ class ChatNamespace(socketio.AsyncNamespace):
                 logger.info(
                     f"[WS] chat:send AI not triggered (group chat without @mention)"
                 )
+                # Return task_id with ai_triggered=false so frontend knows message was saved
+                user_subtask = result["user_subtask"]
                 return {
-                    "error": "Message saved but AI not triggered (group chat without @mention)"
+                    "task_id": task.id,
+                    "subtask_id": user_subtask.id if user_subtask else None,
+                    "ai_triggered": False,
+                    "message": "Message saved without AI response (use @TeamName to trigger AI)",
                 }
 
             if not assistant_subtask:
@@ -737,13 +782,37 @@ class ChatNamespace(socketio.AsyncNamespace):
 
             # Get streaming response from chat service
             from app.services.chat.base import get_http_client
+            from app.services.chat.chat_service import chat_service
             from app.services.chat.message_builder import message_builder
             from app.services.chat.providers import get_provider
             from app.services.chat.providers.base import ChunkType
 
-            history = await session_manager.get_chat_history(task_id)
+            # Check if this is a group chat - get history from database with user names
+            is_group_chat = payload.is_group_chat
+            if is_group_chat:
+                logger.info(
+                    f"[WS] _stream_chat_response: Getting group chat history for task_id={task_id}"
+                )
+                history = await chat_service._get_group_chat_history(task_id)
+                logger.info(
+                    f"[WS] _stream_chat_response: Got group chat history: count={len(history)}, "
+                    f"roles={[m.get('role') for m in history]}"
+                )
+                # Apply truncation for group chat
+                history = chat_service._truncate_group_chat_history(history, task_id)
+                logger.info(
+                    f"[WS] _stream_chat_response: After truncation: count={len(history)}"
+                )
+            else:
+                # For regular chat, get history from Redis
+                history = await session_manager.get_chat_history(task_id)
+
             messages = message_builder.build_messages(
                 history, final_message, system_prompt
+            )
+            logger.info(
+                f"[WS] _stream_chat_response: Built messages: total={len(messages)}, "
+                f"roles={[m.get('role') for m in messages]}"
             )
 
             client = await get_http_client()

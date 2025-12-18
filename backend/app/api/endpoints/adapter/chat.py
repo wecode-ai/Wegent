@@ -139,7 +139,9 @@ def _should_use_direct_chat(db: Session, team: Kind, user_id: int) -> bool:
     return True
 
 
-def _should_trigger_ai_response(task_json: dict, prompt: str, team_name: str) -> bool:
+def _should_trigger_ai_response(
+    task_json: dict, prompt: str, team_name: str, request_is_group_chat: bool = False
+) -> bool:
     """
     Determine whether to trigger AI response based on task mode and prompt content.
 
@@ -150,12 +152,21 @@ def _should_trigger_ai_response(task_json: dict, prompt: str, team_name: str) ->
         task_json: Task's JSON spec
         prompt: User's input message
         team_name: Associated Team name
+        request_is_group_chat: Whether the request explicitly marks this as a group chat
+                              (used for new tasks where task_json is empty)
 
     Returns:
         True if AI response should be triggered, False if only save message
     """
     # Check if task is in group chat mode
+    # For existing tasks: check task_json.spec.is_group_chat
+    # For new tasks: use request_is_group_chat parameter
     is_group_chat = task_json.get("spec", {}).get("is_group_chat", False)
+
+    # If task_json doesn't have is_group_chat set, use the request parameter
+    # This handles the case of creating a new group chat task
+    if not is_group_chat and request_is_group_chat:
+        is_group_chat = True
 
     # Non-group-chat mode: always trigger AI
     if not is_group_chat:
@@ -655,8 +666,9 @@ async def stream_chat(
             task_json = task_kind.json or {}
 
     # Check if AI should be triggered (for group chat with @mention)
+    # Pass request.is_group_chat for new tasks where task_json is empty
     should_trigger_ai = _should_trigger_ai_response(
-        task_json, request.message, team_name
+        task_json, request.message, team_name, request.is_group_chat
     )
     logger.info(
         f"Group chat check: task_id={request.task_id}, "

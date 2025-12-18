@@ -127,6 +127,8 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     console.log('[Socket.IO] Connecting to server...', API_URL + '/chat');
 
     // Create new socket connection
+    // Note: Use 'polling' first for better mobile browser compatibility
+    // Socket.IO will automatically upgrade to WebSocket after initial connection
     const newSocket = io(API_URL + '/chat', {
       path: SOCKETIO_PATH,
       auth: { token },
@@ -135,7 +137,13 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
-      transports: ['websocket', 'polling'],
+      transports: ['polling', 'websocket'],
+      // Increase timeout for mobile networks which may have higher latency
+      timeout: 20000,
+      // Force new connection to avoid stale connections on mobile
+      forceNew: false,
+      // Enable upgrade from polling to websocket
+      upgrade: true,
     });
 
     // Store in ref immediately

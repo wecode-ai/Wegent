@@ -79,6 +79,9 @@ class ChatSendPayload(BaseModel):
     force_override_bot_model_type: Optional[str] = Field(
         None, description="Override model type"
     )
+    is_group_chat: bool = Field(
+        False, description="Whether this is a group chat (for new tasks)"
+    )
 
 
 class ChatCancelPayload(BaseModel):

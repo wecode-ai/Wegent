@@ -58,6 +58,7 @@ export interface ChatSendPayload {
   enable_web_search?: boolean;
   force_override_bot_model?: string;
   force_override_bot_model_type?: string;
+  is_group_chat?: boolean;
 }
 
 export interface ChatCancelPayload {
