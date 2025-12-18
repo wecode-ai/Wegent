@@ -60,6 +60,13 @@ export interface ChatSendPayload {
   force_override_bot_model?: string;
   force_override_bot_model_type?: string;
   is_group_chat?: boolean;
+  // Repository info for code tasks
+  git_url?: string;
+  git_repo?: string;
+  git_repo_id?: number;
+  git_domain?: string;
+  branch_name?: string;
+  task_type?: 'chat' | 'code';
 }
 
 export interface ChatCancelPayload {
@@ -100,6 +107,12 @@ export interface ChatChunkPayload {
   subtask_id: number;
   content: string;
   offset: number;
+  /** Full result data for executor tasks (contains thinking, workbench) */
+  result?: {
+    value?: string;
+    thinking?: unknown[];
+    workbench?: Record<string, unknown>;
+  };
 }
 
 export interface ChatDonePayload {

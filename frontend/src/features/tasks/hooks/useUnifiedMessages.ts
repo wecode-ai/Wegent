@@ -123,6 +123,10 @@ export function useUnifiedMessages({
   // Track the last synced task to avoid unnecessary syncs
   const lastSyncedTaskIdRef = useRef<number | undefined>(undefined);
 
+  // Get stream state for current task - this will update when streamStates changes
+  // because getStreamState depends on streamStates via useCallback
+  const streamState = taskId ? getStreamState(taskId) : undefined;
+
   // Sync backend subtasks to streamState.messages when task changes
   // This initializes the message list from backend data
   useEffect(() => {
@@ -147,10 +151,9 @@ export function useUnifiedMessages({
     }
   }, [taskId, subtasks, syncBackendMessages, team?.name, isGroupChat, user?.id, user?.user_name]);
 
-  // Get stream state for current task
-  const streamState = taskId ? getStreamState(taskId) : undefined;
-
   // Build unified message list from streamState.messages ONLY
+  // NOTE: streamState is obtained outside useMemo to ensure proper reactivity
+  // when streamStates changes in the context
   const result = useMemo<UseUnifiedMessagesResult>(() => {
     // If no taskId or no streamState, return empty result
     if (!taskId || !streamState?.messages) {
@@ -203,7 +206,8 @@ export function useUnifiedMessages({
         senderUserId: msg.senderUserId,
         shouldShowSender: msg.shouldShowSender || (isGroupChat && msg.type === 'user'),
         subtaskStatus: msg.subtaskStatus,
-        thinking: msg.thinking,
+        // Get thinking from result field (for executor tasks)
+        thinking: msg.result?.thinking,
         isCurrentUser: msg.type === 'user' && (msg.senderUserId === user?.id || !msg.senderUserId),
         showSender: isGroupChat && msg.type === 'user',
       };

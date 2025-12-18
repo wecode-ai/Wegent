@@ -83,6 +83,15 @@ class ChatSendPayload(BaseModel):
     is_group_chat: bool = Field(
         False, description="Whether this is a group chat (for new tasks)"
     )
+    # Repository info for code tasks
+    git_url: Optional[str] = Field(None, description="Git repository URL")
+    git_repo: Optional[str] = Field(None, description="Git repository name")
+    git_repo_id: Optional[int] = Field(None, description="Git repository ID")
+    git_domain: Optional[str] = Field(None, description="Git domain")
+    branch_name: Optional[str] = Field(None, description="Git branch name")
+    task_type: Optional[Literal["chat", "code"]] = Field(
+        None, description="Task type: chat or code"
+    )
 
 
 class ChatCancelPayload(BaseModel):

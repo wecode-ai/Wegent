@@ -61,21 +61,31 @@ function StreamingMessageBubble({
 
   const hasContent = Boolean(message.content && message.content.trim());
   const isStreaming = message.status === 'streaming';
+  // Check if we have thinking data (for executor tasks like Claude Code)
+  const hasThinking = Boolean(
+    message.thinking && Array.isArray(message.thinking) && message.thinking.length > 0
+  );
+
+  // Create msg object with thinking data
+  // IMPORTANT: Create a new object each time to ensure memo comparison detects changes
+  const msgForBubble = {
+    type: 'ai' as const,
+    content: '${$$}$' + (message.content || ''),
+    timestamp: message.timestamp,
+    botName: message.botName || selectedTeam?.name || t('messages.bot') || 'Bot',
+    subtaskStatus: 'RUNNING',
+    recoveredContent: isStreaming ? displayContent : hasContent ? message.content : undefined,
+    isRecovered: false,
+    isIncomplete: false,
+    subtaskId: message.subtaskId,
+    // Pass thinking data for executor tasks (Claude Code, etc.)
+    thinking: message.thinking as Message['thinking'],
+  };
 
   return (
     <MessageBubble
       key={message.id}
-      msg={{
-        type: 'ai',
-        content: `\${$$}$${message.content || ''}`,
-        timestamp: message.timestamp,
-        botName: message.botName || selectedTeam?.name || t('messages.bot') || 'Bot',
-        subtaskStatus: 'RUNNING',
-        recoveredContent: isStreaming ? displayContent : hasContent ? message.content : undefined,
-        isRecovered: false,
-        isIncomplete: false,
-        subtaskId: message.subtaskId,
-      }}
+      msg={msgForBubble}
       index={index}
       selectedTaskDetail={selectedTaskDetail}
       selectedTeam={selectedTeam}
@@ -83,7 +93,7 @@ function StreamingMessageBubble({
       selectedBranch={selectedBranch}
       theme={theme}
       t={t}
-      isWaiting={Boolean(isStreaming && !hasContent)}
+      isWaiting={Boolean(isStreaming && !hasContent && !hasThinking)}
       onSendMessage={onSendMessage}
     />
   );
@@ -490,7 +500,7 @@ export default function MessagesArea({
     // For AI messages, format content with separator
     let content = msg.content;
     if (msg.type === 'ai') {
-      content = `\${$$}$${msg.content}`;
+      content = '${$$}$' + msg.content;
     }
 
     return {

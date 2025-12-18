@@ -79,6 +79,7 @@ class WebSocketEmitter:
         subtask_id: int,
         content: str,
         offset: int,
+        result: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Emit chat:chunk event to task room.
@@ -86,16 +87,22 @@ class WebSocketEmitter:
         Args:
             task_id: Task ID
             subtask_id: Subtask ID
-            content: Content chunk
+            content: Content chunk (for text streaming)
             offset: Current offset in the full response
+            result: Optional full result data (for executor tasks with thinking/workbench)
         """
+        payload = {
+            "subtask_id": subtask_id,
+            "content": content,
+            "offset": offset,
+        }
+        # Include full result if provided (for executor tasks)
+        if result is not None:
+            payload["result"] = result
+
         await self.sio.emit(
             ServerEvents.CHAT_CHUNK,
-            {
-                "subtask_id": subtask_id,
-                "content": content,
-                "offset": offset,
-            },
+            payload,
             room=f"task:{task_id}",
             namespace=self.namespace,
         )
@@ -119,6 +126,7 @@ class WebSocketEmitter:
         await self.sio.emit(
             ServerEvents.CHAT_DONE,
             {
+                "task_id": task_id,
                 "subtask_id": subtask_id,
                 "offset": offset,
                 "result": result or {},

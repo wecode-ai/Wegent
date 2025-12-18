@@ -92,8 +92,12 @@ export interface UnifiedMessage {
   shouldShowSender?: boolean;
   /** Subtask status from backend (RUNNING, COMPLETED, etc.) */
   subtaskStatus?: string;
-  /** Thinking data for AI messages */
-  thinking?: unknown;
+  /** Full result data from backend (for executor tasks) */
+  result?: {
+    value?: string;
+    thinking?: unknown[];
+    workbench?: Record<string, unknown>;
+  };
 }
 
 /**
@@ -163,6 +167,13 @@ export interface ChatMessageRequest {
   enable_clarification?: boolean;
   /** Mark this as a group chat task */
   is_group_chat?: boolean;
+  // Repository info for code tasks
+  git_url?: string;
+  git_repo?: string;
+  git_repo_id?: number;
+  git_domain?: string;
+  branch_name?: string;
+  task_type?: 'chat' | 'code';
 }
 
 /**
@@ -472,9 +483,10 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
   /**
    * Handle chat:chunk event from WebSocket
    * Accumulate streaming content for the specific AI message in the unified messages Map
+   * For executor tasks, also update the result field (contains thinking, workbench)
    */
   const handleChatChunk = useCallback((data: ChatChunkPayload) => {
-    const { subtask_id, content } = data;
+    const { subtask_id, content, result } = data;
 
     // Find task ID from subtask
     const taskId = subtaskToTaskRef.current.get(subtask_id);
@@ -495,10 +507,17 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       const newMessages = new Map(currentState.messages);
       const existingMessage = newMessages.get(aiMessageId);
       if (existingMessage) {
-        newMessages.set(aiMessageId, {
+        // For executor tasks, result contains full data (thinking, workbench)
+        // Content is accumulated, but result is replaced with latest
+        const updatedMessage: UnifiedMessage = {
           ...existingMessage,
           content: existingMessage.content + content,
-        });
+        };
+        // If result is provided (executor tasks), update it
+        if (result) {
+          updatedMessage.result = result as UnifiedMessage['result'];
+        }
+        newMessages.set(aiMessageId, updatedMessage);
       }
 
       newMap.set(taskId, {
@@ -875,6 +894,13 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         force_override_bot_model: request.model_id,
         force_override_bot_model_type: request.force_override_bot_model ? 'user' : undefined,
         is_group_chat: request.is_group_chat,
+        // Repository info for code tasks
+        git_url: request.git_url,
+        git_repo: request.git_repo,
+        git_repo_id: request.git_repo_id,
+        git_domain: request.git_domain,
+        branch_name: request.branch_name,
+        task_type: request.task_type,
       };
 
       try {
@@ -1342,7 +1368,8 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
             senderUserId: subtask.sender_user_id || (isUserMessage ? currentUserId : undefined),
             shouldShowSender,
             subtaskStatus: subtask.status,
-            thinking: subtask.result?.thinking,
+            // Store full result for executor tasks (contains thinking, workbench)
+            result: subtask.result as UnifiedMessage['result'],
             error: subtask.error_message || undefined,
           };
 

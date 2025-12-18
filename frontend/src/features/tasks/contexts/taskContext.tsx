@@ -70,7 +70,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   const taskStatusMapRef = useRef<Map<number, TaskStatus>>(new Map());
 
   // WebSocket connection for real-time task updates
-  const { registerTaskHandlers, isConnected, leaveTask } = useSocket();
+  const { registerTaskHandlers, isConnected, leaveTask, joinTask } = useSocket();
 
   // Track previous task ID for leaving WebSocket room when switching tasks
   const previousTaskIdRef = useRef<number | null>(null);
@@ -501,12 +501,18 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     previousTaskIdRef.current = currentTaskId;
 
     if (selectedTask) {
+      // Join the new task room to receive chat:start, chat:chunk, chat:done events
+      // This is important for executor tasks (Code page) where the user needs to
+      // receive AI response events via WebSocket
+      console.log(`[TaskContext] Joining WebSocket room for task ${selectedTask.id}`);
+      joinTask(selectedTask.id);
+
       refreshSelectedTaskDetail(false); // Manual task selection, not auto-refresh
     } else {
       setSelectedTaskDetail(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTask, leaveTask]);
+  }, [selectedTask, leaveTask, joinTask]);
 
   // Mark task as viewed when selectedTaskDetail is loaded
   // This ensures we have the correct status and timestamps from the backend

@@ -452,9 +452,6 @@ class ChatNamespace(socketio.AsyncNamespace):
             # Check if team supports direct chat
             supports_direct_chat = _should_use_direct_chat(db, team, user_id)
             logger.info(f"[WS] chat:send supports_direct_chat={supports_direct_chat}")
-            if not supports_direct_chat:
-                logger.error(f"[WS] chat:send error: Team does not support direct chat")
-                return {"error": "This team does not support direct chat"}
 
             # Get task JSON for group chat check
             task_json = {}
@@ -499,6 +496,12 @@ class ChatNamespace(socketio.AsyncNamespace):
                 model_id=payload.force_override_bot_model,
                 force_override_bot_model=payload.force_override_bot_model is not None,
                 is_group_chat=payload.is_group_chat,
+                # Repository info for code tasks
+                git_url=payload.git_url,
+                git_repo=payload.git_repo,
+                git_repo_id=payload.git_repo_id,
+                git_domain=payload.git_domain,
+                branch_name=payload.branch_name,
             )
             logger.info(f"[WS] chat:send StreamChatRequest created")
 
@@ -536,69 +539,19 @@ class ChatNamespace(socketio.AsyncNamespace):
                     f"[WS] chat:send linked attachment {payload.attachment_id} to subtask {user_subtask_for_attachment.id}"
                 )
 
-            # Check if AI was triggered (for group chat without @mention)
-            if not result["ai_triggered"]:
-                logger.info(
-                    f"[WS] chat:send AI not triggered (group chat without @mention)"
-                )
-                # Return task_id with ai_triggered=false so frontend knows message was saved
-                user_subtask = result["user_subtask"]
-
-                # Join task room and broadcast user message for group chat
-                # This allows other group members to see the message in real-time
-                task_room = f"task:{task.id}"
-                await self.enter_room(sid, task_room)
-
-                if user_subtask:
-                    await self._broadcast_user_message(
-                        db=db,
-                        user_subtask=user_subtask,
-                        task_id=task.id,
-                        message=payload.message,
-                        user_id=user_id,
-                        user_name=user_name,
-                        attachment_id=payload.attachment_id,
-                        task_room=task_room,
-                        skip_sid=sid,
-                    )
-                    logger.info(
-                        f"[WS] chat:send broadcasted user message to room (no AI trigger)"
-                    )
-
-                return {
-                    "task_id": task.id,
-                    "subtask_id": user_subtask.id if user_subtask else None,
-                    "ai_triggered": False,
-                    "message": "Message saved without AI response (use @TeamName to trigger AI)",
-                }
-
-            if not assistant_subtask:
-                logger.error(
-                    f"[WS] chat:send error: Failed to create assistant subtask"
-                )
-                return {"error": "Failed to create assistant subtask"}
-
-            logger.info(
-                f"[WS] chat:send task created: task_id={task.id}, subtask_id={assistant_subtask.id}"
-            )
-
-            # Join task room if not already joined
+            # Join task room
             task_room = f"task:{task.id}"
             await self.enter_room(sid, task_room)
             logger.info(f"[WS] chat:send joined task room: {task_room}")
 
             # Emit task:created event to user room for task list update
-            # This allows other browser tabs/devices to receive the new task notification
             from app.api.ws.events import ServerEvents
             from app.services.chat.ws_emitter import get_ws_emitter
 
             ws_emitter = get_ws_emitter()
             if ws_emitter:
-                # Get team name for the event payload
                 team_crd = Team.model_validate(team.json)
                 team_name = team_crd.metadata.name if team_crd.metadata else team.name
-
-                # Get task title
                 task_crd = Task.model_validate(task.json)
                 task_title = task_crd.spec.title or ""
 
@@ -613,19 +566,8 @@ class ChatNamespace(socketio.AsyncNamespace):
                     f"[WS] chat:send emitted task:created event for task_id={task.id}"
                 )
 
-            # Get user subtask for broadcasting
-            user_subtask = (
-                db.query(Subtask)
-                .filter(
-                    Subtask.task_id == task.id,
-                    Subtask.message_id == assistant_subtask.message_id - 1,
-                    Subtask.role == SubtaskRole.USER,
-                )
-                .first()
-            )
-            logger.info(
-                f"[WS] chat:send user_subtask found: {user_subtask.id if user_subtask else None}"
-            )
+            # Get user subtask for response
+            user_subtask = result["user_subtask"]
 
             # Broadcast user message to room (exclude sender)
             if user_subtask:
@@ -642,48 +584,28 @@ class ChatNamespace(socketio.AsyncNamespace):
                 )
                 logger.info(f"[WS] chat:send broadcasted user message to room")
 
-            # Emit chat:start
-            from app.api.ws.events import ServerEvents
+            # Trigger AI response if needed (decoupled logic in ai_trigger.py)
+            assistant_subtask = result["assistant_subtask"]
+            if result["ai_triggered"] and assistant_subtask:
+                from app.services.chat.ai_trigger import trigger_ai_response
 
-            logger.info(f"[WS] chat:send emitting chat:start event")
-            await self.emit(
-                ServerEvents.CHAT_START,
-                {
-                    "task_id": task.id,
-                    "subtask_id": assistant_subtask.id,
-                },
-                room=task_room,
-            )
-            logger.info(f"[WS] chat:send chat:start emitted")
-
-            # Extract data from ORM objects before closing the session
-            # This prevents DetachedInstanceError in the background task
-            team_data = {
-                "id": team.id,
-                "user_id": team.user_id,
-                "json": team.json,  # Access json while session is still open
-            }
-            user_data = {
-                "id": user.id,
-                "user_name": user.user_name,
-            }
-
-            # Start streaming in background task
-            logger.info(f"[WS] chat:send starting background stream task")
-            stream_task = asyncio.create_task(
-                self._stream_chat_response(
-                    task_id=task.id,
-                    subtask_id=assistant_subtask.id,
-                    team_data=team_data,
-                    user_data=user_data,
+                await trigger_ai_response(
+                    task=task,
+                    assistant_subtask=assistant_subtask,
+                    team=team,
+                    user=user,
                     message=payload.message,
                     payload=payload,
+                    task_room=task_room,
+                    supports_direct_chat=supports_direct_chat,
+                    namespace=self,
                 )
-            )
-            self._active_streams[assistant_subtask.id] = stream_task
-            logger.info(f"[WS] chat:send background stream task started")
 
-            response = {"task_id": task.id, "subtask_id": assistant_subtask.id}
+            # Return unified response - same structure for all modes
+            response = {
+                "task_id": task.id,
+                "subtask_id": user_subtask.id if user_subtask else None,
+            }
             logger.info(f"[WS] chat:send returning response: {response}")
             return response
 
@@ -768,308 +690,6 @@ class ChatNamespace(socketio.AsyncNamespace):
             room=task_room,
             skip_sid=skip_sid,
         )
-
-    async def _stream_chat_response(
-        self,
-        task_id: int,
-        subtask_id: int,
-        team_data: Dict[str, Any],
-        user_data: Dict[str, Any],
-        message: str,
-        payload: ChatSendPayload,
-    ):
-        """
-        Stream chat response to task room.
-
-        Args:
-            task_id: Task ID
-            subtask_id: Assistant subtask ID
-            team_data: Dict with team info (id, user_id, json)
-            user_data: Dict with user info (id, user_name)
-            message: User message
-            payload: Original chat send payload
-        """
-        from app.api.ws.events import ServerEvents
-        from app.services.chat.chat_service import chat_service
-        from app.services.chat.model_resolver import (
-            build_default_headers_with_placeholders,
-            get_bot_system_prompt,
-            get_model_config_for_bot,
-        )
-        from app.services.chat.ws_emitter import get_ws_emitter
-
-        db = SessionLocal()
-        task_room = f"task:{task_id}"
-        offset = 0
-        full_response = ""
-
-        try:
-            # Get first bot for model config
-            team_crd = Team.model_validate(team_data["json"])
-            first_member = team_crd.spec.members[0]
-
-            bot = (
-                db.query(Kind)
-                .filter(
-                    Kind.user_id == team_data["user_id"],
-                    Kind.kind == "Bot",
-                    Kind.name == first_member.botRef.name,
-                    Kind.namespace == first_member.botRef.namespace,
-                    Kind.is_active == True,
-                )
-                .first()
-            )
-
-            if not bot:
-                await self.emit(
-                    ServerEvents.CHAT_ERROR,
-                    {"subtask_id": subtask_id, "error": "Bot not found"},
-                    room=task_room,
-                )
-                return
-
-            # Get model config
-            model_config = get_model_config_for_bot(
-                db,
-                bot,
-                team_data["user_id"],
-                override_model_name=payload.force_override_bot_model,
-                force_override=payload.force_override_bot_model is not None,
-            )
-
-            # Get system prompt
-            system_prompt = get_bot_system_prompt(
-                db, bot, team_data["user_id"], first_member.prompt
-            )
-
-            # Handle attachment
-            final_message = message
-            if payload.attachment_id:
-                from app.models.subtask_attachment import AttachmentStatus
-                from app.services.attachment import attachment_service
-
-                attachment = attachment_service.get_attachment(
-                    db=db,
-                    attachment_id=payload.attachment_id,
-                    user_id=user_data["id"],
-                )
-
-                if attachment and attachment.status == AttachmentStatus.READY:
-                    final_message = attachment_service.build_message_with_attachment(
-                        message, attachment
-                    )
-
-            # Prepare tools
-            tools = None
-            if payload.enable_web_search and settings.WEB_SEARCH_ENABLED:
-                from app.services.chat.tools import get_web_search_tool
-
-                web_search_tool = get_web_search_tool()
-                if web_search_tool:
-                    tools = [web_search_tool]
-
-            # Build data sources for placeholder replacement
-            bot_spec = bot.json.get("spec", {}) if bot.json else {}
-            agent_config = bot_spec.get("agent_config", {})
-            user_info = {"id": user_data["id"], "name": user_data["user_name"]}
-            task_data_dict = {
-                "task_id": task_id,
-                "team_id": team_data["id"],
-                "user": user_info,
-                "prompt": message,
-            }
-            data_sources = {
-                "agent_config": agent_config,
-                "model_config": model_config,
-                "task_data": task_data_dict,
-                "user": user_info,
-            }
-
-            # Process headers
-            raw_default_headers = model_config.get("default_headers", {})
-            if raw_default_headers:
-                processed_headers = build_default_headers_with_placeholders(
-                    raw_default_headers, data_sources
-                )
-                model_config["default_headers"] = processed_headers
-
-            # Register stream for cancellation
-            cancel_event = await session_manager.register_stream(subtask_id)
-
-            # Update status to RUNNING
-            from app.services.chat.db_handler import db_handler
-
-            await db_handler.update_subtask_status(subtask_id, "RUNNING")
-
-            # Get streaming response from chat service
-            from app.services.chat.base import get_http_client
-            from app.services.chat.chat_service import chat_service
-            from app.services.chat.message_builder import message_builder
-            from app.services.chat.providers import get_provider
-            from app.services.chat.providers.base import ChunkType
-
-            # Check if this is a group chat - get history from database with user names
-            is_group_chat = payload.is_group_chat
-            if is_group_chat:
-                logger.info(
-                    f"[WS] _stream_chat_response: Getting group chat history for task_id={task_id}"
-                )
-                history = await chat_service._get_group_chat_history(task_id)
-                logger.info(
-                    f"[WS] _stream_chat_response: Got group chat history: count={len(history)}, "
-                    f"roles={[m.get('role') for m in history]}"
-                )
-                # Apply truncation for group chat
-                history = chat_service._truncate_group_chat_history(history, task_id)
-                logger.info(
-                    f"[WS] _stream_chat_response: After truncation: count={len(history)}"
-                )
-            else:
-                # For regular chat, get history from Redis
-                history = await session_manager.get_chat_history(task_id)
-
-            messages = message_builder.build_messages(
-                history, final_message, system_prompt
-            )
-            logger.info(
-                f"[WS] _stream_chat_response: Built messages: total={len(messages)}, "
-                f"roles={[m.get('role') for m in messages]}"
-            )
-
-            client = await get_http_client()
-            provider = get_provider(model_config, client)
-
-            if not provider:
-                await self.emit(
-                    ServerEvents.CHAT_ERROR,
-                    {"subtask_id": subtask_id, "error": "Failed to create provider"},
-                    room=task_room,
-                )
-                return
-
-            # Stream response
-            last_redis_save = asyncio.get_event_loop().time()
-            last_db_save = asyncio.get_event_loop().time()
-            redis_save_interval = settings.STREAMING_REDIS_SAVE_INTERVAL
-            db_save_interval = settings.STREAMING_DB_SAVE_INTERVAL
-
-            async for chunk in provider.stream_chat(messages, cancel_event, tools=None):
-                if cancel_event.is_set() or await session_manager.is_cancelled(
-                    subtask_id
-                ):
-                    # Cancelled
-                    await self.emit(
-                        ServerEvents.CHAT_CANCELLED,
-                        {"subtask_id": subtask_id},
-                        room=task_room,
-                    )
-                    break
-
-                if chunk.type == ChunkType.CONTENT and chunk.content:
-                    full_response += chunk.content
-
-                    # Emit chunk
-                    await self.emit(
-                        ServerEvents.CHAT_CHUNK,
-                        {
-                            "subtask_id": subtask_id,
-                            "content": chunk.content,
-                            "offset": offset,
-                        },
-                        room=task_room,
-                    )
-                    offset += len(chunk.content)
-
-                    # Save to Redis periodically
-                    current_time = asyncio.get_event_loop().time()
-                    if current_time - last_redis_save >= redis_save_interval:
-                        await session_manager.save_streaming_content(
-                            subtask_id, full_response
-                        )
-                        await session_manager.publish_streaming_chunk(
-                            subtask_id, chunk.content
-                        )
-                        last_redis_save = current_time
-
-                    # Save to DB periodically
-                    if current_time - last_db_save >= db_save_interval:
-                        await db_handler.save_partial_response(
-                            subtask_id, full_response
-                        )
-                        last_db_save = current_time
-
-                elif chunk.type == ChunkType.ERROR:
-                    await self.emit(
-                        ServerEvents.CHAT_ERROR,
-                        {
-                            "subtask_id": subtask_id,
-                            "error": chunk.error or "Unknown error",
-                        },
-                        room=task_room,
-                    )
-                    await db_handler.update_subtask_status(
-                        subtask_id, "FAILED", error=chunk.error
-                    )
-                    return
-
-            # Stream completed
-            if not cancel_event.is_set():
-                result = {"value": full_response}
-
-                # Save to Redis and DB FIRST before emitting done event
-                # This ensures the database is updated before frontend refreshes
-                await session_manager.save_streaming_content(subtask_id, full_response)
-                await session_manager.publish_streaming_done(subtask_id, result)
-
-                # Save chat history
-                await session_manager.append_user_and_assistant_messages(
-                    task_id, message, full_response
-                )
-
-                # Update subtask to completed
-                await db_handler.update_subtask_status(
-                    subtask_id, "COMPLETED", result={"value": full_response}
-                )
-
-                # Emit done event AFTER database is updated
-                # This ensures frontend can immediately fetch the updated data
-                # Include task_id for group chat members who may not have received chat:start
-                await self.emit(
-                    ServerEvents.CHAT_DONE,
-                    {
-                        "task_id": task_id,
-                        "subtask_id": subtask_id,
-                        "offset": offset,
-                        "result": result,
-                    },
-                    room=task_room,
-                )
-
-                # Also notify user room for multi-device sync
-                ws_emitter = get_ws_emitter()
-                if ws_emitter:
-                    await ws_emitter.emit_chat_bot_complete(
-                        user_id=user_data["id"],
-                        task_id=task_id,
-                        subtask_id=subtask_id,
-                        content=full_response,
-                        result=result,
-                    )
-
-        except Exception as e:
-            logger.exception(f"[WS] Stream error subtask={subtask_id}: {e}")
-            await self.emit(
-                ServerEvents.CHAT_ERROR,
-                {"subtask_id": subtask_id, "error": str(e)},
-                room=task_room,
-            )
-        finally:
-            # Cleanup
-            await session_manager.unregister_stream(subtask_id)
-            await session_manager.delete_streaming_content(subtask_id)
-            if subtask_id in self._active_streams:
-                del self._active_streams[subtask_id]
-            db.close()
 
     async def on_chat_cancel(self, sid: str, data: dict) -> dict:
         """

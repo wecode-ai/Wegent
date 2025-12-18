@@ -65,6 +65,8 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
         user_id: int,
         skip: int = 0,
         limit: int = 100,
+        from_latest: bool = False,
+        before_message_id: Optional[int] = None,
     ) -> List[Subtask]:
         """
         Get subtasks by task ID, sorted by message_id.
@@ -78,6 +80,16 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
 
         This avoids MySQL error 1038 which occurs when sorting result sets
         containing large TEXT/BLOB columns (prompt, result, error_message).
+
+        Args:
+            db: Database session
+            task_id: Task ID
+            user_id: User ID
+            skip: Number of records to skip (for pagination)
+            limit: Maximum number of records to return
+            from_latest: If True, return the latest N messages (default for group chat)
+            before_message_id: If provided, return messages before this message_id
+                              (for loading older messages when scrolling up)
         """
         from app.services.task_member_service import task_member_service
 
@@ -88,24 +100,36 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
         # Only select columns needed for filtering and sorting
         if is_member:
             # For group chat members, return all subtasks
-            subtask_ids_query = (
-                db.query(Subtask.id)
-                .filter(Subtask.task_id == task_id)
-                .order_by(Subtask.message_id.asc(), Subtask.created_at.asc())
-                .offset(skip)
-                .limit(limit)
-            )
+            base_query = db.query(Subtask.id).filter(Subtask.task_id == task_id)
         else:
             # For non-members, only return user's own subtasks
+            base_query = db.query(Subtask.id).filter(
+                Subtask.task_id == task_id, Subtask.user_id == user_id
+            )
+
+        # Apply before_message_id filter for loading older messages
+        if before_message_id is not None:
+            base_query = base_query.filter(Subtask.message_id < before_message_id)
+
+        if from_latest:
+            # Get the latest N messages by ordering DESC first, then reverse
             subtask_ids_query = (
-                db.query(Subtask.id)
-                .filter(Subtask.task_id == task_id, Subtask.user_id == user_id)
-                .order_by(Subtask.message_id.asc(), Subtask.created_at.asc())
+                base_query.order_by(
+                    Subtask.message_id.desc(), Subtask.created_at.desc()
+                )
                 .offset(skip)
                 .limit(limit)
             )
-
-        subtask_ids = [row[0] for row in subtask_ids_query.all()]
+            # Reverse to get ascending order for display
+            subtask_ids = [row[0] for row in subtask_ids_query.all()][::-1]
+        else:
+            # Traditional pagination from the beginning
+            subtask_ids_query = (
+                base_query.order_by(Subtask.message_id.asc(), Subtask.created_at.asc())
+                .offset(skip)
+                .limit(limit)
+            )
+            subtask_ids = [row[0] for row in subtask_ids_query.all()]
 
         if not subtask_ids:
             return []

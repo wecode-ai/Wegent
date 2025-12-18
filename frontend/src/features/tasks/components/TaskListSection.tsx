@@ -475,6 +475,7 @@ export default function TaskListSection({
                           taskId={task.id}
                           handleCopyTaskId={handleCopyTaskId}
                           handleDeleteTask={handleDeleteTask}
+                          isGroupChat={task.is_group_chat}
                         />
                       </div>
                     )}
