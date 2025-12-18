@@ -6,17 +6,18 @@
 Elasticsearch storage backend implementation.
 """
 
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, List, Optional
+
 from elasticsearch import Elasticsearch
-from llama_index.core import VectorStoreIndex, StorageContext
+from llama_index.core import StorageContext, VectorStoreIndex
 from llama_index.core.schema import BaseNode
 from llama_index.vector_stores.elasticsearch import ElasticsearchStore
 
-from app.services.rag.storage.base import BaseStorageBackend
 from app.services.rag.retrieval.filters import (
+    build_elasticsearch_filters,
     parse_metadata_filters,
-    build_elasticsearch_filters
 )
+from app.services.rag.storage.base import BaseStorageBackend
 
 
 class ElasticsearchBackend(BaseStorageBackend):
@@ -25,7 +26,7 @@ class ElasticsearchBackend(BaseStorageBackend):
     def __init__(self, config: Dict):
         """Initialize Elasticsearch backend."""
         super().__init__(config)
-        
+
         # Build connection kwargs
         self.es_kwargs = {}
         if self.username and self.password:
@@ -44,11 +45,13 @@ class ElasticsearchBackend(BaseStorageBackend):
         - per_user: Use separate index per user (uses prefix, default: 'wegent', requires user_id)
         """
         mode = self.index_strategy.get("mode", "per_dataset")
-        
+
         if mode == "fixed":
             fixed_name = self.index_strategy.get("fixedName")
             if not fixed_name:
-                raise ValueError("fixedName is required for 'fixed' index strategy mode")
+                raise ValueError(
+                    "fixedName is required for 'fixed' index strategy mode"
+                )
             return fixed_name
         elif mode == "rolling":
             # Use hash-based sharding for rolling strategy
@@ -65,7 +68,9 @@ class ElasticsearchBackend(BaseStorageBackend):
             # Per-user index strategy: separate index for each user
             user_id = kwargs.get("user_id")
             if not user_id:
-                raise ValueError("user_id is required for 'per_user' index strategy mode")
+                raise ValueError(
+                    "user_id is required for 'per_user' index strategy mode"
+                )
             prefix = self.index_strategy.get("prefix", "wegent")
             return f"{prefix}_user_{user_id}"
         else:
@@ -74,33 +79,68 @@ class ElasticsearchBackend(BaseStorageBackend):
     def create_vector_store(self, index_name: str):
         """Create Elasticsearch vector store."""
         return ElasticsearchStore(
-            index_name=index_name,
-            es_url=self.url,
-            **self.es_kwargs
+            index_name=index_name, es_url=self.url, **self.es_kwargs
         )
 
-    def index(
+    def index_with_metadata(
         self,
         nodes: List[BaseNode],
-        index_name: str,
+        knowledge_id: str,
+        document_id: str,
+        source_file: str,
+        created_at: str,
         embed_model,
+        **kwargs,
     ) -> Dict:
-        """Index nodes into Elasticsearch."""
+        """
+        Add metadata to nodes and index them into Elasticsearch.
+
+        Args:
+            nodes: List of nodes to index
+            knowledge_id: Knowledge base ID
+            document_id: Document ID (doc_xxx format)
+            source_file: Source file name
+            created_at: Creation timestamp
+            embed_model: Embedding model
+            **kwargs: Additional parameters (e.g., user_id for per_user index strategy)
+
+        Returns:
+            Indexing result dict
+
+        Note:
+            We use 'doc_ref' instead of 'document_id' in metadata because LlamaIndex
+            overwrites 'document_id' with ref_doc_id (UUID) during storage.
+        """
+        # Add metadata to nodes
+        for idx, node in enumerate(nodes):
+            node.metadata.update(
+                {
+                    "knowledge_id": knowledge_id,
+                    "doc_ref": document_id,  # Our custom doc_xxx ID
+                    "source_file": source_file,
+                    "chunk_index": idx,
+                    "created_at": created_at,
+                }
+            )
+
+        # Get index name
+        index_name = self.get_index_name(knowledge_id, **kwargs)
+
+        # Index nodes
         vector_store = self.create_vector_store(index_name)
         storage_context = StorageContext.from_defaults(vector_store=vector_store)
-        
-        # Index nodes
+
         VectorStoreIndex(
             nodes,
             storage_context=storage_context,
             embed_model=embed_model,
-            show_progress=True
+            show_progress=True,
         )
-        
+
         return {
             "indexed_count": len(nodes),
             "index_name": index_name,
-            "status": "success"
+            "status": "success",
         }
 
     def retrieve(
@@ -110,7 +150,7 @@ class ElasticsearchBackend(BaseStorageBackend):
         embed_model,
         retrieval_setting: Dict[str, Any],
         metadata_condition: Optional[Dict[str, Any]] = None,
-        **kwargs
+        **kwargs,
     ) -> Dict:
         """
         Retrieve nodes from Elasticsearch (Dify-style API).
@@ -135,7 +175,7 @@ class ElasticsearchBackend(BaseStorageBackend):
         top_k = retrieval_setting.get("top_k", 5)
         score_threshold = retrieval_setting.get("score_threshold", 0.7)
         retrieval_mode = retrieval_setting.get("retrieval_mode", "vector")
-        
+
         if retrieval_mode == "hybrid":
             vector_weight = retrieval_setting.get("vector_weight", 0.7)
             keyword_weight = retrieval_setting.get("keyword_weight", 0.3)
@@ -148,7 +188,7 @@ class ElasticsearchBackend(BaseStorageBackend):
                 score_threshold=score_threshold,
                 vector_weight=vector_weight,
                 keyword_weight=keyword_weight,
-                metadata_condition=metadata_condition
+                metadata_condition=metadata_condition,
             )
         else:
             return self._retrieve_vector(
@@ -158,13 +198,11 @@ class ElasticsearchBackend(BaseStorageBackend):
                 embed_model=embed_model,
                 top_k=top_k,
                 score_threshold=score_threshold,
-                metadata_condition=metadata_condition
+                metadata_condition=metadata_condition,
             )
 
     def _build_metadata_filters(
-        self,
-        knowledge_id: str,
-        metadata_condition: Optional[Dict[str, Any]] = None
+        self, knowledge_id: str, metadata_condition: Optional[Dict[str, Any]] = None
     ):
         """
         Build metadata filters from condition dict.
@@ -186,46 +224,36 @@ class ElasticsearchBackend(BaseStorageBackend):
         embed_model,
         top_k: int,
         score_threshold: float,
-        metadata_condition: Optional[Dict[str, Any]] = None
+        metadata_condition: Optional[Dict[str, Any]] = None,
     ) -> Dict:
         """Pure vector search."""
         vector_store = self.create_vector_store(index_name)
         index = VectorStoreIndex.from_vector_store(
-            vector_store=vector_store,
-            embed_model=embed_model
+            vector_store=vector_store, embed_model=embed_model
         )
-        
+
         # Build metadata filters
         filters = self._build_metadata_filters(knowledge_id, metadata_condition)
-        
-        retriever = index.as_retriever(
-            similarity_top_k=top_k,
-            filters=filters
-        )
-        
+
+        retriever = index.as_retriever(similarity_top_k=top_k, filters=filters)
+
         # Retrieve
         nodes = retriever.retrieve(query)
-        
-        # Filter by threshold and format results
+
+        # Filter by threshold and format results (Dify-compatible format)
         results = []
         for node in nodes:
             if node.score >= score_threshold:
-                results.append({
-                    "document_id": node.metadata.get("document_id"),
-                    "chunk_index": node.metadata.get("chunk_index"),
-                    "source_file": node.metadata.get("source_file"),
-                    "content": node.text,
-                    "score": node.score,
-                    "metadata": node.metadata
-                })
-        
-        return {
-            "records": results,
-            "query": query,
-            "knowledge_id": knowledge_id,
-            "total": len(results),
-            "retrieval_mode": "vector"
-        }
+                results.append(
+                    {
+                        "content": node.text,
+                        "score": float(node.score),
+                        "title": node.metadata.get("source_file", ""),
+                        "metadata": node.metadata,
+                    }
+                )
+
+        return {"records": results}
 
     def _retrieve_hybrid(
         self,
@@ -237,18 +265,18 @@ class ElasticsearchBackend(BaseStorageBackend):
         score_threshold: float,
         vector_weight: float,
         keyword_weight: float,
-        metadata_condition: Optional[Dict[str, Any]] = None
+        metadata_condition: Optional[Dict[str, Any]] = None,
     ) -> Dict:
         """Hybrid search (vector + BM25)."""
         # Get query embedding
         query_embedding = embed_model.get_query_embedding(query)
-        
+
         # Create Elasticsearch client
         es_client = Elasticsearch(self.url, **self.es_kwargs)
-        
+
         # Build filters using the new filter builder
         must_filters = build_elasticsearch_filters(knowledge_id, metadata_condition)
-        
+
         # Build hybrid search query
         search_body = {
             "size": top_k,
@@ -262,8 +290,8 @@ class ElasticsearchBackend(BaseStorageBackend):
                                 "query": {"match_all": {}},
                                 "script": {
                                     "source": f"cosineSimilarity(params.query_vector, 'embedding') * {vector_weight}",
-                                    "params": {"query_vector": query_embedding}
-                                }
+                                    "params": {"query_vector": query_embedding},
+                                },
                             }
                         },
                         # BM25 keyword search component
@@ -272,190 +300,200 @@ class ElasticsearchBackend(BaseStorageBackend):
                                 "query": query,
                                 "fields": ["text^1.0"],
                                 "type": "best_fields",
-                                "boost": keyword_weight
+                                "boost": keyword_weight,
                             }
-                        }
+                        },
                     ],
-                    "minimum_should_match": 1
+                    "minimum_should_match": 1,
                 }
             },
-            "_source": ["text", "metadata"]
+            "_source": ["text", "metadata"],
         }
-        
+
         # Execute search
         response = es_client.search(index=index_name, body=search_body)
-        
-        # Process results
+
+        # Process results (Dify-compatible format)
         results = []
         for hit in response["hits"]["hits"]:
             score = hit["_score"]
             normalized_score = min(score, 1.0)
-            
+
             if normalized_score >= score_threshold:
                 source = hit["_source"]
                 metadata = source.get("metadata", {})
-                
-                results.append({
-                    "document_id": metadata.get("document_id"),
-                    "chunk_index": metadata.get("chunk_index"),
-                    "source_file": metadata.get("source_file"),
-                    "content": source.get("text", ""),
-                    "score": normalized_score,
-                    "metadata": metadata
-                })
-        
-        return {
-            "records": results,
-            "query": query,
-            "knowledge_id": knowledge_id,
-            "total": len(results),
-            "retrieval_mode": "hybrid"
-        }
+
+                results.append(
+                    {
+                        "content": source.get("text", ""),
+                        "score": float(normalized_score),
+                        "title": metadata.get("source_file", ""),
+                        "metadata": metadata,
+                    }
+                )
+
+        return {"records": results}
 
     def delete_document(self, knowledge_id: str, document_id: str, **kwargs) -> Dict:
-        """Delete document from Elasticsearch."""
+        """
+        Delete document from Elasticsearch using native ES API.
+
+        Uses delete_by_query to remove all chunks with matching doc_ref (doc_xxx format).
+        """
         index_name = self.get_index_name(knowledge_id, **kwargs)
-        vector_store = self.create_vector_store(index_name)
-        
-        # Build metadata condition for document_id
-        metadata_condition = {
-            "operator": "and",
-            "conditions": [
-                {"key": "document_id", "operator": "eq", "value": document_id}
-            ]
+        es_client = Elasticsearch(self.url, **self.es_kwargs)
+
+        # Use ES native delete_by_query API with our custom doc_ref field
+        delete_query = {
+            "query": {
+                "bool": {
+                    "must": [
+                        {"term": {"metadata.knowledge_id.keyword": knowledge_id}},
+                        {"term": {"metadata.doc_ref.keyword": document_id}},
+                    ]
+                }
+            }
         }
-        
-        # Query nodes with matching document_id using new filter parser
-        filters = parse_metadata_filters(knowledge_id, metadata_condition)
-        
-        index = VectorStoreIndex.from_vector_store(vector_store=vector_store)
-        retriever = index.as_retriever(similarity_top_k=1000, filters=filters)
-        nodes = retriever.retrieve("dummy query")
-        
-        # Delete nodes
-        deleted_count = 0
-        for node in nodes:
-            vector_store.delete(node.node_id)
-            deleted_count += 1
-        
+
+        response = es_client.delete_by_query(index=index_name, body=delete_query)
+
         return {
             "document_id": document_id,
             "knowledge_id": knowledge_id,
-            "deleted_chunks": deleted_count,
-            "status": "deleted"
+            "deleted_chunks": response.get("deleted", 0),
+            "status": "deleted",
         }
 
     def get_document(self, knowledge_id: str, document_id: str, **kwargs) -> Dict:
-        """Get document details from Elasticsearch."""
+        """
+        Get document details from Elasticsearch using native ES API.
+
+        Uses ES search to retrieve all chunks with matching doc_ref (doc_xxx format).
+        """
         index_name = self.get_index_name(knowledge_id, **kwargs)
-        vector_store = self.create_vector_store(index_name)
-        
-        # Build metadata condition for document_id
-        metadata_condition = {
-            "operator": "and",
-            "conditions": [
-                {"key": "document_id", "operator": "eq", "value": document_id}
-            ]
+        es_client = Elasticsearch(self.url, **self.es_kwargs)
+
+        # Use ES native search API with our custom doc_ref field
+        search_body = {
+            "size": 1000,  # Max chunks per document
+            "query": {
+                "bool": {
+                    "must": [
+                        {"term": {"metadata.knowledge_id.keyword": knowledge_id}},
+                        {"term": {"metadata.doc_ref.keyword": document_id}},
+                    ]
+                }
+            },
+            "sort": [{"metadata.chunk_index": "asc"}],
+            "_source": ["content", "metadata"],
         }
-        
-        # Query nodes with matching document_id using new filter parser
-        filters = parse_metadata_filters(knowledge_id, metadata_condition)
-        
-        index = VectorStoreIndex.from_vector_store(vector_store=vector_store)
-        retriever = index.as_retriever(similarity_top_k=1000, filters=filters)
-        nodes = retriever.retrieve("dummy query")
-        
-        if not nodes:
+
+        response = es_client.search(index=index_name, body=search_body)
+
+        hits = response["hits"]["hits"]
+        if not hits:
             raise ValueError(f"Document {document_id} not found")
-        
+
+        # Extract chunks
         chunks = []
         source_file = None
-        for node in nodes:
+        for hit in hits:
+            source = hit["_source"]
+            metadata = source.get("metadata", {})
+
             if source_file is None:
-                source_file = node.metadata.get("source_file")
-            chunks.append({
-                "chunk_index": node.metadata.get("chunk_index"),
-                "content": node.text,
-                "metadata": node.metadata
-            })
-        
+                source_file = metadata.get("source_file")
+
+            chunks.append(
+                {
+                    "chunk_index": metadata.get("chunk_index"),
+                    "content": source.get("content", ""),
+                    "metadata": metadata,
+                }
+            )
+
         return {
             "document_id": document_id,
             "knowledge_id": knowledge_id,
             "source_file": source_file,
             "chunk_count": len(chunks),
-            "chunks": chunks
+            "chunks": chunks,
         }
 
     def list_documents(
-        self,
-        knowledge_id: str,
-        page: int = 1,
-        page_size: int = 20,
-        **kwargs
+        self, knowledge_id: str, page: int = 1, page_size: int = 20, **kwargs
     ) -> Dict:
-        """List documents in knowledge base."""
+        """
+        List documents in knowledge base.
+
+        Uses metadata.doc_ref (our custom doc_xxx format) for aggregation
+        to match the doc_ref returned in retrieve API metadata.
+        """
         index_name = self.get_index_name(knowledge_id, **kwargs)
         es_client = Elasticsearch(self.url, **self.es_kwargs)
-        
-        # Aggregate by document_id
+
+        # Aggregate by doc_ref (our custom document ID), filtered by knowledge_id
         search_body = {
             "size": 0,
-            "query": {
-                "term": {"metadata.knowledge_id.keyword": knowledge_id}
-            },
+            "query": {"term": {"metadata.knowledge_id.keyword": knowledge_id}},
             "aggs": {
                 "documents": {
                     "terms": {
-                        "field": "metadata.document_id.keyword",
-                        "size": 10000
+                        "field": "metadata.doc_ref.keyword",  # Our custom doc_xxx ID
+                        "size": 10000,
                     },
                     "aggs": {
                         "source_file": {
                             "terms": {
                                 "field": "metadata.source_file.keyword",
-                                "size": 1
+                                "size": 1,
                             }
                         },
                         "created_at": {
                             "min": {
-                                "field": "metadata.created_at.keyword"
+                                "field": "metadata.created_at"  # date field, no .keyword
                             }
-                        }
-                    }
+                        },
+                    },
                 }
-            }
+            },
         }
-        
+
         response = es_client.search(index=index_name, body=search_body)
-        
+
         # Process results
         all_docs = []
         for bucket in response["aggregations"]["documents"]["buckets"]:
             doc_id = bucket["key"]
             chunk_count = bucket["doc_count"]
-            source_file = bucket["source_file"]["buckets"][0]["key"] if bucket["source_file"]["buckets"] else None
+            source_file = (
+                bucket["source_file"]["buckets"][0]["key"]
+                if bucket["source_file"]["buckets"]
+                else None
+            )
             created_at = bucket.get("created_at", {}).get("value_as_string")
-            
-            all_docs.append({
-                "document_id": doc_id,
-                "source_file": source_file,
-                "chunk_count": chunk_count,
-                "created_at": created_at
-            })
-        
+
+            all_docs.append(
+                {
+                    "document_id": doc_id,
+                    "source_file": source_file,
+                    "chunk_count": chunk_count,
+                    "created_at": created_at,
+                }
+            )
+
         # Pagination
         total = len(all_docs)
         start = (page - 1) * page_size
         end = start + page_size
         documents = all_docs[start:end]
-        
+
         return {
             "documents": documents,
             "total": total,
             "page": page,
             "page_size": page_size,
-            "knowledge_id": knowledge_id
+            "knowledge_id": knowledge_id,
         }
 
     def test_connection(self) -> bool:

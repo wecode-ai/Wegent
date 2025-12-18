@@ -145,7 +145,7 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
       setShowPassword(false);
       setShowApiKey(false);
     }
-  }, [open, retriever, toast, t, storageType]);
+  }, [open, retriever, toast, t]);
 
   const handleStorageTypeChange = (value: 'elasticsearch' | 'qdrant') => {
     setStorageType(value);
@@ -373,7 +373,7 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
               {t('retrievers.storage_type_required')}
             </Label>
             <Select value={storageType} onValueChange={handleStorageTypeChange}>
-              <SelectTrigger className="bg-base">
+              <SelectTrigger id="storage_type" className="bg-base">
                 <SelectValue placeholder={t('retrievers.storage_type_select')} />
               </SelectTrigger>
               <SelectContent>
@@ -498,7 +498,7 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
                 setIndexMode(value as 'fixed' | 'rolling' | 'per_dataset' | 'per_user')
               }
             >
-              <SelectTrigger className="bg-base">
+              <SelectTrigger id="index_mode" className="bg-base">
                 <SelectValue placeholder={t('retrievers.index_strategy')} />
               </SelectTrigger>
               <SelectContent>

@@ -140,6 +140,9 @@ graph LR
 2. **启动平台**
    ```bash
    docker-compose up -d
+   
+   # 可选：启用 RAG 功能（需要 Elasticsearch）
+   # docker compose --profile rag up -d
    ```
 
 3. **访问 Web 界面**

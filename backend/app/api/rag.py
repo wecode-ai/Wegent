@@ -7,36 +7,34 @@ RAG API routes.
 Refactored to use Retriever CRD configuration instead of global config.
 """
 
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, Query
-from sqlalchemy.orm import Session
 import json
 import tempfile
 from pathlib import Path
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core.security import get_current_user
 from app.models.user import User
 from app.schemas.rag import (
-    RetrieveRequest,
-    DocumentUploadResponse,
-    RetrieveResponse,
     DocumentDeleteResponse,
     DocumentDetailResponse,
     DocumentListResponse,
+    DocumentUploadResponse,
+    RetrieveRequest,
+    RetrieveResponse,
 )
+from app.services.adapters.retriever_kinds import retriever_kinds_service
 from app.services.rag.document_service import DocumentService
 from app.services.rag.retrieval_service import RetrievalService
 from app.services.rag.storage.factory import create_storage_backend
-from app.services.adapters.retriever_kinds import retriever_kinds_service
 
 router = APIRouter(prefix="/api/rag", tags=["RAG"])
 
 
 def get_retriever_and_backend(
-    retriever_name: str,
-    retriever_namespace: str,
-    user_id: int,
-    db: Session
+    retriever_name: str, retriever_namespace: str, user_id: int, db: Session
 ):
     """
     Get Retriever CRD and create storage backend.
@@ -55,10 +53,7 @@ def get_retriever_and_backend(
     """
     # Get Retriever CRD
     retriever = retriever_kinds_service.get_retriever(
-        db,
-        user_id=user_id,
-        name=retriever_name,
-        namespace=retriever_namespace
+        db, user_id=user_id, name=retriever_name, namespace=retriever_namespace
     )
 
     # Create storage backend from Retriever config
@@ -73,9 +68,10 @@ async def upload_document(
     retriever_name: str = Form(...),
     retriever_namespace: str = Form(default="default"),
     file: UploadFile = File(...),
-    embedding_config: str = Form(...),
+    embedding_model_name: str = Form(...),
+    embedding_model_namespace: str = Form(default="default"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """
     Upload and index a document.
@@ -85,7 +81,8 @@ async def upload_document(
         retriever_name: Retriever name
         retriever_namespace: Retriever namespace (default: "default")
         file: Document file (MD/PDF/TXT/DOCX/code)
-        embedding_config: JSON string with embedding config
+        embedding_model_name: Embedding model name
+        embedding_model_namespace: Embedding model namespace (default: "default")
         db: Database session
         current_user: Current user
 
@@ -96,15 +93,12 @@ async def upload_document(
         HTTPException: If upload or indexing fails
     """
     try:
-        # Parse embedding config
-        embedding_cfg = json.loads(embedding_config)
-
         # Get retriever and create backend
         _, storage_backend = get_retriever_and_backend(
             retriever_name=retriever_name,
             retriever_namespace=retriever_namespace,
             user_id=current_user.id,
-            db=db
+            db=db,
         )
 
         # Create document service
@@ -112,8 +106,7 @@ async def upload_document(
 
         # Save to temp file
         with tempfile.NamedTemporaryFile(
-            delete=False,
-            suffix=Path(file.filename).suffix
+            delete=False, suffix=Path(file.filename).suffix
         ) as tmp:
             content = await file.read()
             tmp.write(content)
@@ -124,16 +117,16 @@ async def upload_document(
             result = await doc_service.index_document(
                 knowledge_id=knowledge_id,
                 file_path=tmp_path,
-                embedding_config=embedding_cfg,
-                user_id=current_user.id
+                embedding_model_name=embedding_model_name,
+                embedding_model_namespace=embedding_model_namespace,
+                user_id=current_user.id,
+                db=db,
             )
             return result
         finally:
             # Cleanup temp file
             Path(tmp_path).unlink(missing_ok=True)
 
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Invalid embedding_config JSON")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -142,7 +135,7 @@ async def upload_document(
 async def retrieve_documents(
     request: RetrieveRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """
     Retrieve relevant document chunks.
@@ -155,7 +148,7 @@ async def retrieve_documents(
     Default weights are 0.7 for vector and 0.3 for keyword (must sum to 1.0).
 
     Args:
-        request: Retrieval request with retriever_ref and mode
+        request: Retrieval request with retriever_ref and embedding_model_ref
         db: Database session
         current_user: Current user
 
@@ -174,7 +167,10 @@ async def retrieve_documents(
                 "name": "my-es-retriever",
                 "namespace": "default"
             },
-            "embedding_config": {...},
+            "embedding_model_ref": {
+                "name": "bge-m3",
+                "namespace": "default"
+            },
             "top_k": 5,
             "score_threshold": 0.7,
             "retrieval_mode": "hybrid",
@@ -191,7 +187,7 @@ async def retrieve_documents(
             retriever_name=request.retriever_ref.name,
             retriever_namespace=request.retriever_ref.namespace,
             user_id=current_user.id,
-            db=db
+            db=db,
         )
 
         # Create retrieval service
@@ -201,12 +197,14 @@ async def retrieve_documents(
         retrieval_params = {
             "query": request.query,
             "knowledge_id": request.knowledge_id,
-            "embedding_config": request.embedding_config.dict(),
+            "embedding_model_name": request.embedding_model_ref.name,
+            "embedding_model_namespace": request.embedding_model_ref.namespace,
+            "user_id": current_user.id,
+            "db": db,
             "top_k": request.top_k,
             "score_threshold": request.score_threshold,
             "retrieval_mode": request.retrieval_mode.value,
             "metadata_condition": request.metadata_condition,
-            "user_id": current_user.id
         }
 
         # Add hybrid weights if in hybrid mode
@@ -227,7 +225,7 @@ async def delete_document(
     retriever_name: str = Query(...),
     retriever_namespace: str = Query(default="default"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """
     Delete a document.
@@ -252,68 +250,16 @@ async def delete_document(
             retriever_name=retriever_name,
             retriever_namespace=retriever_namespace,
             user_id=current_user.id,
-            db=db
+            db=db,
         )
 
         # Create document service
         doc_service = DocumentService(storage_backend=storage_backend)
 
         result = await doc_service.delete_document(
-            knowledge_id=knowledge_id,
-            document_id=document_id,
-            user_id=current_user.id
+            knowledge_id=knowledge_id, document_id=document_id, user_id=current_user.id
         )
         return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/documents/{document_id}", response_model=DocumentDetailResponse)
-async def get_document(
-    document_id: str,
-    knowledge_id: str = Query(...),
-    retriever_name: str = Query(...),
-    retriever_namespace: str = Query(default="default"),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """
-    Get document details with all chunks.
-
-    Args:
-        document_id: Document ID
-        knowledge_id: Knowledge base ID
-        retriever_name: Retriever name
-        retriever_namespace: Retriever namespace (default: "default")
-        db: Database session
-        current_user: Current user
-
-    Returns:
-        Document details
-
-    Raises:
-        HTTPException: If document not found
-    """
-    try:
-        # Get retriever and create backend
-        _, storage_backend = get_retriever_and_backend(
-            retriever_name=retriever_name,
-            retriever_namespace=retriever_namespace,
-            user_id=current_user.id,
-            db=db
-        )
-
-        # Create document service
-        doc_service = DocumentService(storage_backend=storage_backend)
-
-        result = await doc_service.get_document(
-            knowledge_id=knowledge_id,
-            document_id=document_id,
-            user_id=current_user.id
-        )
-        return result
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -326,7 +272,7 @@ async def list_documents(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """
     List documents in knowledge base with pagination.
@@ -352,7 +298,7 @@ async def list_documents(
             retriever_name=retriever_name,
             retriever_namespace=retriever_namespace,
             user_id=current_user.id,
-            db=db
+            db=db,
         )
 
         # Create document service
@@ -362,7 +308,7 @@ async def list_documents(
             knowledge_id=knowledge_id,
             page=page,
             page_size=page_size,
-            user_id=current_user.id
+            user_id=current_user.id,
         )
         return result
     except Exception as e:
@@ -374,7 +320,7 @@ async def test_retriever_connection(
     retriever_name: str = Query(...),
     retriever_namespace: str = Query(default="default"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """
     Test connection to retriever storage backend.
@@ -397,7 +343,7 @@ async def test_retriever_connection(
             retriever_name=retriever_name,
             retriever_namespace=retriever_namespace,
             user_id=current_user.id,
-            db=db
+            db=db,
         )
 
         # Test connection
@@ -405,7 +351,7 @@ async def test_retriever_connection(
 
         return {
             "success": success,
-            "message": "Connection successful" if success else "Connection failed"
+            "message": "Connection successful" if success else "Connection failed",
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

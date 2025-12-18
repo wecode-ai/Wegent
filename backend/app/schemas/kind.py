@@ -518,7 +518,9 @@ class StorageConfig(BaseModel):
     url: str  # Connection URL
     username: Optional[str] = None  # Username for authentication
     password: Optional[str] = None  # Password for authentication
-    apiKey: Optional[str] = None  # API key for authentication (alternative to username/password)
+    apiKey: Optional[str] = (
+        None  # API key for authentication (alternative to username/password)
+    )
     indexStrategy: IndexStrategy  # Index naming strategy
     ext: Optional[Dict[str, Any]] = None  # Additional provider-specific config
 
@@ -557,6 +559,7 @@ class RetrieverRef(BaseModel):
     """Reference to a Retriever"""
 
     name: str
+    namespace: str = "default"
 
 
 class RetrieverList(BaseModel):

@@ -11,9 +11,11 @@ import asyncio
 import uuid
 from typing import Dict
 
+from sqlalchemy.orm import Session
+
+from app.services.rag.embedding.factory import create_embedding_model_from_crd
 from app.services.rag.index import DocumentIndexer
 from app.services.rag.storage.base import BaseStorageBackend
-from app.services.rag.embedding.factory import create_embedding_model
 
 
 class DocumentService:
@@ -35,8 +37,10 @@ class DocumentService:
         self,
         knowledge_id: str,
         file_path: str,
-        embedding_config: dict,
-        user_id: int = None,
+        embedding_model_name: str,
+        embedding_model_namespace: str,
+        user_id: int,
+        db: Session,
     ) -> Dict:
         """
         Synchronous document indexing implementation.
@@ -45,8 +49,10 @@ class DocumentService:
         Args:
             knowledge_id: Knowledge base ID
             file_path: Path to document file
-            embedding_config: Embedding model configuration
-            user_id: User ID (for per_user index strategy)
+            embedding_model_name: Embedding model name
+            embedding_model_namespace: Embedding model namespace
+            user_id: User ID
+            db: Database session
 
         Returns:
             Indexing result dict
@@ -54,13 +60,17 @@ class DocumentService:
         # Generate document ID
         document_id = f"doc_{uuid.uuid4().hex[:12]}"
 
-        # Create embedding model
-        embed_model = create_embedding_model(embedding_config)
+        # Create embedding model from CRD
+        embed_model = create_embedding_model_from_crd(
+            db=db,
+            user_id=user_id,
+            model_name=embedding_model_name,
+            model_namespace=embedding_model_namespace,
+        )
 
         # Create indexer with storage backend
         indexer = DocumentIndexer(
-            storage_backend=self.storage_backend,
-            embed_model=embed_model
+            storage_backend=self.storage_backend, embed_model=embed_model
         )
 
         # Index document (synchronous operation, pass user_id)
@@ -68,7 +78,7 @@ class DocumentService:
             knowledge_id=knowledge_id,
             file_path=file_path,
             document_id=document_id,
-            user_id=user_id
+            user_id=user_id,
         )
 
         return result
@@ -77,16 +87,21 @@ class DocumentService:
         self,
         knowledge_id: str,
         file_path: str,
-        embedding_config: dict,
-        user_id: int = None,
+        embedding_model_name: str,
+        embedding_model_namespace: str,
+        user_id: int,
+        db: Session,
     ) -> Dict:
         """
         Index a document into storage backend.
 
         Args:
-            knowledge_id: Knowledge base ID (replaces dataset_id)
+            knowledge_id: Knowledge base ID
             file_path: Path to document file
-            embedding_config: Embedding model configuration dict
+            embedding_model_name: Embedding model name
+            embedding_model_namespace: Embedding model namespace
+            user_id: User ID
+            db: Database session
 
         Returns:
             Indexing result dict with:
@@ -106,8 +121,10 @@ class DocumentService:
             self._index_document_sync,
             knowledge_id,
             file_path,
-            embedding_config,
-            user_id
+            embedding_model_name,
+            embedding_model_namespace,
+            user_id,
+            db,
         )
 
     async def delete_document(
@@ -130,40 +147,12 @@ class DocumentService:
                 - deleted_chunks: Number of chunks deleted
                 - status: Deletion status
         """
-        return self.storage_backend.delete_document(
+        # Run in thread pool to avoid uvloop conflicts
+        return await asyncio.to_thread(
+            self.storage_backend.delete_document,
             knowledge_id=knowledge_id,
             document_id=document_id,
-            user_id=user_id
-        )
-
-    async def get_document(
-        self,
-        knowledge_id: str,
-        document_id: str,
-        user_id: int = None,
-    ) -> Dict:
-        """
-        Get document details with all chunks.
-
-        Args:
-            knowledge_id: Knowledge base ID
-            document_id: Document ID
-
-        Returns:
-            Document details dict with:
-                - document_id: Document ID
-                - knowledge_id: Knowledge base ID
-                - source_file: Source filename
-                - chunk_count: Number of chunks
-                - chunks: List of chunk dicts
-
-        Raises:
-            ValueError: If document not found
-        """
-        return self.storage_backend.get_document(
-            knowledge_id=knowledge_id,
-            document_id=document_id,
-            user_id=user_id
+            user_id=user_id,
         )
 
     async def list_documents(
@@ -189,11 +178,13 @@ class DocumentService:
                 - page_size: Page size
                 - knowledge_id: Knowledge base ID
         """
-        return self.storage_backend.list_documents(
+        # Run in thread pool to avoid uvloop conflicts
+        return await asyncio.to_thread(
+            self.storage_backend.list_documents,
             knowledge_id=knowledge_id,
             page=page,
             page_size=page_size,
-            user_id=user_id
+            user_id=user_id,
         )
 
     def test_connection(self) -> bool:
@@ -204,4 +195,3 @@ class DocumentService:
             True if connection successful, False otherwise
         """
         return self.storage_backend.test_connection()
-
