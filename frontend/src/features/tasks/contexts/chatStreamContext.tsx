@@ -45,6 +45,7 @@ import {
   ChatDonePayload,
   ChatErrorPayload,
   ChatCancelledPayload,
+  ChatMessagePayload,
 } from '@/types/socket';
 import type { TaskDetailSubtask } from '@/types/api';
 
@@ -610,7 +611,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       error,
     });
   }, []);
-
   /**
    * Handle chat:cancelled event from WebSocket
    */
@@ -658,6 +658,72 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     console.log('[ChatStreamContext] chat:cancelled received', { task_id: taskId, subtask_id });
   }, []);
 
+  /**
+   * Handle chat:message event from WebSocket
+   * This is triggered when another user sends a message in a group chat
+   * Adds the message to the unified messages Map for real-time display
+   */
+  const handleChatMessage = useCallback((data: ChatMessagePayload) => {
+    const { task_id, subtask_id, role, content, sender, created_at } = data;
+
+    console.log('[ChatStreamContext][chat:message] Received', {
+      task_id,
+      subtask_id,
+      role,
+      sender,
+      contentLen: content?.length || 0,
+    });
+
+    // Generate message ID based on role
+    const isUserMessage = role === 'user' || role?.toUpperCase() === 'USER';
+    const messageId = isUserMessage ? `user-backend-${subtask_id}` : `ai-${subtask_id}`;
+
+    // Track subtask to task mapping
+    subtaskToTaskRef.current.set(subtask_id, task_id);
+
+    // Add the message to the unified messages Map
+    setStreamStates(prev => {
+      const newMap = new Map(prev);
+      const currentState = newMap.get(task_id) || { ...defaultStreamState };
+
+      // Check if message already exists (avoid duplicates)
+      if (currentState.messages.has(messageId)) {
+        console.log('[ChatStreamContext][chat:message] Message already exists, skipping', {
+          messageId,
+        });
+        return prev;
+      }
+
+      const newMessages = new Map(currentState.messages);
+      const newMessage: UnifiedMessage = {
+        id: messageId,
+        type: isUserMessage ? 'user' : 'ai',
+        status: 'completed',
+        content: content || '',
+        timestamp: created_at ? new Date(created_at).getTime() : Date.now(),
+        subtaskId: subtask_id,
+        senderUserName: sender?.user_name,
+        senderUserId: sender?.user_id,
+        shouldShowSender: isUserMessage, // Show sender for user messages in group chat
+      };
+
+      newMessages.set(messageId, newMessage);
+
+      console.log('[ChatStreamContext][chat:message] Added message to task', {
+        taskId: task_id,
+        messageId,
+        senderUserName: sender?.user_name,
+      });
+      logMessagesState('chat:message', task_id, newMessages);
+
+      newMap.set(task_id, {
+        ...currentState,
+        messages: newMessages,
+      });
+      return newMap;
+    });
+  }, []);
+
   // Register WebSocket event handlers
   useEffect(() => {
     const handlers: ChatEventHandlers = {
@@ -666,6 +732,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       onChatDone: handleChatDone,
       onChatError: handleChatError,
       onChatCancelled: handleChatCancelled,
+      onChatMessage: handleChatMessage,
     };
 
     const cleanup = registerChatHandlers(handlers);
@@ -677,6 +744,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     handleChatDone,
     handleChatError,
     handleChatCancelled,
+    handleChatMessage,
   ]);
 
   /**

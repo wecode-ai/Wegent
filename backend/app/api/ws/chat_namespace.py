@@ -115,7 +115,23 @@ async def can_access_task(user_id: int, task_id: int) -> bool:
             .first()
         )
 
-        return shared is not None
+        if shared is not None:
+            return True
+
+        # Check if user is a group chat member (via TaskMember)
+        from app.models.task_member import MemberStatus, TaskMember
+
+        member = (
+            db.query(TaskMember)
+            .filter(
+                TaskMember.task_id == task_id,
+                TaskMember.user_id == user_id,
+                TaskMember.status == MemberStatus.ACTIVE,
+            )
+            .first()
+        )
+
+        return member is not None
 
     finally:
         db.close()
@@ -510,6 +526,35 @@ class ChatNamespace(socketio.AsyncNamespace):
                 )
                 # Return task_id with ai_triggered=false so frontend knows message was saved
                 user_subtask = result["user_subtask"]
+
+                # Join task room and broadcast user message for group chat
+                # This allows other group members to see the message in real-time
+                task_room = f"task:{task.id}"
+                await self.enter_room(sid, task_room)
+
+                if user_subtask:
+                    from app.api.ws.events import ServerEvents
+
+                    await self.emit(
+                        ServerEvents.CHAT_MESSAGE,
+                        {
+                            "subtask_id": user_subtask.id,
+                            "task_id": task.id,
+                            "role": "user",
+                            "content": payload.message,
+                            "sender": {
+                                "user_id": user_id,
+                                "user_name": user_name,
+                            },
+                            "created_at": user_subtask.created_at.isoformat(),
+                        },
+                        room=task_room,
+                        skip_sid=sid,
+                    )
+                    logger.info(
+                        f"[WS] chat:send broadcasted user message to room (no AI trigger)"
+                    )
+
                 return {
                     "task_id": task.id,
                     "subtask_id": user_subtask.id if user_subtask else None,

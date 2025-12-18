@@ -30,6 +30,7 @@ import {
   ChatDonePayload,
   ChatErrorPayload,
   ChatCancelledPayload,
+  ChatMessagePayload,
   ChatSendPayload,
   ChatSendAck,
   TaskCreatedPayload,
@@ -85,6 +86,8 @@ export interface ChatEventHandlers {
   onChatDone?: (data: ChatDonePayload) => void;
   onChatError?: (data: ChatErrorPayload) => void;
   onChatCancelled?: (data: ChatCancelledPayload) => void;
+  /** Handler for chat:message event (other users' messages in group chat) */
+  onChatMessage?: (data: ChatMessagePayload) => void;
 }
 
 /** Task event handlers for task list updates */
@@ -345,13 +348,15 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         return () => {};
       }
 
-      const { onChatStart, onChatChunk, onChatDone, onChatError, onChatCancelled } = handlers;
+      const { onChatStart, onChatChunk, onChatDone, onChatError, onChatCancelled, onChatMessage } =
+        handlers;
 
       if (onChatStart) socket.on(ServerEvents.CHAT_START, onChatStart);
       if (onChatChunk) socket.on(ServerEvents.CHAT_CHUNK, onChatChunk);
       if (onChatDone) socket.on(ServerEvents.CHAT_DONE, onChatDone);
       if (onChatError) socket.on(ServerEvents.CHAT_ERROR, onChatError);
       if (onChatCancelled) socket.on(ServerEvents.CHAT_CANCELLED, onChatCancelled);
+      if (onChatMessage) socket.on(ServerEvents.CHAT_MESSAGE, onChatMessage);
 
       // Return cleanup function
       return () => {
@@ -360,10 +365,12 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         if (onChatDone) socket.off(ServerEvents.CHAT_DONE, onChatDone);
         if (onChatError) socket.off(ServerEvents.CHAT_ERROR, onChatError);
         if (onChatCancelled) socket.off(ServerEvents.CHAT_CANCELLED, onChatCancelled);
+        if (onChatMessage) socket.off(ServerEvents.CHAT_MESSAGE, onChatMessage);
       };
     },
     [socket]
   );
+
   /**
    * Register task event handlers for task list updates
    * Returns a cleanup function to unregister handlers
