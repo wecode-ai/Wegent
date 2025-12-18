@@ -109,6 +109,7 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
           model_id:
             selectedModel?.name === '__default__' ? undefined : selectedModel?.name || undefined,
           force_override_bot_model: forceOverride,
+          is_group_chat: true, // Mark this as a group chat
         },
         {
           // Don't set pendingUserMessage to avoid showing duplicate messages
