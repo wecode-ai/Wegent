@@ -163,7 +163,6 @@ class Settings(BaseSettings):
     # }
     CHAT_MCP_SERVERS: str = "{}"
 
-    # Graceful shutdown configuration for Kubernetes deployments
     # Maximum time to wait for active streaming requests to complete (seconds)
     # Default: 600 seconds (10 minutes) to allow long-running streaming requests to complete
     GRACEFUL_SHUTDOWN_TIMEOUT: int = 600

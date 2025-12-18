@@ -49,8 +49,6 @@ def health_check(db: Session = Depends(get_db)):
 @router.get("/ready")
 def readiness_check(response: Response, db: Session = Depends(get_db)):
     """
-    Readiness probe endpoint for Kubernetes.
-
     This endpoint checks if the application is ready to receive traffic.
     Returns 503 during graceful shutdown to stop receiving new requests.
     Returns:
@@ -95,8 +93,6 @@ def readiness_check(response: Response, db: Session = Depends(get_db)):
 @router.get("/startup")
 def startup_check(db: Session = Depends(get_db)):
     """
-    Startup probe endpoint for Kubernetes.
-
     This endpoint checks if the application has finished starting up.
     Unlike readiness, this doesn't return 503 during shutdown because
     the startup phase is already complete.
