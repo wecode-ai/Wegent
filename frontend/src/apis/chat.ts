@@ -78,6 +78,8 @@ export interface StreamChatRequest {
   subtask_id?: number;
   /** Character offset for resuming (0 = send all cached content) */
   offset?: number;
+  /** Whether this is a group chat */
+  is_group_chat?: boolean;
 }
 
 /**

@@ -59,6 +59,8 @@ class StreamChatRequest(BaseModel):
     # Resume/reconnect parameters for offset-based streaming
     subtask_id: Optional[int] = None  # For resuming an existing stream
     offset: Optional[int] = None  # Character offset for resuming (0 = new stream)
+    # Group chat flag
+    is_group_chat: bool = False  # Whether this is a group chat
 
 
 def _get_shell_type(db: Session, bot: Kind, user_id: int) -> str:
@@ -315,6 +317,11 @@ async def _create_task_and_subtasks(
         # Auto-detect task type based on git_url presence
         task_type = "code" if request.git_url else "chat"
 
+        # Log the is_group_chat value being set
+        logger.info(
+            f"[_create_task_and_subtasks] Creating task_json with is_group_chat={request.is_group_chat}"
+        )
+
         task_json = {
             "kind": "Task",
             "spec": {
@@ -322,6 +329,7 @@ async def _create_task_and_subtasks(
                 "prompt": message,
                 "teamRef": {"name": team.name, "namespace": team.namespace},
                 "workspaceRef": {"name": workspace_name, "namespace": "default"},
+                "is_group_chat": request.is_group_chat,
             },
             "status": {
                 "state": "Available",
@@ -363,6 +371,12 @@ async def _create_task_and_subtasks(
         )
         db.add(task)
         task_id = new_task_id
+
+        # Log the created task_json to verify is_group_chat was saved correctly
+        logger.info(
+            f"[_create_task_and_subtasks] Created task {new_task_id} with task_json.spec.is_group_chat="
+            f"{task_json.get('spec', {}).get('is_group_chat', 'NOT_SET')}"
+        )
 
     # Get existing subtasks to determine message_id
     # Use subtask_user_id to see all messages (for group chats, this is task owner's ID)
@@ -655,6 +669,12 @@ async def stream_chat(
         f"should_trigger_ai={should_trigger_ai}"
     )
 
+    # Log the request.is_group_chat value before creating task
+    logger.info(
+        f"[stream_chat] Before creating task - request.is_group_chat={request.is_group_chat}, "
+        f"request={request.model_dump()}"
+    )
+
     # Create task and subtasks (use original message for storage, final_message for LLM)
     result = await _create_task_and_subtasks(
         db,
@@ -670,19 +690,6 @@ async def stream_chat(
     user_subtask = result["user_subtask"]
     assistant_subtask = result["assistant_subtask"]
     ai_triggered = result["ai_triggered"]
-
-    # Link attachment to the user subtask if provided
-    # IMPORTANT: This must be done BEFORE the early return for non-AI-triggered messages
-    # to ensure attachments are properly associated with user messages in group chat
-    if attachment:
-        from app.services.attachment import attachment_service as att_service
-
-        att_service.link_attachment_to_subtask(
-            db=db,
-            attachment_id=attachment.id,
-            subtask_id=user_subtask.id,
-            user_id=current_user.id,
-        )
 
     # If AI not triggered, return early with message saved response
     if not ai_triggered:
@@ -706,6 +713,15 @@ async def stream_chat(
     from app.api.dependencies import _set_telemetry_task_context
 
     _set_telemetry_task_context(task_id=task.id, subtask_id=assistant_subtask.id)
+
+    # Link attachment to the user subtask if provided
+    if attachment:
+        attachment_service.link_attachment_to_subtask(
+            db=db,
+            attachment_id=attachment.id,
+            subtask_id=user_subtask.id,
+            user_id=current_user.id,
+        )
 
     # Get first bot for model config and system prompt
     team_crd = Team.model_validate(team.json)
@@ -877,9 +893,12 @@ After each round of user answers:
     agent_config = bot_spec.get("agent_config", {})
 
     # Get user info for data sources
+    # Note: Use "name" key to match executor's task_data.user.name format
     user_info = {
         "id": current_user.id,
-        "name": current_user.user_name,
+        "name": current_user.user_name or "",
+        "user_name": current_user.user_name
+        or "",  # Also include user_name for compatibility
     }
 
     # Build task_data similar to executor format
