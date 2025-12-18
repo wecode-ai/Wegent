@@ -5,6 +5,7 @@
 """
 Models package
 """
+from app.models.analytics_event import AnalyticsEvent
 from app.models.api_key import APIKey
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
@@ -30,4 +31,5 @@ __all__ = [
     "NamespaceMember",
     "APIKey",
     "KnowledgeDocument",
+    "AnalyticsEvent",
 ]
