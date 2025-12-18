@@ -27,6 +27,8 @@ interface ChatInputProps {
   // Group chat support
   isGroupChat?: boolean;
   team?: Team | null;
+  // Callback when file is pasted (e.g., image from clipboard)
+  onPasteFile?: (file: File) => void;
 }
 
 export default function ChatInput({
@@ -41,6 +43,7 @@ export default function ChatInput({
   badge,
   isGroupChat = false,
   team = null,
+  onPasteFile,
 }: ChatInputProps) {
   const { t, i18n } = useTranslation('chat');
 
@@ -311,11 +314,43 @@ export default function ChatInput({
 
   const handlePaste = useCallback(
     (e: React.ClipboardEvent<HTMLDivElement>) => {
-      e.preventDefault();
       if (disabled) return;
 
-      // Get plain text from clipboard, stripping all formatting and invisible characters
       const clipboardData = e.clipboardData;
+
+      // Check if clipboard contains files (images or other files)
+      if (clipboardData.files && clipboardData.files.length > 0) {
+        const file = clipboardData.files[0];
+
+        // If onPasteFile callback is provided, handle file paste
+        if (onPasteFile && file) {
+          e.preventDefault();
+          onPasteFile(file);
+          return;
+        }
+      }
+
+      // Check if clipboard contains image items (for screenshots)
+      const items = clipboardData.items;
+      if (items) {
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          // Check if the item is an image type
+          if (item.type.startsWith('image/')) {
+            const file = item.getAsFile();
+            if (file && onPasteFile) {
+              e.preventDefault();
+              onPasteFile(file);
+              return;
+            }
+          }
+        }
+      }
+
+      // Handle text paste (existing logic)
+      e.preventDefault();
+
+      // Get plain text from clipboard, stripping all formatting and invisible characters
       let pastedText = clipboardData.getData('text/plain');
 
       // Remove invisible/control characters that can break layout
@@ -347,7 +382,7 @@ export default function ChatInput({
         setShowPlaceholder(!newText);
       }
     },
-    [disabled, setMessage, getTextWithNewlines]
+    [disabled, setMessage, getTextWithNewlines, onPasteFile]
   );
 
   const handleFocus = useCallback(() => {
