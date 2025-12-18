@@ -554,6 +554,10 @@ class SharedTaskService:
                 progress=100,  # Mark as fully completed
                 result=original_subtask.result,
                 error_message=original_subtask.error_message,
+                # Copy group chat fields to preserve sender information
+                sender_type=original_subtask.sender_type,
+                sender_user_id=original_subtask.sender_user_id,
+                reply_to_subtask_id=original_subtask.reply_to_subtask_id,
                 # Use local time instead of UTC to match other subtask creation in the codebase
                 created_at=datetime.now(),
                 updated_at=datetime.now(),
@@ -807,6 +811,18 @@ class SharedTaskService:
             .all()
         )
 
+        # Query sender user names for group chat messages
+        sender_ids = set()
+        for sub in subtasks:
+            if sub.sender_user_id and sub.sender_user_id > 0:
+                sender_ids.add(sub.sender_user_id)
+
+        # Batch query users
+        user_name_map = {}
+        if sender_ids:
+            users = db.query(User).filter(User.id.in_(sender_ids)).all()
+            user_name_map = {u.id: u.user_name for u in users}
+
         # Convert to public subtask data (exclude sensitive fields)
         public_subtasks = []
         for sub in subtasks:
@@ -836,6 +852,11 @@ class SharedTaskService:
                 for att in attachments
             ]
 
+            # Get sender user name if available
+            sender_user_name = None
+            if sub.sender_user_id and sub.sender_user_id > 0:
+                sender_user_name = user_name_map.get(sub.sender_user_id)
+
             public_subtasks.append(
                 PublicSubtaskData(
                     id=sub.id,
@@ -846,6 +867,10 @@ class SharedTaskService:
                     created_at=sub.created_at,
                     updated_at=sub.updated_at,
                     attachments=public_attachments,
+                    sender_type=sub.sender_type,
+                    sender_user_id=sub.sender_user_id,
+                    sender_user_name=sender_user_name,
+                    reply_to_subtask_id=sub.reply_to_subtask_id,
                 )
             )
 
