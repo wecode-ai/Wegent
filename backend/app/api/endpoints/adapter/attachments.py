@@ -17,7 +17,6 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
-from app.models.subtask_attachment import AttachmentStatus
 from app.models.user import User
 from app.services.attachment import attachment_service
 from app.services.attachment.parser import DocumentParseError, DocumentParser
@@ -147,26 +146,42 @@ async def get_attachment(
 
     # Check access permission:
     # 1. User is the uploader
-    # 2. User is a member of the task that contains this attachment
+    # 2. User is the task owner
+    # 3. User is a member of the task that contains this attachment
     has_access = attachment.user_id == current_user.id
 
     if not has_access and attachment.subtask_id > 0:
-        # Check if user is a task member
+        # Check if user is a task owner or member
+        from app.models.kind import Kind
         from app.models.subtask import Subtask
         from app.models.task_member import MemberStatus, TaskMember
 
         subtask = db.query(Subtask).filter(Subtask.id == attachment.subtask_id).first()
         if subtask:
-            task_member = (
-                db.query(TaskMember)
+            # Check if user is the task owner
+            task = (
+                db.query(Kind)
                 .filter(
-                    TaskMember.task_id == subtask.task_id,
-                    TaskMember.user_id == current_user.id,
-                    TaskMember.status == MemberStatus.ACTIVE,
+                    Kind.id == subtask.task_id,
+                    Kind.kind == "Task",
+                    Kind.user_id == current_user.id,
                 )
                 .first()
             )
-            has_access = task_member is not None
+            if task:
+                has_access = True
+            else:
+                # Check if user is a task member
+                task_member = (
+                    db.query(TaskMember)
+                    .filter(
+                        TaskMember.task_id == subtask.task_id,
+                        TaskMember.user_id == current_user.id,
+                        TaskMember.status == MemberStatus.ACTIVE,
+                    )
+                    .first()
+                )
+                has_access = task_member is not None
 
     if not has_access:
         raise HTTPException(status_code=404, detail="Attachment not found")
@@ -207,26 +222,42 @@ async def download_attachment(
 
     # Check access permission:
     # 1. User is the uploader
-    # 2. User is a member of the task that contains this attachment
+    # 2. User is the task owner
+    # 3. User is a member of the task that contains this attachment
     has_access = attachment.user_id == current_user.id
 
     if not has_access and attachment.subtask_id > 0:
-        # Check if user is a task member
+        # Check if user is a task owner or member
+        from app.models.kind import Kind
         from app.models.subtask import Subtask
         from app.models.task_member import MemberStatus, TaskMember
 
         subtask = db.query(Subtask).filter(Subtask.id == attachment.subtask_id).first()
         if subtask:
-            task_member = (
-                db.query(TaskMember)
+            # Check if user is the task owner
+            task = (
+                db.query(Kind)
                 .filter(
-                    TaskMember.task_id == subtask.task_id,
-                    TaskMember.user_id == current_user.id,
-                    TaskMember.status == MemberStatus.ACTIVE,
+                    Kind.id == subtask.task_id,
+                    Kind.kind == "Task",
+                    Kind.user_id == current_user.id,
                 )
                 .first()
             )
-            has_access = task_member is not None
+            if task:
+                has_access = True
+            else:
+                # Check if user is a task member
+                task_member = (
+                    db.query(TaskMember)
+                    .filter(
+                        TaskMember.task_id == subtask.task_id,
+                        TaskMember.user_id == current_user.id,
+                        TaskMember.status == MemberStatus.ACTIVE,
+                    )
+                    .first()
+                )
+                has_access = task_member is not None
 
     if not has_access:
         raise HTTPException(status_code=404, detail="Attachment not found")
