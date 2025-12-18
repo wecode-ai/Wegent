@@ -71,6 +71,7 @@ class ChatSendPayload(BaseModel):
     task_id: Optional[int] = Field(None, description="Task ID for multi-turn chat")
     team_id: int = Field(..., description="Team ID")
     message: str = Field(..., description="User message content")
+    title: Optional[str] = Field(None, description="Custom title for new tasks")
     attachment_id: Optional[int] = Field(None, description="Optional attachment ID")
     enable_web_search: bool = Field(False, description="Enable web search")
     force_override_bot_model: Optional[str] = Field(

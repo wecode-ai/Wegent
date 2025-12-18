@@ -27,7 +27,7 @@
  */
 
 import { useMemo, useEffect, useRef } from 'react';
-import { useChatStreamContext } from '../contexts/chatStreamContext';
+import { useChatStreamContext, computeIsStreaming } from '../contexts/chatStreamContext';
 import { useUser } from '@/features/common/UserContext';
 import { useTaskContext } from '../contexts/taskContext';
 import type { Team, Attachment } from '@/types/api';
@@ -235,7 +235,8 @@ export function useUnifiedMessages({
 
     return {
       messages: sortedMessages,
-      isStreaming: streamingSubtaskIds.length > 0 || (streamState?.isStreaming ?? false),
+      // Compute isStreaming from messages - a task is streaming if any AI message has status='streaming'
+      isStreaming: streamingSubtaskIds.length > 0 || computeIsStreaming(streamState?.messages),
       streamingSubtaskIds,
       hasPendingMessages,
       subtasksMap,

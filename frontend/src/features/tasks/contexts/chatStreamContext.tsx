@@ -102,10 +102,11 @@ export interface UnifiedMessage {
  * Key design: All messages (user and AI) are stored in a single unified messages Map.
  * Each message has its own state (pending/streaming/completed/error) and content.
  * This allows proper isolation between messages and prevents state mixing issues.
+ *
+ * IMPORTANT: `isStreaming` is now computed from messages, not stored independently.
+ * A task is streaming if any AI message has status='streaming'.
  */
 interface StreamState {
-  /** Whether any AI is currently streaming response for this task */
-  isStreaming: boolean;
   /** Whether stop operation is in progress */
   isStopping: boolean;
   /** Error if any */
@@ -118,6 +119,21 @@ interface StreamState {
   messages: Map<string, UnifiedMessage>;
   /** Current AI response subtask ID (set when chat:start received) */
   subtaskId: number | null;
+}
+
+/**
+ * Helper function to compute isStreaming from messages
+ * A task is streaming if any AI message has status='streaming'
+ * Exported for use in components that need to compute streaming state from messages
+ */
+export function computeIsStreaming(messages: Map<string, UnifiedMessage> | undefined): boolean {
+  if (!messages) return false;
+  for (const msg of messages.values()) {
+    if (msg.type === 'ai' && msg.status === 'streaming') {
+      return true;
+    }
+  }
+  return false;
 }
 type StreamStateMap = Map<number, StreamState>;
 
@@ -225,7 +241,6 @@ export const ChatStreamContext = createContext<ChatStreamContextType | undefined
  * Default stream state
  */
 const defaultStreamState: StreamState = {
-  isStreaming: false,
   isStopping: false,
   error: null,
   messages: new Map(),
@@ -286,22 +301,25 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
 
   /**
    * Check if a task is currently streaming
+   * Computed from messages - a task is streaming if any AI message has status='streaming'
    */
   const isTaskStreaming = useCallback(
     (taskId: number): boolean => {
       const state = streamStates.get(taskId);
-      return state?.isStreaming || false;
+      if (!state) return false;
+      return computeIsStreaming(state.messages);
     },
     [streamStates]
   );
 
   /**
    * Get all currently streaming task IDs
+   * Computed from messages - a task is streaming if any AI message has status='streaming'
    */
   const getStreamingTaskIds = useCallback((): number[] => {
     const ids: number[] = [];
     streamStates.forEach((state, taskId) => {
-      if (state.isStreaming) {
+      if (computeIsStreaming(state.messages)) {
         ids.push(taskId);
       }
     });
@@ -370,7 +388,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
 
         newMap.set(task_id, {
           ...currentState,
-          isStreaming: true,
           subtaskId: subtask_id,
           messages: newMessages,
         });
@@ -405,7 +422,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           newMap.delete(tempId);
           newMap.set(task_id, {
             ...state,
-            isStreaming: true,
             subtaskId: subtask_id,
             messages: newMessages,
           });
@@ -446,7 +462,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
 
       newMap.set(task_id, {
         ...defaultStreamState,
-        isStreaming: true,
         subtaskId: subtask_id,
         messages: newMessages,
       });
@@ -500,15 +515,26 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
    * NO REFRESH needed - the UI will display the content from messages Map
    */
   const handleChatDone = useCallback((data: ChatDonePayload) => {
-    const { subtask_id, result } = data;
+    const { task_id: eventTaskId, subtask_id, result } = data;
 
     console.log('[ChatStreamContext][chat:done] Received', {
+      task_id: eventTaskId,
       subtask_id,
       resultLen: (result?.value as string)?.length || 0,
     });
 
-    // Find task ID from subtask
-    const taskId = subtaskToTaskRef.current.get(subtask_id);
+    // Find task ID from subtask mapping, or use task_id from event (for group chat members)
+    let taskId = subtaskToTaskRef.current.get(subtask_id);
+    if (!taskId && eventTaskId) {
+      // For group chat members who may not have received chat:start,
+      // use task_id from the event and set up the mapping
+      taskId = eventTaskId;
+      subtaskToTaskRef.current.set(subtask_id, taskId);
+      console.log('[ChatStreamContext][chat:done] Using task_id from event for group chat member', {
+        taskId,
+        subtask_id,
+      });
+    }
     if (!taskId) {
       console.warn('[ChatStreamContext][chat:done] Unknown subtask:', subtask_id);
       return;
@@ -546,7 +572,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
 
       newMap.set(taskId, {
         ...currentState,
-        isStreaming: false,
         isStopping: false,
         messages: newMessages,
       });
@@ -593,7 +618,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
 
       newMap.set(taskId, {
         ...currentState,
-        isStreaming: false,
         isStopping: false,
         error: errorObj,
         messages: newMessages,
@@ -644,7 +668,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
 
       newMap.set(taskId, {
         ...currentState,
-        isStreaming: false,
         isStopping: false,
         messages: newMessages,
       });
@@ -833,7 +856,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
 
         newMap.set(immediateTaskId, {
           ...currentState,
-          isStreaming: false,
           isStopping: false,
           error: null,
           subtaskId: null,
@@ -847,6 +869,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         task_id: request.task_id,
         team_id: request.team_id,
         message: request.message,
+        title: request.title,
         attachment_id: request.attachment_id,
         enable_web_search: request.enable_web_search,
         force_override_bot_model: request.model_id,
@@ -996,7 +1019,8 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
   const stopStream = useCallback(
     async (taskId: number): Promise<void> => {
       const state = streamStates.get(taskId);
-      if (!state?.isStreaming) return;
+      // Check if streaming by computing from messages
+      if (!state || !computeIsStreaming(state.messages)) return;
 
       // Set stopping state
       setStreamStates(prev => {
@@ -1040,7 +1064,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         const newMap = new Map(prev);
         const currentState = newMap.get(taskId);
         if (currentState) {
-          newMap.set(taskId, { ...currentState, isStreaming: false, isStopping: false });
+          newMap.set(taskId, { ...currentState, isStopping: false });
         }
         return newMap;
       });
@@ -1125,7 +1149,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
 
       // Check if already streaming for this task
       const existingState = streamStates.get(taskId);
-      if (existingState?.isStreaming) {
+      if (existingState && computeIsStreaming(existingState.messages)) {
         console.log('[ChatStreamContext] Already streaming for task', taskId);
         return true;
       }
@@ -1180,7 +1204,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
 
             newMap.set(taskId, {
               ...currentState,
-              isStreaming: true,
               isStopping: false,
               error: null,
               subtaskId: subtask_id,
@@ -1362,13 +1385,11 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           }
         }
 
-        // Check if any AI message is currently streaming
-        let isStreaming = false;
+        // Find current streaming subtask ID if any
         let currentSubtaskId: number | null = null;
 
         for (const msg of newMessages.values()) {
           if (msg.type === 'ai' && msg.status === 'streaming') {
-            isStreaming = true;
             currentSubtaskId = msg.subtaskId || null;
             break;
           }
@@ -1376,7 +1397,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
 
         newMap.set(taskId, {
           ...currentState,
-          isStreaming,
           subtaskId: currentSubtaskId,
           messages: newMessages,
         });

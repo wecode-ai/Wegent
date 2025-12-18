@@ -30,7 +30,7 @@ import { sendMessage, isChatShell } from '../service/messageService';
 import { useUser } from '@/features/common/UserContext';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTaskContext } from '../contexts/taskContext';
-import { useChatStreamContext } from '../contexts/chatStreamContext';
+import { useChatStreamContext, computeIsStreaming } from '../contexts/chatStreamContext';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import QuotaUsage from './QuotaUsage';
@@ -371,15 +371,27 @@ export default function ChatArea({
     }
     return getStreamState(currentDisplayTaskId);
   }, [currentDisplayTaskId, streamingTaskId, getStreamState]);
-
-  // Check if the currently displayed task is streaming
-  const isCurrentTaskStreaming = currentStreamState?.isStreaming || false;
-
   // Check if there's any active stream (for the streaming task we started)
   const isStreamingTaskActive = streamingTaskId ? isTaskStreaming(streamingTaskId) : false;
 
-  // Extract stream state values for the current display
-  const isStreaming = isCurrentTaskStreaming;
+  // Check if context reports streaming (for message sender, before subtask status is updated)
+  // Computed from messages - a task is streaming if any AI message has status='streaming'
+  const isContextStreaming = computeIsStreaming(currentStreamState?.messages);
+
+  // Check if any AI message (assistant subtask) is currently running
+  // This is the source of truth for streaming state, derived from actual subtask status
+  // This ensures all users (including group chat members) see correct streaming state
+  const isSubtaskStreaming = useMemo(() => {
+    if (!selectedTaskDetail?.subtasks) return false;
+    return selectedTaskDetail.subtasks.some(
+      subtask => subtask.role === 'assistant' && subtask.status === 'RUNNING'
+    );
+  }, [selectedTaskDetail?.subtasks]);
+
+  // Combine both sources of truth:
+  // - isSubtaskStreaming: for group chat members and after task detail refresh
+  // - isContextStreaming: for message sender, before subtask status is updated
+  const isStreaming = isSubtaskStreaming || isContextStreaming;
   const isStopping = currentStreamState?.isStopping || false;
   // Check if there are any pending user messages in the unified messages Map
   const hasPendingUserMessage = useMemo(() => {
@@ -517,7 +529,8 @@ export default function ChatArea({
     if (!taskId) return;
 
     // Only try to resume if we're not already streaming for this task
-    if (isCurrentTaskStreaming) return;
+    // Use isStreaming which is derived from subtask status
+    if (isStreaming) return;
 
     // Only try to resume for Chat Shell tasks
     if (!selectedTeam || !isChatShell(selectedTeam)) return;
@@ -546,7 +559,7 @@ export default function ChatArea({
   }, [
     selectedTaskDetail?.id,
     selectedTeam,
-    isCurrentTaskStreaming,
+    isStreaming,
     contextResumeStream,
     refreshSelectedTaskDetail,
   ]);
