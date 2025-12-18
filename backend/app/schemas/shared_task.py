@@ -102,6 +102,11 @@ class PublicSubtaskData(BaseModel):
     created_at: datetime
     updated_at: datetime
     attachments: List[PublicAttachmentData] = []
+    # Group chat fields
+    sender_type: Optional[str] = None
+    sender_user_id: Optional[int] = None
+    sender_user_name: Optional[str] = None
+    reply_to_subtask_id: Optional[int] = None
 
 
 class PublicSharedTaskResponse(BaseModel):

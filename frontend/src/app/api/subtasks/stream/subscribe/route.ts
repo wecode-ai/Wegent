@@ -5,6 +5,10 @@
 /**
  * Next.js API Route for proxying group chat SSE stream.
  *
+ * @deprecated This SSE proxy route is deprecated. Group chat streaming now uses
+ * WebSocket via the global Socket.IO connection (see `useGroupChatStream` hook).
+ * This route is kept for backward compatibility but will be removed in a future version.
+ *
  * This route proxies SSE requests to the backend, reading the auth token
  * from cookies since EventSource API doesn't support custom headers.
  */

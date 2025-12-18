@@ -6,6 +6,7 @@
 
 import { useState } from 'react';
 import { ChevronDownIcon, UserGroupIcon, LinkIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { Users } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -133,6 +134,7 @@ export default function TaskTitleDropdown({
               className
             )}
           >
+            <Users className="h-4 w-4 flex-shrink-0 text-text-muted" />
             <span className="truncate">{displayTitle}</span>
             <ChevronDownIcon className="h-4 w-4 flex-shrink-0 text-text-muted" />
           </button>

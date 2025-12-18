@@ -18,7 +18,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useToast } from '@/hooks/use-toast';
-import { Team } from '@/types/api';
+import { Team, Task } from '@/types/api';
 import {
   Select,
   SelectContent,
@@ -47,8 +47,8 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
   const [forceOverride, setForceOverride] = useState(false);
 
   const { teams, isTeamsLoading } = teamService.useTeams();
-  const { startStream } = useChatStreamContext();
-  const { refreshTasks } = useTaskContext();
+  const { sendMessage } = useChatStreamContext();
+  const { refreshTasks, setSelectedTask } = useTaskContext();
 
   // Filter teams to only show chat-type teams (agent_type === 'chat')
   const chatTeams = useMemo(() => {
@@ -98,9 +98,9 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
         forceOverride: forceOverride,
       });
 
-      // Use ChatStreamContext to start the stream
+      // Use ChatStreamContext to send the message
       // This ensures the stream is registered globally and the task page can display it
-      void startStream(
+      void sendMessage(
         {
           message: t('groupChat.create.initialMessage'),
           team_id: selectedTeam.id,
@@ -129,10 +129,19 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
             // Refresh task list to show the new group chat
             refreshTasks();
 
+            // Set selected task with is_group_chat flag BEFORE navigation
+            // This ensures ChatArea receives the correct isGroupChat prop immediately
+            setSelectedTask({
+              id: realTaskId,
+              title: title,
+              team_id: selectedTeam?.id || 0,
+              is_group_chat: true,
+            } as Task);
+
             // Navigate to the new task to show streaming output
             router.push(`/chat?taskId=${realTaskId}`);
           },
-          onComplete: () => {
+          onAIComplete: () => {
             // Success toast
             toast({
               title: t('groupChat.create.success'),

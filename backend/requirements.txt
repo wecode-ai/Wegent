@@ -62,6 +62,9 @@ orjson>=3.9.0
 # Caching
 redis>=4.5.0
 
+# WebSocket / Real-time
+python-socketio[asyncio]>=5.10.0
+
 # Testing related
 pytest>=7.4.0
 pytest-asyncio>=0.21.0

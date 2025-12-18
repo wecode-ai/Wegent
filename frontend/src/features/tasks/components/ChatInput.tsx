@@ -283,15 +283,23 @@ export default function ChatInput({
     (mention: string) => {
       if (editableRef.current) {
         const currentText = getTextWithNewlines(editableRef.current);
-        // Replace the last @word with the selected mention
-        const words = currentText.split(/(\s)/);
-        const lastWordIndex = words.length - 1;
-        if (words[lastWordIndex].startsWith('@')) {
-          words[lastWordIndex] = mention + ' ';
+        // Replace the last @word (including partial @query) with the selected mention
+        // Find the last @ symbol and replace everything from there to the end of that word
+        const lastAtIndex = currentText.lastIndexOf('@');
+        if (lastAtIndex !== -1) {
+          // Get text before the @
+          const textBefore = currentText.substring(0, lastAtIndex);
+          // Get text after the @ and find where the current word ends
+          const textAfterAt = currentText.substring(lastAtIndex + 1);
+          // Find the end of the current word (first whitespace after @)
+          const wordEndMatch = textAfterAt.match(/^\S*/);
+          const currentWord = wordEndMatch ? wordEndMatch[0] : '';
+          const textAfterWord = textAfterAt.substring(currentWord.length);
+          // Build new text: text before @ + mention + space + remaining text
+          const newText = textBefore + mention + ' ' + textAfterWord.trimStart();
+          setMessage(newText);
+          setContentWithNewlines(editableRef.current, newText);
         }
-        const newText = words.join('');
-        setMessage(newText);
-        setContentWithNewlines(editableRef.current, newText);
 
         // Move cursor to end
         const selection = window.getSelection();
