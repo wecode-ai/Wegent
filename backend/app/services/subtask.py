@@ -281,8 +281,13 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
                 "task_id": subtask.task_id,
                 "team_id": subtask.team_id,
                 "title": subtask.title,
+                "bot_ids": subtask.bot_ids if subtask.bot_ids else [],
                 "role": subtask.role.value if subtask.role else None,
                 "prompt": subtask.prompt,
+                "executor_namespace": subtask.executor_namespace,
+                "executor_name": subtask.executor_name,
+                "message_id": subtask.message_id,
+                "parent_id": subtask.parent_id,
                 "status": subtask.status.value if subtask.status else None,
                 "progress": subtask.progress,
                 "result": subtask.result,
@@ -301,6 +306,11 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
                 "completed_at": (
                     subtask.completed_at.isoformat() if subtask.completed_at else None
                 ),
+                "user_id": subtask.user_id,
+                "executor_deleted_at": subtask.executor_deleted_at,
+                "attachments": [],  # Attachments not loaded in this query for performance
+                "sender_user_name": sender_username,
+                "reply_to_subtask_id": subtask.reply_to_subtask_id,
             }
             messages.append(message_dict)
 

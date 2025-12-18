@@ -3,10 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Enhanced MessageBubble wrapper for group chat support
+ * Sender information display components for group chat support
  *
- * This component wraps the existing MessageBubble and adds sender information display
- * for group chat messages.
+ * These components add sender information display for group chat messages
+ * without modifying the original MessageBubble layout.
  */
 
 'use client';
@@ -22,7 +22,11 @@ interface GroupChatMessageWrapperProps {
 }
 
 /**
- * Wrapper component that adds sender information above messages in group chats
+ * Lightweight wrapper that adds sender information above messages in group chats
+ * without changing the original message layout structure.
+ *
+ * This component only renders a sender badge above the children when needed,
+ * preserving the original MessageBubble's flex layout and alignment.
  *
  * Usage:
  * ```tsx
@@ -39,7 +43,7 @@ export function GroupChatMessageWrapper({
   const { user } = useUser();
   const currentUserId = user?.id;
 
-  // Don't show sender info if not a group chat
+  // Don't show sender info if not a group chat - just render children directly
   if (!isGroupChat) {
     return <>{children}</>;
   }
@@ -50,28 +54,36 @@ export function GroupChatMessageWrapper({
   const isUserMessage = subtask.role === 'USER' || subtask.sender_type === 'USER';
   const isAIMessage = subtask.role === 'ASSISTANT' || subtask.sender_type === 'TEAM';
 
-  // Determine message alignment based on sender
-  const alignmentClass = isOwnMessage ? 'self-end' : 'self-start';
+  // Determine if we need to show any sender info
+  const showUserSenderBadge = !isOwnMessage && isUserMessage && senderName;
+  const showAISenderBadge = isAIMessage && subtask.sender_user_name;
 
+  // If no sender badge needed, just render children directly
+  if (!showUserSenderBadge && !showAISenderBadge) {
+    return <>{children}</>;
+  }
+
+  // Render sender badge above the original message bubble
+  // Using React.Fragment to avoid adding any wrapper div that could affect layout
   return (
-    <div className={`flex flex-col ${alignmentClass} max-w-[85%] sm:max-w-[80%]`}>
+    <>
       {/* Show sender name for messages from other users */}
-      {!isOwnMessage && isUserMessage && senderName && (
-        <div className="text-xs text-text-muted mb-1 px-2 font-medium">{senderName}</div>
+      {showUserSenderBadge && (
+        <div className="text-xs text-text-muted mb-1 font-medium">{senderName}</div>
       )}
 
       {/* Show "AI (triggered by XXX)" for AI responses in group chat */}
-      {isAIMessage && subtask.sender_user_name && (
-        <div className="text-xs text-text-muted mb-1 px-2 flex items-center gap-1">
+      {showAISenderBadge && (
+        <div className="text-xs text-text-muted mb-1 flex items-center gap-1">
           <span className="text-base">🤖</span>
           <span>AI</span>
           <span className="text-text-secondary">(triggered by {subtask.sender_user_name})</span>
         </div>
       )}
 
-      {/* Original message bubble */}
+      {/* Original message bubble - rendered without any wrapper */}
       {children}
-    </div>
+    </>
   );
 }
 
@@ -121,40 +133,3 @@ export function MessageSenderBadge({
 
   return null;
 }
-
-/**
- * Example usage in MessagesArea:
- *
- * ```tsx
- * import { GroupChatMessageWrapper, MessageSenderBadge } from './MessageSenderBadge'
- *
- * function MessagesArea({ subtasks, isGroupChat }) {
- *   const { user } = useUser()
- *
- *   return (
- *     <div className="messages-container">
- *       {subtasks.map(subtask => (
- *         // Option 1: Using wrapper
- *         <GroupChatMessageWrapper
- *           key={subtask.id}
- *           subtask={subtask}
- *           isGroupChat={isGroupChat}
- *         >
- *           <MessageBubble msg={convertToMessage(subtask)} ... />
- *         </GroupChatMessageWrapper>
- *
- *         // Option 2: Using inline badge
- *         <div key={subtask.id}>
- *           <MessageSenderBadge
- *             subtask={subtask}
- *             isGroupChat={isGroupChat}
- *             currentUserId={user?.id}
- *           />
- *           <MessageBubble msg={convertToMessage(subtask)} ... />
- *         </div>
- *       ))}
- *     </div>
- *   )
- * }
- * ```
- */

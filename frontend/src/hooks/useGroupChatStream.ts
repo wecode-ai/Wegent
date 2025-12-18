@@ -56,6 +56,24 @@ export function useGroupChatStream(options: UseGroupChatStreamOptions): UseGroup
   const eventSourceRef = useRef<EventSource | null>(null);
   const isMountedRef = useRef(true);
 
+  // Store callbacks in refs to avoid re-triggering effects
+  const onChunkRef = useRef(onChunk);
+  const onCompleteRef = useRef(onComplete);
+  const onErrorRef = useRef(onError);
+
+  // Keep refs updated
+  useEffect(() => {
+    onChunkRef.current = onChunk;
+  }, [onChunk]);
+
+  useEffect(() => {
+    onCompleteRef.current = onComplete;
+  }, [onComplete]);
+
+  useEffect(() => {
+    onErrorRef.current = onError;
+  }, [onError]);
+
   // Disconnect function
   const disconnect = useCallback(() => {
     if (eventSourceRef.current) {
@@ -67,8 +85,8 @@ export function useGroupChatStream(options: UseGroupChatStreamOptions): UseGroup
 
   // Connect to SSE stream
   useEffect(() => {
-    // If no subtaskId, disconnect
-    if (subtaskId === undefined) {
+    // If no subtaskId or subtaskId is not a valid number, disconnect
+    if (subtaskId == null || typeof subtaskId !== 'number') {
       disconnect();
       return;
     }
@@ -98,16 +116,12 @@ export function useGroupChatStream(options: UseGroupChatStreamOptions): UseGroup
           if (chunk.result) {
             setResult(chunk.result);
           }
-          if (onComplete) {
-            onComplete(chunk.result);
-          }
+          onCompleteRef.current?.(chunk.result);
           disconnect();
         } else {
           // Append content
           setContent(prev => prev + chunk.content);
-          if (onChunk) {
-            onChunk(chunk);
-          }
+          onChunkRef.current?.(chunk);
         }
       } catch (err) {
         console.error('[useGroupChatStream] Failed to parse chunk:', err);
@@ -123,9 +137,7 @@ export function useGroupChatStream(options: UseGroupChatStreamOptions): UseGroup
       setIsStreaming(false);
       console.error('[useGroupChatStream] SSE error:', event);
 
-      if (onError) {
-        onError(errorMessage);
-      }
+      onErrorRef.current?.(errorMessage);
 
       disconnect();
     };
@@ -134,7 +146,7 @@ export function useGroupChatStream(options: UseGroupChatStreamOptions): UseGroup
     return () => {
       disconnect();
     };
-  }, [taskId, subtaskId, offset, onChunk, onComplete, onError, disconnect]);
+  }, [taskId, subtaskId, offset, disconnect]);
 
   // Cleanup on unmount
   useEffect(() => {

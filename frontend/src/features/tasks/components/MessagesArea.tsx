@@ -61,6 +61,8 @@ interface RecoveredMessageBubbleProps {
   onSendMessage?: (content: string) => void;
   /** Whether this is a group chat (show sender names) */
   isGroupChat?: boolean;
+  /** Whether this message is from the current user (for group chat alignment) */
+  isCurrentUserMessage?: boolean;
 }
 
 function RecoveredMessageBubble({
@@ -75,6 +77,7 @@ function RecoveredMessageBubble({
   t,
   onSendMessage,
   isGroupChat = false,
+  isCurrentUserMessage,
 }: RecoveredMessageBubbleProps) {
   // Use typewriter effect for recovered content that is still streaming
   const displayContent = useTypewriter(recovery.content || '');
@@ -104,6 +107,7 @@ function RecoveredMessageBubble({
         theme={theme}
         t={t}
         onSendMessage={onSendMessage}
+        isCurrentUserMessage={isCurrentUserMessage}
       />
     );
   }
@@ -120,6 +124,7 @@ function RecoveredMessageBubble({
         theme={theme}
         t={t}
         onSendMessage={onSendMessage}
+        isCurrentUserMessage={isCurrentUserMessage}
       />
     </GroupChatMessageWrapper>
   );
@@ -147,6 +152,12 @@ interface MessagesAreaProps {
   onSendMessage?: (content: string) => void;
   /** Whether this is a group chat (show sender names) */
   isGroupChat?: boolean;
+  /** Group chat streaming content (for other users to see streaming from another user) */
+  groupChatStreamingContent?: string;
+  /** Group chat streaming subtask ID */
+  groupChatStreamingSubtaskId?: number | null;
+  /** Whether group chat is streaming (from another user) */
+  isGroupChatStreaming?: boolean;
 }
 
 export default function MessagesArea({
@@ -162,6 +173,9 @@ export default function MessagesArea({
   onShareButtonRender,
   onSendMessage,
   isGroupChat = false,
+  groupChatStreamingContent,
+  groupChatStreamingSubtaskId,
+  isGroupChatStreaming = false,
 }: MessagesAreaProps) {
   const { t } = useTranslation('chat');
   const { t: tCommon } = useTranslation('common');
@@ -180,8 +194,11 @@ export default function MessagesArea({
   // Group chat members panel state
   const [showMembersPanel, setShowMembersPanel] = useState(false);
 
-  // Use Typewriter effect for streaming content
+  // Use Typewriter effect for streaming content (own streaming)
   const displayContent = useTypewriter(streamingContent || '');
+
+  // Use Typewriter effect for group chat streaming content (from other users)
+  const groupChatDisplayContent = useTypewriter(groupChatStreamingContent || '');
 
   // Handle task share - wrapped in useCallback to prevent infinite loops
   const handleShareTask = useCallback(async () => {
@@ -568,6 +585,11 @@ export default function MessagesArea({
           isIncomplete = recovery.incomplete;
         }
 
+        // Get sender user ID for group chat alignment
+        // For USER messages: use sender_user_id or user_id
+        // For AI messages: no sender user ID (always left-aligned)
+        const senderUserId = msgType === 'user' ? sub.sender_user_id || sub.user_id : undefined;
+
         messages.push({
           type: msgType,
           content: content,
@@ -584,6 +606,7 @@ export default function MessagesArea({
           isRecovered, // Flag to indicate this is recovered content
           isIncomplete, // Flag to indicate content is incomplete
           senderUserName: sub.sender_user_name, // Add sender user name for group chat
+          senderUserId, // Add sender user ID for group chat alignment
           shouldShowSender: detail.is_group_chat === true, // Only show sender in group chat
         });
       });
@@ -847,6 +870,13 @@ export default function MessagesArea({
               ? `${msg.type}-${msg.subtaskId}`
               : `msg-${index}-${msg.timestamp}`;
 
+            // Determine if this is the current user's message (for group chat alignment)
+            // In group chat: only current user's messages should be right-aligned
+            // For user messages: compare senderUserId with current user ID
+            // For AI messages: always left-aligned (isCurrentUserMessage = false)
+            const isCurrentUserMessageForRecovery =
+              msg.type === 'user' ? (isGroupChat ? msg.senderUserId === user?.id : true) : false;
+
             // Use RecoveredMessageBubble for messages with active recovery (streaming)
             if (recovery?.recovered && recovery.streaming) {
               return (
@@ -863,6 +893,7 @@ export default function MessagesArea({
                   t={t}
                   onSendMessage={onSendMessage}
                   isGroupChat={isGroupChat}
+                  isCurrentUserMessage={isCurrentUserMessageForRecovery}
                 />
               );
             }
@@ -872,6 +903,13 @@ export default function MessagesArea({
             const subtask = msg.subtaskId
               ? selectedTaskDetail?.subtasks?.find(s => s.id === msg.subtaskId)
               : undefined;
+
+            // Determine if this is the current user's message (for group chat alignment)
+            // In group chat: only current user's messages should be right-aligned
+            // For user messages: compare senderUserId with current user ID
+            // For AI messages: always left-aligned (isCurrentUserMessage = false)
+            const isCurrentUserMessage =
+              msg.type === 'user' ? (isGroupChat ? msg.senderUserId === user?.id : true) : false;
 
             // If no subtask found or not a group chat, render without wrapper
             if (!subtask || !isGroupChat) {
@@ -887,6 +925,7 @@ export default function MessagesArea({
                   theme={theme as 'light' | 'dark'}
                   t={t}
                   onSendMessage={onSendMessage}
+                  isCurrentUserMessage={isCurrentUserMessage}
                 />
               );
             }
@@ -903,6 +942,7 @@ export default function MessagesArea({
                   theme={theme as 'light' | 'dark'}
                   t={t}
                   onSendMessage={onSendMessage}
+                  isCurrentUserMessage={isCurrentUserMessage}
                 />
               </GroupChatMessageWrapper>
             );
@@ -958,6 +998,34 @@ export default function MessagesArea({
                 onSendMessage={onSendMessage}
               />
             )}
+
+          {/* Group chat streaming AI response from other users */}
+          {/* Only show when: 1) is group chat, 2) group chat is streaming, 3) not own streaming */}
+          {isGroupChat && isGroupChatStreaming && groupChatStreamingSubtaskId && !isStreaming && (
+            <MessageBubble
+              key={`group-streaming-${groupChatStreamingSubtaskId}`}
+              msg={{
+                type: 'ai',
+                content: `\${$$}$${groupChatStreamingContent || ''}`,
+                timestamp: Date.now(),
+                botName: selectedTeam?.name || t('messages.bot') || 'Bot',
+                subtaskStatus: 'RUNNING',
+                recoveredContent: groupChatDisplayContent,
+                isRecovered: false,
+                isIncomplete: false,
+                subtaskId: groupChatStreamingSubtaskId,
+              }}
+              index={displayMessages.length + 1}
+              selectedTaskDetail={selectedTaskDetail}
+              selectedTeam={selectedTeam}
+              selectedRepo={selectedRepo}
+              selectedBranch={selectedBranch}
+              theme={theme as 'light' | 'dark'}
+              t={t}
+              isWaiting={Boolean(isGroupChatStreaming && !groupChatStreamingContent)}
+              onSendMessage={onSendMessage}
+            />
+          )}
         </div>
       )}
 

@@ -413,6 +413,13 @@ export default function ChatArea({
     setStreamingTaskId(null);
   }, [currentDisplayTaskId, streamingTaskId, contextResetStream]);
 
+  // Group chat streaming state (for other users to see streaming content)
+  const [groupChatStreamingContent, setGroupChatStreamingContent] = useState<string>('');
+  const [groupChatStreamingSubtaskId, setGroupChatStreamingSubtaskId] = useState<number | null>(
+    null
+  );
+  const [isGroupChatStreaming, setIsGroupChatStreaming] = useState(false);
+
   // Group chat message handlers
   const handleNewMessages = useCallback(
     (messages: SubtaskWithSender[]) => {
@@ -425,15 +432,31 @@ export default function ChatArea({
 
   const handleStreamContent = useCallback((content: string, subtaskId: number) => {
     console.log('[GroupChat] Stream content:', { subtaskId, contentLength: content.length });
+    // Update group chat streaming state so MessagesArea can display it
+    setGroupChatStreamingContent(content);
+    setGroupChatStreamingSubtaskId(subtaskId);
+    setIsGroupChatStreaming(true);
   }, []);
 
   const handleStreamComplete = useCallback(
     (subtaskId: number, result?: Record<string, unknown>) => {
       console.log('[GroupChat] Stream complete:', { subtaskId, result });
+      // Clear group chat streaming state
+      setGroupChatStreamingContent('');
+      setGroupChatStreamingSubtaskId(null);
+      setIsGroupChatStreaming(false);
+      // Refresh to get the final message
       refreshSelectedTaskDetail();
     },
     [refreshSelectedTaskDetail]
   );
+
+  // Reset group chat streaming state when task changes
+  useEffect(() => {
+    setGroupChatStreamingContent('');
+    setGroupChatStreamingSubtaskId(null);
+    setIsGroupChatStreaming(false);
+  }, [selectedTaskDetail?.id]);
 
   // Clear streamingTaskId when the streaming task completes or when we switch to a different task
   useEffect(() => {
@@ -1320,6 +1343,9 @@ export default function ChatArea({
               onShareButtonRender={onShareButtonRender}
               onSendMessage={handleSendMessageFromChild}
               isGroupChat={selectedTaskDetail?.is_group_chat || false}
+              groupChatStreamingContent={groupChatStreamingContent}
+              groupChatStreamingSubtaskId={groupChatStreamingSubtaskId}
+              isGroupChatStreaming={isGroupChatStreaming}
             />
           </div>
         </div>
