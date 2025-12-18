@@ -2,7 +2,9 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 import logging
+import signal
 import sys
 import time
 import uuid
@@ -10,7 +12,7 @@ from contextlib import asynccontextmanager
 
 import redis
 import socketio
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.api import api_router
@@ -23,6 +25,7 @@ from app.core.exceptions import (
     validation_exception_handler,
 )
 from app.core.logging import setup_logging
+from app.core.shutdown import shutdown_manager
 from app.core.yaml_init import run_yaml_initialization
 from app.db.base import Base
 from app.db.session import SessionLocal, engine
@@ -242,25 +245,67 @@ async def lifespan(app: FastAPI):
     yield
 
     # ==================== SHUTDOWN ====================
-    logger.info("Shutting down application...")
+    logger.info("=" * 60)
+    logger.info("Graceful shutdown initiated...")
+    logger.info("=" * 60)
 
-    # Close chat service HTTP client
+    # Step 1: Initiate graceful shutdown (mark as shutting down)
+    await shutdown_manager.initiate_shutdown()
+    logger.info(
+        "✓ Shutdown state set. Active streams: %d",
+        shutdown_manager.get_active_stream_count(),
+    )
+
+    # Step 2: Wait for active streaming requests to complete
+    shutdown_timeout = settings.GRACEFUL_SHUTDOWN_TIMEOUT
+    if shutdown_manager.get_active_stream_count() > 0:
+        logger.info(
+            "Waiting for %d active streams to complete (timeout: %ds)...",
+            shutdown_manager.get_active_stream_count(),
+            shutdown_timeout,
+        )
+        streams_completed = await shutdown_manager.wait_for_streams(
+            timeout=shutdown_timeout
+        )
+
+        if not streams_completed:
+            # Timeout reached, cancel remaining streams
+            remaining = shutdown_manager.get_active_stream_count()
+            logger.warning(
+                "Timeout reached. Cancelling %d remaining streams...", remaining
+            )
+            cancelled = await shutdown_manager.cancel_all_streams()
+            logger.info("Cancelled %d streams", cancelled)
+
+            # Give a short grace period for cancellation to propagate
+            await asyncio.sleep(1)
+    else:
+        logger.info("No active streams, proceeding with shutdown")
+
+    # Step 3: Close chat service HTTP client
     from app.services.chat.base import close_http_client
 
     await close_http_client()
     logger.info("✓ Chat service HTTP client closed")
 
-    # Stop background jobs
+    # Step 4: Stop background jobs
     stop_background_jobs(app)
-    logger.info("✓ Application shutdown completed")
+    logger.info("✓ Background jobs stopped")
 
-    # Shutdown OpenTelemetry
+    # Step 5: Shutdown OpenTelemetry
     from shared.telemetry.config import get_otel_config
     from shared.telemetry.core import is_telemetry_enabled, shutdown_telemetry
 
     if get_otel_config().enabled and is_telemetry_enabled():
         shutdown_telemetry()
         logger.info("✓ OpenTelemetry shutdown completed")
+
+    logger.info("=" * 60)
+    logger.info(
+        "Application shutdown completed. Duration: %.2fs",
+        shutdown_manager.shutdown_duration,
+    )
+    logger.info("=" * 60)
 
 
 def create_app():
@@ -322,6 +367,43 @@ def create_app():
     else:
         logger.debug("OpenTelemetry is disabled")
 
+    # Shutdown middleware - reject new requests during graceful shutdown
+    @app.middleware("http")
+    async def shutdown_middleware(request: Request, call_next):
+        """
+        Middleware to handle graceful shutdown.
+
+        During shutdown:
+        - Health check endpoints (/health, /ready, /) are always allowed
+        - New requests are rejected with 503 Service Unavailable
+        - Existing streaming requests continue until completion
+        """
+        # Always allow health check and probe endpoints
+        allowed_paths = {"/", "/api/health", "/api/ready", "/api/startup"}
+        if request.url.path in allowed_paths:
+            return await call_next(request)
+
+        # Reject new requests during shutdown if configured
+        if shutdown_manager.is_shutting_down and settings.SHUTDOWN_REJECT_NEW_REQUESTS:
+            from starlette.responses import JSONResponse
+
+            logger.warning(
+                "Rejecting request during shutdown: %s %s",
+                request.method,
+                request.url.path,
+            )
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "detail": "Service is shutting down",
+                    "retry_after": 5,
+                    "active_streams": shutdown_manager.get_active_stream_count(),
+                },
+                headers={"Retry-After": "5"},
+            )
+
+        return await call_next(request)
+
     @app.middleware("http")
     async def log_requests(request: Request, call_next):
         from starlette.responses import StreamingResponse
@@ -344,6 +426,17 @@ def create_app():
         username = get_username_from_request(request)
 
         client_ip = request.client.host if request.client else "Unknown"
+
+        # Always set request context for logging (works even without OTEL)
+        from shared.telemetry.context import (
+            set_request_context,
+            set_task_context,
+            set_user_context,
+        )
+
+        set_request_context(request_id)
+        if username:
+            set_user_context(user_name=username)
 
         # Capture request body if OTEL is enabled and body capture is configured
         request_body = None
@@ -371,13 +464,25 @@ def create_app():
         # Add OpenTelemetry span attributes if enabled
         if otel_config.enabled:
             from opentelemetry import trace
-            from shared.telemetry.context import set_request_context, set_user_context
             from shared.telemetry.core import is_telemetry_enabled
 
             if is_telemetry_enabled():
-                set_request_context(request_id)
-                if username:
-                    set_user_context(user_name=username)
+                # Extract task_id and subtask_id from request body for tracing
+                if request_body:
+                    try:
+                        import json
+
+                        body_json = json.loads(request_body)
+                        task_id = body_json.get("task_id")
+                        subtask_id = body_json.get("subtask_id")
+                        if task_id is not None or subtask_id is not None:
+                            set_task_context(task_id=task_id, subtask_id=subtask_id)
+                        # Extract user_id from request body if available
+                        user_id = body_json.get("user_id")
+                        if user_id is not None:
+                            set_user_context(user_id=str(user_id))
+                    except (json.JSONDecodeError, TypeError):
+                        pass  # Not JSON or invalid format, skip task context extraction
 
                 # Add request body to current span
                 if request_body:

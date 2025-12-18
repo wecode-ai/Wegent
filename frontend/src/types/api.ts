@@ -244,6 +244,9 @@ export interface TaskDetail {
   subtasks: TaskDetailSubtask[];
   workbench?: WorkbenchData | null;
   model_id?: string | null; // Model name used for this task
+  is_group_chat?: boolean; // Whether this task is a group chat
+  is_group_owner?: boolean; // Whether current user is the group owner
+  member_count?: number; // Number of active members in the group
 }
 
 /** Subtask result structure */
@@ -282,6 +285,11 @@ export interface TaskDetailSubtask {
   completed_at: string;
   bots: Bot[];
   attachments?: Attachment[];
+  // Group chat fields
+  sender_type?: 'USER' | 'TEAM';
+  sender_user_id?: number;
+  sender_user_name?: string;
+  reply_to_subtask_id?: number;
 }
 
 export interface Task {
@@ -305,6 +313,7 @@ export interface Task {
   created_at: string;
   updated_at: string;
   completed_at: string;
+  is_group_chat?: boolean; // Whether this task is a group chat
 }
 
 /** GitHub repository new structure */

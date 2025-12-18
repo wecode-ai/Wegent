@@ -22,6 +22,7 @@
     "start": "开始!",
     "confirm": "确认",
     "close": "关闭",
+    "done": "完成",
     "submit": "提交",
     "reset": "重置",
     "search": "搜索",
@@ -583,6 +584,7 @@
     "manage_skills_button": "管理技能"
   },
   "models": {
+    "label": "模型",
     "title": "模型管理",
     "description": "管理您的 AI 模型配置",
     "public": "公共",
@@ -1094,6 +1096,72 @@
       "create_failed": "创建 API 密钥失败",
       "delete_failed": "删除 API 密钥失败",
       "name_required": "请输入密钥名称"
+    }
+  },
+  "groupChat": {
+    "create": {
+      "button": "创建群聊",
+      "title": "创建群聊",
+      "description": "创建一个新的群聊任务，邀请其他人一起讨论",
+      "titleLabel": "群聊标题",
+      "titlePlaceholder": "输入群聊标题",
+      "titleRequired": "请输入群聊标题",
+      "teamLabel": "选择智能体",
+      "teamPlaceholder": "选择一个智能体",
+      "teamRequired": "请选择智能体",
+      "noChatTeams": "没有可用的聊天智能体",
+      "initialMessage": "群聊已创建，欢迎大家！",
+      "success": "群聊创建成功",
+      "successDesc": "现在可以邀请其他成员加入了",
+      "failed": "创建群聊失败",
+      "failedDesc": "请重试"
+    },
+    "inviteLink": {
+      "title": "邀请加入群聊",
+      "description": "生成邀请链接，分享给其他用户即可加入「{{taskTitle}}」",
+      "expiresIn": "链接有效期：",
+      "permanent": "永久有效",
+      "permanentNote": "此链接永久有效",
+      "hours24": "24 小时",
+      "days3": "3 天",
+      "days7": "7 天",
+      "days30": "30 天",
+      "generate": "生成邀请链接",
+      "generating": "生成中...",
+      "generateFailed": "生成邀请链接失败",
+      "copied": "链接已复制",
+      "copyFailed": "复制链接失败",
+      "expiresNote": "链接有效期 {{hours}} 小时，过期后需重新生成",
+      "regenerate": "重新生成",
+      "manage": "管理群组链接"
+    },
+    "invite": {
+      "title": "加入群聊",
+      "description": "你被邀请加入一个群聊",
+      "invitedBy": "{{name}} 邀请你加入",
+      "memberCount": "{{count}} 位成员",
+      "join": "加入群聊",
+      "joining": "加入中...",
+      "joinSuccess": "成功加入群聊！",
+      "joinFailed": "加入失败",
+      "alreadyMember": "你已经是群聊成员",
+      "invalidLink": "邀请链接无效或已过期"
+    },
+    "members": {
+      "title": "群聊成员",
+      "inviteLink": "邀请链接",
+      "addMember": "添加成员",
+      "addMembers": "添加成员",
+      "you": "你",
+      "invitedBy": "由 {{name}} 邀请",
+      "loadFailed": "加载成员失败",
+      "removeSuccess": "已移除 {{name}}",
+      "removeFailed": "移除成员失败",
+      "notOwner": "只有任务创建者可以创建邀请链接"
+    },
+    "delete": {
+      "button": "删除群组",
+      "confirmMessage": "确定要删除这个群聊吗？此操作无法撤销。"
     }
   },
   "wizard": {

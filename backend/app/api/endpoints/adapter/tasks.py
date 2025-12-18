@@ -12,7 +12,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_db
+from app.api.dependencies import get_db, with_task_telemetry
 from app.core import security
 from app.core.config import settings
 from app.models.user import User
@@ -76,8 +76,8 @@ def create_task_with_optional_id(
 
 @router.post("/{task_id}", response_model=TaskInDB, status_code=status.HTTP_201_CREATED)
 def create_task_with_id(
-    task_id: int,
     task_create: TaskCreate,
+    task_id: int = Depends(with_task_telemetry),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -117,6 +117,22 @@ def get_tasks_lite(
     return {"total": total, "items": items}
 
 
+@router.get("/lite/new", response_model=TaskLiteListResponse)
+def get_new_tasks_lite(
+    since_id: int = Query(..., ge=1, description="Get tasks with ID greater than this"),
+    limit: int = Query(
+        50, ge=1, le=100, description="Maximum number of new tasks to return"
+    ),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get new tasks created after the specified task ID, excluding DELETE status tasks"""
+    items = task_kinds_service.get_new_tasks_since_id(
+        db=db, user_id=current_user.id, since_id=since_id, limit=limit
+    )
+    return {"total": len(items), "items": items}
+
+
 @router.get("/search", response_model=TaskListResponse)
 def search_tasks_by_title(
     title: str = Query(..., min_length=1, description="Search by task title keywords"),
@@ -135,7 +151,7 @@ def search_tasks_by_title(
 
 @router.get("/{task_id}", response_model=TaskDetail)
 def get_task(
-    task_id: int,
+    task_id: int = Depends(with_task_telemetry),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -147,8 +163,8 @@ def get_task(
 
 @router.put("/{task_id}", response_model=TaskInDB)
 def update_task(
-    task_id: int,
     task_update: TaskUpdate,
+    task_id: int = Depends(with_task_telemetry),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -160,7 +176,7 @@ def update_task(
 
 @router.delete("/{task_id}")
 def delete_task(
-    task_id: int,
+    task_id: int = Depends(with_task_telemetry),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -171,8 +187,8 @@ def delete_task(
 
 @router.post("/{task_id}/cancel")
 async def cancel_task(
-    task_id: int,
     background_tasks: BackgroundTasks,
+    task_id: int = Depends(with_task_telemetry),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):

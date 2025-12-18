@@ -16,6 +16,7 @@ from shared.telemetry.context.attributes import SpanAttributes
 from shared.telemetry.context.propagation import (
     TRACE_PARENT_ENV,
     TRACE_STATE_ENV,
+    extract_trace_context_from_headers,
     get_trace_context_env_vars,
     get_trace_context_for_propagation,
     inject_trace_context_to_headers,
@@ -26,8 +27,12 @@ from shared.telemetry.context.propagation import (
 # Span manipulation utilities
 from shared.telemetry.context.span import (
     add_span_event,
+    copy_context_vars,
     create_child_span,
+    get_business_context,
     get_current_span,
+    get_request_id,
+    restore_context_vars,
     set_agent_context,
     set_bot_context,
     set_model_context,
@@ -60,11 +65,18 @@ __all__ = [
     "set_agent_context",
     "set_request_context",
     "set_repository_context",
+    # Context getters (for SpanProcessor and logging)
+    "get_business_context",
+    "get_request_id",
+    # Context copy/restore (for new event loops or threads)
+    "copy_context_vars",
+    "restore_context_vars",
     # Propagation
     "get_trace_context_for_propagation",
     "get_trace_context_env_vars",
     "restore_trace_context_from_env",
     "inject_trace_context_to_headers",
+    "extract_trace_context_from_headers",
     "TRACE_PARENT_ENV",
     "TRACE_STATE_ENV",
 ]

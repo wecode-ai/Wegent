@@ -7,6 +7,9 @@ OpenTelemetry provider initialization module.
 
 Provides functions to initialize TracerProvider and MeterProvider
 with OTLP exporters for distributed tracing and metrics.
+
+Includes BusinessContextSpanProcessor for automatic propagation of
+business context (task_id, subtask_id, user_id, user_name) to all spans.
 """
 
 import logging
@@ -19,6 +22,7 @@ from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExport
 from opentelemetry.sdk.metrics import MeterProvider as SDKMeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import ReadableSpan, Span, SpanProcessor
 from opentelemetry.sdk.trace import TracerProvider as SDKTracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.trace.sampling import (
@@ -33,28 +37,80 @@ from opentelemetry.util.types import Attributes
 logger = logging.getLogger(__name__)
 
 
+class BusinessContextSpanProcessor(SpanProcessor):
+    """
+    A SpanProcessor that automatically adds business context attributes
+    (task_id, subtask_id, user_id, user_name) to every span.
+
+    This processor reads from ContextVars set by set_task_context() and
+    set_user_context() and adds those attributes to each span when it starts.
+
+    This ensures that all spans within a request automatically inherit
+    the business context, making it easy to filter and correlate traces
+    by task_id, subtask_id, or user.
+    """
+
+    def on_start(
+        self,
+        span: Span,
+        parent_context: Optional[Context] = None,
+    ) -> None:
+        """
+        Called when a span is started. Adds business context attributes.
+        """
+        try:
+            # Import here to avoid circular imports
+            from shared.telemetry.context.span import get_business_context
+
+            # Get current business context from ContextVars
+            context = get_business_context()
+
+            # Add each attribute to the span
+            for key, value in context.items():
+                if value is not None:
+                    span.set_attribute(key, value)
+
+        except Exception as e:
+            # Don't let context propagation errors affect the application
+            logger.debug(f"Failed to add business context to span: {e}")
+
+    def on_end(self, span: ReadableSpan) -> None:
+        """Called when a span is ended. No action needed."""
+        pass
+
+    def shutdown(self) -> None:
+        """Called when the processor is shut down. No action needed."""
+        pass
+
+    def force_flush(self, timeout_millis: int = 30000) -> bool:
+        """Force flush any pending spans. No action needed."""
+        return True
+
+
 class FilteringParentBasedSampler(Sampler):
     """
     A custom sampler that filters out internal ASGI spans (http send/receive).
-    
+
     This sampler wraps a parent-based sampler and adds filtering logic to
     drop spans with names like "http send" or "http receive" which are
     created by the ASGI middleware for each SSE chunk in streaming responses.
-    
+
     This significantly reduces trace noise for streaming endpoints like
     /api/chat/stream where each chunk would otherwise create a separate span.
     """
-    
+
     # Span names to filter out (internal ASGI spans)
-    FILTERED_SPAN_NAMES = frozenset([
-        "http send",
-        "http receive",
-        "HTTP send",
-        "HTTP receive",
-        "asgi.send",
-        "asgi.receive",
-    ])
-    
+    FILTERED_SPAN_NAMES = frozenset(
+        [
+            "http send",
+            "http receive",
+            "HTTP send",
+            "HTTP receive",
+            "asgi.send",
+            "asgi.receive",
+        ]
+    )
+
     def __init__(
         self,
         root_sampler: Sampler,
@@ -62,14 +118,14 @@ class FilteringParentBasedSampler(Sampler):
     ):
         """
         Initialize the filtering sampler.
-        
+
         Args:
             root_sampler: The underlying sampler to use for non-filtered spans
             filter_internal_spans: Whether to filter out internal ASGI spans
         """
         self._root_sampler = root_sampler
         self._filter_internal_spans = filter_internal_spans
-    
+
     def should_sample(
         self,
         parent_context: Optional[Context],
@@ -82,7 +138,7 @@ class FilteringParentBasedSampler(Sampler):
     ) -> SamplingResult:
         """
         Determine if a span should be sampled.
-        
+
         Filters out internal ASGI spans (http send/receive) to reduce noise
         from streaming endpoints.
         """
@@ -93,7 +149,7 @@ class FilteringParentBasedSampler(Sampler):
                 attributes=None,
                 trace_state=trace_state,
             )
-        
+
         # Delegate to the root sampler for all other spans
         return self._root_sampler.should_sample(
             parent_context=parent_context,
@@ -104,7 +160,7 @@ class FilteringParentBasedSampler(Sampler):
             links=links,
             trace_state=trace_state,
         )
-    
+
     def get_description(self) -> str:
         """Return a description of this sampler."""
         return f"FilteringParentBasedSampler(root={self._root_sampler.get_description()}, filter_internal={self._filter_internal_spans})"
@@ -151,19 +207,25 @@ def init_tracer_provider(
     # 3. The application continues to function normally
     span_processor = BatchSpanProcessor(
         otlp_exporter,
-        max_queue_size=2048,           # Max spans in queue (default: 2048)
-        schedule_delay_millis=5000,    # Export every 5 seconds (default: 5000)
-        max_export_batch_size=512,     # Max spans per batch (default: 512)
-        export_timeout_millis=10000,   # 10 second export timeout (default: 30000)
+        max_queue_size=2048,  # Max spans in queue (default: 2048)
+        schedule_delay_millis=5000,  # Export every 5 seconds (default: 5000)
+        max_export_batch_size=512,  # Max spans per batch (default: 512)
+        export_timeout_millis=10000,  # 10 second export timeout (default: 30000)
     )
     tracer_provider.add_span_processor(span_processor)
+
+    # Add BusinessContextSpanProcessor to automatically propagate
+    # task_id, subtask_id, user_id, user_name to all spans
+    business_context_processor = BusinessContextSpanProcessor()
+    tracer_provider.add_span_processor(business_context_processor)
 
     # Set as global TracerProvider
     trace.set_tracer_provider(tracer_provider)
 
     logger.debug(
         f"TracerProvider initialized with endpoint: {otlp_endpoint}, "
-        f"sampler_ratio: {sampler_ratio}, fail-safe mode enabled"
+        f"sampler_ratio: {sampler_ratio}, fail-safe mode enabled, "
+        f"business context propagation enabled"
     )
 
 
@@ -196,8 +258,8 @@ def init_meter_provider(resource: Resource, otlp_endpoint: str) -> None:
     # 2. The application continues to function normally
     metric_reader = PeriodicExportingMetricReader(
         metric_exporter,
-        export_interval_millis=60000,   # Export every 60 seconds
-        export_timeout_millis=10000,    # 10 second export timeout
+        export_interval_millis=60000,  # Export every 60 seconds
+        export_timeout_millis=10000,  # 10 second export timeout
     )
 
     # Create MeterProvider

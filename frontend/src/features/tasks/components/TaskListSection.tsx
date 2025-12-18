@@ -15,6 +15,7 @@ import {
   RotateCw,
   Code2,
   MessageSquare,
+  Users,
 } from 'lucide-react';
 
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
@@ -313,6 +314,11 @@ export default function TaskListSection({
       } else {
         taskType = 'chat';
       }
+    }
+
+    // Show group chat icon for group chats
+    if (task.is_group_chat) {
+      return <Users className="w-3.5 h-3.5 text-text-muted" />;
     }
 
     if (taskType === 'code') {

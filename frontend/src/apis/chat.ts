@@ -50,6 +50,8 @@ export interface StreamChatRequest {
   team_id: number;
   /** Task ID for multi-turn conversations (optional) */
   task_id?: number;
+  /** Custom title for new tasks (optional) */
+  title?: string;
   /** Model ID override (optional) */
   model_id?: string;
   /** Force override bot's default model */

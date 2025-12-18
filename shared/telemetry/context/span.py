@@ -7,16 +7,120 @@ Span manipulation utilities for OpenTelemetry.
 
 Provides functions for working with spans, including
 setting attributes, adding events, and managing span status.
+
+Also provides ContextVars for automatic propagation of business context
+(task_id, subtask_id, user_id, user_name) to all spans within a request.
 """
 
 import logging
+from contextvars import ContextVar
 from typing import Any, Dict, Optional
 
 from opentelemetry import trace
 from opentelemetry.trace import Span, Status, StatusCode
-
 from shared.telemetry.context.attributes import SpanAttributes
 from shared.telemetry.core import is_telemetry_enabled
+
+# ============================================================================
+# Context Variables for automatic propagation to all spans
+# ============================================================================
+
+# These ContextVars store business context that should be automatically
+# added to all spans within a request. They are set via set_task_context()
+# and set_user_context(), and read by BusinessContextSpanProcessor.
+
+_task_id_var: ContextVar[Optional[int]] = ContextVar("task_id", default=None)
+_subtask_id_var: ContextVar[Optional[int]] = ContextVar("subtask_id", default=None)
+_user_id_var: ContextVar[Optional[str]] = ContextVar("user_id", default=None)
+_user_name_var: ContextVar[Optional[str]] = ContextVar("user_name", default=None)
+_request_id_var: ContextVar[Optional[str]] = ContextVar("request_id", default=None)
+
+
+def get_request_id() -> Optional[str]:
+    """
+    Get the current request ID from ContextVar.
+
+    This is used by the logging filter to add request_id to log records.
+
+    Returns:
+        The current request ID or None if not set
+    """
+    return _request_id_var.get()
+
+
+def copy_context_vars() -> Dict[str, Any]:
+    """
+    Copy all telemetry ContextVar values to a dictionary.
+
+    This is useful when creating a new event loop or thread where
+    ContextVars don't automatically propagate. The returned dict
+    can be passed to restore_context_vars() in the new context.
+
+    Returns:
+        Dict containing all current ContextVar values
+    """
+    return {
+        "task_id": _task_id_var.get(),
+        "subtask_id": _subtask_id_var.get(),
+        "user_id": _user_id_var.get(),
+        "user_name": _user_name_var.get(),
+        "request_id": _request_id_var.get(),
+    }
+
+
+def restore_context_vars(context_dict: Dict[str, Any]) -> None:
+    """
+    Restore ContextVar values from a dictionary.
+
+    This should be called at the start of a new event loop or thread
+    to restore the context that was copied with copy_context_vars().
+
+    Args:
+        context_dict: Dict containing ContextVar values from copy_context_vars()
+    """
+    if context_dict.get("task_id") is not None:
+        _task_id_var.set(context_dict["task_id"])
+    if context_dict.get("subtask_id") is not None:
+        _subtask_id_var.set(context_dict["subtask_id"])
+    if context_dict.get("user_id") is not None:
+        _user_id_var.set(context_dict["user_id"])
+    if context_dict.get("user_name") is not None:
+        _user_name_var.set(context_dict["user_name"])
+    if context_dict.get("request_id") is not None:
+        _request_id_var.set(context_dict["request_id"])
+
+
+def get_business_context() -> Dict[str, Any]:
+    """
+    Get the current business context from ContextVars.
+
+    Returns:
+        Dict with task_id, subtask_id, user_id, user_name, request_id if set
+    """
+    context = {}
+
+    task_id = _task_id_var.get()
+    if task_id is not None:
+        context[SpanAttributes.TASK_ID] = task_id
+
+    subtask_id = _subtask_id_var.get()
+    if subtask_id is not None:
+        context[SpanAttributes.SUBTASK_ID] = subtask_id
+
+    user_id = _user_id_var.get()
+    if user_id is not None:
+        context[SpanAttributes.USER_ID] = user_id
+
+    user_name = _user_name_var.get()
+    if user_name is not None:
+        context[SpanAttributes.USER_NAME] = user_name
+
+    request_id = _request_id_var.get()
+    if request_id is not None:
+        context[SpanAttributes.REQUEST_ID] = request_id
+
+    return context
+
 
 logger = logging.getLogger(__name__)
 
@@ -186,12 +290,20 @@ def set_user_context(
     user_id: Optional[str] = None, user_name: Optional[str] = None
 ) -> None:
     """
-    Set user context attributes on the current span.
+    Set user context attributes on the current span AND store in ContextVar
+    for automatic propagation to subsequent spans.
 
     Args:
         user_id: User identifier
         user_name: User name
     """
+    # Store in ContextVars for automatic propagation to subsequent spans
+    if user_id is not None:
+        _user_id_var.set(user_id)
+    if user_name is not None:
+        _user_name_var.set(user_name)
+
+    # Also set on current span immediately
     attributes = {}
     if user_id:
         attributes[SpanAttributes.USER_ID] = user_id
@@ -206,12 +318,20 @@ def set_task_context(
     task_id: Optional[int] = None, subtask_id: Optional[int] = None
 ) -> None:
     """
-    Set task context attributes on the current span.
+    Set task context attributes on the current span AND store in ContextVar
+    for automatic propagation to subsequent spans.
 
     Args:
         task_id: Task identifier
         subtask_id: Subtask identifier
     """
+    # Store in ContextVars for automatic propagation to subsequent spans
+    if task_id is not None:
+        _task_id_var.set(task_id)
+    if subtask_id is not None:
+        _subtask_id_var.set(subtask_id)
+
+    # Also set on current span immediately
     attributes = {}
     if task_id is not None:
         attributes[SpanAttributes.TASK_ID] = task_id
@@ -304,11 +424,17 @@ def set_agent_context(
 
 def set_request_context(request_id: Optional[str] = None) -> None:
     """
-    Set request context attributes on the current span.
+    Set request context attributes on the current span AND store in ContextVar
+    for use in logging.
 
     Args:
         request_id: Request identifier
     """
+    # Store in ContextVar for logging filter to access
+    if request_id is not None:
+        _request_id_var.set(request_id)
+
+    # Also set on current span immediately
     if request_id:
         set_span_attributes({SpanAttributes.REQUEST_ID: request_id})
 

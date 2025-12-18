@@ -46,6 +46,8 @@ import { useToast } from '@/hooks/use-toast';
 import { taskApis } from '@/apis/tasks';
 import { useAttachment } from '@/hooks/useAttachment';
 import { chatApis, SearchEngine } from '@/apis/chat';
+import { GroupChatSyncManager } from './group-chat';
+import type { SubtaskWithSender } from '@/apis/group-chat';
 
 const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18;
 
@@ -411,6 +413,51 @@ export default function ChatArea({
     setStreamingTaskId(null);
   }, [currentDisplayTaskId, streamingTaskId, contextResetStream]);
 
+  // Group chat streaming state (for other users to see streaming content)
+  const [groupChatStreamingContent, setGroupChatStreamingContent] = useState<string>('');
+  const [groupChatStreamingSubtaskId, setGroupChatStreamingSubtaskId] = useState<number | null>(
+    null
+  );
+  const [isGroupChatStreaming, setIsGroupChatStreaming] = useState(false);
+
+  // Group chat message handlers
+  const handleNewMessages = useCallback(
+    (messages: SubtaskWithSender[]) => {
+      if (messages.length > 0) {
+        refreshSelectedTaskDetail();
+      }
+    },
+    [refreshSelectedTaskDetail]
+  );
+
+  const handleStreamContent = useCallback((content: string, subtaskId: number) => {
+    console.log('[GroupChat] Stream content:', { subtaskId, contentLength: content.length });
+    // Update group chat streaming state so MessagesArea can display it
+    setGroupChatStreamingContent(content);
+    setGroupChatStreamingSubtaskId(subtaskId);
+    setIsGroupChatStreaming(true);
+  }, []);
+
+  const handleStreamComplete = useCallback(
+    (subtaskId: number, result?: Record<string, unknown>) => {
+      console.log('[GroupChat] Stream complete:', { subtaskId, result });
+      // Clear group chat streaming state
+      setGroupChatStreamingContent('');
+      setGroupChatStreamingSubtaskId(null);
+      setIsGroupChatStreaming(false);
+      // Refresh to get the final message
+      refreshSelectedTaskDetail();
+    },
+    [refreshSelectedTaskDetail]
+  );
+
+  // Reset group chat streaming state when task changes
+  useEffect(() => {
+    setGroupChatStreamingContent('');
+    setGroupChatStreamingSubtaskId(null);
+    setIsGroupChatStreaming(false);
+  }, [selectedTaskDetail?.id]);
+
   // Clear streamingTaskId when the streaming task completes or when we switch to a different task
   useEffect(() => {
     if (streamingTaskId && selectedTaskDetail?.id && selectedTaskDetail.id !== streamingTaskId) {
@@ -507,6 +554,17 @@ export default function ChatArea({
     return appMode === 'workflow';
   }, [appMode]);
 
+  // Helper function to check if a team is compatible with the current mode
+  const isTeamCompatibleWithMode = useCallback(
+    (team: Team): boolean => {
+      // If bind_mode is not set or is an empty array, team is not compatible
+      if (!team.bind_mode || team.bind_mode.length === 0) return false;
+      // Otherwise, check if current mode is in bind_mode
+      return team.bind_mode.includes(taskType);
+    },
+    [taskType]
+  );
+
   // Restore user preferences from localStorage when teams load
   // Only runs for new tasks (no messages), not when switching to existing tasks
   useEffect(() => {
@@ -517,32 +575,36 @@ export default function ChatArea({
 
     if (lastTeamId) {
       const lastTeam = teams.find(team => team.id === lastTeamId);
-      if (lastTeam) {
+      // Only restore if the team is compatible with current mode
+      if (lastTeam && isTeamCompatibleWithMode(lastTeam)) {
         setSelectedTeam(lastTeam);
         setHasRestoredPreferences(true);
         return;
       } else {
         console.log(
-          '[ChatArea] â�Œ Team from localStorage not found in teams list, ID:',
+          '[ChatArea] ❌ Team from localStorage not found or not compatible with current mode, ID:',
           lastTeamId
         );
       }
     }
 
-    // No valid preference, use first team as default
-    if (teams.length > 0) {
+    // No valid preference, use first compatible team as default
+    const compatibleTeam = teams.find(team => isTeamCompatibleWithMode(team));
+    if (compatibleTeam) {
       console.log(
-        '[ChatArea] No valid preference, using first team as default:',
-        teams[0].name,
-        teams[0].id
+        '[ChatArea] No valid preference, using first compatible team as default:',
+        compatibleTeam.name,
+        compatibleTeam.id
       );
-      setSelectedTeam(teams[0]);
+      setSelectedTeam(compatibleTeam);
+    } else {
+      console.log('[ChatArea] No compatible team found for current mode:', taskType);
     }
     setHasRestoredPreferences(true);
     // Note: selectedTaskDetail is intentionally excluded from dependencies
     // This effect should only run when teams load, not when task detail changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [teams, hasRestoredPreferences, hasMessages]);
+  }, [teams, hasRestoredPreferences, hasMessages, isTeamCompatibleWithMode]);
 
   // Handle external team selection for new tasks (from team sharing)
   useEffect(() => {
@@ -558,13 +620,28 @@ export default function ChatArea({
     }
 
     if (!selectedTeam?.id || selectedTeam.id !== detailTeamId) {
+      // Try to find team in teams list first
       const matchedTeam = teams.find(team => team.id === detailTeamId) || null;
       if (matchedTeam) {
         setSelectedTeam(matchedTeam);
         setHasRestoredPreferences(true);
+      } else {
+        // For group chat members: team might not be in teams list
+        // Use team object directly from selectedTaskDetail if available
+        if (selectedTaskDetail?.team && typeof selectedTaskDetail.team === 'object') {
+          const teamFromDetail = selectedTaskDetail.team as Team;
+          if (teamFromDetail.id === detailTeamId) {
+            console.log(
+              '[ChatArea] Using team from task detail (group chat member):',
+              teamFromDetail.name
+            );
+            setSelectedTeam(teamFromDetail);
+            setHasRestoredPreferences(true);
+          }
+        }
       }
     }
-  }, [detailTeamId, teams, selectedTeam?.id, setSelectedTeam]);
+  }, [detailTeamId, teams, selectedTeam?.id, setSelectedTeam, selectedTaskDetail?.team]);
 
   // Set model and override flag when viewing existing task
   useEffect(() => {
@@ -1233,6 +1310,18 @@ export default function ChatArea({
       className="flex-1 flex flex-col min-h-0 w-full relative"
       style={{ height: '100%', boxSizing: 'border-box' }}
     >
+      {/* Group Chat Sync Manager - zero UI, handles polling and streaming */}
+      {selectedTaskDetail?.is_group_chat && selectedTaskDetail.id && (
+        <GroupChatSyncManager
+          taskId={selectedTaskDetail.id}
+          isGroupChat={true}
+          enabled={true}
+          onNewMessages={handleNewMessages}
+          onStreamContent={handleStreamContent}
+          onStreamComplete={handleStreamComplete}
+        />
+      )}
+
       {/* Messages Area: always mounted to keep scroll container stable */}
       <div className={hasMessages ? 'relative flex-1 min-h-0' : 'relative'}>
         {/* Top gradient fade effect - only show when has messages */}
@@ -1268,6 +1357,10 @@ export default function ChatArea({
               streamingSubtaskId={streamingSubtaskId}
               onShareButtonRender={onShareButtonRender}
               onSendMessage={handleSendMessageFromChild}
+              isGroupChat={selectedTaskDetail?.is_group_chat || false}
+              groupChatStreamingContent={groupChatStreamingContent}
+              groupChatStreamingSubtaskId={groupChatStreamingSubtaskId}
+              isGroupChatStreaming={isGroupChatStreaming}
             />
           </div>
         </div>
@@ -1347,6 +1440,8 @@ export default function ChatArea({
                         canSubmit={canSubmit}
                         tipText={randomTip}
                         badge={selectedTeam ? <SelectedTeamBadge team={selectedTeam} /> : undefined}
+                        isGroupChat={selectedTaskDetail?.is_group_chat || false}
+                        team={selectedTeam}
                       />
                     </div>
                   )}
@@ -1606,6 +1701,8 @@ export default function ChatArea({
                       taskType={taskType}
                       canSubmit={canSubmit}
                       tipText={randomTip}
+                      isGroupChat={selectedTaskDetail?.is_group_chat || false}
+                      team={selectedTeam}
                     />
                   </div>
                 )}

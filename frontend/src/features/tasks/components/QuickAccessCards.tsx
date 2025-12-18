@@ -92,10 +92,8 @@ export function QuickAccessCards({
 
   // Filter teams by bind_mode based on current mode (same logic as TeamSelector)
   const filteredTeams = teams.filter(team => {
-    // If bind_mode is an empty array, filter it out
-    if (Array.isArray(team.bind_mode) && team.bind_mode.length === 0) return false;
-    // If bind_mode is not set (undefined/null), show in all modes
-    if (!team.bind_mode) return true;
+    // If bind_mode is not set or is an empty array, filter it out (team has no bound mode)
+    if (!team.bind_mode || team.bind_mode.length === 0) return false;
     // Otherwise, only show if current mode is in bind_mode
     return team.bind_mode.includes(currentMode);
   });
