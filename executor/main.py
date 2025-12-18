@@ -21,6 +21,8 @@ from contextlib import asynccontextmanager
 from shared.logger import setup_logger
 from shared.status import TaskStatus
 from shared.telemetry.config import get_otel_config
+from shared.telemetry.context import set_task_context, set_user_context
+from shared.telemetry.core import is_telemetry_enabled
 from executor.tasks import process
 from executor.services.agent_service import AgentService
 
@@ -67,6 +69,12 @@ async def lifespan(app: FastAPI):
             logger.warning(f"Failed to initialize OpenTelemetry: {e}")
     try:
         if os.getenv("TASK_INFO"):
+            # Generate a request_id for startup task execution
+            # This ensures logs have a request_id even without HTTP request
+            startup_request_id = str(uuid.uuid4())[:8]
+            from shared.telemetry.context import set_request_context
+            set_request_context(startup_request_id)
+            
             logger.info("TASK_INFO environment variable found, attempting to run task")
             status = run_task()
             logger.info(f"Task execution status: {status}")
@@ -97,20 +105,38 @@ app = FastAPI(
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     from starlette.responses import StreamingResponse
+    from opentelemetry import context
 
     # Skip logging for health check requests
     if request.url.path == "/":
         return await call_next(request)
 
-    # Generate a unique request ID
-    request_id = str(uuid.uuid4())[:8]
+    # Get request_id from header (propagated from upstream service) or generate new one
+    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())[:8]
     request.state.request_id = request_id
 
     start_time = time.time()
 
-    # Capture request body if OTEL is enabled and body capture is configured
-    # Get OTEL config for middleware checks
+    # Always set request context for logging (works even without OTEL)
+    from shared.telemetry.context import set_request_context, extract_trace_context_from_headers
+    set_request_context(request_id)
+
+    # Extract and attach trace context from incoming HTTP headers for distributed tracing
+    # This allows executor to continue the trace started by executor_manager
     otel_cfg = get_otel_config()
+    if otel_cfg.enabled:
+        try:
+            # Convert headers to dict for extraction
+            headers_dict = dict(request.headers)
+            extracted_ctx = extract_trace_context_from_headers(headers_dict)
+            if extracted_ctx:
+                # Attach the extracted context so subsequent spans become children
+                context.attach(extracted_ctx)
+                logger.debug(f"Attached trace context from headers for request {request_id}")
+        except Exception as e:
+            logger.debug(f"Failed to extract trace context from headers: {e}")
+
+    # Capture request body if OTEL is enabled and body capture is configured
     request_body = None
     if (
         otel_cfg.enabled
@@ -136,11 +162,8 @@ async def log_requests(request: Request, call_next):
         try:
             from opentelemetry import trace
             from shared.telemetry.core import is_telemetry_enabled
-            from shared.telemetry.context import set_request_context
 
             if is_telemetry_enabled():
-                set_request_context(request_id)
-
                 if request_body:
                     current_span = trace.get_current_span()
                     if current_span and current_span.is_recording():
@@ -243,6 +266,18 @@ async def execute_task(request: Request):
     task_id = task_data.get("task_id", -1)
     subtask_id = task_data.get("subtask_id", -1)
 
+    # Set task and user context for tracing
+    otel_config = get_otel_config()
+    if otel_config.enabled and is_telemetry_enabled():
+        set_task_context(task_id=task_id, subtask_id=subtask_id)
+        # Extract user info from task data
+        user_data = task_data.get("user", {})
+        if user_data:
+            set_user_context(
+                user_id=str(user_data.get("id", "")) if user_data.get("id") else None,
+                user_name=user_data.get("name")
+            )
+
     try:
         # Use process function to handle task uniformly
         status = process(task_data)
@@ -293,6 +328,11 @@ async def cancel_task(
     Cancel the currently running task for a specific task_id
     Returns immediately, callback is sent asynchronously in background to avoid blocking executor_manager's cancel request
     """
+    # Set task context for tracing
+    otel_config = get_otel_config()
+    if otel_config.enabled and is_telemetry_enabled():
+        set_task_context(task_id=task_id)
+
     status, message = agent_service.cancel_task(task_id)
 
     if status == TaskStatus.SUCCESS:

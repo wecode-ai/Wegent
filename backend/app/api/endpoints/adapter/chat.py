@@ -505,6 +505,11 @@ async def stream_chat(
         db, current_user, team, request.message, request, request.task_id
     )
 
+    # Set task context for OpenTelemetry tracing after task/subtask creation
+    from app.api.dependencies import _set_telemetry_task_context
+
+    _set_telemetry_task_context(task_id=task.id, subtask_id=assistant_subtask.id)
+
     # Link attachment to the user subtask if provided
     if attachment:
         # Find the user subtask (the one before assistant_subtask)
