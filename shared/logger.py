@@ -7,7 +7,9 @@
 # -*- coding: utf-8 -*-
 
 """
-Common logging module, configures and provides logging functionality for the application
+Common logging module, configures and provides logging functionality for the application.
+
+Supports automatic request_id injection into log messages via ContextVar.
 """
 
 import logging
@@ -16,6 +18,39 @@ import sys
 from logging.handlers import QueueHandler, QueueListener
 import multiprocessing
 from typing import Optional
+
+
+class RequestIdFilter(logging.Filter):
+    """
+    A logging filter that adds request_id to log records.
+    
+    This filter reads the request_id from the ContextVar set by set_request_context()
+    and adds it to each log record, making it available in the log format string.
+    """
+    
+    def filter(self, record: logging.LogRecord) -> bool:
+        """
+        Add request_id to the log record.
+        
+        Args:
+            record: The log record to modify
+            
+        Returns:
+            True (always allow the record to be logged)
+        """
+        try:
+            from shared.telemetry.context import get_request_id
+            request_id = get_request_id()
+            record.request_id = request_id if request_id else "-"
+        except ImportError:
+            # If telemetry module is not available, use placeholder
+            record.request_id = "-"
+        except Exception:
+            # Fallback for any other errors
+            record.request_id = "-"
+        
+        return True
+
 
 class NonBlockingStreamHandler(logging.StreamHandler):
     """
@@ -34,10 +69,12 @@ class NonBlockingStreamHandler(logging.StreamHandler):
             # Handle other exceptions gracefully
             pass
 
+
 def setup_logger(name, level=logging.INFO,
-                format='%(asctime)s - [in %(pathname)s:%(lineno)d] - %(levelname)s - %(message)s',
+                format='%(asctime)s - [%(request_id)s] - [in %(pathname)s:%(lineno)d] - %(levelname)s - %(message)s',
                 datefmt='%Y-%m-%d %H:%M:%S',
-                use_multiprocessing_safe=True):
+                use_multiprocessing_safe=True,
+                include_request_id=True):
     """
     Configure and return a logger instance
 
@@ -46,9 +83,10 @@ def setup_logger(name, level=logging.INFO,
     Args:
         name: Logger name
         level: Logging level, default is INFO
-        format: Log message format, default includes line number
+        format: Log message format, default includes line number and request_id
         datefmt: Date format for timestamps
         use_multiprocessing_safe: Whether to use multiprocessing-safe logging
+        include_request_id: Whether to include request_id in log format (default: True)
 
     Returns:
         logging.Logger: Configured logger instance
@@ -82,6 +120,10 @@ def setup_logger(name, level=logging.INFO,
             log_queue = multiprocessing.Queue()
             queue_handler = QueueHandler(log_queue)
             queue_handler.setLevel(level)
+            
+            # Add RequestIdFilter to queue handler
+            if include_request_id:
+                queue_handler.addFilter(RequestIdFilter())
 
             listener_handler = NonBlockingStreamHandler(sys.stdout)
             listener_handler.setLevel(level)
@@ -102,6 +144,11 @@ def setup_logger(name, level=logging.INFO,
         console_handler = NonBlockingStreamHandler(sys.stdout)
         console_handler.setLevel(level)
         console_handler.setFormatter(formatter)
+        
+        # Add RequestIdFilter to console handler
+        if include_request_id:
+            console_handler.addFilter(RequestIdFilter())
+        
         logger.addHandler(console_handler)
 
     return logger

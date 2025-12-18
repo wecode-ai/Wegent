@@ -7,6 +7,9 @@ OpenTelemetry provider initialization module.
 
 Provides functions to initialize TracerProvider and MeterProvider
 with OTLP exporters for distributed tracing and metrics.
+
+Includes BusinessContextSpanProcessor for automatic propagation of
+business context (task_id, subtask_id, user_id, user_name) to all spans.
 """
 
 import logging
@@ -19,6 +22,7 @@ from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExport
 from opentelemetry.sdk.metrics import MeterProvider as SDKMeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import ReadableSpan, Span, SpanProcessor
 from opentelemetry.sdk.trace import TracerProvider as SDKTracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.trace.sampling import (
@@ -31,6 +35,56 @@ from opentelemetry.trace import Link, SpanKind
 from opentelemetry.util.types import Attributes
 
 logger = logging.getLogger(__name__)
+
+
+class BusinessContextSpanProcessor(SpanProcessor):
+    """
+    A SpanProcessor that automatically adds business context attributes
+    (task_id, subtask_id, user_id, user_name) to every span.
+    
+    This processor reads from ContextVars set by set_task_context() and
+    set_user_context() and adds those attributes to each span when it starts.
+    
+    This ensures that all spans within a request automatically inherit
+    the business context, making it easy to filter and correlate traces
+    by task_id, subtask_id, or user.
+    """
+    
+    def on_start(
+        self,
+        span: Span,
+        parent_context: Optional[Context] = None,
+    ) -> None:
+        """
+        Called when a span is started. Adds business context attributes.
+        """
+        try:
+            # Import here to avoid circular imports
+            from shared.telemetry.context.span import get_business_context
+            
+            # Get current business context from ContextVars
+            context = get_business_context()
+            
+            # Add each attribute to the span
+            for key, value in context.items():
+                if value is not None:
+                    span.set_attribute(key, value)
+                    
+        except Exception as e:
+            # Don't let context propagation errors affect the application
+            logger.debug(f"Failed to add business context to span: {e}")
+    
+    def on_end(self, span: ReadableSpan) -> None:
+        """Called when a span is ended. No action needed."""
+        pass
+    
+    def shutdown(self) -> None:
+        """Called when the processor is shut down. No action needed."""
+        pass
+    
+    def force_flush(self, timeout_millis: int = 30000) -> bool:
+        """Force flush any pending spans. No action needed."""
+        return True
 
 
 class FilteringParentBasedSampler(Sampler):
@@ -158,12 +212,18 @@ def init_tracer_provider(
     )
     tracer_provider.add_span_processor(span_processor)
 
+    # Add BusinessContextSpanProcessor to automatically propagate
+    # task_id, subtask_id, user_id, user_name to all spans
+    business_context_processor = BusinessContextSpanProcessor()
+    tracer_provider.add_span_processor(business_context_processor)
+
     # Set as global TracerProvider
     trace.set_tracer_provider(tracer_provider)
 
     logger.debug(
         f"TracerProvider initialized with endpoint: {otlp_endpoint}, "
-        f"sampler_ratio: {sampler_ratio}, fail-safe mode enabled"
+        f"sampler_ratio: {sampler_ratio}, fail-safe mode enabled, "
+        f"business context propagation enabled"
     )
 
 
