@@ -170,9 +170,7 @@ def shutdown_status(response: Response):
             "status": "shutting_down",
             "message": "Service is shutting down, not accepting new traffic",
         }
-    return {
-        "is_shutting_down": shutdown_manager.is_shutting_down
-    }
+    return {"is_shutting_down": shutdown_manager.is_shutting_down}
 
 
 @router.post("/shutdown/reset")
