@@ -130,6 +130,26 @@ function RecoveredMessageBubble({
   );
 }
 
+/**
+ * Check if a message contains an @ mention for a specific bot/team name
+ * This is used in group chat to determine if AI should respond
+ * @param message - The message content to check
+ * @param botName - The bot/team name to look for (e.g., "MyBot", "智能助手")
+ * @returns true if the message contains @botName
+ */
+function containsBotMention(
+  message: string | null | undefined,
+  botName: string | null | undefined
+): boolean {
+  if (!message || !botName) return false;
+  // Escape special regex characters in bot name
+  const escapedBotName = botName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // Match @botName (case-insensitive, supports Chinese and other characters)
+  // The bot name can be followed by whitespace, punctuation, or end of string
+  const atMentionPattern = new RegExp(`@${escapedBotName}(?:\\s|$|[,，。.!！?？])`, 'i');
+  return atMentionPattern.test(message);
+}
+
 interface MessagesAreaProps {
   selectedTeam?: Team | null;
   selectedRepo?: GitRepoInfo | null;
@@ -851,10 +871,12 @@ export default function MessagesArea({
       translate="no"
     >
       {/* Messages Area - always render container to prevent layout shift */}
-      {/* Show messages when: 1) has display messages, 2) has pending message, 3) is streaming, 4) has selected task (even if loading) */}
+      {/* Show messages when: 1) has display messages, 2) has pending message, 3) is streaming with subtask ID, 4) has selected task (even if loading) */}
+      {/* IMPORTANT: For streaming, only consider it "active" when streamingSubtaskId is set */}
+      {/* This prevents showing empty streaming state before AI generation is triggered */}
       {(displayMessages.length > 0 ||
         pendingUserMessage ||
-        isStreaming ||
+        (isStreaming && streamingSubtaskId) ||
         selectedTaskDetail?.id) && (
         <div className="flex-1 space-y-8 messages-container">
           {displayMessages.map((msg, index) => {
@@ -947,9 +969,11 @@ export default function MessagesArea({
 
           {/* Pending user message (optimistic update) - only show if not already in displayMessages */}
           {/* Use MessageBubble to ensure proper rendering of special formats like ClarificationAnswerSummary */}
-          {/* In group chat, wrap with GroupChatMessageWrapper to show sender name consistently */}
+          {/* In group chat, always wrap with GroupChatMessageWrapper for consistent appearance */}
+          {/* In group chat, wait for user info to be loaded to prevent "no username" -> "with username" flash */}
           {pendingUserMessage &&
             !isPendingMessageAlreadyDisplayed &&
+            (!isGroupChat || user) &&
             (() => {
               const pendingMsg = {
                 type: 'user' as const,
@@ -978,16 +1002,19 @@ export default function MessagesArea({
                 />
               );
 
-              // In group chat, wrap with GroupChatMessageWrapper to show sender name
-              // This ensures consistent appearance with messages from displayMessages
-              if (isGroupChat && user) {
+              // In group chat, always wrap with GroupChatMessageWrapper for consistent appearance
+              // This ensures the message doesn't "jump" when transitioning from pending to displayed
+              // Note: For own messages, GroupChatMessageWrapper won't show sender badge (by design)
+              if (isGroupChat) {
                 // Create a mock subtask for the wrapper
+                // Use user info if available, otherwise use placeholder values
                 const mockSubtask = {
                   id: -1,
                   role: 'USER' as const,
                   sender_type: 'USER' as const,
-                  sender_user_id: user.id,
-                  sender_user_name: user.user_name,
+                  sender_user_id: user?.id || 0,
+                  sender_user_name: user?.user_name || '',
+                  user_id: user?.id || 0,
                 } as unknown as TaskDetailSubtask;
 
                 return (
@@ -1004,22 +1031,73 @@ export default function MessagesArea({
               return messageBubble;
             })()}
 
-          {/* Streaming AI response - use MessageBubble component for consistency */}
-          {/* Show waiting indicator inside MessageBubble when streaming but no content yet */}
-          {(isStreaming || streamingContent) &&
-            streamingContent !== undefined &&
-            !isStreamingContentAlreadyDisplayed && (
+          {/* Unified Streaming AI response - works for both single chat and group chat */}
+          {/* Only show when subtaskId is set, indicating AI generation was triggered */}
+          {/* This unified approach handles: */}
+          {/* 1. Own streaming (streamingSubtaskId set) */}
+          {/* 2. Group chat streaming from others (groupChatStreamingSubtaskId set, not own streaming) */}
+          {(() => {
+            // Determine which streaming state to use
+            // Priority: own streaming > group chat streaming from others
+            const isOwnStreaming = Boolean(streamingSubtaskId);
+            const isOtherUserStreaming =
+              isGroupChat && isGroupChatStreaming && groupChatStreamingSubtaskId && !isOwnStreaming;
+
+            // Get the active streaming state
+            const activeSubtaskId = isOwnStreaming
+              ? streamingSubtaskId
+              : isOtherUserStreaming
+                ? groupChatStreamingSubtaskId
+                : null;
+            const activeContent = isOwnStreaming ? streamingContent : groupChatStreamingContent;
+            const activeDisplayContent = isOwnStreaming ? displayContent : groupChatDisplayContent;
+            const activeIsStreaming = isOwnStreaming ? isStreaming : isGroupChatStreaming;
+
+            // Only render if we have an active subtask ID (AI generation was triggered)
+            if (!activeSubtaskId) return null;
+
+            // For own streaming, check if content is already displayed
+            if (isOwnStreaming && isStreamingContentAlreadyDisplayed) return null;
+
+            // CRITICAL: For group chat streaming from others, check if this subtask is already being
+            // recovered by useMultipleStreamingRecovery. If so, don't show duplicate streaming bubble.
+            // The recovery mechanism already handles displaying the streaming content with "(已恢复)" label.
+            if (isOtherUserStreaming && activeSubtaskId) {
+              const recoveryState = recoveryMap.get(activeSubtaskId);
+              if (recoveryState?.recovered) {
+                // This subtask is already being recovered, don't show duplicate streaming bubble
+                return null;
+              }
+            }
+
+            // For group chat with own streaming: only show streaming indicator if pending message contains @bot mention
+            // This prevents showing streaming indicator when user sends a message without @bot
+            // Note: This only affects the "waiting" state before content arrives
+            // Once content starts streaming (activeContent is not empty), we always show it
+            if (isGroupChat && isOwnStreaming && !activeContent) {
+              // Get the bot/team name from task detail or selected team
+              const botName = selectedTaskDetail?.team?.name || selectedTeam?.name;
+              // Check if the pending message contains @botName mention
+              const hasBotMention = containsBotMention(pendingUserMessage, botName);
+              if (!hasBotMention) {
+                // No @bot mention in group chat, don't show streaming indicator
+                return null;
+              }
+            }
+
+            return (
               <MessageBubble
-                key="streaming-message"
+                key={`streaming-${activeSubtaskId}`}
                 msg={{
                   type: 'ai',
-                  content: `\${$$}$${streamingContent || ''}`,
+                  content: `\${$$}$${activeContent || ''}`,
                   timestamp: Date.now(),
                   botName: selectedTeam?.name || t('messages.bot') || 'Bot',
                   subtaskStatus: 'RUNNING',
-                  recoveredContent: displayContent,
+                  recoveredContent: activeDisplayContent,
                   isRecovered: false,
                   isIncomplete: false,
+                  subtaskId: activeSubtaskId,
                 }}
                 index={displayMessages.length}
                 selectedTaskDetail={selectedTaskDetail}
@@ -1028,38 +1106,11 @@ export default function MessagesArea({
                 selectedBranch={selectedBranch}
                 theme={theme as 'light' | 'dark'}
                 t={t}
-                isWaiting={Boolean(isStreaming && !streamingContent)}
+                isWaiting={Boolean(activeIsStreaming && !activeContent)}
                 onSendMessage={onSendMessage}
               />
-            )}
-
-          {/* Group chat streaming AI response from other users */}
-          {/* Only show when: 1) is group chat, 2) group chat is streaming, 3) not own streaming */}
-          {isGroupChat && isGroupChatStreaming && groupChatStreamingSubtaskId && !isStreaming && (
-            <MessageBubble
-              key={`group-streaming-${groupChatStreamingSubtaskId}`}
-              msg={{
-                type: 'ai',
-                content: `\${$$}$${groupChatStreamingContent || ''}`,
-                timestamp: Date.now(),
-                botName: selectedTeam?.name || t('messages.bot') || 'Bot',
-                subtaskStatus: 'RUNNING',
-                recoveredContent: groupChatDisplayContent,
-                isRecovered: false,
-                isIncomplete: false,
-                subtaskId: groupChatStreamingSubtaskId,
-              }}
-              index={displayMessages.length + 1}
-              selectedTaskDetail={selectedTaskDetail}
-              selectedTeam={selectedTeam}
-              selectedRepo={selectedRepo}
-              selectedBranch={selectedBranch}
-              theme={theme as 'light' | 'dark'}
-              t={t}
-              isWaiting={Boolean(isGroupChatStreaming && !groupChatStreamingContent)}
-              onSendMessage={onSendMessage}
-            />
-          )}
+            );
+          })()}
         </div>
       )}
 
