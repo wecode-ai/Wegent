@@ -104,13 +104,14 @@ async def can_access_task(user_id: int, task_id: int) -> bool:
             return True
 
         # Check if task is shared with user (via SharedTask)
-        from app.models.kind import SharedTask
+        from app.models.shared_task import SharedTask
 
         shared = (
             db.query(SharedTask)
             .filter(
-                SharedTask.task_id == task_id,
-                SharedTask.shared_with_user_id == user_id,
+                SharedTask.original_task_id == task_id,
+                SharedTask.user_id == user_id,
+                SharedTask.is_active == True,
             )
             .first()
         )
