@@ -265,8 +265,34 @@ export function AddMembersDialog({
 
   const handleCopyInviteLink = async () => {
     if (!inviteUrl) return;
+
+    // Try modern clipboard API first
+    if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+      try {
+        await navigator.clipboard.writeText(inviteUrl);
+        setCopied(true);
+        toast({
+          title: t('groupChat.inviteLink.copied'),
+        });
+        setTimeout(() => {
+          handleClose();
+          onComplete?.(); // Notify parent that the entire flow is completed
+        }, 500);
+        return;
+      } catch (err) {
+        console.error('Clipboard API failed: ', err);
+      }
+    }
+
+    // Fallback for non-HTTPS environments (e.g., HTTP IP:port)
     try {
-      await navigator.clipboard.writeText(inviteUrl);
+      const textarea = document.createElement('textarea');
+      textarea.value = inviteUrl;
+      textarea.style.cssText = 'position:fixed;opacity:0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
       setCopied(true);
       toast({
         title: t('groupChat.inviteLink.copied'),
@@ -275,7 +301,8 @@ export function AddMembersDialog({
         handleClose();
         onComplete?.(); // Notify parent that the entire flow is completed
       }, 500);
-    } catch {
+    } catch (err) {
+      console.error('Fallback copy failed: ', err);
       toast({
         title: t('groupChat.inviteLink.copyFailed'),
         variant: 'destructive',
