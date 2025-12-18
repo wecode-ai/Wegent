@@ -5,26 +5,31 @@
 /**
  * Group Chat Sync Manager Component
  *
- * Integrates real-time message polling and stream subscription for group chats.
+ * Handles polling for new messages in group chats.
  * This component should be mounted when a group chat task is active.
+ *
+ * Note: Streaming content recovery for other users' messages is handled by
+ * useMultipleStreamingRecovery in MessagesArea, which detects RUNNING ASSISTANT
+ * subtasks and recovers their streaming content via the unified stream endpoint.
+ * This simplifies the architecture by using a single mechanism for all streaming recovery.
  */
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useGroupChatPolling } from '@/hooks/useGroupChatPolling';
-import { useGroupChatStream } from '@/hooks/useGroupChatStream';
 import type { SubtaskWithSender } from '@/apis/group-chat';
 
 interface GroupChatSyncManagerProps {
   taskId: number;
   isGroupChat: boolean;
   enabled?: boolean;
+  /** Callback when new messages are detected via polling */
   onNewMessages?: (messages: SubtaskWithSender[]) => void;
-  onStreamContent?: (content: string, subtaskId: number) => void;
+  /** Callback when a stream completes (detected via polling) */
   onStreamComplete?: (subtaskId: number, result?: Record<string, unknown>) => void;
 }
 
 /**
- * Manager component for group chat real-time synchronization
+ * Manager component for group chat message polling
  *
  * Usage:
  * ```tsx
@@ -33,16 +38,12 @@ interface GroupChatSyncManagerProps {
  *   isGroupChat={task.isGroupChat}
  *   enabled={isActive}
  *   onNewMessages={(messages) => {
- *     // Add new messages to message list
- *     messages.forEach(msg => addMessage(msg))
+ *     // Refresh task detail to show new messages
+ *     refreshSelectedTaskDetail()
  *   }}
- *   onStreamContent={(content, subtaskId) => {
- *     // Update streaming content for the subtask
- *     updateStreamingMessage(subtaskId, content)
- *   }}
- *   onStreamComplete={(subtaskId, result) => {
- *     // Mark stream as complete
- *     finalizeMessage(subtaskId, result)
+ *   onStreamComplete={(subtaskId) => {
+ *     // Refresh to get the final message
+ *     refreshSelectedTaskDetail()
  *   }}
  * />
  * ```
@@ -52,12 +53,14 @@ export function GroupChatSyncManager({
   isGroupChat,
   enabled = true,
   onNewMessages,
-  onStreamContent,
   onStreamComplete,
 }: GroupChatSyncManagerProps) {
   // Polling for new messages
+  // Note: streamingSubtaskId is still tracked by polling, but streaming content
+  // recovery is handled by useMultipleStreamingRecovery in MessagesArea
   const {
     streamingSubtaskId,
+    hasStreaming,
     error: pollingError,
     clearMessages,
   } = useGroupChatPolling({
@@ -70,32 +73,18 @@ export function GroupChatSyncManager({
     },
   });
 
-  // Stream subscription (automatically connects when streamingSubtaskId changes)
-  const { content: streamContent, error: streamError } = useGroupChatStream({
-    taskId,
-    subtaskId: streamingSubtaskId, // undefined means not subscribed
-    offset: 0,
-    onChunk: chunk => {
-      if (onStreamContent && chunk.subtask_id) {
-        onStreamContent(chunk.content, chunk.subtask_id);
-      }
-    },
-    onComplete: result => {
-      if (onStreamComplete && streamingSubtaskId) {
-        onStreamComplete(streamingSubtaskId, result);
-      }
-    },
-    onError: error => {
-      console.error('[GroupChatSync] Stream error:', error);
-    },
-  });
-
-  // Notify about streaming content updates
+  // When streaming completes (hasStreaming becomes false after being true),
+  // notify the parent to refresh
+  const prevHasStreamingRef = useRef<boolean>(false);
   useEffect(() => {
-    if (streamContent && streamingSubtaskId && onStreamContent) {
-      onStreamContent(streamContent, streamingSubtaskId);
+    // If we were streaming and now we're not, stream completed
+    if (prevHasStreamingRef.current && !hasStreaming && streamingSubtaskId) {
+      if (onStreamComplete) {
+        onStreamComplete(streamingSubtaskId);
+      }
     }
-  }, [streamContent, streamingSubtaskId, onStreamContent]);
+    prevHasStreamingRef.current = hasStreaming;
+  }, [hasStreaming, streamingSubtaskId, onStreamComplete]);
 
   // Log errors
   useEffect(() => {
@@ -103,12 +92,6 @@ export function GroupChatSyncManager({
       console.error('[GroupChatSync] Polling error:', pollingError);
     }
   }, [pollingError]);
-
-  useEffect(() => {
-    if (streamError) {
-      console.error('[GroupChatSync] Stream error:', streamError);
-    }
-  }, [streamError]);
 
   // Cleanup messages when unmounting
   useEffect(() => {

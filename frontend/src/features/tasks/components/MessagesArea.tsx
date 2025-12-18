@@ -154,9 +154,9 @@ interface MessagesAreaProps {
   selectedTeam?: Team | null;
   selectedRepo?: GitRepoInfo | null;
   selectedBranch?: GitBranch | null;
-  /** Streaming content for Chat Shell (optional) */
+  /** Streaming content for Chat Shell (optional) - for current user's own streaming */
   streamingContent?: string;
-  /** Whether streaming is in progress */
+  /** Whether streaming is in progress - for current user's own streaming */
   isStreaming?: boolean;
   /** Pending user message for optimistic update */
   pendingUserMessage?: string | null;
@@ -166,18 +166,12 @@ interface MessagesAreaProps {
   pendingAttachment?: Attachment | null;
   /** Callback to notify parent when content changes and scroll may be needed */
   onContentChange?: () => void;
-  /** Current streaming subtask ID (for deduplication) */
+  /** Current streaming subtask ID (for deduplication) - for current user's own streaming */
   streamingSubtaskId?: number | null;
   /** Generic callback when a component inside the message bubble wants to send a message */
   onSendMessage?: (content: string) => void;
   /** Whether this is a group chat (show sender names) */
   isGroupChat?: boolean;
-  /** Group chat streaming content (for other users to see streaming from another user) */
-  groupChatStreamingContent?: string;
-  /** Group chat streaming subtask ID */
-  groupChatStreamingSubtaskId?: number | null;
-  /** Whether group chat is streaming (from another user) */
-  isGroupChatStreaming?: boolean;
 }
 
 export default function MessagesArea({
@@ -193,9 +187,6 @@ export default function MessagesArea({
   onShareButtonRender,
   onSendMessage,
   isGroupChat = false,
-  groupChatStreamingContent,
-  groupChatStreamingSubtaskId,
-  isGroupChatStreaming = false,
 }: MessagesAreaProps) {
   const { t } = useTranslation('chat');
   const { t: tCommon } = useTranslation('common');
@@ -214,11 +205,10 @@ export default function MessagesArea({
   // Group chat members panel state
   const [showMembersPanel, setShowMembersPanel] = useState(false);
 
-  // Use Typewriter effect for streaming content (own streaming)
+  // Use Typewriter effect for streaming content (current user's own streaming only)
+  // Note: For other users' streaming in group chat, useMultipleStreamingRecovery handles
+  // the content recovery and RecoveredMessageBubble applies its own typewriter effect
   const displayContent = useTypewriter(streamingContent || '');
-
-  // Use Typewriter effect for group chat streaming content (from other users)
-  const groupChatDisplayContent = useTypewriter(groupChatStreamingContent || '');
 
   // Handle task share - wrapped in useCallback to prevent infinite loops
   const handleShareTask = useCallback(async () => {
@@ -466,14 +456,30 @@ export default function MessagesArea({
   }, [selectedTaskDetail?.id, selectedTaskDetail?.status, refreshSelectedTaskDetail, isChatShell]);
 
   // Prepare subtasks for recovery check
+  // Use JSON.stringify to create a stable dependency that changes when subtask content changes
+  // This ensures the hook re-runs when new RUNNING subtasks appear
+  const subtasksKey = useMemo(() => {
+    if (!selectedTaskDetail?.subtasks) return '';
+    return selectedTaskDetail.subtasks.map(sub => `${sub.id}:${sub.status}:${sub.role}`).join(',');
+  }, [selectedTaskDetail?.subtasks]);
+
   const subtasksForRecovery = useMemo(() => {
     if (!selectedTaskDetail?.subtasks) return null;
-    return selectedTaskDetail.subtasks.map(sub => ({
+    const result = selectedTaskDetail.subtasks.map(sub => ({
       id: sub.id,
       status: sub.status,
       role: sub.role,
     }));
-  }, [selectedTaskDetail?.subtasks]);
+    console.log('[MessagesArea] subtasksForRecovery updated:', {
+      count: result.length,
+      runningAssistants: result
+        .filter(s => s.status === 'RUNNING' && s.role === 'ASSISTANT')
+        .map(s => s.id),
+      streamingSubtaskId,
+      subtasksKey,
+    });
+    return result;
+  }, [subtasksKey, selectedTaskDetail?.subtasks, streamingSubtaskId]);
 
   // Get team ID for offset-based streaming recovery
   const teamId = selectedTeam?.id || selectedTaskDetail?.team?.id || null;
@@ -980,9 +986,12 @@ export default function MessagesArea({
                 content: pendingUserMessage,
                 timestamp: Date.now(),
                 attachments: pendingAttachment ? [pendingAttachment] : undefined,
-                // In group chat, add sender info for the pending message
+                // Add sender info for group chat to show username and timestamp
+                // In non-group chat, don't show sender info (consistent with normal messages)
                 senderUserName: isGroupChat ? user?.user_name : undefined,
                 senderUserId: isGroupChat ? user?.id : undefined,
+                // Only show sender info in group chat (consistent with normal messages)
+                shouldShowSender: isGroupChat,
               };
 
               const messageBubble = (
@@ -1031,50 +1040,22 @@ export default function MessagesArea({
               return messageBubble;
             })()}
 
-          {/* Unified Streaming AI response - works for both single chat and group chat */}
-          {/* Only show when subtaskId is set, indicating AI generation was triggered */}
-          {/* This unified approach handles: */}
-          {/* 1. Own streaming (streamingSubtaskId set) */}
-          {/* 2. Group chat streaming from others (groupChatStreamingSubtaskId set, not own streaming) */}
+          {/* Streaming AI response - for current user's own streaming only */}
+          {/* Only show when streamingSubtaskId is set, indicating AI generation was triggered by current user */}
+          {/* Note: For other users' streaming in group chat, useMultipleStreamingRecovery handles */}
+          {/* the content recovery and displays it via RecoveredMessageBubble with "(已恢复)" label */}
           {(() => {
-            // Determine which streaming state to use
-            // Priority: own streaming > group chat streaming from others
-            const isOwnStreaming = Boolean(streamingSubtaskId);
-            const isOtherUserStreaming =
-              isGroupChat && isGroupChatStreaming && groupChatStreamingSubtaskId && !isOwnStreaming;
+            // Only render for current user's own streaming
+            if (!streamingSubtaskId) return null;
 
-            // Get the active streaming state
-            const activeSubtaskId = isOwnStreaming
-              ? streamingSubtaskId
-              : isOtherUserStreaming
-                ? groupChatStreamingSubtaskId
-                : null;
-            const activeContent = isOwnStreaming ? streamingContent : groupChatStreamingContent;
-            const activeDisplayContent = isOwnStreaming ? displayContent : groupChatDisplayContent;
-            const activeIsStreaming = isOwnStreaming ? isStreaming : isGroupChatStreaming;
+            // Check if content is already displayed (stream completed and backend returned the response)
+            if (isStreamingContentAlreadyDisplayed) return null;
 
-            // Only render if we have an active subtask ID (AI generation was triggered)
-            if (!activeSubtaskId) return null;
-
-            // For own streaming, check if content is already displayed
-            if (isOwnStreaming && isStreamingContentAlreadyDisplayed) return null;
-
-            // CRITICAL: For group chat streaming from others, check if this subtask is already being
-            // recovered by useMultipleStreamingRecovery. If so, don't show duplicate streaming bubble.
-            // The recovery mechanism already handles displaying the streaming content with "(已恢复)" label.
-            if (isOtherUserStreaming && activeSubtaskId) {
-              const recoveryState = recoveryMap.get(activeSubtaskId);
-              if (recoveryState?.recovered) {
-                // This subtask is already being recovered, don't show duplicate streaming bubble
-                return null;
-              }
-            }
-
-            // For group chat with own streaming: only show streaming indicator if pending message contains @bot mention
+            // For group chat: only show streaming indicator if pending message contains @bot mention
             // This prevents showing streaming indicator when user sends a message without @bot
             // Note: This only affects the "waiting" state before content arrives
-            // Once content starts streaming (activeContent is not empty), we always show it
-            if (isGroupChat && isOwnStreaming && !activeContent) {
+            // Once content starts streaming (streamingContent is not empty), we always show it
+            if (isGroupChat && !streamingContent) {
               // Get the bot/team name from task detail or selected team
               const botName = selectedTaskDetail?.team?.name || selectedTeam?.name;
               // Check if the pending message contains @botName mention
@@ -1087,17 +1068,17 @@ export default function MessagesArea({
 
             return (
               <MessageBubble
-                key={`streaming-${activeSubtaskId}`}
+                key={`streaming-${streamingSubtaskId}`}
                 msg={{
                   type: 'ai',
-                  content: `\${$$}$${activeContent || ''}`,
+                  content: `\${$$}$${streamingContent || ''}`,
                   timestamp: Date.now(),
                   botName: selectedTeam?.name || t('messages.bot') || 'Bot',
                   subtaskStatus: 'RUNNING',
-                  recoveredContent: activeDisplayContent,
+                  recoveredContent: displayContent,
                   isRecovered: false,
                   isIncomplete: false,
-                  subtaskId: activeSubtaskId,
+                  subtaskId: streamingSubtaskId,
                 }}
                 index={displayMessages.length}
                 selectedTaskDetail={selectedTaskDetail}
@@ -1106,7 +1087,7 @@ export default function MessagesArea({
                 selectedBranch={selectedBranch}
                 theme={theme as 'light' | 'dark'}
                 t={t}
-                isWaiting={Boolean(activeIsStreaming && !activeContent)}
+                isWaiting={Boolean(isStreaming && !streamingContent)}
                 onSendMessage={onSendMessage}
               />
             );
