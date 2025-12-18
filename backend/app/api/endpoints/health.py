@@ -7,6 +7,8 @@ During graceful shutdown:
 - /health returns 200 (app is still alive)
 - /ready returns 503 (stop sending new traffic)
 - /startup returns 200 (startup is complete)
+- /shutdown/initiate (POST) triggers graceful shutdown manually
+- /shutdown/reset (POST) resets shutdown state to restore 200
 """
 
 from fastapi import APIRouter, Depends, Response
@@ -122,3 +124,86 @@ def startup_check(db: Session = Depends(get_db)):
         from fastapi import HTTPException
 
         raise HTTPException(status_code=503, detail=f"Startup failed: {str(e)}")
+
+
+@router.post("/shutdown/initiate")
+async def initiate_shutdown():
+    """
+    Manually initiate graceful shutdown.
+
+    This endpoint is designed to be called by Kubernetes preStop hook
+    to trigger graceful shutdown before the pod is terminated.
+
+    Usage in K8s preStop:
+        preStop:
+          exec:
+            command:
+              - /bin/sh
+              - -c
+              - |
+                curl -X POST http://localhost:8080/api/shutdown/initiate || true
+                sleep 30
+
+    After calling this endpoint:
+    - /ready will return 503 (stop receiving new traffic)
+    - /health will still return 200 (app is alive)
+    - Active streaming requests will be allowed to complete
+
+    Returns:
+        dict: Shutdown initiation status
+    """
+    if shutdown_manager.is_shutting_down:
+        return {
+            "status": "already_shutting_down",
+            "message": "Shutdown was already initiated",
+            "active_streams": shutdown_manager.get_active_stream_count(),
+            "shutdown_duration": shutdown_manager.shutdown_duration,
+        }
+
+    await shutdown_manager.initiate_shutdown()
+
+    return {
+        "status": "shutdown_initiated",
+        "message": "Graceful shutdown initiated. /ready will now return 503.",
+        "active_streams": shutdown_manager.get_active_stream_count(),
+    }
+
+
+@router.get("/shutdown/status")
+def shutdown_status():
+    """
+    Get current shutdown status.
+
+    Returns:
+        dict: Current shutdown state information
+    """
+    return {
+        "is_shutting_down": shutdown_manager.is_shutting_down,
+        "active_streams": shutdown_manager.get_active_stream_count(),
+        "shutdown_duration": shutdown_manager.shutdown_duration,
+        "active_stream_ids": list(shutdown_manager.get_active_streams()),
+    }
+
+
+@router.post("/shutdown/reset")
+def reset_shutdown():
+    """
+    Reset shutdown state to restore normal operation.
+
+    This endpoint resets the shutdown flag, allowing /ready to return 200 again.
+    Useful for testing or recovering from an accidental shutdown initiation.
+
+    WARNING: This should only be used for testing or emergency recovery.
+    In production, a pod in shutdown state should be terminated and replaced.
+
+    Returns:
+        dict: Reset status
+    """
+    was_shutting_down = shutdown_manager.is_shutting_down
+    shutdown_manager.reset()
+
+    return {
+        "status": "reset_complete",
+        "message": "Shutdown state reset. /ready will now return 200.",
+        "was_shutting_down": was_shutting_down,
+    }
