@@ -12,6 +12,7 @@ from app.api.endpoints import (
     openapi_responses,
     quota,
     repository,
+    subtasks,
     users,
     wiki,
     wizard,
@@ -46,6 +47,7 @@ api_router.include_router(shells.router, prefix="/shells", tags=["shells"])
 api_router.include_router(agents.router, prefix="/agents", tags=["public-shell"])
 api_router.include_router(teams.router, prefix="/teams", tags=["teams"])
 api_router.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
+api_router.include_router(subtasks.router, prefix="/subtasks", tags=["subtasks"])
 api_router.include_router(task_members.router, prefix="/tasks", tags=["task-members"])
 api_router.include_router(chat.router, prefix="/chat", tags=["chat"])
 api_router.include_router(

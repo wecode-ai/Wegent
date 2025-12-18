@@ -28,6 +28,7 @@ import { useTheme } from '@/features/theme/ThemeProvider';
 import { useTypewriter } from '@/hooks/useTypewriter';
 import { useMultipleStreamingRecovery, type RecoveryState } from '@/hooks/useStreamingRecovery';
 import MessageBubble, { type Message } from './MessageBubble';
+import { GroupChatMessageWrapper } from './MessageSenderBadge';
 import TaskShareModal from './TaskShareModal';
 import { taskApis } from '@/apis/tasks';
 import { type SelectableMessage } from './ExportPdfButton';
@@ -58,6 +59,8 @@ interface RecoveredMessageBubbleProps {
   t: (key: string) => string;
   /** Generic callback when a component inside the message bubble wants to send a message */
   onSendMessage?: (content: string) => void;
+  /** Whether this is a group chat (show sender names) */
+  isGroupChat?: boolean;
 }
 
 function RecoveredMessageBubble({
@@ -71,6 +74,7 @@ function RecoveredMessageBubble({
   theme,
   t,
   onSendMessage,
+  isGroupChat = false,
 }: RecoveredMessageBubbleProps) {
   // Use typewriter effect for recovered content that is still streaming
   const displayContent = useTypewriter(recovery.content || '');
@@ -84,18 +88,40 @@ function RecoveredMessageBubble({
     isIncomplete: recovery.incomplete,
   };
 
+  // Find the corresponding subtask from selectedTaskDetail
+  const subtask = selectedTaskDetail?.subtasks?.find(s => s.id === msg.subtaskId);
+
+  // If no subtask found or not a group chat, render without wrapper
+  if (!subtask || !isGroupChat) {
+    return (
+      <MessageBubble
+        msg={modifiedMsg}
+        index={index}
+        selectedTaskDetail={selectedTaskDetail}
+        selectedTeam={selectedTeam}
+        selectedRepo={selectedRepo}
+        selectedBranch={selectedBranch}
+        theme={theme}
+        t={t}
+        onSendMessage={onSendMessage}
+      />
+    );
+  }
+
   return (
-    <MessageBubble
-      msg={modifiedMsg}
-      index={index}
-      selectedTaskDetail={selectedTaskDetail}
-      selectedTeam={selectedTeam}
-      selectedRepo={selectedRepo}
-      selectedBranch={selectedBranch}
-      theme={theme}
-      t={t}
-      onSendMessage={onSendMessage}
-    />
+    <GroupChatMessageWrapper subtask={subtask} isGroupChat={isGroupChat}>
+      <MessageBubble
+        msg={modifiedMsg}
+        index={index}
+        selectedTaskDetail={selectedTaskDetail}
+        selectedTeam={selectedTeam}
+        selectedRepo={selectedRepo}
+        selectedBranch={selectedBranch}
+        theme={theme}
+        t={t}
+        onSendMessage={onSendMessage}
+      />
+    </GroupChatMessageWrapper>
   );
 }
 
@@ -119,6 +145,8 @@ interface MessagesAreaProps {
   streamingSubtaskId?: number | null;
   /** Generic callback when a component inside the message bubble wants to send a message */
   onSendMessage?: (content: string) => void;
+  /** Whether this is a group chat (show sender names) */
+  isGroupChat?: boolean;
 }
 
 export default function MessagesArea({
@@ -133,6 +161,7 @@ export default function MessagesArea({
   streamingSubtaskId,
   onShareButtonRender,
   onSendMessage,
+  isGroupChat = false,
 }: MessagesAreaProps) {
   const { t } = useTranslation('chat');
   const { t: tCommon } = useTranslation('common');
@@ -833,24 +862,49 @@ export default function MessagesArea({
                   theme={theme as 'light' | 'dark'}
                   t={t}
                   onSendMessage={onSendMessage}
+                  isGroupChat={isGroupChat}
                 />
               );
             }
 
             // Use regular MessageBubble for other messages
+            // Find the corresponding subtask from selectedTaskDetail
+            const subtask = msg.subtaskId
+              ? selectedTaskDetail?.subtasks?.find(s => s.id === msg.subtaskId)
+              : undefined;
+
+            // If no subtask found or not a group chat, render without wrapper
+            if (!subtask || !isGroupChat) {
+              return (
+                <MessageBubble
+                  key={messageKey}
+                  msg={msg}
+                  index={index}
+                  selectedTaskDetail={selectedTaskDetail}
+                  selectedTeam={selectedTeam}
+                  selectedRepo={selectedRepo}
+                  selectedBranch={selectedBranch}
+                  theme={theme as 'light' | 'dark'}
+                  t={t}
+                  onSendMessage={onSendMessage}
+                />
+              );
+            }
+
             return (
-              <MessageBubble
-                key={messageKey}
-                msg={msg}
-                index={index}
-                selectedTaskDetail={selectedTaskDetail}
-                selectedTeam={selectedTeam}
-                selectedRepo={selectedRepo}
-                selectedBranch={selectedBranch}
-                theme={theme as 'light' | 'dark'}
-                t={t}
-                onSendMessage={onSendMessage}
-              />
+              <GroupChatMessageWrapper key={messageKey} subtask={subtask} isGroupChat={isGroupChat}>
+                <MessageBubble
+                  msg={msg}
+                  index={index}
+                  selectedTaskDetail={selectedTaskDetail}
+                  selectedTeam={selectedTeam}
+                  selectedRepo={selectedRepo}
+                  selectedBranch={selectedBranch}
+                  theme={theme as 'light' | 'dark'}
+                  t={t}
+                  onSendMessage={onSendMessage}
+                />
+              </GroupChatMessageWrapper>
             );
           })}
 

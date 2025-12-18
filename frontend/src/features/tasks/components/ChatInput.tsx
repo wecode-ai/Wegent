@@ -9,6 +9,7 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
 import { useUser } from '@/features/common/UserContext';
 import type { ChatTipItem } from '@/types/api';
+import MentionAutocomplete from './chat/MentionAutocomplete';
 
 interface ChatInputProps {
   message: string;
@@ -23,6 +24,9 @@ interface ChatInputProps {
   tipText?: ChatTipItem | null;
   // Optional badge element to render inline with text
   badge?: React.ReactNode;
+  // Group chat support
+  isGroupChat?: boolean;
+  teamName?: string;
 }
 
 export default function ChatInput({
@@ -35,6 +39,8 @@ export default function ChatInput({
   canSubmit = true,
   tipText,
   badge,
+  isGroupChat = false,
+  teamName = '',
 }: ChatInputProps) {
   const { t, i18n } = useTranslation('chat');
 
@@ -46,8 +52,12 @@ export default function ChatInput({
     if (tipText) {
       return tipText[currentLang] || tipText.en || t('placeholder.input');
     }
+    // For group chat, show mention instruction
+    if (isGroupChat && teamName) {
+      return t('groupChat.mentionToTrigger', { teamName });
+    }
     return t('placeholder.input');
-  }, [tipText, currentLang, t]);
+  }, [tipText, currentLang, t, isGroupChat, teamName]);
   const [isComposing, setIsComposing] = useState(false);
   // Track if composition just ended (for Safari where compositionend fires before keydown)
   const compositionJustEndedRef = useRef(false);
@@ -59,6 +69,10 @@ export default function ChatInput({
 
   // Track if we should show placeholder
   const [showPlaceholder, setShowPlaceholder] = useState(!message);
+
+  // Mention autocomplete state
+  const [showMentionMenu, setShowMentionMenu] = useState(false);
+  const [mentionMenuPosition, setMentionMenuPosition] = useState({ top: 0, left: 0 });
 
   // Update placeholder visibility when message changes externally
   useEffect(() => {
@@ -219,8 +233,64 @@ export default function ChatInput({
       const text = getTextWithNewlines(e.currentTarget);
       setMessage(text);
       setShowPlaceholder(!text);
+
+      // Check for @ trigger in group chat mode
+      if (isGroupChat && teamName) {
+        const lastChar = text[text.length - 1];
+        if (lastChar === '@') {
+          // Get cursor position to show autocomplete menu
+          const selection = window.getSelection();
+          if (selection && selection.rangeCount > 0) {
+            const range = selection.getRangeAt(0);
+            const rect = range.getBoundingClientRect();
+            const containerRect = editableRef.current?.getBoundingClientRect();
+
+            if (containerRect) {
+              setMentionMenuPosition({
+                top: rect.bottom - containerRect.top + 4,
+                left: rect.left - containerRect.left,
+              });
+              setShowMentionMenu(true);
+            }
+          }
+        } else if (showMentionMenu) {
+          // Close menu if user continues typing after @
+          const words = text.split(/\s/);
+          const lastWord = words[words.length - 1];
+          if (!lastWord.startsWith('@')) {
+            setShowMentionMenu(false);
+          }
+        }
+      }
     },
-    [disabled, setMessage, getTextWithNewlines]
+    [disabled, setMessage, getTextWithNewlines, isGroupChat, teamName, showMentionMenu]
+  );
+
+  // Handle mention selection
+  const handleMentionSelect = useCallback(
+    (mention: string) => {
+      if (editableRef.current) {
+        const currentText = getTextWithNewlines(editableRef.current);
+        // Replace the last @ with the selected mention
+        const newText = currentText.replace(/@$/, mention + ' ');
+        setMessage(newText);
+        setContentWithNewlines(editableRef.current, newText);
+
+        // Move cursor to end
+        const selection = window.getSelection();
+        if (selection && editableRef.current) {
+          const range = document.createRange();
+          range.selectNodeContents(editableRef.current);
+          range.collapse(false);
+          selection.removeAllRanges();
+          selection.addRange(range);
+        }
+
+        // Focus back to input
+        editableRef.current.focus();
+      }
+    },
+    [getTextWithNewlines, setMessage, setContentWithNewlines]
   );
 
   const handlePaste = useCallback(
@@ -295,6 +365,16 @@ export default function ChatInput({
         >
           {placeholder}
         </div>
+      )}
+
+      {/* Mention autocomplete menu */}
+      {showMentionMenu && isGroupChat && teamName && (
+        <MentionAutocomplete
+          teamName={teamName}
+          onSelect={handleMentionSelect}
+          onClose={() => setShowMentionMenu(false)}
+          position={mentionMenuPosition}
+        />
       )}
 
       {/* Scrollable container that includes both badge and editable content */}

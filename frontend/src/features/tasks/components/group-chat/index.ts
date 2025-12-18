@@ -11,3 +11,4 @@ export { CreateGroupChatDialog } from './CreateGroupChatDialog';
 export { InviteLinkDialog } from './InviteLinkDialog';
 export { InviteJoinHandler } from './InviteJoinHandler';
 export { TaskMembersPanel } from './TaskMembersPanel';
+export { GroupChatSyncManager } from './GroupChatSyncManager';

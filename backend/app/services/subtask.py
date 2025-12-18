@@ -214,5 +214,97 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
         db.delete(subtask)
         db.commit()
 
+    def get_new_messages_since(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        user_id: int,
+        last_subtask_id: Optional[int] = None,
+        since: Optional[str] = None,
+    ) -> List[dict]:
+        """
+        Get new messages for a task since a given subtask ID or timestamp.
+        Used for polling new messages in group chat.
+
+        Args:
+            db: Database session
+            task_id: Task ID
+            user_id: User ID
+            last_subtask_id: Last subtask ID received by client
+            since: ISO timestamp to filter messages after this time
+
+        Returns:
+            List of subtask dictionaries with sender information
+        """
+        from app.models.user import User
+        from app.services.task_member_service import task_member_service
+
+        # Check if user is a member of this task
+        is_member = task_member_service.is_member(db, task_id, user_id)
+        if not is_member:
+            raise HTTPException(
+                status_code=403, detail="Not authorized to access this task"
+            )
+
+        # Build query
+        query = (
+            db.query(Subtask, User.user_name.label("sender_username"))
+            .outerjoin(User, Subtask.sender_user_id == User.id)
+            .filter(Subtask.task_id == task_id)
+        )
+
+        # Apply filters
+        if last_subtask_id:
+            query = query.filter(Subtask.id > last_subtask_id)
+
+        if since:
+            from datetime import datetime
+
+            try:
+                since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+                query = query.filter(Subtask.created_at > since_dt)
+            except ValueError:
+                pass  # Ignore invalid timestamp
+
+        # Order by message_id and created_at
+        query = query.order_by(Subtask.message_id.asc(), Subtask.created_at.asc())
+
+        # Execute query
+        results = query.all()
+
+        # Convert to dict format
+        messages = []
+        for subtask, sender_username in results:
+            message_dict = {
+                "id": subtask.id,
+                "task_id": subtask.task_id,
+                "team_id": subtask.team_id,
+                "title": subtask.title,
+                "role": subtask.role.value if subtask.role else None,
+                "prompt": subtask.prompt,
+                "status": subtask.status.value if subtask.status else None,
+                "progress": subtask.progress,
+                "result": subtask.result,
+                "error_message": subtask.error_message,
+                "sender_type": (
+                    subtask.sender_type.value if subtask.sender_type else None
+                ),
+                "sender_user_id": subtask.sender_user_id,
+                "sender_username": sender_username,
+                "created_at": (
+                    subtask.created_at.isoformat() if subtask.created_at else None
+                ),
+                "updated_at": (
+                    subtask.updated_at.isoformat() if subtask.updated_at else None
+                ),
+                "completed_at": (
+                    subtask.completed_at.isoformat() if subtask.completed_at else None
+                ),
+            }
+            messages.append(message_dict)
+
+        return messages
+
 
 subtask_service = SubtaskService(Subtask)

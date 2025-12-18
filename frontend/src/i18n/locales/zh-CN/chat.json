@@ -204,6 +204,12 @@
     "longer_than_usual": "响应时间较长，请耐心等待"
   },
   "groupChat": {
+    "mentionToTrigger": "输入 @{{teamName}} 以获取 AI 回复",
+    "messageSaved": "消息已保存",
+    "mentionAutocomplete": {
+      "title": "提及",
+      "noTeam": "无可用团队"
+    },
     "inviteLink": {
       "title": "邀请加入群聊",
       "description": "生成邀请链接，分享给其他用户即可加入「{{taskTitle}}」",

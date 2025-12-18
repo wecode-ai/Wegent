@@ -46,6 +46,8 @@ import { useToast } from '@/hooks/use-toast';
 import { taskApis } from '@/apis/tasks';
 import { useAttachment } from '@/hooks/useAttachment';
 import { chatApis, SearchEngine } from '@/apis/chat';
+import { GroupChatSyncManager } from './group-chat';
+import type { SubtaskWithSender } from '@/apis/group-chat';
 
 const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18;
 
@@ -410,6 +412,28 @@ export default function ChatArea({
     }
     setStreamingTaskId(null);
   }, [currentDisplayTaskId, streamingTaskId, contextResetStream]);
+
+  // Group chat message handlers
+  const handleNewMessages = useCallback(
+    (messages: SubtaskWithSender[]) => {
+      if (messages.length > 0) {
+        refreshSelectedTaskDetail();
+      }
+    },
+    [refreshSelectedTaskDetail]
+  );
+
+  const handleStreamContent = useCallback((content: string, subtaskId: number) => {
+    console.log('[GroupChat] Stream content:', { subtaskId, contentLength: content.length });
+  }, []);
+
+  const handleStreamComplete = useCallback(
+    (subtaskId: number, result?: Record<string, unknown>) => {
+      console.log('[GroupChat] Stream complete:', { subtaskId, result });
+      refreshSelectedTaskDetail();
+    },
+    [refreshSelectedTaskDetail]
+  );
 
   // Clear streamingTaskId when the streaming task completes or when we switch to a different task
   useEffect(() => {
@@ -1248,6 +1272,18 @@ export default function ChatArea({
       className="flex-1 flex flex-col min-h-0 w-full relative"
       style={{ height: '100%', boxSizing: 'border-box' }}
     >
+      {/* Group Chat Sync Manager - zero UI, handles polling and streaming */}
+      {selectedTaskDetail?.is_group_chat && selectedTaskDetail.id && (
+        <GroupChatSyncManager
+          taskId={selectedTaskDetail.id}
+          isGroupChat={true}
+          enabled={true}
+          onNewMessages={handleNewMessages}
+          onStreamContent={handleStreamContent}
+          onStreamComplete={handleStreamComplete}
+        />
+      )}
+
       {/* Messages Area: always mounted to keep scroll container stable */}
       <div className={hasMessages ? 'relative flex-1 min-h-0' : 'relative'}>
         {/* Top gradient fade effect - only show when has messages */}
@@ -1283,6 +1319,7 @@ export default function ChatArea({
               streamingSubtaskId={streamingSubtaskId}
               onShareButtonRender={onShareButtonRender}
               onSendMessage={handleSendMessageFromChild}
+              isGroupChat={selectedTaskDetail?.is_group_chat || false}
             />
           </div>
         </div>

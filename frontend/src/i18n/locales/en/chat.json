@@ -204,6 +204,12 @@
     "longer_than_usual": "Response is taking longer than usual"
   },
   "groupChat": {
+    "mentionToTrigger": "Type @{{teamName}} to get AI response",
+    "messageSaved": "Message saved",
+    "mentionAutocomplete": {
+      "title": "Mention",
+      "noTeam": "No team available"
+    },
     "inviteLink": {
       "title": "Invite to Group Chat",
       "description": "Generate an invite link to share with others to join \"{{taskTitle}}\"",
