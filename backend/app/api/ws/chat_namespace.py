@@ -111,6 +111,7 @@ async def can_access_task(user_id: int, task_id: int) -> bool:
             .filter(
                 SharedTask.original_task_id == task_id,
                 SharedTask.user_id == user_id,
+                SharedTask.is_active == True,
             )
             .first()
         )
