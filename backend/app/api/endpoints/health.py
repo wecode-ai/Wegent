@@ -24,8 +24,6 @@ router = APIRouter()
 @router.get("/health")
 def health_check(db: Session = Depends(get_db)):
     """
-    Liveness probe endpoint for Kubernetes.
-
     This endpoint checks if the application is alive and responding.
     It should return 200 even during graceful shutdown (app is still alive,
     just not accepting new traffic).
@@ -131,18 +129,7 @@ async def initiate_shutdown():
     """
     Manually initiate graceful shutdown.
 
-    This endpoint is designed to be called by Kubernetes preStop hook
     to trigger graceful shutdown before the pod is terminated.
-
-    Usage in K8s preStop:
-        preStop:
-          exec:
-            command:
-              - /bin/sh
-              - -c
-              - |
-                curl -X POST http://localhost:8080/api/shutdown/initiate || true
-                sleep 30
 
     After calling this endpoint:
     - /ready will return 503 (stop receiving new traffic)
@@ -170,18 +157,21 @@ async def initiate_shutdown():
 
 
 @router.get("/shutdown/status")
-def shutdown_status():
+def shutdown_status(response: Response):
     """
     Get current shutdown status.
 
     Returns:
         dict: Current shutdown state information
     """
+    if shutdown_manager.is_shutting_down:
+        response.status_code = 503
+        return {
+            "status": "shutting_down",
+            "message": "Service is shutting down, not accepting new traffic",
+        }
     return {
-        "is_shutting_down": shutdown_manager.is_shutting_down,
-        "active_streams": shutdown_manager.get_active_stream_count(),
-        "shutdown_duration": shutdown_manager.shutdown_duration,
-        "active_stream_ids": list(shutdown_manager.get_active_streams()),
+        "is_shutting_down": shutdown_manager.is_shutting_down
     }
 
 

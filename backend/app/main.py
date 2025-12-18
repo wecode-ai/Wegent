@@ -367,7 +367,7 @@ def create_app():
         - Existing streaming requests continue until completion
         """
         # Always allow health check and probe endpoints
-        allowed_paths = {"/", "/api/health", "/api/ready", "/api/startup"}
+        allowed_paths = {"/", "/api/health", "/api/ready", "/api/startup", "/api/shutdown/status", "/api/shutdown/reset"}
         if request.url.path in allowed_paths:
             return await call_next(request)
 
