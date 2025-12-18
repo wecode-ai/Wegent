@@ -8,7 +8,7 @@ import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { useTranslation } from '@/hooks/useTranslation';
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
 import { useUser } from '@/features/common/UserContext';
-import type { ChatTipItem } from '@/types/api';
+import type { ChatTipItem, Team } from '@/types/api';
 import MentionAutocomplete from './chat/MentionAutocomplete';
 
 interface ChatInputProps {
@@ -26,7 +26,7 @@ interface ChatInputProps {
   badge?: React.ReactNode;
   // Group chat support
   isGroupChat?: boolean;
-  teamName?: string;
+  team?: Team | null;
 }
 
 export default function ChatInput({
@@ -40,7 +40,7 @@ export default function ChatInput({
   tipText,
   badge,
   isGroupChat = false,
-  teamName = '',
+  team = null,
 }: ChatInputProps) {
   const { t, i18n } = useTranslation('chat');
 
@@ -53,11 +53,11 @@ export default function ChatInput({
       return tipText[currentLang] || tipText.en || t('placeholder.input');
     }
     // For group chat, show mention instruction
-    if (isGroupChat && teamName) {
-      return t('groupChat.mentionToTrigger', { teamName });
+    if (isGroupChat && team?.name) {
+      return t('groupChat.mentionToTrigger', { teamName: team.name });
     }
     return t('placeholder.input');
-  }, [tipText, currentLang, t, isGroupChat, teamName]);
+  }, [tipText, currentLang, t, isGroupChat, team?.name]);
   const [isComposing, setIsComposing] = useState(false);
   // Track if composition just ended (for Safari where compositionend fires before keydown)
   const compositionJustEndedRef = useRef(false);
@@ -73,6 +73,7 @@ export default function ChatInput({
   // Mention autocomplete state
   const [showMentionMenu, setShowMentionMenu] = useState(false);
   const [mentionMenuPosition, setMentionMenuPosition] = useState({ top: 0, left: 0 });
+  const [mentionQuery, setMentionQuery] = useState('');
 
   // Update placeholder visibility when message changes externally
   useEffect(() => {
@@ -235,7 +236,7 @@ export default function ChatInput({
       setShowPlaceholder(!text);
 
       // Check for @ trigger in group chat mode
-      if (isGroupChat && teamName) {
+      if (isGroupChat && team) {
         const lastChar = text[text.length - 1];
         if (lastChar === '@') {
           // Get cursor position to show autocomplete menu
@@ -246,24 +247,32 @@ export default function ChatInput({
             const containerRect = editableRef.current?.getBoundingClientRect();
 
             if (containerRect) {
+              // Position menu above the cursor (bottom of chat input)
+              // Calculate position relative to container
               setMentionMenuPosition({
-                top: rect.bottom - containerRect.top + 4,
+                top: rect.top - containerRect.top - 8, // Position above cursor with 8px gap
                 left: rect.left - containerRect.left,
               });
               setShowMentionMenu(true);
+              setMentionQuery('');
             }
           }
         } else if (showMentionMenu) {
-          // Close menu if user continues typing after @
+          // Update query or close menu if user continues typing after @
           const words = text.split(/\s/);
           const lastWord = words[words.length - 1];
-          if (!lastWord.startsWith('@')) {
+          if (lastWord.startsWith('@')) {
+            // Extract query after @
+            const query = lastWord.substring(1);
+            setMentionQuery(query);
+          } else {
             setShowMentionMenu(false);
+            setMentionQuery('');
           }
         }
       }
     },
-    [disabled, setMessage, getTextWithNewlines, isGroupChat, teamName, showMentionMenu]
+    [disabled, setMessage, getTextWithNewlines, isGroupChat, team, showMentionMenu]
   );
 
   // Handle mention selection
@@ -271,8 +280,13 @@ export default function ChatInput({
     (mention: string) => {
       if (editableRef.current) {
         const currentText = getTextWithNewlines(editableRef.current);
-        // Replace the last @ with the selected mention
-        const newText = currentText.replace(/@$/, mention + ' ');
+        // Replace the last @word with the selected mention
+        const words = currentText.split(/(\s)/);
+        const lastWordIndex = words.length - 1;
+        if (words[lastWordIndex].startsWith('@')) {
+          words[lastWordIndex] = mention + ' ';
+        }
+        const newText = words.join('');
         setMessage(newText);
         setContentWithNewlines(editableRef.current, newText);
 
@@ -288,6 +302,8 @@ export default function ChatInput({
 
         // Focus back to input
         editableRef.current.focus();
+        setShowMentionMenu(false);
+        setMentionQuery('');
       }
     },
     [getTextWithNewlines, setMessage, setContentWithNewlines]
@@ -368,11 +384,15 @@ export default function ChatInput({
       )}
 
       {/* Mention autocomplete menu */}
-      {showMentionMenu && isGroupChat && teamName && (
+      {showMentionMenu && isGroupChat && team && (
         <MentionAutocomplete
-          teamName={teamName}
+          team={team}
+          query={mentionQuery}
           onSelect={handleMentionSelect}
-          onClose={() => setShowMentionMenu(false)}
+          onClose={() => {
+            setShowMentionMenu(false);
+            setMentionQuery('');
+          }}
           position={mentionMenuPosition}
         />
       )}

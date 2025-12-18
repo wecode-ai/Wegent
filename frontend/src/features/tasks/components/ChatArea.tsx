@@ -1425,6 +1425,8 @@ export default function ChatArea({
                         canSubmit={canSubmit}
                         tipText={randomTip}
                         badge={selectedTeam ? <SelectedTeamBadge team={selectedTeam} /> : undefined}
+                        isGroupChat={selectedTaskDetail?.is_group_chat || false}
+                        team={selectedTeam}
                       />
                     </div>
                   )}
@@ -1684,6 +1686,8 @@ export default function ChatArea({
                       taskType={taskType}
                       canSubmit={canSubmit}
                       tipText={randomTip}
+                      isGroupChat={selectedTaskDetail?.is_group_chat || false}
+                      team={selectedTeam}
                     />
                   </div>
                 )}

@@ -208,7 +208,8 @@
     "messageSaved": "消息已保存",
     "mentionAutocomplete": {
       "title": "提及",
-      "noTeam": "无可用团队"
+      "noTeam": "无可用团队",
+      "bot": "智能体"
     },
     "inviteLink": {
       "title": "邀请加入群聊",

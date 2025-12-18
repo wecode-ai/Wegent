@@ -208,7 +208,8 @@
     "messageSaved": "Message saved",
     "mentionAutocomplete": {
       "title": "Mention",
-      "noTeam": "No team available"
+      "noTeam": "No team available",
+      "bot": "Bot"
     },
     "inviteLink": {
       "title": "Invite to Group Chat",
