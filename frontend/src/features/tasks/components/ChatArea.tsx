@@ -459,8 +459,6 @@ export default function ChatArea({
     }
   }, [selectedTaskDetail?.id, streamingTaskId, resetStreamingState]);
 
-  // Reset streaming state when task ID changes (user switches tasks)
-  // This ensures pending message from task A doesn't show up in task B
   // IMPORTANT: Only reset when switching to a DIFFERENT task, not when the current task gets an ID
   // This prevents clearing the pending message when a new task is created and gets its ID
   const previousTaskIdRef = useRef<number | null | undefined>(undefined);

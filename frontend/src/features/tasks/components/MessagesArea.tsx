@@ -662,15 +662,15 @@ export default function MessagesArea({
     if (userMessages.length === 0) return false;
 
     const pendingTrimmed = pendingUserMessage.trim();
-    // Check all user messages for a match
-    // Use includes() as a fallback in case of minor formatting differences
+    // Check all user messages for an EXACT match only
+    // IMPORTANT: Do NOT use includes() as it causes false positives when:
+    // - A new message happens to be a substring of an existing message
+    // - An existing message happens to be a substring of the new message
+    // This was causing the bug where follow-up messages weren't displayed
     const isDisplayed = userMessages.some(msg => {
       const msgTrimmed = msg.content.trim();
-      // Exact match
-      if (msgTrimmed === pendingTrimmed) return true;
-      // Check if one contains the other (handles cases where backend might add/remove whitespace)
-      if (msgTrimmed.includes(pendingTrimmed) || pendingTrimmed.includes(msgTrimmed)) return true;
-      return false;
+      // Only exact match - no substring matching
+      return msgTrimmed === pendingTrimmed;
     });
 
     // If the message is already displayed in displayMessages, hide the pending message

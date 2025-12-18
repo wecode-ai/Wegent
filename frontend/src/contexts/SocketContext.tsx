@@ -199,6 +199,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
 
   /**
    * Join a task room
+   * Prevents duplicate joins by checking if already joined
    */
   const joinTask = useCallback(
     async (
@@ -213,6 +214,12 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     }> => {
       if (!socket?.connected) {
         return { error: 'Not connected' };
+      }
+
+      // Check if already joined this task room to prevent duplicate joins
+      if (joinedTasksRef.current.has(taskId)) {
+        console.log('[Socket.IO] Already joined task room, skipping:', taskId);
+        return {};
       }
 
       return new Promise(resolve => {
