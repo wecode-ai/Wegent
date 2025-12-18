@@ -6,7 +6,7 @@
 Document retrieval orchestration.
 """
 
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
 from app.services.rag.storage.base import BaseStorageBackend
 
@@ -25,16 +25,19 @@ class DocumentRetriever:
         self.storage_backend = storage_backend
         self.embed_model = embed_model
 
-    async def retrieve(
+    def retrieve(
         self,
         knowledge_id: str,
         query: str,
         retrieval_setting: Dict[str, Any],
         metadata_condition: Optional[Dict[str, Any]] = None,
-        **kwargs
+        **kwargs,
     ) -> Dict:
         """
-        Retrieve relevant documents.
+        Retrieve relevant documents (synchronous).
+
+        This method is synchronous because it's called from asyncio.to_thread()
+        in RetrievalService to avoid event loop conflicts with LlamaIndex.
 
         Args:
             knowledge_id: Knowledge base ID
@@ -46,16 +49,16 @@ class DocumentRetriever:
                 - vector_weight: Optional weight for vector search
                 - keyword_weight: Optional weight for keyword search
             metadata_condition: Optional metadata filtering conditions
-            **kwargs: Additional parameters
+            **kwargs: Additional parameters (e.g., user_id for per_user index strategy)
 
         Returns:
             Retrieval result dict
         """
-        return await self.storage_backend.retrieve(
+        return self.storage_backend.retrieve(
             knowledge_id=knowledge_id,
             query=query,
             embed_model=self.embed_model,
             retrieval_setting=retrieval_setting,
             metadata_condition=metadata_condition,
-            **kwargs
+            **kwargs,
         )

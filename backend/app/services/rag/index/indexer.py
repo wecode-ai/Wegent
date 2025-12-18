@@ -6,12 +6,13 @@
 Document indexing orchestration.
 """
 
-from typing import Dict
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
+from typing import Dict
+
 from llama_index.core import SimpleDirectoryReader
 
-from app.services.rag.index.chunker import DocumentChunker
+from app.services.rag.splitter import DocumentSplitter
 from app.services.rag.storage.base import BaseStorageBackend
 
 
@@ -28,23 +29,22 @@ class DocumentIndexer:
         """
         self.storage_backend = storage_backend
         self.embed_model = embed_model
-        self.chunker = DocumentChunker(embed_model)
+        self.splitter = DocumentSplitter(embed_model)
 
-    async def index_document(
-        self,
-        knowledge_id: str,
-        file_path: str,
-        document_id: str,
-        **kwargs
+    def index_document(
+        self, knowledge_id: str, file_path: str, document_id: str, **kwargs
     ) -> Dict:
         """
-        Index a document.
+        Index a document (synchronous).
+
+        This method is synchronous because it's called from asyncio.to_thread()
+        in DocumentService to avoid event loop conflicts with LlamaIndex.
 
         Args:
             knowledge_id: Knowledge base ID
             file_path: Path to document file
             document_id: Document ID
-            **kwargs: Additional parameters
+            **kwargs: Additional parameters (e.g., user_id for per_user index strategy)
 
         Returns:
             Indexing result dict
@@ -53,41 +53,35 @@ class DocumentIndexer:
             Exception: If indexing fails
         """
         # Load document
-        documents = SimpleDirectoryReader(
-            input_files=[file_path]
-        ).load_data()
+        documents = SimpleDirectoryReader(input_files=[file_path]).load_data()
 
-        # Chunk documents
-        nodes = self.chunker.chunk_documents(documents)
+        # Split documents into nodes
+        nodes = self.splitter.split_documents(documents)
 
-        # Add metadata
+        # Prepare metadata
         source_file = Path(file_path).name
         created_at = datetime.utcnow().isoformat()
-        nodes = self.chunker.add_metadata(
+
+        # Delegate to storage backend for metadata addition and indexing
+        result = self.storage_backend.index_with_metadata(
             nodes=nodes,
             knowledge_id=knowledge_id,
             document_id=document_id,
             source_file=source_file,
-            created_at=created_at
-        )
-
-        # Get index name
-        index_name = self.storage_backend.get_index_name(knowledge_id, **kwargs)
-
-        # Index nodes
-        result = self.storage_backend.index(
-            nodes=nodes,
-            index_name=index_name,
-            embed_model=self.embed_model
+            created_at=created_at,
+            embed_model=self.embed_model,
+            **kwargs,
         )
 
         # Add document info to result
-        result.update({
-            "document_id": document_id,
-            "knowledge_id": knowledge_id,
-            "source_file": source_file,
-            "chunk_count": len(nodes),
-            "created_at": created_at
-        })
+        result.update(
+            {
+                "document_id": document_id,
+                "knowledge_id": knowledge_id,
+                "source_file": source_file,
+                "chunk_count": len(nodes),
+                "created_at": created_at,
+            }
+        )
 
         return result
