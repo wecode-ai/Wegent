@@ -241,6 +241,14 @@ class ExecutorKindsService(
                     task.updated_at = datetime.now()
                     flag_modified(task, "json")
 
+                    # Send WebSocket event for task status update (PENDING -> RUNNING)
+                    self._emit_task_status_ws_event(
+                        user_id=task.user_id,
+                        task_id=task_id,
+                        status="RUNNING",
+                        progress=task_crd.status.progress if task_crd.status else 0,
+                    )
+
     def _get_model_config_from_public_model(
         self, db: Session, agent_config: Any
     ) -> Any:
@@ -947,7 +955,108 @@ class ExecutorKindsService(
         # Send notification when task is completed or failed
         self._send_task_completion_notification(db, task_id, task_crd)
 
+        # Send WebSocket event for task status update
+        if task_crd.status:
+            self._emit_task_status_ws_event(
+                user_id=task.user_id,
+                task_id=task_id,
+                status=task_crd.status.status,
+                progress=task_crd.status.progress,
+            )
+
         db.add(task)
+
+    def _emit_task_status_ws_event(
+        self,
+        user_id: int,
+        task_id: int,
+        status: str,
+        progress: Optional[int] = None,
+    ) -> None:
+        """
+        Emit task:status WebSocket event to notify frontend of task status changes.
+
+        This method schedules the WebSocket event emission asynchronously to avoid
+        blocking the database transaction.
+
+        Args:
+            user_id: User ID who owns the task
+            task_id: Task ID
+            status: New task status
+            progress: Optional progress percentage
+        """
+        logger.info(
+            f"[WS] _emit_task_status_ws_event called for task={task_id} status={status} progress={progress} user_id={user_id}"
+        )
+
+        async def emit_async():
+            try:
+                from app.services.chat.ws_emitter import get_ws_emitter
+
+                ws_emitter = get_ws_emitter()
+                if ws_emitter:
+                    await ws_emitter.emit_task_status(
+                        user_id=user_id,
+                        task_id=task_id,
+                        status=status,
+                        progress=progress,
+                    )
+                    logger.info(
+                        f"[WS] Successfully emitted task:status event for task={task_id} status={status} progress={progress}"
+                    )
+                else:
+                    logger.warning(
+                        f"[WS] ws_emitter is None, cannot emit task:status event for task={task_id}"
+                    )
+            except Exception as e:
+                logger.error(
+                    f"[WS] Failed to emit task:status WebSocket event: {e}",
+                    exc_info=True,
+                )
+
+        # Schedule async execution
+        # First try to get the running event loop from the current context
+        try:
+            # Try to get the running event loop
+            loop = asyncio.get_running_loop()
+            # We're in an async context, use create_task directly
+            loop.create_task(emit_async())
+            logger.info(
+                f"[WS] Scheduled task:status event via loop.create_task for task={task_id}"
+            )
+        except RuntimeError:
+            # No running event loop in current thread
+            # Try to use the main event loop reference from ws_emitter
+            logger.info(
+                f"[WS] No running event loop in current thread, trying main event loop for task={task_id}"
+            )
+            try:
+                from app.services.chat.ws_emitter import get_main_event_loop
+
+                main_loop = get_main_event_loop()
+                if main_loop and main_loop.is_running():
+                    # Schedule the coroutine to run in the main event loop
+                    asyncio.run_coroutine_threadsafe(emit_async(), main_loop)
+                    logger.info(
+                        f"[WS] Scheduled task:status event via run_coroutine_threadsafe (main loop) for task={task_id}"
+                    )
+                else:
+                    # Fallback: try asyncio.get_event_loop()
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        asyncio.run_coroutine_threadsafe(emit_async(), loop)
+                        logger.info(
+                            f"[WS] Scheduled task:status event via run_coroutine_threadsafe (fallback) for task={task_id}"
+                        )
+                    else:
+                        logger.warning(
+                            f"[WS] No running event loop available, cannot emit task:status event for task={task_id}"
+                        )
+            except RuntimeError as e:
+                # No event loop available at all
+                logger.warning(
+                    f"[WS] Could not emit task:status event - no event loop available: {e}"
+                )
 
     def _auto_delete_executors_if_enabled(
         self, db: Session, task_id: int, task_crd: Task, subtasks: List[Subtask]

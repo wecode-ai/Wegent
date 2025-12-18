@@ -23,7 +23,7 @@ import {
   initializeTaskViewStatus,
 } from '@/utils/taskViewStatus';
 import { useSocket } from '@/contexts/SocketContext';
-import { TaskCreatedPayload, TaskInvitedPayload } from '@/types/socket';
+import { TaskCreatedPayload, TaskInvitedPayload, TaskStatusPayload } from '@/types/socket';
 
 type TaskContextType = {
   tasks: Task[];
@@ -265,6 +265,63 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     });
   }, []);
 
+  // Handle task status update via WebSocket
+  const handleTaskStatus = useCallback(
+    (data: TaskStatusPayload) => {
+      console.log('[TaskContext] Received task:status event via WebSocket:', data);
+
+      const now = new Date().toISOString();
+      // Use completed_at from WebSocket payload for terminal states, or generate one
+      const terminalStates = ['COMPLETED', 'FAILED', 'CANCELLED'];
+      const isTerminalState = terminalStates.includes(data.status);
+      const completedAt = isTerminalState ? data.completed_at || now : undefined;
+
+      setTasks(prev => {
+        const taskIndex = prev.findIndex(task => task.id === data.task_id);
+        if (taskIndex === -1) {
+          console.log(
+            `[TaskContext] Task ${data.task_id} not found in list, skipping status update`
+          );
+          return prev;
+        }
+
+        const updatedTasks = [...prev];
+        const existingTask = updatedTasks[taskIndex];
+
+        // Update task status, progress, and completed_at for terminal states
+        updatedTasks[taskIndex] = {
+          ...existingTask,
+          status: data.status as TaskStatus,
+          progress: data.progress ?? existingTask.progress,
+          updated_at: now,
+          // Update completed_at for terminal states
+          ...(completedAt && { completed_at: completedAt }),
+        };
+
+        console.log(
+          `[TaskContext] Updated task ${data.task_id} status to ${data.status} via WebSocket`,
+          completedAt ? `completed_at=${completedAt}` : ''
+        );
+        return updatedTasks;
+      });
+
+      // Also update selected task detail if it's the same task
+      if (selectedTask && selectedTask.id === data.task_id) {
+        setSelectedTaskDetail(prev => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            status: data.status as TaskStatus,
+            progress: data.progress ?? prev.progress,
+            updated_at: now,
+            // Update completed_at for terminal states
+            ...(completedAt && { completed_at: completedAt }),
+          };
+        });
+      }
+    },
+    [selectedTask]
+  );
   // Register WebSocket event handlers for real-time task updates
   useEffect(() => {
     // Only register handlers when WebSocket is connected
@@ -277,16 +334,19 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     const cleanup = registerTaskHandlers({
       onTaskCreated: handleTaskCreated,
       onTaskInvited: handleTaskInvited,
+      onTaskStatus: handleTaskStatus,
     });
 
     return () => {
       console.log('[TaskContext] Cleaning up WebSocket task handlers');
       cleanup();
     };
-  }, [isConnected, registerTaskHandlers, handleTaskCreated, handleTaskInvited]);
+  }, [isConnected, registerTaskHandlers, handleTaskCreated, handleTaskInvited, handleTaskStatus]);
 
-  // Only refresh periodically when there are unfinished tasks OR when there's a network error
-  // This ensures polling continues even after network errors to recover when connection is restored
+  // Polling strategy:
+  // - When WebSocket is connected: rely on real-time updates, use longer polling interval (60s) as fallback
+  // - When WebSocket is disconnected: use shorter polling interval (10s) for faster updates
+  // - Only poll when there are incomplete tasks OR network error (for recovery)
   useEffect(() => {
     const hasIncompleteTasks = tasks.some(
       task =>
@@ -301,16 +361,24 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     // Continue polling if there are incomplete tasks OR if there was a network error
     // This allows recovery when network connection is restored
     if (hasIncompleteTasks || hasNetworkError) {
+      // Use longer interval when WebSocket is connected (real-time updates via WebSocket)
+      // Use shorter interval when WebSocket is disconnected (fallback to polling)
+      const pollingInterval = isConnected ? 60000 : 10000;
+
+      console.log(
+        `[TaskContext] Setting up polling with ${pollingInterval / 1000}s interval (WebSocket ${isConnected ? 'connected' : 'disconnected'})`
+      );
+
       interval = setInterval(() => {
         refreshTasks();
-      }, 10000);
+      }, pollingInterval);
     }
 
     return () => {
       if (interval) clearInterval(interval);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadedPages, tasks, hasNetworkError]); // Added hasNetworkError to dependencies
+  }, [loadedPages, tasks, hasNetworkError, isConnected]); // Added isConnected to dependencies
 
   const refreshSelectedTaskDetail = async (isAutoRefresh: boolean = false) => {
     if (!selectedTask) return;
@@ -366,11 +434,9 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  // Mark task as viewed when selected OR when currently viewing task reaches terminal state
+  // Trigger task detail refresh when selectedTask changes
   useEffect(() => {
     if (selectedTask) {
-      // Mark task as viewed when selected
-      markTaskAsViewed(selectedTask.id, selectedTask.status);
       refreshSelectedTaskDetail(false); // Manual task selection, not auto-refresh
     } else {
       setSelectedTaskDetail(null);
@@ -378,22 +444,22 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTask]);
 
-  // Auto-mark as viewed when currently viewing task reaches terminal state
+  // Mark task as viewed when selectedTaskDetail is loaded
+  // This ensures we have the correct status and timestamps from the backend
   useEffect(() => {
     if (selectedTaskDetail) {
       const terminalStates = ['COMPLETED', 'FAILED', 'CANCELLED'];
-      if (terminalStates.includes(selectedTaskDetail.status)) {
-        // Use TaskDetail's completed_at/updated_at as the timestamp for marking as viewed
-        // This ensures consistency with isTaskUnread which uses Task's timestamps
-        // Note: TaskDetail now has these fields from the backend
-        const taskTimestamp =
-          selectedTaskDetail.completed_at ||
+      // For terminal states, use task's completed_at/updated_at to ensure viewedAt >= taskUpdatedAt
+      // This prevents the "unread" badge from showing due to client/server time differences
+      const taskTimestamp = terminalStates.includes(selectedTaskDetail.status)
+        ? selectedTaskDetail.completed_at ||
           selectedTaskDetail.updated_at ||
-          new Date().toISOString();
+          new Date().toISOString()
+        : undefined;
 
-        markTaskAsViewed(selectedTaskDetail.id, selectedTaskDetail.status, taskTimestamp);
-        setViewStatusVersion(prev => prev + 1);
-      }
+      markTaskAsViewed(selectedTaskDetail.id, selectedTaskDetail.status, taskTimestamp);
+      // Trigger re-render to update unread status in sidebar
+      setViewStatusVersion(prev => prev + 1);
     }
   }, [
     selectedTaskDetail?.status,

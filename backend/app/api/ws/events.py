@@ -219,6 +219,7 @@ class TaskStatusPayload(BaseModel):
     task_id: int
     status: str
     progress: Optional[int] = None
+    completed_at: Optional[str] = None
 
 
 class TaskSharedPayload(BaseModel):

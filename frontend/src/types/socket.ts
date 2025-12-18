@@ -165,6 +165,7 @@ export interface TaskStatusPayload {
   task_id: number;
   status: string;
   progress?: number;
+  completed_at?: string;
 }
 
 export interface TaskSharedPayload {

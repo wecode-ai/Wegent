@@ -10,6 +10,7 @@ to clients. It wraps the Socket.IO server and provides typed methods
 for all event types.
 """
 
+import asyncio
 import logging
 from datetime import datetime
 from typing import Any, Dict, Optional
@@ -358,6 +359,7 @@ class WebSocketEmitter:
         task_id: int,
         status: str,
         progress: Optional[int] = None,
+        completed_at: Optional[str] = None,
     ) -> None:
         """
         Emit task:status event to user room.
@@ -367,14 +369,23 @@ class WebSocketEmitter:
             task_id: Task ID
             status: New status
             progress: Optional progress percentage
+            completed_at: Optional completion timestamp (for terminal states)
         """
+        payload = {
+            "task_id": task_id,
+            "status": status,
+            "progress": progress,
+        }
+        # Include completed_at for terminal states
+        if completed_at is not None:
+            payload["completed_at"] = completed_at
+        elif status in ("COMPLETED", "FAILED", "CANCELLED"):
+            # Auto-generate completed_at for terminal states if not provided
+            payload["completed_at"] = datetime.now().isoformat()
+
         await self.sio.emit(
             ServerEvents.TASK_STATUS,
-            {
-                "task_id": task_id,
-                "status": status,
-                "progress": progress,
-            },
+            payload,
             room=f"user:{user_id}",
             namespace=self.namespace,
         )
@@ -465,6 +476,8 @@ class WebSocketEmitter:
 
 # Global emitter instance (lazy initialized)
 _ws_emitter: Optional[WebSocketEmitter] = None
+# Global reference to the main event loop (set during initialization)
+_main_event_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
 def get_ws_emitter() -> Optional[WebSocketEmitter]:
@@ -477,6 +490,16 @@ def get_ws_emitter() -> Optional[WebSocketEmitter]:
     return _ws_emitter
 
 
+def get_main_event_loop() -> Optional[asyncio.AbstractEventLoop]:
+    """
+    Get the main event loop reference.
+
+    Returns:
+        The main event loop or None if not initialized
+    """
+    return _main_event_loop
+
+
 def init_ws_emitter(sio: socketio.AsyncServer) -> WebSocketEmitter:
     """
     Initialize the global WebSocket emitter.
@@ -487,7 +510,21 @@ def init_ws_emitter(sio: socketio.AsyncServer) -> WebSocketEmitter:
     Returns:
         WebSocketEmitter: Initialized emitter instance
     """
-    global _ws_emitter
+    global _ws_emitter, _main_event_loop
     _ws_emitter = WebSocketEmitter(sio)
-    logger.info("WebSocket emitter initialized")
+
+    # Capture the main event loop reference for use in synchronous contexts
+    try:
+        _main_event_loop = asyncio.get_running_loop()
+        logger.info("WebSocket emitter initialized with main event loop reference")
+    except RuntimeError:
+        # No running loop during initialization (shouldn't happen in normal startup)
+        try:
+            _main_event_loop = asyncio.get_event_loop()
+            logger.info(
+                "WebSocket emitter initialized with event loop (not running yet)"
+            )
+        except RuntimeError:
+            logger.warning("WebSocket emitter initialized without event loop reference")
+
     return _ws_emitter
