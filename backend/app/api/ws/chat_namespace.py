@@ -42,6 +42,38 @@ from app.services.chat.session_manager import session_manager
 logger = logging.getLogger(__name__)
 
 
+async def call_executor_cancel(task_id: int) -> bool:
+    """
+    Call executor_manager to cancel a task.
+
+    Args:
+        task_id: Task ID to cancel
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    import httpx
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                settings.EXECUTOR_CANCEL_TASK_URL,
+                json={"task_id": task_id},
+                timeout=5.0,
+            )
+            response.raise_for_status()
+            logger.info(
+                f"executor_manager responded successfully for task_id={task_id}"
+            )
+            return True
+    except Exception as e:
+        logger.error(
+            f"executor_manager call failed for task_id={task_id}: {e}",
+            exc_info=True,
+        )
+        return False
+
+
 def verify_jwt_token(token: str) -> Optional[User]:
     """
     Verify JWT token and return user.
@@ -708,12 +740,14 @@ class ChatNamespace(socketio.AsyncNamespace):
         try:
             payload = ChatCancelPayload(**data)
         except ValidationError as e:
+            logger.error(f"[WS] chat:cancel validation error: {e}")
             return {"error": f"Invalid payload: {e}"}
 
         session = await self.get_session(sid)
         user_id = session.get("user_id")
 
         if not user_id:
+            logger.error("[WS] chat:cancel error: Not authenticated")
             return {"error": "Not authenticated"}
 
         db = SessionLocal()
@@ -729,15 +763,36 @@ class ChatNamespace(socketio.AsyncNamespace):
             )
 
             if not subtask:
+                logger.error(
+                    f"[WS] chat:cancel error: Subtask not found subtask_id={payload.subtask_id} user_id={user_id}"
+                )
                 return {"error": "Subtask not found"}
 
             if subtask.status not in [SubtaskStatus.PENDING, SubtaskStatus.RUNNING]:
+                logger.warning(
+                    f"[WS] chat:cancel error: Cannot cancel subtask in {subtask.status.value} state"
+                )
                 return {
                     "error": f"Cannot cancel subtask in {subtask.status.value} state"
                 }
 
-            # Signal cancellation
-            await session_manager.cancel_stream(payload.subtask_id)
+            # Check if this is a Chat Shell task or Executor task based on shell_type
+            # Shell type "Chat" uses session_manager (direct chat)
+            # Other shell types (ClaudeCode, Agno, etc.) use executor_manager
+            is_chat_shell = (
+                payload.shell_type == "Chat" if payload.shell_type else False
+            )
+
+            logger.info(
+                f"[WS] chat:cancel task_id={subtask.task_id}, shell_type={payload.shell_type}, is_chat_shell={is_chat_shell}"
+            )
+
+            if is_chat_shell:
+                # For Chat Shell tasks, use session_manager
+                await session_manager.cancel_stream(payload.subtask_id)
+            else:
+                # For Executor tasks, call executor_manager API
+                await call_executor_cancel(subtask.task_id)
 
             # Update subtask
             subtask.status = SubtaskStatus.COMPLETED
@@ -779,6 +834,10 @@ class ChatNamespace(socketio.AsyncNamespace):
 
             return {"success": True}
 
+        except Exception as e:
+            logger.error(f"[WS] chat:cancel exception: {e}", exc_info=True)
+            db.rollback()
+            return {"error": f"Internal server error: {str(e)}"}
         finally:
             db.close()
 
