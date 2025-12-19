@@ -6,6 +6,7 @@
 Elasticsearch storage backend implementation.
 """
 
+import hashlib
 from typing import Any, Dict, List, Optional
 
 from elasticsearch import Elasticsearch
@@ -57,8 +58,10 @@ class ElasticsearchBackend(BaseStorageBackend):
             # Use hash-based sharding for rolling strategy
             prefix = self.index_strategy.get("prefix", "wegent")
             step = self.index_strategy.get("rollingStep", 5000)
-            # Simple hash-based sharding
-            hash_val = hash(knowledge_id) % 10000
+            # Deterministic hash-based sharding using MD5
+            hash_val = (
+                int(hashlib.md5(knowledge_id.encode()).hexdigest(), 16) % 10000
+            )
             index_base = (hash_val // step) * step
             return f"{prefix}_index_{index_base}"
         elif mode == "per_dataset":
@@ -298,7 +301,7 @@ class ElasticsearchBackend(BaseStorageBackend):
                         {
                             "multi_match": {
                                 "query": query,
-                                "fields": ["text^1.0"],
+                                "fields": ["content^1.0"],
                                 "type": "best_fields",
                                 "boost": keyword_weight,
                             }
@@ -307,7 +310,7 @@ class ElasticsearchBackend(BaseStorageBackend):
                     "minimum_should_match": 1,
                 }
             },
-            "_source": ["text", "metadata"],
+            "_source": ["content", "metadata"],
         }
 
         # Execute search
@@ -325,7 +328,7 @@ class ElasticsearchBackend(BaseStorageBackend):
 
                 results.append(
                     {
-                        "content": source.get("text", ""),
+                        "content": source.get("content", ""),
                         "score": float(normalized_score),
                         "title": metadata.get("source_file", ""),
                         "metadata": metadata,
