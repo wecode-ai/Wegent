@@ -102,6 +102,15 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
   const { t: tChat } = useTranslation('chat');
   const items = useMemo(() => thinking ?? [], [thinking]);
 
+  // DEBUG: Log when ThinkingComponent receives new thinking data
+  console.log('[ThinkingComponent] Render', {
+    thinkingType: typeof thinking,
+    thinkingIsArray: Array.isArray(thinking),
+    thinkingLen: Array.isArray(thinking) ? thinking.length : 0,
+    itemsLen: items.length,
+    taskStatus,
+  });
+
   // Initialize isOpen based on taskStatus
   const shouldBeCollapsed =
     taskStatus === 'COMPLETED' || taskStatus === 'FAILED' || taskStatus === 'CANCELLED';

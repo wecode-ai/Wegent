@@ -339,13 +339,17 @@ async def export_task_docx(
     - Embedded images and attachment info
     """
     from app.models.kind import Kind
+    from app.services.task_member_service import task_member_service
 
-    # Query task with permission check
+    # Check if user has access to the task (owner or group chat member)
+    if not task_member_service.is_member(db, task_id, current_user.id):
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # Query task without user_id filter since we already validated access
     task = (
         db.query(Kind)
         .filter(
             Kind.id == task_id,
-            Kind.user_id == current_user.id,
             Kind.kind == "Task",
             Kind.is_active == True,
         )

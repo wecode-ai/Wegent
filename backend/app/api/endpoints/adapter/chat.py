@@ -139,7 +139,9 @@ def _should_use_direct_chat(db: Session, team: Kind, user_id: int) -> bool:
     return True
 
 
-def _should_trigger_ai_response(task_json: dict, prompt: str, team_name: str) -> bool:
+def _should_trigger_ai_response(
+    task_json: dict, prompt: str, team_name: str, request_is_group_chat: bool = False
+) -> bool:
     """
     Determine whether to trigger AI response based on task mode and prompt content.
 
@@ -150,12 +152,21 @@ def _should_trigger_ai_response(task_json: dict, prompt: str, team_name: str) ->
         task_json: Task's JSON spec
         prompt: User's input message
         team_name: Associated Team name
+        request_is_group_chat: Whether the request explicitly marks this as a group chat
+                              (used for new tasks where task_json is empty)
 
     Returns:
         True if AI response should be triggered, False if only save message
     """
     # Check if task is in group chat mode
+    # For existing tasks: check task_json.spec.is_group_chat
+    # For new tasks: use request_is_group_chat parameter
     is_group_chat = task_json.get("spec", {}).get("is_group_chat", False)
+
+    # If task_json doesn't have is_group_chat set, use the request parameter
+    # This handles the case of creating a new group chat task
+    if not is_group_chat and request_is_group_chat:
+        is_group_chat = True
 
     # Non-group-chat mode: always trigger AI
     if not is_group_chat:
@@ -445,6 +456,19 @@ async def _create_task_and_subtasks(
         )
         db.add(assistant_subtask)
 
+    # Update task.updated_at for group chat messages (even without AI trigger)
+    # This ensures the task list shows unread indicators for new messages
+    if request.is_group_chat or task.json.get("spec", {}).get("is_group_chat", False):
+        from sqlalchemy.orm.attributes import flag_modified
+
+        task.updated_at = datetime.now()
+        # Also update the JSON status.updatedAt for consistency
+        task_crd = Task.model_validate(task.json)
+        if task_crd.status:
+            task_crd.status.updatedAt = datetime.now()
+            task.json = task_crd.model_dump(mode="json")
+            flag_modified(task, "json")
+
     db.commit()
     db.refresh(task)
     db.refresh(user_subtask)
@@ -494,12 +518,82 @@ async def _create_task_and_subtasks(
                     f"Initialized {len(history_messages)} messages in Redis for task {task_id}"
                 )
 
+    # Notify all group chat members about the new message via WebSocket
+    # This allows their task list to show the unread indicator
+    if request.is_group_chat or task.json.get("spec", {}).get("is_group_chat", False):
+        await _notify_group_members_task_updated(db, task, user.id)
+
     return {
         "task": task,
         "user_subtask": user_subtask,
         "assistant_subtask": assistant_subtask,
         "ai_triggered": should_trigger_ai,
     }
+
+
+async def _notify_group_members_task_updated(
+    db: Session, task: Kind, sender_user_id: int
+) -> None:
+    """
+    Notify all group chat members about task update via WebSocket.
+
+    This sends a task:status event to each member's user room so their
+    task list can show the unread indicator for new messages.
+
+    Args:
+        db: Database session
+        task: Task Kind object
+        sender_user_id: User ID of the message sender (to exclude from notification)
+    """
+    from app.models.task_member import MemberStatus, TaskMember
+    from app.services.chat.ws_emitter import get_ws_emitter
+
+    ws_emitter = get_ws_emitter()
+    if not ws_emitter:
+        logger.warning(
+            f"[_notify_group_members_task_updated] WebSocket emitter not available"
+        )
+        return
+
+    try:
+        # Get all active members of this group chat
+        members = (
+            db.query(TaskMember)
+            .filter(
+                TaskMember.task_id == task.id,
+                TaskMember.status == MemberStatus.ACTIVE,
+            )
+            .all()
+        )
+
+        # Also include the task owner
+        member_user_ids = {m.user_id for m in members}
+        member_user_ids.add(task.user_id)
+
+        # Get current task status
+        task_crd = Task.model_validate(task.json)
+        current_status = task_crd.status.status if task_crd.status else "PENDING"
+
+        # Notify each member (except the sender) about the task update
+        for member_user_id in member_user_ids:
+            if member_user_id == sender_user_id:
+                # Skip the sender - they already know about their own message
+                continue
+
+            await ws_emitter.emit_task_status(
+                user_id=member_user_id,
+                task_id=task.id,
+                status=current_status,
+                progress=task_crd.status.progress if task_crd.status else 0,
+            )
+            logger.debug(
+                f"[_notify_group_members_task_updated] Notified user {member_user_id} about task {task.id} update"
+            )
+
+    except Exception as e:
+        logger.warning(
+            f"[_notify_group_members_task_updated] Failed to notify group members: {e}"
+        )
 
 
 @router.post("/stream")
@@ -655,8 +749,9 @@ async def stream_chat(
             task_json = task_kind.json or {}
 
     # Check if AI should be triggered (for group chat with @mention)
+    # Pass request.is_group_chat for new tasks where task_json is empty
     should_trigger_ai = _should_trigger_ai_response(
-        task_json, request.message, team_name
+        task_json, request.message, team_name, request.is_group_chat
     )
     logger.info(
         f"Group chat check: task_id={request.task_id}, "
@@ -762,132 +857,11 @@ async def stream_chat(
     system_prompt = get_bot_system_prompt(db, bot, team.user_id, first_member.prompt)
 
     # Append clarification mode instructions if enabled
-    if request.enable_clarification:
-        clarification_prompt = """
+    from app.services.chat.clarification_prompt import append_clarification_prompt
 
-## Smart Follow-up Mode (智能追问模式)
-
-When you receive a user request that is ambiguous or lacks important details, ask targeted clarification questions through MULTIPLE ROUNDS before proceeding with the task.
-
-### Output Format
-
-When asking clarification questions, output them in the following Markdown format:
-
-```markdown
-## 💬 智能追问 (Smart Follow-up Questions)
-
-### Q1: [Question text]
-**Type**: single_choice
-**Options**:
-- [✓] `value` - Label text (recommended)
-- [ ] `value` - Label text
-
-### Q2: [Question text]
-**Type**: multiple_choice
-**Options**:
-- [✓] `value` - Label text (recommended)
-- [ ] `value` - Label text
-- [ ] `value` - Label text
-
-### Q3: [Question text]
-**Type**: text_input
-```
-
-### Question Design Guidelines
-
-- Ask 3-5 focused questions per round
-- Use `single_choice` for yes/no or mutually exclusive options
-- Use `multiple_choice` for features that can be combined
-- Use `text_input` for open-ended requirements (e.g., specific details, numbers, names)
-- Mark recommended options with `[✓]` and `(recommended)`
-- Wrap the entire question section in a markdown code block (```markdown ... ```)
-
-### Question Types
-
-- `single_choice`: User selects ONE option
-- `multiple_choice`: User can select MULTIPLE options
-- `text_input`: Free text input (no options needed)
-
-### Multi-Round Clarification Strategy (重要！)
-
-**You MUST conduct multiple rounds of clarification (typically 2-4 rounds) to gather sufficient information.**
-
-**Round 1 - Basic Context (基础背景):**
-Focus on understanding the overall context:
-- What is the general goal/purpose?
-- Who is the target audience?
-- What format/type is expected?
-- What is the general domain/field?
-
-**Round 2 - Specific Details (具体细节):**
-Based on Round 1 answers, dig deeper:
-- What are the specific requirements within the chosen context?
-- What constraints or limitations exist?
-- What specific content/data should be included?
-- What is the scope or scale?
-
-**Round 3 - Personalization (个性化定制):**
-Gather user-specific information:
-- What are the user's specific achievements/data/examples?
-- What style/tone preferences?
-- Any special requirements or exceptions?
-- Timeline or deadline considerations?
-
-**Round 4 (if needed) - Final Confirmation (最终确认):**
-Clarify any remaining ambiguities before proceeding.
-
-### Exit Criteria - When to STOP Asking and START Executing (退出标准)
-
-**ONLY proceed to execute the task when ALL of the following conditions are met:**
-
-1. **Sufficient Specificity (足够具体):** You have enough specific details to produce a personalized, actionable result rather than a generic template.
-
-2. **Actionable Information (可执行信息):** You have concrete data, examples, or specifics that can be directly incorporated into the output.
-
-3. **Clear Scope (明确范围):** The boundaries and scope of the task are well-defined.
-
-4. **No Critical Gaps (无关键缺失):** There are no critical pieces of information missing that would significantly impact the quality of the output.
-
-**Examples of when to CONTINUE asking:**
-
-- User says "互联网行业" but hasn't specified their role (产品/研发/运营/设计/etc.)
-- User wants a "年终汇报" but hasn't mentioned any specific achievements or projects
-- User requests a "PPT" but hasn't provided any data or metrics to include
-- User mentions a goal but hasn't specified constraints (time, budget, resources)
-
-**Examples of when to STOP asking and proceed:**
-
-- User has provided their specific role, key projects, measurable achievements, and target audience
-- User has given concrete numbers, dates, or examples that can be directly used
-- User explicitly indicates they want to proceed with current information
-- You have asked 4+ rounds and have gathered substantial information
-
-### Information Completeness Checklist (信息完整度检查)
-
-Before deciding to proceed, mentally check:
-
-- [ ] WHO: Target audience clearly identified
-- [ ] WHAT: Specific deliverable type and format defined
-- [ ] WHY: Purpose and goals understood
-- [ ] HOW: Style, tone, and approach determined
-- [ ] DETAILS: Specific content, data, or examples provided
-- [ ] CONSTRAINTS: Limitations, requirements, or preferences known
-
-**If fewer than 4 items are checked, you likely need another round of questions.**
-
-### Response After Receiving Answers
-
-After each round of user answers:
-
-1. **Acknowledge** the answers briefly (1-2 sentences)
-2. **Assess** whether you have sufficient information (use the checklist above)
-3. **Either:**
-   - Ask follow-up questions (next round) if information is still insufficient
-   - OR proceed with the task if exit criteria are met
-
-**Important:** Do NOT rush to provide a solution after just one round of questions. Take time to gather comprehensive information for a truly personalized and high-quality output.
-"""
-        system_prompt = system_prompt + clarification_prompt
+    system_prompt = append_clarification_prompt(
+        system_prompt, request.enable_clarification
+    )
 
     # Build data_sources for placeholder replacement in DEFAULT_HEADERS
     # This mirrors the executor's member_builder.py logic
