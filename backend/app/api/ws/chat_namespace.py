@@ -835,7 +835,6 @@ class ChatNamespace(socketio.AsyncNamespace):
                 db.query(Subtask)
                 .filter(
                     Subtask.id == payload.subtask_id,
-                    Subtask.user_id == user_id,
                 )
                 .first()
             )

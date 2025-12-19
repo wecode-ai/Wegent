@@ -406,15 +406,23 @@ export default function ChatArea({
   }, [localPendingMessage, currentStreamState?.messages]);
 
   // Wrapper for stopStream that uses the current display task ID
-  // Passes current subtasks to help find running AI subtask if chat:start hasn't been received
+  // Passes current subtasks and team to help find running AI subtask if chat:start hasn't been received
   const stopStream = useCallback(async () => {
     const taskIdToStop = currentDisplayTaskId || streamingTaskId;
 
     if (taskIdToStop && taskIdToStop > 0) {
-      // Pass current subtasks from task detail to help find running subtask and get shell_type
-      await contextStopStream(taskIdToStop, selectedTaskDetail?.subtasks);
+      // Pass current subtasks and team from task detail to help find running subtask and get shell_type
+      const team =
+        typeof selectedTaskDetail?.team === 'object' ? selectedTaskDetail.team : undefined;
+      await contextStopStream(taskIdToStop, selectedTaskDetail?.subtasks, team);
     }
-  }, [currentDisplayTaskId, streamingTaskId, contextStopStream, selectedTaskDetail?.subtasks]);
+  }, [
+    currentDisplayTaskId,
+    streamingTaskId,
+    contextStopStream,
+    selectedTaskDetail?.subtasks,
+    selectedTaskDetail?.team,
+  ]);
 
   // Wrapper for resetStream that uses the current display task ID
   // Note: This function is kept for potential future use but currently

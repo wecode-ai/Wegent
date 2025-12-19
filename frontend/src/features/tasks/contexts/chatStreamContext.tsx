@@ -47,7 +47,7 @@ import {
   ChatCancelledPayload,
   ChatMessagePayload,
 } from '@/types/socket';
-import type { TaskDetailSubtask } from '@/types/api';
+import type { TaskDetailSubtask, Team } from '@/types/api';
 
 /**
  * Message type enum
@@ -225,8 +225,9 @@ interface ChatStreamContextType {
    * Stop the stream for a specific task
    * @param taskId - Task ID
    * @param backupSubtasks - Optional backup subtasks from selectedTaskDetail, used to find running ASSISTANT subtask when chat:start hasn't been received
+   * @param team - Optional team info for fallback shell_type when subtask bots are empty
    */
-  stopStream: (taskId: number, backupSubtasks?: TaskDetailSubtask[]) => Promise<void>;
+  stopStream: (taskId: number, backupSubtasks?: TaskDetailSubtask[], team?: Team) => Promise<void>;
   /** Reset stream state for a specific task */
   resetStream: (taskId: number) => void;
   /** Clear all stream states */
@@ -1082,7 +1083,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
    * If subtaskId is not found in stream state, search in backend subtasks
    */
   const stopStream = useCallback(
-    async (taskId: number, backupSubtasks?: TaskDetailSubtask[]): Promise<void> => {
+    async (taskId: number, backupSubtasks?: TaskDetailSubtask[], team?: Team): Promise<void> => {
       const state = streamStates.get(taskId);
       const isStreaming = computeIsStreaming(state?.messages);
 
@@ -1137,7 +1138,16 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       }
 
       // Get shell_type from the running subtask's first bot
-      const shellType = runningSubtask?.bots?.[0]?.shell_type;
+      // Fallback to team's first bot shell_type or agent_type if subtask bots are empty
+      let shellType = runningSubtask?.bots?.[0]?.shell_type;
+      if (!shellType && team) {
+        // Try team.bots[0].bot.shell_type first
+        shellType = team.bots?.[0]?.bot?.shell_type;
+        // If still not found, check team.agent_type (e.g., 'chat' -> 'Chat')
+        if (!shellType && team.agent_type?.toLowerCase() === 'chat') {
+          shellType = 'Chat';
+        }
+      }
 
       // Call backend to cancel via WebSocket
       if (subtaskId) {
