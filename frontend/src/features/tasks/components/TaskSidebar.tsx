@@ -649,8 +649,35 @@ export default function TaskSidebar({
                 {groupChats.length > 0 && (
                   <>
                     {!isCollapsed && (
-                      <div className="px-1 pb-1 text-xs font-medium text-text-muted">
-                        {t('tasks.group_chats')}
+                      <div className="px-1 pb-1 text-xs font-medium text-text-muted flex items-center justify-between">
+                        <div className="flex items-center gap-1">
+                          <span>{t('tasks.group_chats')}</span>
+                          <TooltipProvider>
+                            <Tooltip delayDuration={300}>
+                              <TooltipTrigger asChild>
+                                <button
+                                  onClick={handleOpenSearchDialog}
+                                  className="p-0.5 text-text-muted hover:text-text-primary transition-colors rounded"
+                                  aria-label={t('tasks.search_placeholder_chat')}
+                                >
+                                  <Search className="h-3.5 w-3.5" />
+                                </button>
+                              </TooltipTrigger>
+                              <TooltipContent side="right">
+                                <p>{t('tasks.search_placeholder_chat')}</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        </div>
+                        {/* Mark All Group Chats As Read Button */}
+                        {getUnreadCount(groupChats) > 0 && (
+                          <button
+                            onClick={handleMarkAllAsViewed}
+                            className="text-xs text-text-muted hover:text-text-primary transition-colors"
+                          >
+                            {t('tasks.mark_all_read')} ({getUnreadCount(groupChats)})
+                          </button>
+                        )}
                       </div>
                     )}
                     <TaskListSection
