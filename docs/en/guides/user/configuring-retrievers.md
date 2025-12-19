@@ -203,10 +203,10 @@ Content-Type: application/json
 GET /api/rag/documents?knowledge_id=kb_001&retriever_name=my-es-retriever&page=1&page_size=20
 
 # Get document details
-GET /api/rag/documents/{document_id}?knowledge_id=kb_001&retriever_name=my-es-retriever
+GET /api/rag/documents/{doc_ref}?knowledge_id=kb_001&retriever_name=my-es-retriever
 
 # Delete document
-DELETE /api/rag/documents/{document_id}?knowledge_id=kb_001&retriever_name=my-es-retriever
+DELETE /api/rag/documents/{doc_ref}?knowledge_id=kb_001&retriever_name=my-es-retriever
 ```
 
 ## Embedding Providers

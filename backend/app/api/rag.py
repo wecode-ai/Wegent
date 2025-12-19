@@ -218,9 +218,9 @@ async def retrieve_documents(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.delete("/documents/{document_id}", response_model=DocumentDeleteResponse)
+@router.delete("/documents/{doc_ref}", response_model=DocumentDeleteResponse)
 async def delete_document(
-    document_id: str,
+    doc_ref: str,
     knowledge_id: str = Query(...),
     retriever_name: str = Query(...),
     retriever_namespace: str = Query(default="default"),
@@ -231,7 +231,7 @@ async def delete_document(
     Delete a document.
 
     Args:
-        document_id: Document ID
+        doc_ref: Document reference ID
         knowledge_id: Knowledge base ID
         retriever_name: Retriever name
         retriever_namespace: Retriever namespace (default: "default")
@@ -257,7 +257,7 @@ async def delete_document(
         doc_service = DocumentService(storage_backend=storage_backend)
 
         result = await doc_service.delete_document(
-            knowledge_id=knowledge_id, document_id=document_id, user_id=current_user.id
+            knowledge_id=knowledge_id, doc_ref=doc_ref, user_id=current_user.id
         )
         return result
     except Exception as e:

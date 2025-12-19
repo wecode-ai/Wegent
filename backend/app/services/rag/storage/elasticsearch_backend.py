@@ -59,9 +59,7 @@ class ElasticsearchBackend(BaseStorageBackend):
             prefix = self.index_strategy.get("prefix", "wegent")
             step = self.index_strategy.get("rollingStep", 5000)
             # Deterministic hash-based sharding using MD5
-            hash_val = (
-                int(hashlib.md5(knowledge_id.encode()).hexdigest(), 16) % 10000
-            )
+            hash_val = int(hashlib.md5(knowledge_id.encode()).hexdigest(), 16) % 10000
             index_base = (hash_val // step) * step
             return f"{prefix}_index_{index_base}"
         elif mode == "per_dataset":
@@ -89,7 +87,7 @@ class ElasticsearchBackend(BaseStorageBackend):
         self,
         nodes: List[BaseNode],
         knowledge_id: str,
-        document_id: str,
+        doc_ref: str,
         source_file: str,
         created_at: str,
         embed_model,
@@ -101,7 +99,7 @@ class ElasticsearchBackend(BaseStorageBackend):
         Args:
             nodes: List of nodes to index
             knowledge_id: Knowledge base ID
-            document_id: Document ID (doc_xxx format)
+            doc_ref: Document reference ID (doc_xxx format)
             source_file: Source file name
             created_at: Creation timestamp
             embed_model: Embedding model
@@ -111,15 +109,15 @@ class ElasticsearchBackend(BaseStorageBackend):
             Indexing result dict
 
         Note:
-            We use 'doc_ref' instead of 'document_id' in metadata because LlamaIndex
-            overwrites 'document_id' with ref_doc_id (UUID) during storage.
+            We use 'doc_ref' in metadata to store our custom doc_xxx ID.
+            LlamaIndex has its own internal 'document_id' field (ref_doc_id UUID).
         """
         # Add metadata to nodes
         for idx, node in enumerate(nodes):
             node.metadata.update(
                 {
                     "knowledge_id": knowledge_id,
-                    "doc_ref": document_id,  # Our custom doc_xxx ID
+                    "doc_ref": doc_ref,  # Our custom doc_xxx ID
                     "source_file": source_file,
                     "chunk_index": idx,
                     "created_at": created_at,
@@ -337,7 +335,7 @@ class ElasticsearchBackend(BaseStorageBackend):
 
         return {"records": results}
 
-    def delete_document(self, knowledge_id: str, document_id: str, **kwargs) -> Dict:
+    def delete_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
         """
         Delete document from Elasticsearch using native ES API.
 
@@ -352,7 +350,7 @@ class ElasticsearchBackend(BaseStorageBackend):
                 "bool": {
                     "must": [
                         {"term": {"metadata.knowledge_id.keyword": knowledge_id}},
-                        {"term": {"metadata.doc_ref.keyword": document_id}},
+                        {"term": {"metadata.doc_ref.keyword": doc_ref}},
                     ]
                 }
             }
@@ -361,13 +359,13 @@ class ElasticsearchBackend(BaseStorageBackend):
         response = es_client.delete_by_query(index=index_name, body=delete_query)
 
         return {
-            "document_id": document_id,
+            "doc_ref": doc_ref,
             "knowledge_id": knowledge_id,
             "deleted_chunks": response.get("deleted", 0),
             "status": "deleted",
         }
 
-    def get_document(self, knowledge_id: str, document_id: str, **kwargs) -> Dict:
+    def get_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
         """
         Get document details from Elasticsearch using native ES API.
 
@@ -383,7 +381,7 @@ class ElasticsearchBackend(BaseStorageBackend):
                 "bool": {
                     "must": [
                         {"term": {"metadata.knowledge_id.keyword": knowledge_id}},
-                        {"term": {"metadata.doc_ref.keyword": document_id}},
+                        {"term": {"metadata.doc_ref.keyword": doc_ref}},
                     ]
                 }
             },
@@ -395,7 +393,7 @@ class ElasticsearchBackend(BaseStorageBackend):
 
         hits = response["hits"]["hits"]
         if not hits:
-            raise ValueError(f"Document {document_id} not found")
+            raise ValueError(f"Document {doc_ref} not found")
 
         # Extract chunks
         chunks = []
@@ -416,7 +414,7 @@ class ElasticsearchBackend(BaseStorageBackend):
             )
 
         return {
-            "document_id": document_id,
+            "doc_ref": doc_ref,
             "knowledge_id": knowledge_id,
             "source_file": source_file,
             "chunk_count": len(chunks),
@@ -478,7 +476,7 @@ class ElasticsearchBackend(BaseStorageBackend):
 
             all_docs.append(
                 {
-                    "document_id": doc_id,
+                    "doc_ref": doc_id,
                     "source_file": source_file,
                     "chunk_count": chunk_count,
                     "created_at": created_at,

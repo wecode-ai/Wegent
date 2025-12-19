@@ -902,8 +902,8 @@ JSON: {
 }
 
 # 5. Document management
-DELETE /api/rag/documents/{document_id}?knowledge_id=kb_001&retriever_name=my-es-retriever
-GET /api/rag/documents/{document_id}?knowledge_id=kb_001&retriever_name=my-es-retriever
+DELETE /api/rag/documents/{doc_ref}?knowledge_id=kb_001&retriever_name=my-es-retriever
+GET /api/rag/documents/{doc_ref}?knowledge_id=kb_001&retriever_name=my-es-retriever
 GET /api/rag/documents?knowledge_id=kb_001&retriever_name=my-es-retriever&page=1&page_size=20
 
 # 6. Test retriever connection
@@ -1186,8 +1186,8 @@ spec:
 |----------|--------|---------|
 | `/documents/upload` | POST | Upload and index document (requires retriever_name, retriever_namespace) |
 | `/retrieve` | POST | Retrieve relevant document chunks (requires retriever_ref in body) |
-| `/documents/{document_id}` | DELETE | Delete a document (requires retriever_name, retriever_namespace) |
-| `/documents/{document_id}` | GET | Get document details with all chunks (requires retriever_name, retriever_namespace) |
+| `/documents/{doc_ref}` | DELETE | Delete a document (requires retriever_name, retriever_namespace) |
+| `/documents/{doc_ref}` | GET | Get document details with all chunks (requires retriever_name, retriever_namespace) |
 | `/documents` | GET | List documents in a knowledge base (requires retriever_name, retriever_namespace) |
 | `/test-connection` | POST | Test retriever storage connection (requires retriever_name, retriever_namespace) |
 
