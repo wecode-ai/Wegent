@@ -456,27 +456,6 @@ async def _create_task_and_subtasks(
         )
         db.add(assistant_subtask)
 
-        # For follow-up messages (existing task with new subtask), reset task status to RUNNING
-        # This allows executor_manager to pick up the new subtask for processing
-        # Note: Task status is set to RUNNING (not PENDING) because:
-        # - dispatch_tasks checks for PENDING or RUNNING tasks (line 76)
-        # - _get_followup_subtasks_with_executor handles COMPLETED tasks with PENDING subtasks
-        # - Setting to RUNNING allows the task to be picked up by dispatch_tasks when task_ids is specified
-        # Only do this for existing tasks (task_id was provided in request)
-        if existing_subtasks:
-            from sqlalchemy.orm.attributes import flag_modified
-
-            task_crd = Task.model_validate(task.json)
-            if task_crd.status and task_crd.status.status == "COMPLETED":
-                logger.info(
-                    f"[_create_task_and_subtasks] Resetting task {task_id} status from COMPLETED to RUNNING for follow-up message"
-                )
-                task_crd.status.status = "RUNNING"
-                task_crd.status.updatedAt = datetime.now()
-                task.json = task_crd.model_dump(mode="json")
-                task.updated_at = datetime.now()
-                flag_modified(task, "json")
-
     # Update task.updated_at for group chat messages (even without AI trigger)
     # This ensures the task list shows unread indicators for new messages
     if request.is_group_chat or task.json.get("spec", {}).get("is_group_chat", False):
