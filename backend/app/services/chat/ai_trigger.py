@@ -174,6 +174,7 @@ async def _stream_chat_response(
     task_room = f"task:{task_id}"
     offset = 0
     full_response = ""
+    mcp_session = None  # Initialize for cleanup in finally block
 
     try:
         # Get first bot for model config
@@ -232,13 +233,25 @@ async def _stream_chat_response(
                 )
 
         # Prepare tools
-        tools = None
+        all_tools = []
         if payload.enable_web_search and settings.WEB_SEARCH_ENABLED:
             from app.services.chat.tools import get_web_search_tool
 
             web_search_tool = get_web_search_tool()
             if web_search_tool:
-                tools = [web_search_tool]
+                all_tools.append(web_search_tool)
+
+        # Load MCP tools if enabled
+        from app.services.chat.tools import get_mcp_session
+
+        mcp_session = await get_mcp_session(task_id)
+        if mcp_session:
+            all_tools.extend(mcp_session.get_tools())
+
+        # Initialize tool handler if we have any tools
+        from app.services.chat.tool_handler import ToolHandler
+
+        tool_handler = ToolHandler(all_tools) if all_tools else None
 
         # Build data sources for placeholder replacement
         bot_spec = bot.json.get("spec", {}) if bot.json else {}
@@ -320,7 +333,15 @@ async def _stream_chat_response(
         redis_save_interval = settings.STREAMING_REDIS_SAVE_INTERVAL
         db_save_interval = settings.STREAMING_DB_SAVE_INTERVAL
 
-        async for chunk in provider.stream_chat(messages, cancel_event, tools=None):
+        # Use tool calling flow if tools are available
+        if tool_handler and tool_handler.has_tools:
+            stream_gen = chat_service._handle_tool_calling_flow(
+                provider, messages, tool_handler, cancel_event
+            )
+        else:
+            stream_gen = provider.stream_chat(messages, cancel_event, tools=None)
+
+        async for chunk in stream_gen:
             if cancel_event.is_set() or await session_manager.is_cancelled(subtask_id):
                 # Cancelled
                 await namespace.emit(
@@ -429,4 +450,9 @@ async def _stream_chat_response(
         await session_manager.delete_streaming_content(subtask_id)
         if subtask_id in namespace._active_streams:
             del namespace._active_streams[subtask_id]
+        # Cleanup MCP session when stream ends
+        if mcp_session:
+            from app.services.chat.tools import cleanup_mcp_session
+
+            await cleanup_mcp_session(task_id)
         db.close()
