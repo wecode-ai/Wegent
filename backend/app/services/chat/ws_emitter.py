@@ -92,6 +92,7 @@ class WebSocketEmitter:
             result: Optional full result data (for executor tasks with thinking/workbench)
         """
         payload = {
+            "task_id": task_id,  # Include task_id for reliable task identification
             "subtask_id": subtask_id,
             "content": content,
             "offset": offset,

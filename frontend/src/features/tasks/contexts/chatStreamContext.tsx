@@ -486,10 +486,20 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
    * For executor tasks, also update the result field (contains thinking, workbench)
    */
   const handleChatChunk = useCallback((data: ChatChunkPayload) => {
-    const { subtask_id, content, result } = data;
+    const { task_id: eventTaskId, subtask_id, content, result } = data;
 
-    // Find task ID from subtask
-    const taskId = subtaskToTaskRef.current.get(subtask_id);
+    // Find task ID from subtask mapping, or use task_id from event (for follow-up messages)
+    let taskId = subtaskToTaskRef.current.get(subtask_id);
+    if (!taskId && eventTaskId) {
+      // For follow-up messages where chat:start might not have been processed yet,
+      // use task_id from the event and set up the mapping
+      taskId = eventTaskId;
+      subtaskToTaskRef.current.set(subtask_id, taskId);
+      console.log('[ChatStreamContext][chat:chunk] Using task_id from event (follow-up mode)', {
+        taskId,
+        subtask_id,
+      });
+    }
     if (!taskId) {
       console.warn('[ChatStreamContext] Received chunk for unknown subtask:', subtask_id);
       return;
@@ -501,7 +511,34 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     setStreamStates(prev => {
       const newMap = new Map(prev);
       const currentState = newMap.get(taskId);
-      if (!currentState) return prev;
+
+      // If no state exists for this task (e.g., chat:start was missed),
+      // create a new state with the AI message
+      if (!currentState) {
+        console.log('[ChatStreamContext][chat:chunk] Creating new task state (missed chat:start)', {
+          taskId,
+          subtask_id,
+        });
+        const newMessages = new Map<string, UnifiedMessage>();
+        const newAiMessage: UnifiedMessage = {
+          id: aiMessageId,
+          type: 'ai',
+          status: 'streaming',
+          content: content,
+          timestamp: Date.now(),
+          subtaskId: subtask_id,
+        };
+        if (result) {
+          newAiMessage.result = result as UnifiedMessage['result'];
+        }
+        newMessages.set(aiMessageId, newAiMessage);
+        newMap.set(taskId, {
+          ...defaultStreamState,
+          subtaskId: subtask_id,
+          messages: newMessages,
+        });
+        return newMap;
+      }
 
       // Update unified messages Map
       const newMessages = new Map(currentState.messages);
@@ -518,10 +555,29 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           updatedMessage.result = result as UnifiedMessage['result'];
         }
         newMessages.set(aiMessageId, updatedMessage);
+      } else {
+        // AI message doesn't exist yet (chat:start was missed), create it
+        console.log('[ChatStreamContext][chat:chunk] Creating AI message (missed chat:start)', {
+          taskId,
+          subtask_id,
+        });
+        const newAiMessage: UnifiedMessage = {
+          id: aiMessageId,
+          type: 'ai',
+          status: 'streaming',
+          content: content,
+          timestamp: Date.now(),
+          subtaskId: subtask_id,
+        };
+        if (result) {
+          newAiMessage.result = result as UnifiedMessage['result'];
+        }
+        newMessages.set(aiMessageId, newAiMessage);
       }
 
       newMap.set(taskId, {
         ...currentState,
+        subtaskId: subtask_id,
         messages: newMessages,
       });
       return newMap;
@@ -568,7 +624,31 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     setStreamStates(prev => {
       const newMap = new Map(prev);
       const currentState = newMap.get(taskId);
-      if (!currentState) return prev;
+
+      // If no state exists for this task (e.g., chat:start and chat:chunk were missed),
+      // create a new state with the completed AI message
+      if (!currentState) {
+        console.log('[ChatStreamContext][chat:done] Creating new task state (missed chat:start/chunk)', {
+          taskId,
+          subtask_id,
+        });
+        const newMessages = new Map<string, UnifiedMessage>();
+        newMessages.set(aiMessageId, {
+          id: aiMessageId,
+          type: 'ai',
+          status: 'completed',
+          content: finalContent,
+          timestamp: Date.now(),
+          subtaskId: subtask_id,
+        });
+        newMap.set(taskId, {
+          ...defaultStreamState,
+          subtaskId: subtask_id,
+          isStopping: false,
+          messages: newMessages,
+        });
+        return newMap;
+      }
 
       // Update unified messages Map
       const newMessages = new Map(currentState.messages);
@@ -578,6 +658,20 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           ...existingMessage,
           status: 'completed',
           content: finalContent || existingMessage.content,
+        });
+      } else {
+        // AI message doesn't exist yet (chat:start was missed), create it as completed
+        console.log('[ChatStreamContext][chat:done] Creating AI message as completed (missed chat:start)', {
+          taskId,
+          subtask_id,
+        });
+        newMessages.set(aiMessageId, {
+          id: aiMessageId,
+          type: 'ai',
+          status: 'completed',
+          content: finalContent,
+          timestamp: Date.now(),
+          subtaskId: subtask_id,
         });
       }
 

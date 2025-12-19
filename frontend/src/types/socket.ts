@@ -104,6 +104,7 @@ export interface ChatStartPayload {
 }
 
 export interface ChatChunkPayload {
+  task_id?: number;  // Optional for backward compatibility, but should always be present
   subtask_id: number;
   content: string;
   offset: number;

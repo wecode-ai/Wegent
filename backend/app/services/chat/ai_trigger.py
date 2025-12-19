@@ -358,6 +358,7 @@ async def _stream_chat_response(
                 await namespace.emit(
                     ServerEvents.CHAT_CHUNK,
                     {
+                        "task_id": task_id,  # Include task_id for reliable task identification
                         "subtask_id": subtask_id,
                         "content": chunk.content,
                         "offset": offset,
