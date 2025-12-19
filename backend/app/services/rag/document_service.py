@@ -9,7 +9,7 @@ Refactored to use modular architecture with pluggable storage backends.
 
 import asyncio
 import uuid
-from typing import Dict
+from typing import Dict, Optional
 
 from sqlalchemy.orm import Session
 
@@ -131,7 +131,7 @@ class DocumentService:
         self,
         knowledge_id: str,
         document_id: str,
-        user_id: int = None,
+        user_id: Optional[int] = None,
     ) -> Dict:
         """
         Delete a document from storage.
@@ -160,7 +160,7 @@ class DocumentService:
         knowledge_id: str,
         page: int = 1,
         page_size: int = 20,
-        user_id: int = None,
+        user_id: Optional[int] = None,
     ) -> Dict:
         """
         List documents in knowledge base with pagination.

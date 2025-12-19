@@ -568,5 +568,3 @@ class RetrieverList(BaseModel):
     apiVersion: str = "agent.wecode.io/v1"
     kind: str = "RetrieverList"
     items: List[Retriever]
-
-    namespace: str = "default"

@@ -6,7 +6,7 @@
 Document indexing orchestration.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict
 
@@ -60,7 +60,7 @@ class DocumentIndexer:
 
         # Prepare metadata
         source_file = Path(file_path).name
-        created_at = datetime.utcnow().isoformat()
+        created_at = datetime.now(timezone.utc).isoformat()
 
         # Delegate to storage backend for metadata addition and indexing
         result = self.storage_backend.index_with_metadata(
