@@ -29,6 +29,7 @@ interface TaskMembersPanelProps {
   taskTitle: string;
   currentUserId: number;
   onLeave?: () => void;
+  onMembersChanged?: () => void; // Callback when members are added/removed to refresh task detail
 }
 
 export function TaskMembersPanel({
@@ -38,6 +39,7 @@ export function TaskMembersPanel({
   taskTitle,
   currentUserId,
   onLeave,
+  onMembersChanged,
 }: TaskMembersPanelProps) {
   const { t } = useTranslation('chat');
   const { toast } = useToast();
@@ -59,6 +61,8 @@ export function TaskMembersPanel({
       const response = await taskMemberApi.getMembers(taskId);
       setMembers(response.members);
       setTaskOwnerId(response.task_owner_id);
+      // DO NOT call onMembersChanged here - it should only be called when members are actually changed
+      // Calling it here would trigger refresh every time the panel opens
     } catch (error: unknown) {
       toast({
         title: t('groupChat.members.loadFailed'),
@@ -68,7 +72,7 @@ export function TaskMembersPanel({
     } finally {
       setLoading(false);
     }
-  }, [open, taskId, toast, t]);
+  }, [open, taskId, toast, t]); // Removed onMembersChanged from dependencies
 
   useEffect(() => {
     fetchMembers();
@@ -94,7 +98,10 @@ export function TaskMembersPanel({
       toast({
         title: t('groupChat.members.removeSuccess', { name: username }),
       });
+      // Refresh member list and trigger parent refresh
+      // Use the same pattern as AddMembersDialog
       fetchMembers();
+      onMembersChanged?.();
     } catch (error: unknown) {
       toast({
         title: t('groupChat.members.removeFailed'),
@@ -353,7 +360,12 @@ export function TaskMembersPanel({
         onClose={() => setShowAddMembersDialog(false)}
         taskId={taskId}
         taskTitle={taskTitle}
-        onMembersAdded={fetchMembers}
+        onMembersAdded={() => {
+          // Refresh member list first
+          fetchMembers();
+          // Then trigger parent refresh (task list + task detail)
+          onMembersChanged?.();
+        }}
         onComplete={handleClose}
       />
     </>

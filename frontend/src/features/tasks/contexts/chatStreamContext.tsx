@@ -891,6 +891,8 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         title: request.title,
         attachment_id: request.attachment_id,
         enable_web_search: request.enable_web_search,
+        search_engine: request.search_engine,
+        enable_clarification: request.enable_clarification,
         force_override_bot_model: request.model_id,
         force_override_bot_model_type: request.force_override_bot_model ? 'user' : undefined,
         is_group_chat: request.is_group_chat,
