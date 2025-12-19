@@ -12,6 +12,7 @@ import type {
   User,
   UserPreferences,
   QuickAccessResponse,
+  QuickAccessUpdate,
   WelcomeConfigResponse,
 } from '@/types/api';
 
@@ -159,6 +160,10 @@ export const userApis = {
 
   async getQuickAccess(): Promise<QuickAccessResponse> {
     return apiClient.get('/users/quick-access');
+  },
+
+  async updateQuickAccess(data: QuickAccessUpdate): Promise<QuickAccessResponse> {
+    return apiClient.put('/users/quick-access', data);
   },
 
   async getWelcomeConfig(): Promise<WelcomeConfigResponse> {

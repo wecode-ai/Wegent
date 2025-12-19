@@ -28,6 +28,7 @@ import BotList from './BotList';
 import UnifiedAddButton from '@/components/common/UnifiedAddButton';
 import TeamShareModal from './TeamShareModal';
 import TeamCreationWizard from './wizard/TeamCreationWizard';
+import { QuickAccessSettingsButton } from './teams/QuickAccessSettingsDialog';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useToast } from '@/hooks/use-toast';
 import { sortTeamsByUpdatedAt } from '@/utils/team';
@@ -381,42 +382,45 @@ export default function TeamList({ scope = 'personal', groupName }: TeamListProp
         </div>
         <div className="bg-base border border-border rounded-md p-2 w-full max-w-full overflow-hidden max-h-[70vh] flex flex-col overflow-y-auto custom-scrollbar">
           {/* Mode filter tabs */}
-          <div className="flex items-center gap-1 mb-3 pb-2 border-b border-border">
-            <button
-              type="button"
-              onClick={() => setModeFilter('all')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                modeFilter === 'all'
-                  ? 'bg-primary text-white'
-                  : 'bg-muted text-text-secondary hover:text-text-primary hover:bg-hover'
-              }`}
-            >
-              {t('teams.filter_all')}
-            </button>
-            <button
-              type="button"
-              onClick={() => setModeFilter('chat')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                modeFilter === 'chat'
-                  ? 'bg-primary text-white'
-                  : 'bg-muted text-text-secondary hover:text-text-primary hover:bg-hover'
-              }`}
-            >
-              <ChatBubbleLeftEllipsisIcon className="w-4 h-4" />
-              {t('teams.filter_chat')}
-            </button>
-            <button
-              type="button"
-              onClick={() => setModeFilter('code')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                modeFilter === 'code'
-                  ? 'bg-primary text-white'
-                  : 'bg-muted text-text-secondary hover:text-text-primary hover:bg-hover'
-              }`}
-            >
-              <CodeBracketIcon className="w-4 h-4" />
-              {t('teams.filter_code')}
-            </button>
+          <div className="flex items-center justify-between gap-2 mb-3 pb-2 border-b border-border">
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setModeFilter('all')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                  modeFilter === 'all'
+                    ? 'bg-primary text-white'
+                    : 'bg-muted text-text-secondary hover:text-text-primary hover:bg-hover'
+                }`}
+              >
+                {t('teams.filter_all')}
+              </button>
+              <button
+                type="button"
+                onClick={() => setModeFilter('chat')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                  modeFilter === 'chat'
+                    ? 'bg-primary text-white'
+                    : 'bg-muted text-text-secondary hover:text-text-primary hover:bg-hover'
+                }`}
+              >
+                <ChatBubbleLeftEllipsisIcon className="w-4 h-4" />
+                {t('teams.filter_chat')}
+              </button>
+              <button
+                type="button"
+                onClick={() => setModeFilter('code')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                  modeFilter === 'code'
+                    ? 'bg-primary text-white'
+                    : 'bg-muted text-text-secondary hover:text-text-primary hover:bg-hover'
+                }`}
+              >
+                <CodeBracketIcon className="w-4 h-4" />
+                {t('teams.filter_code')}
+              </button>
+            </div>
+            <QuickAccessSettingsButton />
           </div>
           {isLoading ? (
             <LoadingState fullScreen={false} message={t('teams.loading')} />

@@ -25,9 +25,6 @@ import { getSharedTagStyle as getSharedBadgeStyle } from '@/utils/styles';
 import { TeamIconDisplay } from '@/features/settings/components/teams/TeamIconDisplay';
 import TeamCreationWizard from '@/features/settings/components/wizard/TeamCreationWizard';
 
-// Maximum number of quick access cards to display
-const MAX_QUICK_ACCESS_CARDS = 4;
-
 interface QuickAccessCardsProps {
   teams: Team[];
   selectedTeam: Team | null;
@@ -63,7 +60,11 @@ export function QuickAccessCards({
   const moreButtonRef = useRef<HTMLDivElement>(null);
 
   // Define the extended team type for display
-  type DisplayTeam = Team & { is_system: boolean; recommended_mode?: 'chat' | 'code' | 'both' };
+  type DisplayTeam = Team & {
+    is_system: boolean;
+    is_pinned: boolean;
+    recommended_mode?: 'chat' | 'code' | 'both';
+  };
 
   // Prefetch both chat and code pages on mount for smoother navigation
   useEffect(() => {
@@ -77,7 +78,9 @@ export function QuickAccessCards({
       try {
         setIsQuickAccessLoading(true);
         const response = await userApis.getQuickAccess();
-        setQuickAccessTeams(response.teams);
+        // Use display_teams from the current mode (chat/code)
+        const modeConfig = currentMode === 'chat' ? response.chat : response.code;
+        setQuickAccessTeams(modeConfig.display_teams);
       } catch (error) {
         console.error('Failed to fetch quick access teams:', error);
         // Fallback: use first few teams from the teams list
@@ -88,7 +91,7 @@ export function QuickAccessCards({
     };
 
     fetchQuickAccess();
-  }, []);
+  }, [currentMode]);
 
   // Filter teams by bind_mode based on current mode (same logic as TeamSelector)
   const filteredTeams = teams.filter(team => {
@@ -99,6 +102,7 @@ export function QuickAccessCards({
   });
 
   // Get display teams: quick access teams matched with full team data
+  // Backend now handles the pinned + auto-fill logic, we just match with full team data
   const allDisplayTeams: DisplayTeam[] =
     quickAccessTeams.length > 0
       ? quickAccessTeams
@@ -108,6 +112,7 @@ export function QuickAccessCards({
               return {
                 ...fullTeam,
                 is_system: qa.is_system,
+                is_pinned: qa.is_pinned,
                 recommended_mode: qa.recommended_mode || fullTeam.recommended_mode,
               } as DisplayTeam;
             }
@@ -115,7 +120,7 @@ export function QuickAccessCards({
           })
           .filter((t): t is DisplayTeam => t !== null)
       : // Fallback: show first teams from filtered list if no quick access configured
-        filteredTeams.map(t => ({ ...t, is_system: false }) as DisplayTeam);
+        filteredTeams.slice(0, 8).map(t => ({ ...t, is_system: false, is_pinned: false }) as DisplayTeam);
 
   // Filter out selected team if hideSelected is true
   const teamsAfterFilter =
@@ -123,8 +128,8 @@ export function QuickAccessCards({
       ? allDisplayTeams.filter(t => t.id !== selectedTeam.id)
       : allDisplayTeams;
 
-  // Limit display teams to MAX_QUICK_ACCESS_CARDS
-  const displayTeams = teamsAfterFilter.slice(0, MAX_QUICK_ACCESS_CARDS);
+  // Backend already limits to max_count, no need to slice here
+  const displayTeams = teamsAfterFilter;
 
   // Close dropdown when clicking outside
   useEffect(() => {

@@ -145,21 +145,47 @@ class QuickAccessTeam(BaseModel):
 
     id: int
     name: str
+    is_pinned: bool = False  # True = user pinned, False = auto filled
     is_system: bool = False  # True if from system recommendations
     recommended_mode: Optional[Literal["chat", "code", "both"]] = "both"
     agent_type: Optional[str] = None
+    icon: Optional[str] = None  # Icon ID from preset icon library
 
     class Config:
         from_attributes = True
 
 
+class QuickAccessModeConfig(BaseModel):
+    """Quick access configuration for a single mode (chat/code)"""
+
+    max_count: int = 8
+    pinned_teams: List[int] = []  # User pinned team IDs
+    display_teams: List[QuickAccessTeam] = []  # Final display list (pinned + auto filled)
+
+
 class QuickAccessResponse(BaseModel):
-    """Quick access response with merged system recommendations"""
+    """Quick access response with mode-specific configurations"""
 
     system_version: int
     user_version: Optional[int] = None
-    show_system_recommended: bool  # True if user_version < system_version
-    teams: List[QuickAccessTeam]
+    chat: QuickAccessModeConfig
+    code: QuickAccessModeConfig
+
+
+class QuickAccessModeUpdate(BaseModel):
+    """Quick access update for a single mode"""
+
+    max_count: int = Field(8, ge=1, le=10, description="Maximum display count (1-10)")
+    pinned_teams: List[int] = Field(
+        default_factory=list, description="List of pinned team IDs"
+    )
+
+
+class QuickAccessUpdate(BaseModel):
+    """Request model for updating quick access configuration"""
+
+    chat: Optional[QuickAccessModeUpdate] = None
+    code: Optional[QuickAccessModeUpdate] = None
 
 
 # Chat Slogan & Tips Schemas
