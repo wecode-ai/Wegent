@@ -309,7 +309,9 @@ class ExecutorKindsService(
                 continue
 
             # Copy executor_name to the pending subtask so it can reuse the container
-            pending_subtask.executor_name = completed_subtask_with_executor.executor_name
+            pending_subtask.executor_name = (
+                completed_subtask_with_executor.executor_name
+            )
             pending_subtask.executor_namespace = (
                 completed_subtask_with_executor.executor_namespace
             )
