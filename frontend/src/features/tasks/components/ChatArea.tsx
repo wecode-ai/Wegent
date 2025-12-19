@@ -311,8 +311,14 @@ export default function ChatArea({
     controlsContainerWidth > 0 && controlsContainerWidth < COLLAPSE_SELECTORS_THRESHOLD;
 
   // New: Get selectedTask to determine if there are messages
-  const { selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail, setSelectedTask } =
+  const { selectedTask, selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail, setSelectedTask } =
     useTaskContext();
+
+  // Determine if this is a group chat - use both selectedTask and selectedTaskDetail
+  // selectedTask.is_group_chat is available immediately (set during creation)
+  // selectedTaskDetail.is_group_chat is loaded from API (may have delay)
+  // Using OR logic ensures @ mention works immediately after group chat creation
+  const isGroupChat = selectedTask?.is_group_chat || selectedTaskDetail?.is_group_chat || false;
 
   const detailTeamId = useMemo<number | null>(() => {
     if (!selectedTaskDetail?.team) {
@@ -1023,7 +1029,7 @@ export default function ChatArea({
             enable_web_search: enableWebSearch,
             search_engine: selectedSearchEngine || undefined,
             enable_clarification: enableClarification,
-            is_group_chat: selectedTaskDetail?.is_group_chat || false,
+            is_group_chat: isGroupChat,
             // Pass repository info for code tasks
             git_url: showRepositorySelector ? selectedRepo?.git_url : undefined,
             git_repo: showRepositorySelector ? selectedRepo?.git_repo : undefined,
@@ -1118,7 +1124,7 @@ export default function ChatArea({
       resetAttachment,
       selectedModel?.name,
       selectedTaskDetail?.id,
-      selectedTaskDetail?.is_group_chat,
+      isGroupChat,
       contextSendMessage,
       forceOverride,
       enableWebSearch,
@@ -1326,7 +1332,7 @@ export default function ChatArea({
     >
       {/* Group Chat Sync Manager - zero UI, handles polling for new messages */}
       {/* Note: Streaming content recovery is handled by useMultipleStreamingRecovery in MessagesArea */}
-      {selectedTaskDetail?.is_group_chat && selectedTaskDetail.id && (
+      {isGroupChat && selectedTaskDetail?.id && (
         <GroupChatSyncManager
           taskId={selectedTaskDetail.id}
           isGroupChat={true}
@@ -1366,7 +1372,7 @@ export default function ChatArea({
               onContentChange={handleMessagesContentChange}
               onShareButtonRender={onShareButtonRender}
               onSendMessage={handleSendMessageFromChild}
-              isGroupChat={selectedTaskDetail?.is_group_chat || false}
+              isGroupChat={isGroupChat}
             />
           </div>
         </div>
@@ -1446,7 +1452,7 @@ export default function ChatArea({
                         canSubmit={canSubmit}
                         tipText={randomTip}
                         badge={selectedTeam ? <SelectedTeamBadge team={selectedTeam} /> : undefined}
-                        isGroupChat={selectedTaskDetail?.is_group_chat || false}
+                        isGroupChat={isGroupChat}
                         team={selectedTeam}
                         onPasteFile={
                           isChatShell(selectedTeam) && !attachmentState.attachment
@@ -1695,7 +1701,7 @@ export default function ChatArea({
                       canSubmit={canSubmit}
                       tipText={randomTip}
                       badge={selectedTeam ? <SelectedTeamBadge team={selectedTeam} /> : undefined}
-                      isGroupChat={selectedTaskDetail?.is_group_chat || false}
+                      isGroupChat={isGroupChat}
                       team={selectedTeam}
                       onPasteFile={
                         isChatShell(selectedTeam) && !attachmentState.attachment
