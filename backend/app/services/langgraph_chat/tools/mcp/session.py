@@ -1,11 +1,14 @@
 """MCP session manager for handling multiple MCP server connections."""
 
+import logging
 from typing import Dict, List, Optional
 import asyncio
 
 from .client import MCPClient, MCPSession
 from .adapter import adapt_mcp_tools
 from ..base import BaseTool
+
+logger = logging.getLogger(__name__)
 
 
 class MCPSessionManager:
@@ -77,7 +80,7 @@ class MCPSessionManager:
                 self.tools_cache[server_name] = adapt_mcp_tools(session)
 
         except Exception as e:
-            print(f"Failed to connect to MCP server {server_name}: {e}")
+            logger.error("Failed to connect to MCP server %s: %s", server_name, e, exc_info=True)
 
     async def disconnect_all(self) -> None:
         """Disconnect from all MCP servers."""

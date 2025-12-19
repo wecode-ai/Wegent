@@ -76,6 +76,18 @@ class OpenAIProvider(BaseLLMProvider):
 
     def convert_from_provider_format(self, response: ChatCompletion) -> CompletionResponse:
         """Convert OpenAI response to standard format."""
+        if not response.choices:
+            return CompletionResponse(
+                content="",
+                tool_calls=None,
+                finish_reason="stop",
+                usage={
+                    "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
+                    "completion_tokens": response.usage.completion_tokens if response.usage else 0,
+                    "total_tokens": response.usage.total_tokens if response.usage else 0,
+                },
+            )
+
         choice = response.choices[0]
         message = choice.message
 

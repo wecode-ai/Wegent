@@ -1,5 +1,6 @@
 """Anthropic provider implementation."""
 
+import json
 from typing import AsyncIterator, List, Dict, Any, Optional
 from anthropic import AsyncAnthropic
 from anthropic.types import Message as AnthropicMessage, ContentBlock, ToolUseBlock
@@ -90,15 +91,25 @@ class AnthropicProvider(BaseLLMProvider):
 
                 # Convert tool calls
                 if msg.tool_calls:
-                    message_dict["content"] = [
-                        {
-                            "type": "tool_use",
-                            "id": tc["id"],
-                            "name": tc["function"]["name"],
-                            "input": tc["function"]["arguments"],
-                        }
-                        for tc in msg.tool_calls
-                    ]
+                    message_dict["content"] = []
+                    for tc in msg.tool_calls:
+                        # Ensure arguments is a dict (Anthropic requires dict, not string)
+                        arguments = tc["function"]["arguments"]
+                        if isinstance(arguments, str):
+                            try:
+                                arguments = json.loads(arguments)
+                            except json.JSONDecodeError:
+                                # Fallback to empty dict if JSON parsing fails
+                                arguments = {}
+
+                        message_dict["content"].append(
+                            {
+                                "type": "tool_use",
+                                "id": tc["id"],
+                                "name": tc["function"]["name"],
+                                "input": arguments,
+                            }
+                        )
 
                 # Convert tool results
                 if msg.tool_call_id:
@@ -123,13 +134,20 @@ class AnthropicProvider(BaseLLMProvider):
             if block.type == "text":
                 content += block.text
             elif block.type == "tool_use":
+                # OpenAI expects arguments as JSON string, not dict
+                try:
+                    arguments_str = json.dumps(block.input)
+                except (TypeError, ValueError):
+                    # Fallback to string representation if json.dumps fails
+                    arguments_str = str(block.input)
+
                 tool_calls.append(
                     {
                         "id": block.id,
                         "type": "function",
                         "function": {
                             "name": block.name,
-                            "arguments": block.input,
+                            "arguments": arguments_str,
                         },
                     }
                 )
@@ -184,17 +202,21 @@ class AnthropicProvider(BaseLLMProvider):
                 # Anthropic uses base64 image format
                 image_url = item["image_url"]["url"]
                 if image_url.startswith("data:"):
-                    # Extract base64 data
-                    media_type, base64_data = image_url.split(";base64,")
-                    media_type = media_type.replace("data:", "")
-                    anthropic_content.append(
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": media_type,
-                                "data": base64_data,
-                            },
-                        }
-                    )
+                    # Extract base64 data with error handling
+                    try:
+                        media_type, base64_data = image_url.split(";base64,", 1)
+                        media_type = media_type.replace("data:", "")
+                        anthropic_content.append(
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": media_type,
+                                    "data": base64_data,
+                                },
+                            }
+                        )
+                    except ValueError:
+                        # Skip malformed data URLs
+                        pass
         return anthropic_content

@@ -1,11 +1,13 @@
 """LangGraph Chat Service configuration."""
 
 from typing import Dict, Any
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class LangGraphChatConfig(BaseSettings):
     """Configuration for LangGraph Chat Service."""
+
+    model_config = SettingsConfigDict(env_prefix="LANGGRAPH_", case_sensitive=True)
 
     # Service switch
     CHAT_SERVICE_VERSION: str = "v1"  # v1=existing service, v2=LangGraph service
@@ -21,8 +23,8 @@ class LangGraphChatConfig(BaseSettings):
     TOOL_EXECUTION_TIMEOUT: int = 30  # seconds
 
     # MCP configuration
-    MCP_ENABLED: bool = False
-    MCP_SERVERS: str = "{}"  # JSON format
+    CHAT_MCP_ENABLED: bool = False
+    CHAT_MCP_SERVERS: str = "{}"  # JSON format
 
     # Skills configuration
     SKILLS_ENABLED: bool = True
@@ -36,18 +38,12 @@ class LangGraphChatConfig(BaseSettings):
     OTEL_EXPORTER_ENDPOINT: str = ""
     OTEL_SERVICE_NAME: str = "langgraph-chat-service"
 
-    class Config:
-        """Pydantic config."""
-
-        env_prefix = "LANGGRAPH_"
-        case_sensitive = True
-
     def get_mcp_servers_config(self) -> Dict[str, Any]:
         """Parse MCP servers configuration from JSON string."""
         import json
 
         try:
-            return json.loads(self.MCP_SERVERS)
+            return json.loads(self.CHAT_MCP_SERVERS)
         except json.JSONDecodeError:
             return {}
 

@@ -6,6 +6,7 @@ Supports multiple transport protocols:
 - streamable-http (HTTP streaming)
 """
 
+import os
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional, AsyncIterator
 from pydantic import BaseModel
@@ -150,7 +151,14 @@ class SSEMCPSession(MCPSession):
 class StdioMCPSession(MCPSession):
     """MCP session using stdio transport (local process)."""
 
-    def __init__(self, server_name: str, command: str, args: Optional[List[str]] = None, env: Optional[Dict[str, str]] = None):
+    def __init__(
+        self,
+        server_name: str,
+        command: str,
+        args: Optional[List[str]] = None,
+        env: Optional[Dict[str, str]] = None,
+        read_timeout: float = 30.0,
+    ):
         """Initialize stdio MCP session.
 
         Args:
@@ -158,22 +166,26 @@ class StdioMCPSession(MCPSession):
             command: Command to execute
             args: Optional command arguments
             env: Optional environment variables
+            read_timeout: Timeout for readline operations in seconds (default: 30.0)
         """
         super().__init__(server_name)
         self.command = command
         self.args = args or []
         self.env = env or {}
         self.process: Optional[asyncio.subprocess.Process] = None
+        self.read_timeout = read_timeout
 
     async def connect(self) -> None:
         """Start the MCP server process."""
+        # Merge with current environment to inherit PATH and other variables
+        merged_env = {**os.environ.copy(), **self.env}
         self.process = await asyncio.create_subprocess_exec(
             self.command,
             *self.args,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env={**self.env},
+            env=merged_env,
         )
 
         # Fetch tools list on connection
@@ -195,6 +207,9 @@ class StdioMCPSession(MCPSession):
 
         Returns:
             Response data
+
+        Raises:
+            RuntimeError: If process not running, timeout occurs, or MCP error returned
         """
         if not self.process or not self.process.stdin or not self.process.stdout:
             raise RuntimeError("Process not running")
@@ -203,7 +218,14 @@ class StdioMCPSession(MCPSession):
         self.process.stdin.write((request + "\n").encode())
         await self.process.stdin.drain()
 
-        response_line = await self.process.stdout.readline()
+        try:
+            response_line = await asyncio.wait_for(self.process.stdout.readline(), timeout=self.read_timeout)
+        except asyncio.TimeoutError:
+            # Terminate unresponsive process
+            if self.process:
+                self.process.terminate()
+            raise RuntimeError(f"MCP server '{self.server_name}' did not respond within {self.read_timeout}s")
+
         response = json.loads(response_line.decode())
 
         if "error" in response:
