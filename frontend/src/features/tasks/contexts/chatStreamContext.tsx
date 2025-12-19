@@ -1118,6 +1118,14 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       } else if (subtaskId && backupSubtasks) {
         // If we have subtaskId from state, find the corresponding subtask to get bot info
         runningSubtask = backupSubtasks.find(st => st.id === subtaskId);
+
+        // If not found (subtask not yet in backupSubtasks after new message),
+        // fallback to finding the latest RUNNING ASSISTANT subtask
+        if (!runningSubtask) {
+          runningSubtask = backupSubtasks
+            .filter(st => st.role === 'ASSISTANT' && st.status === 'RUNNING')
+            .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
+        }
       }
 
       // Get current content from the AI message
