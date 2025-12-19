@@ -101,11 +101,16 @@ class FileReaderSkill(BaseTool):
         full_path = os.path.abspath(os.path.join(self.workspace_root, file_path))
 
         # Security check: ensure path is within workspace
-        # Normalize workspace root with trailing separator to prevent prefix attacks
-        workspace_root_abs = os.path.abspath(self.workspace_root) + os.sep
-        full_path_with_sep = full_path if full_path.endswith(os.sep) else full_path + os.sep
+        # Normalize both paths to absolute form and use os.path.commonpath for robust validation
+        workspace_root_abs = os.path.abspath(self.workspace_root)
 
-        if not (full_path.startswith(workspace_root_abs) or full_path == os.path.abspath(self.workspace_root)):
+        try:
+            # Verify full_path is inside workspace_root_abs
+            common = os.path.commonpath([workspace_root_abs, full_path])
+            if common != workspace_root_abs:
+                raise ValueError(f"Path traversal detected: {file_path}")
+        except ValueError:
+            # commonpath raises ValueError if paths are on different drives (Windows)
             raise ValueError(f"Path traversal detected: {file_path}")
 
         return full_path
@@ -125,13 +130,11 @@ class FileReaderSkill(BaseTool):
         total_lines = 0
 
         with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-            # Collect target chunk
+            # Collect target chunk and count total lines
             for i, line in enumerate(f):
+                total_lines = i + 1  # Update total_lines for each line (handles empty files)
                 if i >= offset and i < offset + limit:
                     lines.append(line.rstrip("\n"))
-
-            # Count remaining lines after chunk to get accurate total
-            total_lines = i + 1  # i is zero-indexed, so add 1 for total count
 
         content = "\n".join(lines)
         has_more = offset + limit < total_lines
@@ -247,10 +250,17 @@ class FileListSkill(BaseTool):
         directory = directory.lstrip("/")
         full_dir = os.path.abspath(os.path.join(self.workspace_root, directory))
 
-        # Normalize workspace root with trailing separator to prevent prefix attacks
-        workspace_root_abs = os.path.abspath(self.workspace_root) + os.sep
+        # Security check: ensure path is within workspace
+        # Normalize both paths to absolute form and use os.path.commonpath for robust validation
+        workspace_root_abs = os.path.abspath(self.workspace_root)
 
-        if not (full_dir.startswith(workspace_root_abs) or full_dir == os.path.abspath(self.workspace_root)):
+        try:
+            # Verify full_dir is inside workspace_root_abs
+            common = os.path.commonpath([workspace_root_abs, full_dir])
+            if common != workspace_root_abs:
+                raise ValueError(f"Path traversal detected: {directory}")
+        except ValueError:
+            # commonpath raises ValueError if paths are on different drives (Windows)
             raise ValueError(f"Path traversal detected: {directory}")
 
         return full_dir

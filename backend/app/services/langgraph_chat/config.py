@@ -1,7 +1,11 @@
 """LangGraph Chat Service configuration."""
 
+import json
+import logging
 from typing import Dict, Any
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 class LangGraphChatConfig(BaseSettings):
@@ -40,11 +44,14 @@ class LangGraphChatConfig(BaseSettings):
 
     def get_mcp_servers_config(self) -> Dict[str, Any]:
         """Parse MCP servers configuration from JSON string."""
-        import json
-
         try:
             return json.loads(self.CHAT_MCP_SERVERS)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            logger.error(
+                "Failed to parse CHAT_MCP_SERVERS JSON configuration: %s. Raw value: %s",
+                str(e),
+                self.CHAT_MCP_SERVERS,
+            )
             return {}
 
 

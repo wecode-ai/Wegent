@@ -36,7 +36,8 @@ dependencies = [
     # AI/ML API clients
     "anthropic>=0.30.0",
     "openai>=1.0.0",
-    "google-generativeai>=0.7.0",
+    # TODO: Migrate to official google-genai SDK v1.56.0 - google-generativeai is legacy/interim
+    "google-generativeai==0.8.6",
     # LangChain and LangGraph
     "langchain>=1.0.0",
     "langgraph>=1.0.0",

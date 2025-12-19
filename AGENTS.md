@@ -670,7 +670,7 @@ wegent/
 │   │   ├── core/         # Config, security, cache, YAML init
 │   │   ├── models/       # SQLAlchemy models (Kind, User, Subtask, Namespace, NamespaceMember, SharedTeam, SharedTask, SkillBinary, SubtaskAttachment)
 │   │   ├── schemas/      # Pydantic schemas & CRD definitions (namespace.py, namespace_member.py)
-│   │   ├── services/     # Business logic (chat/, adapters/, search/, kind.py, repository.py, group_service.py, group_permission.py)
+│   │   ├── services/     # Business logic (chat/, adapters/, search/, langgraph_chat/, kind.py, repository.py, group_service.py, group_permission.py)
 │   │   └── repository/   # Git providers (GitHub, GitLab, Gitee, Gerrit)
 │   ├── alembic/          # Database migrations
 │   └── init_data/        # YAML initialization data
