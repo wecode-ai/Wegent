@@ -1,6 +1,7 @@
 """Web search tool (placeholder for integration with existing search service)."""
 
 from typing import Optional
+
 from pydantic import Field
 
 from ..base import BaseTool, ToolInput, ToolResult
@@ -52,4 +53,6 @@ class WebSearchTool(BaseTool):
             )
 
         except Exception as e:
-            return ToolResult(success=False, output=None, error=f"Web search failed: {str(e)}")
+            return ToolResult(
+                success=False, output=None, error=f"Web search failed: {str(e)}"
+            )

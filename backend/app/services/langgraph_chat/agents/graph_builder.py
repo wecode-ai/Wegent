@@ -1,14 +1,15 @@
 """LangGraph graph builder for agent workflows."""
 
-from typing import List, Dict, Any, Optional, Callable
-from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.memory import MemorySaver
-from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, SystemMessage
-from langchain_core.tools import Tool
-from langchain_core.language_models import BaseChatModel
+from typing import Any, Callable, Dict, List, Optional
 
-from .state import AgentState
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.tools import Tool
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph import END, StateGraph
+
 from ..tools.base import BaseTool, ToolRegistry
+from .state import AgentState
 
 
 class LangGraphAgentBuilder:
@@ -115,18 +116,30 @@ class LangGraphAgentBuilder:
 
                 try:
                     # Execute tool via registry
-                    result = await self.tool_registry.execute_tool(tool_name, **tool_args)
+                    result = await self.tool_registry.execute_tool(
+                        tool_name, **tool_args
+                    )
 
                     # Store result
-                    tool_results.append({
-                        "tool_call_id": tool_call_id,
-                        "tool_name": tool_name,
-                        "result": result.model_dump() if hasattr(result, "model_dump") else {"output": result.output},
-                    })
+                    tool_results.append(
+                        {
+                            "tool_call_id": tool_call_id,
+                            "tool_name": tool_name,
+                            "result": (
+                                result.model_dump()
+                                if hasattr(result, "model_dump")
+                                else {"output": result.output}
+                            ),
+                        }
+                    )
 
                     # Create ToolMessage for LangChain
                     tool_message = ToolMessage(
-                        content=result.output if result.success else f"Error: {result.error}",
+                        content=(
+                            result.output
+                            if result.success
+                            else f"Error: {result.error}"
+                        ),
                         tool_call_id=tool_call_id,
                         name=tool_name,
                     )
@@ -164,7 +177,9 @@ class LangGraphAgentBuilder:
         last_message = messages[-1]
 
         # Check if max iterations reached
-        if state.get("iteration", 0) >= state.get("max_iterations", self.max_iterations):
+        if state.get("iteration", 0) >= state.get(
+            "max_iterations", self.max_iterations
+        ):
             return "end"
 
         # Check if LLM made tool calls

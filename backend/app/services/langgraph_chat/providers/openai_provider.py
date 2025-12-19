@@ -1,16 +1,19 @@
 """OpenAI provider implementation."""
 
-from typing import AsyncIterator, List, Dict, Any, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
+
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 
-from .base import BaseLLMProvider, Message, StreamChunk, CompletionResponse
+from .base import BaseLLMProvider, CompletionResponse, Message, StreamChunk
 
 
 class OpenAIProvider(BaseLLMProvider):
     """OpenAI LLM provider using official SDK."""
 
-    def __init__(self, model: str, api_key: str, base_url: Optional[str] = None, **kwargs):
+    def __init__(
+        self, model: str, api_key: str, base_url: Optional[str] = None, **kwargs
+    ):
         """Initialize OpenAI provider.
 
         Args:
@@ -50,12 +53,16 @@ class OpenAIProvider(BaseLLMProvider):
             response = await self.client.chat.completions.create(**params)
             return self.convert_from_provider_format(response)
 
-    async def _stream_completion(self, params: Dict[str, Any]) -> AsyncIterator[StreamChunk]:
+    async def _stream_completion(
+        self, params: Dict[str, Any]
+    ) -> AsyncIterator[StreamChunk]:
         """Stream completion responses."""
         async for chunk in await self.client.chat.completions.create(**params):
             yield self._convert_stream_chunk(chunk)
 
-    def convert_to_provider_format(self, messages: List[Message]) -> List[Dict[str, Any]]:
+    def convert_to_provider_format(
+        self, messages: List[Message]
+    ) -> List[Dict[str, Any]]:
         """Convert messages to OpenAI format."""
         provider_messages = []
         for msg in messages:
@@ -74,7 +81,9 @@ class OpenAIProvider(BaseLLMProvider):
 
         return provider_messages
 
-    def convert_from_provider_format(self, response: ChatCompletion) -> CompletionResponse:
+    def convert_from_provider_format(
+        self, response: ChatCompletion
+    ) -> CompletionResponse:
         """Convert OpenAI response to standard format."""
         if not response.choices:
             return CompletionResponse(
@@ -82,9 +91,15 @@ class OpenAIProvider(BaseLLMProvider):
                 tool_calls=None,
                 finish_reason="stop",
                 usage={
-                    "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
-                    "completion_tokens": response.usage.completion_tokens if response.usage else 0,
-                    "total_tokens": response.usage.total_tokens if response.usage else 0,
+                    "prompt_tokens": (
+                        response.usage.prompt_tokens if response.usage else 0
+                    ),
+                    "completion_tokens": (
+                        response.usage.completion_tokens if response.usage else 0
+                    ),
+                    "total_tokens": (
+                        response.usage.total_tokens if response.usage else 0
+                    ),
                 },
             )
 
@@ -93,11 +108,17 @@ class OpenAIProvider(BaseLLMProvider):
 
         return CompletionResponse(
             content=message.content or "",
-            tool_calls=[tc.model_dump() for tc in message.tool_calls] if message.tool_calls else None,
+            tool_calls=(
+                [tc.model_dump() for tc in message.tool_calls]
+                if message.tool_calls
+                else None
+            ),
             finish_reason=choice.finish_reason or "stop",
             usage={
                 "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
-                "completion_tokens": response.usage.completion_tokens if response.usage else 0,
+                "completion_tokens": (
+                    response.usage.completion_tokens if response.usage else 0
+                ),
                 "total_tokens": response.usage.total_tokens if response.usage else 0,
             },
         )
@@ -111,7 +132,9 @@ class OpenAIProvider(BaseLLMProvider):
             if choice.delta.content:
                 delta["content"] = choice.delta.content
             if choice.delta.tool_calls:
-                delta["tool_calls"] = [tc.model_dump() for tc in choice.delta.tool_calls]
+                delta["tool_calls"] = [
+                    tc.model_dump() for tc in choice.delta.tool_calls
+                ]
 
         return StreamChunk(
             delta=delta,

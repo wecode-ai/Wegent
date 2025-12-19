@@ -1,22 +1,28 @@
 """LangGraph Chat Service - main service entry point with real LangGraph agent."""
 
-from typing import List, Dict, Any, Optional, AsyncIterator
 import json
-import uuid
 import time
+import uuid
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 from langchain_core.messages import AIMessage
 
+from .agents.graph_builder import LangGraphAgentBuilder
 from .config import config
 from .providers.langchain_models import LangChainModelFactory
-from .tools import ToolRegistry, SkillsRegistry, WebSearchTool
+from .tools import SkillsRegistry, ToolRegistry, WebSearchTool
 from .tools.mcp import MCPSessionManager
-from .agents.graph_builder import LangGraphAgentBuilder
 
 
 class StreamChunk:
     """Stream chunk response."""
-    def __init__(self, delta: Dict[str, Any], finish_reason: Optional[str] = None, usage: Optional[Dict[str, int]] = None):
+
+    def __init__(
+        self,
+        delta: Dict[str, Any],
+        finish_reason: Optional[str] = None,
+        usage: Optional[Dict[str, int]] = None,
+    ):
         self.delta = delta
         self.finish_reason = finish_reason
         self.usage = usage
@@ -24,6 +30,7 @@ class StreamChunk:
 
 class CompletionResponse:
     """Chat completion response."""
+
     def __init__(
         self,
         content: str,
@@ -34,7 +41,11 @@ class CompletionResponse:
         self.content = content
         self.tool_calls = tool_calls
         self.finish_reason = finish_reason
-        self.usage = usage or {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        self.usage = usage or {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
 
 
 class LangGraphChatService:
@@ -155,7 +166,9 @@ class LangGraphChatService:
         if deep_thinking or (tools and len(self.tool_registry.get_all_tools()) > 0):
             # Use LangGraph agent for tool calling and multi-step reasoning
             if stream:
-                return self._stream_agent_execution(agent_builder, messages, config_dict)
+                return self._stream_agent_execution(
+                    agent_builder, messages, config_dict
+                )
             else:
                 return await self._execute_agent(agent_builder, messages, config_dict)
         else:
@@ -190,7 +203,9 @@ class LangGraphChatService:
 
         # Convert to CompletionResponse
         if isinstance(last_message, AIMessage):
-            content = last_message.content if isinstance(last_message.content, str) else ""
+            content = (
+                last_message.content if isinstance(last_message.content, str) else ""
+            )
             tool_calls = None
 
             if hasattr(last_message, "tool_calls") and last_message.tool_calls:
@@ -220,7 +235,11 @@ class LangGraphChatService:
         else:
             # Fallback for non-AI messages
             return CompletionResponse(
-                content=str(last_message.content) if hasattr(last_message, "content") else "",
+                content=(
+                    str(last_message.content)
+                    if hasattr(last_message, "content")
+                    else ""
+                ),
                 tool_calls=None,
                 finish_reason="stop",
                 usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
@@ -251,7 +270,9 @@ class LangGraphChatService:
                         if isinstance(msg, AIMessage):
                             # Stream AI message content
                             if msg.content:
-                                yield StreamChunk(delta={"content": msg.content}, finish_reason=None)
+                                yield StreamChunk(
+                                    delta={"content": msg.content}, finish_reason=None
+                                )
 
                             # Stream tool calls
                             if hasattr(msg, "tool_calls") and msg.tool_calls:
@@ -266,10 +287,17 @@ class LangGraphChatService:
                                     }
                                     for tc in msg.tool_calls
                                 ]
-                                yield StreamChunk(delta={"tool_calls": tool_calls_formatted}, finish_reason=None)
+                                yield StreamChunk(
+                                    delta={"tool_calls": tool_calls_formatted},
+                                    finish_reason=None,
+                                )
 
         # Final chunk
-        yield StreamChunk(delta={}, finish_reason="stop", usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
+        yield StreamChunk(
+            delta={},
+            finish_reason="stop",
+            usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        )
 
     async def _execute_direct_llm(
         self,
@@ -285,7 +313,11 @@ class LangGraphChatService:
         Returns:
             CompletionResponse
         """
-        from langchain_core.messages import SystemMessage, HumanMessage, AIMessage as LCAIMessage
+        from langchain_core.messages import AIMessage as LCAIMessage
+        from langchain_core.messages import (
+            HumanMessage,
+            SystemMessage,
+        )
 
         # Convert to LangChain messages
         lc_messages = []
@@ -324,7 +356,11 @@ class LangGraphChatService:
         Yields:
             StreamChunk
         """
-        from langchain_core.messages import SystemMessage, HumanMessage, AIMessage as LCAIMessage
+        from langchain_core.messages import AIMessage as LCAIMessage
+        from langchain_core.messages import (
+            HumanMessage,
+            SystemMessage,
+        )
 
         # Convert to LangChain messages
         lc_messages = []
@@ -345,7 +381,11 @@ class LangGraphChatService:
                 yield StreamChunk(delta={"content": chunk.content}, finish_reason=None)
 
         # Final chunk
-        yield StreamChunk(delta={}, finish_reason="stop", usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
+        yield StreamChunk(
+            delta={},
+            finish_reason="stop",
+            usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        )
 
     def list_available_tools(self) -> List[Dict[str, Any]]:
         """List all available tools.

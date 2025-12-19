@@ -3,16 +3,16 @@
 Provides OpenAI-compatible chat completion API with LangChain/LangGraph backend.
 """
 
-from typing import List, Dict, Any, Optional
-from fastapi import APIRouter, HTTPException, Depends
+import json
+from typing import Any, Dict, List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-import json
 
 from app.core.deps import get_current_user
 from app.models import User
 from app.services.langgraph_chat import LangGraphChatService
-
 
 router = APIRouter()
 

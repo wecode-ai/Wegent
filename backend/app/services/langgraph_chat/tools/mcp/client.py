@@ -6,14 +6,15 @@ Supports multiple transport protocols:
 - streamable-http (HTTP streaming)
 """
 
-import os
-from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional, AsyncIterator
-from pydantic import BaseModel
 import asyncio
 import json
-import httpx
+import os
 import subprocess
+from abc import ABC, abstractmethod
+from typing import Any, AsyncIterator, Dict, List, Optional
+
+import httpx
+from pydantic import BaseModel
 
 
 class MCPTool(BaseModel):
@@ -56,7 +57,9 @@ class MCPSession(ABC):
         pass
 
     @abstractmethod
-    async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    async def call_tool(
+        self, tool_name: str, arguments: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """Call a tool on the MCP server.
 
         Args:
@@ -72,7 +75,9 @@ class MCPSession(ABC):
 class SSEMCPSession(MCPSession):
     """MCP session using SSE (Server-Sent Events) transport."""
 
-    def __init__(self, server_name: str, url: str, headers: Optional[Dict[str, str]] = None):
+    def __init__(
+        self, server_name: str, url: str, headers: Optional[Dict[str, str]] = None
+    ):
         """Initialize SSE MCP session.
 
         Args:
@@ -126,7 +131,9 @@ class SSEMCPSession(MCPSession):
 
         return tools
 
-    async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    async def call_tool(
+        self, tool_name: str, arguments: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """Call tool via SSE endpoint.
 
         Args:
@@ -141,7 +148,10 @@ class SSEMCPSession(MCPSession):
 
         response = await self.client.post(
             self.url,
-            json={"method": "tools/call", "params": {"name": tool_name, "arguments": arguments}},
+            json={
+                "method": "tools/call",
+                "params": {"name": tool_name, "arguments": arguments},
+            },
             headers=self.headers,
         )
         response.raise_for_status()
@@ -198,7 +208,9 @@ class StdioMCPSession(MCPSession):
             await self.process.wait()
             self.process = None
 
-    async def _send_request(self, method: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    async def _send_request(
+        self, method: str, params: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """Send JSON-RPC request to MCP server.
 
         Args:
@@ -214,17 +226,23 @@ class StdioMCPSession(MCPSession):
         if not self.process or not self.process.stdin or not self.process.stdout:
             raise RuntimeError("Process not running")
 
-        request = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+        request = json.dumps(
+            {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+        )
         self.process.stdin.write((request + "\n").encode())
         await self.process.stdin.drain()
 
         try:
-            response_line = await asyncio.wait_for(self.process.stdout.readline(), timeout=self.read_timeout)
+            response_line = await asyncio.wait_for(
+                self.process.stdout.readline(), timeout=self.read_timeout
+            )
         except asyncio.TimeoutError:
             # Terminate unresponsive process
             if self.process:
                 self.process.terminate()
-            raise RuntimeError(f"MCP server '{self.server_name}' did not respond within {self.read_timeout}s")
+            raise RuntimeError(
+                f"MCP server '{self.server_name}' did not respond within {self.read_timeout}s"
+            )
 
         response = json.loads(response_line.decode())
 
@@ -253,7 +271,9 @@ class StdioMCPSession(MCPSession):
 
         return tools
 
-    async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    async def call_tool(
+        self, tool_name: str, arguments: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """Call tool via stdio.
 
         Args:
@@ -263,13 +283,17 @@ class StdioMCPSession(MCPSession):
         Returns:
             Tool result
         """
-        return await self._send_request("tools/call", {"name": tool_name, "arguments": arguments})
+        return await self._send_request(
+            "tools/call", {"name": tool_name, "arguments": arguments}
+        )
 
 
 class StreamableHTTPMCPSession(MCPSession):
     """MCP session using Streamable HTTP transport."""
 
-    def __init__(self, server_name: str, url: str, headers: Optional[Dict[str, str]] = None):
+    def __init__(
+        self, server_name: str, url: str, headers: Optional[Dict[str, str]] = None
+    ):
         """Initialize Streamable HTTP MCP session.
 
         Args:
@@ -318,7 +342,9 @@ class StreamableHTTPMCPSession(MCPSession):
 
         return tools
 
-    async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    async def call_tool(
+        self, tool_name: str, arguments: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """Call tool via HTTP endpoint.
 
         Args:
@@ -331,7 +357,9 @@ class StreamableHTTPMCPSession(MCPSession):
         if not self.client:
             raise RuntimeError("Session not connected")
 
-        response = await self.client.post(f"{self.url}/tools/{tool_name}", json=arguments, headers=self.headers)
+        response = await self.client.post(
+            f"{self.url}/tools/{tool_name}", json=arguments, headers=self.headers
+        )
         response.raise_for_status()
         return response.json()
 
@@ -343,7 +371,9 @@ class MCPClient:
         """Initialize MCP client."""
         self.sessions: Dict[str, MCPSession] = {}
 
-    async def connect_sse(self, server_name: str, url: str, headers: Optional[Dict[str, str]] = None) -> MCPSession:
+    async def connect_sse(
+        self, server_name: str, url: str, headers: Optional[Dict[str, str]] = None
+    ) -> MCPSession:
         """Connect to MCP server via SSE.
 
         Args:
@@ -360,7 +390,11 @@ class MCPClient:
         return session
 
     async def connect_stdio(
-        self, server_name: str, command: str, args: Optional[List[str]] = None, env: Optional[Dict[str, str]] = None
+        self,
+        server_name: str,
+        command: str,
+        args: Optional[List[str]] = None,
+        env: Optional[Dict[str, str]] = None,
     ) -> MCPSession:
         """Connect to MCP server via stdio.
 
@@ -378,7 +412,9 @@ class MCPClient:
         self.sessions[server_name] = session
         return session
 
-    async def connect_streamable_http(self, server_name: str, url: str, headers: Optional[Dict[str, str]] = None) -> MCPSession:
+    async def connect_streamable_http(
+        self, server_name: str, url: str, headers: Optional[Dict[str, str]] = None
+    ) -> MCPSession:
         """Connect to MCP server via Streamable HTTP.
 
         Args:

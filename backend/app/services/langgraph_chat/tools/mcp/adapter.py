@@ -1,6 +1,7 @@
 """MCP tool adapter to convert MCP tools to BaseTool format."""
 
-from typing import Dict, Any, Type
+from typing import Any, Dict, Type
+
 from pydantic import BaseModel, create_model
 
 from ..base import BaseTool, ToolInput, ToolResult
@@ -43,7 +44,9 @@ class MCPToolAdapter(BaseTool):
         # Build field definitions
         fields = {}
         for field_name, field_info in properties.items():
-            field_type = self._json_type_to_python_type(field_info.get("type", "string"))
+            field_type = self._json_type_to_python_type(
+                field_info.get("type", "string")
+            )
             field_default = ... if field_name in required else None
             fields[field_name] = (field_type, field_default)
 
@@ -83,14 +86,20 @@ class MCPToolAdapter(BaseTool):
             return ToolResult(
                 success=True,
                 output=result,
-                metadata={"server": self.session.server_name, "tool": self.mcp_tool.name},
+                metadata={
+                    "server": self.session.server_name,
+                    "tool": self.mcp_tool.name,
+                },
             )
         except Exception as e:
             return ToolResult(
                 success=False,
                 output=None,
                 error=str(e),
-                metadata={"server": self.session.server_name, "tool": self.mcp_tool.name},
+                metadata={
+                    "server": self.session.server_name,
+                    "tool": self.mcp_tool.name,
+                },
             )
 
 

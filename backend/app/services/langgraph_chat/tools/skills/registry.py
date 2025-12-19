@@ -1,8 +1,9 @@
 """Skills registry for managing built-in skills."""
 
 from typing import List
+
 from ..base import BaseTool, ToolRegistry
-from .file_reader import FileReaderSkill, FileListSkill
+from .file_reader import FileListSkill, FileReaderSkill
 
 
 class SkillsRegistry:

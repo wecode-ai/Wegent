@@ -1,11 +1,12 @@
 """LLM provider factory."""
 
 from typing import Optional
-from .base import BaseLLMProvider
-from .openai_provider import OpenAIProvider
-from .anthropic_provider import AnthropicProvider
-from .gemini_provider import GeminiProvider
+
 from ..config import config
+from .anthropic_provider import AnthropicProvider
+from .base import BaseLLMProvider
+from .gemini_provider import GeminiProvider
+from .openai_provider import OpenAIProvider
 
 
 class ProviderFactory:
@@ -19,7 +20,13 @@ class ProviderFactory:
     }
 
     @classmethod
-    def create_provider(cls, model: str, api_key: Optional[str] = None, base_url: Optional[str] = None, **kwargs) -> BaseLLMProvider:
+    def create_provider(
+        cls,
+        model: str,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+        **kwargs,
+    ) -> BaseLLMProvider:
         """Create LLM provider based on model name.
 
         Args:

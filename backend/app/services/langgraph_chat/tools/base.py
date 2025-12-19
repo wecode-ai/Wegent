@@ -1,9 +1,10 @@
 """Base tool interface and registry."""
 
-from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, List, Type
-from pydantic import BaseModel, Field
 import asyncio
+from abc import ABC, abstractmethod
+from typing import Any, Dict, List, Optional, Type
+
+from pydantic import BaseModel, Field
 
 
 class ToolInput(BaseModel):
@@ -60,7 +61,11 @@ class BaseTool(ABC):
         try:
             return await asyncio.wait_for(self.execute(**kwargs), timeout=self.timeout)
         except asyncio.TimeoutError:
-            return ToolResult(success=False, output=None, error=f"Tool execution timeout after {self.timeout}s")
+            return ToolResult(
+                success=False,
+                output=None,
+                error=f"Tool execution timeout after {self.timeout}s",
+            )
         except Exception as e:
             return ToolResult(success=False, output=None, error=str(e))
 
@@ -163,7 +168,9 @@ class ToolRegistry:
         """
         tool = self.get(tool_name)
         if not tool:
-            return ToolResult(success=False, output=None, error=f"Tool not found: {tool_name}")
+            return ToolResult(
+                success=False, output=None, error=f"Tool not found: {tool_name}"
+            )
 
         return await tool.execute_with_timeout(**kwargs)
 

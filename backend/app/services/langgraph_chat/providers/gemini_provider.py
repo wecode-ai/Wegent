@@ -1,18 +1,21 @@
 """Google Gemini provider implementation."""
 
-from typing import AsyncIterator, List, Dict, Any, Optional
+import json
+from typing import Any, AsyncIterator, Dict, List, Optional
 from uuid import uuid4
+
 import google.generativeai as genai
 from google.generativeai.types import GenerateContentResponse
-import json
 
-from .base import BaseLLMProvider, Message, StreamChunk, CompletionResponse
+from .base import BaseLLMProvider, CompletionResponse, Message, StreamChunk
 
 
 class GeminiProvider(BaseLLMProvider):
     """Google Gemini LLM provider using official SDK."""
 
-    def __init__(self, model: str, api_key: str, base_url: Optional[str] = None, **kwargs):
+    def __init__(
+        self, model: str, api_key: str, base_url: Optional[str] = None, **kwargs
+    ):
         """Initialize Gemini provider.
 
         Args:
@@ -34,11 +37,15 @@ class GeminiProvider(BaseLLMProvider):
         **kwargs,
     ) -> CompletionResponse | AsyncIterator[StreamChunk]:
         """Execute Gemini chat completion."""
-        system_instruction, provider_messages = self.convert_to_provider_format(messages)
+        system_instruction, provider_messages = self.convert_to_provider_format(
+            messages
+        )
 
         # Configure model with system instruction if present
         if system_instruction:
-            model = genai.GenerativeModel(self.model, system_instruction=system_instruction)
+            model = genai.GenerativeModel(
+                self.model, system_instruction=system_instruction
+            )
         else:
             model = self.model_instance
 
@@ -51,18 +58,24 @@ class GeminiProvider(BaseLLMProvider):
         if stream:
             return self._stream_completion(model, provider_messages, gemini_tools)
         else:
-            response = await model.generate_content_async(provider_messages, tools=gemini_tools)
+            response = await model.generate_content_async(
+                provider_messages, tools=gemini_tools
+            )
             return self.convert_from_provider_format(response)
 
     async def _stream_completion(
         self, model: Any, messages: List[Dict[str, Any]], tools: Optional[List[Any]]
     ) -> AsyncIterator[StreamChunk]:
         """Stream completion responses."""
-        response = await model.generate_content_async(messages, tools=tools, stream=True)
+        response = await model.generate_content_async(
+            messages, tools=tools, stream=True
+        )
         async for chunk in response:
             yield self._convert_stream_chunk(chunk)
 
-    def convert_to_provider_format(self, messages: List[Message]) -> tuple[str | None, List[Dict[str, Any]]]:
+    def convert_to_provider_format(
+        self, messages: List[Message]
+    ) -> tuple[str | None, List[Dict[str, Any]]]:
         """Convert messages to Gemini format.
 
         Returns:
@@ -92,9 +105,11 @@ class GeminiProvider(BaseLLMProvider):
                             {
                                 "function_call": {
                                     "name": tc["function"]["name"],
-                                    "args": json.loads(tc["function"]["arguments"])
-                                    if isinstance(tc["function"]["arguments"], str)
-                                    else tc["function"]["arguments"],
+                                    "args": (
+                                        json.loads(tc["function"]["arguments"])
+                                        if isinstance(tc["function"]["arguments"], str)
+                                        else tc["function"]["arguments"]
+                                    ),
                                 }
                             }
                         )
@@ -114,7 +129,9 @@ class GeminiProvider(BaseLLMProvider):
 
         return system_instruction, provider_messages
 
-    def convert_from_provider_format(self, response: GenerateContentResponse) -> CompletionResponse:
+    def convert_from_provider_format(
+        self, response: GenerateContentResponse
+    ) -> CompletionResponse:
         """Convert Gemini response to standard format."""
         content = ""
         tool_calls = []
@@ -140,11 +157,27 @@ class GeminiProvider(BaseLLMProvider):
         return CompletionResponse(
             content=content,
             tool_calls=tool_calls if tool_calls else None,
-            finish_reason=response.candidates[0].finish_reason.name if response.candidates else "stop",
+            finish_reason=(
+                response.candidates[0].finish_reason.name
+                if response.candidates
+                else "stop"
+            ),
             usage={
-                "prompt_tokens": response.usage_metadata.prompt_token_count if response.usage_metadata else 0,
-                "completion_tokens": response.usage_metadata.candidates_token_count if response.usage_metadata else 0,
-                "total_tokens": response.usage_metadata.total_token_count if response.usage_metadata else 0,
+                "prompt_tokens": (
+                    response.usage_metadata.prompt_token_count
+                    if response.usage_metadata
+                    else 0
+                ),
+                "completion_tokens": (
+                    response.usage_metadata.candidates_token_count
+                    if response.usage_metadata
+                    else 0
+                ),
+                "total_tokens": (
+                    response.usage_metadata.total_token_count
+                    if response.usage_metadata
+                    else 0
+                ),
             },
         )
 
@@ -204,7 +237,9 @@ class GeminiProvider(BaseLLMProvider):
             "required": schema.get("required", []),
         }
 
-    def _convert_multimodal_content(self, content: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _convert_multimodal_content(
+        self, content: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
         """Convert OpenAI-style multimodal content to Gemini format."""
         import base64
 
@@ -225,7 +260,12 @@ class GeminiProvider(BaseLLMProvider):
                         media_type, base64_data = image_url.split(";base64,", 1)
                         image_bytes = base64.b64decode(base64_data)
                         gemini_parts.append(
-                            {"inline_data": {"mime_type": media_type.replace("data:", ""), "data": image_bytes}}
+                            {
+                                "inline_data": {
+                                    "mime_type": media_type.replace("data:", ""),
+                                    "data": image_bytes,
+                                }
+                            }
                         )
                     except (ValueError, base64.binascii.Error):
                         # Skip malformed data URLs or invalid base64

@@ -1,7 +1,8 @@
 """Base LLM provider interface."""
 
 from abc import ABC, abstractmethod
-from typing import AsyncIterator, List, Dict, Any, Optional, Tuple, Union
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple, Union
+
 from pydantic import BaseModel
 
 
@@ -35,7 +36,9 @@ class CompletionResponse(BaseModel):
 class BaseLLMProvider(ABC):
     """Base class for LLM providers."""
 
-    def __init__(self, model: str, api_key: str, base_url: Optional[str] = None, **kwargs):
+    def __init__(
+        self, model: str, api_key: str, base_url: Optional[str] = None, **kwargs
+    ):
         """Initialize provider.
 
         Args:

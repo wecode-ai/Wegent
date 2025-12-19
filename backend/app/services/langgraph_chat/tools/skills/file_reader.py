@@ -1,11 +1,12 @@
 """File reader skill for chunked reading of large files."""
 
-from typing import Optional
-from pydantic import Field
 import os
+from typing import Optional
 
-from ..base import BaseTool, ToolInput, ToolResult
+from pydantic import Field
+
 from ...config import config
+from ..base import BaseTool, ToolInput, ToolResult
 
 
 class FileReaderInput(ToolInput):
@@ -27,7 +28,12 @@ class FileReaderSkill(BaseTool):
     description = "Read file content with pagination support for large files. Returns specified lines range with metadata about total lines and whether more content is available."
     input_schema = FileReaderInput
 
-    def __init__(self, workspace_root: str = "/workspace", max_lines: Optional[int] = None, timeout: int = 30):
+    def __init__(
+        self,
+        workspace_root: str = "/workspace",
+        max_lines: Optional[int] = None,
+        timeout: int = 30,
+    ):
         """Initialize file reader skill.
 
         Args:
@@ -39,7 +45,9 @@ class FileReaderSkill(BaseTool):
         self.workspace_root = workspace_root
         self.max_lines = max_lines or config.FILE_READER_MAX_LINES
 
-    async def execute(self, file_path: str, offset: int = 0, limit: int = 200) -> ToolResult:
+    async def execute(
+        self, file_path: str, offset: int = 0, limit: int = 200
+    ) -> ToolResult:
         """Execute file reading with pagination.
 
         Args:
@@ -55,16 +63,22 @@ class FileReaderSkill(BaseTool):
             full_path = self._resolve_file_path(file_path)
 
             if not os.path.exists(full_path):
-                return ToolResult(success=False, output=None, error=f"File not found: {file_path}")
+                return ToolResult(
+                    success=False, output=None, error=f"File not found: {file_path}"
+                )
 
             if not os.path.isfile(full_path):
-                return ToolResult(success=False, output=None, error=f"Path is not a file: {file_path}")
+                return ToolResult(
+                    success=False, output=None, error=f"Path is not a file: {file_path}"
+                )
 
             # Enforce limit cap
             limit = min(limit, self.max_lines)
 
             # Read file with pagination
-            content, total_lines, has_more = self._read_file_chunk(full_path, offset, limit)
+            content, total_lines, has_more = self._read_file_chunk(
+                full_path, offset, limit
+            )
 
             return ToolResult(
                 success=True,
@@ -80,7 +94,9 @@ class FileReaderSkill(BaseTool):
             )
 
         except Exception as e:
-            return ToolResult(success=False, output=None, error=f"Failed to read file: {str(e)}")
+            return ToolResult(
+                success=False, output=None, error=f"Failed to read file: {str(e)}"
+            )
 
     def _resolve_file_path(self, file_path: str) -> str:
         """Resolve and sanitize file path.
@@ -115,7 +131,9 @@ class FileReaderSkill(BaseTool):
 
         return full_path
 
-    def _read_file_chunk(self, file_path: str, offset: int, limit: int) -> tuple[str, int, bool]:
+    def _read_file_chunk(
+        self, file_path: str, offset: int, limit: int
+    ) -> tuple[str, int, bool]:
         """Read a chunk of lines from file.
 
         Args:
@@ -132,7 +150,9 @@ class FileReaderSkill(BaseTool):
         with open(file_path, "r", encoding="utf-8", errors="replace") as f:
             # Collect target chunk and count total lines
             for i, line in enumerate(f):
-                total_lines = i + 1  # Update total_lines for each line (handles empty files)
+                total_lines = (
+                    i + 1
+                )  # Update total_lines for each line (handles empty files)
                 if i >= offset and i < offset + limit:
                     lines.append(line.rstrip("\n"))
 
@@ -145,8 +165,12 @@ class FileReaderSkill(BaseTool):
 class FileListInput(ToolInput):
     """Input schema for file list tool."""
 
-    directory: str = Field(default=".", description="Directory path relative to workspace")
-    pattern: Optional[str] = Field(default=None, description="Optional glob pattern to filter files")
+    directory: str = Field(
+        default=".", description="Directory path relative to workspace"
+    )
+    pattern: Optional[str] = Field(
+        default=None, description="Optional glob pattern to filter files"
+    )
 
 
 class FileListSkill(BaseTool):
@@ -166,7 +190,9 @@ class FileListSkill(BaseTool):
         super().__init__(timeout)
         self.workspace_root = workspace_root
 
-    async def execute(self, directory: str = ".", pattern: Optional[str] = None) -> ToolResult:
+    async def execute(
+        self, directory: str = ".", pattern: Optional[str] = None
+    ) -> ToolResult:
         """Execute file listing.
 
         Args:
@@ -183,14 +209,26 @@ class FileListSkill(BaseTool):
             full_dir = self._resolve_directory(directory)
 
             if not os.path.exists(full_dir):
-                return ToolResult(success=False, output=None, error=f"Directory not found: {directory}")
+                return ToolResult(
+                    success=False,
+                    output=None,
+                    error=f"Directory not found: {directory}",
+                )
 
             if not os.path.isdir(full_dir):
-                return ToolResult(success=False, output=None, error=f"Path is not a directory: {directory}")
+                return ToolResult(
+                    success=False,
+                    output=None,
+                    error=f"Path is not a directory: {directory}",
+                )
 
             # Validate glob pattern for directory traversal attempts
             if pattern and (".." in pattern or pattern.startswith("/")):
-                return ToolResult(success=False, output=None, error="Invalid pattern: parent directory traversal not allowed")
+                return ToolResult(
+                    success=False,
+                    output=None,
+                    error="Invalid pattern: parent directory traversal not allowed",
+                )
 
             # List files
             if pattern:
@@ -202,7 +240,9 @@ class FileListSkill(BaseTool):
                 validated_paths = []
                 for file_path in file_paths:
                     abs_path = os.path.abspath(file_path)
-                    if abs_path.startswith(workspace_root_abs) or abs_path == os.path.abspath(self.workspace_root):
+                    if abs_path.startswith(
+                        workspace_root_abs
+                    ) or abs_path == os.path.abspath(self.workspace_root):
                         validated_paths.append(file_path)
                 file_paths = validated_paths
             else:
@@ -233,7 +273,9 @@ class FileListSkill(BaseTool):
             )
 
         except Exception as e:
-            return ToolResult(success=False, output=None, error=f"Failed to list files: {str(e)}")
+            return ToolResult(
+                success=False, output=None, error=f"Failed to list files: {str(e)}"
+            )
 
     def _resolve_directory(self, directory: str) -> str:
         """Resolve and sanitize directory path.

@@ -1,9 +1,10 @@
 """Agent state definitions for LangGraph."""
 
-from typing import Annotated, List, Dict, Any, Optional
-from typing_extensions import TypedDict
-from langgraph.graph import add_messages
+from typing import Annotated, Any, Dict, List, Optional
+
 from langchain_core.messages import BaseMessage
+from langgraph.graph import add_messages
+from typing_extensions import TypedDict
 
 
 class AgentState(TypedDict):
@@ -18,6 +19,7 @@ class AgentState(TypedDict):
         error: Error message if execution failed
         metadata: Additional metadata for execution context
     """
+
     # Messages with automatic aggregation via add_messages reducer
     messages: Annotated[List[BaseMessage], add_messages]
 

@@ -1,17 +1,22 @@
 """Anthropic provider implementation."""
 
 import json
-from typing import AsyncIterator, List, Dict, Any, Optional
-from anthropic import AsyncAnthropic
-from anthropic.types import Message as AnthropicMessage, ContentBlock, ToolUseBlock
+from typing import Any, AsyncIterator, Dict, List, Optional
 
-from .base import BaseLLMProvider, Message, StreamChunk, CompletionResponse
+from anthropic import AsyncAnthropic
+from anthropic.types import ContentBlock
+from anthropic.types import Message as AnthropicMessage
+from anthropic.types import ToolUseBlock
+
+from .base import BaseLLMProvider, CompletionResponse, Message, StreamChunk
 
 
 class AnthropicProvider(BaseLLMProvider):
     """Anthropic LLM provider using official SDK."""
 
-    def __init__(self, model: str, api_key: str, base_url: Optional[str] = None, **kwargs):
+    def __init__(
+        self, model: str, api_key: str, base_url: Optional[str] = None, **kwargs
+    ):
         """Initialize Anthropic provider.
 
         Args:
@@ -57,13 +62,17 @@ class AnthropicProvider(BaseLLMProvider):
             response = await self.client.messages.create(**params)
             return self.convert_from_provider_format(response)
 
-    async def _stream_completion(self, params: Dict[str, Any]) -> AsyncIterator[StreamChunk]:
+    async def _stream_completion(
+        self, params: Dict[str, Any]
+    ) -> AsyncIterator[StreamChunk]:
         """Stream completion responses."""
         async with self.client.messages.stream(**params) as stream:
             async for chunk in stream:
                 yield self._convert_stream_chunk(chunk)
 
-    def convert_to_provider_format(self, messages: List[Message]) -> tuple[str | None, List[Dict[str, Any]]]:
+    def convert_to_provider_format(
+        self, messages: List[Message]
+    ) -> tuple[str | None, List[Dict[str, Any]]]:
         """Convert messages to Anthropic format.
 
         Returns:
@@ -87,7 +96,9 @@ class AnthropicProvider(BaseLLMProvider):
                 if isinstance(msg.content, str):
                     message_dict["content"] = msg.content
                 elif isinstance(msg.content, list):
-                    message_dict["content"] = self._convert_multimodal_content(msg.content)
+                    message_dict["content"] = self._convert_multimodal_content(
+                        msg.content
+                    )
 
                 # Convert tool calls
                 if msg.tool_calls:
@@ -125,7 +136,9 @@ class AnthropicProvider(BaseLLMProvider):
 
         return system_message, provider_messages
 
-    def convert_from_provider_format(self, response: AnthropicMessage) -> CompletionResponse:
+    def convert_from_provider_format(
+        self, response: AnthropicMessage
+    ) -> CompletionResponse:
         """Convert Anthropic response to standard format."""
         content = ""
         tool_calls = []
@@ -159,7 +172,8 @@ class AnthropicProvider(BaseLLMProvider):
             usage={
                 "prompt_tokens": response.usage.input_tokens,
                 "completion_tokens": response.usage.output_tokens,
-                "total_tokens": response.usage.input_tokens + response.usage.output_tokens,
+                "total_tokens": response.usage.input_tokens
+                + response.usage.output_tokens,
             },
         )
 
@@ -177,7 +191,9 @@ class AnthropicProvider(BaseLLMProvider):
 
         return StreamChunk(delta=delta, finish_reason=finish_reason)
 
-    def _convert_tools_to_anthropic_format(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _convert_tools_to_anthropic_format(
+        self, tools: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
         """Convert OpenAI-style tools to Anthropic format."""
         anthropic_tools = []
         for tool in tools:
@@ -192,7 +208,9 @@ class AnthropicProvider(BaseLLMProvider):
                 )
         return anthropic_tools
 
-    def _convert_multimodal_content(self, content: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _convert_multimodal_content(
+        self, content: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
         """Convert OpenAI-style multimodal content to Anthropic format."""
         anthropic_content = []
         for item in content:
