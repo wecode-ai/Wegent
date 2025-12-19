@@ -134,6 +134,8 @@ export function AddMembersDialog({
         // Ensure task is converted to group chat before generating link
         try {
           await taskMemberApi.convertToGroupChat(taskId);
+          // Trigger callback immediately after conversion to update UI
+          onMembersAdded?.();
         } catch (conversionError) {
           console.log('Task conversion for invite link:', conversionError);
         }
@@ -168,8 +170,13 @@ export function AddMembersDialog({
 
     try {
       // First, ensure the task is converted to a group chat
+      let wasConverted = false;
       try {
         await taskMemberApi.convertToGroupChat(taskId);
+        wasConverted = true;
+        // Trigger callback immediately after conversion to update UI
+        // This ensures the task moves to group chat list and @ feature is enabled
+        onMembersAdded?.();
       } catch (conversionError) {
         // Ignore conversion errors - task might already be a group chat
         console.log('Task conversion:', conversionError);
@@ -198,7 +205,10 @@ export function AddMembersDialog({
         toast({
           title: t('groupChat.addMembers.success', { count: successCount }),
         });
-        onMembersAdded?.();
+        // Call again after adding members to refresh member list
+        if (!wasConverted) {
+          onMembersAdded?.();
+        }
       }
 
       if (alreadyMemberCount > 0 && successCount === 0 && errors.length === 0) {
