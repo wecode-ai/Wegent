@@ -82,6 +82,11 @@ dependencies = [
     "mcp>=1.0.0",
     # WebSocket support
     "python-socketio>=5.10.0",
+
+    # Knowledge base and document processing
+    "llama-index-core>=0.14.10",
+    "llama-index-embeddings-openai>=0.5.1",
+    "llama-index-vector-stores-elasticsearch>=0.4.3",
 ]
 
 [dependency-groups]
