@@ -8,6 +8,7 @@ import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { useTranslation } from '@/hooks/useTranslation';
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
 import { useUser } from '@/features/common/UserContext';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import type { ChatTipItem, Team } from '@/types/api';
 import MentionAutocomplete from './chat/MentionAutocomplete';
 
@@ -215,8 +216,12 @@ export default function ChatInput({
         if (canSubmit) {
           handleSendMessage();
         }
+      } else if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey) {
+        // Enter without modifier creates new line
+        // Prevent default to avoid creating <div> elements, insert <br> instead
+        e.preventDefault();
+        document.execCommand('insertLineBreak');
       }
-      // Enter without modifier creates new line (default behavior)
     } else {
       if (isMobile) {
         return;
@@ -226,8 +231,12 @@ export default function ChatInput({
         if (canSubmit) {
           handleSendMessage();
         }
+      } else if (e.key === 'Enter' && e.shiftKey) {
+        // Shift+Enter creates new line
+        // Prevent default to avoid creating <div> elements, insert <br> instead
+        e.preventDefault();
+        document.execCommand('insertLineBreak');
       }
-      // Shift+Enter creates new line (default behavior, no preventDefault)
     }
   };
 
@@ -411,81 +420,103 @@ export default function ChatInput({
   const minHeight = isMobile ? '3.5rem' : '1.75rem';
   const maxHeight = isMobile ? '9rem' : '12rem';
 
+  // Get tooltip text based on send key preference and platform
+  const tooltipText = useMemo(() => {
+    if (sendKey === 'cmd_enter') {
+      // Detect if Mac or Windows
+      const isMac =
+        typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform);
+      return isMac ? t('send_shortcut_cmd_enter_mac') : t('send_shortcut_cmd_enter_win');
+    }
+    return t('send_shortcut');
+  }, [sendKey, t]);
+
   return (
-    <div className="w-full relative" data-tour="task-input">
-      {/* Placeholder - shown when empty */}
-      {showPlaceholder && (
-        <div
-          className="absolute pointer-events-none text-text-muted text-base"
-          style={{
-            top: '0.5rem',
-            left: badge ? `${badgeWidth}px` : '0',
-          }}
-        >
-          {placeholder}
-        </div>
-      )}
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div className="w-full relative" data-tour="task-input">
+            {/* Placeholder - shown when empty */}
+            {showPlaceholder && (
+              <div
+                className="absolute pointer-events-none text-text-muted text-base"
+                style={{
+                  top: '0.5rem',
+                  left: badge ? `${badgeWidth}px` : '0',
+                }}
+              >
+                {placeholder}
+              </div>
+            )}
 
-      {/* Mention autocomplete menu */}
-      {showMentionMenu && isGroupChat && team && (
-        <MentionAutocomplete
-          team={team}
-          query={mentionQuery}
-          onSelect={handleMentionSelect}
-          onClose={() => {
-            setShowMentionMenu(false);
-            setMentionQuery('');
-          }}
-          position={mentionMenuPosition}
-        />
-      )}
+            {/* Mention autocomplete menu */}
+            {showMentionMenu && isGroupChat && team && (
+              <MentionAutocomplete
+                team={team}
+                query={mentionQuery}
+                onSelect={handleMentionSelect}
+                onClose={() => {
+                  setShowMentionMenu(false);
+                  setMentionQuery('');
+                }}
+                position={mentionMenuPosition}
+              />
+            )}
 
-      {/* Scrollable container that includes both badge and editable content */}
-      <div
-        className="w-full custom-scrollbar"
-        style={{
-          minHeight,
-          maxHeight,
-          overflowY: 'auto',
-        }}
-      >
-        {/* Inner content wrapper with badge and text */}
-        <div className="relative">
-          {/* Badge - positioned absolutely so it doesn't affect text flow */}
-          {badge && (
-            <span
-              ref={badgeRef}
-              className="absolute left-0 top-2 pointer-events-auto z-10"
-              style={{ userSelect: 'none' }}
+            {/* Scrollable container that includes both badge and editable content */}
+            <div
+              className="w-full custom-scrollbar"
+              style={{
+                minHeight,
+                maxHeight,
+                overflowY: 'auto',
+              }}
             >
-              {badge}
-            </span>
-          )}
+              {/* Inner content wrapper with badge and text */}
+              <div className="relative">
+                {/* Badge - positioned absolutely so it doesn't affect text flow */}
+                {badge && (
+                  <span
+                    ref={badgeRef}
+                    className="absolute left-0 top-2 pointer-events-auto z-10"
+                    style={{ userSelect: 'none' }}
+                  >
+                    {badge}
+                  </span>
+                )}
 
-          {/* Editable content area */}
-          <div
-            ref={editableRef}
-            contentEditable={!disabled}
-            onInput={handleInput}
-            onKeyDown={handleKeyDown}
-            onPaste={handlePaste}
-            onCompositionStart={handleCompositionStart}
-            onCompositionEnd={handleCompositionEnd}
-            onFocus={handleFocus}
-            data-testid="message-input"
-            className={`w-full py-2 bg-transparent text-text-primary text-base focus:outline-none ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-            style={{
-              minHeight,
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-word',
-              // Use text-indent for first line to leave space for badge
-              // Subsequent lines will start from the left edge
-              textIndent: badge ? `${badgeWidth}px` : 0,
-            }}
-            suppressContentEditableWarning
-          />
-        </div>
-      </div>
-    </div>
+                {/* Editable content area */}
+                <div
+                  ref={editableRef}
+                  contentEditable={!disabled}
+                  onInput={handleInput}
+                  onKeyDown={handleKeyDown}
+                  onPaste={handlePaste}
+                  onCompositionStart={handleCompositionStart}
+                  onCompositionEnd={handleCompositionEnd}
+                  onFocus={handleFocus}
+                  data-testid="message-input"
+                  className={`w-full py-2 bg-transparent text-text-primary text-base focus:outline-none ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  style={{
+                    minHeight,
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                    // Use text-indent for first line only to leave space for badge
+                    // By using insertLineBreak in keydown handler, we ensure Shift+Enter
+                    // only inserts <br> tags (not new <div> blocks), so text-indent
+                    // correctly affects only the first line and subsequent lines start from left edge
+                    textIndent: badge ? `${badgeWidth}px` : 0,
+                  }}
+                  suppressContentEditableWarning
+                />
+              </div>
+            </div>
+          </div>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="text-xs">
+          <p>{tooltipText}</p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }

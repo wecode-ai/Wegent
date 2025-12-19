@@ -67,7 +67,6 @@ export default function TaskParamSync() {
     // IMPORTANT: selectedTaskDetail is intentionally NOT in the dependency array
     // This effect should only run when URL changes, not when task detail changes
     // Using ref to access current value without triggering re-runs
-     
   }, [searchParams, router, setSelectedTask, toast]);
 
   return null; // Only responsible for synchronization, does not render any content

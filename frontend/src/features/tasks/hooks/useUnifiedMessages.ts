@@ -157,7 +157,16 @@ export function useUnifiedMessages({
     if (!taskId) {
       lastSyncedTaskIdRef.current = undefined;
     }
-  }, [taskId, subtasks, streamState, syncBackendMessages, team?.name, isGroupChat, user?.id, user?.user_name]);
+  }, [
+    taskId,
+    subtasks,
+    streamState,
+    syncBackendMessages,
+    team?.name,
+    isGroupChat,
+    user?.id,
+    user?.user_name,
+  ]);
 
   // Build unified message list from streamState.messages ONLY
   // NOTE: streamState is obtained outside useMemo to ensure proper reactivity
