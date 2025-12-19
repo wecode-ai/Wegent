@@ -162,7 +162,7 @@ Generated index name: `rag_kb_{knowledge_id}`
 {
   "records": [
     {
-      "document_id": "doc_123",
+      "doc_ref": "doc_123",
       "chunk_index": 0,
       "source_file": "example.md",
       "content": "...",
