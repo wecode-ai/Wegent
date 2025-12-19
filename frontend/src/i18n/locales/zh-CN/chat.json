@@ -129,6 +129,15 @@
     "execution_type": "执行类型",
     "mcp_init_fail": "❌ MCP 初始化失败。"
   },
+  "send_button": {
+    "shortcut_title": "发送快捷键",
+    "option_enter": "Enter 发送",
+    "option_cmd_enter_mac": "⌘+Enter 发送",
+    "option_cmd_enter_win": "Ctrl+Enter 发送",
+    "change_shortcut": "更改发送快捷键",
+    "preference_saved": "发送快捷键设置已保存",
+    "preference_save_failed": "保存发送快捷键设置失败"
+  },
   "send_shortcut": "回车发送，Shift+回车换行",
   "send_shortcut_cmd_enter_mac": "⌘+回车发送，回车换行",
   "send_shortcut_cmd_enter_win": "Ctrl+回车发送，回车换行",

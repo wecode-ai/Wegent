@@ -129,6 +129,15 @@
     "execution_type": "Execution Type",
     "mcp_init_fail": "❌ MCP initialization failed. "
   },
+  "send_button": {
+    "shortcut_title": "Send Shortcut",
+    "option_enter": "Send with Enter",
+    "option_cmd_enter_mac": "Send with ⌘+Enter",
+    "option_cmd_enter_win": "Send with Ctrl+Enter",
+    "change_shortcut": "Change send shortcut",
+    "preference_saved": "Send shortcut preference saved",
+    "preference_save_failed": "Failed to save send shortcut preference"
+  },
   "send_shortcut": "Enter to send, Shift+Enter for new line",
   "send_shortcut_cmd_enter_mac": "⌘+Enter to send, Enter for new line",
   "send_shortcut_cmd_enter_win": "Ctrl+Enter to send, Enter for new line",

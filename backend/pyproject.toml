@@ -85,6 +85,8 @@ dependencies = [
 
     # MCP tool calling
     "mcp>=1.0.0",
+    # WebSocket support
+    "python-socketio>=5.10.0",
 ]
 
 [dependency-groups]

@@ -266,6 +266,38 @@ class TaskMemberService:
 
         return True
 
+    def get_team_id(self, db: Session, task_id: int) -> Optional[int]:
+        """Get the team ID associated with a task"""
+        task = self.get_task(db, task_id)
+        if not task:
+            return None
+
+        try:
+            task_json = task.json if isinstance(task.json, dict) else {}
+            spec = task_json.get("spec", {})
+            team_ref = spec.get("teamRef", {})
+            team_name = team_ref.get("name")
+            team_namespace = team_ref.get("namespace", "default")
+
+            if team_name:
+                # Get the team Kind to get its ID
+                team = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.name == team_name,
+                        Kind.namespace == team_namespace,
+                        Kind.kind == "Team",
+                        Kind.is_active == True,
+                    )
+                    .first()
+                )
+                if team:
+                    return team.id
+        except Exception as e:
+            logger.warning(f"Failed to get team ID: {e}")
+
+        return None
+
     def get_team_name(self, db: Session, task_id: int) -> Optional[str]:
         """Get the team name associated with a task"""
         task = self.get_task(db, task_id)

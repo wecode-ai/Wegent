@@ -2,33 +2,36 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import { Menu } from '@headlessui/react'
+import { Menu } from '@headlessui/react';
 import {
   ClipboardDocumentIcon,
   TrashIcon,
-} from '@heroicons/react/24/outline'
-import { HiOutlineEllipsisVertical } from 'react-icons/hi2'
-import { useTranslation } from '@/hooks/useTranslation'
+  ArrowRightOnRectangleIcon,
+} from '@heroicons/react/24/outline';
+import { HiOutlineEllipsisVertical } from 'react-icons/hi2';
+import { useTranslation } from '@/hooks/useTranslation';
 
 interface TaskMenuProps {
-  taskId: number
-  handleCopyTaskId: (taskId: number) => void
-  handleDeleteTask: (taskId: number) => void
+  taskId: number;
+  handleCopyTaskId: (taskId: number) => void;
+  handleDeleteTask: (taskId: number) => void;
+  isGroupChat?: boolean;
 }
 
 export default function TaskMenu({
   taskId,
   handleCopyTaskId,
-  handleDeleteTask
+  handleDeleteTask,
+  isGroupChat = false,
 }: TaskMenuProps) {
-  const { t } = useTranslation('common')
+  const { t } = useTranslation('common');
 
   return (
     <Menu as="div" className="relative">
       <Menu.Button
-        onClick={(e) => e.stopPropagation()}
+        onClick={e => e.stopPropagation()}
         className="text-text-muted hover:text-text-primary p-1"
       >
         <HiOutlineEllipsisVertical className="h-4 w-4" />
@@ -40,9 +43,9 @@ export default function TaskMenu({
         <Menu.Item>
           {({ active }) => (
             <button
-              onClick={(e) => {
-                e.stopPropagation()
-                handleCopyTaskId(taskId)
+              onClick={e => {
+                e.stopPropagation();
+                handleCopyTaskId(taskId);
               }}
               className={`w-full px-3 py-2 text-xs text-left text-text-primary flex items-center ${active ? 'bg-muted' : ''}`}
             >
@@ -54,18 +57,27 @@ export default function TaskMenu({
         <Menu.Item>
           {({ active }) => (
             <button
-              onClick={(e) => {
-                e.stopPropagation()
-                handleDeleteTask(taskId)
+              onClick={e => {
+                e.stopPropagation();
+                handleDeleteTask(taskId);
               }}
               className={`w-full px-3 py-2 text-xs text-left text-text-primary flex items-center ${active ? 'bg-muted' : ''}`}
             >
-              <TrashIcon className="h-3.5 w-3.5 mr-2" />
-              {t('tasks.delete_task')}
+              {isGroupChat ? (
+                <>
+                  <ArrowRightOnRectangleIcon className="h-3.5 w-3.5 mr-2" />
+                  {t('groupChat.leave')}
+                </>
+              ) : (
+                <>
+                  <TrashIcon className="h-3.5 w-3.5 mr-2" />
+                  {t('tasks.delete_task')}
+                </>
+              )}
             </button>
           )}
         </Menu.Item>
       </Menu.Items>
     </Menu>
-  )
+  );
 }

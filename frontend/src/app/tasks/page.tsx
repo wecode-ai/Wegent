@@ -21,6 +21,7 @@ import { Team } from '@/types/api';
 import { UserProvider } from '@/features/common/UserContext';
 import { TaskContextProvider } from '@/features/tasks/contexts/taskContext';
 import { ChatStreamProvider } from '@/features/tasks/contexts/chatStreamContext';
+import { SocketProvider } from '@/contexts/SocketContext';
 
 function TasksPageContent() {
   // Team state from service
@@ -86,11 +87,13 @@ function TasksPageContent() {
 export default function TasksPage() {
   return (
     <UserProvider>
-      <TaskContextProvider>
-        <ChatStreamProvider>
-          <TasksPageContent />
-        </ChatStreamProvider>
-      </TaskContextProvider>
+      <SocketProvider>
+        <TaskContextProvider>
+          <ChatStreamProvider>
+            <TasksPageContent />
+          </ChatStreamProvider>
+        </TaskContextProvider>
+      </SocketProvider>
     </UserProvider>
   );
 }

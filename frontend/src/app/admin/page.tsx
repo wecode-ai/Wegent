@@ -18,6 +18,7 @@ import SystemConfigPanel from '@/features/admin/components/SystemConfigPanel';
 import { UserProvider, useUser } from '@/features/common/UserContext';
 import { TaskContextProvider } from '@/features/tasks/contexts/taskContext';
 import { ChatStreamProvider } from '@/features/tasks/contexts/chatStreamContext';
+import { SocketProvider } from '@/contexts/SocketContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import { GithubStarButton } from '@/features/layout/GithubStarButton';
 import { ThemeToggle } from '@/features/theme/ThemeToggle';
@@ -185,13 +186,15 @@ function AdminContent() {
 export default function AdminPage() {
   return (
     <UserProvider>
-      <TaskContextProvider>
-        <ChatStreamProvider>
-          <Suspense fallback={<div>Loading...</div>}>
-            <AdminContent />
-          </Suspense>
-        </ChatStreamProvider>
-      </TaskContextProvider>
+      <SocketProvider>
+        <TaskContextProvider>
+          <ChatStreamProvider>
+            <Suspense fallback={<div>Loading...</div>}>
+              <AdminContent />
+            </Suspense>
+          </ChatStreamProvider>
+        </TaskContextProvider>
+      </SocketProvider>
     </UserProvider>
   );
 }
