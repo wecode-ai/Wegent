@@ -445,6 +445,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             # Import existing helpers from chat endpoint
             from app.api.endpoints.adapter.chat import (
                 StreamChatRequest,
+                _create_task_and_subtasks,
                 _should_trigger_ai_response,
                 _should_use_direct_chat,
             )
@@ -509,79 +510,104 @@ class ChatNamespace(socketio.AsyncNamespace):
             )
             logger.info(f"[WS] chat:send StreamChatRequest created")
 
-            # Create task and subtasks using task_kinds_service.create_task_or_append
-            logger.info(f"[WS] chat:send calling task_kinds_service.create_task_or_append...")
-
-            # Auto-detect task type based on git_url presence
-            task_type = "code" if payload.git_url else "chat"
-
-            # Build TaskCreate object
-            task_create = TaskCreate(
-                title=payload.title,
-                team_id=payload.team_id,
-                git_url=payload.git_url or "",
-                git_repo=payload.git_repo or "",
-                git_repo_id=payload.git_repo_id or 0,
-                git_domain=payload.git_domain or "",
-                branch_name=payload.branch_name or "",
-                prompt=payload.message,
-                type="online",
-                task_type=task_type,
-                auto_delete_executor="false",
-                source="chat_shell",
-                model_id=payload.force_override_bot_model,
-                force_override_bot_model=payload.force_override_bot_model is not None,
-            )
-
-            # Call create_task_or_append (synchronous method)
-            task_dict = task_kinds_service.create_task_or_append(
-                db=db,
-                obj_in=task_create,
-                user=user,
-                task_id=payload.task_id,
-            )
-
-            # Get the task Kind object from database
-            task = (
-                db.query(Kind)
-                .filter(
-                    Kind.id == task_dict["id"],
-                    Kind.kind == "Task",
-                    Kind.is_active == True,
+            # Create task and subtasks
+            # Use different methods based on supports_direct_chat:
+            # - If supports_direct_chat is True: use _create_task_and_subtasks (async, for Chat Shell)
+            # - If supports_direct_chat is False: use task_kinds_service.create_task_or_append (sync, for other shells)
+            if supports_direct_chat:
+                # Use _create_task_and_subtasks for direct chat (Chat Shell)
+                logger.info(f"[WS] chat:send calling _create_task_and_subtasks (supports_direct_chat=True)...")
+                result = await _create_task_and_subtasks(
+                    db,
+                    user,
+                    team,
+                    payload.message,
+                    request,
+                    payload.task_id,
+                    should_trigger_ai=should_trigger_ai,
                 )
-                .first()
-            )
-
-            logger.info(
-                f"[WS] chat:send task_kinds_service.create_task_or_append returned: task_id={task_dict.get('id')}"
-            )
-
-            # Query the created subtasks from database
-            # Get the latest USER subtask for this task
-            user_subtask = (
-                db.query(Subtask)
-                .filter(
-                    Subtask.task_id == task_dict["id"],
-                    Subtask.role == SubtaskRole.USER,
+                logger.info(
+                    f"[WS] chat:send _create_task_and_subtasks returned: ai_triggered={result.get('ai_triggered')}, task_id={result.get('task').id if result.get('task') else None}"
                 )
-                .order_by(Subtask.id.desc())
-                .first()
-            )
 
-            # Get the latest ASSISTANT subtask for this task (if should_trigger_ai)
-            assistant_subtask = None
-            if should_trigger_ai:
-                assistant_subtask = (
+                task = result["task"]
+                assistant_subtask = result["assistant_subtask"]
+                user_subtask = result["user_subtask"]
+                user_subtask_for_attachment = user_subtask
+            else:
+                # Use task_kinds_service.create_task_or_append for non-direct chat
+                logger.info(f"[WS] chat:send calling task_kinds_service.create_task_or_append (supports_direct_chat=False)...")
+
+                # Auto-detect task type based on git_url presence
+                task_type = "code" if payload.git_url else "chat"
+
+                # Build TaskCreate object
+                task_create = TaskCreate(
+                    title=payload.title,
+                    team_id=payload.team_id,
+                    git_url=payload.git_url or "",
+                    git_repo=payload.git_repo or "",
+                    git_repo_id=payload.git_repo_id or 0,
+                    git_domain=payload.git_domain or "",
+                    branch_name=payload.branch_name or "",
+                    prompt=payload.message,
+                    type="online",
+                    task_type=task_type,
+                    auto_delete_executor="false",
+                    source="chat_shell",
+                    model_id=payload.force_override_bot_model,
+                    force_override_bot_model=payload.force_override_bot_model is not None,
+                )
+
+                # Call create_task_or_append (synchronous method)
+                task_dict = task_kinds_service.create_task_or_append(
+                    db=db,
+                    obj_in=task_create,
+                    user=user,
+                    task_id=payload.task_id,
+                )
+
+                # Get the task Kind object from database
+                task = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.id == task_dict["id"],
+                        Kind.kind == "Task",
+                        Kind.is_active == True,
+                    )
+                    .first()
+                )
+
+                logger.info(
+                    f"[WS] chat:send task_kinds_service.create_task_or_append returned: task_id={task_dict.get('id')}"
+                )
+
+                # Query the created subtasks from database
+                # Get the latest USER subtask for this task
+                user_subtask = (
                     db.query(Subtask)
                     .filter(
                         Subtask.task_id == task_dict["id"],
-                        Subtask.role == SubtaskRole.ASSISTANT,
+                        Subtask.role == SubtaskRole.USER,
                     )
                     .order_by(Subtask.id.desc())
                     .first()
                 )
 
-            user_subtask_for_attachment = user_subtask
+                # Get the latest ASSISTANT subtask for this task (if should_trigger_ai)
+                assistant_subtask = None
+                if should_trigger_ai:
+                    assistant_subtask = (
+                        db.query(Subtask)
+                        .filter(
+                            Subtask.task_id == task_dict["id"],
+                            Subtask.role == SubtaskRole.ASSISTANT,
+                        )
+                        .order_by(Subtask.id.desc())
+                        .first()
+                    )
+
+                user_subtask_for_attachment = user_subtask
 
             # Link attachment to user subtask if provided
             # This is important for group chat history to include attachment content
