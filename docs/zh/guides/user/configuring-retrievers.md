@@ -203,10 +203,10 @@ Content-Type: application/json
 GET /api/rag/documents?knowledge_id=kb_001&retriever_name=my-es-retriever&page=1&page_size=20
 
 # 获取文档详情
-GET /api/rag/documents/{document_id}?knowledge_id=kb_001&retriever_name=my-es-retriever
+GET /api/rag/documents/{doc_ref}?knowledge_id=kb_001&retriever_name=my-es-retriever
 
 # 删除文档
-DELETE /api/rag/documents/{document_id}?knowledge_id=kb_001&retriever_name=my-es-retriever
+DELETE /api/rag/documents/{doc_ref}?knowledge_id=kb_001&retriever_name=my-es-retriever
 ```
 
 ## 嵌入提供商

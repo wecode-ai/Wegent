@@ -103,7 +103,7 @@ class DocumentUploadRequest(BaseModel):
 class DocumentUploadResponse(BaseModel):
     """Document upload response."""
 
-    document_id: str
+    doc_ref: str
     knowledge_id: str
     source_file: str
     chunk_count: int
@@ -143,7 +143,7 @@ class DocumentDeleteRequest(BaseModel):
 class DocumentDeleteResponse(BaseModel):
     """Document deletion response."""
 
-    document_id: str
+    doc_ref: str
     knowledge_id: str
     deleted_chunks: int
     status: str
@@ -161,7 +161,7 @@ class DocumentDetailRequest(BaseModel):
 class DocumentDetailResponse(BaseModel):
     """Document detail response."""
 
-    document_id: str
+    doc_ref: str
     knowledge_id: str
     source_file: str
     chunk_count: int

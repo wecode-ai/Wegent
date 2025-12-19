@@ -505,12 +505,12 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
                 <SelectItem value="per_user">
                   {t('retrievers.index_strategy_per_user')}
                   {STORAGE_TYPE_CONFIG[storageType].recommendedIndexMode === 'per_user' &&
-                    ' (推荐)'}
+                    ` (${t('wizard.recommended')})`}
                 </SelectItem>
                 <SelectItem value="per_dataset">
                   {t('retrievers.index_strategy_per_dataset')}
                   {STORAGE_TYPE_CONFIG[storageType].recommendedIndexMode === 'per_dataset' &&
-                    ' (推荐)'}
+                    ` (${t('wizard.recommended')})`}
                 </SelectItem>
                 <SelectItem value="fixed">{t('retrievers.index_strategy_fixed')}</SelectItem>
                 <SelectItem value="rolling">{t('retrievers.index_strategy_rolling')}</SelectItem>
