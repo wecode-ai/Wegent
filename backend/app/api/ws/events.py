@@ -74,6 +74,10 @@ class ChatSendPayload(BaseModel):
     title: Optional[str] = Field(None, description="Custom title for new tasks")
     attachment_id: Optional[int] = Field(None, description="Optional attachment ID")
     enable_web_search: bool = Field(False, description="Enable web search")
+    search_engine: Optional[str] = Field(None, description="Search engine to use")
+    enable_clarification: bool = Field(
+        False, description="Enable clarification mode for smart follow-up questions"
+    )
     force_override_bot_model: Optional[str] = Field(
         None, description="Override model name"
     )

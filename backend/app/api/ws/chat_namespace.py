@@ -494,6 +494,8 @@ class ChatNamespace(socketio.AsyncNamespace):
                 title=payload.title,
                 attachment_id=payload.attachment_id,
                 enable_web_search=payload.enable_web_search,
+                search_engine=payload.search_engine,
+                enable_clarification=payload.enable_clarification,
                 model_id=payload.force_override_bot_model,
                 force_override_bot_model=payload.force_override_bot_model is not None,
                 is_group_chat=payload.is_group_chat,
