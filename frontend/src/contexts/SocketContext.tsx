@@ -160,23 +160,23 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       setReconnectAttempts(0);
     });
 
-    newSocket.on('disconnect', reason => {
+    newSocket.on('disconnect', (reason: string) => {
       console.log('[Socket.IO] Disconnected:', reason);
       setIsConnected(false);
     });
 
-    newSocket.on('connect_error', error => {
+    newSocket.on('connect_error', (error: Error) => {
       console.error('[Socket.IO] Connection error:', error);
       setConnectionError(error);
       setIsConnected(false);
     });
 
-    newSocket.io.on('reconnect_attempt', attempt => {
+    newSocket.io.on('reconnect_attempt', (attempt: number) => {
       console.log('[Socket.IO] Reconnect attempt:', attempt);
       setReconnectAttempts(attempt);
     });
 
-    newSocket.io.on('reconnect', attempt => {
+    newSocket.io.on('reconnect', (attempt: number) => {
       console.log('[Socket.IO] Reconnected after', attempt, 'attempts');
       setIsConnected(true);
       setConnectionError(null);
@@ -188,7 +188,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       });
     });
 
-    newSocket.io.on('reconnect_error', error => {
+    newSocket.io.on('reconnect_error', (error: Error) => {
       console.error('[Socket.IO] Reconnect error:', error);
       setConnectionError(error);
     });
