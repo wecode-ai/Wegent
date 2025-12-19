@@ -382,6 +382,14 @@ export default function MessagesArea({
     setSelectedTask(null);
   }, [setSelectedTask]);
 
+  // Handle members changed in group chat panel
+  const handleMembersChanged = useCallback(() => {
+    // Refresh both task list (to move task to correct category)
+    // and task detail (to update is_group_chat flag and enable @ feature)
+    refreshTasks();
+    refreshSelectedTaskDetail(false);
+  }, [refreshTasks, refreshSelectedTaskDetail]);
+
   // Memoize share and export buttons
   const shareButton = useMemo(() => {
     if (!selectedTaskDetail?.id || messages.length === 0) {
@@ -595,12 +603,7 @@ export default function MessagesArea({
           taskTitle={selectedTaskDetail.title || selectedTaskDetail.prompt || 'Untitled Task'}
           currentUserId={user.id}
           onLeave={handleLeaveGroupChat}
-          onMembersChanged={() => {
-            // Refresh both task list (to move task to correct category)
-            // and task detail (to update is_group_chat flag and enable @ feature)
-            refreshTasks();
-            refreshSelectedTaskDetail(false);
-          }}
+          onMembersChanged={handleMembersChanged}
         />
       )}
     </div>
