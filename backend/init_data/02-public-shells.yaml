@@ -13,7 +13,8 @@ metadata:
     type: local_engine
 spec:
   shellType: ClaudeCode
-  supportModel: []
+  supportModel:
+    - claude
   baseImage: ghcr.io/wecode-ai/wegent-base-python3.12:1.0.1
 status:
   state: Available
@@ -27,7 +28,10 @@ metadata:
     type: local_engine
 spec:
   shellType: Agno
-  supportModel: []
+  supportModel:
+    - openai
+    - claude
+    - gemini
   baseImage: ghcr.io/wecode-ai/wegent-base-python3.12:1.0.1
 status:
   state: Available
