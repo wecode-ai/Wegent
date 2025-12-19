@@ -231,29 +231,25 @@ class SharedTaskService:
         return f"{base_url}/shared/task?token={share_token}"
 
     def validate_task_exists(self, db: Session, task_id: int, user_id: int) -> bool:
-        """Validate that task exists and belongs to user"""
-        task = (
-            db.query(Kind)
-            .filter(
-                Kind.id == task_id,
-                Kind.user_id == user_id,
-                Kind.kind == "Task",
-                Kind.is_active == True,
-            )
-            .first()
-        )
+        """Validate that task exists and user has access (owner or group chat member)"""
+        from app.services.task_member_service import task_member_service
 
-        return task is not None
+        # Check if user is the task owner or an active group chat member
+        return task_member_service.is_member(db, task_id, user_id)
 
     def share_task(self, db: Session, task_id: int, user_id: int) -> TaskShareResponse:
         """Generate task share link"""
+        from app.services.task_member_service import task_member_service
 
-        # Get task
+        # Validate user has access to the task (owner or group chat member)
+        if not task_member_service.is_member(db, task_id, user_id):
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        # Get the task to get the actual owner's user_id for token generation
         task = (
             db.query(Kind)
             .filter(
                 Kind.id == task_id,
-                Kind.user_id == user_id,
                 Kind.kind == "Task",
                 Kind.is_active == True,
             )
@@ -263,9 +259,10 @@ class SharedTaskService:
         if task is None:
             raise HTTPException(status_code=404, detail="Task not found")
 
-        # Generate share token
+        # Generate share token using the task owner's user_id (not the current user)
+        # This ensures the token remains valid and consistent
         share_token = self.generate_share_token(
-            user_id=user_id,
+            user_id=task.user_id,
             task_id=task_id,
         )
 
@@ -391,7 +388,7 @@ class SharedTaskService:
                     )
 
                     # Create workspace name with timestamp to ensure uniqueness
-                    timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
+                    timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
                     workspace_name = (
                         f"ws-{git_repo.replace('/', '-')}-{branch_name}-{timestamp}"
                     )
@@ -423,8 +420,8 @@ class SharedTaskService:
                         namespace="default",
                         json=workspace_crd.model_dump(mode="json", exclude_none=True),
                         is_active=True,
-                        created_at=datetime.utcnow(),
-                        updated_at=datetime.utcnow(),
+                        created_at=datetime.now(),
+                        updated_at=datetime.now(),
                     )
                     db.add(new_workspace)
                     db.flush()  # Get new workspace ID
@@ -507,7 +504,7 @@ class SharedTaskService:
                 task_crd.metadata.labels["forceOverrideBotModel"] = "true"
 
         # Generate unique task name with timestamp to avoid duplicate key errors
-        timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
         unique_task_name = f"Copy of {original_task.name}-{timestamp}"
 
         # Create new task with updated team reference
@@ -520,8 +517,8 @@ class SharedTaskService:
                 mode="json", exclude_none=True
             ),  # Use updated JSON
             is_active=True,
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
         )
 
         db.add(new_task)
@@ -557,8 +554,14 @@ class SharedTaskService:
                 progress=100,  # Mark as fully completed
                 result=original_subtask.result,
                 error_message=original_subtask.error_message,
-                # Remove created_at and updated_at to use database defaults (current timestamp)
-                completed_at=datetime.utcnow(),
+                # Copy group chat fields to preserve sender information
+                sender_type=original_subtask.sender_type,
+                sender_user_id=original_subtask.sender_user_id,
+                reply_to_subtask_id=original_subtask.reply_to_subtask_id,
+                # Use local time instead of UTC to match other subtask creation in the codebase
+                created_at=datetime.now(),
+                updated_at=datetime.now(),
+                completed_at=datetime.now(),
             )
 
             db.add(new_subtask)
@@ -585,7 +588,7 @@ class SharedTaskService:
                     text_length=original_attachment.text_length,
                     status=original_attachment.status,
                     error_message=original_attachment.error_message,
-                    created_at=datetime.utcnow(),
+                    created_at=datetime.now(),
                 )
                 db.add(new_attachment)
 
@@ -689,7 +692,7 @@ class SharedTaskService:
             # Reuse existing record to avoid unique constraint violation
             existing_share.copied_task_id = copied_task.id
             existing_share.is_active = True
-            existing_share.updated_at = datetime.utcnow()
+            existing_share.updated_at = datetime.now()
             shared_task = existing_share
         else:
             # Create new share relationship record
@@ -740,7 +743,7 @@ class SharedTaskService:
             )
 
         shared_task.is_active = False
-        shared_task.updated_at = datetime.utcnow()
+        shared_task.updated_at = datetime.now()
         db.commit()
 
         return True
@@ -808,6 +811,18 @@ class SharedTaskService:
             .all()
         )
 
+        # Query sender user names for group chat messages
+        sender_ids = set()
+        for sub in subtasks:
+            if sub.sender_user_id and sub.sender_user_id > 0:
+                sender_ids.add(sub.sender_user_id)
+
+        # Batch query users
+        user_name_map = {}
+        if sender_ids:
+            users = db.query(User).filter(User.id.in_(sender_ids)).all()
+            user_name_map = {u.id: u.user_name for u in users}
+
         # Convert to public subtask data (exclude sensitive fields)
         public_subtasks = []
         for sub in subtasks:
@@ -837,6 +852,11 @@ class SharedTaskService:
                 for att in attachments
             ]
 
+            # Get sender user name if available
+            sender_user_name = None
+            if sub.sender_user_id and sub.sender_user_id > 0:
+                sender_user_name = user_name_map.get(sub.sender_user_id)
+
             public_subtasks.append(
                 PublicSubtaskData(
                     id=sub.id,
@@ -847,6 +867,10 @@ class SharedTaskService:
                     created_at=sub.created_at,
                     updated_at=sub.updated_at,
                     attachments=public_attachments,
+                    sender_type=sub.sender_type,
+                    sender_user_id=sub.sender_user_id,
+                    sender_user_name=sender_user_name,
+                    reply_to_subtask_id=sub.reply_to_subtask_id,
                 )
             )
 

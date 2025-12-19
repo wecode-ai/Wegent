@@ -15,18 +15,21 @@ import time
 import uuid
 from typing import Any, Dict, Optional
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel
-
 from executor_manager.clients.task_api_client import TaskApiClient
 from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
 from executor_manager.executors.dispatcher import ExecutorDispatcher
 from executor_manager.tasks.task_processor import TaskProcessor
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel
 from shared.logger import setup_logger
 from shared.models.task import TasksRequest
 from shared.telemetry.config import get_otel_config
-from shared.telemetry.context import set_request_context, set_task_context, set_user_context
+from shared.telemetry.context import (
+    set_request_context,
+    set_task_context,
+    set_user_context,
+)
 
 # Setup logger
 logger = setup_logger(__name__)
@@ -64,6 +67,7 @@ async def log_requests(request: Request, call_next):
 
     # Always set request context for logging (works even without OTEL)
     from shared.telemetry.context import set_request_context
+
     set_request_context(request_id)
 
     # Get OTEL config
@@ -119,7 +123,6 @@ async def log_requests(request: Request, call_next):
     if otel_config.enabled:
         try:
             from opentelemetry import trace
-
             from shared.telemetry.core import is_telemetry_enabled
 
             if is_telemetry_enabled():
@@ -349,8 +352,12 @@ async def receive_tasks(request: TasksRequest, http_request: Request):
         # Functions handle OTEL enabled check internally
         if request.tasks:
             first_task = request.tasks[0]
-            set_task_context(task_id=first_task.task_id, subtask_id=first_task.subtask_id)
-            set_user_context(user_id=str(first_task.user.id), user_name=first_task.user.name)
+            set_task_context(
+                task_id=first_task.task_id, subtask_id=first_task.subtask_id
+            )
+            set_user_context(
+                user_id=str(first_task.user.id), user_name=first_task.user.name
+            )
 
         # Call the task processor to handle the tasks
         task_processor.process_tasks([task.dict() for task in request.tasks])

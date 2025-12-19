@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core import security
 from app.models.kind import Kind
-from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
 from app.models.user import User
 from app.schemas.kind import Bot, Shell, Task, Team
 from app.services.chat.base import ChatServiceBase
@@ -41,6 +41,7 @@ class StreamChatRequest(BaseModel):
     message: str
     team_id: int
     task_id: Optional[int] = None  # Optional for multi-turn conversations
+    title: Optional[str] = None  # Optional custom title for new tasks
     model_id: Optional[str] = None  # Optional model override
     force_override_bot_model: bool = False
     attachment_id: Optional[int] = None  # Optional attachment ID for file upload
@@ -58,6 +59,8 @@ class StreamChatRequest(BaseModel):
     # Resume/reconnect parameters for offset-based streaming
     subtask_id: Optional[int] = None  # For resuming an existing stream
     offset: Optional[int] = None  # Character offset for resuming (0 = new stream)
+    # Group chat flag
+    is_group_chat: bool = False  # Whether this is a group chat
 
 
 def _get_shell_type(db: Session, bot: Kind, user_id: int) -> str:
@@ -136,6 +139,44 @@ def _should_use_direct_chat(db: Session, team: Kind, user_id: int) -> bool:
     return True
 
 
+def _should_trigger_ai_response(
+    task_json: dict, prompt: str, team_name: str, request_is_group_chat: bool = False
+) -> bool:
+    """
+    Determine whether to trigger AI response based on task mode and prompt content.
+
+    For non-group-chat mode: always trigger AI
+    For group-chat mode: only trigger if prompt contains @TeamName (exact match)
+
+    Args:
+        task_json: Task's JSON spec
+        prompt: User's input message
+        team_name: Associated Team name
+        request_is_group_chat: Whether the request explicitly marks this as a group chat
+                              (used for new tasks where task_json is empty)
+
+    Returns:
+        True if AI response should be triggered, False if only save message
+    """
+    # Check if task is in group chat mode
+    # For existing tasks: check task_json.spec.is_group_chat
+    # For new tasks: use request_is_group_chat parameter
+    is_group_chat = task_json.get("spec", {}).get("is_group_chat", False)
+
+    # If task_json doesn't have is_group_chat set, use the request parameter
+    # This handles the case of creating a new group chat task
+    if not is_group_chat and request_is_group_chat:
+        is_group_chat = True
+
+    # Non-group-chat mode: always trigger AI
+    if not is_group_chat:
+        return True
+
+    # Group chat mode: check for @TeamName mention (exact match)
+    mention_pattern = f"@{team_name}"
+    return mention_pattern in prompt
+
+
 async def _create_task_and_subtasks(
     db: Session,
     user: User,
@@ -143,12 +184,24 @@ async def _create_task_and_subtasks(
     message: str,
     request: StreamChatRequest,
     task_id: Optional[int] = None,
-) -> tuple[Kind, Subtask]:
+    should_trigger_ai: bool = True,
+) -> dict:
     """
     Create or get task and create subtasks for chat.
 
+    For group chat members, subtasks are created with the task owner's user_id
+    to ensure proper message history and visibility across all members.
+
+    Args:
+        should_trigger_ai: If True, create both USER and ASSISTANT subtasks.
+                          If False, only create USER subtask (for group chat without @mention)
+
     Returns:
-        Tuple of (task, assistant_subtask)
+        Dict with keys:
+        - task: Task Kind object
+        - user_subtask: User subtask (always created)
+        - assistant_subtask: Assistant subtask (only if should_trigger_ai=True)
+        - ai_triggered: Whether AI was triggered
     """
     team_crd = Team.model_validate(team.json)
 
@@ -162,7 +215,7 @@ async def _create_task_and_subtasks(
                 Kind.kind == "Bot",
                 Kind.name == member.botRef.name,
                 Kind.namespace == member.botRef.namespace,
-                Kind.is_active == True,
+                Kind.is_active,
             )
             .first()
         )
@@ -173,19 +226,50 @@ async def _create_task_and_subtasks(
         raise HTTPException(status_code=400, detail="No valid bots found in team")
 
     task = None
+    # Track the user_id to use for subtasks (owner's ID for group chats)
+    subtask_user_id = user.id
 
     if task_id:
-        # Get existing task
+        # Get existing task - check both ownership and membership
         task = (
             db.query(Kind)
             .filter(
                 Kind.id == task_id,
                 Kind.user_id == user.id,
                 Kind.kind == "Task",
-                Kind.is_active == True,
+                Kind.is_active,
             )
             .first()
         )
+
+        # If not found as owner, check if user is a group chat member
+        if not task:
+            from app.models.task_member import MemberStatus, TaskMember
+
+            member = (
+                db.query(TaskMember)
+                .filter(
+                    TaskMember.task_id == task_id,
+                    TaskMember.user_id == user.id,
+                    TaskMember.status == MemberStatus.ACTIVE,
+                )
+                .first()
+            )
+
+            if member:
+                # User is a group member, get task without user_id check
+                task = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.id == task_id,
+                        Kind.kind == "Task",
+                        Kind.is_active,
+                    )
+                    .first()
+                )
+                # For group members, use task owner's user_id for subtasks
+                if task:
+                    subtask_user_id = task.user_id
 
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
@@ -235,10 +319,19 @@ async def _create_task_and_subtasks(
         db.add(workspace)
 
         # Create task
-        title = message[:50] + "..." if len(message) > 50 else message
+        # Use custom title if provided, otherwise generate from message
+        if request.title:
+            title = request.title
+        else:
+            title = message[:50] + "..." if len(message) > 50 else message
 
         # Auto-detect task type based on git_url presence
         task_type = "code" if request.git_url else "chat"
+
+        # Log the is_group_chat value being set
+        logger.info(
+            f"[_create_task_and_subtasks] Creating task_json with is_group_chat={request.is_group_chat}"
+        )
 
         task_json = {
             "kind": "Task",
@@ -247,6 +340,7 @@ async def _create_task_and_subtasks(
                 "prompt": message,
                 "teamRef": {"name": team.name, "namespace": team.namespace},
                 "workspaceRef": {"name": workspace_name, "namespace": "default"},
+                "is_group_chat": request.is_group_chat,
             },
             "status": {
                 "state": "Available",
@@ -289,10 +383,17 @@ async def _create_task_and_subtasks(
         db.add(task)
         task_id = new_task_id
 
+        # Log the created task_json to verify is_group_chat was saved correctly
+        logger.info(
+            f"[_create_task_and_subtasks] Created task {new_task_id} with task_json.spec.is_group_chat="
+            f"{task_json.get('spec', {}).get('is_group_chat', 'NOT_SET')}"
+        )
+
     # Get existing subtasks to determine message_id
+    # Use subtask_user_id to see all messages (for group chats, this is task owner's ID)
     existing_subtasks = (
         db.query(Subtask)
-        .filter(Subtask.task_id == task_id, Subtask.user_id == user.id)
+        .filter(Subtask.task_id == task_id, Subtask.user_id == subtask_user_id)
         .order_by(Subtask.message_id.desc())
         .all()
     )
@@ -303,12 +404,14 @@ async def _create_task_and_subtasks(
         next_message_id = existing_subtasks[0].message_id + 1
         parent_id = existing_subtasks[0].message_id
 
-    # Create USER subtask
+    # Create USER subtask (always created)
+    from app.models.subtask import SenderType
+
     user_subtask = Subtask(
-        user_id=user.id,
+        user_id=subtask_user_id,  # Use task owner's ID for group chats
         task_id=task_id,
         team_id=team.id,
-        title=f"User message",
+        title="User message",
         bot_ids=bot_ids,
         role=SubtaskRole.USER,
         executor_namespace="",
@@ -321,35 +424,56 @@ async def _create_task_and_subtasks(
         error_message="",
         completed_at=datetime.now(),
         result=None,
+        sender_type=SenderType.USER,
+        sender_user_id=user.id,  # Record the actual sender user ID
     )
     db.add(user_subtask)
 
-    # Create ASSISTANT subtask
-    # Note: completed_at is set to a placeholder value because the DB column doesn't allow NULL
-    # It will be updated when the stream completes
-    assistant_subtask = Subtask(
-        user_id=user.id,
-        task_id=task_id,
-        team_id=team.id,
-        title=f"Assistant response",
-        bot_ids=bot_ids,
-        role=SubtaskRole.ASSISTANT,
-        executor_namespace="",
-        executor_name="",
-        prompt="",
-        status=SubtaskStatus.PENDING,
-        progress=0,
-        message_id=next_message_id + 1,
-        parent_id=next_message_id,
-        error_message="",
-        result=None,
-        completed_at=datetime.now(),  # Placeholder, will be updated when stream completes
-    )
-    db.add(assistant_subtask)
+    # Create ASSISTANT subtask only if AI should be triggered
+    assistant_subtask = None
+    if should_trigger_ai:
+        # Note: completed_at is set to a placeholder value because the DB column doesn't allow NULL
+        # It will be updated when the stream completes
+        assistant_subtask = Subtask(
+            user_id=subtask_user_id,  # Use task owner's ID for group chats
+            task_id=task_id,
+            team_id=team.id,
+            title="Assistant response",
+            bot_ids=bot_ids,
+            role=SubtaskRole.ASSISTANT,
+            executor_namespace="",
+            executor_name="",
+            prompt="",
+            status=SubtaskStatus.PENDING,
+            progress=0,
+            message_id=next_message_id + 1,
+            parent_id=next_message_id,
+            error_message="",
+            result=None,
+            completed_at=datetime.now(),  # Placeholder, will be updated when stream completes
+            sender_type=SenderType.TEAM,
+            sender_user_id=0,  # AI has no user_id, use 0 instead of None
+        )
+        db.add(assistant_subtask)
+
+    # Update task.updated_at for group chat messages (even without AI trigger)
+    # This ensures the task list shows unread indicators for new messages
+    if request.is_group_chat or task.json.get("spec", {}).get("is_group_chat", False):
+        from sqlalchemy.orm.attributes import flag_modified
+
+        task.updated_at = datetime.now()
+        # Also update the JSON status.updatedAt for consistency
+        task_crd = Task.model_validate(task.json)
+        if task_crd.status:
+            task_crd.status.updatedAt = datetime.now()
+            task.json = task_crd.model_dump(mode="json")
+            flag_modified(task, "json")
 
     db.commit()
     db.refresh(task)
-    db.refresh(assistant_subtask)
+    db.refresh(user_subtask)
+    if assistant_subtask:
+        db.refresh(assistant_subtask)
 
     # Initialize Redis chat history from existing subtasks if needed
     # This is crucial for shared tasks that were copied with historical messages
@@ -393,7 +517,83 @@ async def _create_task_and_subtasks(
                 logger.info(
                     f"Initialized {len(history_messages)} messages in Redis for task {task_id}"
                 )
-    return task, assistant_subtask
+
+    # Notify all group chat members about the new message via WebSocket
+    # This allows their task list to show the unread indicator
+    if request.is_group_chat or task.json.get("spec", {}).get("is_group_chat", False):
+        await _notify_group_members_task_updated(db, task, user.id)
+
+    return {
+        "task": task,
+        "user_subtask": user_subtask,
+        "assistant_subtask": assistant_subtask,
+        "ai_triggered": should_trigger_ai,
+    }
+
+
+async def _notify_group_members_task_updated(
+    db: Session, task: Kind, sender_user_id: int
+) -> None:
+    """
+    Notify all group chat members about task update via WebSocket.
+
+    This sends a task:status event to each member's user room so their
+    task list can show the unread indicator for new messages.
+
+    Args:
+        db: Database session
+        task: Task Kind object
+        sender_user_id: User ID of the message sender (to exclude from notification)
+    """
+    from app.models.task_member import MemberStatus, TaskMember
+    from app.services.chat.ws_emitter import get_ws_emitter
+
+    ws_emitter = get_ws_emitter()
+    if not ws_emitter:
+        logger.warning(
+            f"[_notify_group_members_task_updated] WebSocket emitter not available"
+        )
+        return
+
+    try:
+        # Get all active members of this group chat
+        members = (
+            db.query(TaskMember)
+            .filter(
+                TaskMember.task_id == task.id,
+                TaskMember.status == MemberStatus.ACTIVE,
+            )
+            .all()
+        )
+
+        # Also include the task owner
+        member_user_ids = {m.user_id for m in members}
+        member_user_ids.add(task.user_id)
+
+        # Get current task status
+        task_crd = Task.model_validate(task.json)
+        current_status = task_crd.status.status if task_crd.status else "PENDING"
+
+        # Notify each member (except the sender) about the task update
+        for member_user_id in member_user_ids:
+            if member_user_id == sender_user_id:
+                # Skip the sender - they already know about their own message
+                continue
+
+            await ws_emitter.emit_task_status(
+                user_id=member_user_id,
+                task_id=task.id,
+                status=current_status,
+                progress=task_crd.status.progress if task_crd.status else 0,
+            )
+            logger.debug(
+                f"[_notify_group_members_task_updated] Notified user {member_user_id} about task {task.id} update"
+            )
+
+    except Exception as e:
+        logger.warning(
+            f"[_notify_group_members_task_updated] Failed to notify group members: {e}"
+        )
 
 
 @router.post("/stream")
@@ -500,35 +700,127 @@ async def stream_chat(
         else:
             logger.warning("Web search requested but disabled in configuration")
 
-    # Create task and subtasks (use original message for storage, final_message for LLM)
-    task, assistant_subtask = await _create_task_and_subtasks(
-        db, current_user, team, request.message, request, request.task_id
+    # Get or create task first to check group chat mode and team name
+    task_kind = None
+    task_json = {}
+    team_name = team.name
+
+    if request.task_id:
+        # Get existing task - first try as owner
+        task_kind = (
+            db.query(Kind)
+            .filter(
+                Kind.id == request.task_id,
+                Kind.user_id == current_user.id,
+                Kind.kind == "Task",
+                Kind.is_active,
+            )
+            .first()
+        )
+
+        # If not found as owner, check if user is a group chat member
+        if not task_kind:
+            from app.models.task_member import MemberStatus, TaskMember
+
+            member = (
+                db.query(TaskMember)
+                .filter(
+                    TaskMember.task_id == request.task_id,
+                    TaskMember.user_id == current_user.id,
+                    TaskMember.status == MemberStatus.ACTIVE,
+                )
+                .first()
+            )
+
+            if member:
+                # User is a group member, get task without user_id check
+                task_kind = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.id == request.task_id,
+                        Kind.kind == "Task",
+                        Kind.is_active,
+                    )
+                    .first()
+                )
+
+        # If task found, get its JSON
+        if task_kind:
+            task_json = task_kind.json or {}
+
+    # Check if AI should be triggered (for group chat with @mention)
+    # Pass request.is_group_chat for new tasks where task_json is empty
+    should_trigger_ai = _should_trigger_ai_response(
+        task_json, request.message, team_name, request.is_group_chat
     )
+    logger.info(
+        f"Group chat check: task_id={request.task_id}, "
+        f"task_kind_found={task_kind is not None}, "
+        f"task_json_spec={task_json.get('spec', {})}, "
+        f"is_group_chat={task_json.get('spec', {}).get('is_group_chat', False)}, "
+        f"team_name={team_name}, "
+        f"message_preview={request.message[:50] if request.message else ''}, "
+        f"message_contains_mention={'@' + team_name in request.message}, "
+        f"should_trigger_ai={should_trigger_ai}"
+    )
+
+    # Log the request.is_group_chat value before creating task
+    logger.info(
+        f"[stream_chat] Before creating task - request.is_group_chat={request.is_group_chat}, "
+        f"request={request.model_dump()}"
+    )
+
+    # Create task and subtasks (use original message for storage, final_message for LLM)
+    result = await _create_task_and_subtasks(
+        db,
+        current_user,
+        team,
+        request.message,
+        request,
+        request.task_id,
+        should_trigger_ai=should_trigger_ai,
+    )
+
+    task = result["task"]
+    user_subtask = result["user_subtask"]
+    assistant_subtask = result["assistant_subtask"]
+    ai_triggered = result["ai_triggered"]
+
+    # Link attachment to the user subtask if provided
+    # This must be done before the early return for non-AI-triggered messages
+    # to ensure attachments are visible in group chat even without @mention
+    if attachment:
+        from app.services.attachment import attachment_service
+
+        attachment_service.link_attachment_to_subtask(
+            db=db,
+            attachment_id=attachment.id,
+            subtask_id=user_subtask.id,
+            user_id=current_user.id,
+        )
+
+    # If AI not triggered, return early with message saved response
+    if not ai_triggered:
+
+        async def no_ai_response():
+            yield f"data: {json.dumps({'task_id': task.id, 'subtask_id': user_subtask.id, 'content': '', 'done': True, 'ai_triggered': False, 'message': 'Message saved without AI response'})}\n\n"
+
+        return StreamingResponse(
+            no_ai_response(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+                "X-Task-Id": str(task.id),
+                "X-Subtask-Id": str(user_subtask.id),
+            },
+        )
 
     # Set task context for OpenTelemetry tracing after task/subtask creation
     from app.api.dependencies import _set_telemetry_task_context
 
     _set_telemetry_task_context(task_id=task.id, subtask_id=assistant_subtask.id)
-
-    # Link attachment to the user subtask if provided
-    if attachment:
-        # Find the user subtask (the one before assistant_subtask)
-        user_subtask = (
-            db.query(Subtask)
-            .filter(
-                Subtask.task_id == task.id,
-                Subtask.message_id == assistant_subtask.message_id - 1,
-                Subtask.role == SubtaskRole.USER,
-            )
-            .first()
-        )
-        if user_subtask:
-            attachment_service.link_attachment_to_subtask(
-                db=db,
-                attachment_id=attachment.id,
-                subtask_id=user_subtask.id,
-                user_id=current_user.id,
-            )
 
     # Get first bot for model config and system prompt
     team_crd = Team.model_validate(team.json)
@@ -700,9 +992,12 @@ After each round of user answers:
     agent_config = bot_spec.get("agent_config", {})
 
     # Get user info for data sources
+    # Note: Use "name" key to match executor's task_data.user.name format
     user_info = {
         "id": current_user.id,
-        "name": current_user.user_name,
+        "name": current_user.user_name or "",
+        "user_name": current_user.user_name
+        or "",  # Also include user_name for compatibility
     }
 
     # Build task_data similar to executor format
@@ -746,28 +1041,47 @@ After each round of user answers:
     from fastapi.responses import StreamingResponse
 
     async def generate_with_ids():
-        # Send first message with IDs
-        first_msg = {
-            "task_id": task.id,
-            "subtask_id": assistant_subtask.id,
-            "content": "",
-            "done": False,
-        }
-        yield f"data: {json.dumps(first_msg)}\n\n"
+        from app.services.chat.session_manager import session_manager
 
-        # Get the actual stream from chat service (use final_message with attachment content)
-        stream_response = await chat_service.chat_stream(
-            subtask_id=assistant_subtask.id,
-            task_id=task.id,
-            message=final_message,
-            model_config=model_config,
-            system_prompt=system_prompt,
-            tools=tools,
-        )
+        # Set task-level streaming status for group chat
+        task_json = task.json or {}
+        is_group_chat = task_json.get("spec", {}).get("is_group_chat", False)
+        if is_group_chat:
+            await session_manager.set_task_streaming_status(
+                task_id=task.id,
+                subtask_id=assistant_subtask.id,
+                user_id=current_user.id,
+                username=current_user.user_name,
+            )
 
-        # Forward the stream
-        async for chunk in stream_response.body_iterator:
-            yield chunk
+        try:
+            # Send first message with IDs
+            first_msg = {
+                "task_id": task.id,
+                "subtask_id": assistant_subtask.id,
+                "content": "",
+                "done": False,
+            }
+            yield f"data: {json.dumps(first_msg)}\n\n"
+
+            # Get the actual stream from chat service (use final_message with attachment content)
+            stream_response = await chat_service.chat_stream(
+                subtask_id=assistant_subtask.id,
+                task_id=task.id,
+                message=final_message,
+                model_config=model_config,
+                system_prompt=system_prompt,
+                tools=tools,
+                is_group_chat=is_group_chat,
+            )
+
+            # Forward the stream
+            async for chunk in stream_response.body_iterator:
+                yield chunk
+        finally:
+            # Clear task-level streaming status when done
+            if is_group_chat:
+                await session_manager.clear_task_streaming_status(task.id)
 
     return StreamingResponse(
         generate_with_ids(),
@@ -793,7 +1107,7 @@ async def _handle_resume_stream(
     Handle resume/reconnect stream request with offset-based continuation.
 
     This function implements the offset-based streaming protocol:
-    1. Verify subtask ownership and status
+    1. Verify subtask ownership/membership and status
     2. Get cached content from Redis/DB
     3. Send content from offset position onwards
     4. Subscribe to Pub/Sub for real-time updates
@@ -812,9 +1126,10 @@ async def _handle_resume_stream(
 
     from fastapi.responses import StreamingResponse
 
+    from app.models.task_member import MemberStatus, TaskMember
     from app.services.chat.session_manager import session_manager
 
-    # Verify subtask ownership
+    # Verify subtask ownership first
     subtask = (
         db.query(Subtask)
         .filter(
@@ -823,6 +1138,27 @@ async def _handle_resume_stream(
         )
         .first()
     )
+
+    # If not found as owner, check if user is a group chat member
+    if not subtask:
+        # First get the subtask without user_id filter to check task membership
+        subtask_any = db.query(Subtask).filter(Subtask.id == subtask_id).first()
+
+        if subtask_any:
+            # Check if user is a group chat member for this task
+            member = (
+                db.query(TaskMember)
+                .filter(
+                    TaskMember.task_id == subtask_any.task_id,
+                    TaskMember.user_id == current_user.id,
+                    TaskMember.status == MemberStatus.ACTIVE,
+                )
+                .first()
+            )
+
+            if member:
+                # User is a group member, allow access
+                subtask = subtask_any
 
     if not subtask:
         raise HTTPException(status_code=404, detail="Subtask not found")
@@ -1221,7 +1557,9 @@ async def get_streaming_content(
             "incomplete": bool        # Whether content is incomplete (client disconnected)
         }
     """
-    # Verify subtask ownership
+    from app.models.task_member import MemberStatus, TaskMember
+
+    # Verify subtask ownership first
     subtask = (
         db.query(Subtask)
         .filter(
@@ -1230,6 +1568,27 @@ async def get_streaming_content(
         )
         .first()
     )
+
+    # If not found as owner, check if user is a group chat member
+    if not subtask:
+        # First get the subtask without user_id filter to check task membership
+        subtask_any = db.query(Subtask).filter(Subtask.id == subtask_id).first()
+
+        if subtask_any:
+            # Check if user is a group chat member for this task
+            member = (
+                db.query(TaskMember)
+                .filter(
+                    TaskMember.task_id == subtask_any.task_id,
+                    TaskMember.user_id == current_user.id,
+                    TaskMember.status == MemberStatus.ACTIVE,
+                )
+                .first()
+            )
+
+            if member:
+                # User is a group member, allow access
+                subtask = subtask_any
 
     if not subtask:
         raise HTTPException(status_code=404, detail="Subtask not found")
@@ -1280,7 +1639,7 @@ async def resume_stream(
     streaming content from an ongoing Chat Shell task, similar to OpenAI's implementation.
 
     Flow:
-    1. Verify subtask ownership and status (must be RUNNING)
+    1. Verify subtask ownership/membership and status (must be RUNNING)
     2. Send cached content from Redis immediately
     3. Subscribe to Redis Pub/Sub channel for real-time updates
     4. Continue streaming new content as it arrives
@@ -1295,7 +1654,9 @@ async def resume_stream(
 
     from fastapi.responses import StreamingResponse
 
-    # Verify subtask ownership
+    from app.models.task_member import MemberStatus, TaskMember
+
+    # Verify subtask ownership first
     subtask = (
         db.query(Subtask)
         .filter(
@@ -1304,6 +1665,27 @@ async def resume_stream(
         )
         .first()
     )
+
+    # If not found as owner, check if user is a group chat member
+    if not subtask:
+        # First get the subtask without user_id filter to check task membership
+        subtask_any = db.query(Subtask).filter(Subtask.id == subtask_id).first()
+
+        if subtask_any:
+            # Check if user is a group chat member for this task
+            member = (
+                db.query(TaskMember)
+                .filter(
+                    TaskMember.task_id == subtask_any.task_id,
+                    TaskMember.user_id == current_user.id,
+                    TaskMember.status == MemberStatus.ACTIVE,
+                )
+                .first()
+            )
+
+            if member:
+                # User is a group member, allow access
+                subtask = subtask_any
 
     if not subtask:
         raise HTTPException(status_code=404, detail="Subtask not found")

@@ -805,6 +805,11 @@ Task (Team + Workspace) → Subtasks (messages/steps)
   - `CHAT_MCP_SERVERS` - JSON configuration for MCP servers (similar to Claude Desktop format)
     - Supported server types: `stdio`, `sse`, `streamable-http`
     - Example: `{"mcpServers":{"image-gen":{"type":"sse","url":"http://localhost:8080/sse"}}}`
+- `GROUP_CHAT_HISTORY_*` - Group chat history truncation configuration
+  - `GROUP_CHAT_HISTORY_FIRST_MESSAGES` - Number of first messages to keep for AI context (default: 10)
+  - `GROUP_CHAT_HISTORY_LAST_MESSAGES` - Number of last messages to keep for AI context (default: 20)
+  - In group chat mode, AI-bot sees: first N messages + last M messages (no duplicates)
+  - If total messages < N + M, all messages are kept
 
 #### Database Migrations (Alembic)
 

@@ -4,7 +4,15 @@
 
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, ReactNode, useRef } from 'react';
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  ReactNode,
+  useRef,
+  useCallback,
+} from 'react';
 import { Task, TaskDetail, TaskStatus } from '@/types/api';
 import { taskApis } from '@/apis/tasks';
 import { notifyTaskCompletion } from '@/utils/notification';
@@ -13,7 +21,10 @@ import {
   getUnreadCount,
   markAllTasksAsViewed,
   initializeTaskViewStatus,
+  getTaskViewStatus,
 } from '@/utils/taskViewStatus';
+import { useSocket } from '@/contexts/SocketContext';
+import { TaskCreatedPayload, TaskInvitedPayload, TaskStatusPayload } from '@/types/socket';
 
 type TaskContextType = {
   tasks: Task[];
@@ -31,7 +42,7 @@ type TaskContextType = {
   searchTasks: (term: string) => Promise<void>;
   isSearching: boolean;
   isSearchResult: boolean;
-  markTaskAsViewed: (taskId: number, status: TaskStatus) => void;
+  markTaskAsViewed: (taskId: number, status: TaskStatus, taskTimestamp?: string) => void;
   getUnreadCount: (tasks: Task[]) => number;
   markAllTasksAsViewed: () => void;
   viewStatusVersion: number;
@@ -57,6 +68,12 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
 
   // Track task status for notification
   const taskStatusMapRef = useRef<Map<number, TaskStatus>>(new Map());
+
+  // WebSocket connection for real-time task updates
+  const { registerTaskHandlers, isConnected, leaveTask, joinTask } = useSocket();
+
+  // Track previous task ID for leaving WebSocket room when switching tasks
+  const previousTaskIdRef = useRef<number | null>(null);
 
   // Pagination related
   const [hasMore, setHasMore] = useState(true);
@@ -161,8 +178,227 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Only refresh periodically when there are unfinished tasks OR when there's a network error
-  // This ensures polling continues even after network errors to recover when connection is restored
+  // Handle new task created via WebSocket
+  const handleTaskCreated = useCallback((data: TaskCreatedPayload) => {
+    console.log('[TaskContext] Received task:created event via WebSocket:', data);
+
+    // Check if task already exists in the list
+    setTasks(prev => {
+      const exists = prev.some(task => task.id === data.task_id);
+      if (exists) {
+        console.log(`[TaskContext] Task ${data.task_id} already exists, skipping`);
+        return prev;
+      }
+
+      // Create a new task object from the WebSocket payload
+      // Note: Some fields use empty string as default since Task interface requires string type
+      // For streaming tasks, set initial status to RUNNING since the task is already being processed
+      const newTask: Task = {
+        id: data.task_id,
+        title: data.title,
+        team_id: data.team_id,
+        git_url: '',
+        git_repo: '',
+        git_repo_id: 0,
+        git_domain: '',
+        branch_name: '',
+        prompt: '',
+        status: 'RUNNING' as TaskStatus,
+        task_type: 'chat',
+        progress: 0,
+        batch: 0,
+        result: {},
+        error_message: '',
+        user_id: 0,
+        user_name: '',
+        created_at: data.created_at,
+        updated_at: data.created_at,
+        completed_at: '',
+        is_group_chat: false,
+      };
+
+      // Initialize view status for the new task
+      initializeTaskViewStatus([newTask]);
+
+      console.log(`[TaskContext] Added new task ${data.task_id} via WebSocket`);
+      return [newTask, ...prev];
+    });
+  }, []);
+
+  // Handle user invited to group chat via WebSocket
+  const handleTaskInvited = useCallback((data: TaskInvitedPayload) => {
+    console.log('[TaskContext] Received task:invited event via WebSocket:', data);
+
+    // Check if task already exists in the list
+    setTasks(prev => {
+      const exists = prev.some(task => task.id === data.task_id);
+      if (exists) {
+        console.log(`[TaskContext] Task ${data.task_id} already exists (invited), skipping`);
+        return prev;
+      }
+
+      // Create a new task object from the WebSocket payload for invited group chat
+      // For streaming tasks, set initial status to RUNNING since the task is already being processed
+      const newTask: Task = {
+        id: data.task_id,
+        title: data.title,
+        team_id: data.team_id,
+        git_url: '',
+        git_repo: '',
+        git_repo_id: 0,
+        git_domain: '',
+        branch_name: '',
+        prompt: '',
+        status: 'RUNNING' as TaskStatus,
+        task_type: 'chat',
+        progress: 0,
+        batch: 0,
+        result: {},
+        error_message: '',
+        user_id: 0,
+        user_name: '',
+        created_at: data.created_at,
+        updated_at: data.created_at,
+        completed_at: '',
+        is_group_chat: data.is_group_chat,
+      };
+
+      // Initialize view status for the new task
+      initializeTaskViewStatus([newTask]);
+
+      console.log(`[TaskContext] Added invited group chat task ${data.task_id} via WebSocket`);
+      return [newTask, ...prev];
+    });
+  }, []);
+
+  // Handle task status update via WebSocket
+  const handleTaskStatus = useCallback(
+    (data: TaskStatusPayload) => {
+      console.log('[TaskContext] Received task:status event via WebSocket:', data);
+
+      const now = new Date().toISOString();
+      // Use completed_at from WebSocket payload for terminal states, or generate one
+      const terminalStates = ['COMPLETED', 'FAILED', 'CANCELLED'];
+      const isTerminalState = terminalStates.includes(data.status);
+      const completedAt = isTerminalState ? data.completed_at || now : undefined;
+
+      // Use a ref-like pattern to capture isGroupChatTask from within setTasks
+      // We need to handle the logic inside setTasks to ensure we have the correct task data
+      setTasks(prev => {
+        const taskIndex = prev.findIndex(task => task.id === data.task_id);
+        if (taskIndex === -1) {
+          console.log(
+            `[TaskContext] Task ${data.task_id} not found in list, skipping status update`
+          );
+          return prev;
+        }
+
+        const existingTask = prev[taskIndex];
+        const isGroupChatTask = existingTask.is_group_chat === true;
+
+        // Update task status, progress, and completed_at for terminal states
+        const updatedTask = {
+          ...existingTask,
+          status: data.status as TaskStatus,
+          progress: data.progress ?? existingTask.progress,
+          updated_at: now,
+          // Update completed_at for terminal states
+          ...(completedAt && { completed_at: completedAt }),
+        };
+
+        // For group chat tasks, move the task to the top of the list
+        // This ensures new messages in group chats are visible
+        if (isGroupChatTask) {
+          const updatedTasks = [...prev];
+          updatedTasks.splice(taskIndex, 1); // Remove from current position
+          updatedTasks.unshift(updatedTask); // Add to the beginning
+          console.log(`[TaskContext] Moved group chat task ${data.task_id} to top of list`);
+
+          // Schedule the side effects for after state update
+          // For group chat tasks, trigger re-render to show unread indicator
+          // Only if user is not currently viewing this task
+          setTimeout(() => {
+            if (!selectedTask || selectedTask.id !== data.task_id) {
+              setViewStatusVersion(v => v + 1);
+              console.log(
+                `[TaskContext] Triggered re-render for group chat task ${data.task_id} unread indicator`
+              );
+            }
+          }, 0);
+
+          return updatedTasks;
+        }
+
+        // For non-group chat tasks, update in place
+        const updatedTasks = [...prev];
+        updatedTasks[taskIndex] = updatedTask;
+
+        console.log(
+          `[TaskContext] Updated task ${data.task_id} status to ${data.status} via WebSocket`,
+          completedAt ? `completed_at=${completedAt}` : ''
+        );
+
+        // Schedule the side effects for after state update
+        // For non-group-chat tasks reaching terminal state, update viewedAt
+        if (isTerminalState && completedAt) {
+          setTimeout(() => {
+            const existingViewStatus = getTaskViewStatus(data.task_id);
+            if (existingViewStatus) {
+              // User has previously viewed this task, update viewedAt to match completed_at
+              markTaskAsViewed(data.task_id, data.status as TaskStatus, completedAt);
+              setViewStatusVersion(v => v + 1);
+              console.log(
+                `[TaskContext] Updated viewedAt for task ${data.task_id} to match completed_at (user previously viewed)`
+              );
+            }
+          }, 0);
+        }
+
+        return updatedTasks;
+      });
+
+      // Also update selected task detail if it's the same task
+      if (selectedTask && selectedTask.id === data.task_id) {
+        setSelectedTaskDetail(prev => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            status: data.status as TaskStatus,
+            progress: data.progress ?? prev.progress,
+            updated_at: now,
+            // Update completed_at for terminal states
+            ...(completedAt && { completed_at: completedAt }),
+          };
+        });
+      }
+    },
+    [selectedTask]
+  );
+  // Register WebSocket event handlers for real-time task updates
+  useEffect(() => {
+    // Only register handlers when WebSocket is connected
+    if (!isConnected) {
+      console.log('[TaskContext] WebSocket not connected, skipping task handler registration');
+      return;
+    }
+
+    console.log('[TaskContext] Registering WebSocket task handlers');
+    const cleanup = registerTaskHandlers({
+      onTaskCreated: handleTaskCreated,
+      onTaskInvited: handleTaskInvited,
+      onTaskStatus: handleTaskStatus,
+    });
+
+    return () => {
+      console.log('[TaskContext] Cleaning up WebSocket task handlers');
+      cleanup();
+    };
+  }, [isConnected, registerTaskHandlers, handleTaskCreated, handleTaskInvited, handleTaskStatus]);
+
+  // Polling strategy:
+  // - When WebSocket is connected: rely on real-time updates, use longer polling interval (60s) as fallback
+  // - When WebSocket is disconnected: use shorter polling interval (10s) for faster updates
+  // - Only poll when there are incomplete tasks OR network error (for recovery)
   useEffect(() => {
     const hasIncompleteTasks = tasks.some(
       task =>
@@ -177,16 +413,24 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     // Continue polling if there are incomplete tasks OR if there was a network error
     // This allows recovery when network connection is restored
     if (hasIncompleteTasks || hasNetworkError) {
+      // Use longer interval when WebSocket is connected (real-time updates via WebSocket)
+      // Use shorter interval when WebSocket is disconnected (fallback to polling)
+      const pollingInterval = isConnected ? 60000 : 10000;
+
+      console.log(
+        `[TaskContext] Setting up polling with ${pollingInterval / 1000}s interval (WebSocket ${isConnected ? 'connected' : 'disconnected'})`
+      );
+
       interval = setInterval(() => {
         refreshTasks();
-      }, 10000);
+      }, pollingInterval);
     }
 
     return () => {
       if (interval) clearInterval(interval);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadedPages, tasks, hasNetworkError]); // Added hasNetworkError to dependencies
+  }, [loadedPages, tasks, hasNetworkError, isConnected]); // Added isConnected to dependencies
 
   const refreshSelectedTaskDetail = async (isAutoRefresh: boolean = false) => {
     if (!selectedTask) return;
@@ -242,34 +486,50 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  // Mark task as viewed when selected OR when currently viewing task reaches terminal state
+  // Trigger task detail refresh and manage WebSocket room when selectedTask changes
   useEffect(() => {
+    const currentTaskId = selectedTask?.id ?? null;
+    const previousTaskId = previousTaskIdRef.current;
+
+    // Leave previous task room if switching to a different task
+    if (previousTaskId !== null && previousTaskId !== currentTaskId) {
+      console.log(`[TaskContext] Leaving WebSocket room for task ${previousTaskId}`);
+      leaveTask(previousTaskId);
+    }
+
+    // Update the ref to track current task
+    previousTaskIdRef.current = currentTaskId;
+
     if (selectedTask) {
-      // Mark task as viewed when selected
-      markTaskAsViewed(selectedTask.id, selectedTask.status);
+      // Join the new task room to receive chat:start, chat:chunk, chat:done events
+      // This is important for executor tasks (Code page) where the user needs to
+      // receive AI response events via WebSocket
+      console.log(`[TaskContext] Joining WebSocket room for task ${selectedTask.id}`);
+      joinTask(selectedTask.id);
+
       refreshSelectedTaskDetail(false); // Manual task selection, not auto-refresh
     } else {
       setSelectedTaskDetail(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTask]);
+  }, [selectedTask, leaveTask, joinTask]);
 
-  // Auto-mark as viewed when currently viewing task reaches terminal state
+  // Mark task as viewed when selectedTaskDetail is loaded
+  // This ensures we have the correct status and timestamps from the backend
   useEffect(() => {
     if (selectedTaskDetail) {
       const terminalStates = ['COMPLETED', 'FAILED', 'CANCELLED'];
-      if (terminalStates.includes(selectedTaskDetail.status)) {
-        // Use TaskDetail's completed_at/updated_at as the timestamp for marking as viewed
-        // This ensures consistency with isTaskUnread which uses Task's timestamps
-        // Note: TaskDetail now has these fields from the backend
-        const taskTimestamp =
-          selectedTaskDetail.completed_at ||
+      // For terminal states, use task's completed_at/updated_at to ensure viewedAt >= taskUpdatedAt
+      // This prevents the "unread" badge from showing due to client/server time differences
+      const taskTimestamp = terminalStates.includes(selectedTaskDetail.status)
+        ? selectedTaskDetail.completed_at ||
           selectedTaskDetail.updated_at ||
-          new Date().toISOString();
+          new Date().toISOString()
+        : undefined;
 
-        markTaskAsViewed(selectedTaskDetail.id, selectedTaskDetail.status, taskTimestamp);
-        setViewStatusVersion(prev => prev + 1);
-      }
+      markTaskAsViewed(selectedTaskDetail.id, selectedTaskDetail.status, taskTimestamp);
+      // Trigger re-render to update unread status in sidebar
+      setViewStatusVersion(prev => prev + 1);
     }
   }, [
     selectedTaskDetail?.status,
@@ -306,6 +566,17 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     setViewStatusVersion(prev => prev + 1);
   };
 
+  // Wrapper for markTaskAsViewed that also triggers re-render
+  // This ensures the unread dot disappears immediately when a task is clicked
+  const handleMarkTaskAsViewed = useCallback(
+    (taskId: number, status: TaskStatus, taskTimestamp?: string) => {
+      markTaskAsViewed(taskId, status, taskTimestamp);
+      // Trigger re-render to update unread status in sidebar
+      setViewStatusVersion(prev => prev + 1);
+    },
+    []
+  );
+
   return (
     <TaskContext.Provider
       value={{
@@ -324,7 +595,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
         searchTasks,
         isSearching,
         isSearchResult,
-        markTaskAsViewed,
+        markTaskAsViewed: handleMarkTaskAsViewed,
         getUnreadCount,
         markAllTasksAsViewed: handleMarkAllTasksAsViewed,
         viewStatusVersion,

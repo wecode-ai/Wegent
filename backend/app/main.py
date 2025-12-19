@@ -11,6 +11,7 @@ import uuid
 from contextlib import asynccontextmanager
 
 import redis
+import socketio
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -225,6 +226,16 @@ async def lifespan(app: FastAPI):
     start_background_jobs(app)
     logger.info("✓ Background jobs started")
 
+    # Initialize Socket.IO WebSocket emitter
+    # Note: Chat namespace is already registered in create_socketio_asgi_app()
+    logger.info("Initializing Socket.IO...")
+    from app.core.socketio import get_sio
+    from app.services.chat.ws_emitter import init_ws_emitter
+
+    sio = get_sio()
+    init_ws_emitter(sio)
+    logger.info("✓ Socket.IO initialized")
+
     logger.info("=" * 60)
     logger.info("Application startup completed successfully!")
     logger.info("=" * 60)
@@ -354,43 +365,6 @@ def create_app():
             logger.warning(f"Failed to initialize OpenTelemetry: {e}")
     else:
         logger.debug("OpenTelemetry is disabled")
-
-    # Shutdown middleware - reject new requests during graceful shutdown
-    @app.middleware("http")
-    async def shutdown_middleware(request: Request, call_next):
-        """
-        Middleware to handle graceful shutdown.
-
-        During shutdown:
-        - Health check endpoints (/health, /ready, /) are always allowed
-        - New requests are rejected with 503 Service Unavailable
-        - Existing streaming requests continue until completion
-        """
-        # Always allow health check and probe endpoints
-        allowed_paths = {"/", "/api/health", "/api/ready", "/api/startup"}
-        if request.url.path in allowed_paths:
-            return await call_next(request)
-
-        # Reject new requests during shutdown if configured
-        if shutdown_manager.is_shutting_down and settings.SHUTDOWN_REJECT_NEW_REQUESTS:
-            from starlette.responses import JSONResponse
-
-            logger.warning(
-                "Rejecting request during shutdown: %s %s",
-                request.method,
-                request.url.path,
-            )
-            return JSONResponse(
-                status_code=503,
-                content={
-                    "detail": "Service is shutting down",
-                    "retry_after": 5,
-                    "active_streams": shutdown_manager.get_active_stream_count(),
-                },
-                headers={"Retry-After": "5"},
-            )
-
-        return await call_next(request)
 
     @app.middleware("http")
     async def log_requests(request: Request, call_next):
@@ -580,11 +554,43 @@ def create_app():
     return app
 
 
-app = create_app()
+# Create FastAPI app
+_fastapi_app = create_app()
 
 
-# Root path
-@app.get("/")
+def create_socketio_asgi_app():
+    """
+    Create combined ASGI app with Socket.IO mounted.
+
+    Returns a combined app that routes Socket.IO traffic to Socket.IO server
+    and everything else to FastAPI.
+    """
+    from app.api.ws import register_chat_namespace
+    from app.core.socketio import create_socketio_app, get_sio
+
+    sio = get_sio()
+
+    # Register chat namespace before creating ASGI app
+    # This ensures the namespace is available when clients connect
+    register_chat_namespace(sio)
+    _logger.info("Chat namespace registered during ASGI app creation")
+
+    socketio_app = create_socketio_app(sio)
+
+    # Create combined ASGI app
+    return socketio.ASGIApp(
+        sio,
+        other_asgi_app=_fastapi_app,
+        socketio_path="/socket.io",
+    )
+
+
+# Combined ASGI app (Socket.IO + FastAPI)
+app = create_socketio_asgi_app()
+
+
+# Root path (registered on FastAPI app)
+@_fastapi_app.get("/")
 async def root():
     """
     Root path, returns API information
@@ -594,4 +600,5 @@ async def root():
         "version": settings.VERSION,
         "api_prefix": settings.API_PREFIX,
         "docs_url": f"{settings.API_PREFIX}/docs",
+        "socketio_path": "/socket.io",
     }

@@ -15,6 +15,7 @@ import {
   RotateCw,
   Code2,
   MessageSquare,
+  Users,
 } from 'lucide-react';
 
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
@@ -45,9 +46,13 @@ export default function TaskListSection({
   showTitle = true,
 }: TaskListSectionProps) {
   const router = useRouter();
-  const { selectedTaskDetail, setSelectedTask, refreshTasks } = useTaskContext();
+  const { selectedTaskDetail, setSelectedTask, refreshTasks, viewStatusVersion, markTaskAsViewed } =
+    useTaskContext();
   const { clearAllStreams } = useChatStreamContext();
   const { t } = useTranslation('common');
+  // Use viewStatusVersion to trigger re-render when task view status changes
+  // This is needed to update the unread dot immediately when a task is clicked
+  const _viewStatusVersion = viewStatusVersion;
   const [hoveredTaskId, setHoveredTaskId] = useState<number | null>(null);
   const [_loading, setLoading] = useState(false);
   const [longPressTaskId, setLongPressTaskId] = useState<number | null>(null);
@@ -74,6 +79,12 @@ export default function TaskListSection({
     // Clear all stream states when switching tasks to prevent auto-switching back
     // when the previous streaming task completes
     clearAllStreams();
+
+    // Immediately mark task as viewed to clear the unread dot
+    // Use current time as viewedAt to ensure it's always >= task's completed_at/updated_at
+    // This is simpler and more reliable than using task timestamps which may vary
+    // between list items and task details
+    markTaskAsViewed(task.id, task.status);
 
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams();
@@ -281,8 +292,13 @@ export default function TaskListSection({
     }
   };
 
-  const getUnreadDotColor = (status: string) => {
-    switch (status) {
+  const getUnreadDotColor = (task: Task) => {
+    // For group chat tasks, always use green to indicate new messages
+    if (task.is_group_chat) {
+      return 'bg-green-500';
+    }
+    // For non-group-chat tasks, use status-based colors
+    switch (task.status) {
       case 'COMPLETED':
         return 'bg-green-500';
       case 'FAILED':
@@ -296,7 +312,12 @@ export default function TaskListSection({
 
   // Determine whether to show status icon in expanded mode
   // Terminal states only show icon when unread, non-terminal states always show
+  // Group chat tasks show icon when there are unread messages
   const shouldShowStatusIcon = (task: Task): boolean => {
+    // For group chat tasks, show icon when there are unread messages
+    if (task.is_group_chat) {
+      return isTaskUnread(task);
+    }
     const terminalStates = ['COMPLETED', 'FAILED', 'CANCELLED'];
     if (terminalStates.includes(task.status)) {
       const unread = isTaskUnread(task);
@@ -313,6 +334,11 @@ export default function TaskListSection({
       } else {
         taskType = 'chat';
       }
+    }
+
+    // Show group chat icon for group chats
+    if (task.is_group_chat) {
+      return <Users className="w-3.5 h-3.5 text-text-muted" />;
     }
 
     if (taskType === 'code') {
@@ -372,7 +398,7 @@ export default function TaskListSection({
                         </div>
                         {isTaskUnread(task) && (
                           <span
-                            className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${getUnreadDotColor(task.status)} animate-pulse-dot`}
+                            className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${getUnreadDotColor(task)} animate-pulse-dot`}
                           />
                         )}
                       </div>
@@ -437,7 +463,7 @@ export default function TaskListSection({
                         </div>
                         {isTaskUnread(task) && (
                           <span
-                            className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${getUnreadDotColor(task.status)} animate-pulse-dot`}
+                            className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${getUnreadDotColor(task)} animate-pulse-dot`}
                           />
                         )}
                       </div>
@@ -449,6 +475,7 @@ export default function TaskListSection({
                           taskId={task.id}
                           handleCopyTaskId={handleCopyTaskId}
                           handleDeleteTask={handleDeleteTask}
+                          isGroupChat={task.is_group_chat}
                         />
                       </div>
                     )}

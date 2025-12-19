@@ -724,15 +724,19 @@ class ClaudeCodeAgent(Agent):
                     report_immediately=False,
                     use_i18n_keys=False,
                 )
-                
+
                 # Copy ContextVars before creating new event loop
                 # ContextVars don't automatically propagate to new event loops
                 try:
-                    from shared.telemetry.context import copy_context_vars, restore_context_vars
+                    from shared.telemetry.context import (
+                        copy_context_vars,
+                        restore_context_vars,
+                    )
+
                     saved_context = copy_context_vars()
                 except ImportError:
                     saved_context = None
-                
+
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 try:
@@ -1113,11 +1117,15 @@ class ClaudeCodeAgent(Agent):
                     # No running event loop, run the async method in a new loop
                     # Copy ContextVars before creating new event loop
                     try:
-                        from shared.telemetry.context import copy_context_vars, restore_context_vars
+                        from shared.telemetry.context import (
+                            copy_context_vars,
+                            restore_context_vars,
+                        )
+
                         saved_context = copy_context_vars()
                     except ImportError:
                         saved_context = None
-                    
+
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
                     try:

@@ -125,9 +125,22 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             team_name = task_crd.spec.teamRef.name
             team_namespace = task_crd.spec.teamRef.namespace
 
-            team = team_kinds_service.get_team_by_name_and_namespace(
-                db, team_name, team_namespace, user.id
-            )
+            # For group chat members, allow using the task's team even if not owned by user
+            from app.services.task_member_service import task_member_service
+
+            is_group_member = task_member_service.is_member(db, task_id, user.id)
+
+            if is_group_member:
+                # Group chat member - get team without user ownership check
+                team = team_kinds_service.get_team_by_name_and_namespace_without_user_check(
+                    db, team_name, team_namespace
+                )
+            else:
+                # Regular user - check team ownership
+                team = team_kinds_service.get_team_by_name_and_namespace(
+                    db, team_name, team_namespace, user.id
+                )
+
             if not team:
                 raise HTTPException(
                     status_code=404,
@@ -268,14 +281,17 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         Get user's Task list with pagination (only active tasks, excluding DELETE status)
         Optimized version using raw SQL to avoid MySQL "Out of sort memory" errors.
         DELETE status tasks are filtered in application layer.
+        Includes tasks owned by user AND tasks user is a member of (group chats).
         """
-        # Use raw SQL to get task IDs without JSON_EXTRACT in WHERE clause
+        # Use raw SQL to get task IDs where user is owner OR member
         count_sql = text(
             """
-            SELECT COUNT(*) FROM kinds
-            WHERE user_id = :user_id
-            AND kind = 'Task'
-            AND is_active = true
+            SELECT COUNT(DISTINCT k.id)
+            FROM kinds k
+            LEFT JOIN task_members tm ON k.id = tm.task_id AND tm.user_id = :user_id AND tm.status = 'ACTIVE'
+            WHERE k.kind = 'Task'
+            AND k.is_active = true
+            AND (k.user_id = :user_id OR tm.id IS NOT NULL)
         """
         )
         total_result = db.execute(count_sql, {"user_id": user_id}).scalar()
@@ -283,11 +299,13 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         # Get task IDs sorted by created_at
         ids_sql = text(
             """
-            SELECT id FROM kinds
-            WHERE user_id = :user_id
-            AND kind = 'Task'
-            AND is_active = true
-            ORDER BY created_at DESC
+            SELECT DISTINCT k.id, k.created_at
+            FROM kinds k
+            LEFT JOIN task_members tm ON k.id = tm.task_id AND tm.user_id = :user_id AND tm.status = 'ACTIVE'
+            WHERE k.kind = 'Task'
+            AND k.is_active = true
+            AND (k.user_id = :user_id OR tm.id IS NOT NULL)
+            ORDER BY k.created_at DESC
             LIMIT :limit OFFSET :skip
         """
         )
@@ -344,31 +362,35 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         """
         Get user's Task list with pagination (lightweight version for list display)
         Only returns essential fields without JOIN queries for better performance.
+        Includes tasks owned by user AND tasks user is a member of (group chats).
 
         Uses raw SQL to avoid MySQL "Out of sort memory" errors caused by
         JSON_EXTRACT in WHERE clause combined with ORDER BY.
         """
-        # Use raw SQL to get task IDs with proper indexing
-        # This avoids the JSON_EXTRACT memory issue by using a subquery approach
+        # Get task IDs where user is owner OR member
+        # Use raw SQL with UNION for efficiency
         count_sql = text(
             """
-            SELECT COUNT(*) FROM kinds
-            WHERE user_id = :user_id
-            AND kind = 'Task'
-            AND is_active = true
+            SELECT COUNT(DISTINCT k.id)
+            FROM kinds k
+            LEFT JOIN task_members tm ON k.id = tm.task_id AND tm.user_id = :user_id AND tm.status = 'ACTIVE'
+            WHERE k.kind = 'Task'
+            AND k.is_active = true
+            AND (k.user_id = :user_id OR tm.id IS NOT NULL)
         """
         )
         total_result = db.execute(count_sql, {"user_id": user_id}).scalar()
 
-        # Get task IDs sorted by created_at, then filter DELETE status in application
-        # Using index on (user_id, kind, is_active, created_at) for efficient sorting
+        # Get task IDs sorted by created_at, including both owned and member tasks
         ids_sql = text(
             """
-            SELECT id FROM kinds
-            WHERE user_id = :user_id
-            AND kind = 'Task'
-            AND is_active = true
-            ORDER BY created_at DESC
+            SELECT DISTINCT k.id, k.created_at
+            FROM kinds k
+            LEFT JOIN task_members tm ON k.id = tm.task_id AND tm.user_id = :user_id AND tm.status = 'ACTIVE'
+            WHERE k.kind = 'Task'
+            AND k.is_active = true
+            AND (k.user_id = :user_id OR tm.id IS NOT NULL)
+            ORDER BY k.created_at DESC
             LIMIT :limit OFFSET :skip
         """
         )
@@ -401,6 +423,23 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
 
         # Recalculate total excluding DELETE status (approximate)
         total = total_result if total_result else 0
+
+        # Get task member counts in batch for is_group_chat detection
+        from app.models.task_member import MemberStatus, TaskMember
+
+        task_ids_for_members = [t.id for t in tasks]
+        member_counts = {}
+        if task_ids_for_members:
+            member_count_results = (
+                db.query(TaskMember.task_id, func.count(TaskMember.id).label("count"))
+                .filter(
+                    TaskMember.task_id.in_(task_ids_for_members),
+                    TaskMember.status == MemberStatus.ACTIVE,
+                )
+                .group_by(TaskMember.task_id)
+                .all()
+            )
+            member_counts = {row[0]: row[1] for row in member_count_results}
 
         # Build lightweight result without expensive JOIN operations
         result = []
@@ -510,6 +549,14 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     else workspace_result[0]
                 )
 
+            # Check if this is a group chat
+            # First check task.json.spec.is_group_chat, fallback to member count
+            task_json = task.json or {}
+            is_group_chat = task_json.get("spec", {}).get("is_group_chat", False)
+            # Fallback: if not explicitly set, check member count
+            if not is_group_chat:
+                is_group_chat = member_counts.get(task.id, 0) > 0
+
             result.append(
                 {
                     "id": task.id,
@@ -522,10 +569,206 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     "completed_at": completed_at,
                     "team_id": team_id,
                     "git_repo": git_repo,
+                    "is_group_chat": is_group_chat,
                 }
             )
 
         return result, total
+
+    def get_new_tasks_since_id(
+        self, db: Session, *, user_id: int, since_id: int, limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """
+        Get new tasks created after the specified task ID.
+        Returns tasks with ID greater than since_id, ordered by ID descending.
+        Includes tasks owned by user AND tasks user is a member of (group chats).
+        """
+        # Get task IDs where user is owner OR member, with ID > since_id
+        ids_sql = text(
+            """
+            SELECT DISTINCT k.id, k.created_at
+            FROM kinds k
+            LEFT JOIN task_members tm ON k.id = tm.task_id AND tm.user_id = :user_id AND tm.status = 'ACTIVE'
+            WHERE k.kind = 'Task'
+            AND k.is_active = true
+            AND k.id > :since_id
+            AND (k.user_id = :user_id OR tm.id IS NOT NULL)
+            ORDER BY k.id DESC
+            LIMIT :limit
+        """
+        )
+        task_id_rows = db.execute(
+            ids_sql, {"user_id": user_id, "since_id": since_id, "limit": limit}
+        ).fetchall()
+        task_ids = [row[0] for row in task_id_rows]
+
+        if not task_ids:
+            return []
+
+        # Load full task data for the selected IDs
+        tasks = db.query(Kind).filter(Kind.id.in_(task_ids)).all()
+
+        # Filter out DELETE status tasks and restore order
+        id_to_task = {}
+        for t in tasks:
+            task_crd = Task.model_validate(t.json)
+            status = task_crd.status.status if task_crd.status else "PENDING"
+            if status != "DELETE":
+                id_to_task[t.id] = t
+
+        # Restore the original order (by ID descending)
+        tasks = [id_to_task[tid] for tid in task_ids if tid in id_to_task]
+
+        # Get task member counts in batch for is_group_chat detection
+        from app.models.task_member import MemberStatus, TaskMember
+
+        task_ids_for_members = [t.id for t in tasks]
+        member_counts = {}
+        if task_ids_for_members:
+            member_count_results = (
+                db.query(TaskMember.task_id, func.count(TaskMember.id).label("count"))
+                .filter(
+                    TaskMember.task_id.in_(task_ids_for_members),
+                    TaskMember.status == MemberStatus.ACTIVE,
+                )
+                .group_by(TaskMember.task_id)
+                .all()
+            )
+            member_counts = {row[0]: row[1] for row in member_count_results}
+
+        # Build lightweight result (same structure as get_user_tasks_lite)
+        result = []
+        for task in tasks:
+            task_crd = Task.model_validate(task.json)
+
+            # Extract basic fields from task JSON
+            task_type = (
+                task_crd.metadata.labels
+                and task_crd.metadata.labels.get("taskType")
+                or "chat"
+            )
+            type_value = (
+                task_crd.metadata.labels
+                and task_crd.metadata.labels.get("type")
+                or "online"
+            )
+            status = task_crd.status.status if task_crd.status else "PENDING"
+
+            # Parse timestamps
+            created_at = task.created_at
+            updated_at = task.updated_at
+            completed_at = None
+            if task_crd.status:
+                try:
+                    if task_crd.status.createdAt:
+                        created_at = task_crd.status.createdAt
+                    if task_crd.status.updatedAt:
+                        updated_at = task_crd.status.updatedAt
+                    if task_crd.status.completedAt:
+                        completed_at = task_crd.status.completedAt
+                except:
+                    pass
+
+            # Get team_id using direct SQL query
+            team_name = task_crd.spec.teamRef.name
+            team_namespace = task_crd.spec.teamRef.namespace
+            team_result = db.execute(
+                text(
+                    """
+                    SELECT id FROM kinds
+                    WHERE user_id = :user_id
+                    AND kind = 'Team'
+                    AND name = :name
+                    AND namespace = :namespace
+                    AND is_active = true
+                    LIMIT 1
+                """
+                ),
+                {"user_id": user_id, "name": team_name, "namespace": team_namespace},
+            ).fetchone()
+
+            # If not found in user's teams, check shared teams
+            team_id = team_result[0] if team_result else None
+            if not team_id:
+                shared_team_result = db.execute(
+                    text(
+                        """
+                        SELECT k.id FROM kinds k
+                        INNER JOIN shared_teams st ON k.user_id = st.original_user_id
+                        WHERE st.user_id = :user_id
+                        AND st.is_active = true
+                        AND k.kind = 'Team'
+                        AND k.name = :name
+                        AND k.namespace = :namespace
+                        AND k.is_active = true
+                        LIMIT 1
+                    """
+                    ),
+                    {
+                        "user_id": user_id,
+                        "name": team_name,
+                        "namespace": team_namespace,
+                    },
+                ).fetchone()
+                team_id = shared_team_result[0] if shared_team_result else None
+
+            # Get git_repo from workspace using direct SQL query
+            workspace_name = task_crd.spec.workspaceRef.name
+            workspace_namespace = task_crd.spec.workspaceRef.namespace
+            workspace_result = db.execute(
+                text(
+                    """
+                    SELECT JSON_EXTRACT(json, '$.spec.repository.gitRepo') as git_repo
+                    FROM kinds
+                    WHERE user_id = :user_id
+                    AND kind = 'Workspace'
+                    AND name = :name
+                    AND namespace = :namespace
+                    AND is_active = true
+                    LIMIT 1
+                """
+                ),
+                {
+                    "user_id": user_id,
+                    "name": workspace_name,
+                    "namespace": workspace_namespace,
+                },
+            ).fetchone()
+
+            git_repo = None
+            if workspace_result and workspace_result[0]:
+                # Remove JSON quotes from extracted value
+                git_repo = (
+                    workspace_result[0].strip('"')
+                    if isinstance(workspace_result[0], str)
+                    else workspace_result[0]
+                )
+
+            # Check if this is a group chat
+            # First check task.json.spec.is_group_chat, fallback to member count
+            task_json = task.json or {}
+            is_group_chat = task_json.get("spec", {}).get("is_group_chat", False)
+            # Fallback: if not explicitly set, check member count
+            if not is_group_chat:
+                is_group_chat = member_counts.get(task.id, 0) > 0
+
+            result.append(
+                {
+                    "id": task.id,
+                    "title": task_crd.spec.title,
+                    "status": status,
+                    "task_type": task_type,
+                    "type": type_value,
+                    "created_at": created_at,
+                    "updated_at": updated_at,
+                    "completed_at": completed_at,
+                    "team_id": team_id,
+                    "git_repo": git_repo,
+                    "is_group_chat": is_group_chat,
+                }
+            )
+
+        return result
 
     def get_user_tasks_by_title_with_pagination(
         self, db: Session, *, user_id: int, title: str, skip: int = 0, limit: int = 100
@@ -613,7 +856,11 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
     ) -> Optional[Dict[str, Any]]:
         """
         Get Task by ID and user ID (only active tasks)
+        Allows access if user is the owner OR a member of the group chat
         """
+        from app.models.task_member import MemberStatus, TaskMember
+
+        # First, try to find task owned by user
         task = (
             db.query(Kind)
             .filter(
@@ -626,10 +873,39 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             .first()
         )
 
+        # If not found as owner, check if user is a group chat member
+        if not task:
+            # Check if user is a member of this task's group chat
+            member = (
+                db.query(TaskMember)
+                .filter(
+                    TaskMember.task_id == task_id,
+                    TaskMember.user_id == user_id,
+                    TaskMember.status == MemberStatus.ACTIVE,
+                )
+                .first()
+            )
+
+            if member:
+                # User is a member, fetch the task without user_id filter
+                task = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.id == task_id,
+                        Kind.kind == "Task",
+                        Kind.is_active == True,
+                        text("JSON_EXTRACT(json, '$.status.status') != 'DELETE'"),
+                    )
+                    .first()
+                )
+
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
 
-        return self._convert_to_task_dict(task, db, user_id)
+        # For group chat members, use the task owner's user_id to convert task dict
+        # This ensures team and workspace lookups work correctly
+        convert_user_id = task.user_id  # Always use task owner's user_id
+        return self._convert_to_task_dict(task, db, convert_user_id)
 
     def get_task_detail(
         self, db: Session, *, task_id: int, user_id: int
@@ -638,6 +914,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         Get detailed task information including related user, team, subtasks and open links
         """
         from app.services.subtask import subtask_service
+        from app.services.task_member_service import task_member_service
 
         task_dict = self.get_task_by_id(db, task_id=task_id, user_id=user_id)
 
@@ -648,13 +925,41 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         team_id = task_dict.get("team_id")
         team = None
         if team_id:
+            logger.info(
+                f"[get_task_detail] task_id={task_id}, team_id={team_id}, user_id={user_id}"
+            )
             team = db.query(Kind).filter(Kind.id == team_id).first()
             if team:
-                # Use team_kinds_service._convert_to_team_dict to get full team info including agent_type
-                team = team_kinds_service._convert_to_team_dict(team, db, user_id)
+                # For both owner and group members, use the task owner's user_id to get team info
+                # This ensures group members can see the team's bots and configuration
+                task_owner_id = task_member_service.get_task_owner_id(db, task_id)
+                logger.info(
+                    f"[get_task_detail] task_owner_id={task_owner_id}, team found: {team is not None}"
+                )
+                if task_owner_id:
+                    team = team_kinds_service._convert_to_team_dict(
+                        team, db, task_owner_id
+                    )
+                    logger.info(
+                        f"[get_task_detail] after _convert_to_team_dict, team: {team is not None}"
+                    )
+                else:
+                    logger.warning(
+                        f"[get_task_detail] task_owner_id is None for task_id={task_id}"
+                    )
+                    team = None
+            else:
+                logger.warning(
+                    f"[get_task_detail] team not found for team_id={team_id}"
+                )
+        else:
+            logger.info(f"[get_task_detail] task_id={task_id} has no team_id")
 
         # Get related subtasks
-        subtasks = subtask_service.get_by_task(db=db, task_id=task_id, user_id=user_id)
+        # Use from_latest=True to get the latest N messages (default behavior for group chat)
+        subtasks = subtask_service.get_by_task(
+            db=db, task_id=task_id, user_id=user_id, from_latest=True
+        )
 
         # Get all bot objects for the subtasks
         all_bot_ids = set()
@@ -814,12 +1119,40 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 ],
                 # Add attachments
                 "attachments": attachments_list,
+                # Group chat fields
+                "sender_type": subtask.sender_type,  # Already a string value, not enum
+                "sender_user_id": subtask.sender_user_id,
+                "sender_user_name": getattr(subtask, "sender_user_name", None),
+                "reply_to_subtask_id": subtask.reply_to_subtask_id,
             }
             subtasks_dict.append(subtask_dict)
 
         task_dict["user"] = user
         task_dict["team"] = team
         task_dict["subtasks"] = subtasks_dict
+
+        # Add group chat information
+        from app.models.task_member import MemberStatus, TaskMember
+
+        # Check if this task has any members (indicating it's a group chat)
+        members = (
+            db.query(TaskMember)
+            .filter(
+                TaskMember.task_id == task_id,
+                TaskMember.status == MemberStatus.ACTIVE,
+            )
+            .all()
+        )
+
+        # First check task.json.spec.is_group_chat, fallback to member count
+        # task_dict already contains the parsed task data from get_task_by_id
+        is_group_chat = task_dict.get("is_group_chat", False)
+        # If not set in task_dict, check member count
+        if not is_group_chat:
+            is_group_chat = len(members) > 0
+        task_dict["is_group_chat"] = is_group_chat
+        task_dict["is_group_owner"] = task_dict.get("user_id") == user_id
+        task_dict["member_count"] = len(members) if is_group_chat else None
 
         return task_dict
 
@@ -967,9 +1300,14 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
 
     def delete_task(self, db: Session, *, task_id: int, user_id: int) -> None:
         """
-        Delete user Task and handle running subtasks
+        Delete user Task and handle running subtasks.
+        For group chat tasks:
+        - If user is the owner: delete the entire task (soft delete)
+        - If user is a member: leave the group chat (remove membership)
         """
         logger.info(f"Deleting task with id: {task_id}")
+
+        # First check if user is the task owner
         task = (
             db.query(Kind)
             .filter(
@@ -981,8 +1319,44 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             .first()
         )
 
+        # If not the owner, check if user is a group chat member
         if not task:
-            raise HTTPException(status_code=404, detail="Task not found")
+            from app.models.task_member import MemberStatus, TaskMember
+
+            # Check if this is a group chat task and user is a member
+            task = (
+                db.query(Kind)
+                .filter(
+                    Kind.id == task_id,
+                    Kind.kind == "Task",
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+
+            if not task:
+                raise HTTPException(status_code=404, detail="Task not found")
+
+            # Check if user is a member of this task
+            task_member = (
+                db.query(TaskMember)
+                .filter(
+                    TaskMember.task_id == task_id,
+                    TaskMember.user_id == user_id,
+                    TaskMember.status == MemberStatus.ACTIVE,
+                )
+                .first()
+            )
+
+            if not task_member:
+                raise HTTPException(status_code=404, detail="Task not found")
+
+            # User is a member, not owner - handle as "leave group chat"
+            logger.info(f"User {user_id} leaving group chat task {task_id}")
+            task_member.status = MemberStatus.REMOVED
+            task_member.removed_at = datetime.now()
+            db.commit()
+            return
 
         # Get all subtasks for the task
         task_subtasks = db.query(Subtask).filter(Subtask.task_id == task_id).all()
@@ -1415,6 +1789,13 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
 
         model_id = task_crd.metadata.labels and task_crd.metadata.labels.get("modelId")
 
+        # Extract is_group_chat from task spec
+        is_group_chat = (
+            task_crd.spec.is_group_chat
+            if hasattr(task_crd.spec, "is_group_chat")
+            else False
+        )
+
         return {
             "id": task.id,
             "type": type,
@@ -1437,6 +1818,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             "updated_at": updated_at or task.updated_at,
             "completed_at": completed_at,
             "model_id": model_id,
+            "is_group_chat": is_group_chat,  # Add is_group_chat field
         }
 
     def _convert_team_to_dict(
@@ -1857,6 +2239,34 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 "completed_at": completed_at,
             }
 
+        # Batch query member counts for is_group_chat detection
+        from app.models.task_member import MemberStatus, TaskMember
+
+        task_ids = [t.id for t in tasks]
+        member_count_results = (
+            db.query(TaskMember.task_id, func.count(TaskMember.id).label("count"))
+            .filter(
+                TaskMember.task_id.in_(task_ids),
+                TaskMember.status == MemberStatus.ACTIVE,
+            )
+            .group_by(TaskMember.task_id)
+            .all()
+        )
+        member_counts = {row[0]: row[1] for row in member_count_results}
+
+        # Add is_group_chat to result
+        for task_id_str, data in result.items():
+            task_id = int(task_id_str)
+            # First check task JSON, fallback to member count
+            task = db.query(Kind).filter(Kind.id == task_id).first()
+            if task and task.json:
+                is_group_chat = task.json.get("spec", {}).get("is_group_chat", False)
+                if not is_group_chat:
+                    is_group_chat = member_counts.get(task_id, 0) > 0
+            else:
+                is_group_chat = member_counts.get(task_id, 0) > 0
+            data["is_group_chat"] = is_group_chat
+
         return result
 
     def _convert_to_task_dict_optimized(
@@ -1900,6 +2310,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             "created_at": related_data.get("created_at", task.created_at),
             "updated_at": related_data.get("updated_at", task.updated_at),
             "completed_at": related_data.get("completed_at"),
+            "is_group_chat": related_data.get("is_group_chat", False),
         }
 
 

@@ -52,6 +52,12 @@ class Settings(BaseSettings):
     CHAT_HISTORY_MAX_MESSAGES: int = 50  # Maximum messages to keep in history
     CHAT_API_TIMEOUT_SECONDS: int = 300  # LLM API call timeout (5 minutes)
 
+    # Group chat history configuration
+    # In group chat mode, AI-bot sees: first N messages + last M messages (no duplicates)
+    # If total messages < N + M, all messages are kept
+    GROUP_CHAT_HISTORY_FIRST_MESSAGES: int = 10  # Number of first messages to keep
+    GROUP_CHAT_HISTORY_LAST_MESSAGES: int = 20  # Number of last messages to keep
+
     # Streaming incremental save configuration
     STREAMING_REDIS_SAVE_INTERVAL: float = 1.0  # Redis save interval (seconds)
     STREAMING_DB_SAVE_INTERVAL: float = 5.0  # Database save interval (seconds)

@@ -9,7 +9,8 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
 import { useUser } from '@/features/common/UserContext';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import type { ChatTipItem } from '@/types/api';
+import type { ChatTipItem, Team } from '@/types/api';
+import MentionAutocomplete from './chat/MentionAutocomplete';
 
 interface ChatInputProps {
   message: string;
@@ -24,6 +25,11 @@ interface ChatInputProps {
   tipText?: ChatTipItem | null;
   // Optional badge element to render inline with text
   badge?: React.ReactNode;
+  // Group chat support
+  isGroupChat?: boolean;
+  team?: Team | null;
+  // Callback when file is pasted (e.g., image from clipboard)
+  onPasteFile?: (file: File) => void;
 }
 
 export default function ChatInput({
@@ -36,6 +42,9 @@ export default function ChatInput({
   canSubmit = true,
   tipText,
   badge,
+  isGroupChat = false,
+  team = null,
+  onPasteFile,
 }: ChatInputProps) {
   const { t, i18n } = useTranslation('chat');
 
@@ -47,8 +56,12 @@ export default function ChatInput({
     if (tipText) {
       return tipText[currentLang] || tipText.en || t('placeholder.input');
     }
+    // For group chat, show mention instruction
+    if (isGroupChat && team?.name) {
+      return t('groupChat.mentionToTrigger', { teamName: team.name });
+    }
     return t('placeholder.input');
-  }, [tipText, currentLang, t]);
+  }, [tipText, currentLang, t, isGroupChat, team?.name]);
   const [isComposing, setIsComposing] = useState(false);
   // Track if composition just ended (for Safari where compositionend fires before keydown)
   const compositionJustEndedRef = useRef(false);
@@ -60,6 +73,11 @@ export default function ChatInput({
 
   // Track if we should show placeholder
   const [showPlaceholder, setShowPlaceholder] = useState(!message);
+
+  // Mention autocomplete state
+  const [showMentionMenu, setShowMentionMenu] = useState(false);
+  const [mentionMenuPosition, setMentionMenuPosition] = useState({ top: 0, left: 0 });
+  const [mentionQuery, setMentionQuery] = useState('');
 
   // Update placeholder visibility when message changes externally
   useEffect(() => {
@@ -228,17 +246,128 @@ export default function ChatInput({
       const text = getTextWithNewlines(e.currentTarget);
       setMessage(text);
       setShowPlaceholder(!text);
+
+      // Check for @ trigger in group chat mode
+      if (isGroupChat && team) {
+        const lastChar = text[text.length - 1];
+        if (lastChar === '@') {
+          // Get cursor position to show autocomplete menu
+          const selection = window.getSelection();
+          if (selection && selection.rangeCount > 0) {
+            const range = selection.getRangeAt(0);
+            const rect = range.getBoundingClientRect();
+            const containerRect = editableRef.current?.getBoundingClientRect();
+
+            if (containerRect) {
+              // Position menu above the cursor (bottom of chat input)
+              // Calculate position relative to container
+              setMentionMenuPosition({
+                top: rect.top - containerRect.top - 8, // Position above cursor with 8px gap
+                left: rect.left - containerRect.left,
+              });
+              setShowMentionMenu(true);
+              setMentionQuery('');
+            }
+          }
+        } else if (showMentionMenu) {
+          // Update query or close menu if user continues typing after @
+          const words = text.split(/\s/);
+          const lastWord = words[words.length - 1];
+          if (lastWord.startsWith('@')) {
+            // Extract query after @
+            const query = lastWord.substring(1);
+            setMentionQuery(query);
+          } else {
+            setShowMentionMenu(false);
+            setMentionQuery('');
+          }
+        }
+      }
     },
-    [disabled, setMessage, getTextWithNewlines]
+    [disabled, setMessage, getTextWithNewlines, isGroupChat, team, showMentionMenu]
+  );
+
+  // Handle mention selection
+  const handleMentionSelect = useCallback(
+    (mention: string) => {
+      if (editableRef.current) {
+        const currentText = getTextWithNewlines(editableRef.current);
+        // Replace the last @word (including partial @query) with the selected mention
+        // Find the last @ symbol and replace everything from there to the end of that word
+        const lastAtIndex = currentText.lastIndexOf('@');
+        if (lastAtIndex !== -1) {
+          // Get text before the @
+          const textBefore = currentText.substring(0, lastAtIndex);
+          // Get text after the @ and find where the current word ends
+          const textAfterAt = currentText.substring(lastAtIndex + 1);
+          // Find the end of the current word (first whitespace after @)
+          const wordEndMatch = textAfterAt.match(/^\S*/);
+          const currentWord = wordEndMatch ? wordEndMatch[0] : '';
+          const textAfterWord = textAfterAt.substring(currentWord.length);
+          // Build new text: text before @ + mention + space + remaining text
+          const newText = textBefore + mention + ' ' + textAfterWord.trimStart();
+          setMessage(newText);
+          setContentWithNewlines(editableRef.current, newText);
+        }
+
+        // Move cursor to end
+        const selection = window.getSelection();
+        if (selection && editableRef.current) {
+          const range = document.createRange();
+          range.selectNodeContents(editableRef.current);
+          range.collapse(false);
+          selection.removeAllRanges();
+          selection.addRange(range);
+        }
+
+        // Focus back to input
+        editableRef.current.focus();
+        setShowMentionMenu(false);
+        setMentionQuery('');
+      }
+    },
+    [getTextWithNewlines, setMessage, setContentWithNewlines]
   );
 
   const handlePaste = useCallback(
     (e: React.ClipboardEvent<HTMLDivElement>) => {
-      e.preventDefault();
       if (disabled) return;
 
-      // Get plain text from clipboard, stripping all formatting and invisible characters
       const clipboardData = e.clipboardData;
+
+      // Check if clipboard contains files (images or other files)
+      if (clipboardData.files && clipboardData.files.length > 0) {
+        const file = clipboardData.files[0];
+
+        // If onPasteFile callback is provided, handle file paste
+        if (onPasteFile && file) {
+          e.preventDefault();
+          onPasteFile(file);
+          return;
+        }
+      }
+
+      // Check if clipboard contains image items (for screenshots)
+      const items = clipboardData.items;
+      if (items) {
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          // Check if the item is an image type
+          if (item.type.startsWith('image/')) {
+            const file = item.getAsFile();
+            if (file && onPasteFile) {
+              e.preventDefault();
+              onPasteFile(file);
+              return;
+            }
+          }
+        }
+      }
+
+      // Handle text paste (existing logic)
+      e.preventDefault();
+
+      // Get plain text from clipboard, stripping all formatting and invisible characters
       let pastedText = clipboardData.getData('text/plain');
 
       // Remove invisible/control characters that can break layout
@@ -270,7 +399,7 @@ export default function ChatInput({
         setShowPlaceholder(!newText);
       }
     },
-    [disabled, setMessage, getTextWithNewlines]
+    [disabled, setMessage, getTextWithNewlines, onPasteFile]
   );
 
   const handleFocus = useCallback(() => {
@@ -318,6 +447,20 @@ export default function ChatInput({
               >
                 {placeholder}
               </div>
+            )}
+
+            {/* Mention autocomplete menu */}
+            {showMentionMenu && isGroupChat && team && (
+              <MentionAutocomplete
+                team={team}
+                query={mentionQuery}
+                onSelect={handleMentionSelect}
+                onClose={() => {
+                  setShowMentionMenu(false);
+                  setMentionQuery('');
+                }}
+                position={mentionMenuPosition}
+              />
             )}
 
             {/* Scrollable container that includes both badge and editable content */}

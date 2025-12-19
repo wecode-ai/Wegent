@@ -117,6 +117,22 @@ def get_tasks_lite(
     return {"total": total, "items": items}
 
 
+@router.get("/lite/new", response_model=TaskLiteListResponse)
+def get_new_tasks_lite(
+    since_id: int = Query(..., ge=1, description="Get tasks with ID greater than this"),
+    limit: int = Query(
+        50, ge=1, le=100, description="Maximum number of new tasks to return"
+    ),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get new tasks created after the specified task ID, excluding DELETE status tasks"""
+    items = task_kinds_service.get_new_tasks_since_id(
+        db=db, user_id=current_user.id, since_id=since_id, limit=limit
+    )
+    return {"total": len(items), "items": items}
+
+
 @router.get("/search", response_model=TaskListResponse)
 def search_tasks_by_title(
     title: str = Query(..., min_length=1, description="Search by task title keywords"),
@@ -323,13 +339,17 @@ async def export_task_docx(
     - Embedded images and attachment info
     """
     from app.models.kind import Kind
+    from app.services.task_member_service import task_member_service
 
-    # Query task with permission check
+    # Check if user has access to the task (owner or group chat member)
+    if not task_member_service.is_member(db, task_id, current_user.id):
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # Query task without user_id filter since we already validated access
     task = (
         db.query(Kind)
         .filter(
             Kind.id == task_id,
-            Kind.user_id == current_user.id,
             Kind.kind == "Task",
             Kind.is_active == True,
         )

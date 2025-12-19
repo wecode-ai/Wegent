@@ -23,7 +23,7 @@ import '@/app/tasks/tasks.css';
 import '@/features/common/scrollbar.css';
 import { GithubStarButton } from '@/features/layout/GithubStarButton';
 import { ThemeToggle } from '@/features/theme/ThemeToggle';
-import { Team } from '@/types/api';
+import { Team, WorkbenchData } from '@/types/api';
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext';
 import { saveLastTab } from '@/utils/userPreferences';
@@ -43,10 +43,19 @@ export default function CodePage() {
   const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams();
 
   // Task context for workbench data
-  const { selectedTaskDetail } = useTaskContext();
+  const { selectedTaskDetail, setSelectedTask, refreshTasks } = useTaskContext();
 
-  // Chat stream context
-  const { clearAllStreams } = useChatStreamContext();
+  // Chat stream context for real-time workbench and thinking data
+  const { getStreamState, clearAllStreams } = useChatStreamContext();
+
+  // Get current task title for top navigation
+  const currentTaskTitle = selectedTaskDetail?.title;
+
+  // Handle task deletion
+  const handleTaskDeleted = () => {
+    setSelectedTask(null);
+    refreshTasks();
+  };
 
   // Router for navigation
   const router = useRouter();
@@ -94,40 +103,87 @@ export default function CodePage() {
     }
   }, [hasTaskId]);
 
-  // Determine if workbench should show loading state
-  const isWorkbenchLoading =
-    hasTaskId &&
-    !selectedTaskDetail?.workbench &&
-    selectedTaskDetail?.status !== 'COMPLETED' &&
-    selectedTaskDetail?.status !== 'FAILED' &&
-    selectedTaskDetail?.status !== 'CANCELLED';
-
   // Calculate open links from task detail
   const openLinks = useMemo(() => {
     return calculateOpenLinks(selectedTaskDetail);
   }, [selectedTaskDetail]);
 
-  // Calculate thinking data from subtasks for timeline
-  const thinkingData = useMemo(() => {
-    if (!selectedTaskDetail?.subtasks || selectedTaskDetail.subtasks.length === 0) {
-      return null;
-    }
+  // Type for thinking data
+  type ThinkingStep = {
+    title: string;
+    next_action: string;
+    details?: Record<string, unknown>;
+  };
 
-    // Extract thinking from the latest subtask result
-    const latestSubtask = selectedTaskDetail.subtasks[selectedTaskDetail.subtasks.length - 1];
-    if (latestSubtask?.result && typeof latestSubtask.result === 'object') {
-      const result = latestSubtask.result as { thinking?: unknown[] };
-      if (result.thinking && Array.isArray(result.thinking)) {
-        return result.thinking as Array<{
-          title: string;
-          next_action: string;
-          details?: Record<string, unknown>;
-        }>;
+  // Get real-time thinking and workbench data from stream state
+  // Priority: stream state (real-time) > selectedTaskDetail (API polling)
+  const { thinkingData, workbenchData } = useMemo(() => {
+    const currentTaskId = selectedTaskDetail?.id;
+    const streamState = currentTaskId ? getStreamState(currentTaskId) : undefined;
+
+    // Try to get data from stream state first (real-time updates via WebSocket)
+    if (streamState?.messages && streamState.messages.size > 0) {
+      // Find the latest AI message with result data (iterate in reverse order to get the newest)
+      // Priority: streaming message > completed message with result
+      let latestAiMessageWithResult: {
+        thinking: ThinkingStep[] | null;
+        workbench: WorkbenchData | null;
+      } | null = null;
+
+      for (const msg of streamState.messages.values()) {
+        if (msg.type === 'ai') {
+          // For streaming messages, always use their result (real-time updates)
+          if (msg.status === 'streaming' && msg.result) {
+            const result = msg.result as { thinking?: unknown[]; workbench?: WorkbenchData };
+            const thinking =
+              result.thinking && Array.isArray(result.thinking)
+                ? (result.thinking as ThinkingStep[])
+                : null;
+            const workbench = result.workbench || null;
+            // Streaming message takes highest priority, return immediately
+            return {
+              thinkingData: thinking,
+              workbenchData: workbench || selectedTaskDetail?.workbench || null,
+            };
+          }
+          // For completed messages, keep track of the latest one with result
+          if (msg.result) {
+            const result = msg.result as { thinking?: unknown[]; workbench?: WorkbenchData };
+            const thinking =
+              result.thinking && Array.isArray(result.thinking)
+                ? (result.thinking as ThinkingStep[])
+                : null;
+            const workbench = result.workbench || null;
+            latestAiMessageWithResult = { thinking, workbench };
+          }
+        }
+      }
+
+      // If we found a completed AI message with result, use it
+      if (latestAiMessageWithResult) {
+        return {
+          thinkingData: latestAiMessageWithResult.thinking,
+          workbenchData:
+            latestAiMessageWithResult.workbench || selectedTaskDetail?.workbench || null,
+        };
       }
     }
 
-    return null;
-  }, [selectedTaskDetail]);
+    // Fallback to selectedTaskDetail (API polling data)
+    if (selectedTaskDetail?.subtasks && selectedTaskDetail.subtasks.length > 0) {
+      const latestSubtask = selectedTaskDetail.subtasks[selectedTaskDetail.subtasks.length - 1];
+      if (latestSubtask?.result && typeof latestSubtask.result === 'object') {
+        const result = latestSubtask.result as { thinking?: unknown[] };
+        const thinking =
+          result.thinking && Array.isArray(result.thinking)
+            ? (result.thinking as ThinkingStep[])
+            : null;
+        return { thinkingData: thinking, workbenchData: selectedTaskDetail?.workbench || null };
+      }
+    }
+
+    return { thinkingData: null, workbenchData: selectedTaskDetail?.workbench || null };
+  }, [selectedTaskDetail, getStreamState]);
 
   // Save last active tab to localStorage
   useEffect(() => {
@@ -148,6 +204,9 @@ export default function CodePage() {
 
   // Handle new task from collapsed sidebar button
   const handleNewTask = () => {
+    // IMPORTANT: Clear selected task FIRST to ensure UI state is reset immediately
+    // This prevents the UI from being stuck showing the previous task's messages
+    setSelectedTask(null);
     clearAllStreams();
     router.replace(paths.code.getHref());
   };
@@ -195,7 +254,10 @@ export default function CodePage() {
           <TopNavigation
             activePage="code"
             variant="with-sidebar"
+            title={currentTaskTitle}
+            taskDetail={selectedTaskDetail}
             onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
+            onTaskDeleted={handleTaskDeleted}
           >
             {shareButton}
             {isMobile ? <ThemeToggle /> : <GithubStarButton />}
@@ -233,8 +295,14 @@ export default function CodePage() {
                 isOpen={isWorkbenchOpen}
                 onClose={() => setIsWorkbenchOpen(false)}
                 onOpen={() => setIsWorkbenchOpen(true)}
-                workbenchData={selectedTaskDetail?.workbench}
-                isLoading={isWorkbenchLoading}
+                workbenchData={workbenchData}
+                isLoading={
+                  hasTaskId &&
+                  !workbenchData &&
+                  selectedTaskDetail?.status !== 'COMPLETED' &&
+                  selectedTaskDetail?.status !== 'FAILED' &&
+                  selectedTaskDetail?.status !== 'CANCELLED'
+                }
                 taskTitle={selectedTaskDetail?.title}
                 taskNumber={selectedTaskDetail ? `#${selectedTaskDetail.id}` : undefined}
                 thinking={thinkingData}

@@ -80,6 +80,8 @@ dependencies = [
     "beautifulsoup4>=4.12.0",
     "emoji>=2.9.0",
     "mcp>=1.0.0",
+    # WebSocket support
+    "python-socketio>=5.10.0",
 ]
 
 [dependency-groups]

@@ -4,7 +4,7 @@
 
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 import { Task } from '@/types/api';
@@ -12,6 +12,10 @@ import { useToast } from '@/hooks/use-toast';
 
 /**
  * Listen to the taskId parameter in the URL and automatically set selectedTask
+ *
+ * IMPORTANT: This component should ONLY respond to URL changes, not to selectedTaskDetail changes.
+ * The selectedTaskDetail is used via ref to avoid unnecessary effect re-runs that could cause
+ * race conditions when user clicks "New Task" button.
  */
 export default function TaskParamSync() {
   const { toast } = useToast();
@@ -20,19 +24,25 @@ export default function TaskParamSync() {
 
   const router = useRouter();
 
+  // Use ref to track selectedTaskDetail without triggering effect re-runs
+  // This prevents race conditions when user clicks "New Task" button
+  const selectedTaskDetailRef = useRef(selectedTaskDetail);
+  selectedTaskDetailRef.current = selectedTaskDetail;
+
   useEffect(() => {
     const taskId = searchParams.get('taskId');
 
     // If no taskId in URL, clear selection
+    // Use ref to check current state without adding to dependencies
     if (!taskId) {
-      if (selectedTaskDetail) {
+      if (selectedTaskDetailRef.current) {
         setSelectedTask(null);
       }
       return;
     }
 
     // If taskId in URL already matches selected task, do nothing
-    if (String(selectedTaskDetail?.id) === taskId) {
+    if (String(selectedTaskDetailRef.current?.id) === taskId) {
       return;
     }
 
@@ -54,7 +64,10 @@ export default function TaskParamSync() {
     };
 
     verifyAndSetTask();
-  }, [searchParams, selectedTaskDetail, router, setSelectedTask, toast]);
+    // IMPORTANT: selectedTaskDetail is intentionally NOT in the dependency array
+    // This effect should only run when URL changes, not when task detail changes
+    // Using ref to access current value without triggering re-runs
+  }, [searchParams, router, setSelectedTask, toast]);
 
   return null; // Only responsible for synchronization, does not render any content
 }
