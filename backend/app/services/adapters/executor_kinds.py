@@ -198,10 +198,10 @@ class ExecutorKindsService(
         self, db: Session, status: str, limit: int, type: str
     ) -> List[Subtask]:
         """
-        Get follow-up subtasks (续聊) for tasks that are RUNNING but have new PENDING subtasks.
+        Get follow-up subtasks (续聊) for tasks that are COMPLETED but have new PENDING subtasks.
 
         This method finds tasks where:
-        1. Task status is RUNNING (set by _create_task_and_subtasks for follow-up messages)
+        1. Task status is COMPLETED (not PENDING)
         2. There are PENDING ASSISTANT subtasks
         3. There are previous COMPLETED subtasks with executor_name (existing container)
         4. No RUNNING subtasks exist (to avoid conflicts)
@@ -218,13 +218,8 @@ class ExecutorKindsService(
         Returns:
             List of PENDING subtasks with executor_name populated from previous subtasks
         """
-        logger.info(
-            f"[followup] _get_followup_subtasks_with_executor called: status={status}, limit={limit}, type={type}"
-        )
-
-        # Step 1: Find tasks that are RUNNING but have PENDING ASSISTANT subtasks
+        # Step 1: Find tasks that are COMPLETED but have PENDING ASSISTANT subtasks
         # and have at least one COMPLETED subtask with executor_name
-        # Note: Task status is set to RUNNING by _create_task_and_subtasks when sending follow-up messages
         if type == "offline":
             tasks = (
                 db.query(Kind)
@@ -233,7 +228,7 @@ class ExecutorKindsService(
                     Kind.is_active == True,
                     text(
                         "JSON_EXTRACT(json, '$.metadata.labels.type') = 'offline' "
-                        "AND JSON_EXTRACT(json, '$.status.status') = 'RUNNING'"
+                        "AND JSON_EXTRACT(json, '$.status.status') = 'COMPLETED'"
                     ),
                 )
                 .order_by(Kind.updated_at.desc())
@@ -249,7 +244,7 @@ class ExecutorKindsService(
                     text(
                         "(JSON_EXTRACT(json, '$.metadata.labels.type') IS NULL "
                         "OR JSON_EXTRACT(json, '$.metadata.labels.type') = 'online') "
-                        "AND JSON_EXTRACT(json, '$.status.status') = 'RUNNING'"
+                        "AND JSON_EXTRACT(json, '$.status.status') = 'COMPLETED'"
                     ),
                 )
                 .order_by(Kind.updated_at.desc())
@@ -257,12 +252,7 @@ class ExecutorKindsService(
                 .all()
             )
 
-        logger.info(
-            f"[followup] Found {len(tasks) if tasks else 0} RUNNING tasks to check for follow-up subtasks"
-        )
-
         if not tasks:
-            logger.info("[followup] No COMPLETED tasks found, returning empty list")
             return []
 
         subtasks = []
@@ -271,7 +261,6 @@ class ExecutorKindsService(
                 break
 
             task_id = task.id
-            logger.info(f"[followup] Checking task {task_id} for follow-up subtasks")
 
             # Check if there are any RUNNING subtasks (skip if so)
             running_count = (
@@ -283,9 +272,6 @@ class ExecutorKindsService(
                 .count()
             )
             if running_count > 0:
-                logger.info(
-                    f"[followup] Task {task_id} has {running_count} RUNNING subtasks, skipping"
-                )
                 continue
 
             # Find PENDING ASSISTANT subtask
@@ -301,14 +287,7 @@ class ExecutorKindsService(
             )
 
             if not pending_subtask:
-                logger.info(
-                    f"[followup] Task {task_id} has no PENDING ASSISTANT subtask, skipping"
-                )
                 continue
-
-            logger.info(
-                f"[followup] Task {task_id} has PENDING subtask {pending_subtask.id}"
-            )
 
             # Find the most recent COMPLETED subtask with executor_name
             completed_subtask_with_executor = (
@@ -327,9 +306,6 @@ class ExecutorKindsService(
             if not completed_subtask_with_executor:
                 # No previous executor found, skip this task
                 # (it might be a direct chat task or first message failed)
-                logger.info(
-                    f"[followup] Task {task_id} has no COMPLETED subtask with executor_name, skipping"
-                )
                 continue
 
             # Copy executor_name to the pending subtask so it can reuse the container
@@ -357,10 +333,6 @@ class ExecutorKindsService(
         updated_subtasks = []
 
         for subtask in subtasks:
-            # Check if this is a follow-up subtask (has executor_name from previous subtask)
-            # This indicates it's a continuation of an existing conversation
-            is_followup = bool(subtask.executor_name)
-
             # Use optimistic locking mechanism to ensure concurrent safety
             result = (
                 db.query(Subtask)
@@ -381,11 +353,8 @@ class ExecutorKindsService(
                 # Reload the updated subtask
                 updated_subtask = db.query(Subtask).get(subtask.id)
                 updated_subtasks.append(updated_subtask)
-                # Update task status to RUNNING
-                # For follow-up subtasks, force update even if task is COMPLETED
-                self._update_task_to_running(
-                    db, updated_subtask.task_id, force_update=is_followup
-                )
+                # update task status to RUNNING
+                self._update_task_to_running(db, updated_subtask.task_id)
 
                 # Send chat:start WebSocket event for executor tasks
                 # This allows frontend to establish subtask-to-task mapping
@@ -397,17 +366,8 @@ class ExecutorKindsService(
 
         return updated_subtasks
 
-    def _update_task_to_running(
-        self, db: Session, task_id: int, force_update: bool = False
-    ) -> None:
-        """
-        Update task status to RUNNING using kinds table.
-
-        Args:
-            db: Database session
-            task_id: Task ID to update
-            force_update: If True, update even if task is COMPLETED (for follow-up messages)
-        """
+    def _update_task_to_running(self, db: Session, task_id: int) -> None:
+        """Update task status to RUNNING (only when task is PENDING) using kinds table"""
         task = (
             db.query(Kind)
             .filter(Kind.id == task_id, Kind.kind == "Task", Kind.is_active == True)
@@ -415,34 +375,28 @@ class ExecutorKindsService(
         )
 
         if task:
-            task_crd = Task.model_validate(task.json)
-            current_status = task_crd.status.status if task_crd.status else "PENDING"
-
-            # Update to RUNNING if:
-            # 1. Current status is PENDING (normal case)
-            # 2. force_update is True and current status is COMPLETED (follow-up case)
-            should_update = current_status == "PENDING" or (
-                force_update and current_status == "COMPLETED"
-            )
-
-            if should_update:
-                if task_crd.status:
-                    task_crd.status.status = "RUNNING"
-                    task_crd.status.updatedAt = datetime.now()
-                task.json = task_crd.model_dump(mode="json")
-                task.updated_at = datetime.now()
-                flag_modified(task, "json")
-
-                # Send WebSocket event for task status update
-                self._emit_task_status_ws_event(
-                    user_id=task.user_id,
-                    task_id=task_id,
-                    status="RUNNING",
-                    progress=task_crd.status.progress if task_crd.status else 0,
+            if task:
+                task_crd = Task.model_validate(task.json)
+                current_status = (
+                    task_crd.status.status if task_crd.status else "PENDING"
                 )
-                logger.info(
-                    f"[followup] Updated task {task_id} status from {current_status} to RUNNING (force_update={force_update})"
-                )
+
+                # Ensure only PENDING status can be updated
+                if current_status == "PENDING":
+                    if task_crd.status:
+                        task_crd.status.status = "RUNNING"
+                        task_crd.status.updatedAt = datetime.now()
+                    task.json = task_crd.model_dump(mode="json")
+                    task.updated_at = datetime.now()
+                    flag_modified(task, "json")
+
+                    # Send WebSocket event for task status update (PENDING -> RUNNING)
+                    self._emit_task_status_ws_event(
+                        user_id=task.user_id,
+                        task_id=task_id,
+                        status="RUNNING",
+                        progress=task_crd.status.progress if task_crd.status else 0,
+                    )
 
     def _get_model_config_from_public_model(
         self, db: Session, agent_config: Any
