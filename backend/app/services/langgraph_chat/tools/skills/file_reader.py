@@ -101,7 +101,11 @@ class FileReaderSkill(BaseTool):
         full_path = os.path.abspath(os.path.join(self.workspace_root, file_path))
 
         # Security check: ensure path is within workspace
-        if not full_path.startswith(os.path.abspath(self.workspace_root)):
+        # Normalize workspace root with trailing separator to prevent prefix attacks
+        workspace_root_abs = os.path.abspath(self.workspace_root) + os.sep
+        full_path_with_sep = full_path if full_path.endswith(os.sep) else full_path + os.sep
+
+        if not (full_path.startswith(workspace_root_abs) or full_path == os.path.abspath(self.workspace_root)):
             raise ValueError(f"Path traversal detected: {file_path}")
 
         return full_path
@@ -121,16 +125,13 @@ class FileReaderSkill(BaseTool):
         total_lines = 0
 
         with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-            # Count total lines and collect target chunk
+            # Collect target chunk
             for i, line in enumerate(f):
-                total_lines += 1
-
                 if i >= offset and i < offset + limit:
                     lines.append(line.rstrip("\n"))
 
-                # Stop reading if we've collected enough lines
-                if i >= offset + limit:
-                    break
+            # Count remaining lines after chunk to get accurate total
+            total_lines = i + 1  # i is zero-indexed, so add 1 for total count
 
         content = "\n".join(lines)
         has_more = offset + limit < total_lines
@@ -184,10 +185,23 @@ class FileListSkill(BaseTool):
             if not os.path.isdir(full_dir):
                 return ToolResult(success=False, output=None, error=f"Path is not a directory: {directory}")
 
+            # Validate glob pattern for directory traversal attempts
+            if pattern and (".." in pattern or pattern.startswith("/")):
+                return ToolResult(success=False, output=None, error="Invalid pattern: parent directory traversal not allowed")
+
             # List files
             if pattern:
                 search_pattern = os.path.join(full_dir, pattern)
                 file_paths = glob.glob(search_pattern, recursive=True)
+
+                # Validate all matched paths are within workspace
+                workspace_root_abs = os.path.abspath(self.workspace_root) + os.sep
+                validated_paths = []
+                for file_path in file_paths:
+                    abs_path = os.path.abspath(file_path)
+                    if abs_path.startswith(workspace_root_abs) or abs_path == os.path.abspath(self.workspace_root):
+                        validated_paths.append(file_path)
+                file_paths = validated_paths
             else:
                 file_paths = [os.path.join(full_dir, f) for f in os.listdir(full_dir)]
 
@@ -233,7 +247,10 @@ class FileListSkill(BaseTool):
         directory = directory.lstrip("/")
         full_dir = os.path.abspath(os.path.join(self.workspace_root, directory))
 
-        if not full_dir.startswith(os.path.abspath(self.workspace_root)):
+        # Normalize workspace root with trailing separator to prevent prefix attacks
+        workspace_root_abs = os.path.abspath(self.workspace_root) + os.sep
+
+        if not (full_dir.startswith(workspace_root_abs) or full_dir == os.path.abspath(self.workspace_root)):
             raise ValueError(f"Path traversal detected: {directory}")
 
         return full_dir

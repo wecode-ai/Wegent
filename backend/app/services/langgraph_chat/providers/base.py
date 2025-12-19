@@ -1,7 +1,7 @@
 """Base LLM provider interface."""
 
 from abc import ABC, abstractmethod
-from typing import AsyncIterator, List, Dict, Any, Optional
+from typing import AsyncIterator, List, Dict, Any, Optional, Tuple, Union
 from pydantic import BaseModel
 
 
@@ -73,14 +73,18 @@ class BaseLLMProvider(ABC):
         pass
 
     @abstractmethod
-    def convert_to_provider_format(self, messages: List[Message]) -> List[Dict[str, Any]]:
+    def convert_to_provider_format(
+        self, messages: List[Message]
+    ) -> Union[List[Dict[str, Any]], Tuple[Optional[str], List[Dict[str, Any]]]]:
         """Convert messages to provider-specific format.
 
         Args:
             messages: Standard messages
 
         Returns:
-            Provider-specific message format
+            Provider-specific message format. Can be either:
+            - List[Dict[str, Any]]: Simple message list
+            - Tuple[Optional[str], List[Dict[str, Any]]]: (system_message, messages)
         """
         pass
 

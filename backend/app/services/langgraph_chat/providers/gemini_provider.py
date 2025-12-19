@@ -1,6 +1,7 @@
 """Google Gemini provider implementation."""
 
 from typing import AsyncIterator, List, Dict, Any, Optional
+from uuid import uuid4
 import google.generativeai as genai
 from google.generativeai.types import GenerateContentResponse
 import json
@@ -127,7 +128,7 @@ class GeminiProvider(BaseLLMProvider):
                     fc = part.function_call
                     tool_calls.append(
                         {
-                            "id": f"call_{hash(fc.name)}",  # Gemini doesn't provide IDs
+                            "id": f"call_{uuid4()}",  # Generate unique ID per call
                             "type": "function",
                             "function": {
                                 "name": fc.name,
@@ -161,7 +162,7 @@ class GeminiProvider(BaseLLMProvider):
                     fc = part.function_call
                     delta["tool_calls"] = [
                         {
-                            "id": f"call_{hash(fc.name)}",
+                            "id": f"call_{uuid4()}",  # Generate unique ID per call
                             "type": "function",
                             "function": {
                                 "name": fc.name,
@@ -205,6 +206,8 @@ class GeminiProvider(BaseLLMProvider):
 
     def _convert_multimodal_content(self, content: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Convert OpenAI-style multimodal content to Gemini format."""
+        import base64
+
         gemini_parts = []
         for item in content:
             if item["type"] == "text":
@@ -213,11 +216,19 @@ class GeminiProvider(BaseLLMProvider):
                 # Gemini supports inline images
                 image_url = item["image_url"]["url"]
                 if image_url.startswith("data:"):
-                    # Extract base64 data
-                    import base64
+                    # Extract and validate base64 data
+                    if ";base64," not in image_url:
+                        # Skip malformed data URLs without base64 marker
+                        continue
 
-                    media_type, base64_data = image_url.split(";base64,")
-                    image_bytes = base64.b64decode(base64_data)
-                    gemini_parts.append({"inline_data": {"mime_type": media_type.replace("data:", ""), "data": image_bytes}})
+                    try:
+                        media_type, base64_data = image_url.split(";base64,", 1)
+                        image_bytes = base64.b64decode(base64_data)
+                        gemini_parts.append(
+                            {"inline_data": {"mime_type": media_type.replace("data:", ""), "data": image_bytes}}
+                        )
+                    except (ValueError, base64.binascii.Error):
+                        # Skip malformed data URLs or invalid base64
+                        pass
 
         return gemini_parts

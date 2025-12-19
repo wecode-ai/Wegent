@@ -38,10 +38,10 @@ dependencies = [
     "openai>=1.0.0",
     "google-generativeai>=0.7.0",
     # LangChain and LangGraph
-    "langchain>=0.3.0",
-    "langgraph>=0.2.0",
-    "langchain-openai>=0.2.0",
-    "langchain-anthropic>=0.2.0",
+    "langchain>=0.3.0,<1.0.0",
+    "langgraph>=0.2.0,<1.0.0",
+    "langchain-openai>=0.2.0,<1.0.0",
+    "langchain-anthropic>=0.2.0,<1.0.0",
     "langchain-google-genai>=2.0.0",
     # Utilities
     "python-dotenv>=1.0.0",
