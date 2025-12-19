@@ -91,17 +91,20 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 )
             namespace = group_name
 
-        # Check duplicate team name under the same namespace (only active teams)
-        existing = (
-            db.query(Kind)
-            .filter(
-                Kind.kind == "Team",
-                Kind.name == obj_in.name,
-                Kind.namespace == namespace,
-                Kind.is_active == True,
-            )
-            .first()
+        # Check duplicate team name (only active teams)
+        # For personal teams (default namespace): check uniqueness per user
+        # For group teams: check uniqueness within the group namespace
+        existing_query = db.query(Kind).filter(
+            Kind.kind == "Team",
+            Kind.name == obj_in.name,
+            Kind.namespace == namespace,
+            Kind.is_active == True,
         )
+        if namespace == "default":
+            # Personal team: also filter by user_id
+            existing_query = existing_query.filter(Kind.user_id == user_id)
+        existing = existing_query.first()
+
         if existing:
             raise HTTPException(
                 status_code=400,
@@ -803,21 +806,24 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         update_data = obj_in.model_dump(exclude_unset=True)
 
-        # If updating name, ensure uniqueness under the same namespace (only active teams), excluding current team
+        # If updating name, ensure uniqueness (only active teams), excluding current team
+        # For personal teams (default namespace): check uniqueness per user
+        # For group teams: check uniqueness within the group namespace
         if "name" in update_data:
             new_name = update_data["name"]
             if new_name != team.name:
-                conflict = (
-                    db.query(Kind)
-                    .filter(
-                        Kind.kind == "Team",
-                        Kind.name == new_name,
-                        Kind.namespace == team.namespace,
-                        Kind.is_active == True,
-                        Kind.id != team.id,
-                    )
-                    .first()
+                conflict_query = db.query(Kind).filter(
+                    Kind.kind == "Team",
+                    Kind.name == new_name,
+                    Kind.namespace == team.namespace,
+                    Kind.is_active == True,
+                    Kind.id != team.id,
                 )
+                if team.namespace == "default":
+                    # Personal team: also filter by user_id
+                    conflict_query = conflict_query.filter(Kind.user_id == user_id)
+                conflict = conflict_query.first()
+
                 if conflict:
                     raise HTTPException(
                         status_code=400,
