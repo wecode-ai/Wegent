@@ -594,6 +594,7 @@ export default function MessagesArea({
           taskTitle={selectedTaskDetail.title || selectedTaskDetail.prompt || 'Untitled Task'}
           currentUserId={user.id}
           onLeave={handleLeaveGroupChat}
+          onMembersChanged={() => refreshSelectedTaskDetail(false)}
         />
       )}
     </div>

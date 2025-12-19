@@ -29,6 +29,7 @@ interface TaskMembersPanelProps {
   taskTitle: string;
   currentUserId: number;
   onLeave?: () => void;
+  onMembersChanged?: () => void; // Callback when members are added/removed to refresh task detail
 }
 
 export function TaskMembersPanel({
@@ -38,6 +39,7 @@ export function TaskMembersPanel({
   taskTitle,
   currentUserId,
   onLeave,
+  onMembersChanged,
 }: TaskMembersPanelProps) {
   const { t } = useTranslation('chat');
   const { toast } = useToast();
@@ -59,6 +61,8 @@ export function TaskMembersPanel({
       const response = await taskMemberApi.getMembers(taskId);
       setMembers(response.members);
       setTaskOwnerId(response.task_owner_id);
+      // Trigger task detail refresh when members change
+      onMembersChanged?.();
     } catch (error: unknown) {
       toast({
         title: t('groupChat.members.loadFailed'),
@@ -68,7 +72,7 @@ export function TaskMembersPanel({
     } finally {
       setLoading(false);
     }
-  }, [open, taskId, toast, t]);
+  }, [open, taskId, toast, t, onMembersChanged]);
 
   useEffect(() => {
     fetchMembers();
@@ -95,6 +99,8 @@ export function TaskMembersPanel({
         title: t('groupChat.members.removeSuccess', { name: username }),
       });
       fetchMembers();
+      // Trigger task detail refresh when members change
+      onMembersChanged?.();
     } catch (error: unknown) {
       toast({
         title: t('groupChat.members.removeFailed'),
