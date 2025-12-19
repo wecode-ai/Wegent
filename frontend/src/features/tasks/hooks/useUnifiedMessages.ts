@@ -130,11 +130,19 @@ export function useUnifiedMessages({
   // Sync backend subtasks to streamState.messages when task changes
   // This initializes the message list from backend data
   useEffect(() => {
+    const hasMessages = streamState?.messages && streamState.messages.size > 0;
+
     // Only sync when:
     // 1. We have a taskId
     // 2. We have subtasks
-    // 3. The task has changed (different from last synced)
-    if (taskId && subtasks && subtasks.length > 0 && taskId !== lastSyncedTaskIdRef.current) {
+    // 3. The task has changed (different from last synced) OR messages are empty
+    //    (force resync after clearAllStreams to fix double-click blank message bug)
+    if (
+      taskId &&
+      subtasks &&
+      subtasks.length > 0 &&
+      (taskId !== lastSyncedTaskIdRef.current || !hasMessages)
+    ) {
       console.log('[useUnifiedMessages] Syncing backend messages for task', taskId);
       syncBackendMessages(taskId, subtasks, {
         teamName: team?.name,
@@ -149,7 +157,7 @@ export function useUnifiedMessages({
     if (!taskId) {
       lastSyncedTaskIdRef.current = undefined;
     }
-  }, [taskId, subtasks, syncBackendMessages, team?.name, isGroupChat, user?.id, user?.user_name]);
+  }, [taskId, subtasks, streamState, syncBackendMessages, team?.name, isGroupChat, user?.id, user?.user_name]);
 
   // Build unified message list from streamState.messages ONLY
   // NOTE: streamState is obtained outside useMemo to ensure proper reactivity
