@@ -215,6 +215,13 @@ async def _stream_chat_response(
             db, bot, team_data["user_id"], first_member.prompt
         )
 
+        # Append clarification mode instructions if enabled
+        from app.services.chat.clarification_prompt import append_clarification_prompt
+
+        system_prompt = append_clarification_prompt(
+            system_prompt, payload.enable_clarification
+        )
+
         # Handle attachment
         final_message = message
         if payload.attachment_id:
@@ -237,10 +244,10 @@ async def _stream_chat_response(
         if payload.enable_web_search and settings.WEB_SEARCH_ENABLED:
             from app.services.chat.tools import get_web_search_tool
 
-            web_search_tool = get_web_search_tool()
+            # Pass the search engine selected by user
+            web_search_tool = get_web_search_tool(engine_name=payload.search_engine)
             if web_search_tool:
                 all_tools.append(web_search_tool)
-
         # Load MCP tools if enabled
         from app.services.chat.tools import get_mcp_session
 
