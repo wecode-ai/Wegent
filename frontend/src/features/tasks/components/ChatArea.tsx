@@ -392,6 +392,7 @@ export default function ChatArea({
   // - isSubtaskStreaming: for group chat members and after task detail refresh
   // - isContextStreaming: for message sender, before subtask status is updated
   const isStreaming = isSubtaskStreaming || isContextStreaming;
+
   const isStopping = currentStreamState?.isStopping || false;
   // Check if there are any pending user messages in the unified messages Map
   const hasPendingUserMessage = useMemo(() => {
@@ -1560,7 +1561,25 @@ export default function ChatArea({
                             <CircleStop className="h-5 w-5 text-orange-500" />
                           </Button>
                         )
+                      ) : selectedTaskDetail?.status === 'PENDING' &&
+                        !isSubtaskStreaming &&
+                        selectedTaskDetail?.is_group_chat ? (
+                        // For group chat: if task status is PENDING but no AI subtask is running,
+                        // show normal send button instead of loading animation.
+                        // This handles the case where group chat messages don't trigger AI (no @mention)
+                        <SendButton
+                          onClick={() => handleSendMessage()}
+                          disabled={
+                            isLoading ||
+                            isStreaming ||
+                            isModelSelectionRequired ||
+                            !isAttachmentReadyToSend ||
+                            (shouldHideChatInput ? false : !taskInputMessage.trim())
+                          }
+                          isLoading={isLoading}
+                        />
                       ) : selectedTaskDetail?.status === 'PENDING' ? (
+                        // For non-group-chat tasks with PENDING status, show loading animation
                         <Button
                           variant="ghost"
                           size="icon"
@@ -1799,7 +1818,25 @@ export default function ChatArea({
                           <CircleStop className="h-5 w-5 text-orange-500" />
                         </Button>
                       )
+                    ) : selectedTaskDetail?.status === 'PENDING' &&
+                      !isSubtaskStreaming &&
+                      selectedTaskDetail?.is_group_chat ? (
+                      // For group chat: if task status is PENDING but no AI subtask is running,
+                      // show normal send button instead of loading animation.
+                      // This handles the case where group chat messages don't trigger AI (no @mention)
+                      <SendButton
+                        onClick={() => handleSendMessage()}
+                        disabled={
+                          isLoading ||
+                          isStreaming ||
+                          isModelSelectionRequired ||
+                          !isAttachmentReadyToSend ||
+                          (shouldHideChatInput ? false : !taskInputMessage.trim())
+                        }
+                        isLoading={isLoading}
+                      />
                     ) : selectedTaskDetail?.status === 'PENDING' ? (
+                      // For non-group-chat tasks with PENDING status, show loading animation
                       <Button
                         variant="ghost"
                         size="icon"
