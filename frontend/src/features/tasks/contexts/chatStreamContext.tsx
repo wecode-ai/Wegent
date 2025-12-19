@@ -363,8 +363,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
   const handleChatStart = useCallback((data: ChatStartPayload) => {
     const { task_id, subtask_id } = data;
 
-    console.log('[ChatStreamContext][chat:start] Received', { task_id, subtask_id });
-
     // Track subtask to task mapping
     if (subtask_id) {
       subtaskToTaskRef.current.set(subtask_id, task_id);
@@ -411,10 +409,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         if (tempId < 0 && !state.subtaskId) {
           // Found a temporary state without AI subtask ID
           // This is likely the one waiting for this chat:start
-          console.log('[ChatStreamContext][chat:start] Migrating temp task ID', {
-            tempId,
-            realTaskId: task_id,
-          });
 
           // Add new AI message to unified messages Map
           const newMessages = new Map(state.messages);
@@ -426,8 +420,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
             timestamp: Date.now(),
             subtaskId: subtask_id,
           });
-
-          logMessagesState('chat:start (migrated)', task_id, newMessages);
 
           // Move state from temp ID to real ID
           newMap.delete(tempId);
@@ -489,7 +481,19 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     const { subtask_id, content, result } = data;
 
     // Find task ID from subtask
-    const taskId = subtaskToTaskRef.current.get(subtask_id);
+    let taskId = subtaskToTaskRef.current.get(subtask_id);
+
+    // If taskId is a temporary ID (negative), resolve it to the real ID
+    if (taskId && taskId < 0) {
+      const realId = tempToRealTaskIdRef.current.get(taskId);
+
+      if (realId) {
+        taskId = realId;
+        // Update the mapping to use the real ID
+        subtaskToTaskRef.current.set(subtask_id, realId);
+      }
+    }
+
     if (!taskId) {
       console.warn('[ChatStreamContext] Received chunk for unknown subtask:', subtask_id);
       return;
@@ -544,15 +548,27 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
 
     // Find task ID from subtask mapping, or use task_id from event (for group chat members)
     let taskId = subtaskToTaskRef.current.get(subtask_id);
+
+    // If taskId is a temporary ID (negative), resolve it to the real ID
+    if (taskId && taskId < 0) {
+      const realId = tempToRealTaskIdRef.current.get(taskId);
+      if (realId) {
+        taskId = realId;
+        // Update the mapping to use the real ID
+        subtaskToTaskRef.current.set(subtask_id, realId);
+      } else {
+        console.warn('[ChatStreamContext][chat:done] Temporary ID found but no real ID mapping', {
+          tempId: taskId,
+          subtask_id,
+        });
+      }
+    }
+
     if (!taskId && eventTaskId) {
       // For group chat members who may not have received chat:start,
-      // use task_id from the event and set up the mapping
+      // or when the subtask mapping is missing, use task_id from the event
       taskId = eventTaskId;
       subtaskToTaskRef.current.set(subtask_id, taskId);
-      console.log('[ChatStreamContext][chat:done] Using task_id from event for group chat member', {
-        taskId,
-        subtask_id,
-      });
     }
     if (!taskId) {
       console.warn('[ChatStreamContext][chat:done] Unknown subtask:', subtask_id);
@@ -568,25 +584,30 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     setStreamStates(prev => {
       const newMap = new Map(prev);
       const currentState = newMap.get(taskId);
-      if (!currentState) return prev;
+
+      if (!currentState) {
+        return prev;
+      }
 
       // Update unified messages Map
       const newMessages = new Map(currentState.messages);
       const existingMessage = newMessages.get(aiMessageId);
+
       if (existingMessage) {
         newMessages.set(aiMessageId, {
           ...existingMessage,
           status: 'completed',
           content: finalContent || existingMessage.content,
         });
+      } else {
+        console.warn('[ChatStreamContext][chat:done] AI message not found, cannot update status', {
+          taskId,
+          aiMessageId,
+          subtask_id,
+          availableMessages: Array.from(newMessages.keys()),
+        });
       }
 
-      console.log('[ChatStreamContext][chat:done] Updated AI message to completed', {
-        taskId,
-        aiMessageId,
-        subtaskId: subtask_id,
-        contentLen: (finalContent || existingMessage?.content || '').length,
-      });
       logMessagesState('chat:done', taskId, newMessages);
 
       newMap.set(taskId, {
@@ -609,7 +630,18 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     const { subtask_id, error } = data;
 
     // Find task ID from subtask
-    const taskId = subtaskToTaskRef.current.get(subtask_id);
+    let taskId = subtaskToTaskRef.current.get(subtask_id);
+
+    // If taskId is a temporary ID (negative), resolve it to the real ID
+    if (taskId && taskId < 0) {
+      const realId = tempToRealTaskIdRef.current.get(taskId);
+      if (realId) {
+        taskId = realId;
+        // Update the mapping to use the real ID
+        subtaskToTaskRef.current.set(subtask_id, realId);
+      }
+    }
+
     if (!taskId) {
       console.warn('[ChatStreamContext] Received error for unknown subtask:', subtask_id);
       return;
@@ -1431,12 +1463,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         });
 
         return newMap;
-      });
-
-      console.log('[ChatStreamContext] syncBackendMessages completed', {
-        taskId,
-        subtaskCount: subtasks.length,
-        isGroupChat,
       });
     },
     []
