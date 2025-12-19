@@ -61,8 +61,8 @@ export function TaskMembersPanel({
       const response = await taskMemberApi.getMembers(taskId);
       setMembers(response.members);
       setTaskOwnerId(response.task_owner_id);
-      // Trigger task detail refresh when members change
-      onMembersChanged?.();
+      // DO NOT call onMembersChanged here - it should only be called when members are actually changed
+      // Calling it here would trigger refresh every time the panel opens
     } catch (error: unknown) {
       toast({
         title: t('groupChat.members.loadFailed'),
@@ -72,7 +72,7 @@ export function TaskMembersPanel({
     } finally {
       setLoading(false);
     }
-  }, [open, taskId, toast, t, onMembersChanged]);
+  }, [open, taskId, toast, t]); // Removed onMembersChanged from dependencies
 
   useEffect(() => {
     fetchMembers();
@@ -359,7 +359,12 @@ export function TaskMembersPanel({
         onClose={() => setShowAddMembersDialog(false)}
         taskId={taskId}
         taskTitle={taskTitle}
-        onMembersAdded={fetchMembers}
+        onMembersAdded={() => {
+          // Refresh member list first
+          fetchMembers();
+          // Then trigger parent refresh (task list + task detail)
+          onMembersChanged?.();
+        }}
         onComplete={handleClose}
       />
     </>
