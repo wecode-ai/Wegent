@@ -427,30 +427,27 @@ pytest tests/api/endpoints/v2/ -v
 pytest --cov=app/services/langgraph_chat --cov-report=html
 ```
 
-## TODO
+## 实现状态
 
-### P0 - 核心框架 ✅
-- [x] Provider 适配器（OpenAI、Anthropic、Gemini）
-- [x] 工具系统基础（BaseTool、ToolRegistry）
-- [x] 主服务入口（LangGraphChatService）
+### ✅ 已完成核心功能
+- [x] **Provider 适配器** - 使用 LangChain 官方集成 (ChatOpenAI, ChatAnthropic, ChatGoogleGenerativeAI)
+- [x] **工具系统基础** - BaseTool、ToolRegistry 注册与执行
+- [x] **主服务入口** - LangGraphChatService 统一接口
+- [x] **MCP 集成** - SSE、stdio、streamable-http 三种传输协议
+- [x] **Skills 文件读取** - 分块读取、文件列表
+- [x] **LangGraph 状态图构建器** - 基于 StateGraph 实现 agent → tools → agent 循环
+- [x] **真实的智能体工作流** - AgentState 状态管理 + 自动工具调用
+- [x] **深度思考模式** - Multi-step reasoning with tool execution loops
+- [x] **流式输出** - 支持 agent 执行过程的流式响应
 
-### P1 - 工具系统 ✅
-- [x] MCP 集成（SSE、stdio、streamable-http）
-- [x] Skills 文件读取（分块读取、文件列表）
-
-### P2 - 状态管理 🔄
-- [ ] Redis Checkpointer
-- [ ] 会话恢复机制
-
-### P3 - 可观测性 🔄
-- [ ] OpenTelemetry 追踪
-- [ ] 指标收集
-
-### P4 - 高级功能 🔄
-- [ ] LangGraph 状态图构建器
-- [ ] A2A (Agent-to-Agent) 接口
-- [ ] 动态工具注册
-- [ ] 多模态处理（image/document handler）
+### 🚧 计划中功能
+- [ ] **Redis Checkpointer** - 当前使用 MemorySaver 内存检查点
+- [ ] **会话恢复机制** - 基于 thread_id 恢复历史对话
+- [ ] **OpenTelemetry 追踪** - 可观测性监控
+- [ ] **指标收集** - Token usage、latency 统计
+- [ ] **A2A (Agent-to-Agent)** - 多智能体协作接口
+- [ ] **动态工具注册** - 运行时注册新工具
+- [ ] **多模态处理** - 图像/文档处理
 
 ## 许可证
 
