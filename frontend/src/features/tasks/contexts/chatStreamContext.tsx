@@ -221,8 +221,12 @@ interface ChatStreamContextType {
       currentUserName?: string;
     }
   ) => Promise<number>;
-  /** Stop the stream for a specific task */
-  stopStream: (taskId: number) => Promise<void>;
+  /**
+   * Stop the stream for a specific task
+   * @param taskId - Task ID
+   * @param backupSubtasks - Optional backup subtasks from selectedTaskDetail, used to find running ASSISTANT subtask when chat:start hasn't been received
+   */
+  stopStream: (taskId: number, backupSubtasks?: TaskDetailSubtask[]) => Promise<void>;
   /** Reset stream state for a specific task */
   resetStream: (taskId: number) => void;
   /** Clear all stream states */
@@ -1075,12 +1079,17 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
 
   /**
    * Stop the stream for a specific task using WebSocket
+   * If subtaskId is not found in stream state, search in backend subtasks
    */
   const stopStream = useCallback(
-    async (taskId: number): Promise<void> => {
+    async (taskId: number, backupSubtasks?: TaskDetailSubtask[]): Promise<void> => {
       const state = streamStates.get(taskId);
+      const isStreaming = computeIsStreaming(state?.messages);
+
       // Check if streaming by computing from messages
-      if (!state || !computeIsStreaming(state.messages)) return;
+      if (!state || !isStreaming) {
+        return;
+      }
 
       // Set stopping state
       setStreamStates(prev => {
@@ -1092,7 +1101,24 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         return newMap;
       });
 
-      const subtaskId = state.subtaskId;
+      let subtaskId = state.subtaskId;
+      let runningSubtask: TaskDetailSubtask | undefined;
+
+      // If subtaskId is not available in stream state, try to find it from backend subtasks
+      // This handles the case where chat:start hasn't been received yet (user clicks cancel very quickly)
+      if (!subtaskId && backupSubtasks && backupSubtasks.length > 0) {
+        // Find the last RUNNING ASSISTANT subtask
+        runningSubtask = backupSubtasks
+          .filter(st => st.role === 'ASSISTANT' && st.status === 'RUNNING')
+          .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
+
+        if (runningSubtask) {
+          subtaskId = runningSubtask.id;
+        }
+      } else if (subtaskId && backupSubtasks) {
+        // If we have subtaskId from state, find the corresponding subtask to get bot info
+        runningSubtask = backupSubtasks.find(st => st.id === subtaskId);
+      }
 
       // Get current content from the AI message
       let partialContent = '';
@@ -1102,10 +1128,13 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         partialContent = aiMessage?.content || '';
       }
 
+      // Get shell_type from the running subtask's first bot
+      const shellType = runningSubtask?.bots?.[0]?.shell_type;
+
       // Call backend to cancel via WebSocket
       if (subtaskId) {
         try {
-          const result = await cancelChatStream(subtaskId, partialContent);
+          const result = await cancelChatStream(subtaskId, partialContent, shellType);
 
           if (result.error) {
             console.error('[ChatStreamContext] Failed to cancel stream:', result.error);
@@ -1115,16 +1144,32 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           const callbacks = callbacksRef.current.get(taskId);
           callbacks?.onAIComplete?.(taskId, subtaskId);
         } catch (error) {
-          console.error('[ChatStreamContext] Failed to stop chat:', error);
+          console.error('[ChatStreamContext] Exception during cancelChatStream:', error);
         }
       }
 
-      // Update state - keep the partial content
+      // Update state - keep the partial content and mark AI message as completed
       setStreamStates(prev => {
         const newMap = new Map(prev);
         const currentState = newMap.get(taskId);
         if (currentState) {
-          newMap.set(taskId, { ...currentState, isStopping: false });
+          // Create a new messages map with AI message status updated to 'completed'
+          const updatedMessages = new Map(currentState.messages);
+          if (subtaskId) {
+            const aiMessageId = generateMessageId('ai', subtaskId);
+            const aiMessage = updatedMessages.get(aiMessageId);
+            if (aiMessage && aiMessage.status === 'streaming') {
+              updatedMessages.set(aiMessageId, {
+                ...aiMessage,
+                status: 'completed',
+              });
+            }
+          }
+          newMap.set(taskId, {
+            ...currentState,
+            isStopping: false,
+            messages: updatedMessages,
+          });
         }
         return newMap;
       });
@@ -1317,24 +1362,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         const currentState = newMap.get(taskId) || { ...defaultStreamState };
         const newMessages = new Map<string, UnifiedMessage>();
 
-        // Log current state before sync
-        console.log('[ChatStreamContext][syncBackendMessages] Before sync', {
-          taskId,
-          currentMessagesCount: currentState.messages.size,
-          currentMessages: Array.from(currentState.messages.values()).map(m => ({
-            id: m.id,
-            type: m.type,
-            status: m.status,
-            subtaskId: m.subtaskId,
-          })),
-          backendSubtasksCount: subtasks.length,
-          backendSubtasks: subtasks.map(s => ({
-            id: s.id,
-            role: s.role,
-            status: s.status,
-          })),
-        });
-
         // First, add all backend subtasks as messages
         // Sort by created_at to maintain order
         const sortedSubtasks = [...subtasks].sort(
@@ -1352,7 +1379,21 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           // Determine message status based on subtask status
           let status: MessageStatus = 'completed';
           if (subtask.status === 'RUNNING' || subtask.status === 'PENDING') {
-            status = isUserMessage ? 'pending' : 'streaming';
+            if (isUserMessage) {
+              status = 'pending';
+            } else {
+              // For AI messages with RUNNING status:
+              // Only set to 'streaming' if we already have this message in streaming state
+              // (created by chat:start event). Otherwise, skip it - the message will be
+              // created when chat:start event arrives.
+              const existingMessage = currentState.messages.get(messageId);
+              if (existingMessage && existingMessage.status === 'streaming') {
+                status = 'streaming';
+              } else {
+                // Skip this AI message - it will be created by chat:start event
+                continue;
+              }
+            }
           } else if (subtask.status === 'FAILED' || subtask.status === 'CANCELLED') {
             status = 'error';
           }
