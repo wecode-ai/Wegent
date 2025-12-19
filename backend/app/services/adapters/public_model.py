@@ -227,9 +227,9 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
         List available model names based on shell type and shell supportModel filter.
         Queries both user's own models and public models from kinds table.
 
-        Shell type to model provider mapping:
-        - Agno -> openai
-        - ClaudeCode -> claude
+        Logic:
+        - If supportModel is empty, all models are supported
+        - If supportModel is not empty, only models matching the specified providers are supported
 
         Returns list of dicts with 'name' and 'displayName' fields.
         """
@@ -256,12 +256,8 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
             supportModel = shell_crd.spec.supportModel or []
             supportModel = [str(x) for x in supportModel if x]
 
-        # Determine required model provider based on shell_type
-        # Agno uses openai protocol, ClaudeCode uses claude protocol
-        shell_provider_map = {"Agno": "openai", "ClaudeCode": "claude"}
-        required_provider = shell_provider_map.get(shell_type)
-
-        # If supportModel is specified, use it; otherwise filter by agent's required provider
+        # If supportModel is empty, all models are supported
+        # If supportModel is not empty, only filter by specified providers
         use_support_model_filter = len(supportModel) > 0
         allowed = set(supportModel)
 
@@ -292,11 +288,8 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
             if use_support_model_filter:
                 # Use supportModel filter from shell spec
                 return provider in allowed
-            elif required_provider:
-                # Filter by agent's required provider
-                return provider == required_provider
             else:
-                # No filter, allow all
+                # supportModel is empty, all models are supported
                 return True
 
         # Use dict to store name -> displayName mapping (to handle duplicates)
