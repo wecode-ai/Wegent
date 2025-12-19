@@ -6,6 +6,7 @@
 Custom embedding implementation for external APIs.
 """
 
+import asyncio
 from typing import Dict, List, Optional
 
 import requests
@@ -59,8 +60,8 @@ class CustomEmbedding(BaseEmbedding):
         return self._call_api(text)
 
     async def _aget_query_embedding(self, query: str) -> List[float]:
-        """Async version (fallback to sync for simplicity)."""
-        return self._get_query_embedding(query)
+        """Async version - runs sync call in thread pool to avoid blocking."""
+        return await asyncio.to_thread(self._get_query_embedding, query)
 
     @retry(
         stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10)

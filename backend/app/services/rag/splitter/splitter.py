@@ -9,6 +9,7 @@ Document splitting for RAG indexing.
 from typing import List
 
 from llama_index.core import Document
+from llama_index.core.base.embeddings.base import BaseEmbedding
 from llama_index.core.node_parser import SemanticSplitterNodeParser
 from llama_index.core.schema import BaseNode
 
@@ -18,7 +19,7 @@ class DocumentSplitter:
 
     def __init__(
         self,
-        embed_model,
+        embed_model: BaseEmbedding,
         buffer_size: int = 1,
         breakpoint_percentile_threshold: int = 95,
     ):

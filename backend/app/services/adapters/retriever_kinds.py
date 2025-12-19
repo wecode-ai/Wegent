@@ -116,7 +116,12 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
         """
         # Check permissions for group resources
         if namespace != "default":
-            check_group_permission(db, user_id, namespace, required_role="Reporter")
+            if not check_group_permission(
+                db, user_id, namespace, required_role="Reporter"
+            ):
+                raise HTTPException(
+                    status_code=403, detail="Access denied to this group"
+                )
 
         # Query retriever
         kind = (
@@ -161,7 +166,12 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
 
         # Check permissions for group resources
         if namespace != "default":
-            check_group_permission(db, user_id, namespace, required_role="Developer")
+            if not check_group_permission(
+                db, user_id, namespace, required_role="Developer"
+            ):
+                raise HTTPException(
+                    status_code=403, detail="Access denied to this group"
+                )
 
         # Check if retriever with same name already exists
         existing = (
@@ -229,7 +239,12 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
 
         # Check permissions for group resources
         if namespace != "default":
-            check_group_permission(db, user_id, namespace, required_role="Developer")
+            if not check_group_permission(
+                db, user_id, namespace, required_role="Developer"
+            ):
+                raise HTTPException(
+                    status_code=403, detail="Access denied to this group"
+                )
 
         # Query retriever
         kind = (
@@ -247,9 +262,29 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
         if not kind:
             raise HTTPException(status_code=404, detail="Retriever not found")
 
+        # Check for name conflicts if name is being changed
+        new_name = retriever.metadata.name
+        if new_name != name:
+            conflict = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == user_id,
+                    Kind.name == new_name,
+                    Kind.kind == "Retriever",
+                    Kind.namespace == namespace,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+            if conflict:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Retriever with name '{new_name}' already exists",
+                )
+
         # Update Kind record
         kind.json = retriever.model_dump(mode="json", exclude_none=True)
-        kind.name = retriever.metadata.name  # Allow name update
+        kind.name = new_name
         db.commit()
         db.refresh(kind)
 
@@ -277,7 +312,12 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
         """
         # Check permissions for group resources
         if namespace != "default":
-            check_group_permission(db, user_id, namespace, required_role="Maintainer")
+            if not check_group_permission(
+                db, user_id, namespace, required_role="Maintainer"
+            ):
+                raise HTTPException(
+                    status_code=403, detail="Access denied to this group"
+                )
 
         # Query retriever
         kind = (
