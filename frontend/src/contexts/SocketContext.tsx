@@ -73,7 +73,8 @@ interface SocketContextType {
   /** Cancel a chat stream via WebSocket */
   cancelChatStream: (
     subtaskId: number,
-    partialContent?: string
+    partialContent?: string,
+    shellType?: string
   ) => Promise<{ success: boolean; error?: string }>;
   /** Register chat event handlers */
   registerChatHandlers: (handlers: ChatEventHandlers) => () => void;
@@ -323,9 +324,11 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   const cancelChatStream = useCallback(
     async (
       subtaskId: number,
-      partialContent?: string
+      partialContent?: string,
+      shellType?: string
     ): Promise<{ success: boolean; error?: string }> => {
       if (!socket?.connected) {
+        console.error('[Socket.IO] cancelChatStream failed - not connected');
         return { success: false, error: 'Not connected to server' };
       }
 
@@ -335,6 +338,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
           {
             subtask_id: subtaskId,
             partial_content: partialContent,
+            shell_type: shellType,
           },
           (response: { success?: boolean; error?: string }) => {
             resolve({ success: response.success ?? true, error: response.error });

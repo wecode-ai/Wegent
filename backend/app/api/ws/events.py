@@ -105,6 +105,9 @@ class ChatCancelPayload(BaseModel):
     partial_content: Optional[str] = Field(
         None, description="Partial content received so far"
     )
+    shell_type: Optional[str] = Field(
+        None, description="Shell type of the bot (e.g., 'Chat', 'ClaudeCode', 'Agno')"
+    )
 
 
 class ChatResumePayload(BaseModel):
