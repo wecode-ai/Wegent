@@ -174,9 +174,8 @@ export function AddMembersDialog({
       try {
         await taskMemberApi.convertToGroupChat(taskId);
         wasConverted = true;
-        // Trigger callback immediately after conversion to update UI
-        // This ensures the task moves to group chat list and @ feature is enabled
-        onMembersAdded?.();
+        // Note: Don't call onMembersAdded here yet - wait until members are added
+        // to avoid race condition where UI refreshes before additions complete
       } catch (conversionError) {
         // Ignore conversion errors - task might already be a group chat
         console.log('Task conversion:', conversionError);
@@ -200,15 +199,17 @@ export function AddMembersDialog({
 
       setAddedCount(successCount);
 
+      // Now that all operations are complete, trigger UI refresh
+      // This ensures the member list is accurate when refreshed
+      if (wasConverted || successCount > 0) {
+        onMembersAdded?.();
+      }
+
       // Show toast messages based on results
       if (successCount > 0) {
         toast({
           title: t('groupChat.addMembers.success', { count: successCount }),
         });
-        // Call again after adding members to refresh member list
-        if (!wasConverted) {
-          onMembersAdded?.();
-        }
       }
 
       if (alreadyMemberCount > 0 && successCount === 0 && errors.length === 0) {

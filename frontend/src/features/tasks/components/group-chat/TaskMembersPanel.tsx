@@ -98,8 +98,9 @@ export function TaskMembersPanel({
       toast({
         title: t('groupChat.members.removeSuccess', { name: username }),
       });
+      // Refresh member list and trigger parent refresh
+      // Use the same pattern as AddMembersDialog
       fetchMembers();
-      // Trigger task detail refresh when members change
       onMembersChanged?.();
     } catch (error: unknown) {
       toast({
