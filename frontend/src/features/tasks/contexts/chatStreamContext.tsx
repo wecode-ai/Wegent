@@ -695,13 +695,19 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
    * Handle chat:cancelled event from WebSocket
    */
   const handleChatCancelled = useCallback((data: ChatCancelledPayload) => {
-    const { subtask_id } = data;
+    const { task_id: eventTaskId, subtask_id } = data;
 
-    // Find task ID from subtask
-    const taskId = subtaskToTaskRef.current.get(subtask_id);
+    // Use task_id from event, or fallback to subtask mapping
+    const taskId = eventTaskId || subtaskToTaskRef.current.get(subtask_id);
+
     if (!taskId) {
       console.warn('[ChatStreamContext] Received cancelled for unknown subtask:', subtask_id);
       return;
+    }
+
+    // Track subtask to task mapping for future reference
+    if (subtask_id && taskId) {
+      subtaskToTaskRef.current.set(subtask_id, taskId);
     }
 
     const aiMessageId = generateMessageId('ai', subtask_id);
