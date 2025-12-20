@@ -11,7 +11,8 @@
  * Key Design Principles:
  * 1. SINGLE SOURCE OF TRUTH: streamState.messages is the ONLY source for rendering
  * 2. INITIALIZATION: When selecting a task, sync backend subtasks to streamState.messages
- * 3. PROPER ORDERING: Messages are sorted by timestamp
+ * 3. PROPER ORDERING: Messages are sorted by messageId (backend order) for stable ordering,
+ *    fallback to timestamp for pending messages without messageId
  * 4. STATE ISOLATION: Each message maintains its own state independently
  *
  * Message Flow:
@@ -46,6 +47,8 @@ export interface DisplayMessage {
   content: string;
   /** Timestamp when message was created */
   timestamp: number;
+  /** Backend message_id for ordering (ensures stable message ordering) */
+  messageId?: number;
   /** Subtask ID from backend (set when confirmed) */
   subtaskId?: number;
   /** Error message if status is 'error' */
@@ -84,7 +87,7 @@ interface UseUnifiedMessagesOptions {
 }
 
 interface UseUnifiedMessagesResult {
-  /** Unified message list for display, sorted by timestamp */
+  /** Unified message list for display, sorted by messageId (backend order) */
   messages: DisplayMessage[];
   /** Whether any message is currently streaming */
   isStreaming: boolean;
@@ -215,6 +218,8 @@ export function useUnifiedMessages({
         status: msg.status,
         content: msg.content,
         timestamp: msg.timestamp,
+        // Preserve messageId for stable ordering
+        messageId: msg.messageId,
         subtaskId: msg.subtaskId,
         error: msg.error,
         attachments,
@@ -251,8 +256,23 @@ export function useUnifiedMessages({
       }
     }
 
-    // Sort messages by timestamp
-    const sortedMessages = messages.sort((a, b) => a.timestamp - b.timestamp);
+    // Sort messages: prioritize messageId (from backend) for stable ordering,
+    // fallback to timestamp for pending messages without messageId
+    const sortedMessages = messages.sort((a, b) => {
+      // If both have messageId, use it for stable ordering (backend-defined order)
+      if (a.messageId !== undefined && b.messageId !== undefined) {
+        return a.messageId - b.messageId;
+      }
+      // If only one has messageId, backend messages come before pending messages
+      if (a.messageId !== undefined && b.messageId === undefined) {
+        return -1;
+      }
+      if (a.messageId === undefined && b.messageId !== undefined) {
+        return 1;
+      }
+      // Both without messageId (pending messages), use timestamp
+      return a.timestamp - b.timestamp;
+    });
 
     return {
       messages: sortedMessages,

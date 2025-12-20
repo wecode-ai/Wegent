@@ -78,6 +78,8 @@ export interface UnifiedMessage {
   attachments?: unknown[];
   /** Timestamp when message was created */
   timestamp: number;
+  /** Backend message_id for ordering (used to ensure stable message ordering) */
+  messageId?: number;
   /** Subtask ID from backend (set when confirmed) */
   subtaskId?: number;
   /** Error message if status is 'error' */
@@ -1381,9 +1383,9 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         const newMessages = new Map<string, UnifiedMessage>();
 
         // First, add all backend subtasks as messages
-        // Sort by created_at to maintain order
+        // Sort by message_id for stable ordering (backend uses this for message order)
         const sortedSubtasks = [...subtasks].sort(
-          (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+          (a, b) => a.message_id - b.message_id
         );
 
         for (const subtask of sortedSubtasks) {
@@ -1454,6 +1456,8 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
             status,
             content,
             timestamp: new Date(subtask.created_at).getTime(),
+            // Store message_id for stable ordering (backend uses this for ordering)
+            messageId: subtask.message_id,
             subtaskId: subtask.id,
             attachments: subtask.attachments,
             botName,
