@@ -185,6 +185,9 @@ class ChatMessagePayload(BaseModel):
 
     subtask_id: int
     task_id: int
+    message_id: int = Field(
+        ..., description="Message ID for ordering (primary sort key)"
+    )
     role: str
     content: str
     sender: Dict[str, Any] = Field(default_factory=dict)

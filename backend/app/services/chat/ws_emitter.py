@@ -194,6 +194,7 @@ class WebSocketEmitter:
         self,
         task_id: int,
         subtask_id: int,
+        message_id: int,
         role: str,
         content: str,
         sender: Dict[str, Any],
@@ -206,6 +207,7 @@ class WebSocketEmitter:
         Args:
             task_id: Task ID
             subtask_id: Subtask ID
+            message_id: Message ID for ordering (primary sort key)
             role: Message role (user/assistant/system)
             content: Message content
             sender: Sender info dict
@@ -217,6 +219,7 @@ class WebSocketEmitter:
             {
                 "subtask_id": subtask_id,
                 "task_id": task_id,
+                "message_id": message_id,
                 "role": role,
                 "content": content,
                 "sender": sender,
