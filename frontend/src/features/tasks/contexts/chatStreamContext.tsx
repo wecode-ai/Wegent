@@ -1288,12 +1288,15 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
 
         // Check if there's an active streaming session
         if (response.streaming) {
-          const { subtask_id, cached_content } = response.streaming;
+          const { subtask_id, cached_content, cached_result } = response.streaming;
 
           console.log('[ChatStreamContext] Found active streaming session', {
             taskId,
             subtaskId: subtask_id,
             cachedContentLength: cached_content?.length || 0,
+            hasCachedResult: !!cached_result,
+            hasThinking: !!(cached_result?.thinking?.length),
+            hasWorkbench: !!cached_result?.workbench,
           });
 
           // Track subtask to task mapping
@@ -1307,7 +1310,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
             });
           }
 
-          // Initialize stream state with cached content
+          // Initialize stream state with cached content and result
           const initialContent = cached_content || '';
           const aiMessageId = generateMessageId('ai', subtask_id);
 
@@ -1323,6 +1326,8 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
               content: initialContent,
               timestamp: Date.now(),
               subtaskId: subtask_id,
+              // Restore result field (contains thinking, workbench) for executor tasks
+              result: cached_result as UnifiedMessage['result'],
             });
 
             newMap.set(taskId, {
@@ -1339,6 +1344,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
             taskId,
             subtaskId: subtask_id,
             initialContentLength: initialContent.length,
+            hasResult: !!cached_result,
           });
 
           return true;

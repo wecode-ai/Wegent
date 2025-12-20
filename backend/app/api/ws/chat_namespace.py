@@ -373,6 +373,8 @@ class ChatNamespace(socketio.AsyncNamespace):
 
             # Get cached content from Redis
             cached_content = await session_manager.get_streaming_content(subtask_id)
+            # Get cached result (contains thinking, workbench) from Redis
+            cached_result = await session_manager.get_streaming_result(subtask_id)
             offset = len(cached_content) if cached_content else 0
 
             return {
@@ -380,6 +382,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                     "subtask_id": subtask_id,
                     "offset": offset,
                     "cached_content": cached_content or "",
+                    "cached_result": cached_result,
                 }
             }
 

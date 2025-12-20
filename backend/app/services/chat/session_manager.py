@@ -28,6 +28,8 @@ CANCEL_FLAG_TTL = 300
 
 # Redis key prefix for streaming content cache
 STREAMING_KEY_PREFIX = "chat:streaming:"
+# Redis key prefix for streaming result cache (contains thinking, workbench)
+STREAMING_RESULT_KEY_PREFIX = "chat:streaming_result:"
 # Redis Pub/Sub channel prefix for streaming updates
 STREAMING_CHANNEL_PREFIX = "chat:stream_channel:"
 # Redis key prefix for task-level streaming status (for group chat)
@@ -346,6 +348,10 @@ class SessionManager:
         """Generate Redis key for streaming content cache."""
         return f"{STREAMING_KEY_PREFIX}{subtask_id}"
 
+    def _get_streaming_result_key(self, subtask_id: int) -> str:
+        """Generate Redis key for streaming result cache (contains thinking, workbench)."""
+        return f"{STREAMING_RESULT_KEY_PREFIX}{subtask_id}"
+
     async def save_streaming_content(
         self, subtask_id: int, content: str, expire: int = None
     ) -> bool:
@@ -411,12 +417,67 @@ class SessionManager:
         """
         try:
             key = self._get_streaming_key(subtask_id)
+            result_key = self._get_streaming_result_key(subtask_id)
+            # Delete both content and result cache
+            await self._cache.delete(result_key)
             return await self._cache.delete(key)
         except Exception as e:
             logger.error(
                 f"Error deleting streaming content for subtask {subtask_id}: {e}"
             )
             return False
+
+    async def save_streaming_result(
+        self, subtask_id: int, result: Dict[str, Any], expire: int = None
+    ) -> bool:
+        """
+        Save streaming result to Redis (temporary cache).
+
+        This is used for recovery when user refreshes during streaming.
+        The result contains thinking and workbench data for executor tasks.
+
+        Args:
+            subtask_id: Subtask ID
+            result: Result dict containing value, thinking, workbench, etc.
+            expire: Expiration time in seconds (default from settings)
+
+        Returns:
+            bool: True if save was successful
+        """
+        try:
+            key = self._get_streaming_result_key(subtask_id)
+            expire_time = expire or settings.STREAMING_REDIS_TTL
+            # Store as JSON string
+            return await self._cache.set(key, json.dumps(result), expire=expire_time)
+        except Exception as e:
+            logger.error(
+                f"Error saving streaming result for subtask {subtask_id}: {e}"
+            )
+            return False
+
+    async def get_streaming_result(self, subtask_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Get streaming result from Redis cache.
+
+        Used for recovery when user refreshes during streaming.
+
+        Args:
+            subtask_id: Subtask ID
+
+        Returns:
+            dict or None: Cached streaming result, or None if not found
+        """
+        try:
+            key = self._get_streaming_result_key(subtask_id)
+            result = await self._cache.get(key)
+            if result is not None and isinstance(result, str):
+                return json.loads(result)
+            return None
+        except Exception as e:
+            logger.error(
+                f"Error getting streaming result for subtask {subtask_id}: {e}"
+            )
+            return None
 
     def _get_channel_key(self, subtask_id: int) -> str:
         """Generate Redis Pub/Sub channel key for streaming updates."""
