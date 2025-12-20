@@ -99,6 +99,21 @@ class WebSocketEmitter:
         # Include full result if provided (for executor tasks)
         if result is not None:
             payload["result"] = result
+            # Cache result to Redis for page refresh recovery
+            # This includes thinking and workbench data for executor tasks
+            try:
+                from app.services.chat.session_manager import session_manager
+
+                # Save both content and full result to Redis
+                value = result.get("value", "")
+                if value:
+                    await session_manager.save_streaming_content(subtask_id, value)
+                # Save full result (contains thinking, workbench)
+                await session_manager.save_streaming_result(subtask_id, result)
+            except Exception as e:
+                logger.warning(
+                    f"[WS] Failed to cache streaming result for subtask={subtask_id}: {e}"
+                )
 
         await self.sio.emit(
             ServerEvents.CHAT_CHUNK,

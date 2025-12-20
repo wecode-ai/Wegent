@@ -240,6 +240,12 @@ export interface TaskJoinAck {
     subtask_id: number;
     offset: number;
     cached_content: string;
+    /** Cached result data for executor tasks (contains thinking, workbench) */
+    cached_result?: {
+      value?: string;
+      thinking?: unknown[];
+      workbench?: Record<string, unknown>;
+    };
   };
   error?: string;
 }
