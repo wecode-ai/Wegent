@@ -30,8 +30,7 @@ import ClarificationAnswerSummary from './ClarificationAnswerSummary';
 import AttachmentPreview from './AttachmentPreview';
 import StreamingWaitIndicator from './StreamingWaitIndicator';
 import type { ClarificationData, FinalPromptData, ClarificationAnswer } from '@/types/api';
-import { traceLocalActionSync } from '@/lib/telemetry';
-import { useUser } from '@/features/common/UserContext';
+import { useTraceAction } from '@/hooks/useTraceAction';
 export interface Message {
   type: 'user' | 'ai';
   content: string;
@@ -317,37 +316,34 @@ const MessageBubble = memo(
     paragraphAction,
     isCurrentUserMessage,
   }: MessageBubbleProps) {
-    // Get user context for telemetry
-    const { user } = useUser();
+    // Use trace hook for telemetry (auto-includes user and task context)
+    const { traceActionSync } = useTraceAction();
 
     // Determine if this is a user-type message (for styling purposes)
     const isUserTypeMessage = msg.type === 'user';
 
-    // Create trace callback for copy actions with user and task context
+    // Trace callbacks for copy and download actions
     const handleCopyTrace = (copyType: 'user-message' | 'ai-message') => {
-      const attributes: Record<string, string | number | undefined> = {
-        'copy.type': copyType,
-        'copy.message_type': msg.type,
-      };
+      traceActionSync(
+        'copy-message',
+        {
+          'copy.type': copyType,
+          'copy.message_type': msg.type,
+          ...(msg.subtaskId && { 'subtask.id': msg.subtaskId }),
+        },
+        () => {}
+      );
+    };
 
-      // Add user context
-      if (user) {
-        attributes['user.id'] = user.id;
-        attributes['user.name'] = user.user_name;
-      }
-
-      // Add task context
-      if (selectedTaskDetail?.id) {
-        attributes['task.id'] = selectedTaskDetail.id;
-      }
-
-      // Add subtask context
-      if (msg.subtaskId) {
-        attributes['subtask.id'] = msg.subtaskId;
-      }
-
-      // Use traceLocalActionSync with empty function since copy is already done
-      traceLocalActionSync('copy-message', attributes, () => {});
+    const handleDownloadTrace = () => {
+      traceActionSync(
+        'download-message',
+        {
+          'download.message_type': msg.type,
+          ...(msg.subtaskId && { 'subtask.id': msg.subtaskId }),
+        },
+        () => {}
+      );
     };
 
     // Determine if this message should be right-aligned (current user's message)
@@ -596,6 +592,7 @@ const MessageBubble = memo(
                   a.download = 'message.md';
                   a.click();
                   URL.revokeObjectURL(url);
+                  handleDownloadTrace();
                 },
               },
             ]}
@@ -1225,6 +1222,7 @@ const MessageBubble = memo(
                     a.download = 'message.md';
                     a.click();
                     URL.revokeObjectURL(url);
+                    handleDownloadTrace();
                   },
                 },
               ]}
@@ -1282,6 +1280,7 @@ const MessageBubble = memo(
                       a.download = 'message.md';
                       a.click();
                       URL.revokeObjectURL(url);
+                      handleDownloadTrace();
                     },
                   },
                 ]}
