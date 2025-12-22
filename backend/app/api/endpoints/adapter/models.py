@@ -83,6 +83,10 @@ def list_unified_models(
     group_name: Optional[str] = Query(
         None, description="Group name (required when scope='group')"
     ),
+    model_category_type: Optional[str] = Query(
+        None,
+        description="Filter by model category type (llm, tts, stt, embedding, rerank)",
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
@@ -106,6 +110,7 @@ def list_unified_models(
     - include_config: Whether to include full model config in response
     - scope: Query scope ('personal', 'group', or 'all')
     - group_name: Group name (required when scope='group')
+    - model_category_type: Optional filter by model category type (llm, tts, stt, embedding, rerank)
 
     Response:
     {
@@ -115,7 +120,8 @@ def list_unified_models(
           "type": "public" | "user",
           "displayName": "Human Readable Name",
           "provider": "openai" | "claude",
-          "modelId": "gpt-4"
+          "modelId": "gpt-4",
+          "modelCategoryType": "llm" | "tts" | "stt" | "embedding" | "rerank"
         }
       ]
     }
@@ -127,6 +133,7 @@ def list_unified_models(
         include_config=include_config,
         scope=scope,
         group_name=group_name,
+        model_category_type=model_category_type,
     )
     return {"data": data}
 
@@ -313,10 +320,12 @@ def test_model_connection(
 
     Request body:
     {
-      "provider_type": "openai" | "anthropic",
+      "provider_type": "openai" | "anthropic" | "gemini",
       "model_id": "gpt-4",
       "api_key": "sk-...",
-      "base_url": "https://api.openai.com/v1"  // optional
+      "base_url": "https://api.openai.com/v1",  // optional
+      "custom_headers": {"header-name": "header-value"},  // optional, custom HTTP headers
+      "model_category_type": "llm" | "embedding" | "tts" | "stt" | "rerank"  // optional, defaults to "llm"
     }
 
     Response:
@@ -329,6 +338,8 @@ def test_model_connection(
     model_id = test_data.get("model_id")
     api_key = test_data.get("api_key")
     base_url = test_data.get("base_url")
+    custom_headers = test_data.get("custom_headers", {})
+    model_category_type = test_data.get("model_category_type", "llm")
 
     if not provider_type or not model_id or not api_key:
         return {
@@ -336,67 +347,25 @@ def test_model_connection(
             "message": "Missing required fields: provider_type, model_id, api_key",
         }
 
+    # Ensure custom_headers is a dict
+    if not isinstance(custom_headers, dict):
+        custom_headers = {}
+
     try:
         if provider_type == "openai":
-            import openai
-
-            client = openai.OpenAI(
-                api_key=api_key, base_url=base_url or "https://api.openai.com/v1"
+            return _test_openai_connection(
+                model_id, api_key, base_url, custom_headers, model_category_type
             )
-            # Send minimal test request
-            response = client.chat.completions.create(
-                model=model_id,
-                messages=[{"role": "user", "content": "hi"}],
-                max_tokens=128,
-            )
-            return {"success": True, "message": f"Successfully connected to {model_id}"}
 
         elif provider_type == "anthropic":
-            import anthropic
-
-            # Create client with base_url in constructor for proper initialization
-            # This is required for compatible APIs like MiniMax
-            client_kwargs = {"auth_token": api_key}
-            if base_url:
-                client_kwargs["base_url"] = base_url
-
-            client = anthropic.Anthropic(**client_kwargs)
-
-            response = client.messages.create(
-                model=model_id,
-                max_tokens=128,
-                messages=[{"role": "user", "content": "hi"}],
+            return _test_anthropic_connection(
+                model_id, api_key, base_url, custom_headers, model_category_type
             )
-            return {"success": True, "message": f"Successfully connected to {model_id}"}
 
         elif provider_type == "gemini":
-            import httpx
-
-            # Gemini uses REST API with API key in header
-            gemini_base_url = base_url or "https://generativelanguage.googleapis.com"
-            gemini_base_url = gemini_base_url.rstrip("/")
-
-            # Build URL for generateContent endpoint
-            if "/v1beta" in gemini_base_url or "/v1" in gemini_base_url:
-                url = f"{gemini_base_url}/models/{model_id}:generateContent"
-            else:
-                url = f"{gemini_base_url}/v1beta/models/{model_id}:generateContent"
-
-            headers = {
-                "Content-Type": "application/json",
-                "x-goog-api-key": api_key,
-            }
-
-            payload = {
-                "contents": [{"role": "user", "parts": [{"text": "hi"}]}],
-                "generationConfig": {"maxOutputTokens": 128},
-            }
-
-            with httpx.Client(timeout=30.0) as client:
-                response = client.post(url, json=payload, headers=headers)
-                response.raise_for_status()
-
-            return {"success": True, "message": f"Successfully connected to {model_id}"}
+            return _test_gemini_connection(
+                model_id, api_key, base_url, custom_headers, model_category_type
+            )
 
         else:
             return {"success": False, "message": "Unsupported provider type"}
@@ -404,6 +373,172 @@ def test_model_connection(
     except Exception as e:
         logger.error(f"Model connection test failed: {str(e)}")
         return {"success": False, "message": f"Connection failed: {str(e)}"}
+
+
+def _test_openai_connection(
+    model_id: str,
+    api_key: str,
+    base_url: Optional[str],
+    custom_headers: dict,
+    model_category_type: str,
+) -> dict:
+    """Test OpenAI-compatible API connection based on model category type."""
+    import openai
+
+    client = openai.OpenAI(
+        api_key=api_key,
+        base_url=base_url or "https://api.openai.com/v1",
+        default_headers=custom_headers if custom_headers else None,
+    )
+
+    if model_category_type == "embedding":
+        # Test embedding endpoint
+        response = client.embeddings.create(
+            model=model_id,
+            input="test",
+        )
+        return {
+            "success": True,
+            "message": f"Successfully connected to embedding model {model_id}",
+        }
+
+    elif model_category_type == "tts":
+        # TTS models can't be easily tested without audio output
+        # Just verify the model exists by making a minimal request
+        # Note: This will fail but we can check the error type
+        try:
+            # Try to create speech - this will consume minimal tokens
+            response = client.audio.speech.create(
+                model=model_id,
+                voice="alloy",
+                input="hi",
+            )
+            return {
+                "success": True,
+                "message": f"Successfully connected to TTS model {model_id}",
+            }
+        except openai.NotFoundError:
+            return {"success": False, "message": f"TTS model {model_id} not found"}
+
+    elif model_category_type == "stt":
+        # STT models require audio input, hard to test without actual audio
+        # Return a message indicating manual verification is needed
+        return {
+            "success": True,
+            "message": f"STT model {model_id} configured. Audio transcription test requires actual audio input.",
+        }
+
+    elif model_category_type == "rerank":
+        # Rerank models are typically not standard OpenAI API
+        # They may use custom endpoints
+        return {
+            "success": True,
+            "message": f"Rerank model {model_id} configured. Please verify with actual rerank request.",
+        }
+
+    else:
+        # Default: LLM - use chat completions
+        response = client.chat.completions.create(
+            model=model_id,
+            messages=[{"role": "user", "content": "hi"}],
+            max_tokens=128,
+        )
+        return {"success": True, "message": f"Successfully connected to {model_id}"}
+
+
+def _test_anthropic_connection(
+    model_id: str,
+    api_key: str,
+    base_url: Optional[str],
+    custom_headers: dict,
+    model_category_type: str,
+) -> dict:
+    """Test Anthropic API connection."""
+    import anthropic
+
+    # Anthropic currently only supports LLM models
+    if model_category_type not in ["llm", None, ""]:
+        return {
+            "success": False,
+            "message": f"Anthropic provider does not support {model_category_type} models",
+        }
+
+    # Create client with base_url in constructor for proper initialization
+    # This is required for compatible APIs like MiniMax
+    client_kwargs = {"api_key": api_key}
+    if base_url:
+        client_kwargs["base_url"] = base_url
+    if custom_headers:
+        client_kwargs["default_headers"] = custom_headers
+
+    client = anthropic.Anthropic(**client_kwargs)
+
+    response = client.messages.create(
+        model=model_id,
+        max_tokens=128,
+        messages=[{"role": "user", "content": "hi"}],
+    )
+    return {"success": True, "message": f"Successfully connected to {model_id}"}
+
+
+def _test_gemini_connection(
+    model_id: str,
+    api_key: str,
+    base_url: Optional[str],
+    custom_headers: dict,
+    model_category_type: str,
+) -> dict:
+    """Test Gemini API connection based on model category type."""
+    import httpx
+
+    gemini_base_url = base_url or "https://generativelanguage.googleapis.com"
+    gemini_base_url = gemini_base_url.rstrip("/")
+
+    headers = {
+        "Content-Type": "application/json",
+        "x-goog-api-key": api_key,
+    }
+    # Merge custom headers (custom headers take precedence)
+    if custom_headers:
+        headers.update(custom_headers)
+
+    if model_category_type == "embedding":
+        # Gemini embedding endpoint
+        if "/v1beta" in gemini_base_url or "/v1" in gemini_base_url:
+            url = f"{gemini_base_url}/models/{model_id}:embedContent"
+        else:
+            url = f"{gemini_base_url}/v1beta/models/{model_id}:embedContent"
+
+        payload = {
+            "content": {"parts": [{"text": "test"}]},
+        }
+
+        with httpx.Client(timeout=30.0) as client:
+            response = client.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+
+        return {
+            "success": True,
+            "message": f"Successfully connected to embedding model {model_id}",
+        }
+
+    else:
+        # Default: LLM - use generateContent
+        if "/v1beta" in gemini_base_url or "/v1" in gemini_base_url:
+            url = f"{gemini_base_url}/models/{model_id}:generateContent"
+        else:
+            url = f"{gemini_base_url}/v1beta/models/{model_id}:generateContent"
+
+        payload = {
+            "contents": [{"role": "user", "parts": [{"text": "hi"}]}],
+            "generationConfig": {"maxOutputTokens": 128},
+        }
+
+        with httpx.Client(timeout=30.0) as client:
+            response = client.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+
+        return {"success": True, "message": f"Successfully connected to {model_id}"}
 
 
 @router.get("/compatible")

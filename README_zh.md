@@ -140,6 +140,9 @@ graph LR
 2. **启动平台**
    ```bash
    docker-compose up -d
+   
+   # 可选：启用 RAG 功能（需要 Elasticsearch）
+   # docker compose --profile rag up -d
    ```
 
 3. **访问 Web 界面**
@@ -319,6 +322,13 @@ wegent/
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/johnny0120">
+            <img src="https://avatars.githubusercontent.com/u/15564476?v=4" width="80;" alt="johnny0120"/>
+            <br />
+            <sub><b>Johnny0120</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/moqimoqidea">
             <img src="https://avatars.githubusercontent.com/u/39821951?v=4" width="80;" alt="moqimoqidea"/>
             <br />
@@ -338,13 +348,6 @@ wegent/
             <br />
             <sub><b>Fengkuizhi</b></sub>
         </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/johnny0120">
-            <img src="https://avatars.githubusercontent.com/u/15564476?v=4" width="80;" alt="johnny0120"/>
-            <br />
-            <sub><b>johnny0120</b></sub>
-        </a>
     </td></tr>
 <tr>
     <td align="center">
@@ -352,6 +355,20 @@ wegent/
             <img src="https://avatars.githubusercontent.com/u/77268?v=4" width="80;" alt="jolestar"/>
             <br />
             <sub><b>Jolestar</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/andrewzq777">
+            <img src="https://avatars.githubusercontent.com/u/223815624?v=4" width="80;" alt="andrewzq777"/>
+            <br />
+            <sub><b>andrewzq777</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/graindt">
+            <img src="https://avatars.githubusercontent.com/u/3962041?v=4" width="80;" alt="graindt"/>
+            <br />
+            <sub><b>graindt</b></sub>
         </a>
     </td></tr>
 </table>

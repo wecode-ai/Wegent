@@ -17,6 +17,7 @@ import { ModelListWithScope } from '@/features/settings/components/ModelListWith
 import { ShellListWithScope } from '@/features/settings/components/ShellListWithScope';
 import { TeamListWithScope } from '@/features/settings/components/TeamListWithScope';
 import ApiKeyList from '@/features/settings/components/ApiKeyList';
+import { RetrieverListWithScope } from '@/features/settings/components/RetrieverListWithScope';
 import { useTranslation } from '@/hooks/useTranslation';
 import { GithubStarButton } from '@/features/layout/GithubStarButton';
 import { ThemeToggle } from '@/features/theme/ThemeToggle';
@@ -114,6 +115,7 @@ function SettingsContent() {
   );
 
   // Render content based on active tab
+  // Render content based on active tab
   const currentComponent = useMemo(() => {
     switch (activeTab) {
       case 'personal-models':
@@ -122,6 +124,8 @@ function SettingsContent() {
         return <ShellListWithScope scope="personal" />;
       case 'personal-team':
         return <TeamListWithScope scope="personal" />;
+      case 'personal-retrievers':
+        return <RetrieverListWithScope scope="personal" />;
       case 'group-manager':
         return <GroupManager />;
       case 'group-models':
@@ -148,6 +152,14 @@ function SettingsContent() {
             onGroupChange={setSelectedGroup}
           />
         );
+      case 'group-retrievers':
+        return (
+          <RetrieverListWithScope
+            scope="group"
+            selectedGroup={selectedGroup}
+            onGroupChange={setSelectedGroup}
+          />
+        );
       case 'integrations':
         return <GitHubIntegration />;
       case 'general':
@@ -159,7 +171,6 @@ function SettingsContent() {
         return <TeamListWithScope scope="personal" />;
     }
   }, [activeTab, selectedGroup]);
-
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
       {/* Resizable sidebar with TaskSidebar */}
