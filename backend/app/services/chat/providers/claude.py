@@ -134,15 +134,44 @@ class ClaudeProvider(LLMProvider):
         return None
 
     def format_tools(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Format tools for Claude API (uses input_schema)."""
-        return [
-            {
-                "name": t.get("function", {}).get("name"),
-                "description": t.get("function", {}).get("description"),
-                "input_schema": t.get("function", {}).get("parameters"),
-            }
-            for t in tools
-        ]
+        """
+        Format tools for Claude API (uses input_schema).
+
+        If tools are already in Claude format (have 'input_schema' key),
+        they are returned as-is. Otherwise, they are converted from OpenAI format.
+        """
+        if not tools:
+            return tools
+
+        formatted = []
+        for tool in tools:
+            # Check if already in Claude format (has input_schema)
+            if "input_schema" in tool and "name" in tool:
+                formatted.append(tool)
+            # Check if it's in OpenAI format (has 'function' key)
+            elif "function" in tool:
+                func = tool.get("function", {})
+                formatted.append(
+                    {
+                        "name": func.get("name"),
+                        "description": func.get("description"),
+                        "input_schema": func.get("parameters"),
+                    }
+                )
+            # Check if it's a raw tool definition (has name, description, parameters)
+            elif "name" in tool and "parameters" in tool:
+                formatted.append(
+                    {
+                        "name": tool["name"],
+                        "description": tool.get("description"),
+                        "input_schema": tool["parameters"],
+                    }
+                )
+            else:
+                # Unknown format, pass through
+                formatted.append(tool)
+
+        return formatted
 
     async def stream_chat(
         self,
