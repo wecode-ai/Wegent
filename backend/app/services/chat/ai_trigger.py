@@ -10,18 +10,19 @@ It decouples the AI response logic from message saving, allowing for:
 - Different AI backends (direct chat, executor, queue-based)
 - Future extensibility (e.g., queue-based processing)
 - Clean separation of concerns
+
+Now uses LangGraphChatService for direct chat streaming.
 """
 
 import asyncio
 import logging
-from typing import Any, Dict, Optional
+from typing import Any
 
-from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.subtask import Subtask
 from app.models.user import User
-from app.schemas.kind import Bot, Shell, Task, Team
+from app.schemas.kind import Team
 
 logger = logging.getLogger(__name__)
 
@@ -63,8 +64,11 @@ async def trigger_ai_response(
         namespace: ChatNamespace instance for emitting events
     """
     logger.info(
-        f"[ai_trigger] Triggering AI response: task_id={task.id}, "
-        f"subtask_id={assistant_subtask.id}, supports_direct_chat={supports_direct_chat}"
+        "[ai_trigger] Triggering AI response: task_id=%d, "
+        "subtask_id=%d, supports_direct_chat=%s",
+        task.id,
+        assistant_subtask.id,
+        supports_direct_chat,
     )
 
     if supports_direct_chat:
@@ -84,7 +88,7 @@ async def trigger_ai_response(
         # AI response is handled by executor_manager
         # The executor_manager polls for PENDING tasks and processes them
         logger.info(
-            f"[ai_trigger] Non-direct chat, AI response handled by executor_manager"
+            "[ai_trigger] Non-direct chat, AI response handled by executor_manager"
         )
 
 
@@ -99,14 +103,14 @@ async def _trigger_direct_chat(
     namespace: Any,
 ) -> None:
     """
-    Trigger direct chat (Chat Shell) AI response.
+    Trigger direct chat (Chat Shell) AI response using LangGraphChatService.
 
     Emits chat:start event and starts streaming in background task.
     """
     from app.api.ws.events import ServerEvents
 
     # Emit chat:start event
-    logger.info(f"[ai_trigger] Emitting chat:start event")
+    logger.info("[ai_trigger] Emitting chat:start event")
     await namespace.emit(
         ServerEvents.CHAT_START,
         {
@@ -115,7 +119,7 @@ async def _trigger_direct_chat(
         },
         room=task_room,
     )
-    logger.info(f"[ai_trigger] chat:start emitted")
+    logger.info("[ai_trigger] chat:start emitted")
 
     # Extract data from ORM objects before starting background task
     # This prevents DetachedInstanceError
@@ -129,52 +133,51 @@ async def _trigger_direct_chat(
         "user_name": user.user_name,
     }
 
-    # Start streaming in background task
-    logger.info(f"[ai_trigger] Starting background stream task")
+    # Start streaming in background task using LangGraphChatService
+    logger.info("[ai_trigger] Starting background stream task with LangGraph")
     stream_task = asyncio.create_task(
-        _stream_chat_response(
+        _stream_chat_response_langgraph(
             task_id=task.id,
             subtask_id=assistant_subtask.id,
             team_data=team_data,
             user_data=user_data,
             message=message,
             payload=payload,
+            task_room=task_room,
             namespace=namespace,
         )
     )
     namespace._active_streams[assistant_subtask.id] = stream_task
-    logger.info(f"[ai_trigger] Background stream task started")
+    logger.info("[ai_trigger] Background stream task started")
 
 
-async def _stream_chat_response(
+async def _stream_chat_response_langgraph(
     task_id: int,
     subtask_id: int,
-    team_data: Dict[str, Any],
-    user_data: Dict[str, Any],
+    team_data: dict[str, Any],
+    user_data: dict[str, Any],
     message: str,
     payload: Any,
+    task_room: str,
     namespace: Any,
-):
+) -> None:
     """
-    Stream chat response to task room.
+    Stream chat response using LangGraphChatService.
 
-    This is the actual streaming logic, moved from ChatNamespace.
+    This replaces the original _stream_chat_response with LangGraph-based implementation.
     """
     from app.api.ws.events import ServerEvents
-    from app.services.chat.chat_service import chat_service
     from app.services.chat.model_resolver import (
         build_default_headers_with_placeholders,
         get_bot_system_prompt,
         get_model_config_for_bot,
     )
-    from app.services.chat.session_manager import session_manager
-    from app.services.chat.ws_emitter import get_ws_emitter
+    from app.services.langgraph_chat.service import (
+        WebSocketStreamConfig,
+        langgraph_chat_service,
+    )
 
     db = SessionLocal()
-    task_room = f"task:{task_id}"
-    offset = 0
-    full_response = ""
-    mcp_session = None  # Initialize for cleanup in finally block
 
     try:
         # Get first bot for model config
@@ -188,7 +191,7 @@ async def _stream_chat_response(
                 Kind.kind == "Bot",
                 Kind.name == first_member.botRef.name,
                 Kind.namespace == first_member.botRef.namespace,
-                Kind.is_active == True,
+                Kind.is_active,
             )
             .first()
         )
@@ -239,27 +242,6 @@ async def _stream_chat_response(
                     message, attachment
                 )
 
-        # Prepare tools
-        all_tools = []
-        if payload.enable_web_search and settings.WEB_SEARCH_ENABLED:
-            from app.services.chat.tools import get_web_search_tool
-
-            # Pass the search engine selected by user
-            web_search_tool = get_web_search_tool(engine_name=payload.search_engine)
-            if web_search_tool:
-                all_tools.append(web_search_tool)
-        # Load MCP tools if enabled
-        from app.services.chat.tools import get_mcp_session
-
-        mcp_session = await get_mcp_session(task_id)
-        if mcp_session:
-            all_tools.extend(mcp_session.get_tools())
-
-        # Initialize tool handler if we have any tools
-        from app.services.chat.tool_handler import ToolHandler
-
-        tool_handler = ToolHandler(all_tools) if all_tools else None
-
         # Build data sources for placeholder replacement
         bot_spec = bot.json.get("spec", {}) if bot.json else {}
         agent_config = bot_spec.get("agent_config", {})
@@ -285,181 +267,33 @@ async def _stream_chat_response(
             )
             model_config["default_headers"] = processed_headers
 
-        # Register stream for cancellation
-        cancel_event = await session_manager.register_stream(subtask_id)
-
-        # Update status to RUNNING
-        from app.services.chat.db_handler import db_handler
-
-        await db_handler.update_subtask_status(subtask_id, "RUNNING")
-
-        # Get streaming response from chat service
-        from app.services.chat.base import get_http_client
-        from app.services.chat.message_builder import message_builder
-        from app.services.chat.providers import get_provider
-        from app.services.chat.providers.base import ChunkType
-
-        # Check if this is a group chat - get history from database with user names
-        is_group_chat = payload.is_group_chat
-        if is_group_chat:
-            logger.info(
-                f"[ai_trigger] Getting group chat history for task_id={task_id}"
-            )
-            history = await chat_service._get_group_chat_history(task_id)
-            logger.info(
-                f"[ai_trigger] Got group chat history: count={len(history)}, "
-                f"roles={[m.get('role') for m in history]}"
-            )
-            # Apply truncation for group chat
-            history = chat_service._truncate_group_chat_history(history, task_id)
-            logger.info(f"[ai_trigger] After truncation: count={len(history)}")
-        else:
-            # For regular chat, get history from Redis
-            history = await session_manager.get_chat_history(task_id)
-
-        messages = message_builder.build_messages(history, final_message, system_prompt)
-        logger.info(
-            f"[ai_trigger] Built messages: total={len(messages)}, "
-            f"roles={[m.get('role') for m in messages]}"
+        # Create WebSocket stream config
+        ws_config = WebSocketStreamConfig(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            task_room=task_room,
+            user_id=user_data["id"],
+            user_name=user_data["user_name"],
+            is_group_chat=payload.is_group_chat,
+            enable_web_search=payload.enable_web_search,
+            search_engine=payload.search_engine,
         )
 
-        client = await get_http_client()
-        provider = get_provider(model_config, client)
-
-        if not provider:
-            await namespace.emit(
-                ServerEvents.CHAT_ERROR,
-                {"subtask_id": subtask_id, "error": "Failed to create provider"},
-                room=task_room,
-            )
-            return
-
-        # Stream response
-        last_redis_save = asyncio.get_event_loop().time()
-        last_db_save = asyncio.get_event_loop().time()
-        redis_save_interval = settings.STREAMING_REDIS_SAVE_INTERVAL
-        db_save_interval = settings.STREAMING_DB_SAVE_INTERVAL
-
-        # Use tool calling flow if tools are available
-        if tool_handler and tool_handler.has_tools:
-            stream_gen = chat_service._handle_tool_calling_flow(
-                provider, messages, tool_handler, cancel_event
-            )
-        else:
-            stream_gen = provider.stream_chat(messages, cancel_event, tools=None)
-
-        async for chunk in stream_gen:
-            if cancel_event.is_set() or await session_manager.is_cancelled(subtask_id):
-                # Cancelled
-                await namespace.emit(
-                    ServerEvents.CHAT_CANCELLED,
-                    {"subtask_id": subtask_id},
-                    room=task_room,
-                )
-                break
-
-            if chunk.type == ChunkType.CONTENT and chunk.content:
-                full_response += chunk.content
-
-                # Emit chunk
-                await namespace.emit(
-                    ServerEvents.CHAT_CHUNK,
-                    {
-                        "subtask_id": subtask_id,
-                        "content": chunk.content,
-                        "offset": offset,
-                    },
-                    room=task_room,
-                )
-                offset += len(chunk.content)
-
-                # Save to Redis periodically
-                current_time = asyncio.get_event_loop().time()
-                if current_time - last_redis_save >= redis_save_interval:
-                    await session_manager.save_streaming_content(
-                        subtask_id, full_response
-                    )
-                    await session_manager.publish_streaming_chunk(
-                        subtask_id, chunk.content
-                    )
-                    last_redis_save = current_time
-
-                # Save to DB periodically
-                if current_time - last_db_save >= db_save_interval:
-                    await db_handler.save_partial_response(subtask_id, full_response)
-                    last_db_save = current_time
-
-            elif chunk.type == ChunkType.ERROR:
-                await namespace.emit(
-                    ServerEvents.CHAT_ERROR,
-                    {
-                        "subtask_id": subtask_id,
-                        "error": chunk.error or "Unknown error",
-                    },
-                    room=task_room,
-                )
-                await db_handler.update_subtask_status(
-                    subtask_id, "FAILED", error=chunk.error
-                )
-                return
-
-        # Stream completed
-        if not cancel_event.is_set():
-            result = {"value": full_response}
-
-            # Save to Redis and DB FIRST before emitting done event
-            await session_manager.save_streaming_content(subtask_id, full_response)
-            await session_manager.publish_streaming_done(subtask_id, result)
-
-            # Save chat history
-            await session_manager.append_user_and_assistant_messages(
-                task_id, message, full_response
-            )
-
-            # Update subtask to completed
-            await db_handler.update_subtask_status(
-                subtask_id, "COMPLETED", result={"value": full_response}
-            )
-
-            # Emit done event AFTER database is updated
-            await namespace.emit(
-                ServerEvents.CHAT_DONE,
-                {
-                    "task_id": task_id,
-                    "subtask_id": subtask_id,
-                    "offset": offset,
-                    "result": result,
-                },
-                room=task_room,
-            )
-
-            # Also notify user room for multi-device sync
-            ws_emitter = get_ws_emitter()
-            if ws_emitter:
-                await ws_emitter.emit_chat_bot_complete(
-                    user_id=user_data["id"],
-                    task_id=task_id,
-                    subtask_id=subtask_id,
-                    content=full_response,
-                    result=result,
-                )
+        # Use LangGraphChatService for streaming
+        await langgraph_chat_service.stream_to_websocket(
+            message=final_message,
+            model_config=model_config,
+            system_prompt=system_prompt,
+            config=ws_config,
+            namespace=namespace,
+        )
 
     except Exception as e:
-        logger.exception(f"[ai_trigger] Stream error subtask={subtask_id}: {e}")
+        logger.exception("[ai_trigger] Stream error subtask=%d: %s", subtask_id, e)
         await namespace.emit(
             ServerEvents.CHAT_ERROR,
             {"subtask_id": subtask_id, "error": str(e)},
             room=task_room,
         )
     finally:
-        # Cleanup
-        await session_manager.unregister_stream(subtask_id)
-        await session_manager.delete_streaming_content(subtask_id)
-        if subtask_id in namespace._active_streams:
-            del namespace._active_streams[subtask_id]
-        # Cleanup MCP session when stream ends
-        if mcp_session:
-            from app.services.chat.tools import cleanup_mcp_session
-
-            await cleanup_mcp_session(task_id)
         db.close()

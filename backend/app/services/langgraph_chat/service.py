@@ -10,15 +10,18 @@ This module provides a LangGraph-based chat service that uses:
 - Database-based model resolution
 - Redis session management
 - SSE streaming responses
+- WebSocket streaming for real-time chat
 """
 
 import asyncio
 import json
 import logging
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass, field
 from typing import Any, TypeVar
 
 from fastapi.responses import StreamingResponse
+from langchain_core.tools.base import BaseTool
 
 from app.core.config import settings
 
@@ -31,6 +34,22 @@ from .tools import ToolRegistry, WebSearchTool
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+
+@dataclass
+class WebSocketStreamConfig:
+    """Configuration for WebSocket streaming."""
+
+    task_id: int
+    subtask_id: int
+    task_room: str
+    user_id: int
+    user_name: str
+    is_group_chat: bool = False
+    enable_web_search: bool = False
+    search_engine: str | None = None
+    extra_tools: list[BaseTool] = field(default_factory=list)
+
 
 # SSE response headers
 _SSE_HEADERS = {
@@ -83,6 +102,7 @@ class LangGraphChatService:
     - Tool execution
     - Multi-step reasoning loops
     - Streaming with cancellation support
+    - WebSocket streaming for real-time chat
     """
 
     def __init__(
@@ -97,12 +117,13 @@ class LangGraphChatService:
         Args:
             workspace_root: Root directory for file operations
             enable_skills: Enable built-in file skills
-            enable_web_search: Enable web search tool
+            enable_web_search: Enable web search tool (global default)
             enable_checkpointing: Enable state checkpointing
         """
         self.workspace_root = workspace_root
         self.tool_registry = ToolRegistry()
         self.enable_checkpointing = enable_checkpointing
+        self._enable_web_search_default = enable_web_search
 
         # Register built-in skills
         if enable_skills:
@@ -111,7 +132,7 @@ class LangGraphChatService:
             self.tool_registry.register(FileReaderSkill(workspace_root=workspace_root))
             self.tool_registry.register(FileListSkill(workspace_root=workspace_root))
 
-        # Register web search if enabled
+        # Register web search if enabled globally
         if enable_web_search and settings.WEB_SEARCH_ENABLED:
             self.tool_registry.register(WebSearchTool())
 
@@ -119,6 +140,7 @@ class LangGraphChatService:
         self,
         model_config: dict[str, Any],
         max_iterations: int = 10,
+        extra_tools: list[BaseTool] | None = None,
         **model_kwargs,
     ) -> LangGraphAgentBuilder:
         """Create a LangGraph agent with the given model config.
@@ -126,6 +148,7 @@ class LangGraphChatService:
         Args:
             model_config: Model configuration from database
             max_iterations: Max tool loop iterations
+            extra_tools: Additional tools to include (e.g., MCP tools)
             **model_kwargs: Additional model parameters
 
         Returns:
@@ -134,10 +157,22 @@ class LangGraphChatService:
         # Create LangChain model from config
         llm = LangChainModelFactory.create_from_config(model_config, **model_kwargs)
 
+        # Create a temporary registry with extra tools
+        tool_registry = ToolRegistry()
+
+        # Copy existing tools
+        for tool in self.tool_registry.get_all():
+            tool_registry.register(tool)
+
+        # Add extra tools
+        if extra_tools:
+            for tool in extra_tools:
+                tool_registry.register(tool)
+
         # Create agent builder
         return LangGraphAgentBuilder(
             llm=llm,
-            tool_registry=self.tool_registry,
+            tool_registry=tool_registry,
             max_iterations=max_iterations,
             enable_checkpointing=self.enable_checkpointing,
         )
@@ -376,6 +411,254 @@ class LangGraphChatService:
             "tool_results": final_state.get("tool_results", []),
             "iterations": final_state.get("iteration", 0),
         }
+
+    # ==================== WebSocket Streaming API ====================
+
+    async def stream_to_websocket(
+        self,
+        message: str | dict[str, Any],
+        model_config: dict[str, Any],
+        system_prompt: str,
+        config: WebSocketStreamConfig,
+        namespace: Any,
+        max_iterations: int = 10,
+    ) -> None:
+        """Stream chat response via WebSocket.
+
+        This method is designed to replace the streaming logic in ai_trigger.py.
+        It handles:
+        - MCP tool loading and cleanup
+        - Dynamic web search tool
+        - Shutdown manager integration
+        - WebSocket event emission (chat:chunk, chat:done, chat:error, chat:cancelled)
+
+        Args:
+            message: User message (string or dict)
+            model_config: Model configuration from ModelResolver
+            system_prompt: System prompt
+            config: WebSocket streaming configuration
+            namespace: ChatNamespace instance for emitting events
+            max_iterations: Max tool loop iterations
+        """
+        from app.api.ws.events import ServerEvents
+        from app.core.shutdown import shutdown_manager
+        from app.services.chat.ws_emitter import get_ws_emitter
+
+        subtask_id = config.subtask_id
+        task_id = config.task_id
+        task_room = config.task_room
+
+        semaphore = _get_chat_semaphore()
+        acquired = False
+        mcp_client = None
+        extra_tools: list[BaseTool] = list(config.extra_tools)
+        offset = 0
+        full_response = ""
+
+        try:
+            # Register with shutdown manager
+            if not await shutdown_manager.register_stream(subtask_id):
+                logger.warning(
+                    "[WS_STREAM] Rejecting stream during shutdown: subtask_id=%d",
+                    subtask_id,
+                )
+                await namespace.emit(
+                    ServerEvents.CHAT_ERROR,
+                    {"subtask_id": subtask_id, "error": "Server is shutting down"},
+                    room=task_room,
+                )
+                return
+
+            # Acquire semaphore with timeout
+            try:
+                acquired = await asyncio.wait_for(semaphore.acquire(), timeout=5.0)
+            except asyncio.TimeoutError:
+                await namespace.emit(
+                    ServerEvents.CHAT_ERROR,
+                    {
+                        "subtask_id": subtask_id,
+                        "error": "Too many concurrent chat requests",
+                    },
+                    room=task_room,
+                )
+                await storage_handler.update_subtask_status(
+                    subtask_id, "FAILED", error="Too many concurrent chat requests"
+                )
+                return
+
+            # Register stream for cancellation
+            cancel_event = await storage_handler.register_stream(subtask_id)
+
+            # Update status to RUNNING
+            await storage_handler.update_subtask_status(subtask_id, "RUNNING")
+
+            # Load MCP tools if enabled
+            if settings.CHAT_MCP_ENABLED:
+                mcp_client = await self._load_mcp_tools(task_id)
+                if mcp_client:
+                    extra_tools.extend(mcp_client.get_tools())
+
+            # Add web search tool if enabled for this request
+            if config.enable_web_search and settings.WEB_SEARCH_ENABLED:
+                web_search_tool = WebSearchTool()
+                extra_tools.append(web_search_tool)
+
+            # Get chat history
+            if config.is_group_chat:
+                history = await self._get_group_chat_history(task_id)
+                history = self._truncate_history(history)
+            else:
+                history = await storage_handler.get_chat_history(task_id)
+
+            # Build messages
+            messages = MessageConverter.build_messages(history, message, system_prompt)
+
+            # Create agent with extra tools
+            agent = self._create_agent(
+                model_config, max_iterations, extra_tools=extra_tools
+            )
+
+            # Stream tokens
+            last_redis_save = asyncio.get_event_loop().time()
+            last_db_save = asyncio.get_event_loop().time()
+
+            async for token in agent.stream_tokens(messages, cancel_event=cancel_event):
+                # Check for cancellation or shutdown
+                if cancel_event.is_set() or shutdown_manager.is_shutting_down:
+                    await namespace.emit(
+                        ServerEvents.CHAT_CANCELLED,
+                        {"subtask_id": subtask_id},
+                        room=task_room,
+                    )
+                    await storage_handler.update_subtask_status(subtask_id, "CANCELLED")
+                    return
+
+                full_response += token
+
+                # Emit chunk via WebSocket
+                await namespace.emit(
+                    ServerEvents.CHAT_CHUNK,
+                    {
+                        "subtask_id": subtask_id,
+                        "content": token,
+                        "offset": offset,
+                    },
+                    room=task_room,
+                )
+                offset += len(token)
+
+                # Periodic saves
+                current_time = asyncio.get_event_loop().time()
+                if (
+                    current_time - last_redis_save
+                    >= settings.STREAMING_REDIS_SAVE_INTERVAL
+                ):
+                    await storage_handler.save_streaming_content(
+                        subtask_id, full_response
+                    )
+                    last_redis_save = current_time
+                if current_time - last_db_save >= settings.STREAMING_DB_SAVE_INTERVAL:
+                    await storage_handler.save_partial_response(
+                        subtask_id, full_response
+                    )
+                    last_db_save = current_time
+
+            # Stream completed successfully
+            result = {"value": full_response}
+
+            # Save final state
+            await storage_handler.save_streaming_content(subtask_id, full_response)
+            await storage_handler.publish_streaming_done(subtask_id, result)
+            await storage_handler.append_messages(task_id, message, full_response)
+            await storage_handler.update_subtask_status(
+                subtask_id, "COMPLETED", result=result
+            )
+
+            # Emit done event
+            await namespace.emit(
+                ServerEvents.CHAT_DONE,
+                {
+                    "task_id": task_id,
+                    "subtask_id": subtask_id,
+                    "offset": offset,
+                    "result": result,
+                },
+                room=task_room,
+            )
+
+            # Notify user room for multi-device sync
+            ws_emitter = get_ws_emitter()
+            if ws_emitter:
+                await ws_emitter.emit_chat_bot_complete(
+                    user_id=config.user_id,
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    content=full_response,
+                    result=result,
+                )
+
+        except Exception as e:
+            logger.exception("[WS_STREAM] subtask=%s error", subtask_id)
+            await namespace.emit(
+                ServerEvents.CHAT_ERROR,
+                {"subtask_id": subtask_id, "error": str(e)},
+                room=task_room,
+            )
+            await storage_handler.update_subtask_status(
+                subtask_id, "FAILED", error=str(e)
+            )
+
+        finally:
+            # Cleanup
+            await storage_handler.unregister_stream(subtask_id)
+            await storage_handler.delete_streaming_content(subtask_id)
+            await shutdown_manager.unregister_stream(subtask_id)
+
+            if subtask_id in getattr(namespace, "_active_streams", {}):
+                del namespace._active_streams[subtask_id]
+
+            if mcp_client:
+                await mcp_client.disconnect()
+
+            if acquired:
+                semaphore.release()
+
+    async def _load_mcp_tools(self, task_id: int) -> Any:
+        """Load MCP tools for a task.
+
+        Args:
+            task_id: Task ID for session management
+
+        Returns:
+            MCPClient instance or None
+        """
+        try:
+            from .tools.mcp import MCPClient
+
+            mcp_servers_config = getattr(settings, "CHAT_MCP_SERVERS", "")
+            if not mcp_servers_config:
+                return None
+
+            import json as json_module
+
+            config_data = json_module.loads(mcp_servers_config)
+            servers = config_data.get("mcpServers", config_data)
+
+            if not servers:
+                return None
+
+            client = MCPClient(servers)
+            await client.connect()
+            logger.info(
+                "[MCP] Loaded %d tools for task %d",
+                len(client.get_tools()),
+                task_id,
+            )
+            return client
+
+        except Exception:
+            logger.exception("[MCP] Failed to load MCP tools for task %d", task_id)
+            return None
 
     # ==================== Helper Methods ====================
 
