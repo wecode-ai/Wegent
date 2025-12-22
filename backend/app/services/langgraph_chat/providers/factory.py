@@ -2,9 +2,14 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""LLM provider factory."""
+"""LLM provider factory.
 
-from ..config import config
+NOTE: This module is deprecated. Use app.services.langgraph_chat.models.LangChainModelFactory instead.
+The new model factory uses database-based model configuration.
+"""
+
+import warnings
+
 from .anthropic_provider import AnthropicProvider
 from .base import BaseLLMProvider
 from .google_provider import GoogleProvider
@@ -12,7 +17,10 @@ from .openai_provider import OpenAIProvider
 
 
 class ProviderFactory:
-    """Factory for creating LLM providers."""
+    """Factory for creating LLM providers.
+
+    DEPRECATED: Use LangChainModelFactory with database-resolved model config instead.
+    """
 
     _provider_map = {
         "openai": OpenAIProvider,
@@ -30,9 +38,11 @@ class ProviderFactory:
     ) -> BaseLLMProvider:
         """Create LLM provider based on model name.
 
+        DEPRECATED: Use LangChainModelFactory.create_from_config() instead.
+
         Args:
             model: Model identifier (e.g., gpt-4o, claude-3-5-sonnet, gemini-2.0-flash)
-            api_key: Optional API key override
+            api_key: API key (required, no longer auto-resolved from config)
             base_url: Optional base URL override
             **kwargs: Additional provider-specific parameters
 
@@ -40,20 +50,21 @@ class ProviderFactory:
             BaseLLMProvider instance
 
         Raises:
-            ValueError: If provider cannot be determined from model name
+            ValueError: If provider cannot be determined or API key not provided
         """
+        warnings.warn(
+            "ProviderFactory is deprecated. Use LangChainModelFactory.create_from_config() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
         provider_type = cls._detect_provider_type(model)
 
         if provider_type not in cls._provider_map:
             raise ValueError(f"Unknown provider for model: {model}")
 
-        # Get API key from config if not provided
         if not api_key:
-            api_key = cls._get_default_api_key(provider_type)
-
-        # Get base URL from config if not provided
-        if not base_url:
-            base_url = cls._get_default_base_url(provider_type)
+            raise ValueError(f"API key is required for provider: {provider_type}")
 
         provider_class = cls._provider_map[provider_type]
         return provider_class(model=model, api_key=api_key, base_url=base_url, **kwargs)
@@ -78,42 +89,3 @@ class ProviderFactory:
             return "google"
 
         raise ValueError(f"Cannot detect provider from model name: {model}")
-
-    @classmethod
-    def _get_default_api_key(cls, provider_type: str) -> str:
-        """Get default API key from config.
-
-        Args:
-            provider_type: Provider type
-
-        Returns:
-            API key string
-
-        Raises:
-            ValueError: If API key not configured
-        """
-        key_map = {
-            "openai": config.OPENAI_API_KEY,
-            "anthropic": config.ANTHROPIC_API_KEY,
-            "google": config.GOOGLE_API_KEY,
-        }
-
-        api_key = key_map.get(provider_type, "")
-        if not api_key:
-            raise ValueError(f"API key not configured for provider: {provider_type}")
-
-        return api_key
-
-    @classmethod
-    def _get_default_base_url(cls, provider_type: str) -> str | None:
-        """Get default base URL from config.
-
-        Args:
-            provider_type: Provider type
-
-        Returns:
-            Base URL string or None
-        """
-        if provider_type == "openai":
-            return config.OPENAI_BASE_URL
-        return None

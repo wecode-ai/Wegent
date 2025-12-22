@@ -11,8 +11,6 @@ from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
-from ...config import config
-
 
 class FileReaderInput(BaseModel):
     """Input schema for file reader tool."""
@@ -53,7 +51,8 @@ class FileReaderSkill(BaseTool):
         """
         super().__init__(**kwargs)
         self.workspace_root = workspace_root
-        self.max_lines = max_lines or config.FILE_READER_MAX_LINES
+        # Use default of 500 lines max if not specified
+        self.max_lines = max_lines or 500
 
     def _run(
         self,
