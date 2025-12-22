@@ -42,6 +42,29 @@ services:
       retries: 5
       start_period: 10s
 
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: wegent-elasticsearch
+    restart: always
+    profiles:
+      - rag
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    networks:
+      - wegent-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
   backend:
     # build:
       # dockerfile: docker/backend/Dockerfile
@@ -138,6 +161,8 @@ volumes:
   mysql_data:
     driver: local
   redis_data:
+    driver: local
+  es_data:
     driver: local
 
 networks:

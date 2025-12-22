@@ -80,8 +80,15 @@ dependencies = [
     "beautifulsoup4>=4.12.0",
     "emoji>=2.9.0",
     "mcp>=1.0.0",
+
     # WebSocket support
     "python-socketio>=5.10.0",
+
+    # RAG (Retrieval-Augmented Generation) dependencies
+    "llama-index-core>=0.10.0",
+    "llama-index-vector-stores-elasticsearch>=0.2.0",
+    "llama-index-embeddings-openai>=0.1.0",
+    "llama-index-readers-file>=0.1.0",
 ]
 
 [dependency-groups]

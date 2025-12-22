@@ -139,6 +139,9 @@ graph LR
 2. **Start the platform**
    ```bash
    docker-compose up -d
+   
+   # Optional: Enable RAG features with Elasticsearch
+   # docker compose --profile rag up -d
    ```
 
 3. **Access the web interface**

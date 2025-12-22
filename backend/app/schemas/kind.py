@@ -6,9 +6,73 @@
 Kubernetes-style API schemas for cloud-native agent management
 """
 from datetime import datetime
+from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from pydantic import AliasChoices, BaseModel, Field
+
+
+# Model Category Type Enum (different from resource type public/user/group)
+class ModelCategoryType(str, Enum):
+    """
+    Model category type enumeration for distinguishing model capabilities.
+
+    - LLM: Large Language Models for chat/code (default, backward compatible)
+    - TTS: Text-to-Speech models
+    - STT: Speech-to-Text models
+    - EMBEDDING: Vector embedding models
+    - RERANK: Reranking models
+    """
+
+    LLM = "llm"
+    TTS = "tts"
+    STT = "stt"
+    EMBEDDING = "embedding"
+    RERANK = "rerank"
+
+
+# Type-specific configurations
+class TTSConfig(BaseModel):
+    """TTS-specific configuration"""
+
+    voice: Optional[str] = Field(
+        None, description="Voice ID (e.g., 'alloy', 'echo' for OpenAI)"
+    )
+    speed: Optional[float] = Field(
+        1.0, ge=0.25, le=4.0, description="Speech speed (0.25-4.0)"
+    )
+    output_format: Optional[str] = Field("mp3", description="Output format (mp3, wav)")
+
+
+class STTConfig(BaseModel):
+    """STT-specific configuration"""
+
+    language: Optional[str] = Field(
+        None, description="Language code (e.g., 'en', 'zh')"
+    )
+    transcription_format: Optional[str] = Field(
+        "text", description="Response format (text, srt, vtt)"
+    )
+
+
+class EmbeddingConfig(BaseModel):
+    """Embedding-specific configuration"""
+
+    dimensions: Optional[int] = Field(
+        None, description="Output dimensions (e.g., 1536)"
+    )
+    encoding_format: Optional[str] = Field(
+        "float", description="Encoding format (float, base64)"
+    )
+
+
+class RerankConfig(BaseModel):
+    """Rerank-specific configuration"""
+
+    top_n: Optional[int] = Field(None, description="Number of top results to return")
+    return_documents: Optional[bool] = Field(
+        True, description="Whether to return document texts"
+    )
 
 
 class ObjectMeta(BaseModel):
@@ -72,6 +136,25 @@ class ModelSpec(BaseModel):
     )
     protocol: Optional[str] = (
         None  # Model protocol type: 'openai', 'claude', etc. Required for custom configs
+    )
+
+    # New fields for multi-type model support
+    modelType: Optional[ModelCategoryType] = Field(
+        ModelCategoryType.LLM,
+        description="Model category type (llm, tts, stt, embedding, rerank). Defaults to 'llm' for backward compatibility.",
+    )
+    ttsConfig: Optional[TTSConfig] = Field(
+        None, description="TTS-specific configuration (when modelType='tts')"
+    )
+    sttConfig: Optional[STTConfig] = Field(
+        None, description="STT-specific configuration (when modelType='stt')"
+    )
+    embeddingConfig: Optional[EmbeddingConfig] = Field(
+        None,
+        description="Embedding-specific configuration (when modelType='embedding')",
+    )
+    rerankConfig: Optional[RerankConfig] = Field(
+        None, description="Rerank-specific configuration (when modelType='rerank')"
     )
 
 
@@ -416,3 +499,72 @@ class KnowledgeBaseList(BaseModel):
     apiVersion: str = "agent.wecode.io/v1"
     kind: str = "KnowledgeBaseList"
     items: List[KnowledgeBase]
+
+
+# Retriever CRD schemas
+class IndexStrategy(BaseModel):
+    """Index naming strategy configuration"""
+
+    mode: str  # 'fixed', 'rolling', 'per_dataset', 'per_user'
+    fixedName: Optional[str] = None  # For 'fixed' mode: single index name
+    rollingStep: Optional[int] = None  # For 'rolling' mode: step size (e.g., 5000)
+    prefix: Optional[str] = None  # For 'per_dataset'/'per_user' mode: index prefix
+
+
+class StorageConfig(BaseModel):
+    """Storage backend configuration"""
+
+    type: str  # 'elasticsearch' or 'qdrant'
+    url: str  # Connection URL
+    username: Optional[str] = None  # Username for authentication
+    password: Optional[str] = None  # Password for authentication
+    apiKey: Optional[str] = (
+        None  # API key for authentication (alternative to username/password)
+    )
+    indexStrategy: IndexStrategy  # Index naming strategy
+    ext: Optional[Dict[str, Any]] = None  # Additional provider-specific config
+
+
+class RetrievalMethod(BaseModel):
+    """Retrieval method configuration"""
+
+    enabled: bool = True
+    defaultWeight: Optional[float] = None  # Default weight for hybrid search
+
+
+class RetrieverSpec(BaseModel):
+    """Retriever specification"""
+
+    storageConfig: StorageConfig
+    retrievalMethods: Dict[str, RetrievalMethod] = Field(
+        default_factory=lambda: {
+            "vector": RetrievalMethod(enabled=True, defaultWeight=0.7),
+            "keyword": RetrievalMethod(enabled=True, defaultWeight=0.3),
+            "hybrid": RetrievalMethod(enabled=True),
+        }
+    )
+    description: Optional[str] = None
+
+
+class Retriever(BaseModel):
+    """Retriever CRD"""
+
+    apiVersion: str = "agent.wecode.io/v1"
+    kind: str = "Retriever"
+    metadata: ObjectMeta
+    spec: RetrieverSpec
+
+
+class RetrieverRef(BaseModel):
+    """Reference to a Retriever"""
+
+    name: str
+    namespace: str = "default"
+
+
+class RetrieverList(BaseModel):
+    """Retriever list"""
+
+    apiVersion: str = "agent.wecode.io/v1"
+    kind: str = "RetrieverList"
+    items: List[Retriever]

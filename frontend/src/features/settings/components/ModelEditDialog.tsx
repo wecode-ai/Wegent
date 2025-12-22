@@ -26,7 +26,15 @@ import {
 import { Loader2 } from 'lucide-react';
 import { EyeIcon, EyeSlashIcon, BeakerIcon } from '@heroicons/react/24/outline';
 import { useTranslation } from '@/hooks/useTranslation';
-import { modelApis, ModelCRD } from '@/apis/models';
+import {
+  modelApis,
+  ModelCRD,
+  ModelCategoryType,
+  TTSConfig,
+  STTConfig,
+  EmbeddingConfig,
+  RerankConfig,
+} from '@/apis/models';
 
 interface ModelEditDialogProps {
   open: boolean;
@@ -36,6 +44,50 @@ interface ModelEditDialogProps {
   groupName?: string;
   scope?: 'personal' | 'group';
 }
+
+// Model category type options
+const MODEL_CATEGORY_OPTIONS: { value: ModelCategoryType; labelKey: string }[] = [
+  { value: 'llm', labelKey: 'models.model_category_type_llm' },
+  // { value: 'tts', labelKey: 'models.model_category_type_tts' },
+  // { value: 'stt', labelKey: 'models.model_category_type_stt' },
+  { value: 'embedding', labelKey: 'models.model_category_type_embedding' },
+  { value: 'rerank', labelKey: 'models.model_category_type_rerank' },
+];
+
+// Protocol options by model category type
+const PROTOCOL_BY_CATEGORY: Record<
+  ModelCategoryType,
+  { value: string; label: string; hint?: string }[]
+> = {
+  llm: [
+    { value: 'openai', label: 'OpenAI', hint: 'Agno' },
+    { value: 'anthropic', label: 'Anthropic', hint: 'Claude Code' },
+    { value: 'gemini', label: 'Gemini', hint: 'Google' },
+  ],
+  tts: [
+    { value: 'openai', label: 'OpenAI TTS' },
+    { value: 'azure', label: 'Azure Cognitive Services' },
+    { value: 'elevenlabs', label: 'ElevenLabs' },
+    { value: 'custom', label: 'Custom API' },
+  ],
+  stt: [
+    { value: 'openai', label: 'OpenAI Whisper' },
+    { value: 'azure', label: 'Azure Speech Services' },
+    { value: 'google', label: 'Google Cloud STT' },
+    { value: 'custom', label: 'Custom API' },
+  ],
+  embedding: [
+    { value: 'openai', label: 'OpenAI Embeddings' },
+    { value: 'cohere', label: 'Cohere Embed' },
+    { value: 'jina', label: 'Jina AI' },
+    { value: 'custom', label: 'Custom API' },
+  ],
+  rerank: [
+    { value: 'cohere', label: 'Cohere Rerank' },
+    { value: 'jina', label: 'Jina Reranker' },
+    { value: 'custom', label: 'Custom API' },
+  ],
+};
 
 const OPENAI_MODEL_OPTIONS = [
   { value: 'gpt-4o', label: 'gpt-4o (Recommended)' },
@@ -74,7 +126,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   // Form state
   const [modelIdName, setModelIdName] = useState('');
   const [displayName, setDisplayName] = useState('');
-  const [providerType, setProviderType] = useState<'openai' | 'anthropic' | 'gemini'>('openai');
+  const [modelCategoryType, setModelCategoryType] = useState<ModelCategoryType>('llm');
+  const [providerType, setProviderType] = useState<string>('openai');
   const [modelId, setModelId] = useState('');
   const [customModelId, setCustomModelId] = useState('');
   const [apiKey, setApiKey] = useState('');
@@ -85,17 +138,48 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
 
+  // Type-specific config state
+  // TTS
+  const [ttsVoice, setTtsVoice] = useState('');
+  const [ttsSpeed, setTtsSpeed] = useState<number>(1.0);
+  const [ttsOutputFormat, setTtsOutputFormat] = useState<'mp3' | 'wav'>('mp3');
+  // STT
+  const [sttLanguage, setSttLanguage] = useState('');
+  const [sttTranscriptionFormat, setSttTranscriptionFormat] = useState<'text' | 'srt' | 'vtt'>(
+    'text'
+  );
+  // Embedding
+  const [embeddingDimensions, setEmbeddingDimensions] = useState<number | undefined>(undefined);
+  const [embeddingEncodingFormat, setEmbeddingEncodingFormat] = useState<'float' | 'base64'>(
+    'float'
+  );
+  // Rerank
+  const [rerankTopN, setRerankTopN] = useState<number | undefined>(undefined);
+  const [rerankReturnDocuments, setRerankReturnDocuments] = useState(true);
+
   // Reset form when dialog opens/closes or model changes
   useEffect(() => {
     if (open) {
       if (model) {
         setModelIdName(model.metadata.name || '');
         setDisplayName(model.metadata.displayName || '');
+        // Set model category type
+        setModelCategoryType(model.spec.modelType || 'llm');
         const modelType = model.spec.modelConfig?.env?.model;
-        if (modelType === 'openai') setProviderType('openai');
-        else if (modelType === 'gemini') setProviderType('gemini');
-        else if (modelType === 'claude') setProviderType('anthropic');
-        else setProviderType('openai');
+        // Map model type to provider type
+        if (modelType === 'claude') {
+          setProviderType('anthropic');
+        } else if (
+          modelType === 'openai' ||
+          modelType === 'gemini' ||
+          modelType === 'cohere' ||
+          modelType === 'jina' ||
+          modelType === 'custom'
+        ) {
+          setProviderType(modelType);
+        } else {
+          setProviderType('openai'); // Default fallback
+        }
         setApiKey(model.spec.modelConfig?.env?.api_key || '');
         setBaseUrl(model.spec.modelConfig?.env?.base_url || '');
         const headers = model.spec.modelConfig?.env?.custom_headers;
@@ -104,29 +188,86 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         } else {
           setCustomHeaders('');
         }
+        // Load type-specific configs
+        if (model.spec.ttsConfig) {
+          setTtsVoice(model.spec.ttsConfig.voice || '');
+          setTtsSpeed(model.spec.ttsConfig.speed || 1.0);
+          setTtsOutputFormat((model.spec.ttsConfig.output_format as 'mp3' | 'wav') || 'mp3');
+        }
+        if (model.spec.sttConfig) {
+          setSttLanguage(model.spec.sttConfig.language || '');
+          setSttTranscriptionFormat(
+            (model.spec.sttConfig.transcription_format as 'text' | 'srt' | 'vtt') || 'text'
+          );
+        }
+        if (model.spec.embeddingConfig) {
+          setEmbeddingDimensions(model.spec.embeddingConfig.dimensions);
+          setEmbeddingEncodingFormat(
+            (model.spec.embeddingConfig.encoding_format as 'float' | 'base64') || 'float'
+          );
+        }
+        if (model.spec.rerankConfig) {
+          setRerankTopN(model.spec.rerankConfig.top_n);
+          setRerankReturnDocuments(model.spec.rerankConfig.return_documents ?? true);
+        }
       } else {
         // Reset for new model
         setModelIdName('');
         setDisplayName('');
+        setModelCategoryType('llm');
         setProviderType('openai');
         setModelId('');
         setCustomModelId('');
         setApiKey('');
         setBaseUrl('');
         setCustomHeaders('');
+        // Reset type-specific configs
+        setTtsVoice('');
+        setTtsSpeed(1.0);
+        setTtsOutputFormat('mp3');
+        setSttLanguage('');
+        setSttTranscriptionFormat('text');
+        setEmbeddingDimensions(undefined);
+        setEmbeddingEncodingFormat('float');
+        setRerankTopN(undefined);
+        setRerankReturnDocuments(true);
       }
       setCustomHeadersError('');
       setShowApiKey(false);
     }
   }, [open, model]);
 
-  // Determine model options based on provider
+  // Determine model options based on model category type and provider
+  // For embedding/rerank, only show "Custom..." option since they don't use preset LLM models
   const modelOptions =
-    providerType === 'openai'
-      ? OPENAI_MODEL_OPTIONS
-      : providerType === 'gemini'
-        ? GEMINI_MODEL_OPTIONS
-        : ANTHROPIC_MODEL_OPTIONS;
+    modelCategoryType === 'embedding' || modelCategoryType === 'rerank'
+      ? [{ value: 'custom', label: 'Custom...' }]
+      : providerType === 'openai'
+        ? OPENAI_MODEL_OPTIONS
+        : providerType === 'gemini'
+          ? GEMINI_MODEL_OPTIONS
+          : ANTHROPIC_MODEL_OPTIONS;
+
+  // Get available protocols for current category type
+  const availableProtocols = PROTOCOL_BY_CATEGORY[modelCategoryType] || [];
+
+  // Handle model category type change
+  const handleModelCategoryTypeChange = (value: ModelCategoryType) => {
+    setModelCategoryType(value);
+    // Reset provider to first available option for new category
+    const protocols = PROTOCOL_BY_CATEGORY[value];
+    if (protocols && protocols.length > 0) {
+      setProviderType(protocols[0].value);
+    }
+    // For embedding/rerank, automatically set to custom mode
+    if (value === 'embedding' || value === 'rerank') {
+      setModelId('custom');
+      setCustomModelId('');
+    } else {
+      setModelId('');
+      setCustomModelId('');
+    }
+  };
 
   // Set model ID when model changes
   useEffect(() => {
@@ -143,16 +284,19 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     }
   }, [model, modelOptions]);
 
-  const handleProviderChange = (value: 'openai' | 'anthropic' | 'gemini') => {
+  const handleProviderChange = (value: string) => {
     setProviderType(value);
     setModelId('');
     setCustomModelId('');
-    if (value === 'openai') {
-      setBaseUrl('https://api.openai.com/v1');
-    } else if (value === 'gemini') {
-      setBaseUrl('https://generativelanguage.googleapis.com');
-    } else {
-      setBaseUrl('https://api.anthropic.com');
+    // Only set default base URL for LLM models
+    if (modelCategoryType === 'llm') {
+      if (value === 'openai') {
+        setBaseUrl('https://api.openai.com/v1');
+      } else if (value === 'gemini') {
+        setBaseUrl('https://generativelanguage.googleapis.com');
+      } else {
+        setBaseUrl('https://api.anthropic.com');
+      }
     }
   };
 
@@ -166,13 +310,25 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
       return;
     }
 
+    // Parse custom headers for test connection
+    const parsedHeaders = validateCustomHeaders(customHeaders);
+    if (parsedHeaders === null) {
+      toast({
+        variant: 'destructive',
+        title: t('models.errors.custom_headers_invalid'),
+      });
+      return;
+    }
+
     setTesting(true);
     try {
       const result = await modelApis.testConnection({
-        provider_type: providerType,
+        provider_type: providerType as 'openai' | 'anthropic' | 'gemini',
         model_id: finalModelId,
         api_key: apiKey,
         base_url: baseUrl || undefined,
+        custom_headers: Object.keys(parsedHeaders).length > 0 ? parsedHeaders : undefined,
+        model_category_type: modelCategoryType,
       });
 
       if (result.success) {
@@ -283,6 +439,50 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
 
     setSaving(true);
     try {
+      // Build type-specific config based on modelCategoryType
+      const ttsConfig: TTSConfig | undefined =
+        modelCategoryType === 'tts'
+          ? {
+              voice: ttsVoice || undefined,
+              speed: ttsSpeed,
+              output_format: ttsOutputFormat,
+            }
+          : undefined;
+
+      const sttConfig: STTConfig | undefined =
+        modelCategoryType === 'stt'
+          ? {
+              language: sttLanguage || undefined,
+              transcription_format: sttTranscriptionFormat,
+            }
+          : undefined;
+
+      const embeddingConfig: EmbeddingConfig | undefined =
+        modelCategoryType === 'embedding'
+          ? {
+              dimensions: embeddingDimensions,
+              encoding_format: embeddingEncodingFormat,
+            }
+          : undefined;
+
+      const rerankConfig: RerankConfig | undefined =
+        modelCategoryType === 'rerank'
+          ? {
+              top_n: rerankTopN,
+              return_documents: rerankReturnDocuments,
+            }
+          : undefined;
+
+      // Map provider type to model field value
+      // For LLM: openai -> openai, anthropic -> claude, gemini -> gemini
+      // For embedding/rerank: use provider type directly (openai, cohere, jina, custom)
+      let modelFieldValue = providerType;
+      if (modelCategoryType === 'llm') {
+        if (providerType === 'anthropic') {
+          modelFieldValue = 'claude';
+        }
+      }
+
       const modelCRD: ModelCRD = {
         apiVersion: 'agent.wecode.io/v1',
         kind: 'Model',
@@ -294,12 +494,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         spec: {
           modelConfig: {
             env: {
-              model:
-                providerType === 'openai'
-                  ? 'openai'
-                  : providerType === 'gemini'
-                    ? 'gemini'
-                    : 'claude',
+              model: modelFieldValue,
               model_id: finalModelId,
               api_key: apiKey,
               ...(baseUrl && { base_url: baseUrl }),
@@ -307,6 +502,11 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                 Object.keys(parsedHeaders).length > 0 && { custom_headers: parsedHeaders }),
             },
           },
+          modelType: modelCategoryType,
+          ...(ttsConfig && { ttsConfig }),
+          ...(sttConfig && { sttConfig }),
+          ...(embeddingConfig && { embeddingConfig }),
+          ...(rerankConfig && { rerankConfig }),
         },
         status: {
           state: 'Available',
@@ -354,6 +554,29 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         </DialogHeader>
 
         <div className="space-y-4 py-4">
+          {/* Model Category Type Selector - New */}
+          <div className="space-y-2">
+            <Label htmlFor="modelCategoryType" className="text-sm font-medium">
+              {t('models.model_category_type')} <span className="text-red-400">*</span>
+            </Label>
+            <Select
+              value={modelCategoryType}
+              onValueChange={(value: ModelCategoryType) => handleModelCategoryTypeChange(value)}
+              disabled={isEditing}
+            >
+              <SelectTrigger className="bg-base">
+                <SelectValue placeholder={t('models.select_model_category_type')} />
+              </SelectTrigger>
+              <SelectContent>
+                {MODEL_CATEGORY_OPTIONS.map(option => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {t(option.labelKey)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
           {/* Model ID and Display Name - Two columns */}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
@@ -399,24 +622,16 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                   <SelectValue placeholder={t('models.select_provider')} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="openai">
-                    <div className="flex items-center gap-2">
-                      <span>OpenAI</span>
-                      <span className="text-xs text-text-muted">(Agno)</span>
-                    </div>
-                  </SelectItem>
-                  <SelectItem value="anthropic">
-                    <div className="flex items-center gap-2">
-                      <span>Anthropic</span>
-                      <span className="text-xs text-text-muted">(Claude Code)</span>
-                    </div>
-                  </SelectItem>
-                  <SelectItem value="gemini">
-                    <div className="flex items-center gap-2">
-                      <span>Gemini</span>
-                      <span className="text-xs text-text-muted">(Google)</span>
-                    </div>
-                  </SelectItem>
+                  {availableProtocols.map(protocol => (
+                    <SelectItem key={protocol.value} value={protocol.value}>
+                      <div className="flex items-center gap-2">
+                        <span>{protocol.label}</span>
+                        {protocol.hint && (
+                          <span className="text-xs text-text-muted">({protocol.hint})</span>
+                        )}
+                      </div>
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -508,6 +723,181 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             {customHeadersError && <p className="text-xs text-error">{customHeadersError}</p>}
             <p className="text-xs text-text-muted">{t('models.custom_headers_hint')}</p>
           </div>
+
+          {/* TTS-specific fields */}
+          {modelCategoryType === 'tts' && (
+            <div className="space-y-4 p-4 bg-muted rounded-lg">
+              <h4 className="text-sm font-medium text-text-secondary">TTS Configuration</h4>
+              <div className="grid grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="tts_voice" className="text-sm font-medium">
+                    {t('models.tts_voice')}
+                  </Label>
+                  <Input
+                    id="tts_voice"
+                    value={ttsVoice}
+                    onChange={e => setTtsVoice(e.target.value)}
+                    placeholder="alloy, echo, fable, onyx, nova, shimmer"
+                    className="bg-base"
+                  />
+                  <p className="text-xs text-text-muted">{t('models.tts_voice_hint')}</p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="tts_speed" className="text-sm font-medium">
+                    {t('models.tts_speed')}
+                  </Label>
+                  <Input
+                    id="tts_speed"
+                    type="number"
+                    step="0.1"
+                    min="0.25"
+                    max="4.0"
+                    value={ttsSpeed}
+                    onChange={e => setTtsSpeed(parseFloat(e.target.value) || 1.0)}
+                    className="bg-base"
+                  />
+                  <p className="text-xs text-text-muted">{t('models.tts_speed_hint')}</p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="tts_output_format" className="text-sm font-medium">
+                    {t('models.tts_output_format')}
+                  </Label>
+                  <Select
+                    value={ttsOutputFormat}
+                    onValueChange={(v: 'mp3' | 'wav') => setTtsOutputFormat(v)}
+                  >
+                    <SelectTrigger className="bg-base">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="mp3">MP3</SelectItem>
+                      <SelectItem value="wav">WAV</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* STT-specific fields */}
+          {modelCategoryType === 'stt' && (
+            <div className="space-y-4 p-4 bg-muted rounded-lg">
+              <h4 className="text-sm font-medium text-text-secondary">STT Configuration</h4>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="stt_language" className="text-sm font-medium">
+                    {t('models.stt_language')}
+                  </Label>
+                  <Input
+                    id="stt_language"
+                    value={sttLanguage}
+                    onChange={e => setSttLanguage(e.target.value)}
+                    placeholder="en, zh, es, fr, de, ja, ko"
+                    className="bg-base"
+                  />
+                  <p className="text-xs text-text-muted">{t('models.stt_language_hint')}</p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="stt_format" className="text-sm font-medium">
+                    {t('models.stt_transcription_format')}
+                  </Label>
+                  <Select
+                    value={sttTranscriptionFormat}
+                    onValueChange={(v: 'text' | 'srt' | 'vtt') => setSttTranscriptionFormat(v)}
+                  >
+                    <SelectTrigger className="bg-base">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="text">Text</SelectItem>
+                      <SelectItem value="srt">SRT</SelectItem>
+                      <SelectItem value="vtt">VTT</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Embedding-specific fields */}
+          {modelCategoryType === 'embedding' && (
+            <div className="space-y-4 p-4 bg-muted rounded-lg">
+              <h4 className="text-sm font-medium text-text-secondary">Embedding Configuration</h4>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="embedding_dimensions" className="text-sm font-medium">
+                    {t('models.embedding_dimensions')}
+                  </Label>
+                  <Input
+                    id="embedding_dimensions"
+                    type="number"
+                    value={embeddingDimensions || ''}
+                    onChange={e => setEmbeddingDimensions(parseInt(e.target.value) || undefined)}
+                    placeholder="1536 (OpenAI), 768 (Cohere)"
+                    className="bg-base"
+                  />
+                  <p className="text-xs text-text-muted">{t('models.embedding_dimensions_hint')}</p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="embedding_format" className="text-sm font-medium">
+                    {t('models.embedding_encoding_format')}
+                  </Label>
+                  <Select
+                    value={embeddingEncodingFormat}
+                    onValueChange={(v: 'float' | 'base64') => setEmbeddingEncodingFormat(v)}
+                  >
+                    <SelectTrigger className="bg-base">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="float">Float</SelectItem>
+                      <SelectItem value="base64">Base64</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Rerank-specific fields */}
+          {modelCategoryType === 'rerank' && (
+            <div className="space-y-4 p-4 bg-muted rounded-lg">
+              <h4 className="text-sm font-medium text-text-secondary">Rerank Configuration</h4>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="rerank_top_n" className="text-sm font-medium">
+                    {t('models.rerank_top_n')}
+                  </Label>
+                  <Input
+                    id="rerank_top_n"
+                    type="number"
+                    value={rerankTopN || ''}
+                    onChange={e => setRerankTopN(parseInt(e.target.value) || undefined)}
+                    placeholder="Default: return all"
+                    className="bg-base"
+                  />
+                  <p className="text-xs text-text-muted">{t('models.rerank_top_n_hint')}</p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="rerank_return_docs" className="text-sm font-medium">
+                    {t('models.rerank_return_documents')}
+                  </Label>
+                  <Select
+                    value={rerankReturnDocuments ? 'true' : 'false'}
+                    onValueChange={v => setRerankReturnDocuments(v === 'true')}
+                  >
+                    <SelectTrigger className="bg-base">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="true">Yes</SelectItem>
+                      <SelectItem value="false">No</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         <DialogFooter className="flex items-center justify-between sm:justify-between">
