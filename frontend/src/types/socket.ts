@@ -57,6 +57,8 @@ export interface ChatSendPayload {
   title?: string;
   attachment_id?: number;
   enable_web_search?: boolean;
+  search_engine?: string;
+  enable_clarification?: boolean;
   force_override_bot_model?: string;
   force_override_bot_model_type?: string;
   is_group_chat?: boolean;
@@ -129,6 +131,7 @@ export interface ChatErrorPayload {
 }
 
 export interface ChatCancelledPayload {
+  task_id: number;
   subtask_id: number;
 }
 

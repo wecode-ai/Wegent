@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.user import User
-from app.schemas.kind import Model, Shell
+from app.schemas.kind import Model, ModelCategoryType, Shell
 from app.services.adapters.public_model import public_model_service
 from app.services.kind import kind_service
 
@@ -62,6 +62,9 @@ class UnifiedModel:
         config: Optional[Dict[str, Any]] = None,
         is_active: bool = True,
         namespace: str = "default",
+        model_category_type: Optional[
+            str
+        ] = None,  # New: llm, tts, stt, embedding, rerank
     ):
         self.name = name
         self.type = (
@@ -73,6 +76,9 @@ class UnifiedModel:
         self.config = config or {}
         self.is_active = is_active
         self.namespace = namespace  # Resource namespace (group name or 'default')
+        self.model_category_type = (
+            model_category_type or "llm"
+        )  # Default to 'llm' for backward compatibility
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -85,6 +91,7 @@ class UnifiedModel:
         - provider: Model provider (e.g., 'openai', 'claude')
         - modelId: Model ID
         - namespace: Resource namespace (group name or 'default')
+        - modelCategoryType: Model category type (llm, tts, stt, embedding, rerank)
         """
         return {
             "name": self.name,
@@ -93,6 +100,7 @@ class UnifiedModel:
             "provider": self.provider,
             "modelId": self.model_id,
             "namespace": self.namespace,
+            "modelCategoryType": self.model_category_type,  # New field
         }
 
     def to_full_dict(self) -> Dict[str, Any]:
@@ -123,7 +131,7 @@ class ModelAggregationService:
         Extract model information from CRD format data.
 
         Returns:
-            Dict with keys: provider, model_id, display_name, config
+            Dict with keys: provider, model_id, display_name, config, model_category_type
         """
         if not isinstance(model_data, dict):
             return {
@@ -131,6 +139,7 @@ class ModelAggregationService:
                 "model_id": None,
                 "display_name": None,
                 "config": {},
+                "model_category_type": "llm",
             }
 
         try:
@@ -139,11 +148,17 @@ class ModelAggregationService:
             if not isinstance(env, dict):
                 env = {}
 
+            # Extract model category type (defaults to 'llm' for backward compatibility)
+            model_category_type = "llm"
+            if model_crd.spec.modelType:
+                model_category_type = model_crd.spec.modelType.value
+
             return {
                 "provider": env.get("model"),
                 "model_id": env.get("model_id"),
                 "display_name": model_crd.metadata.displayName,
                 "config": model_crd.spec.modelConfig,
+                "model_category_type": model_category_type,
             }
         except (ValueError, KeyError, AttributeError) as e:
             logger.warning("Failed to extract model info: %s", e)
@@ -152,6 +167,7 @@ class ModelAggregationService:
                 "model_id": None,
                 "display_name": None,
                 "config": {},
+                "model_category_type": "llm",
             }
 
     def _is_model_compatible_with_shell(
@@ -250,6 +266,7 @@ class ModelAggregationService:
         include_config: bool = False,
         scope: str = "personal",
         group_name: Optional[str] = None,
+        model_category_type: Optional[str] = None,  # New: filter by model category type
     ) -> List[Dict[str, Any]]:
         """
         List all available models for the current user with scope support.
@@ -273,6 +290,7 @@ class ModelAggregationService:
             include_config: Whether to include full config in response
             scope: Query scope ('personal', 'group', or 'all')
             group_name: Group name (required when scope='group')
+            model_category_type: Optional model category type filter (llm, tts, stt, embedding, rerank)
 
         Returns:
             List of unified model dictionaries, each containing:
@@ -281,6 +299,7 @@ class ModelAggregationService:
             - displayName: Human-readable name
             - provider: Model provider
             - modelId: Model ID
+            - modelCategoryType: Model category type (llm, tts, stt, embedding, rerank)
         """
         from app.services.group_permission import get_user_groups
 
@@ -352,6 +371,13 @@ class ModelAggregationService:
                 ):
                     continue
 
+                # Filter by model category type if specified
+                if (
+                    model_category_type
+                    and info.get("model_category_type", "llm") != model_category_type
+                ):
+                    continue
+
                 # Deduplicate by name
                 if resource.name in seen_names:
                     continue
@@ -365,6 +391,7 @@ class ModelAggregationService:
                     config=info["config"] if include_config else {},
                     is_active=resource.is_active,
                     namespace=resource.namespace,
+                    model_category_type=info.get("model_category_type", "llm"),
                 )
                 result.append(unified)
                 seen_names[resource.name] = resource_type
@@ -385,9 +412,21 @@ class ModelAggregationService:
             provider = env.get("model") if isinstance(env, dict) else None
             model_id = env.get("model_id") if isinstance(env, dict) else None
 
+            # Extract model category type from public model data
+            public_model_category_type = "llm"  # Default for backward compatibility
+            if isinstance(config, dict):
+                public_model_category_type = config.get("modelType", "llm")
+
             # Filter by shell compatibility if shell_type is provided
             if shell_type and not self._is_model_compatible_with_shell(
                 provider, shell_type, support_model
+            ):
+                continue
+
+            # Filter by model category type if specified
+            if (
+                model_category_type
+                and public_model_category_type != model_category_type
             ):
                 continue
 
@@ -401,6 +440,7 @@ class ModelAggregationService:
                 model_id=model_id,
                 is_active=model_dict.get("is_active", True),
                 namespace="default",
+                model_category_type=public_model_category_type,
             )
 
             # If name already exists as user model, we still add public model

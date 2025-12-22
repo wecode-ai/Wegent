@@ -121,7 +121,8 @@ export default function MessagesArea({
   const { t } = useTranslation('chat');
   const { t: tCommon } = useTranslation('common');
   const { toast } = useToast();
-  const { selectedTaskDetail, refreshSelectedTaskDetail, setSelectedTask } = useTaskContext();
+  const { selectedTaskDetail, refreshSelectedTaskDetail, refreshTasks, setSelectedTask } =
+    useTaskContext();
   const { theme } = useTheme();
   const { user } = useUser();
 
@@ -381,6 +382,14 @@ export default function MessagesArea({
     setSelectedTask(null);
   }, [setSelectedTask]);
 
+  // Handle members changed in group chat panel
+  const handleMembersChanged = useCallback(() => {
+    // Refresh both task list (to move task to correct category)
+    // and task detail (to update is_group_chat flag and enable @ feature)
+    refreshTasks();
+    refreshSelectedTaskDetail(false);
+  }, [refreshTasks, refreshSelectedTaskDetail]);
+
   // Memoize share and export buttons
   const shareButton = useMemo(() => {
     if (!selectedTaskDetail?.id || messages.length === 0) {
@@ -594,6 +603,7 @@ export default function MessagesArea({
           taskTitle={selectedTaskDetail.title || selectedTaskDetail.prompt || 'Untitled Task'}
           currentUserId={user.id}
           onLeave={handleLeaveGroupChat}
+          onMembersChanged={handleMembersChanged}
         />
       )}
     </div>
