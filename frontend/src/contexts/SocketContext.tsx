@@ -154,6 +154,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       forceNew: false,
       // Disable automatic upgrade from polling to websocket
       // This prevents "Invalid transport" errors when switching transports
+      // This prevents "Invalid transport" errors when switching transports
       upgrade: false,
     });
 

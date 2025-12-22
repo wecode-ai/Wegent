@@ -154,7 +154,8 @@ export default function ModelSelector({
     setError(null);
     try {
       // Use unified API to get public, user, and group models
-      const response = await modelApis.getUnifiedModels(undefined, false, 'all');
+      // Filter by 'llm' category type - only LLM models can be used for chat
+      const response = await modelApis.getUnifiedModels(undefined, false, 'all', undefined, 'llm');
       const modelList = (response.data || []).map(unifiedToModel);
       setModels(modelList);
     } catch (err) {

@@ -548,7 +548,9 @@ class ChatNamespace(socketio.AsyncNamespace):
             # - If supports_direct_chat is False: use task_kinds_service.create_task_or_append (sync, for other shells)
             if supports_direct_chat:
                 # Use _create_task_and_subtasks for direct chat (Chat Shell)
-                logger.info(f"[WS] chat:send calling _create_task_and_subtasks (supports_direct_chat=True)...")
+                logger.info(
+                    f"[WS] chat:send calling _create_task_and_subtasks (supports_direct_chat=True)..."
+                )
                 result = await _create_task_and_subtasks(
                     db,
                     user,
@@ -568,7 +570,9 @@ class ChatNamespace(socketio.AsyncNamespace):
                 user_subtask_for_attachment = user_subtask
             else:
                 # Use task_kinds_service.create_task_or_append for non-direct chat
-                logger.info(f"[WS] chat:send calling task_kinds_service.create_task_or_append (supports_direct_chat=False)...")
+                logger.info(
+                    f"[WS] chat:send calling task_kinds_service.create_task_or_append (supports_direct_chat=False)..."
+                )
 
                 # Auto-detect task type based on git_url presence
                 task_type = "code" if payload.git_url else "chat"
@@ -588,7 +592,8 @@ class ChatNamespace(socketio.AsyncNamespace):
                     auto_delete_executor="false",
                     source="chat_shell",
                     model_id=payload.force_override_bot_model,
-                    force_override_bot_model=payload.force_override_bot_model is not None,
+                    force_override_bot_model=payload.force_override_bot_model
+                    is not None,
                 )
 
                 # Call create_task_or_append (synchronous method)
@@ -908,6 +913,35 @@ class ChatNamespace(socketio.AsyncNamespace):
                 flag_modified(task, "json")
 
             db.commit()
+
+            # Broadcast chat:cancelled event to all task room members via WebSocket
+            # This ensures all group chat members see the streaming has stopped
+            from app.services.chat.ws_emitter import get_ws_emitter
+
+            ws_emitter = get_ws_emitter()
+            if ws_emitter:
+                logger.info(
+                    f"[WS] chat:cancel Broadcasting chat:cancelled event for task={subtask.task_id} subtask={payload.subtask_id}"
+                )
+                await ws_emitter.emit_chat_cancelled(
+                    task_id=subtask.task_id, subtask_id=payload.subtask_id
+                )
+            else:
+                logger.warning(
+                    f"[WS] chat:cancel WebSocket emitter not available, cannot broadcast chat:cancelled event"
+                )
+
+            # Notify group chat members about the status change
+            # This ensures all members see the streaming has stopped and status updated
+            if task:
+                # Import helper function from chat.py
+                from app.api.endpoints.adapter.chat import (
+                    _notify_group_members_task_updated,
+                )
+
+                await _notify_group_members_task_updated(
+                    db=db, task=task, sender_user_id=user_id
+                )
 
             return {"success": True}
 
