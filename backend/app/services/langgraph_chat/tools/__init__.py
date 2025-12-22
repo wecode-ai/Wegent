@@ -6,9 +6,9 @@
 
 from .base import ToolRegistry, global_registry
 from .builtin import (
-    WebSearchTool,
-    FileReaderSkill,
     FileListSkill,
+    FileReaderSkill,
+    WebSearchTool,
 )
 
 __all__ = [

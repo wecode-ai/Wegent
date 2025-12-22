@@ -549,7 +549,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             if supports_direct_chat:
                 # Use _create_task_and_subtasks for direct chat (Chat Shell)
                 logger.info(
-                    "[WS] chat:send calling _create_task_and_subtasks (supports_direct_chat=True)..."
+                    f"[WS] chat:send calling _create_task_and_subtasks (supports_direct_chat=True)..."
                 )
                 result = await _create_task_and_subtasks(
                     db,
@@ -795,6 +795,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             {
                 "subtask_id": user_subtask.id,
                 "task_id": task_id,
+                "message_id": user_subtask.message_id,
                 "role": "user",
                 "content": message,
                 "sender": {
@@ -913,6 +914,35 @@ class ChatNamespace(socketio.AsyncNamespace):
                 flag_modified(task, "json")
 
             db.commit()
+
+            # Broadcast chat:cancelled event to all task room members via WebSocket
+            # This ensures all group chat members see the streaming has stopped
+            from app.services.chat.ws_emitter import get_ws_emitter
+
+            ws_emitter = get_ws_emitter()
+            if ws_emitter:
+                logger.info(
+                    f"[WS] chat:cancel Broadcasting chat:cancelled event for task={subtask.task_id} subtask={payload.subtask_id}"
+                )
+                await ws_emitter.emit_chat_cancelled(
+                    task_id=subtask.task_id, subtask_id=payload.subtask_id
+                )
+            else:
+                logger.warning(
+                    f"[WS] chat:cancel WebSocket emitter not available, cannot broadcast chat:cancelled event"
+                )
+
+            # Notify group chat members about the status change
+            # This ensures all members see the streaming has stopped and status updated
+            if task:
+                # Import helper function from chat.py
+                from app.api.endpoints.adapter.chat import (
+                    _notify_group_members_task_updated,
+                )
+
+                await _notify_group_members_task_updated(
+                    db=db, task=task, sender_user_id=user_id
+                )
 
             return {"success": True}
 

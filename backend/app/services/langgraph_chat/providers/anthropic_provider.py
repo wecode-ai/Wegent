@@ -19,9 +19,7 @@ from .base import BaseLLMProvider, CompletionResponse, Message, StreamChunk
 class AnthropicProvider(BaseLLMProvider):
     """Anthropic LLM provider using official SDK."""
 
-    def __init__(
-        self, model: str, api_key: str, base_url: str | None = None, **kwargs
-    ):
+    def __init__(self, model: str, api_key: str, base_url: str | None = None, **kwargs):
         """Initialize Anthropic provider.
 
         Args:

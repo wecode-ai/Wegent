@@ -30,7 +30,9 @@ class FileReaderSkill(BaseTool):
     """
 
     name: str = "read_file"
-    description: str = "Read file content with pagination support for large files. Returns specified lines range with metadata about total lines and whether more content is available."
+    description: str = (
+        "Read file content with pagination support for large files. Returns specified lines range with metadata about total lines and whether more content is available."
+    )
     args_schema: type[BaseModel] = FileReaderInput
 
     # Instance attributes
@@ -205,7 +207,9 @@ class FileListSkill(BaseTool):
     """Skill for listing files in a directory."""
 
     name: str = "list_files"
-    description: str = "List files in a directory with optional pattern filtering. Returns file names, sizes, and modification times."
+    description: str = (
+        "List files in a directory with optional pattern filtering. Returns file names, sizes, and modification times."
+    )
     args_schema: type[BaseModel] = FileListInput
 
     # Instance attributes

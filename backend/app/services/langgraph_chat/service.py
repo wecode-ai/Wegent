@@ -136,7 +136,8 @@ class n:
         # Initialize Skills if enabled
         if enable_skills and config.SKILLS_ENABLED:
             # Register skills directly to global registry
-            from .tools.builtin import FileReaderSkill, FileListSkill
+            from .tools.builtin import FileListSkill, FileReaderSkill
+
             self.tool_registry.register(FileReaderSkill(workspace_root=workspace_root))
             self.tool_registry.register(FileListSkill(workspace_root=workspace_root))
 

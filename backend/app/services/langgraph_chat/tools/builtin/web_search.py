@@ -22,7 +22,9 @@ class WebSearchTool(BaseTool):
     """Web search tool that integrates with backend search service."""
 
     name: str = "web_search"
-    description: str = "Search the web for information. Returns a list of relevant web pages with titles, URLs, and snippets."
+    description: str = (
+        "Search the web for information. Returns a list of relevant web pages with titles, URLs, and snippets."
+    )
     args_schema: type[BaseModel] = WebSearchInput
 
     def _run(

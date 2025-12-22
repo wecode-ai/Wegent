@@ -263,8 +263,8 @@ export default function PreviewAdjustStep({
     const loadModels = async () => {
       setIsLoadingModels(true);
       try {
-        // Get models compatible with Chat shell type
-        const response = await modelApis.getUnifiedModels('Chat');
+        // Get models compatible with Chat shell type, filtered to LLM category only
+        const response = await modelApis.getUnifiedModels('Chat', false, 'all', undefined, 'llm');
         setAvailableModels(response.data || []);
 
         // If no model is selected and we have models, select the first one

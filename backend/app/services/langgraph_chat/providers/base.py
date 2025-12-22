@@ -41,9 +41,7 @@ class CompletionResponse(BaseModel):
 class BaseLLMProvider(ABC):
     """Base class for LLM providers."""
 
-    def __init__(
-        self, model: str, api_key: str, base_url: str | None = None, **kwargs
-    ):
+    def __init__(self, model: str, api_key: str, base_url: str | None = None, **kwargs):
         """Initialize provider.
 
         Args:
