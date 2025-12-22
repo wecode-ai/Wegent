@@ -180,11 +180,14 @@ class WebSocketEmitter:
         """
         await self.sio.emit(
             ServerEvents.CHAT_CANCELLED,
-            {"subtask_id": subtask_id},
+            {
+                "task_id": task_id,
+                "subtask_id": subtask_id,
+            },
             room=f"task:{task_id}",
             namespace=self.namespace,
         )
-        logger.debug(f"[WS] emit chat:cancelled task={task_id} subtask={subtask_id}")
+        logger.info(f"[WS] emit chat:cancelled task={task_id} subtask={subtask_id}")
 
     # ============================================================
     # Non-streaming Messages (to task room, exclude sender)
