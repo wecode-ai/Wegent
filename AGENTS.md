@@ -944,6 +944,9 @@ POST /api/rag/test-connection?retriever_name=my-es-retriever&retriever_namespace
   - `CHAT_MCP_SERVERS` - JSON configuration for MCP servers (similar to Claude Desktop format)
     - Supported server types: `stdio`, `sse`, `streamable-http`
     - Example: `{"mcpServers":{"image-gen":{"type":"sse","url":"http://localhost:8080/sse"}}}`
+- `CHAT_TOOL_*` - Tool calling flow limits for Chat Shell
+  - `CHAT_TOOL_MAX_REQUESTS` - Maximum LLM requests in tool calling flow (default: 5)
+  - `CHAT_TOOL_MAX_TIME_SECONDS` - Maximum time for tool calling flow in seconds (default: 30.0)
 - `GROUP_CHAT_HISTORY_*` - Group chat history truncation configuration
   - `GROUP_CHAT_HISTORY_FIRST_MESSAGES` - Number of first messages to keep for AI context (default: 10)
   - `GROUP_CHAT_HISTORY_LAST_MESSAGES` - Number of last messages to keep for AI context (default: 20)

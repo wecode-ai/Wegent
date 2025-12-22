@@ -40,6 +40,8 @@ class StreamChunk:
     content: str = ""
     tool_call: dict[str, Any] | None = None
     error: str | None = None
+    # Gemini thought_signature for function calling (required for Gemini 3 Pro)
+    thought_signature: str | None = None
 
 
 @dataclass

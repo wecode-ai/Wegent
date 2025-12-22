@@ -7,6 +7,7 @@
 import asyncio
 import json
 import logging
+import time
 from typing import Any, AsyncGenerator
 
 from fastapi.responses import StreamingResponse
@@ -283,63 +284,105 @@ class ChatService(ChatServiceBase):
         messages: list[dict[str, Any]],
         tool_handler: ToolHandler,
         cancel_event: asyncio.Event,
-        max_depth: int = 5,
     ) -> AsyncGenerator[StreamChunk, None]:
-        """Handle tool calling flow with recursion depth limiting."""
+        """
+        Handle tool calling flow with request count and time limiting.
+
+        The flow suppresses all intermediate content and only outputs the final
+        response after tool execution is complete. The model is asked to summarize
+        the tool results in the final step.
+
+        Args:
+            provider: LLM provider instance
+            messages: Conversation messages
+            tool_handler: Tool handler instance
+            cancel_event: Cancellation event
+
+        Yields:
+            StreamChunk objects for the final response only
+        """
+        # Use settings
+        max_requests = settings.CHAT_TOOL_MAX_REQUESTS
+        max_time_seconds = settings.CHAT_TOOL_MAX_TIME_SECONDS
+
         tools = tool_handler.format_for_provider(provider.provider_name)
+        start_time = time.monotonic()
+        request_count = 0
+        all_tool_results: list[dict[str, Any]] = []
 
-        for current_depth in range(max_depth):
-            is_final_step = current_depth >= max_depth - 1
+        # Extract original question content for summary request
+        original_question = messages[-1]
 
-            # Final step - stream directly
-            if is_final_step:
-                async for chunk in provider.stream_chat(
-                    messages, cancel_event, tools=None
-                ):
-                    if chunk.type in (ChunkType.CONTENT, ChunkType.ERROR) and (
-                        chunk.content or chunk.error
-                    ):
-                        yield chunk
+        while request_count < max_requests:
+            # Check time limit
+            elapsed = time.monotonic() - start_time
+            if elapsed >= max_time_seconds:
+                logger.warning(
+                    "Tool calling flow exceeded time limit: %.1fs >= %.1fs",
+                    elapsed,
+                    max_time_seconds,
+                )
+                break
+
+            # Check cancellation
+            if cancel_event.is_set():
                 return
 
-            # Intermediate step - accumulate and check for tool calls
-            accumulated_content, content_chunks, accumulator = (
-                "",
-                [],
-                ToolCallAccumulator(),
+            request_count += 1
+            logger.debug(
+                "Tool calling request %d/%d, elapsed %.1fs/%.1fs",
+                request_count,
+                max_requests,
+                elapsed,
+                max_time_seconds,
             )
+            accumulator = ToolCallAccumulator()
 
             async for chunk in provider.stream_chat(
                 messages, cancel_event, tools=tools
             ):
-                if chunk.type == ChunkType.CONTENT and chunk.content:
-                    accumulated_content += chunk.content
-                    content_chunks.append(chunk)
-                elif chunk.type == ChunkType.TOOL_CALL and chunk.tool_call:
-                    accumulator.add_chunk(chunk.tool_call)
-                elif chunk.type == ChunkType.ERROR:
-                    yield chunk
-                    return
+                if chunk.type == ChunkType.TOOL_CALL and chunk.tool_call:
+                    # Pass thought_signature for Gemini 3 Pro function calling support
+                    accumulator.add_chunk(chunk.tool_call, chunk.thought_signature)
 
-            # No tool calls - yield accumulated content
+            # No tool calls - exit loop to generate final response
             if not accumulator.has_calls():
-                for chunk in content_chunks:
-                    yield chunk
-                return
+                break
 
-            # Execute tool calls
+            # Execute tool calls (suppress intermediate content)
             tool_calls = accumulator.get_calls()
-            if accumulated_content:
-                logger.debug(
-                    "Tool calling step %s: suppressing %s chars",
-                    current_depth,
-                    len(accumulated_content),
-                )
+            # Add assistant message with tool calls
+            messages.append(ToolHandler.build_assistant_message(None, tool_calls))
+            # Execute tools and collect results
+            tool_results = await tool_handler.execute_all(tool_calls)
+            messages.extend(tool_results)
+            all_tool_results.extend(tool_results)
 
-            messages.append(
-                ToolHandler.build_assistant_message(accumulated_content, tool_calls)
+            logger.info(
+                "Executed %d tool calls in step %d",
+                len(tool_calls),
+                request_count,
             )
-            messages.extend(await tool_handler.execute_all(tool_calls))
+
+        logger.info(
+            "Tool calling flow completed (requests=%d, time=%.1fs, tool_calls=%d), "
+            "generating final response",
+            request_count,
+            time.monotonic() - start_time,
+            len(all_tool_results),
+        )
+
+        # If tool execution occurred, add summary request
+        if all_tool_results:
+            summary_request = (
+                "Based on the tool execution results above, directly answer my "
+                "original question in the same locale as the question. "
+            )
+            messages.append({"role": "user", "content": summary_request})
+            messages.append(original_question)
+        # Final request without tools to get the response
+        async for chunk in provider.stream_chat(messages, cancel_event, tools=None):
+            yield chunk
 
     async def _get_group_chat_history(self, task_id: int) -> list[dict[str, Any]]:
         """

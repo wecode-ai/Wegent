@@ -53,8 +53,37 @@ class OpenAIProvider(LLMProvider):
         return processed
 
     def format_tools(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Format tools for OpenAI API (pass through)."""
-        return tools
+        """
+        Format tools for OpenAI API.
+
+        If tools are already in OpenAI format (have 'type' and 'function' keys),
+        they are returned as-is. Otherwise, they are wrapped in the OpenAI format.
+        """
+        if not tools:
+            return tools
+
+        formatted = []
+        for tool in tools:
+            # Check if already in OpenAI format
+            if tool.get("type") == "function" and "function" in tool:
+                formatted.append(tool)
+            # Check if it's a raw tool definition (has name, description, parameters)
+            elif "name" in tool and "description" in tool:
+                formatted.append(
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": tool["name"],
+                            "description": tool["description"],
+                            "parameters": tool.get("parameters", {}),
+                        },
+                    }
+                )
+            else:
+                # Unknown format, pass through
+                formatted.append(tool)
+
+        return formatted
 
     def _build_headers(self) -> dict[str, str]:
         """Build headers with Authorization."""
