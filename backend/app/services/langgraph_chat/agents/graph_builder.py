@@ -1,10 +1,11 @@
 """LangGraph graph builder for agent workflows."""
 
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import Tool
+from langchain_core.tools.base import BaseTool as LangChainBaseTool
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 
@@ -44,7 +45,7 @@ class LangGraphAgentBuilder:
         else:
             self.llm_with_tools = self.llm
 
-    def _convert_tools_to_langchain(self) -> List[Tool]:
+    def _convert_tools_to_langchain(self) -> List[LangChainBaseTool]:
         """Convert tool registry to LangChain Tool objects.
 
         Returns:
@@ -52,7 +53,8 @@ class LangGraphAgentBuilder:
         """
         langchain_tools = []
 
-        for tool in self.tool_registry.get_all_tools():
+        # Add custom tools (converted to LangChain Tool)
+        for tool in self.tool_registry.get_custom_tools():
             # Create async function wrapper for tool execution
             # Use a factory to bind the current tool to avoid closure variable capture issue
             def make_tool_func(bound_tool):
@@ -75,6 +77,9 @@ class LangGraphAgentBuilder:
                 coroutine=tool_func_bound,  # Use async version
             )
             langchain_tools.append(lc_tool)
+
+        # Add LangChain tools directly (from MCP SDK etc.)
+        langchain_tools.extend(self.tool_registry.get_langchain_tools())
 
         return langchain_tools
 

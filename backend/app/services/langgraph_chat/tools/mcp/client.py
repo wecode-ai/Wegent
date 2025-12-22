@@ -1,466 +1,135 @@
-"""MCP (Model Context Protocol) client implementation.
+"""MCP (Model Context Protocol) client implementation using langchain-mcp-adapters SDK.
 
-Supports multiple transport protocols:
-- SSE (Server-Sent Events)
-- stdio (standard input/output for local processes)
-- streamable-http (HTTP streaming)
+This module provides a simplified wrapper around the official langchain-mcp-adapters
+SDK for managing MCP server connections and tools.
 """
 
-import asyncio
-import json
-import os
-import subprocess
-from abc import ABC, abstractmethod
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
-import httpx
-from pydantic import BaseModel
-
-
-class MCPTool(BaseModel):
-    """MCP tool definition."""
-
-    name: str
-    description: str
-    input_schema: Dict[str, Any]
+from langchain_core.tools.base import BaseTool
+from langchain_mcp_adapters.client import MultiServerMCPClient
+from langchain_mcp_adapters.sessions import (
+    SSEConnection,
+    StdioConnection,
+    StreamableHttpConnection,
+)
 
 
-class MCPSession(ABC):
-    """Base class for MCP sessions."""
+def build_connections(
+    config: Dict[str, Dict[str, Any]],
+) -> Dict[str, SSEConnection | StdioConnection | StreamableHttpConnection]:
+    """Build connection configs from server configuration dict.
 
-    def __init__(self, server_name: str):
-        """Initialize MCP session.
+    Args:
+        config: MCP servers configuration dict
+            Format: {
+                "server_name": {
+                    "type": "sse|stdio|streamable-http",
+                    "url": "...",  # for sse/streamable-http
+                    "command": "...",  # for stdio
+                    "args": [...],  # for stdio
+                    "env": {...},  # for stdio
+                    "headers": {...}  # for sse/streamable-http
+                }
+            }
 
-        Args:
-            server_name: Name of the MCP server
-        """
-        self.server_name = server_name
-        self.tools: List[MCPTool] = []
+    Returns:
+        Dict of server_name to Connection config
+    """
+    connections = {}
 
-    @abstractmethod
-    async def connect(self) -> None:
-        """Establish connection to MCP server."""
-        pass
+    for server_name, server_config in config.items():
+        server_type = server_config.get("type", "sse")
 
-    @abstractmethod
-    async def disconnect(self) -> None:
-        """Close connection to MCP server."""
-        pass
-
-    @abstractmethod
-    async def list_tools(self) -> List[MCPTool]:
-        """List available tools from MCP server.
-
-        Returns:
-            List of MCPTool definitions
-        """
-        pass
-
-    @abstractmethod
-    async def call_tool(
-        self, tool_name: str, arguments: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Call a tool on the MCP server.
-
-        Args:
-            tool_name: Name of the tool to call
-            arguments: Tool arguments
-
-        Returns:
-            Tool execution result
-        """
-        pass
-
-
-class SSEMCPSession(MCPSession):
-    """MCP session using SSE (Server-Sent Events) transport."""
-
-    def __init__(
-        self, server_name: str, url: str, headers: Optional[Dict[str, str]] = None
-    ):
-        """Initialize SSE MCP session.
-
-        Args:
-            server_name: Server name
-            url: SSE endpoint URL
-            headers: Optional HTTP headers
-        """
-        super().__init__(server_name)
-        self.url = url
-        self.headers = headers or {}
-        self.client: Optional[httpx.AsyncClient] = None
-
-    async def connect(self) -> None:
-        """Connect to SSE endpoint."""
-        self.client = httpx.AsyncClient(timeout=30.0)
-        # Fetch tools list on connection
-        self.tools = await self.list_tools()
-
-    async def disconnect(self) -> None:
-        """Close HTTP client."""
-        if self.client:
-            await self.client.aclose()
-            self.client = None
-
-    async def list_tools(self) -> List[MCPTool]:
-        """List tools via SSE endpoint.
-
-        Returns:
-            List of MCPTool definitions
-        """
-        if not self.client:
-            raise RuntimeError("Session not connected")
-
-        response = await self.client.post(
-            self.url,
-            json={"method": "tools/list", "params": {}},
-            headers=self.headers,
-        )
-        response.raise_for_status()
-        data = response.json()
-
-        tools = []
-        for tool_data in data.get("tools", []):
-            tools.append(
-                MCPTool(
-                    name=tool_data["name"],
-                    description=tool_data.get("description", ""),
-                    input_schema=tool_data.get("inputSchema", {}),
-                )
+        if server_type == "sse":
+            connections[server_name] = SSEConnection(
+                transport="sse",
+                url=server_config["url"],
+                headers=server_config.get("headers"),
+                timeout=server_config.get("timeout", 30.0),
             )
-
-        return tools
-
-    async def call_tool(
-        self, tool_name: str, arguments: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Call tool via SSE endpoint.
-
-        Args:
-            tool_name: Tool name
-            arguments: Tool arguments
-
-        Returns:
-            Tool result
-        """
-        if not self.client:
-            raise RuntimeError("Session not connected")
-
-        response = await self.client.post(
-            self.url,
-            json={
-                "method": "tools/call",
-                "params": {"name": tool_name, "arguments": arguments},
-            },
-            headers=self.headers,
-        )
-        response.raise_for_status()
-        return response.json()
-
-
-class StdioMCPSession(MCPSession):
-    """MCP session using stdio transport (local process)."""
-
-    def __init__(
-        self,
-        server_name: str,
-        command: str,
-        args: Optional[List[str]] = None,
-        env: Optional[Dict[str, str]] = None,
-        read_timeout: float = 30.0,
-    ):
-        """Initialize stdio MCP session.
-
-        Args:
-            server_name: Server name
-            command: Command to execute
-            args: Optional command arguments
-            env: Optional environment variables
-            read_timeout: Timeout for readline operations in seconds (default: 30.0)
-        """
-        super().__init__(server_name)
-        self.command = command
-        self.args = args or []
-        self.env = env or {}
-        self.process: Optional[asyncio.subprocess.Process] = None
-        self.read_timeout = read_timeout
-
-    async def connect(self) -> None:
-        """Start the MCP server process."""
-        # Merge with current environment to inherit PATH and other variables
-        merged_env = {**os.environ.copy(), **self.env}
-        self.process = await asyncio.create_subprocess_exec(
-            self.command,
-            *self.args,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=merged_env,
-        )
-
-        # Fetch tools list on connection
-        self.tools = await self.list_tools()
-
-    async def disconnect(self) -> None:
-        """Terminate the MCP server process."""
-        if self.process:
-            self.process.terminate()
-            await self.process.wait()
-            self.process = None
-
-    async def _send_request(
-        self, method: str, params: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Send JSON-RPC request to MCP server.
-
-        Args:
-            method: RPC method name
-            params: Method parameters
-
-        Returns:
-            Response data
-
-        Raises:
-            RuntimeError: If process not running, timeout occurs, or MCP error returned
-        """
-        if not self.process or not self.process.stdin or not self.process.stdout:
-            raise RuntimeError("Process not running")
-
-        request = json.dumps(
-            {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
-        )
-        self.process.stdin.write((request + "\n").encode())
-        await self.process.stdin.drain()
-
-        try:
-            response_line = await asyncio.wait_for(
-                self.process.stdout.readline(), timeout=self.read_timeout
+        elif server_type == "stdio":
+            connections[server_name] = StdioConnection(
+                transport="stdio",
+                command=server_config["command"],
+                args=server_config.get("args", []),
+                env=server_config.get("env"),
             )
-        except asyncio.TimeoutError:
-            # Terminate unresponsive process
-            if self.process:
-                self.process.terminate()
-            raise RuntimeError(
-                f"MCP server '{self.server_name}' did not respond within {self.read_timeout}s"
+        elif server_type == "streamable-http":
+            connections[server_name] = StreamableHttpConnection(
+                transport="streamable_http",
+                url=server_config["url"],
+                headers=server_config.get("headers"),
             )
+        else:
+            raise ValueError(f"Unknown MCP server type: {server_type}")
 
-        response = json.loads(response_line.decode())
-
-        if "error" in response:
-            raise RuntimeError(f"MCP error: {response['error']}")
-
-        return response.get("result", {})
-
-    async def list_tools(self) -> List[MCPTool]:
-        """List tools via stdio.
-
-        Returns:
-            List of MCPTool definitions
-        """
-        result = await self._send_request("tools/list", {})
-
-        tools = []
-        for tool_data in result.get("tools", []):
-            tools.append(
-                MCPTool(
-                    name=tool_data["name"],
-                    description=tool_data.get("description", ""),
-                    input_schema=tool_data.get("inputSchema", {}),
-                )
-            )
-
-        return tools
-
-    async def call_tool(
-        self, tool_name: str, arguments: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Call tool via stdio.
-
-        Args:
-            tool_name: Tool name
-            arguments: Tool arguments
-
-        Returns:
-            Tool result
-        """
-        return await self._send_request(
-            "tools/call", {"name": tool_name, "arguments": arguments}
-        )
-
-
-class StreamableHTTPMCPSession(MCPSession):
-    """MCP session using Streamable HTTP transport."""
-
-    def __init__(
-        self, server_name: str, url: str, headers: Optional[Dict[str, str]] = None
-    ):
-        """Initialize Streamable HTTP MCP session.
-
-        Args:
-            server_name: Server name
-            url: HTTP endpoint URL
-            headers: Optional HTTP headers
-        """
-        super().__init__(server_name)
-        self.url = url
-        self.headers = headers or {}
-        self.client: Optional[httpx.AsyncClient] = None
-
-    async def connect(self) -> None:
-        """Connect to HTTP endpoint."""
-        self.client = httpx.AsyncClient(timeout=30.0)
-        self.tools = await self.list_tools()
-
-    async def disconnect(self) -> None:
-        """Close HTTP client."""
-        if self.client:
-            await self.client.aclose()
-            self.client = None
-
-    async def list_tools(self) -> List[MCPTool]:
-        """List tools via HTTP endpoint.
-
-        Returns:
-            List of MCPTool definitions
-        """
-        if not self.client:
-            raise RuntimeError("Session not connected")
-
-        response = await self.client.get(f"{self.url}/tools", headers=self.headers)
-        response.raise_for_status()
-        data = response.json()
-
-        tools = []
-        for tool_data in data.get("tools", []):
-            tools.append(
-                MCPTool(
-                    name=tool_data["name"],
-                    description=tool_data.get("description", ""),
-                    input_schema=tool_data.get("inputSchema", {}),
-                )
-            )
-
-        return tools
-
-    async def call_tool(
-        self, tool_name: str, arguments: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Call tool via HTTP endpoint.
-
-        Args:
-            tool_name: Tool name
-            arguments: Tool arguments
-
-        Returns:
-            Tool result
-        """
-        if not self.client:
-            raise RuntimeError("Session not connected")
-
-        response = await self.client.post(
-            f"{self.url}/tools/{tool_name}", json=arguments, headers=self.headers
-        )
-        response.raise_for_status()
-        return response.json()
+    return connections
 
 
 class MCPClient:
-    """MCP client that manages multiple server sessions."""
+    """MCP client wrapper using langchain-mcp-adapters SDK.
 
-    def __init__(self):
-        """Initialize MCP client."""
-        self.sessions: Dict[str, MCPSession] = {}
+    This class wraps the MultiServerMCPClient from langchain-mcp-adapters
+    to provide a simpler interface for managing MCP server connections.
+    """
 
-    async def connect_sse(
-        self, server_name: str, url: str, headers: Optional[Dict[str, str]] = None
-    ) -> MCPSession:
-        """Connect to MCP server via SSE.
+    def __init__(self, config: Dict[str, Dict[str, Any]]):
+        """Initialize MCP client with server configuration.
 
         Args:
-            server_name: Server name
-            url: SSE endpoint URL
-            headers: Optional HTTP headers
-
-        Returns:
-            MCPSession instance
+            config: MCP servers configuration dict
         """
-        session = SSEMCPSession(server_name, url, headers)
-        await session.connect()
-        self.sessions[server_name] = session
-        return session
+        self.config = config
+        self.connections = build_connections(config)
+        self._client: Optional[MultiServerMCPClient] = None
+        self._tools_cache: List[BaseTool] = []
 
-    async def connect_stdio(
-        self,
-        server_name: str,
-        command: str,
-        args: Optional[List[str]] = None,
-        env: Optional[Dict[str, str]] = None,
-    ) -> MCPSession:
-        """Connect to MCP server via stdio.
+    async def connect(self) -> None:
+        """Connect to all configured MCP servers.
 
-        Args:
-            server_name: Server name
-            command: Command to execute
-            args: Optional command arguments
-            env: Optional environment variables
-
-        Returns:
-            MCPSession instance
+        Creates a MultiServerMCPClient and enters its async context.
         """
-        session = StdioMCPSession(server_name, command, args, env)
-        await session.connect()
-        self.sessions[server_name] = session
-        return session
+        self._client = MultiServerMCPClient(connections=self.connections)
+        await self._client.__aenter__()
+        # Cache tools after connection
+        self._tools_cache = self._client.get_tools()
 
-    async def connect_streamable_http(
-        self, server_name: str, url: str, headers: Optional[Dict[str, str]] = None
-    ) -> MCPSession:
-        """Connect to MCP server via Streamable HTTP.
-
-        Args:
-            server_name: Server name
-            url: HTTP endpoint URL
-            headers: Optional HTTP headers
-
-        Returns:
-            MCPSession instance
-        """
-        session = StreamableHTTPMCPSession(server_name, url, headers)
-        await session.connect()
-        self.sessions[server_name] = session
-        return session
-
-    async def disconnect(self, server_name: str) -> None:
-        """Disconnect from MCP server.
-
-        Args:
-            server_name: Server name
-        """
-        session = self.sessions.pop(server_name, None)
-        if session:
-            await session.disconnect()
-
-    async def disconnect_all(self) -> None:
+    async def disconnect(self) -> None:
         """Disconnect from all MCP servers."""
-        for session in list(self.sessions.values()):
-            await session.disconnect()
-        self.sessions.clear()
+        if self._client:
+            await self._client.__aexit__(None, None, None)
+            self._client = None
+            self._tools_cache = []
 
-    def get_session(self, server_name: str) -> Optional[MCPSession]:
-        """Get MCP session by server name.
+    def get_tools(self, server_name: Optional[str] = None) -> List[BaseTool]:
+        """Get LangChain-compatible tools from connected servers.
 
         Args:
-            server_name: Server name
+            server_name: Optional server name to filter tools.
+                        If None, returns tools from all servers.
 
         Returns:
-            MCPSession or None
+            List of LangChain BaseTool instances
         """
-        return self.sessions.get(server_name)
+        if not self._client:
+            return []
 
-    def list_sessions(self) -> List[str]:
-        """List connected server names.
+        return self._client.get_tools(server_name=server_name)
+
+    def list_servers(self) -> List[str]:
+        """List configured server names.
 
         Returns:
             List of server names
         """
-        return list(self.sessions.keys())
+        return list(self.connections.keys())
+
+    @property
+    def is_connected(self) -> bool:
+        """Check if client is connected.
+
+        Returns:
+            True if connected, False otherwise
+        """
+        return self._client is not None
