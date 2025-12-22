@@ -13,6 +13,7 @@ from typing import Dict, Optional
 
 from sqlalchemy.orm import Session
 
+from app.schemas.rag import SplitterConfig
 from app.services.rag.embedding.factory import create_embedding_model_from_crd
 from app.services.rag.index import DocumentIndexer
 from app.services.rag.storage.base import BaseStorageBackend
@@ -41,6 +42,7 @@ class DocumentService:
         embedding_model_namespace: str,
         user_id: int,
         db: Session,
+        splitter_config: Optional[SplitterConfig] = None,
     ) -> Dict:
         """
         Synchronous document indexing implementation.
@@ -53,6 +55,7 @@ class DocumentService:
             embedding_model_namespace: Embedding model namespace
             user_id: User ID
             db: Database session
+            splitter_config: Optional splitter configuration
 
         Returns:
             Indexing result dict
@@ -68,9 +71,11 @@ class DocumentService:
             model_namespace=embedding_model_namespace,
         )
 
-        # Create indexer with storage backend
+        # Create indexer with storage backend and splitter config
         indexer = DocumentIndexer(
-            storage_backend=self.storage_backend, embed_model=embed_model
+            storage_backend=self.storage_backend,
+            embed_model=embed_model,
+            splitter_config=splitter_config,
         )
 
         # Index document (synchronous operation, pass user_id)
@@ -91,6 +96,7 @@ class DocumentService:
         embedding_model_namespace: str,
         user_id: int,
         db: Session,
+        splitter_config: Optional[SplitterConfig] = None,
     ) -> Dict:
         """
         Index a document into storage backend.
@@ -102,6 +108,7 @@ class DocumentService:
             embedding_model_namespace: Embedding model namespace
             user_id: User ID
             db: Database session
+            splitter_config: Optional splitter configuration. If None, defaults to SemanticSplitter
 
         Returns:
             Indexing result dict with:
@@ -125,6 +132,7 @@ class DocumentService:
             embedding_model_namespace,
             user_id,
             db,
+            splitter_config,
         )
 
     async def delete_document(

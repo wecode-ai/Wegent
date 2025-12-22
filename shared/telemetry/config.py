@@ -43,6 +43,7 @@ DEFAULT_EXCLUDED_URLS = [
     "/metrics",
     "/api/docs",
     "/api/openapi.json",
+    "/api/quota/*",
     "/favicon.ico",
 ]
 
