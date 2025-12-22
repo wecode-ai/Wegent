@@ -80,6 +80,8 @@ export interface UnifiedMessage {
   timestamp: number;
   /** Subtask ID from backend (set when confirmed) */
   subtaskId?: number;
+  /** Message ID from backend for ordering (primary sort key) */
+  messageId?: number;
   /** Error message if status is 'error' */
   error?: string;
   /** Bot name for AI messages */
@@ -749,11 +751,13 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
    * Adds the message to the unified messages Map for real-time display
    */
   const handleChatMessage = useCallback((data: ChatMessagePayload) => {
-    const { task_id, subtask_id, role, content, sender, created_at, attachments } = data;
+    const { task_id, subtask_id, message_id, role, content, sender, created_at, attachments } =
+      data;
 
     console.log('[ChatStreamContext][chat:message] Received', {
       task_id,
       subtask_id,
+      message_id,
       role,
       sender,
       contentLen: content?.length || 0,
@@ -762,7 +766,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
 
     // Generate message ID based on role
     const isUserMessage = role === 'user' || role?.toUpperCase() === 'USER';
-    const messageId = isUserMessage ? `user-backend-${subtask_id}` : `ai-${subtask_id}`;
+    const msgId = isUserMessage ? `user-backend-${subtask_id}` : `ai-${subtask_id}`;
 
     // Track subtask to task mapping
     subtaskToTaskRef.current.set(subtask_id, task_id);
@@ -773,9 +777,9 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       const currentState = newMap.get(task_id) || { ...defaultStreamState };
 
       // Check if message already exists (avoid duplicates)
-      if (currentState.messages.has(messageId)) {
+      if (currentState.messages.has(msgId)) {
         console.log('[ChatStreamContext][chat:message] Message already exists, skipping', {
-          messageId,
+          msgId,
         });
         return prev;
       }
@@ -783,23 +787,25 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       const newMessages = new Map(currentState.messages);
 
       const newMessage: UnifiedMessage = {
-        id: messageId,
+        id: msgId,
         type: isUserMessage ? 'user' : 'ai',
         status: 'completed',
         content: content || '',
         timestamp: created_at ? new Date(created_at).getTime() : Date.now(),
         subtaskId: subtask_id,
+        messageId: message_id,
         senderUserName: sender?.user_name,
         senderUserId: sender?.user_id,
         shouldShowSender: isUserMessage, // Show sender for user messages in group chat
         attachments: attachments,
       };
 
-      newMessages.set(messageId, newMessage);
+      newMessages.set(msgId, newMessage);
 
       console.log('[ChatStreamContext][chat:message] Added message to task', {
         taskId: task_id,
-        messageId,
+        msgId,
+        messageId: message_id,
         senderUserName: sender?.user_name,
         attachmentsCount: attachments?.length || 0,
       });
@@ -1387,10 +1393,16 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         const newMessages = new Map<string, UnifiedMessage>();
 
         // First, add all backend subtasks as messages
-        // Sort by created_at to maintain order
-        const sortedSubtasks = [...subtasks].sort(
-          (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-        );
+        // Sort by message_id (primary) and created_at (secondary) to maintain correct order
+        // This matches backend sorting logic
+        const sortedSubtasks = [...subtasks].sort((a, b) => {
+          // Primary sort by message_id
+          if (a.message_id !== b.message_id) {
+            return a.message_id - b.message_id;
+          }
+          // Secondary sort by created_at
+          return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+        });
 
         for (const subtask of sortedSubtasks) {
           // Backend returns role as uppercase 'USER' or 'ASSISTANT'
@@ -1461,6 +1473,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
             content,
             timestamp: new Date(subtask.created_at).getTime(),
             subtaskId: subtask.id,
+            messageId: subtask.message_id,
             attachments: subtask.attachments,
             botName,
             senderUserName,

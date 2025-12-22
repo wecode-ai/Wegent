@@ -147,6 +147,8 @@ export interface ChatMessageAttachment {
 export interface ChatMessagePayload {
   subtask_id: number;
   task_id: number;
+  /** Message ID for ordering (primary sort key) */
+  message_id: number;
   role: string;
   content: string;
   sender: {
