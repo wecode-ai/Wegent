@@ -37,6 +37,7 @@ import { UserFloatingMenu } from '@/features/layout/components/UserFloatingMenu'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Task, TaskType } from '@/types/api';
 import { taskApis } from '@/apis/tasks';
+import { markAllTasksAsViewed as markAllTasksAsViewedUtil } from '@/utils/taskViewStatus';
 
 interface TaskSidebarProps {
   isMobileSidebarOpen: boolean;
@@ -66,10 +67,12 @@ export default function TaskSidebar({
     isSearching,
     isSearchResult,
     getUnreadCount,
-    markAllTasksAsViewed,
     viewStatusVersion,
     setSelectedTask,
   } = useTaskContext();
+
+  // Local state to trigger re-render after marking tasks as viewed
+  const [, setLocalVersion] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -322,17 +325,21 @@ export default function TaskSidebar({
     setIsMobileSidebarOpen(false);
   };
 
-  // Mark all tasks as viewed
-  const handleMarkAllAsViewed = () => {
-    markAllTasksAsViewed();
+  // Mark all group chats as viewed
+  const handleMarkGroupChatsAsViewed = () => {
+    const groupChats = tasks.filter(task => task.is_group_chat);
+    markAllTasksAsViewedUtil(groupChats);
+    // Trigger re-render to update unread counts
+    setLocalVersion(v => v + 1);
   };
 
-  // Calculate total unread count
-  // Include viewStatusVersion in dependencies to recalculate when view status changes
-  const totalUnreadCount = React.useMemo(() => {
-    return getUnreadCount(tasks);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tasks, getUnreadCount, viewStatusVersion]);
+  // Mark all regular tasks as viewed
+  const handleMarkRegularTasksAsViewed = () => {
+    const regularTasks = tasks.filter(task => !task.is_group_chat);
+    markAllTasksAsViewedUtil(regularTasks);
+    // Trigger re-render to update unread counts
+    setLocalVersion(v => v + 1);
+  };
 
   // Scroll to bottom to load more
   useEffect(() => {
@@ -366,30 +373,51 @@ export default function TaskSidebar({
               <span className="text-sm text-text-primary">Wegent</span>
             </div>
           )}
-          {onToggleCollapsed && (
+          <div className="flex items-center gap-1">
+            {/* Global Search Button */}
             <TooltipProvider>
               <Tooltip delayDuration={300}>
                 <TooltipTrigger asChild>
                   <Button
                     variant="ghost"
                     size="icon"
-                    onClick={onToggleCollapsed}
+                    onClick={handleOpenSearchDialog}
                     className="h-8 w-8 p-0 text-text-muted hover:text-text-primary hover:bg-hover rounded-xl"
-                    aria-label={isCollapsed ? t('sidebar.expand') : t('sidebar.collapse')}
+                    aria-label={t('tasks.search_placeholder_chat')}
                   >
-                    {isCollapsed ? (
-                      <PanelLeftOpen className="h-4 w-4" />
-                    ) : (
-                      <PanelLeftClose className="h-4 w-4" />
-                    )}
+                    <Search className="h-4 w-4" />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent side="right">
-                  <p>{isCollapsed ? t('sidebar.expand') : t('sidebar.collapse')}</p>
+                  <p>{t('tasks.search_placeholder_chat')}</p>
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
-          )}
+            {onToggleCollapsed && (
+              <TooltipProvider>
+                <Tooltip delayDuration={300}>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={onToggleCollapsed}
+                      className="h-8 w-8 p-0 text-text-muted hover:text-text-primary hover:bg-hover rounded-xl"
+                      aria-label={isCollapsed ? t('sidebar.expand') : t('sidebar.collapse')}
+                    >
+                      {isCollapsed ? (
+                        <PanelLeftOpen className="h-4 w-4" />
+                      ) : (
+                        <PanelLeftClose className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">
+                    <p>{isCollapsed ? t('sidebar.expand') : t('sidebar.collapse')}</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+          </div>
         </div>
       </div>
 
@@ -606,27 +634,6 @@ export default function TaskSidebar({
             </button>
           </div>
         )}
-        {/* Search Button for collapsed mode */}
-        {isCollapsed && !isSearchResult && (
-          <div className="px-1 pb-2 flex justify-center">
-            <TooltipProvider>
-              <Tooltip delayDuration={300}>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={handleOpenSearchDialog}
-                    className="p-1 text-text-muted hover:text-text-primary transition-colors rounded hover:bg-hover"
-                    aria-label={t('tasks.search_placeholder_chat')}
-                  >
-                    <Search className="h-4 w-4" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="right">
-                  <p>{t('tasks.search_placeholder_chat')}</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          </div>
-        )}
         {isSearching ? (
           <div className="text-center py-8 text-xs text-text-muted">{t('tasks.searching')}</div>
         ) : tasks.length === 0 ? (
@@ -650,29 +657,11 @@ export default function TaskSidebar({
                   <>
                     {!isCollapsed && (
                       <div className="px-1 pb-1 text-xs font-medium text-text-muted flex items-center justify-between">
-                        <div className="flex items-center gap-1">
-                          <span>{t('tasks.group_chats')}</span>
-                          <TooltipProvider>
-                            <Tooltip delayDuration={300}>
-                              <TooltipTrigger asChild>
-                                <button
-                                  onClick={handleOpenSearchDialog}
-                                  className="p-0.5 text-text-muted hover:text-text-primary transition-colors rounded"
-                                  aria-label={t('tasks.search_placeholder_chat')}
-                                >
-                                  <Search className="h-3.5 w-3.5" />
-                                </button>
-                              </TooltipTrigger>
-                              <TooltipContent side="right">
-                                <p>{t('tasks.search_placeholder_chat')}</p>
-                              </TooltipContent>
-                            </Tooltip>
-                          </TooltipProvider>
-                        </div>
+                        <span>{t('tasks.group_chats')}</span>
                         {/* Mark All Group Chats As Read Button */}
                         {getUnreadCount(groupChats) > 0 && (
                           <button
-                            onClick={handleMarkAllAsViewed}
+                            onClick={handleMarkGroupChatsAsViewed}
                             className="text-xs text-text-muted hover:text-text-primary transition-colors"
                           >
                             {t('tasks.mark_all_read')} ({getUnreadCount(groupChats)})
@@ -691,39 +680,21 @@ export default function TaskSidebar({
                     />
                   </>
                 )}
-                {/* History Section - with search button next to title */}
+                {/* History Section */}
                 {regularTasks.length > 0 && (
                   <>
                     {!isCollapsed && (
                       <div
                         className={`px-1 pb-1 text-xs font-medium text-text-muted flex items-center justify-between ${groupChats.length > 0 ? 'pt-3 mt-2 border-t border-border' : ''}`}
                       >
-                        <div className="flex items-center gap-1">
-                          <span>{t('tasks.history_title')}</span>
-                          <TooltipProvider>
-                            <Tooltip delayDuration={300}>
-                              <TooltipTrigger asChild>
-                                <button
-                                  onClick={handleOpenSearchDialog}
-                                  className="p-0.5 text-text-muted hover:text-text-primary transition-colors rounded"
-                                  aria-label={t('tasks.search_placeholder_chat')}
-                                >
-                                  <Search className="h-3.5 w-3.5" />
-                                </button>
-                              </TooltipTrigger>
-                              <TooltipContent side="right">
-                                <p>{t('tasks.search_placeholder_chat')}</p>
-                              </TooltipContent>
-                            </Tooltip>
-                          </TooltipProvider>
-                        </div>
-                        {/* Mark All As Read Button - show only when there are unread tasks */}
-                        {totalUnreadCount > 0 && (
+                        <span>{t('tasks.history_title')}</span>
+                        {/* Mark All Regular Tasks As Read Button - show only when there are unread regular tasks */}
+                        {getUnreadCount(regularTasks) > 0 && (
                           <button
-                            onClick={handleMarkAllAsViewed}
+                            onClick={handleMarkRegularTasksAsViewed}
                             className="text-xs text-text-muted hover:text-text-primary transition-colors"
                           >
-                            {t('tasks.mark_all_read')} ({totalUnreadCount})
+                            {t('tasks.mark_all_read')} ({getUnreadCount(regularTasks)})
                           </button>
                         )}
                       </div>
