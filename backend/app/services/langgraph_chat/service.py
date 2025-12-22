@@ -195,7 +195,7 @@ class LangGraphChatService:
                 yield _sse_data({"content": "", "done": True})
 
             except Exception as e:
-                logger.exception("Simple stream error: %s", str(e))
+                logger.exception("Simple stream error")
                 yield _sse_data({"error": str(e)})
 
         return StreamingResponse(
@@ -281,7 +281,7 @@ class LangGraphChatService:
                 yield _sse_data({"content": "", "done": True, "result": result})
 
             except Exception as e:
-                logger.exception("[STREAM] subtask=%s error: %s", subtask_id, str(e))
+                logger.exception("[STREAM] subtask=%s error", subtask_id)
                 await storage_handler.update_subtask_status(subtask_id, "FAILED", error=str(e))
                 yield _sse_data({"error": str(e)})
 

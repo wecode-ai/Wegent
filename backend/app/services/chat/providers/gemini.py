@@ -216,7 +216,11 @@ class GeminiProvider(LLMProvider):
         if not candidates:
             return chunks
 
-        parts = candidates[0].get("content", {}).get("parts", [])
+        content = candidates[0].get("content")
+        if content is None:
+            return chunks
+
+        parts = content.get("parts", [])
         tool_call_index = 0
 
         for part in parts:

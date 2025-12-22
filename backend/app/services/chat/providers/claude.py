@@ -88,7 +88,12 @@ class ClaudeProvider(LLMProvider):
         self, content: str, tool_calls: list[dict]
     ) -> dict[str, Any]:
         """Format assistant message with tool calls."""
-        formatted = [{"type": "text", "text": content}] if content else []
+        # Preserve existing text content if present
+        formatted = []
+        if content:
+            formatted.append({"type": "text", "text": content})
+
+        # Append tool calls to the content list
         for tc in tool_calls:
             formatted.append(
                 {
