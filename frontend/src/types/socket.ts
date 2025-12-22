@@ -131,6 +131,7 @@ export interface ChatErrorPayload {
 }
 
 export interface ChatCancelledPayload {
+  task_id: number;
   subtask_id: number;
 }
 
