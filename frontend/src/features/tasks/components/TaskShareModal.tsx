@@ -11,6 +11,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { DocumentDuplicateIcon } from '@heroicons/react/24/outline';
 import { useTranslation } from '@/hooks/useTranslation';
+import { useTraceAction } from '@/hooks/useTraceAction';
 
 interface TaskShareModalProps {
   visible: boolean;
@@ -27,8 +28,14 @@ export default function TaskShareModal({
 }: TaskShareModalProps) {
   const { t } = useTranslation('common');
   const { toast } = useToast();
+  const { traced } = useTraceAction();
 
-  const handleCopyLink = async () => {
+  // Create a traced version of the copy function
+  const handleCopyLink = traced('copy-share-link', {
+    'action.type': 'copy',
+    'copy.content_type': 'share_link',
+    'task.title': taskTitle,
+  })(async () => {
     try {
       await navigator.clipboard.writeText(shareUrl);
       toast({
@@ -50,7 +57,7 @@ export default function TaskShareModal({
       });
       onClose();
     }
-  };
+  });
 
   return (
     <Modal
