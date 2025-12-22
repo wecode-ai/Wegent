@@ -122,6 +122,8 @@ export interface ChatDonePayload {
   subtask_id: number;
   offset: number;
   result: Record<string, unknown>;
+  /** Message ID for ordering (primary sort key) */
+  message_id?: number;
 }
 
 export interface ChatErrorPayload {
@@ -235,6 +237,7 @@ export interface UnreadCountPayload {
 export interface ChatSendAck {
   task_id?: number;
   subtask_id?: number;
+  message_id?: number; // Message ID for the user's subtask
   error?: string;
 }
 
