@@ -65,8 +65,9 @@ class WebSearchTool(BaseTool):
                     }
                 )
 
-            # Execute search
-            results = await search_service.search(query=query, max_results=max_results)
+            # Execute search using search_raw to get list of results
+            # (search() returns formatted string, search_raw() returns list)
+            results = await search_service.search_raw(query=query, limit=max_results)
 
             # Format results
             formatted_results = []

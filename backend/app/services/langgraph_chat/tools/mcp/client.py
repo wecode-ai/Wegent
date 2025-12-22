@@ -80,7 +80,17 @@ class MCPClient:
 
     Wraps langchain-mcp-adapters MultiServerMCPClient for simplified usage.
 
+    As of langchain-mcp-adapters 0.1.0, MultiServerMCPClient no longer supports
+    being used as a context manager. This class now uses the new API:
+    - client.get_tools() to get all tools directly
+
     Usage:
+        client = MCPClient(config)
+        await client.connect()
+        tools = client.get_tools()
+        await client.disconnect()
+
+    Or with async context manager:
         async with MCPClient(config) as client:
             tools = client.get_tools()
     """
@@ -94,6 +104,7 @@ class MCPClient:
         self.config = config
         self.connections = build_connections(config) if config else {}
         self._client: MultiServerMCPClient | None = None
+        self._tools: list[BaseTool] = []
 
     async def __aenter__(self) -> "MCPClient":
         """Async context manager entry - connect to servers."""
@@ -105,19 +116,32 @@ class MCPClient:
         await self.disconnect()
 
     async def connect(self) -> None:
-        """Connect to all configured MCP servers."""
+        """Connect to all configured MCP servers and load tools.
+
+        As of langchain-mcp-adapters 0.1.0, we use client.get_tools() directly
+        instead of using the client as a context manager.
+        """
         if not self.connections:
             return
 
         self._client = MultiServerMCPClient(connections=self.connections)
-        await self._client.__aenter__()
-        logger.info("Connected to MCP servers: %s", ", ".join(self.list_servers()))
+        # Use the new API: get_tools() is now an async method that handles connection
+        self._tools = await self._client.get_tools()
+        logger.info(
+            "Connected to MCP servers: %s, loaded %d tools",
+            ", ".join(self.list_servers()),
+            len(self._tools),
+        )
 
     async def disconnect(self) -> None:
-        """Disconnect from all MCP servers."""
+        """Disconnect from all MCP servers.
+
+        Note: With the new API, the client manages connections internally
+        during get_tools() calls. We clear our references here.
+        """
         if self._client:
-            await self._client.__aexit__(None, None, None)
             self._client = None
+            self._tools = []
             logger.info("Disconnected from MCP servers")
 
     def get_tools(self, server_names: list[str] | None = None) -> list[BaseTool]:
@@ -130,17 +154,23 @@ class MCPClient:
         Returns:
             List of LangChain BaseTool instances
         """
-        if not self._client:
+        if not self._tools:
             return []
 
         if server_names is None:
-            return self._client.get_tools()
+            return list(self._tools)
 
-        # Collect tools from specified servers
-        tools = []
-        for name in server_names:
-            tools.extend(self._client.get_tools(server_name=name))
-        return tools
+        # Filter tools by server name (tool names are prefixed with server name)
+        filtered_tools = []
+        for tool in self._tools:
+            # Check if tool belongs to any of the specified servers
+            for server_name in server_names:
+                if tool.name.startswith(f"{server_name}_") or server_name in getattr(
+                    tool, "server_name", ""
+                ):
+                    filtered_tools.append(tool)
+                    break
+        return filtered_tools
 
     def list_servers(self) -> list[str]:
         """List configured server names."""
@@ -148,5 +178,5 @@ class MCPClient:
 
     @property
     def is_connected(self) -> bool:
-        """Check if client is connected."""
-        return self._client is not None
+        """Check if client has loaded tools."""
+        return len(self._tools) > 0

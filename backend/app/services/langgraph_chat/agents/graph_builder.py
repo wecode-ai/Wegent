@@ -150,6 +150,8 @@ class LangGraphAgentBuilder:
         """Stream tokens from agent execution.
 
         Uses LangGraph's astream_events API for token-level streaming.
+        For models that don't support streaming, falls back to extracting
+        final content from on_chain_end event.
 
         Args:
             messages: Initial conversation messages
@@ -164,6 +166,10 @@ class LangGraphAgentBuilder:
 
         exec_config = {"configurable": config} if config else None
 
+        event_count = 0
+        streamed_content = False  # Track if we've streamed any content
+        final_content = ""  # Store final content for non-streaming fallback
+
         try:
             async for event in agent.astream_events(
                 {"messages": lc_messages},
@@ -173,6 +179,7 @@ class LangGraphAgentBuilder:
                 },
                 version="v2",
             ):
+                event_count += 1
                 # Check cancellation
                 if cancel_event and cancel_event.is_set():
                     logger.info("Streaming cancelled by user")
@@ -181,17 +188,125 @@ class LangGraphAgentBuilder:
                 # Handle token streaming events
                 kind = event.get("event", "")
 
+                # Log all events for debugging (first 10 and every 100th)
+                if event_count <= 10 or event_count % 100 == 0:
+                    logger.info(
+                        "[stream_tokens] Event #%d: kind=%s, name=%s",
+                        event_count,
+                        kind,
+                        event.get("name", "N/A"),
+                    )
+
                 if kind == "on_chat_model_stream":
                     data = event.get("data", {})
                     chunk = data.get("chunk")
-                    if chunk and hasattr(chunk, "content") and chunk.content:
-                        yield chunk.content
+
+                    # Log chunk details for debugging
+                    if chunk:
+                        logger.debug(
+                            "[stream_tokens] on_chat_model_stream: chunk_type=%s, has_content=%s, content_type=%s",
+                            type(chunk).__name__,
+                            hasattr(chunk, "content"),
+                            (
+                                type(chunk.content).__name__
+                                if hasattr(chunk, "content")
+                                else "N/A"
+                            ),
+                        )
+
+                    if chunk and hasattr(chunk, "content"):
+                        content = chunk.content
+                        # Handle different content types
+                        if isinstance(content, str) and content:
+                            logger.debug(
+                                "[stream_tokens] Yielding string content: %s...",
+                                content[:50] if len(content) > 50 else content,
+                            )
+                            streamed_content = True
+                            yield content
+                        elif isinstance(content, list):
+                            # Handle list content (e.g., multimodal or tool calls)
+                            for part in content:
+                                if isinstance(part, str) and part:
+                                    logger.debug(
+                                        "[stream_tokens] Yielding list string: %s...",
+                                        part[:50] if len(part) > 50 else part,
+                                    )
+                                    streamed_content = True
+                                    yield part
+                                elif isinstance(part, dict):
+                                    # Extract text from dict format
+                                    text = part.get("text", "")
+                                    if text:
+                                        logger.debug(
+                                            "[stream_tokens] Yielding dict text: %s...",
+                                            text[:50] if len(text) > 50 else text,
+                                        )
+                                        streamed_content = True
+                                        yield text
+                        # Log when content is empty or unexpected type
+                        elif content:
+                            logger.debug(
+                                "[stream_tokens] Unexpected content type: %s, value: %s",
+                                type(content).__name__,
+                                str(content)[:100],
+                            )
+                        # Log empty content case
+                        else:
+                            logger.debug("[stream_tokens] Empty content in chunk")
+
+                elif kind == "on_chain_end" and event.get("name") == "LangGraph":
+                    # Extract final content from the top-level LangGraph chain end
+                    # This is useful for non-streaming models
+                    data = event.get("data", {})
+                    output = data.get("output", {})
+                    messages_output = output.get("messages", [])
+
+                    if messages_output:
+                        # Get the last AI message
+                        for msg in reversed(messages_output):
+                            if isinstance(msg, AIMessage):
+                                if isinstance(msg.content, str):
+                                    final_content = msg.content
+                                elif isinstance(msg.content, list):
+                                    # Handle multimodal responses
+                                    text_parts = []
+                                    for part in msg.content:
+                                        if (
+                                            isinstance(part, dict)
+                                            and part.get("type") == "text"
+                                        ):
+                                            text_parts.append(part.get("text", ""))
+                                        elif isinstance(part, str):
+                                            text_parts.append(part)
+                                    final_content = "".join(text_parts)
+                                break
 
                 elif kind == "on_tool_start":
-                    logger.debug("Tool started: %s", event.get("name", "unknown"))
+                    logger.info(
+                        "[stream_tokens] Tool started: %s", event.get("name", "unknown")
+                    )
 
                 elif kind == "on_tool_end":
-                    logger.debug("Tool completed: %s", event.get("name", "unknown"))
+                    logger.info(
+                        "[stream_tokens] Tool completed: %s",
+                        event.get("name", "unknown"),
+                    )
+
+            # If no content was streamed but we have final content, yield it
+            # This handles non-streaming models
+            if not streamed_content and final_content:
+                logger.info(
+                    "[stream_tokens] No streaming content, yielding final content: len=%d",
+                    len(final_content),
+                )
+                yield final_content
+
+            logger.info(
+                "[stream_tokens] Streaming completed: total_events=%d, streamed=%s",
+                event_count,
+                streamed_content,
+            )
 
         except Exception:
             logger.exception("Error in stream_tokens")

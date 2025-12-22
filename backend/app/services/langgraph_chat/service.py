@@ -128,6 +128,7 @@ class LangGraphChatService:
         model_config: dict[str, Any],
         max_iterations: int = 10,
         extra_tools: list[BaseTool] | None = None,
+        streaming: bool = True,
         **model_kwargs,
     ) -> LangGraphAgentBuilder:
         """Create a LangGraph agent with the given model config.
@@ -136,13 +137,16 @@ class LangGraphChatService:
             model_config: Model configuration from database
             max_iterations: Max tool loop iterations
             extra_tools: Additional tools to include (e.g., MCP tools)
+            streaming: Enable streaming mode for the model (default: True)
             **model_kwargs: Additional model parameters
 
         Returns:
             Configured LangGraphAgentBuilder instance
         """
-        # Create LangChain model from config
-        llm = LangChainModelFactory.create_from_config(model_config, **model_kwargs)
+        # Create LangChain model from config with streaming enabled
+        llm = LangChainModelFactory.create_from_config(
+            model_config, streaming=streaming, **model_kwargs
+        )
 
         # Create a temporary registry with extra tools
         tool_registry = ToolRegistry()
@@ -457,13 +461,34 @@ class LangGraphChatService:
                 model_config, max_iterations, extra_tools=extra_tools
             )
 
+            logger.info(
+                "[WS_STREAM] Starting token streaming: task_id=%d, subtask_id=%d, tools=%d",
+                task_id,
+                subtask_id,
+                len(extra_tools),
+            )
+
             # Stream tokens
+            token_count = 0
             async for token in agent.stream_tokens(
                 messages, cancel_event=core.cancel_event
             ):
+                token_count += 1
                 if not await core.process_token(token):
                     # Cancelled or shutdown
+                    logger.info(
+                        "[WS_STREAM] Streaming cancelled: task_id=%d, tokens=%d",
+                        task_id,
+                        token_count,
+                    )
                     return
+
+            logger.info(
+                "[WS_STREAM] Token streaming completed: task_id=%d, tokens=%d, response_len=%d",
+                task_id,
+                token_count,
+                len(state.full_response),
+            )
 
             # Finalize
             result = await core.finalize()

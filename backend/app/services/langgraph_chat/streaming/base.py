@@ -207,8 +207,18 @@ class StreamingCore:
         Returns:
             True if processing should continue, False if cancelled/shutdown
         """
+        logger.debug(
+            "[STREAMING] process_token: subtask_id=%d, token_len=%d",
+            self.state.subtask_id,
+            len(token),
+        )
+
         # Check for cancellation or shutdown
         if self.is_cancelled() or self.is_shutting_down():
+            logger.info(
+                "[STREAMING] Cancelled or shutting down: subtask_id=%d",
+                self.state.subtask_id,
+            )
             await self.emitter.emit_cancelled(self.state.subtask_id)
             await storage_handler.update_subtask_status(
                 self.state.subtask_id,

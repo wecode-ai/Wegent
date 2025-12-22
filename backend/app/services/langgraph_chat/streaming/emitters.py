@@ -155,6 +155,12 @@ class WebSocketEmitter(StreamEmitter):
         """Emit chat:chunk event."""
         from app.api.ws.events import ServerEvents
 
+        logger.debug(
+            "[WS_EMITTER] emit_chunk: subtask_id=%d, offset=%d, content_len=%d",
+            subtask_id,
+            offset,
+            len(content),
+        )
         await self.namespace.emit(
             ServerEvents.CHAT_CHUNK,
             {"subtask_id": subtask_id, "content": content, "offset": offset},
