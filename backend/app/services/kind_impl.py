@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import NotFoundException
 from app.models.kind import Kind
 from app.models.subtask import Subtask
-from app.schemas.kind import Bot, Model, Task, Team
+from app.schemas.kind import Bot, Model, Retriever, Task, Team
 from app.services.adapters.task_kinds import task_kinds_service
 from app.services.kind_base import KindBaseService
 
@@ -578,3 +578,98 @@ class TaskKindService(KindBaseService):
         self, db: Session, user_id: int, db_resource: Kind
     ) -> bool:
         return False
+
+
+class RetrieverKindService(KindBaseService):
+    """Service for Retriever resources"""
+
+    def __init__(self):
+        super().__init__("Retriever")
+
+    def _validate_references(
+        self, db: Session, user_id: int, resource: Dict[str, Any]
+    ) -> None:
+        """Validate Retriever configuration"""
+        retriever_crd = Retriever.model_validate(resource)
+
+        # Validate storage type
+        storage_type = retriever_crd.spec.storageConfig.type
+        valid_storage_types = ["elasticsearch", "qdrant"]
+        if storage_type not in valid_storage_types:
+            raise ValueError(
+                f"Invalid storage type: {storage_type}. "
+                f"Valid options: {', '.join(valid_storage_types)}"
+            )
+
+        # Validate index strategy mode
+        index_mode = retriever_crd.spec.storageConfig.indexStrategy.mode
+        valid_modes = ["fixed", "rolling", "per_dataset", "per_user"]
+        if index_mode not in valid_modes:
+            raise ValueError(
+                f"Invalid index strategy mode: {index_mode}. "
+                f"Valid options: {', '.join(valid_modes)}"
+            )
+
+    def _extract_resource_data(self, resource: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract and encrypt sensitive data in Retriever resource"""
+        # Call parent method first
+        resource_data = super()._extract_resource_data(resource)
+
+        try:
+            if "spec" in resource_data and "storageConfig" in resource_data["spec"]:
+                storage_config = resource_data["spec"]["storageConfig"]
+
+                # Encrypt password if present
+                if "password" in storage_config:
+                    password = storage_config["password"]
+                    if password and password != "***":
+                        if not is_api_key_encrypted(password):
+                            resource_data["spec"]["storageConfig"]["password"] = (
+                                encrypt_api_key(password)
+                            )
+                            logger.info("Encrypted password for Retriever resource")
+
+                # Encrypt API key if present
+                if "apiKey" in storage_config:
+                    api_key = storage_config["apiKey"]
+                    if api_key and api_key != "***":
+                        if not is_api_key_encrypted(api_key):
+                            resource_data["spec"]["storageConfig"]["apiKey"] = (
+                                encrypt_api_key(api_key)
+                            )
+                            logger.info("Encrypted API key for Retriever resource")
+        except ValueError as e:
+            logger.exception("Failed to encrypt sensitive data: %r", e)
+            raise
+
+        return resource_data
+
+    def _format_resource(self, resource: Kind) -> Dict[str, Any]:
+        """Format Retriever resource for API response with decrypted sensitive data"""
+        # Get the stored resource data
+        result = super()._format_resource(resource)
+
+        # Decrypt sensitive data for display
+        try:
+            if "spec" in result and "storageConfig" in result["spec"]:
+                storage_config = result["spec"]["storageConfig"]
+
+                # Decrypt password if present
+                if "password" in storage_config:
+                    password = storage_config["password"]
+                    if password:
+                        result["spec"]["storageConfig"]["password"] = decrypt_api_key(
+                            password
+                        )
+
+                # Decrypt API key if present
+                if "apiKey" in storage_config:
+                    api_key = storage_config["apiKey"]
+                    if api_key:
+                        result["spec"]["storageConfig"]["apiKey"] = decrypt_api_key(
+                            api_key
+                        )
+        except (ValueError, KeyError) as e:
+            logger.warning("Failed to decrypt sensitive data: %r", e)
+
+        return result

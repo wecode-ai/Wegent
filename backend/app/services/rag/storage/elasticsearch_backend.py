@@ -4,25 +4,46 @@
 
 """
 Elasticsearch storage backend implementation.
+
+Supported retrieval modes:
+- vector: Pure vector similarity search using embeddings
+- keyword: Pure BM25 keyword search (full-text search)
+- hybrid: Combined vector + BM25 search with configurable weights
 """
 
-import hashlib
-from typing import Any, Dict, List, Optional
+from typing import Any, ClassVar, Dict, List, Optional
 
 from elasticsearch import Elasticsearch
 from llama_index.core import StorageContext, VectorStoreIndex
 from llama_index.core.schema import BaseNode
+from llama_index.core.vector_stores import ExactMatchFilter, MetadataFilters
+from llama_index.core.vector_stores.types import (
+    VectorStoreQuery,
+    VectorStoreQueryMode,
+)
 from llama_index.vector_stores.elasticsearch import ElasticsearchStore
 
-from app.services.rag.retrieval.filters import (
-    build_elasticsearch_filters,
-    parse_metadata_filters,
-)
+from app.services.rag.retrieval.filters import parse_metadata_filters
 from app.services.rag.storage.base import BaseStorageBackend
 
 
 class ElasticsearchBackend(BaseStorageBackend):
-    """Elasticsearch storage backend implementation."""
+    """
+    Elasticsearch storage backend implementation.
+
+    Supported retrieval modes:
+    - vector: Pure vector similarity search (default)
+    - keyword: Pure BM25 keyword search
+    - hybrid: Combined vector + BM25 search
+
+    Class Attributes:
+        SUPPORTED_RETRIEVAL_METHODS: List of supported retrieval method names
+    """
+
+    # Class-level constant defining supported retrieval methods
+    SUPPORTED_RETRIEVAL_METHODS: ClassVar[List[str]] = ["vector", "keyword", "hybrid"]
+
+    # Uses default INDEX_PREFIX = "index" from base class
 
     def __init__(self, config: Dict):
         """Initialize Elasticsearch backend."""
@@ -34,48 +55,6 @@ class ElasticsearchBackend(BaseStorageBackend):
             self.es_kwargs["basic_auth"] = (self.username, self.password)
         elif self.api_key:
             self.es_kwargs["api_key"] = self.api_key
-
-    def get_index_name(self, knowledge_id: str, **kwargs) -> str:
-        """
-        Get index name based on strategy.
-
-        Strategies:
-        - fixed: Use a single fixed index name (requires fixedName)
-        - rolling: Use rolling indices based on knowledge_id hash (uses prefix, default: 'wegent')
-        - per_dataset: Use separate index per knowledge base (uses prefix, default: 'wegent')
-        - per_user: Use separate index per user (uses prefix, default: 'wegent', requires user_id)
-        """
-        mode = self.index_strategy.get("mode", "per_dataset")
-
-        if mode == "fixed":
-            fixed_name = self.index_strategy.get("fixedName")
-            if not fixed_name:
-                raise ValueError(
-                    "fixedName is required for 'fixed' index strategy mode"
-                )
-            return fixed_name
-        elif mode == "rolling":
-            # Use hash-based sharding for rolling strategy
-            prefix = self.index_strategy.get("prefix", "wegent")
-            step = self.index_strategy.get("rollingStep", 5000)
-            # Deterministic hash-based sharding using MD5
-            hash_val = int(hashlib.md5(knowledge_id.encode()).hexdigest(), 16) % 10000
-            index_base = (hash_val // step) * step
-            return f"{prefix}_index_{index_base}"
-        elif mode == "per_dataset":
-            prefix = self.index_strategy.get("prefix", "wegent")
-            return f"{prefix}_kb_{knowledge_id}"
-        elif mode == "per_user":
-            # Per-user index strategy: separate index for each user
-            user_id = kwargs.get("user_id")
-            if not user_id:
-                raise ValueError(
-                    "user_id is required for 'per_user' index strategy mode"
-                )
-            prefix = self.index_strategy.get("prefix", "wegent")
-            return f"{prefix}_user_{user_id}"
-        else:
-            raise ValueError(f"Unknown index strategy mode: {mode}")
 
     def create_vector_store(self, index_name: str):
         """Create Elasticsearch vector store."""
@@ -156,6 +135,11 @@ class ElasticsearchBackend(BaseStorageBackend):
         """
         Retrieve nodes from Elasticsearch (Dify-style API).
 
+        Uses LlamaIndex's VectorStoreQuery with different modes:
+        - DEFAULT: Pure vector similarity search
+        - TEXT_SEARCH: Pure BM25 keyword search
+        - HYBRID: Combined vector + BM25 search
+
         Args:
             knowledge_id: Knowledge base ID
             query: Search query
@@ -164,8 +148,7 @@ class ElasticsearchBackend(BaseStorageBackend):
                 - top_k: Maximum number of results
                 - score_threshold: Minimum similarity score (0-1)
                 - retrieval_mode: Optional 'vector'/'keyword'/'hybrid' (default: 'vector')
-                - vector_weight: Optional weight for vector search (default: 0.7)
-                - keyword_weight: Optional weight for keyword search (default: 0.3)
+                - alpha: Optional weight for hybrid search (0=keyword only, 1=vector only, default: 0.7)
             metadata_condition: Optional metadata filtering
             **kwargs: Additional parameters
 
@@ -177,30 +160,48 @@ class ElasticsearchBackend(BaseStorageBackend):
         score_threshold = retrieval_setting.get("score_threshold", 0.7)
         retrieval_mode = retrieval_setting.get("retrieval_mode", "vector")
 
-        if retrieval_mode == "hybrid":
-            vector_weight = retrieval_setting.get("vector_weight", 0.7)
-            keyword_weight = retrieval_setting.get("keyword_weight", 0.3)
-            return self._retrieve_hybrid(
-                query=query,
-                knowledge_id=knowledge_id,
-                index_name=index_name,
-                embed_model=embed_model,
-                top_k=top_k,
-                score_threshold=score_threshold,
-                vector_weight=vector_weight,
-                keyword_weight=keyword_weight,
-                metadata_condition=metadata_condition,
+        # Create vector store
+        vector_store = self.create_vector_store(index_name)
+
+        # Build metadata filters
+        filters = self._build_metadata_filters(knowledge_id, metadata_condition)
+
+        # Determine query mode and parameters
+        if retrieval_mode == "keyword":
+            # Pure BM25 keyword search - no embedding needed
+            query_mode = VectorStoreQueryMode.TEXT_SEARCH
+            query_embedding = None
+            alpha = None
+        elif retrieval_mode == "hybrid":
+            # Hybrid search - needs embedding
+            # alpha: 0 = pure keyword, 1 = pure vector, default 0.7 (70% vector)
+            query_mode = VectorStoreQueryMode.HYBRID
+            query_embedding = embed_model.get_query_embedding(query)
+            # Convert vector_weight to alpha (they have the same meaning)
+            alpha = retrieval_setting.get(
+                "alpha", retrieval_setting.get("vector_weight", 0.7)
             )
         else:
-            return self._retrieve_vector(
-                query=query,
-                knowledge_id=knowledge_id,
-                index_name=index_name,
-                embed_model=embed_model,
-                top_k=top_k,
-                score_threshold=score_threshold,
-                metadata_condition=metadata_condition,
-            )
+            # Default: Pure vector search
+            query_mode = VectorStoreQueryMode.DEFAULT
+            query_embedding = embed_model.get_query_embedding(query)
+            alpha = None
+
+        # Create VectorStoreQuery
+        vs_query = VectorStoreQuery(
+            query_str=query,
+            query_embedding=query_embedding,
+            similarity_top_k=top_k,
+            mode=query_mode,
+            filters=filters,
+            alpha=alpha,
+        )
+
+        # Execute query
+        result = vector_store.query(vs_query)
+
+        # Process results
+        return self._process_query_results(result, score_threshold)
 
     def _build_metadata_filters(
         self, knowledge_id: str, metadata_condition: Optional[Dict[str, Any]] = None
@@ -217,38 +218,56 @@ class ElasticsearchBackend(BaseStorageBackend):
         """
         return parse_metadata_filters(knowledge_id, metadata_condition)
 
-    def _retrieve_vector(
+    def _process_query_results(
         self,
-        query: str,
-        knowledge_id: str,
-        index_name: str,
-        embed_model,
-        top_k: int,
+        result,
         score_threshold: float,
-        metadata_condition: Optional[Dict[str, Any]] = None,
     ) -> Dict:
-        """Pure vector search."""
-        vector_store = self.create_vector_store(index_name)
-        index = VectorStoreIndex.from_vector_store(
-            vector_store=vector_store, embed_model=embed_model
-        )
+        """
+        Process VectorStoreQueryResult into Dify-compatible format.
 
-        # Build metadata filters
-        filters = self._build_metadata_filters(knowledge_id, metadata_condition)
+        Args:
+            result: VectorStoreQueryResult from LlamaIndex
+            score_threshold: Minimum relevance score (0-1)
 
-        retriever = index.as_retriever(similarity_top_k=top_k, filters=filters)
+        Returns:
+            Dict with 'records' list in Dify-compatible format
+        """
+        # Handle empty results
+        if not result.nodes:
+            return {"records": []}
 
-        # Retrieve
-        nodes = retriever.retrieve(query)
+        # Get max score for normalization (for keyword search scores may not be normalized)
+        similarities = result.similarities or []
+        if similarities:
+            max_score = max((s for s in similarities if s is not None), default=1.0)
+            if max_score == 0:
+                max_score = 1.0
+        else:
+            max_score = 1.0
 
-        # Filter by threshold and format results (Dify-compatible format)
+        # Process results (Dify-compatible format)
         results = []
-        for node in nodes:
-            if node.score >= score_threshold:
+        for i, node in enumerate(result.nodes):
+            score = (
+                similarities[i]
+                if i < len(similarities) and similarities[i] is not None
+                else 0.0
+            )
+
+            # Normalize score to 0-1 range if needed
+            # For vector search, scores are already normalized (cosine similarity)
+            # For keyword search, scores may need normalization
+            if max_score > 1.0:
+                normalized_score = score / max_score
+            else:
+                normalized_score = score
+
+            if normalized_score >= score_threshold:
                 results.append(
                     {
                         "content": node.text,
-                        "score": float(node.score),
+                        "score": float(normalized_score),
                         "title": node.metadata.get("source_file", ""),
                         "metadata": node.metadata,
                     }
@@ -256,151 +275,73 @@ class ElasticsearchBackend(BaseStorageBackend):
 
         return {"records": results}
 
-    def _retrieve_hybrid(
-        self,
-        query: str,
-        knowledge_id: str,
-        index_name: str,
-        embed_model,
-        top_k: int,
-        score_threshold: float,
-        vector_weight: float,
-        keyword_weight: float,
-        metadata_condition: Optional[Dict[str, Any]] = None,
-    ) -> Dict:
-        """Hybrid search (vector + BM25)."""
-        # Get query embedding
-        query_embedding = embed_model.get_query_embedding(query)
-
-        # Create Elasticsearch client
-        es_client = Elasticsearch(self.url, **self.es_kwargs)
-
-        # Build filters using the new filter builder
-        must_filters = build_elasticsearch_filters(knowledge_id, metadata_condition)
-
-        # Build hybrid search query
-        search_body = {
-            "size": top_k,
-            "query": {
-                "bool": {
-                    "must": must_filters,
-                    "should": [
-                        # Vector search component
-                        {
-                            "script_score": {
-                                "query": {"match_all": {}},
-                                "script": {
-                                    "source": f"cosineSimilarity(params.query_vector, 'embedding') * {vector_weight}",
-                                    "params": {"query_vector": query_embedding},
-                                },
-                            }
-                        },
-                        # BM25 keyword search component
-                        {
-                            "multi_match": {
-                                "query": query,
-                                "fields": ["content^1.0"],
-                                "type": "best_fields",
-                                "boost": keyword_weight,
-                            }
-                        },
-                    ],
-                    "minimum_should_match": 1,
-                }
-            },
-            "_source": ["content", "metadata"],
-        }
-
-        # Execute search
-        response = es_client.search(index=index_name, body=search_body)
-
-        # Process results (Dify-compatible format)
-        results = []
-        for hit in response["hits"]["hits"]:
-            score = hit["_score"]
-            normalized_score = min(score, 1.0)
-
-            if normalized_score >= score_threshold:
-                source = hit["_source"]
-                metadata = source.get("metadata", {})
-
-                results.append(
-                    {
-                        "content": source.get("content", ""),
-                        "score": float(normalized_score),
-                        "title": metadata.get("source_file", ""),
-                        "metadata": metadata,
-                    }
-                )
-
-        return {"records": results}
-
     def delete_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
         """
-        Delete document from Elasticsearch using native ES API.
+        Delete document from Elasticsearch using LlamaIndex API.
 
-        Uses delete_by_query to remove all chunks with matching doc_ref (doc_xxx format).
+        Uses delete_nodes with metadata filters to remove all chunks
+        with matching doc_ref (doc_xxx format).
+
+        Args:
+            knowledge_id: Knowledge base ID
+            doc_ref: Document reference ID (doc_xxx format)
+            **kwargs: Additional parameters (e.g., user_id for per_user index strategy)
+
+        Returns:
+            Deletion result dict
         """
         index_name = self.get_index_name(knowledge_id, **kwargs)
-        es_client = Elasticsearch(self.url, **self.es_kwargs)
+        vector_store = self.create_vector_store(index_name)
 
-        # Use ES native delete_by_query API with our custom doc_ref field
-        delete_query = {
-            "query": {
-                "bool": {
-                    "must": [
-                        {"term": {"metadata.knowledge_id.keyword": knowledge_id}},
-                        {"term": {"metadata.doc_ref.keyword": doc_ref}},
-                    ]
-                }
-            }
-        }
+        # Build filters to match the document
+        filters = self._build_doc_ref_filters(knowledge_id, doc_ref)
 
-        response = es_client.delete_by_query(index=index_name, body=delete_query)
+        # Get nodes first to count them
+        nodes = vector_store.get_nodes(filters=filters)
+        deleted_count = len(nodes)
+
+        # Delete nodes using LlamaIndex API
+        vector_store.delete_nodes(filters=filters)
 
         return {
             "doc_ref": doc_ref,
             "knowledge_id": knowledge_id,
-            "deleted_chunks": response.get("deleted", 0),
+            "deleted_chunks": deleted_count,
             "status": "deleted",
         }
 
     def get_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
         """
-        Get document details from Elasticsearch using native ES API.
+        Get document details from Elasticsearch using LlamaIndex API.
 
-        Uses ES search to retrieve all chunks with matching doc_ref (doc_xxx format).
+        Uses get_nodes with metadata filters to retrieve all chunks
+        with matching doc_ref (doc_xxx format).
+
+        Args:
+            knowledge_id: Knowledge base ID
+            doc_ref: Document reference ID (doc_xxx format)
+            **kwargs: Additional parameters (e.g., user_id for per_user index strategy)
+
+        Returns:
+            Document details dict with chunks
         """
         index_name = self.get_index_name(knowledge_id, **kwargs)
-        es_client = Elasticsearch(self.url, **self.es_kwargs)
+        vector_store = self.create_vector_store(index_name)
 
-        # Use ES native search API with our custom doc_ref field
-        search_body = {
-            "size": 1000,  # Max chunks per document
-            "query": {
-                "bool": {
-                    "must": [
-                        {"term": {"metadata.knowledge_id.keyword": knowledge_id}},
-                        {"term": {"metadata.doc_ref.keyword": doc_ref}},
-                    ]
-                }
-            },
-            "sort": [{"metadata.chunk_index": "asc"}],
-            "_source": ["content", "metadata"],
-        }
+        # Build filters to match the document
+        filters = self._build_doc_ref_filters(knowledge_id, doc_ref)
 
-        response = es_client.search(index=index_name, body=search_body)
+        # Get nodes using LlamaIndex API
+        nodes = vector_store.get_nodes(filters=filters)
 
-        hits = response["hits"]["hits"]
-        if not hits:
+        if not nodes:
             raise ValueError(f"Document {doc_ref} not found")
 
-        # Extract chunks
+        # Extract chunks and sort by chunk_index
         chunks = []
         source_file = None
-        for hit in hits:
-            source = hit["_source"]
-            metadata = source.get("metadata", {})
+        for node in nodes:
+            metadata = node.metadata
 
             if source_file is None:
                 source_file = metadata.get("source_file")
@@ -408,10 +349,13 @@ class ElasticsearchBackend(BaseStorageBackend):
             chunks.append(
                 {
                     "chunk_index": metadata.get("chunk_index"),
-                    "content": source.get("content", ""),
+                    "content": node.text,
                     "metadata": metadata,
                 }
             )
+
+        # Sort by chunk_index
+        chunks.sort(key=lambda x: x.get("chunk_index", 0))
 
         return {
             "doc_ref": doc_ref,
@@ -420,6 +364,25 @@ class ElasticsearchBackend(BaseStorageBackend):
             "chunk_count": len(chunks),
             "chunks": chunks,
         }
+
+    def _build_doc_ref_filters(self, knowledge_id: str, doc_ref: str):
+        """
+        Build metadata filters for document reference lookup.
+
+        Args:
+            knowledge_id: Knowledge base ID
+            doc_ref: Document reference ID (doc_xxx format)
+
+        Returns:
+            MetadataFilters object for filtering by knowledge_id and doc_ref
+        """
+        return MetadataFilters(
+            filters=[
+                ExactMatchFilter(key="knowledge_id", value=knowledge_id),
+                ExactMatchFilter(key="doc_ref", value=doc_ref),
+            ],
+            condition="and",
+        )
 
     def list_documents(
         self, knowledge_id: str, page: int = 1, page_size: int = 20, **kwargs

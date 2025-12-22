@@ -481,6 +481,12 @@
     "name_invalid_hint": "只能包含小写字母、数字和连字符",
     "group_required_title": "请先选择群组",
     "group_required_message": "在群组模式下创建检索引擎时必须选择目标群组",
+    "retrieval_methods": "检索方式",
+    "retrieval_methods_hint": "选择要启用的检索方式，至少需要启用一种。",
+    "loading_retrieval_methods": "加载可用检索方式...",
+    "retrieval_method_vector": "向量检索",
+    "retrieval_method_keyword": "全文检索",
+    "retrieval_method_hybrid": "混合检索",
     "errors": {
       "load_retrievers_failed": "加载检索引擎列表失败",
       "create_failed": "创建检索引擎失败",

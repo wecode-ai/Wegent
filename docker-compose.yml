@@ -43,7 +43,7 @@ services:
       start_period: 10s
 
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    image: elastic/elasticsearch:8.18.8
     container_name: wegent-elasticsearch
     restart: always
     profiles:

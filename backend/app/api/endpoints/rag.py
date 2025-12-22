@@ -10,8 +10,10 @@ Refactored to use Retriever CRD configuration instead of global config.
 import json
 import tempfile
 from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -24,13 +26,16 @@ from app.schemas.rag import (
     DocumentUploadResponse,
     RetrieveRequest,
     RetrieveResponse,
+    SemanticSplitterConfig,
+    SentenceSplitterConfig,
+    SplitterConfig,
 )
 from app.services.adapters.retriever_kinds import retriever_kinds_service
 from app.services.rag.document_service import DocumentService
 from app.services.rag.retrieval_service import RetrievalService
 from app.services.rag.storage.factory import create_storage_backend
 
-router = APIRouter(prefix="/api/rag", tags=["RAG"])
+router = APIRouter()
 
 
 def get_retriever_and_backend(
@@ -70,6 +75,11 @@ async def upload_document(
     file: UploadFile = File(...),
     embedding_model_name: str = Form(...),
     embedding_model_namespace: str = Form(default="default"),
+    splitter_config: Optional[str] = Form(
+        None,
+        description="JSON string of splitter configuration. Example: "
+        '{"type": "sentence", "chunk_size": 1024, "chunk_overlap": 200, "separator": "\\n\\n"}',
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -83,6 +93,11 @@ async def upload_document(
         file: Document file (MD/PDF/TXT/DOCX/code)
         embedding_model_name: Embedding model name
         embedding_model_namespace: Embedding model namespace (default: "default")
+        splitter_config: Optional JSON string of splitter configuration.
+                        If not provided, defaults to semantic splitter.
+                        Examples:
+                        - Semantic: {"type": "semantic", "buffer_size": 1, "breakpoint_percentile_threshold": 95}
+                        - Sentence: {"type": "sentence", "chunk_size": 1024, "chunk_overlap": 200, "separator": "\\n\\n"}
         db: Database session
         current_user: Current user
 
@@ -93,6 +108,25 @@ async def upload_document(
         HTTPException: If upload or indexing fails
     """
     try:
+        # Parse splitter config if provided
+        parsed_splitter_config: Optional[SplitterConfig] = None
+        if splitter_config:
+            try:
+                config_dict = json.loads(splitter_config)
+                config_type = config_dict.get("type", "semantic")
+
+                if config_type == "semantic":
+                    parsed_splitter_config = SemanticSplitterConfig(**config_dict)
+                elif config_type == "sentence":
+                    parsed_splitter_config = SentenceSplitterConfig(**config_dict)
+                else:
+                    raise ValueError(f"Unknown splitter type: {config_type}")
+            except (json.JSONDecodeError, ValidationError) as e:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid splitter_config JSON: {str(e)}",
+                ) from e
+
         # Get retriever and create backend
         _, storage_backend = get_retriever_and_backend(
             retriever_name=retriever_name,
@@ -113,7 +147,7 @@ async def upload_document(
             tmp_path = tmp.name
 
         try:
-            # Index document (pass user_id for per_user index strategy)
+            # Index document (pass user_id for per_user index strategy and splitter config)
             result = await doc_service.index_document(
                 knowledge_id=knowledge_id,
                 file_path=tmp_path,
@@ -121,12 +155,15 @@ async def upload_document(
                 embedding_model_namespace=embedding_model_namespace,
                 user_id=current_user.id,
                 db=db,
+                splitter_config=parsed_splitter_config,
             )
             return result
         finally:
             # Cleanup temp file
             Path(tmp_path).unlink(missing_ok=True)
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
