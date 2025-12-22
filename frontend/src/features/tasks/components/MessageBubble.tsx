@@ -317,34 +317,10 @@ const MessageBubble = memo(
     isCurrentUserMessage,
   }: MessageBubbleProps) {
     // Use trace hook for telemetry (auto-includes user and task context)
-    const { traceActionSync } = useTraceAction();
+    const { trace } = useTraceAction();
 
     // Determine if this is a user-type message (for styling purposes)
     const isUserTypeMessage = msg.type === 'user';
-
-    // Trace callbacks for copy and download actions
-    const handleCopyTrace = (copyType: 'user-message' | 'ai-message') => {
-      traceActionSync(
-        'copy-message',
-        {
-          'copy.type': copyType,
-          'copy.message_type': msg.type,
-          ...(msg.subtaskId && { 'subtask.id': msg.subtaskId }),
-        },
-        () => {}
-      );
-    };
-
-    const handleDownloadTrace = () => {
-      traceActionSync(
-        'download-message',
-        {
-          'download.message_type': msg.type,
-          ...(msg.subtaskId && { 'subtask.id': msg.subtaskId }),
-        },
-        () => {}
-      );
-    };
 
     // Determine if this message should be right-aligned (current user's message)
     // For group chat: only current user's messages are right-aligned
@@ -576,7 +552,7 @@ const MessageBubble = memo(
           />
           <BubbleTools
             contentToCopy={`${promptPart ? promptPart + '\n\n' : ''}${normalizedResult}`}
-            onCopySuccess={() => handleCopyTrace('ai-message')}
+            onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
             tools={[
               {
                 key: 'download',
@@ -592,7 +568,7 @@ const MessageBubble = memo(
                   a.download = 'message.md';
                   a.click();
                   URL.revokeObjectURL(url);
-                  handleDownloadTrace();
+                  trace.download(msg.type, msg.subtaskId);
                 },
               },
             ]}
@@ -1206,7 +1182,7 @@ const MessageBubble = memo(
             {/* Show copy and download buttons */}
             <BubbleTools
               contentToCopy={contentToRender}
-              onCopySuccess={() => handleCopyTrace('ai-message')}
+              onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
               tools={[
                 {
                   key: 'download',
@@ -1222,7 +1198,7 @@ const MessageBubble = memo(
                     a.download = 'message.md';
                     a.click();
                     URL.revokeObjectURL(url);
-                    handleDownloadTrace();
+                    trace.download(msg.type, msg.subtaskId);
                   },
                 },
               ]}
@@ -1264,7 +1240,7 @@ const MessageBubble = memo(
               {/* Show copy and download buttons during streaming */}
               <BubbleTools
                 contentToCopy={contentToRender}
-                onCopySuccess={() => handleCopyTrace('ai-message')}
+                onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
                 tools={[
                   {
                     key: 'download',
@@ -1280,7 +1256,7 @@ const MessageBubble = memo(
                       a.download = 'message.md';
                       a.click();
                       URL.revokeObjectURL(url);
-                      handleDownloadTrace();
+                      trace.download(msg.type, msg.subtaskId);
                     },
                   },
                 ]}
@@ -1361,7 +1337,7 @@ const MessageBubble = memo(
                   content={msg.content}
                   className="h-6 w-6 hover:bg-muted"
                   tooltip={t('actions.copy') || 'Copy'}
-                  onCopySuccess={() => handleCopyTrace('user-message')}
+                  onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
                 />
               </div>
             )}

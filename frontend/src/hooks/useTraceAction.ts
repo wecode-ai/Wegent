@@ -9,7 +9,7 @@
  * in all traced actions.
  */
 
-import { useCallback, useContext } from 'react';
+import { useCallback, useContext, useMemo } from 'react';
 import { traceLocalAction, traceLocalActionSync } from '@/lib/telemetry';
 import { useUser } from '@/features/common/UserContext';
 import { TaskContext } from '@/features/tasks/contexts/taskContext';
@@ -21,17 +21,27 @@ import { Attributes, AttributeValue } from '@opentelemetry/api';
 type TraceContext = Record<string, AttributeValue | undefined>;
 
 /**
+ * Message type for copy/download tracing
+ */
+type MessageType = 'user' | 'ai';
+
+/**
  * Hook that provides trace functions with automatic user and task context.
  *
  * @example
  * ```tsx
- * const { traceAction, traceActionSync } = useTraceAction()
+ * const { trace } = useTraceAction()
  *
- * const handleCopy = async () => {
- *   await traceAction('copy-message', { 'message.content_length': text.length }, async () => {
- *     await navigator.clipboard.writeText(text)
- *   })
- * }
+ * // Simplest usage - predefined events
+ * trace.copy('user')           // trace copy user message
+ * trace.copy('ai', subtaskId)  // trace copy AI message with subtask
+ * trace.download('ai')         // trace download
+ *
+ * // Custom event
+ * trace.event('custom-action', { key: 'value' })
+ *
+ * // Wrap function execution
+ * await trace.action('export-pdf', { pages: 10 }, async () => { ... })
  * ```
  */
 export function useTraceAction() {
@@ -59,12 +69,18 @@ export function useTraceAction() {
   }, [user, taskContext?.selectedTaskDetail]);
 
   /**
+   * Simple event tracing - records an event without wrapping a function.
+   */
+  const traceEvent = useCallback(
+    (name: string, attributes?: Attributes): void => {
+      const contextAttrs = buildContextAttributes();
+      traceLocalActionSync(name, { ...contextAttrs, ...attributes }, () => {});
+    },
+    [buildContextAttributes]
+  );
+
+  /**
    * Trace an async action with automatic context
-   *
-   * @param name - The name of the action (e.g., 'copy-message', 'export-pdf')
-   * @param attributes - Additional attributes to add to the span
-   * @param fn - The async function to execute
-   * @returns The result of the function
    */
   const traceAction = useCallback(
     async <T>(name: string, attributes: Attributes, fn: () => T | Promise<T>): Promise<T> => {
@@ -76,11 +92,6 @@ export function useTraceAction() {
 
   /**
    * Trace a sync action with automatic context
-   *
-   * @param name - The name of the action
-   * @param attributes - Additional attributes to add to the span
-   * @param fn - The sync function to execute
-   * @returns The result of the function
    */
   const traceActionSync = useCallback(
     <T>(name: string, attributes: Attributes, fn: () => T): T => {
@@ -92,12 +103,6 @@ export function useTraceAction() {
 
   /**
    * Trace an action with a specific subtask ID
-   *
-   * @param name - The name of the action
-   * @param subtaskId - The subtask ID to include in the trace
-   * @param attributes - Additional attributes to add to the span
-   * @param fn - The async function to execute
-   * @returns The result of the function
    */
   const traceActionWithSubtask = useCallback(
     async <T>(
@@ -116,9 +121,69 @@ export function useTraceAction() {
     [buildContextAttributes]
   );
 
+  /**
+   * Simplified trace API with predefined common events
+   */
+  const trace = useMemo(
+    () => ({
+      /**
+       * Trace copy message event
+       * @param messageType - 'user' or 'ai'
+       * @param subtaskId - Optional subtask ID
+       */
+      copy: (messageType: MessageType, subtaskId?: number) => {
+        traceEvent('copy-message', {
+          'copy.type': `${messageType}-message`,
+          'copy.message_type': messageType,
+          ...(subtaskId && { 'subtask.id': subtaskId }),
+        });
+      },
+
+      /**
+       * Trace download message event
+       * @param messageType - 'user' or 'ai'
+       * @param subtaskId - Optional subtask ID
+       */
+      download: (messageType: MessageType, subtaskId?: number) => {
+        traceEvent('download-message', {
+          'download.message_type': messageType,
+          ...(subtaskId && { 'subtask.id': subtaskId }),
+        });
+      },
+
+      /**
+       * Trace custom event
+       * @param name - Event name
+       * @param attributes - Optional attributes
+       */
+      event: traceEvent,
+
+      /**
+       * Trace async action with function wrapping
+       * @param name - Action name
+       * @param attributes - Attributes
+       * @param fn - Function to execute
+       */
+      action: traceAction,
+
+      /**
+       * Trace sync action with function wrapping
+       * @param name - Action name
+       * @param attributes - Attributes
+       * @param fn - Function to execute
+       */
+      actionSync: traceActionSync,
+    }),
+    [traceEvent, traceAction, traceActionSync]
+  );
+
   return {
+    // New simplified API
+    trace,
+    // Legacy API (for backward compatibility)
     traceAction,
     traceActionSync,
+    traceEvent,
     traceActionWithSubtask,
     buildContextAttributes,
   };
