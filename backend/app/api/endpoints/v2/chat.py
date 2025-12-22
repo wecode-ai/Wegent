@@ -138,7 +138,7 @@ async def create_chat_completion(
             )
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 async def _stream_response(stream_iterator):

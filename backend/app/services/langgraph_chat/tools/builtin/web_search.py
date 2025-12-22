@@ -1,4 +1,4 @@
-"""Web search tool (placeholder for integration with existing search service)."""
+"""Web search tool integrated with backend search service."""
 
 from typing import Optional
 
@@ -40,14 +40,39 @@ class WebSearchTool(BaseTool):
             ToolResult with search results
         """
         try:
-            # TODO: Integrate with app.services.search
-            # For now, return placeholder
+            # Import search service
+            from app.services.search import get_search_service
+
+            # Get search service instance
+            search_service = get_search_service()
+            if not search_service:
+                return ToolResult(
+                    success=False,
+                    output=None,
+                    error="Web search service not configured. Set WEB_SEARCH_ENABLED=true and configure WEB_SEARCH_ENGINES.",
+                )
+
+            # Execute search
+            results = await search_service.search(query=query, max_results=max_results)
+
+            # Format results
+            formatted_results = []
+            for result in results:
+                formatted_results.append(
+                    {
+                        "title": result.get("title", ""),
+                        "url": result.get("url", ""),
+                        "snippet": result.get("snippet", ""),
+                        "content": result.get("content", ""),
+                    }
+                )
+
             return ToolResult(
                 success=True,
                 output={
                     "query": query,
-                    "results": [],
-                    "message": "Web search integration pending - connect to app.services.search",
+                    "results": formatted_results,
+                    "count": len(formatted_results),
                 },
                 metadata={"max_results": max_results},
             )

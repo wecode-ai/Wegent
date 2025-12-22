@@ -54,19 +54,25 @@ class LangGraphAgentBuilder:
 
         for tool in self.tool_registry.get_all_tools():
             # Create async function wrapper for tool execution
-            async def tool_func(**kwargs):
-                result = await tool.execute(**kwargs)
-                if result.success:
-                    return result.output
-                else:
-                    return f"Error: {result.error}"
+            # Use a factory to bind the current tool to avoid closure variable capture issue
+            def make_tool_func(bound_tool):
+                async def tool_func(**kwargs):
+                    result = await bound_tool.execute(**kwargs)
+                    if result.success:
+                        return result.output
+                    else:
+                        return f"Error: {result.error}"
+
+                return tool_func
+
+            tool_func_bound = make_tool_func(tool)
 
             # Create LangChain Tool
             lc_tool = Tool(
                 name=tool.name,
                 description=tool.description,
-                func=tool_func,
-                coroutine=tool_func,  # Use async version
+                func=tool_func_bound,
+                coroutine=tool_func_bound,  # Use async version
             )
             langchain_tools.append(lc_tool)
 
@@ -134,12 +140,23 @@ class LangGraphAgentBuilder:
                     )
 
                     # Create ToolMessage for LangChain
+                    # Ensure content is always a string by serializing non-string outputs
+                    import json
+
+                    if result.success:
+                        # Convert output to string
+                        if isinstance(result.output, str):
+                            content = result.output
+                        else:
+                            try:
+                                content = json.dumps(result.output, ensure_ascii=False)
+                            except (TypeError, ValueError):
+                                content = str(result.output)
+                    else:
+                        content = f"Error: {result.error}"
+
                     tool_message = ToolMessage(
-                        content=(
-                            result.output
-                            if result.success
-                            else f"Error: {result.error}"
-                        ),
+                        content=content,
                         tool_call_id=tool_call_id,
                         name=tool_name,
                     )

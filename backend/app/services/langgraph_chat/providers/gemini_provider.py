@@ -229,13 +229,60 @@ class GeminiProvider(BaseLLMProvider):
         return gemini_tools
 
     def _convert_json_schema_to_gemini(self, schema: Dict[str, Any]) -> Dict[str, Any]:
-        """Convert JSON Schema to Gemini parameter format."""
-        # Gemini uses a simplified schema format
-        return {
-            "type": schema.get("type", "object"),
-            "properties": schema.get("properties", {}),
-            "required": schema.get("required", []),
-        }
+        """Convert JSON Schema to Gemini parameter format.
+
+        Recursively preserves all Gemini-supported attributes including:
+        type, properties, required, format, description, nullable, enum,
+        minItems, maxItems, minimum, maximum, pattern, default, additionalProperties, items.
+        """
+        if not schema:
+            return {}
+
+        result = {}
+
+        # Copy scalar attributes that Gemini supports
+        for attr in [
+            "type",
+            "format",
+            "description",
+            "nullable",
+            "enum",
+            "minItems",
+            "maxItems",
+            "minimum",
+            "maximum",
+            "pattern",
+            "default",
+            "additionalProperties",
+        ]:
+            if attr in schema:
+                result[attr] = schema[attr]
+
+        # Recursively convert properties
+        if "properties" in schema:
+            result["properties"] = {}
+            for prop_name, prop_schema in schema["properties"].items():
+                result["properties"][prop_name] = self._convert_json_schema_to_gemini(
+                    prop_schema
+                )
+
+        # Copy required array
+        if "required" in schema:
+            result["required"] = schema["required"]
+
+        # Recursively convert items (for arrays)
+        if "items" in schema:
+            items = schema["items"]
+            if isinstance(items, dict):
+                # Single schema for all items
+                result["items"] = self._convert_json_schema_to_gemini(items)
+            elif isinstance(items, list):
+                # Array of schemas (tuple validation)
+                result["items"] = [
+                    self._convert_json_schema_to_gemini(item) for item in items
+                ]
+
+        return result
 
     def _convert_multimodal_content(
         self, content: List[Dict[str, Any]]

@@ -12,6 +12,7 @@ from .client import (
 from .session import MCPSessionManager
 
 __all__ = [
+    "adapt_mcp_tools",
     "MCPClient",
     "MCPSession",
     "MCPSessionManager",
@@ -20,5 +21,4 @@ __all__ = [
     "SSEMCPSession",
     "StdioMCPSession",
     "StreamableHTTPMCPSession",
-    "adapt_mcp_tools",
 ]
