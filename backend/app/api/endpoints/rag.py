@@ -125,7 +125,7 @@ async def upload_document(
                 raise HTTPException(
                     status_code=400,
                     detail=f"Invalid splitter_config JSON: {str(e)}",
-                )
+                ) from e
 
         # Get retriever and create backend
         _, storage_backend = get_retriever_and_backend(

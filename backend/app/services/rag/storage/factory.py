@@ -6,7 +6,7 @@
 Storage backend factory for creating storage backends from Retriever CRD.
 """
 
-from typing import Dict, List, Type
+from typing import Dict, List, Optional, Type
 
 from app.schemas.kind import Retriever
 from app.services.rag.storage.base import BaseStorageBackend
@@ -74,11 +74,11 @@ def get_all_storage_retrieval_methods() -> Dict[str, List[str]]:
 def create_storage_backend_from_config(
     storage_type: str,
     url: str,
-    username: str = None,
-    password: str = None,
-    api_key: str = None,
-    index_strategy: Dict = None,
-    ext: Dict = None,
+    username: Optional[str] = None,
+    password: Optional[str] = None,
+    api_key: Optional[str] = None,
+    index_strategy: Optional[Dict] = None,
+    ext: Optional[Dict] = None,
 ) -> BaseStorageBackend:
     """
     Create storage backend from configuration parameters.
