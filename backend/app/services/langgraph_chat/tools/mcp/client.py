@@ -2,12 +2,13 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""MCP (Model Context Protocol) client implementation using langchain-mcp-adapters SDK.
+"""MCP (Model Context Protocol) client using langchain-mcp-adapters SDK.
 
-This module provides a simplified wrapper around official langchain-mcp-adapters
-SDK for managing MCP server connections and tools.
+This module provides a thin wrapper around the official langchain-mcp-adapters
+MultiServerMCPClient with async context manager support.
 """
 
+import logging
 from typing import Any
 
 from langchain_core.tools.base import BaseTool
@@ -18,15 +19,18 @@ from langchain_mcp_adapters.sessions import (
     StreamableHttpConnection,
 )
 
+logger = logging.getLogger(__name__)
 
-def build_connections(
-    config: dict[str, dict[str, Any]],
-) -> dict[str, SSEConnection | StdioConnection | StreamableHttpConnection]:
+# Type alias for connection types
+Connection = SSEConnection | StdioConnection | StreamableHttpConnection
+
+
+def build_connections(config: dict[str, dict[str, Any]]) -> dict[str, Connection]:
     """Build connection configs from server configuration dict.
 
     Args:
-        config: MCP servers configuration dict
-            Format: {
+        config: MCP servers configuration dict. Format:
+            {
                 "server_name": {
                     "type": "sse|stdio|streamable-http",
                     "url": "...",  # for sse/streamable-http
@@ -40,78 +44,88 @@ def build_connections(
     Returns:
         Dict of server_name to Connection config
     """
+    builders = {
+        "sse": lambda cfg: SSEConnection(
+            transport="sse",
+            url=cfg["url"],
+            headers=cfg.get("headers"),
+            timeout=cfg.get("timeout", 30.0),
+        ),
+        "stdio": lambda cfg: StdioConnection(
+            transport="stdio",
+            command=cfg["command"],
+            args=cfg.get("args", []),
+            env=cfg.get("env"),
+        ),
+        "streamable-http": lambda cfg: StreamableHttpConnection(
+            transport="streamable_http",
+            url=cfg["url"],
+            headers=cfg.get("headers"),
+        ),
+    }
+
     connections = {}
-
-    for server_name, server_config in config.items():
-        server_type = server_config.get("type", "sse")
-
-        if server_type == "sse":
-            connections[server_name] = SSEConnection(
-                transport="sse",
-                url=server_config["url"],
-                headers=server_config.get("headers"),
-                timeout=server_config.get("timeout", 30.0),
-            )
-        elif server_type == "stdio":
-            connections[server_name] = StdioConnection(
-                transport="stdio",
-                command=server_config["command"],
-                args=server_config.get("args", []),
-                env=server_config.get("env"),
-            )
-        elif server_type == "streamable-http":
-            connections[server_name] = StreamableHttpConnection(
-                transport="streamable_http",
-                url=server_config["url"],
-                headers=server_config.get("headers"),
-            )
-        else:
+    for name, cfg in config.items():
+        server_type = cfg.get("type", "sse")
+        builder = builders.get(server_type)
+        if not builder:
             raise ValueError(f"Unknown MCP server type: {server_type}")
+        connections[name] = builder(cfg)
 
     return connections
 
 
 class MCPClient:
-    """MCP client wrapper using langchain-mcp-adapters SDK.
+    """MCP client with async context manager support.
 
-    This class wraps the MultiServerMCPClient from langchain-mcp-adapters
-    to provide a simpler interface for managing MCP server connections.
+    Wraps langchain-mcp-adapters MultiServerMCPClient for simplified usage.
+
+    Usage:
+        async with MCPClient(config) as client:
+            tools = client.get_tools()
     """
 
     def __init__(self, config: dict[str, dict[str, Any]]):
-        """Initialize MCP client with server configuration.
+        """Initialize MCP client.
 
         Args:
             config: MCP servers configuration dict
         """
         self.config = config
-        self.connections = build_connections(config)
+        self.connections = build_connections(config) if config else {}
         self._client: MultiServerMCPClient | None = None
-        self._tools_cache: list[BaseTool] = []
+
+    async def __aenter__(self) -> "MCPClient":
+        """Async context manager entry - connect to servers."""
+        await self.connect()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Async context manager exit - disconnect from servers."""
+        await self.disconnect()
 
     async def connect(self) -> None:
-        """Connect to all configured MCP servers.
+        """Connect to all configured MCP servers."""
+        if not self.connections:
+            return
 
-        Creates a MultiServerMCPClient and enters its async context.
-        """
         self._client = MultiServerMCPClient(connections=self.connections)
         await self._client.__aenter__()
-        # Cache tools after connection
-        self._tools_cache = self._client.get_tools()
+        logger.info("Connected to MCP servers: %s", ", ".join(self.list_servers()))
 
     async def disconnect(self) -> None:
         """Disconnect from all MCP servers."""
         if self._client:
             await self._client.__aexit__(None, None, None)
             self._client = None
-            self._tools_cache = []
+            logger.info("Disconnected from MCP servers")
 
-    def get_tools(self, server_name: str | None = None) -> list[BaseTool]:
+    def get_tools(self, server_names: list[str] | None = None) -> list[BaseTool]:
         """Get LangChain-compatible tools from connected servers.
 
         Args:
-            server_name: Optional server name to filter tools.
-                        If None, returns tools from all servers.
+            server_names: Optional list of server names to filter tools.
+                         If None, returns tools from all servers.
 
         Returns:
             List of LangChain BaseTool instances
@@ -119,21 +133,20 @@ class MCPClient:
         if not self._client:
             return []
 
-        return self._client.get_tools(server_name=server_name)
+        if server_names is None:
+            return self._client.get_tools()
+
+        # Collect tools from specified servers
+        tools = []
+        for name in server_names:
+            tools.extend(self._client.get_tools(server_name=name))
+        return tools
 
     def list_servers(self) -> list[str]:
-        """List configured server names.
-
-        Returns:
-            List of server names
-        """
+        """List configured server names."""
         return list(self.connections.keys())
 
     @property
     def is_connected(self) -> bool:
-        """Check if client is connected.
-
-        Returns:
-            True if connected, False otherwise
-        """
+        """Check if client is connected."""
         return self._client is not None

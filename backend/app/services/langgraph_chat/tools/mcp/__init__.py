@@ -2,17 +2,13 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""MCP module exports.
+"""MCP (Model Context Protocol) integration using langchain-mcp-adapters SDK.
 
-This module provides MCP (Model Context Protocol) integration using by
-official langchain-mcp-adapters SDK.
+Usage:
+    async with MCPClient(config) as client:
+        tools = client.get_tools()
 """
 
 from .client import MCPClient, build_connections
-from .session import MCPSessionManager
 
-__all__ = [
-    "MCPClient",
-    "MCPSessionManager",
-    "build_connections",
-]
+__all__ = ["MCPClient", "build_connections"]

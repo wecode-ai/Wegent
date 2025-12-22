@@ -2,70 +2,49 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Base tool interface and registry for LangChain tools."""
+"""Base tool interface and registry for LangChain tools.
 
-from typing import Any
+Note: Tool invocation is handled automatically by LangGraph's create_react_agent.
+This registry is only for tool registration and retrieval.
+"""
 
 from langchain_core.tools.base import BaseTool
 
 
 class ToolRegistry:
-    """Registry for managing LangChain BaseTool instances."""
+    """Registry for managing LangChain BaseTool instances.
+
+    LangGraph's create_react_agent handles tool invocation automatically,
+    so this registry only provides registration and retrieval functionality.
+    """
 
     def __init__(self):
         """Initialize tool registry."""
         self._tools: dict[str, BaseTool] = {}
 
     def register(self, tool: BaseTool) -> None:
-        """Register a LangChain tool.
-
-        Args:
-            tool: LangChain BaseTool instance to register
-        """
+        """Register a LangChain tool."""
         self._tools[tool.name] = tool
 
     def unregister(self, tool_name: str) -> None:
-        """Unregister a tool.
-
-        Args:
-            tool_name: Name of tool to unregister
-        """
+        """Unregister a tool by name."""
         self._tools.pop(tool_name, None)
 
     def get(self, tool_name: str) -> BaseTool | None:
-        """Get tool by name.
-
-        Args:
-            tool_name: Tool name
-
-        Returns:
-            BaseTool instance or None
-        """
+        """Get tool by name, or None if not found."""
         return self._tools.get(tool_name)
 
     def get_all(self) -> list[BaseTool]:
-        """List all registered tools.
-
-        Returns:
-            List of BaseTool instances
-        """
+        """Get all registered tools."""
         return list(self._tools.values())
 
-    async def invoke_tool(self, tool_name: str, **kwargs) -> Any:
-        """Execute a tool by name.
+    def __len__(self) -> int:
+        """Return number of registered tools."""
+        return len(self._tools)
 
-        Args:
-            tool_name: Tool name
-            **kwargs: Tool parameters
-
-        Returns:
-            Tool output directly (LangChain handles errors)
-        """
-        tool = self._tools.get(tool_name)
-        if tool:
-            return await tool.ainvoke(kwargs)
-
-        raise ValueError(f"Tool not found: {tool_name}")
+    def __contains__(self, tool_name: str) -> bool:
+        """Check if a tool is registered."""
+        return tool_name in self._tools
 
 
 # Global tool registry instance

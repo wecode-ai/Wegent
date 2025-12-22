@@ -9,7 +9,6 @@ This module provides a LangGraph-based chat service that uses:
 - LangChain for model abstraction and tool binding
 - Database-based model resolution
 - Redis session management
-- WebSocket event emission
 - SSE streaming responses
 """
 
@@ -17,19 +16,21 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import Any, TypeVar
 
 from fastapi.responses import StreamingResponse
 
 from app.core.config import settings
 
-from .agents.graph_builder import LangGraphAgentBuilder
+from .agents import LangGraphAgentBuilder
 from .messages import MessageConverter
 from .models import LangChainModelFactory
 from .storage import storage_handler
 from .tools import ToolRegistry, WebSearchTool
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 # SSE response headers
 _SSE_HEADERS = {
@@ -39,7 +40,7 @@ _SSE_HEADERS = {
     "Content-Encoding": "none",
 }
 
-# Semaphore for concurrent chat limit
+# Semaphore for concurrent chat limit (lazy initialized)
 _chat_semaphore: asyncio.Semaphore | None = None
 
 
@@ -51,9 +52,27 @@ def _get_chat_semaphore() -> asyncio.Semaphore:
     return _chat_semaphore
 
 
-def _sse_data(data: dict) -> str:
+def _sse_data(data: dict[str, Any]) -> str:
     """Format data as SSE event."""
     return f"data: {json.dumps(data)}\n\n"
+
+
+def truncate_list_keep_ends(items: list[T], first_n: int, last_n: int) -> list[T]:
+    """Truncate a list keeping first N and last M items.
+
+    Useful for chat history truncation to maintain context while limiting size.
+
+    Args:
+        items: List to truncate
+        first_n: Number of items to keep from the start
+        last_n: Number of items to keep from the end
+
+    Returns:
+        Truncated list, or original if len(items) <= first_n + last_n
+    """
+    if len(items) <= first_n + last_n:
+        return items
+    return items[:first_n] + items[-last_n:]
 
 
 class LangGraphChatService:
@@ -366,16 +385,13 @@ class LangGraphChatService:
 
         return await chat_service._get_group_chat_history(task_id)
 
-    def _truncate_history(self, history: list[dict[str, str]]) -> list[dict[str, str]]:
+    def _truncate_history(self, history: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Truncate chat history keeping first N and last M messages."""
-        first_count = settings.GROUP_CHAT_HISTORY_FIRST_MESSAGES
-        last_count = settings.GROUP_CHAT_HISTORY_LAST_MESSAGES
-        total = len(history)
-
-        if total <= first_count + last_count:
-            return history
-
-        return history[:first_count] + history[-last_count:]
+        return truncate_list_keep_ends(
+            history,
+            settings.GROUP_CHAT_HISTORY_FIRST_MESSAGES,
+            settings.GROUP_CHAT_HISTORY_LAST_MESSAGES,
+        )
 
     def list_tools(self) -> list[dict[str, Any]]:
         """List available tools in OpenAI format."""
@@ -385,7 +401,9 @@ class LangGraphChatService:
                 "function": {
                     "name": tool.name,
                     "description": tool.description,
-                    "parameters": tool.args_schema.schema() if tool.args_schema else {},
+                    "parameters": (
+                        tool.args_schema.model_json_schema() if tool.args_schema else {}
+                    ),
                 },
             }
             for tool in self.tool_registry.get_all()
