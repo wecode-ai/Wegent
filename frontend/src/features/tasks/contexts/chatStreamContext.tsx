@@ -545,13 +545,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
    * NO REFRESH needed - the UI will display the content from messages Map
    */
   const handleChatDone = useCallback((data: ChatDonePayload) => {
-    const { task_id: eventTaskId, subtask_id, result } = data;
-
-    console.log('[ChatStreamContext][chat:done] Received', {
-      task_id: eventTaskId,
-      subtask_id,
-      resultLen: (result?.value as string)?.length || 0,
-    });
+    const { task_id: eventTaskId, subtask_id, result, message_id } = data;
 
     // Find task ID from subtask mapping, or use task_id from event (for group chat members)
     let taskId = subtaskToTaskRef.current.get(subtask_id);
@@ -605,6 +599,8 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           ...existingMessage,
           status: 'completed',
           content: finalContent || existingMessage.content,
+          // Set messageId from backend for proper sorting
+          messageId: message_id,
         });
       } else {
         console.warn('[ChatStreamContext][chat:done] AI message not found, cannot update status', {
@@ -1001,8 +997,9 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
 
         const realTaskId = response.task_id || immediateTaskId;
         const subtaskId = response.subtask_id;
+        const messageId = response.message_id;
 
-        // Update user message status to completed and set subtaskId
+        // Update user message status to completed and set subtaskId and messageId
         setStreamStates(prev => {
           const newMap = new Map(prev);
           const currentState = newMap.get(immediateTaskId);
@@ -1010,7 +1007,12 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
             const newMessages = new Map(currentState.messages);
             const msg = newMessages.get(userMessageId);
             if (msg) {
-              newMessages.set(userMessageId, { ...msg, status: 'completed', subtaskId });
+              newMessages.set(userMessageId, {
+                ...msg,
+                status: 'completed',
+                subtaskId,
+                messageId,
+              });
             }
 
             // If we got a real task ID different from immediate, migrate state
