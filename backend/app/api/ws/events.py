@@ -164,6 +164,8 @@ class ChatDonePayload(BaseModel):
     subtask_id: int
     offset: int
     result: Dict[str, Any] = Field(default_factory=dict)
+    message_id: Optional[int] = None  # Add message_id for message ordering
+    task_id: Optional[int] = None  # Add task_id for group chat members
 
 
 class ChatErrorPayload(BaseModel):
@@ -185,6 +187,9 @@ class ChatMessagePayload(BaseModel):
 
     subtask_id: int
     task_id: int
+    message_id: int = Field(
+        ..., description="Message ID for ordering (primary sort key)"
+    )
     role: str
     content: str
     sender: Dict[str, Any] = Field(default_factory=dict)
@@ -284,6 +289,7 @@ class ChatSendAck(BaseModel):
 
     task_id: Optional[int] = None
     subtask_id: Optional[int] = None
+    message_id: Optional[int] = None  # Message ID for the user's subtask
     error: Optional[str] = None
 
 

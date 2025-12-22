@@ -421,21 +421,25 @@ async def _stream_chat_response(
                 subtask_id, "COMPLETED", result={"value": full_response}
             )
 
-            # Emit done event AFTER database is updated
-            await namespace.emit(
-                ServerEvents.CHAT_DONE,
-                {
-                    "task_id": task_id,
-                    "subtask_id": subtask_id,
-                    "offset": offset,
-                    "result": result,
-                },
-                room=task_room,
-            )
+            # Get message_id from database for proper message ordering
+            from app.models.subtask import Subtask
 
-            # Also notify user room for multi-device sync
+            subtask = db.query(Subtask).filter(Subtask.id == subtask_id).first()
+            message_id = subtask.message_id if subtask else None
+
+            # Emit done event AFTER database is updated
+            # Use ws_emitter for consistent handling with message_id
             ws_emitter = get_ws_emitter()
             if ws_emitter:
+                await ws_emitter.emit_chat_done(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    offset=offset,
+                    result=result,
+                    message_id=message_id,
+                )
+
+                # Also notify user room for multi-device sync
                 await ws_emitter.emit_chat_bot_complete(
                     user_id=user_data["id"],
                     task_id=task_id,
