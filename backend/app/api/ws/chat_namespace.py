@@ -11,12 +11,19 @@ It handles authentication, room management, and chat events.
 
 import asyncio
 import logging
+import uuid
 from datetime import datetime
 from typing import Any, Dict, Optional
 
 import socketio
 from jose import jwt
 from pydantic import ValidationError
+
+from shared.telemetry.context import (
+    set_request_context,
+    set_task_context,
+    set_user_context,
+)
 
 from app.api.ws.events import (
     ChatCancelPayload,
@@ -239,6 +246,31 @@ class ChatNamespace(socketio.AsyncNamespace):
             "history:sync": "on_history_sync",
         }
 
+    async def _restore_trace_context(self, sid: str) -> None:
+        """
+        Restore trace context from session for logging.
+
+        This helper method restores request_id and user context
+        from the WebSocket session to ensure trace logging works
+        correctly across different event handlers.
+
+        Args:
+            sid: Socket ID
+        """
+        try:
+            session = await self.get_session(sid)
+            request_id = session.get("request_id")
+            user_id = session.get("user_id")
+            user_name = session.get("user_name")
+
+            if request_id:
+                set_request_context(request_id)
+            if user_id:
+                set_user_context(user_id=str(user_id), user_name=user_name)
+        except Exception:
+            # If session is not available, generate a new request ID
+            set_request_context(str(uuid.uuid4())[:8])
+
     async def trigger_event(self, event: str, sid: str, *args):
         """
         Override trigger_event to handle colon-separated event names.
@@ -254,6 +286,10 @@ class ChatNamespace(socketio.AsyncNamespace):
         Returns:
             Result from the event handler
         """
+        # Restore trace context for all events (except connect which sets its own)
+        if event != "connect":
+            await self._restore_trace_context(sid)
+
         # Check if this is a colon-separated event we handle
         if event in self._event_handlers:
             handler_name = self._event_handlers[event]
@@ -281,6 +317,10 @@ class ChatNamespace(socketio.AsyncNamespace):
         Raises:
             ConnectionRefusedError: If authentication fails
         """
+        # Generate unique request ID for this WebSocket connection
+        request_id = str(uuid.uuid4())[:8]
+        set_request_context(request_id)
+
         logger.info(f"[WS] Connection attempt sid={sid}")
 
         # Check auth token
@@ -305,8 +345,12 @@ class ChatNamespace(socketio.AsyncNamespace):
             {
                 "user_id": user.id,
                 "user_name": user.user_name,
+                "request_id": request_id,
             },
         )
+
+        # Set user context for trace logging
+        set_user_context(user_id=str(user.id), user_name=user.user_name)
 
         # Join user room
         user_room = f"user:{user.id}"
@@ -324,6 +368,14 @@ class ChatNamespace(socketio.AsyncNamespace):
         try:
             session = await self.get_session(sid)
             user_id = session.get("user_id", "unknown")
+            request_id = session.get("request_id")
+
+            # Restore request context for trace logging
+            if request_id:
+                set_request_context(request_id)
+            if user_id != "unknown":
+                set_user_context(user_id=str(user_id))
+
             logger.info(f"[WS] Disconnected user={user_id} sid={sid}")
         except Exception:
             logger.info(f"[WS] Disconnected sid={sid}")
@@ -359,6 +411,9 @@ class ChatNamespace(socketio.AsyncNamespace):
         # Check permission
         if not await can_access_task(user_id, payload.task_id):
             return {"error": "Access denied"}
+
+        # Set task context for trace logging
+        set_task_context(task_id=payload.task_id)
 
         # Join task room
         task_room = f"task:{payload.task_id}"
@@ -403,6 +458,9 @@ class ChatNamespace(socketio.AsyncNamespace):
         except ValidationError as e:
             return {"error": f"Invalid payload: {e}"}
 
+        # Set task context for trace logging
+        set_task_context(task_id=payload.task_id)
+
         task_room = f"task:{payload.task_id}"
         await self.leave_room(sid, task_room)
 
@@ -436,6 +494,10 @@ class ChatNamespace(socketio.AsyncNamespace):
             logger.info(
                 f"[WS] chat:send payload parsed: team_id={payload.team_id}, task_id={payload.task_id}, message_len={len(payload.message) if payload.message else 0}"
             )
+
+            # Set task context for trace logging if task_id is provided
+            if payload.task_id:
+                set_task_context(task_id=payload.task_id)
         except ValidationError as e:
             logger.error(f"[WS] chat:send validation error: {e}")
             return {"error": f"Invalid payload: {e}"}
@@ -836,6 +898,9 @@ class ChatNamespace(socketio.AsyncNamespace):
         """
         try:
             payload = ChatCancelPayload(**data)
+
+            # Set task context for trace logging
+            set_task_context(subtask_id=payload.subtask_id)
         except ValidationError as e:
             logger.error(f"[WS] chat:cancel validation error: {e}")
             return {"error": f"Invalid payload: {e}"}
@@ -991,6 +1056,9 @@ class ChatNamespace(socketio.AsyncNamespace):
         """
         try:
             payload = ChatResumePayload(**data)
+
+            # Set task context for trace logging
+            set_task_context(task_id=payload.task_id, subtask_id=payload.subtask_id)
         except ValidationError as e:
             return {"error": f"Invalid payload: {e}"}
 
@@ -1041,6 +1109,9 @@ class ChatNamespace(socketio.AsyncNamespace):
         """
         try:
             payload = HistorySyncPayload(**data)
+
+            # Set task context for trace logging
+            set_task_context(task_id=payload.task_id)
         except ValidationError as e:
             return {"error": f"Invalid payload: {e}"}
 
