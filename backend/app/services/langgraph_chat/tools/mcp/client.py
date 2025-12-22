@@ -1,10 +1,14 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """MCP (Model Context Protocol) client implementation using langchain-mcp-adapters SDK.
 
-This module provides a simplified wrapper around the official langchain-mcp-adapters
+This module provides a simplified wrapper around official langchain-mcp-adapters
 SDK for managing MCP server connections and tools.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from langchain_core.tools.base import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -16,8 +20,8 @@ from langchain_mcp_adapters.sessions import (
 
 
 def build_connections(
-    config: Dict[str, Dict[str, Any]],
-) -> Dict[str, SSEConnection | StdioConnection | StreamableHttpConnection]:
+    config: dict[str, dict[str, Any]],
+) -> dict[str, SSEConnection | StdioConnection | StreamableHttpConnection]:
     """Build connection configs from server configuration dict.
 
     Args:
@@ -74,7 +78,7 @@ class MCPClient:
     to provide a simpler interface for managing MCP server connections.
     """
 
-    def __init__(self, config: Dict[str, Dict[str, Any]]):
+    def __init__(self, config: dict[str, dict[str, Any]]):
         """Initialize MCP client with server configuration.
 
         Args:
@@ -82,8 +86,8 @@ class MCPClient:
         """
         self.config = config
         self.connections = build_connections(config)
-        self._client: Optional[MultiServerMCPClient] = None
-        self._tools_cache: List[BaseTool] = []
+        self._client: MultiServerMCPClient | None = None
+        self._tools_cache: list[BaseTool] = []
 
     async def connect(self) -> None:
         """Connect to all configured MCP servers.
@@ -102,7 +106,7 @@ class MCPClient:
             self._client = None
             self._tools_cache = []
 
-    def get_tools(self, server_name: Optional[str] = None) -> List[BaseTool]:
+    def get_tools(self, server_name: str | None = None) -> list[BaseTool]:
         """Get LangChain-compatible tools from connected servers.
 
         Args:
@@ -117,7 +121,7 @@ class MCPClient:
 
         return self._client.get_tools(server_name=server_name)
 
-    def list_servers(self) -> List[str]:
+    def list_servers(self) -> list[str]:
         """List configured server names.
 
         Returns:

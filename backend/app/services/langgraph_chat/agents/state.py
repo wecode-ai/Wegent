@@ -1,6 +1,10 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Agent state definitions for LangGraph."""
 
-from typing import Annotated, Any, Dict, List, Optional
+from typing import Annotated, Any
 
 from langchain_core.messages import BaseMessage
 from langgraph.graph import add_messages
@@ -21,18 +25,18 @@ class AgentState(TypedDict):
     """
 
     # Messages with automatic aggregation via add_messages reducer
-    messages: Annotated[List[BaseMessage], add_messages]
+    messages: Annotated[list[BaseMessage], add_messages]
 
     # Tool execution tracking
-    tool_results: List[Dict[str, Any]]
+    tool_results: list[dict[str, Any]]
 
     # Iteration control
     iteration: int
     max_iterations: int
 
     # Execution results
-    final_answer: Optional[str]
-    error: Optional[str]
+    final_answer: str | None
+    error: str | None
 
     # Context metadata
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]

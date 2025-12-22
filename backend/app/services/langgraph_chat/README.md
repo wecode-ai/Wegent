@@ -17,10 +17,9 @@
     - SSE (Server-Sent Events) 传输
     - stdio (标准输入输出) 传输
     - streamable-http (HTTP 流式) 传输
-  - Skills 大文件处理
-    - 分块文件读取 (`read_file`)
-    - 文件列表 (`list_files`)
   - 内置工具
+    - 文件读取 (`read_file`)
+    - 文件列表 (`list_files`)
     - Web 搜索 (预留接口)
 
 - **深度思考模式**
@@ -54,17 +53,14 @@ backend/app/services/langgraph_chat/
 │   └── factory.py             # Provider 工厂
 │
 ├── tools/                      # 工具系统
-│   ├── base.py                # BaseTool、ToolRegistry
+│   ├── base.py                # ToolRegistry (LangChain BaseTool)
 │   ├── mcp/                   # MCP 工具集成
 │   │   ├── client.py          # MCP 客户端
-│   │   ├── adapter.py         # MCP 工具适配器
 │   │   └── session.py         # MCP 会话管理
-│   ├── skills/                # Skills 系统
-│   │   ├── file_reader.py     # 文件读取工具
-│   │   └── registry.py        # Skills 注册表
 │   └── builtin/               # 内置工具
+│       ├── __init__.py        # 工具导入
+│       ├── file_reader.py     # 文件读取工具
 │       └── web_search.py      # Web 搜索工具
-│
 ├── agents/                     # Agent 实现 (预留)
 ├── state/                      # 状态管理 (预留)
 ├── streaming/                  # 流式输出 (预留)
@@ -125,17 +121,18 @@ response = await provider.chat_completion(
 
 #### 3. 工具系统
 
-可扩展的工具注册与执行机制。
+基于 LangChain BaseTool 的可扩展工具注册与执行机制。
 
 ```python
-from app.services.langgraph_chat.tools import BaseTool, ToolRegistry
+from app.services.langgraph_chat.tools import ToolRegistry
+from app.services.langgraph_chat.tools.builtin import FileReaderSkill
 
 # 注册工具
 registry = ToolRegistry()
 registry.register(FileReaderSkill(workspace_root="/workspace"))
 
 # 执行工具
-result = await registry.execute_tool("read_file", file_path="README.md", offset=0, limit=100)
+result = await registry.invoke_tool("read_file", file_path="README.md", offset=0, limit=100)
 ```
 
 #### 4. MCP 集成
@@ -379,24 +376,31 @@ class CohereProvider(BaseLLMProvider):
 
 ### 添加新工具
 
-1. 在 `tools/builtin/` 或 `tools/skills/` 创建工具文件
-2. 继承 `BaseTool` 并实现 `execute` 方法
-3. 定义 `input_schema` (Pydantic 模型)
+1. 在 `tools/builtin/` 创建工具文件
+2. 继承 `langchain_core.tools.base.BaseTool` 并实现 `_run` 和 `_arun` 方法
+3. 定义 `args_schema` (Pydantic 模型)
 4. 注册到 `ToolRegistry`
 
 ```python
-class MyToolInput(ToolInput):
+from langchain_core.tools.base import BaseTool
+from pydantic import BaseModel, Field
+
+class MyToolInput(BaseModel):
     param1: str = Field(description="...")
     param2: int = Field(default=0)
 
 class MyTool(BaseTool):
     name = "my_tool"
     description = "..."
-    input_schema = MyToolInput
+    args_schema: type[BaseModel] = MyToolInput
 
-    async def execute(self, param1: str, param2: int = 0) -> ToolResult:
-        # 实现工具逻辑
-        return ToolResult(success=True, output="result")
+    def _run(self, param1: str, param2: int = 0) -> str:
+        # 实现同步工具逻辑
+        return "result"
+
+    async def _arun(self, param1: str, param2: int = 0) -> str:
+        # 实现异步工具逻辑
+        return "result"
 ```
 
 ## 依赖说明
@@ -434,7 +438,7 @@ pytest --cov=app/services/langgraph_chat --cov-report=html
 - [x] **工具系统基础** - BaseTool、ToolRegistry 注册与执行
 - [x] **主服务入口** - LangGraphChatService 统一接口
 - [x] **MCP 集成** - SSE、stdio、streamable-http 三种传输协议
-- [x] **Skills 文件读取** - 分块读取、文件列表
+- [x] **内置工具文件读取** - 分块读取、文件列表
 - [x] **LangGraph 状态图构建器** - 基于 StateGraph 实现 agent → tools → agent 循环
 - [x] **真实的智能体工作流** - AgentState 状态管理 + 自动工具调用
 - [x] **深度思考模式** - Multi-step reasoning with tool execution loops

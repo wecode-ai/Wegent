@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """LangGraph Chat Service - main service entry point with real LangGraph agent."""
 
 import json
@@ -10,7 +14,7 @@ from langchain_core.messages import AIMessage
 from .agents.graph_builder import LangGraphAgentBuilder
 from .config import config
 from .providers.langchain_models import LangChainModelFactory
-from .tools import SkillsRegistry, ToolRegistry, WebSearchTool
+from .tools import ToolRegistry, WebSearchTool
 from .tools.mcp import MCPSessionManager
 
 
@@ -89,7 +93,7 @@ class CompletionResponse:
         }
 
 
-class LangGraphChatService:
+class n:
     """Main service for LangGraph-based chat completions.
 
     Uses LangChain/LangGraph framework for agent orchestration with:
@@ -130,12 +134,11 @@ class LangGraphChatService:
                 self.mcp_manager = MCPSessionManager(mcp_config)
 
         # Initialize Skills if enabled
-        self.skills_registry: SkillsRegistry | None = None
         if enable_skills and config.SKILLS_ENABLED:
-            self.skills_registry = SkillsRegistry(workspace_root)
-            # Register skills to global registry
-            for skill in self.skills_registry.get_all_skills():
-                self.tool_registry.register(skill)
+            # Register skills directly to global registry
+            from .tools.builtin import FileReaderSkill, FileListSkill
+            self.tool_registry.register(FileReaderSkill(workspace_root=workspace_root))
+            self.tool_registry.register(FileListSkill(workspace_root=workspace_root))
 
         # Initialize web search if enabled
         if enable_web_search:

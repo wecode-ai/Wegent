@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """LangGraph-based Chat Service module.
 
 This module provides an alternative Chat Service implementation using LangChain/LangGraph

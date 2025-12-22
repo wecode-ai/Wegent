@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """LangGraph graph builder for agent workflows."""
 
 from typing import Any
@@ -100,7 +104,7 @@ class LangGraphAgentBuilder:
                             "result": (
                                 result.model_dump()
                                 if hasattr(result, "model_dump")
-                                else {"output": result.output}
+                                else {"output": result}
                             ),
                         }
                     )
@@ -109,17 +113,14 @@ class LangGraphAgentBuilder:
                     # Ensure content is always a string by serializing non-string outputs
                     import json
 
-                    if result.success:
-                        # Convert output to string
-                        if isinstance(result.output, str):
-                            content = result.output
-                        else:
-                            try:
-                                content = json.dumps(result.output, ensure_ascii=False)
-                            except (TypeError, ValueError):
-                                content = str(result.output)
+                    # Convert output to string
+                    if isinstance(result, str):
+                        content = result
                     else:
-                        content = f"Error: {result.error}"
+                        try:
+                            content = json.dumps(result, ensure_ascii=False)
+                        except (TypeError, ValueError):
+                            content = str(result)
 
                     tool_message = ToolMessage(
                         content=content,

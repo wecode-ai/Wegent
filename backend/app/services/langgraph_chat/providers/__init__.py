@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Provider module exports."""
 
 from .anthropic_provider import AnthropicProvider

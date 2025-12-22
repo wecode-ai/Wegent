@@ -1,15 +1,20 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """File reader skill for chunked reading of large files."""
 
+import json
 import os
-from typing import Optional
 
-from pydantic import Field
+from langchain_core.callbacks import CallbackManagerForToolRun
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel, Field
 
 from ...config import config
-from ..base import BaseTool, ToolInput, ToolResult
 
 
-class FileReaderInput(ToolInput):
+class FileReaderInput(BaseModel):
     """Input schema for file reader tool."""
 
     file_path: str = Field(description="File path or attachment ID")
@@ -24,53 +29,57 @@ class FileReaderSkill(BaseTool):
     context window limitations.
     """
 
-    name = "read_file"
-    description = "Read file content with pagination support for large files. Returns specified lines range with metadata about total lines and whether more content is available."
-    input_schema = FileReaderInput
+    name: str = "read_file"
+    description: str = "Read file content with pagination support for large files. Returns specified lines range with metadata about total lines and whether more content is available."
+    args_schema: type[BaseModel] = FileReaderInput
+
+    # Instance attributes
+    workspace_root: str = "/workspace"
+    max_lines: int = 500
 
     def __init__(
         self,
         workspace_root: str = "/workspace",
-        max_lines: Optional[int] = None,
-        timeout: int = 30,
+        max_lines: int | None = None,
+        **kwargs,
     ):
         """Initialize file reader skill.
 
         Args:
             workspace_root: Root directory for file access
             max_lines: Maximum lines to read in one call (overrides config)
-            timeout: Execution timeout
         """
-        super().__init__(timeout)
+        super().__init__(**kwargs)
         self.workspace_root = workspace_root
         self.max_lines = max_lines or config.FILE_READER_MAX_LINES
 
-    async def execute(
-        self, file_path: str, offset: int = 0, limit: int = 200
-    ) -> ToolResult:
-        """Execute file reading with pagination.
+    def _run(
+        self,
+        file_path: str,
+        offset: int = 0,
+        limit: int = 200,
+        run_manager: CallbackManagerForToolRun | None = None,
+    ) -> str:
+        """Execute file reading with pagination synchronously.
 
         Args:
             file_path: File path relative to workspace_root
             offset: Starting line number (0-indexed)
             limit: Number of lines to read
+            run_manager: Callback manager
 
         Returns:
-            ToolResult with file content and metadata
+            JSON string with file content and metadata
         """
         try:
             # Sanitize and validate file path
             full_path = self._resolve_file_path(file_path)
 
             if not os.path.exists(full_path):
-                return ToolResult(
-                    success=False, output=None, error=f"File not found: {file_path}"
-                )
+                return json.dumps({"error": f"File not found: {file_path}"})
 
             if not os.path.isfile(full_path):
-                return ToolResult(
-                    success=False, output=None, error=f"Path is not a file: {file_path}"
-                )
+                return json.dumps({"error": f"Path is not a file: {file_path}"})
 
             # Enforce limit cap
             limit = min(limit, self.max_lines)
@@ -80,10 +89,9 @@ class FileReaderSkill(BaseTool):
                 full_path, offset, limit
             )
 
-            return ToolResult(
-                success=True,
-                output=content,
-                metadata={
+            return json.dumps(
+                {
+                    "content": content,
                     "file_path": file_path,
                     "offset": offset,
                     "lines_read": len(content.splitlines()),
@@ -91,12 +99,32 @@ class FileReaderSkill(BaseTool):
                     "has_more": has_more,
                     "next_offset": offset + limit if has_more else None,
                 },
+                ensure_ascii=False,
             )
 
         except Exception as e:
-            return ToolResult(
-                success=False, output=None, error=f"Failed to read file: {str(e)}"
-            )
+            return json.dumps({"error": f"Failed to read file: {str(e)}"})
+
+    async def _arun(
+        self,
+        file_path: str,
+        offset: int = 0,
+        limit: int = 200,
+        run_manager: CallbackManagerForToolRun | None = None,
+    ) -> str:
+        """Execute file reading with pagination asynchronously.
+
+        Args:
+            file_path: File path relative to workspace_root
+            offset: Starting line number (0-indexed)
+            limit: Number of lines to read
+            run_manager: Callback manager
+
+        Returns:
+            JSON string with file content and metadata
+        """
+        # File operations are synchronous, delegate to _run
+        return self._run(file_path, offset, limit, run_manager)
 
     def _resolve_file_path(self, file_path: str) -> str:
         """Resolve and sanitize file path.
@@ -162,13 +190,13 @@ class FileReaderSkill(BaseTool):
         return content, total_lines, has_more
 
 
-class FileListInput(ToolInput):
+class FileListInput(BaseModel):
     """Input schema for file list tool."""
 
     directory: str = Field(
         default=".", description="Directory path relative to workspace"
     )
-    pattern: Optional[str] = Field(
+    pattern: str | None = Field(
         default=None, description="Optional glob pattern to filter files"
     )
 
@@ -176,31 +204,37 @@ class FileListInput(ToolInput):
 class FileListSkill(BaseTool):
     """Skill for listing files in a directory."""
 
-    name = "list_files"
-    description = "List files in a directory with optional pattern filtering. Returns file names, sizes, and modification times."
-    input_schema = FileListInput
+    name: str = "list_files"
+    description: str = "List files in a directory with optional pattern filtering. Returns file names, sizes, and modification times."
+    args_schema: type[BaseModel] = FileListInput
 
-    def __init__(self, workspace_root: str = "/workspace", timeout: int = 30):
+    # Instance attributes
+    workspace_root: str = "/workspace"
+
+    def __init__(self, workspace_root: str = "/workspace", **kwargs):
         """Initialize file list skill.
 
         Args:
             workspace_root: Root directory for file access
-            timeout: Execution timeout
         """
-        super().__init__(timeout)
+        super().__init__(**kwargs)
         self.workspace_root = workspace_root
 
-    async def execute(
-        self, directory: str = ".", pattern: Optional[str] = None
-    ) -> ToolResult:
-        """Execute file listing.
+    def _run(
+        self,
+        directory: str = ".",
+        pattern: str | None = None,
+        run_manager: CallbackManagerForToolRun | None = None,
+    ) -> str:
+        """Execute file listing synchronously.
 
         Args:
             directory: Directory path relative to workspace
             pattern: Optional glob pattern
+            run_manager: Callback manager
 
         Returns:
-            ToolResult with file list
+            JSON string with file list
         """
         try:
             import glob
@@ -209,25 +243,15 @@ class FileListSkill(BaseTool):
             full_dir = self._resolve_directory(directory)
 
             if not os.path.exists(full_dir):
-                return ToolResult(
-                    success=False,
-                    output=None,
-                    error=f"Directory not found: {directory}",
-                )
+                return json.dumps({"error": f"Directory not found: {directory}"})
 
             if not os.path.isdir(full_dir):
-                return ToolResult(
-                    success=False,
-                    output=None,
-                    error=f"Path is not a directory: {directory}",
-                )
+                return json.dumps({"error": f"Path is not a directory: {directory}"})
 
             # Validate glob pattern for directory traversal attempts
             if pattern and (".." in pattern or pattern.startswith("/")):
-                return ToolResult(
-                    success=False,
-                    output=None,
-                    error="Invalid pattern: parent directory traversal not allowed",
+                return json.dumps(
+                    {"error": "Invalid pattern: parent directory traversal not allowed"}
                 )
 
             # List files
@@ -262,20 +286,37 @@ class FileListSkill(BaseTool):
                         }
                     )
 
-            return ToolResult(
-                success=True,
-                output=files,
-                metadata={
+            return json.dumps(
+                {
+                    "files": files,
                     "directory": directory,
                     "pattern": pattern,
                     "file_count": len(files),
                 },
+                ensure_ascii=False,
             )
 
         except Exception as e:
-            return ToolResult(
-                success=False, output=None, error=f"Failed to list files: {str(e)}"
-            )
+            return json.dumps({"error": f"Failed to list files: {str(e)}"})
+
+    async def _arun(
+        self,
+        directory: str = ".",
+        pattern: str | None = None,
+        run_manager: CallbackManagerForToolRun | None = None,
+    ) -> str:
+        """Execute file listing asynchronously.
+
+        Args:
+            directory: Directory path relative to workspace
+            pattern: Optional glob pattern
+            run_manager: Callback manager
+
+        Returns:
+            JSON string with file list
+        """
+        # File operations are synchronous, delegate to _run
+        return self._run(directory, pattern, run_manager)
 
     def _resolve_directory(self, directory: str) -> str:
         """Resolve and sanitize directory path.

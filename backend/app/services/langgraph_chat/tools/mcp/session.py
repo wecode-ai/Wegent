@@ -1,7 +1,11 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """MCP session manager for handling multiple MCP server connections."""
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from langchain_core.tools.base import BaseTool
 
@@ -17,7 +21,7 @@ class MCPSessionManager:
     connections and retrieving tools using the langchain-mcp-adapters SDK.
     """
 
-    def __init__(self, config: Dict[str, Dict[str, Any]]):
+    def __init__(self, config: dict[str, dict[str, Any]]):
         """Initialize MCP session manager.
 
         Args:
@@ -56,7 +60,7 @@ class MCPSessionManager:
         except Exception as e:
             logger.error("Error during MCP disconnect: %s", e, exc_info=True)
 
-    def get_tools(self, server_names: Optional[List[str]] = None) -> List[BaseTool]:
+    def get_tools(self, server_names: list[str] | None = None) -> list[BaseTool]:
         """Get LangChain-compatible tools from specified servers or all servers.
 
         Args:
@@ -77,7 +81,7 @@ class MCPSessionManager:
             all_tools.extend(tools)
         return all_tools
 
-    def list_servers(self) -> List[str]:
+    def list_servers(self) -> list[str]:
         """List connected server names.
 
         Returns:

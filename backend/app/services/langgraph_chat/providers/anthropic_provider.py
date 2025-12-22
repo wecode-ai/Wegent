@@ -1,7 +1,12 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Anthropic provider implementation."""
 
 import json
-from typing import Any, AsyncIterator, Dict, List, Optional
+from collections.abc import AsyncIterator
+from typing import Any
 
 from anthropic import AsyncAnthropic
 from anthropic.types import ContentBlock
@@ -15,7 +20,7 @@ class AnthropicProvider(BaseLLMProvider):
     """Anthropic LLM provider using official SDK."""
 
     def __init__(
-        self, model: str, api_key: str, base_url: Optional[str] = None, **kwargs
+        self, model: str, api_key: str, base_url: str | None = None, **kwargs
     ):
         """Initialize Anthropic provider.
 
@@ -30,8 +35,8 @@ class AnthropicProvider(BaseLLMProvider):
 
     async def chat_completion(
         self,
-        messages: List[Message],
-        tools: Optional[List[Dict[str, Any]]] = None,
+        messages: list[Message],
+        tools: list[dict[str, Any]] | None = None,
         tool_choice: str = "auto",
         stream: bool = False,
         **kwargs,
@@ -63,7 +68,7 @@ class AnthropicProvider(BaseLLMProvider):
             return self.convert_from_provider_format(response)
 
     async def _stream_completion(
-        self, params: Dict[str, Any]
+        self, params: dict[str, Any]
     ) -> AsyncIterator[StreamChunk]:
         """Stream completion responses."""
         async with self.client.messages.stream(**params) as stream:
@@ -71,8 +76,8 @@ class AnthropicProvider(BaseLLMProvider):
                 yield self._convert_stream_chunk(chunk)
 
     def convert_to_provider_format(
-        self, messages: List[Message]
-    ) -> tuple[str | None, List[Dict[str, Any]]]:
+        self, messages: list[Message]
+    ) -> tuple[str | None, list[dict[str, Any]]]:
         """Convert messages to Anthropic format.
 
         Returns:
@@ -192,8 +197,8 @@ class AnthropicProvider(BaseLLMProvider):
         return StreamChunk(delta=delta, finish_reason=finish_reason)
 
     def _convert_tools_to_anthropic_format(
-        self, tools: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+        self, tools: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """Convert OpenAI-style tools to Anthropic format."""
         anthropic_tools = []
         for tool in tools:
@@ -209,8 +214,8 @@ class AnthropicProvider(BaseLLMProvider):
         return anthropic_tools
 
     def _convert_multimodal_content(
-        self, content: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+        self, content: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """Convert OpenAI-style multimodal content to Anthropic format."""
         anthropic_content = []
         for item in content:

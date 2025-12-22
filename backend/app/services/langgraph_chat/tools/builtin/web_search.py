@@ -1,13 +1,17 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Web search tool integrated with backend search service."""
 
-from typing import Optional
+import json
 
-from pydantic import Field
+from langchain_core.callbacks import CallbackManagerForToolRun
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel, Field
 
-from ..base import BaseTool, ToolInput, ToolResult
 
-
-class WebSearchInput(ToolInput):
+class WebSearchInput(BaseModel):
     """Input schema for web search tool."""
 
     query: str = Field(description="Search query")
@@ -17,27 +21,34 @@ class WebSearchInput(ToolInput):
 class WebSearchTool(BaseTool):
     """Web search tool that integrates with backend search service."""
 
-    name = "web_search"
-    description = "Search the web for information. Returns a list of relevant web pages with titles, URLs, and snippets."
-    input_schema = WebSearchInput
+    name: str = "web_search"
+    description: str = "Search the web for information. Returns a list of relevant web pages with titles, URLs, and snippets."
+    args_schema: type[BaseModel] = WebSearchInput
 
-    def __init__(self, timeout: int = 30):
-        """Initialize web search tool.
+    def _run(
+        self,
+        query: str,
+        max_results: int = 5,
+        run_manager: CallbackManagerForToolRun | None = None,
+    ) -> str:
+        """Synchronous run - not implemented, use async version."""
+        raise NotImplementedError("WebSearchTool only supports async execution")
 
-        Args:
-            timeout: Execution timeout
-        """
-        super().__init__(timeout)
-
-    async def execute(self, query: str, max_results: int = 5) -> ToolResult:
-        """Execute web search.
+    async def _arun(
+        self,
+        query: str,
+        max_results: int = 5,
+        run_manager: CallbackManagerForToolRun | None = None,
+    ) -> str:
+        """Execute web search asynchronously.
 
         Args:
             query: Search query
             max_results: Maximum number of results
+            run_manager: Callback manager
 
         Returns:
-            ToolResult with search results
+            JSON string with search results
         """
         try:
             # Import search service
@@ -46,10 +57,10 @@ class WebSearchTool(BaseTool):
             # Get search service instance
             search_service = get_search_service()
             if not search_service:
-                return ToolResult(
-                    success=False,
-                    output=None,
-                    error="Web search service not configured. Set WEB_SEARCH_ENABLED=true and configure WEB_SEARCH_ENGINES.",
+                return json.dumps(
+                    {
+                        "error": "Web search service not configured. Set WEB_SEARCH_ENABLED=true and configure WEB_SEARCH_ENGINES."
+                    }
                 )
 
             # Execute search
@@ -67,17 +78,14 @@ class WebSearchTool(BaseTool):
                     }
                 )
 
-            return ToolResult(
-                success=True,
-                output={
+            return json.dumps(
+                {
                     "query": query,
                     "results": formatted_results,
                     "count": len(formatted_results),
                 },
-                metadata={"max_results": max_results},
+                ensure_ascii=False,
             )
 
         except Exception as e:
-            return ToolResult(
-                success=False, output=None, error=f"Web search failed: {str(e)}"
-            )
+            return json.dumps({"error": f"Web search failed: {str(e)}"})

@@ -1,6 +1,11 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """OpenAI provider implementation."""
 
-from typing import Any, AsyncIterator, Dict, List, Optional
+from collections.abc import AsyncIterator
+from typing import Any
 
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
@@ -12,7 +17,7 @@ class OpenAIProvider(BaseLLMProvider):
     """OpenAI LLM provider using official SDK."""
 
     def __init__(
-        self, model: str, api_key: str, base_url: Optional[str] = None, **kwargs
+        self, model: str, api_key: str, base_url: str | None = None, **kwargs
     ):
         """Initialize OpenAI provider.
 
@@ -27,8 +32,8 @@ class OpenAIProvider(BaseLLMProvider):
 
     async def chat_completion(
         self,
-        messages: List[Message],
-        tools: Optional[List[Dict[str, Any]]] = None,
+        messages: list[Message],
+        tools: list[dict[str, Any]] | None = None,
         tool_choice: str = "auto",
         stream: bool = False,
         **kwargs,
@@ -54,15 +59,15 @@ class OpenAIProvider(BaseLLMProvider):
             return self.convert_from_provider_format(response)
 
     async def _stream_completion(
-        self, params: Dict[str, Any]
+        self, params: dict[str, Any]
     ) -> AsyncIterator[StreamChunk]:
         """Stream completion responses."""
         async for chunk in await self.client.chat.completions.create(**params):
             yield self._convert_stream_chunk(chunk)
 
     def convert_to_provider_format(
-        self, messages: List[Message]
-    ) -> List[Dict[str, Any]]:
+        self, messages: list[Message]
+    ) -> list[dict[str, Any]]:
         """Convert messages to OpenAI format."""
         provider_messages = []
         for msg in messages:

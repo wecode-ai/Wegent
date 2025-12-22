@@ -1,7 +1,12 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Google provider implementation."""
 
 import json
-from typing import Any, AsyncIterator, Dict, List, Optional
+from collections.abc import AsyncIterator
+from typing import Any
 from uuid import uuid4
 
 import google.generativeai as genai
@@ -14,7 +19,7 @@ class GoogleProvider(BaseLLMProvider):
     """Google LLM provider using official SDK."""
 
     def __init__(
-        self, model: str, api_key: str, base_url: Optional[str] = None, **kwargs
+        self, model: str, api_key: str, base_url: str | None = None, **kwargs
     ):
         """Initialize Google provider.
 
@@ -30,8 +35,8 @@ class GoogleProvider(BaseLLMProvider):
 
     async def chat_completion(
         self,
-        messages: List[Message],
-        tools: Optional[List[Dict[str, Any]]] = None,
+        messages: list[Message],
+        tools: list[dict[str, Any]] | None = None,
         tool_choice: str = "auto",
         stream: bool = False,
         **kwargs,
@@ -64,7 +69,7 @@ class GoogleProvider(BaseLLMProvider):
             return self.convert_from_provider_format(response)
 
     async def _stream_completion(
-        self, model: Any, messages: List[Dict[str, Any]], tools: Optional[List[Any]]
+        self, model: Any, messages: list[dict[str, Any]], tools: list[Any] | None
     ) -> AsyncIterator[StreamChunk]:
         """Stream completion responses."""
         response = await model.generate_content_async(
@@ -74,8 +79,8 @@ class GoogleProvider(BaseLLMProvider):
             yield self._convert_stream_chunk(chunk)
 
     def convert_to_provider_format(
-        self, messages: List[Message]
-    ) -> tuple[str | None, List[Dict[str, Any]]]:
+        self, messages: list[Message]
+    ) -> tuple[str | None, list[dict[str, Any]]]:
         """Convert messages to Gemini format.
 
         Returns:
@@ -209,7 +214,7 @@ class GoogleProvider(BaseLLMProvider):
 
         return StreamChunk(delta=delta, finish_reason=finish_reason)
 
-    def _convert_tools_to_gemini_format(self, tools: List[Dict[str, Any]]) -> List[Any]:
+    def _convert_tools_to_gemini_format(self, tools: list[dict[str, Any]]) -> list[Any]:
         """Convert OpenAI-style tools to Gemini format."""
         import google.ai.generativelanguage as glm
 
@@ -228,7 +233,7 @@ class GoogleProvider(BaseLLMProvider):
 
         return gemini_tools
 
-    def _convert_json_schema_to_gemini(self, schema: Dict[str, Any]) -> Dict[str, Any]:
+    def _convert_json_schema_to_gemini(self, schema: dict[str, Any]) -> dict[str, Any]:
         """Convert JSON Schema to Gemini parameter format.
 
         Recursively preserves all Gemini-supported attributes including:
@@ -285,8 +290,8 @@ class GoogleProvider(BaseLLMProvider):
         return result
 
     def _convert_multimodal_content(
-        self, content: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+        self, content: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """Convert OpenAI-style multimodal content to Gemini format."""
         import base64
 

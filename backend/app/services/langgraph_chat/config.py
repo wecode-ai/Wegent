@@ -1,8 +1,12 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """LangGraph Chat Service configuration."""
 
 import json
 import logging
-from typing import Any, Dict
+from typing import Any
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -43,7 +47,7 @@ class LangGraphChatConfig(BaseSettings):
     OTEL_EXPORTER_ENDPOINT: str = ""
     OTEL_SERVICE_NAME: str = "langgraph-chat-service"
 
-    def get_mcp_servers_config(self) -> Dict[str, Any]:
+    def get_mcp_servers_config(self) -> dict[str, Any]:
         """Parse MCP servers configuration from JSON string."""
         try:
             return json.loads(self.CHAT_MCP_SERVERS)
