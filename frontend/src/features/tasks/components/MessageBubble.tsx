@@ -30,6 +30,8 @@ import ClarificationAnswerSummary from './ClarificationAnswerSummary';
 import AttachmentPreview from './AttachmentPreview';
 import StreamingWaitIndicator from './StreamingWaitIndicator';
 import type { ClarificationData, FinalPromptData, ClarificationAnswer } from '@/types/api';
+import { traceLocalActionSync } from '@/lib/telemetry';
+import { useUser } from '@/features/common/UserContext';
 export interface Message {
   type: 'user' | 'ai';
   content: string;
@@ -69,10 +71,13 @@ const CopyButton = ({
   content,
   className,
   tooltip,
+  onCopySuccess,
 }: {
   content: string;
   className?: string;
   tooltip?: string;
+  /** Optional callback when copy succeeds - used for telemetry */
+  onCopySuccess?: () => void;
 }) => {
   const [copied, setCopied] = useState(false);
 
@@ -82,6 +87,7 @@ const CopyButton = ({
         await navigator.clipboard.writeText(content);
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
+        onCopySuccess?.();
         return;
       } catch (err) {
         console.error('Failed to copy text: ', err);
@@ -98,6 +104,7 @@ const CopyButton = ({
       document.body.removeChild(textarea);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
+      onCopySuccess?.();
     } catch (err) {
       console.error('Fallback copy failed: ', err);
     }
@@ -134,6 +141,7 @@ const CopyButton = ({
 const BubbleTools = ({
   contentToCopy,
   tools = [],
+  onCopySuccess,
 }: {
   contentToCopy: string;
   tools?: Array<{
@@ -142,10 +150,12 @@ const BubbleTools = ({
     icon: React.ReactNode;
     onClick: () => void;
   }>;
+  /** Optional callback when copy succeeds - used for telemetry */
+  onCopySuccess?: () => void;
 }) => {
   return (
     <div className="absolute bottom-2 left-2 flex items-center gap-1 z-10">
-      <CopyButton content={contentToCopy} />
+      <CopyButton content={contentToCopy} onCopySuccess={onCopySuccess} />
       {tools.map(tool => (
         <Button
           key={tool.key}
@@ -307,8 +317,38 @@ const MessageBubble = memo(
     paragraphAction,
     isCurrentUserMessage,
   }: MessageBubbleProps) {
+    // Get user context for telemetry
+    const { user } = useUser();
+
     // Determine if this is a user-type message (for styling purposes)
     const isUserTypeMessage = msg.type === 'user';
+
+    // Create trace callback for copy actions with user and task context
+    const handleCopyTrace = (copyType: 'user-message' | 'ai-message') => {
+      const attributes: Record<string, string | number | undefined> = {
+        'copy.type': copyType,
+        'copy.message_type': msg.type,
+      };
+
+      // Add user context
+      if (user) {
+        attributes['user.id'] = user.id;
+        attributes['user.name'] = user.user_name;
+      }
+
+      // Add task context
+      if (selectedTaskDetail?.id) {
+        attributes['task.id'] = selectedTaskDetail.id;
+      }
+
+      // Add subtask context
+      if (msg.subtaskId) {
+        attributes['subtask.id'] = msg.subtaskId;
+      }
+
+      // Use traceLocalActionSync with empty function since copy is already done
+      traceLocalActionSync('copy-message', attributes, () => {});
+    };
 
     // Determine if this message should be right-aligned (current user's message)
     // For group chat: only current user's messages are right-aligned
@@ -540,6 +580,7 @@ const MessageBubble = memo(
           />
           <BubbleTools
             contentToCopy={`${promptPart ? promptPart + '\n\n' : ''}${normalizedResult}`}
+            onCopySuccess={() => handleCopyTrace('ai-message')}
             tools={[
               {
                 key: 'download',
@@ -1168,6 +1209,7 @@ const MessageBubble = memo(
             {/* Show copy and download buttons */}
             <BubbleTools
               contentToCopy={contentToRender}
+              onCopySuccess={() => handleCopyTrace('ai-message')}
               tools={[
                 {
                   key: 'download',
@@ -1224,6 +1266,7 @@ const MessageBubble = memo(
               {/* Show copy and download buttons during streaming */}
               <BubbleTools
                 contentToCopy={contentToRender}
+                onCopySuccess={() => handleCopyTrace('ai-message')}
                 tools={[
                   {
                     key: 'download',
@@ -1319,6 +1362,7 @@ const MessageBubble = memo(
                   content={msg.content}
                   className="h-6 w-6 hover:bg-muted"
                   tooltip={t('actions.copy') || 'Copy'}
+                  onCopySuccess={() => handleCopyTrace('user-message')}
                 />
               </div>
             )}

@@ -11,6 +11,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { DocumentDuplicateIcon } from '@heroicons/react/24/outline';
 import { useTranslation } from '@/hooks/useTranslation';
+import { useTraceAction } from '@/hooks/useTraceAction';
 
 interface TaskShareModalProps {
   visible: boolean;
@@ -27,29 +28,40 @@ export default function TaskShareModal({
 }: TaskShareModalProps) {
   const { t } = useTranslation('common');
   const { toast } = useToast();
+  const { traceAction } = useTraceAction();
 
   const handleCopyLink = async () => {
-    try {
-      await navigator.clipboard.writeText(shareUrl);
-      toast({
-        title: t('shared_task.link_copied'),
-        description: t('shared_task.link_copied_desc'),
-      });
-      onClose();
-    } catch {
-      // Fallback to traditional method if clipboard API is not available
-      const textArea = document.createElement('textarea');
-      textArea.value = shareUrl;
-      document.body.appendChild(textArea);
-      textArea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textArea);
-      toast({
-        title: t('shared_task.link_copied'),
-        description: t('shared_task.link_copied_desc'),
-      });
-      onClose();
-    }
+    await traceAction(
+      'copy-share-link',
+      {
+        'action.type': 'copy',
+        'copy.content_type': 'share_link',
+        'task.title': taskTitle,
+      },
+      async () => {
+        try {
+          await navigator.clipboard.writeText(shareUrl);
+          toast({
+            title: t('shared_task.link_copied'),
+            description: t('shared_task.link_copied_desc'),
+          });
+          onClose();
+        } catch {
+          // Fallback to traditional method if clipboard API is not available
+          const textArea = document.createElement('textarea');
+          textArea.value = shareUrl;
+          document.body.appendChild(textArea);
+          textArea.select();
+          document.execCommand('copy');
+          document.body.removeChild(textArea);
+          toast({
+            title: t('shared_task.link_copied'),
+            description: t('shared_task.link_copied_desc'),
+          });
+          onClose();
+        }
+      }
+    );
   };
 
   return (
