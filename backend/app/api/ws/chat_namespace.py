@@ -548,7 +548,9 @@ class ChatNamespace(socketio.AsyncNamespace):
             # - If supports_direct_chat is False: use task_kinds_service.create_task_or_append (sync, for other shells)
             if supports_direct_chat:
                 # Use _create_task_and_subtasks for direct chat (Chat Shell)
-                logger.info(f"[WS] chat:send calling _create_task_and_subtasks (supports_direct_chat=True)...")
+                logger.info(
+                    "[WS] chat:send calling _create_task_and_subtasks (supports_direct_chat=True)..."
+                )
                 result = await _create_task_and_subtasks(
                     db,
                     user,
@@ -568,7 +570,9 @@ class ChatNamespace(socketio.AsyncNamespace):
                 user_subtask_for_attachment = user_subtask
             else:
                 # Use task_kinds_service.create_task_or_append for non-direct chat
-                logger.info(f"[WS] chat:send calling task_kinds_service.create_task_or_append (supports_direct_chat=False)...")
+                logger.info(
+                    f"[WS] chat:send calling task_kinds_service.create_task_or_append (supports_direct_chat=False)..."
+                )
 
                 # Auto-detect task type based on git_url presence
                 task_type = "code" if payload.git_url else "chat"
@@ -588,7 +592,8 @@ class ChatNamespace(socketio.AsyncNamespace):
                     auto_delete_executor="false",
                     source="chat_shell",
                     model_id=payload.force_override_bot_model,
-                    force_override_bot_model=payload.force_override_bot_model is not None,
+                    force_override_bot_model=payload.force_override_bot_model
+                    is not None,
                 )
 
                 # Call create_task_or_append (synchronous method)
