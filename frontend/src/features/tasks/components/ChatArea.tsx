@@ -394,6 +394,7 @@ export default function ChatArea({
   const isStreaming = isSubtaskStreaming || isContextStreaming;
 
   const isStopping = currentStreamState?.isStopping || false;
+
   // Check if there are any pending user messages in the unified messages Map
   const hasPendingUserMessage = useMemo(() => {
     if (localPendingMessage) return true;
@@ -405,12 +406,23 @@ export default function ChatArea({
   }, [localPendingMessage, currentStreamState?.messages]);
 
   // Wrapper for stopStream that uses the current display task ID
+  // Passes current subtasks and team to help find running AI subtask if chat:start hasn't been received
   const stopStream = useCallback(async () => {
     const taskIdToStop = currentDisplayTaskId || streamingTaskId;
-    if (taskIdToStop) {
-      await contextStopStream(taskIdToStop);
+
+    if (taskIdToStop && taskIdToStop > 0) {
+      // Pass current subtasks and team from task detail to help find running subtask and get shell_type
+      const team =
+        typeof selectedTaskDetail?.team === 'object' ? selectedTaskDetail.team : undefined;
+      await contextStopStream(taskIdToStop, selectedTaskDetail?.subtasks, team);
     }
-  }, [currentDisplayTaskId, streamingTaskId, contextStopStream]);
+  }, [
+    currentDisplayTaskId,
+    streamingTaskId,
+    contextStopStream,
+    selectedTaskDetail?.subtasks,
+    selectedTaskDetail?.team,
+  ]);
 
   // Wrapper for resetStream that uses the current display task ID
   // Note: This function is kept for potential future use but currently
@@ -1074,8 +1086,16 @@ export default function ChatArea({
             // streamingContent is preserved, so MessagesArea will display it as a completed message
             // NO REFRESH needed - the UI displays streamingContent from state
             onAIComplete: (_completedTaskId: number, _subtaskId: number) => {
-              // NO REFRESH - streamingContent is preserved in state and displayed by MessagesArea
-              // The stream state will be cleaned up when user switches tasks or starts a new conversation
+              // Don't reset streamingTaskId immediately - wait for task detail refresh
+              // This prevents selectedTaskDetail from becoming undefined
+              setIsLoading(false);
+              // Refresh task detail to update subtask status after stream completion or cancellation
+              // After refresh completes, reset streamingTaskId
+              setTimeout(() => {
+                refreshSelectedTaskDetail(false);
+                // Now it's safe to clear streamingTaskId
+                setStreamingTaskId(null);
+              }, 300);
             },
             onError: (error: Error) => {
               // Reset all streaming state on error
@@ -1109,6 +1129,7 @@ export default function ChatArea({
 
       setIsLoading(false);
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       taskInputMessage,
       shouldHideChatInput,
@@ -1145,7 +1166,7 @@ export default function ChatArea({
 
   const [isCancelling, setIsCancelling] = useState(false);
 
-  const handleCancelTask = async () => {
+  const handleCancelTask = useCallback(async () => {
     if (!selectedTaskDetail?.id || isCancelling) return;
 
     setIsCancelling(true);
@@ -1200,7 +1221,7 @@ export default function ChatArea({
     } finally {
       setIsCancelling(false);
     }
-  };
+  }, [selectedTaskDetail?.id, isCancelling, toast, refreshTasks, refreshSelectedTaskDetail]);
 
   // Callback for MessagesArea to notify content changes (for auto-scroll during streaming)
   const handleMessagesContentChange = useCallback(() => {
@@ -1588,23 +1609,6 @@ export default function ChatArea({
                         >
                           <LoadingDots />
                         </Button>
-                      ) : selectedTaskDetail?.status === 'RUNNING' ? (
-                        isCancelling ? (
-                          <div className="relative h-6 w-6 flex items-center justify-center flex-shrink-0 translate-y-0.5">
-                            <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
-                            <CircleStop className="h-5 w-5 text-orange-500" />
-                          </div>
-                        ) : (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={handleCancelTask}
-                            className="h-6 w-6 rounded-full hover:bg-orange-100 flex-shrink-0 translate-y-0.5"
-                            title="Cancel task"
-                          >
-                            <CircleStop className="h-5 w-5 text-orange-500" />
-                          </Button>
-                        )
                       ) : selectedTaskDetail?.status === 'CANCELLING' ? (
                         <div className="relative h-6 w-6 flex items-center justify-center flex-shrink-0 translate-y-0.5">
                           <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
@@ -1845,23 +1849,6 @@ export default function ChatArea({
                       >
                         <LoadingDots />
                       </Button>
-                    ) : selectedTaskDetail?.status === 'RUNNING' ? (
-                      isCancelling ? (
-                        <div className="relative h-6 w-6 flex items-center justify-center flex-shrink-0 translate-y-0.5">
-                          <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
-                          <CircleStop className="h-5 w-5 text-orange-500" />
-                        </div>
-                      ) : (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={handleCancelTask}
-                          className="h-6 w-6 rounded-full hover:bg-orange-100 flex-shrink-0 translate-y-0.5"
-                          title="Cancel task"
-                        >
-                          <CircleStop className="h-5 w-5 text-orange-500" />
-                        </Button>
-                      )
                     ) : selectedTaskDetail?.status === 'CANCELLING' ? (
                       <div className="relative h-6 w-6 flex items-center justify-center flex-shrink-0 translate-y-0.5">
                         <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />

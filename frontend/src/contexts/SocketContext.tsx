@@ -38,8 +38,10 @@ import {
   TaskInvitedPayload,
 } from '@/types/socket';
 
-// Get the API URL from environment
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+// Socket.IO connection configuration
+// Default: Use relative path (proxy through Next.js server)
+// Set NEXT_PUBLIC_SOCKET_DIRECT_URL to connect directly to backend (bypass proxy)
+const API_URL = process.env.NEXT_PUBLIC_SOCKET_DIRECT_URL || '';
 const SOCKETIO_PATH = '/socket.io';
 
 interface SocketContextType {
@@ -71,7 +73,8 @@ interface SocketContextType {
   /** Cancel a chat stream via WebSocket */
   cancelChatStream: (
     subtaskId: number,
-    partialContent?: string
+    partialContent?: string,
+    shellType?: string
   ) => Promise<{ success: boolean; error?: string }>;
   /** Register chat event handlers */
   registerChatHandlers: (handlers: ChatEventHandlers) => () => void;
@@ -130,8 +133,10 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     console.log('[Socket.IO] Connecting to server...', API_URL + '/chat');
 
     // Create new socket connection
-    // Note: Use 'polling' first for better mobile browser compatibility
-    // Socket.IO will automatically upgrade to WebSocket after initial connection
+    // Transport strategy:
+    // 1. Try WebSocket first (preferred for load-balanced environments without sticky sessions)
+    // 2. If WebSocket fails (e.g., load balancer doesn't support it), fall back to polling
+    // Note: Polling requires sticky sessions in load-balanced environments
     const newSocket = io(API_URL + '/chat', {
       path: SOCKETIO_PATH,
       auth: { token },
@@ -140,12 +145,15 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
-      transports: ['polling', 'websocket'],
+      // Try websocket first, then fall back to polling if websocket fails
+      // This handles cases where load balancer doesn't support WebSocket upgrade
+      transports: ['websocket', 'polling'],
       // Increase timeout for mobile networks which may have higher latency
       timeout: 20000,
       // Force new connection to avoid stale connections on mobile
       forceNew: false,
-      // Enable upgrade from polling to websocket
+      // Disable automatic upgrade from polling to websocket
+      // This prevents "Invalid transport" errors when switching transports
       upgrade: true,
     });
 
@@ -316,9 +324,11 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   const cancelChatStream = useCallback(
     async (
       subtaskId: number,
-      partialContent?: string
+      partialContent?: string,
+      shellType?: string
     ): Promise<{ success: boolean; error?: string }> => {
       if (!socket?.connected) {
+        console.error('[Socket.IO] cancelChatStream failed - not connected');
         return { success: false, error: 'Not connected to server' };
       }
 
@@ -328,6 +338,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
           {
             subtask_id: subtaskId,
             partial_content: partialContent,
+            shell_type: shellType,
           },
           (response: { success?: boolean; error?: string }) => {
             resolve({ success: response.success ?? true, error: response.error });
