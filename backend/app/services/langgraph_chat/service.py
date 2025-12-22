@@ -372,4 +372,9 @@ class LangGraphChatService:
 
 
 # Global service instance
-langgraph_chat_service = LangGraphChatService()
+langgraph_chat_service = LangGraphChatService(
+    workspace_root=getattr(settings, "WORKSPACE_ROOT", "/workspace"),
+    enable_skills=getattr(settings, "ENABLE_SKILLS", True),
+    enable_web_search=settings.WEB_SEARCH_ENABLED,
+    enable_checkpointing=getattr(settings, "ENABLE_CHECKPOINTING", False),
+)

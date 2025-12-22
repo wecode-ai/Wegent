@@ -26,11 +26,22 @@ class EventEmitter:
         self._ws_emitter = None
 
     def _get_emitter(self):
-        """Lazily get the WebSocket emitter instance."""
-        if self._ws_emitter is None:
-            from app.services.chat.ws_emitter import get_ws_emitter
-            self._ws_emitter = get_ws_emitter()
-        return self._ws_emitter
+        """Lazily get the WebSocket emitter instance.
+
+        Only caches a valid emitter and keeps retrying until one is available.
+        Returns None if no emitter is available yet.
+        """
+        if self._ws_emitter is not None:
+            return self._ws_emitter
+
+        from app.services.chat.ws_emitter import get_ws_emitter
+        emitter = get_ws_emitter()
+
+        # Only cache if we got a valid emitter
+        if emitter is not None:
+            self._ws_emitter = emitter
+
+        return emitter
 
     # ==================== Chat Events ====================
 
