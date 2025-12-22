@@ -311,8 +311,13 @@ export default function ChatArea({
     controlsContainerWidth > 0 && controlsContainerWidth < COLLAPSE_SELECTORS_THRESHOLD;
 
   // New: Get selectedTask to determine if there are messages
-  const { selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail, setSelectedTask } =
-    useTaskContext();
+  const {
+    selectedTaskDetail,
+    refreshTasks,
+    refreshSelectedTaskDetail,
+    setSelectedTask,
+    markTaskAsViewed,
+  } = useTaskContext();
 
   const detailTeamId = useMemo<number | null>(() => {
     if (!selectedTaskDetail?.team) {
@@ -1077,6 +1082,18 @@ export default function ChatArea({
                 // Update task list in sidebar (but don't refresh task detail)
                 refreshTasks();
               }
+
+              // For group chat: mark task as viewed when user sends a message
+              // This prevents showing unread indicator for the sender's own messages
+              // The backend updates task.updated_at when any message is sent,
+              // so we need to update viewedAt to match
+              if (selectedTaskDetail?.is_group_chat && completedTaskId) {
+                markTaskAsViewed(
+                  completedTaskId,
+                  selectedTaskDetail.status,
+                  new Date().toISOString()
+                );
+              }
               // NO REFRESH of task detail - pendingUserMessage is displayed from state
               // This prevents the progress bar flash issue
             },
@@ -1141,6 +1158,7 @@ export default function ChatArea({
       selectedModel?.name,
       selectedTaskDetail?.id,
       selectedTaskDetail?.is_group_chat,
+      selectedTaskDetail?.status,
       contextSendMessage,
       forceOverride,
       enableWebSearch,
@@ -1159,6 +1177,7 @@ export default function ChatArea({
       selectedBranch,
       taskType,
       setSelectedTask,
+      markTaskAsViewed,
       user?.id,
       user?.user_name,
     ]
