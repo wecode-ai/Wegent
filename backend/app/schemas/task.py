@@ -158,6 +158,7 @@ class TaskLite(BaseModel):
     team_id: Optional[int] = None
     git_repo: Optional[str] = None
     is_group_chat: bool = False  # Whether this is a group chat task
+    last_message_user_id: Optional[int] = None  # User ID of the last message sender
 
     class Config:
         from_attributes = True

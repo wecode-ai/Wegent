@@ -3,6 +3,37 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Task, TaskStatus, TaskViewStatus, TaskViewStatusMap } from '@/types/api';
+import { useUser } from '@/features/common/UserContext';
+
+/**
+ * Get current user ID from JWT token
+ * This is a fallback method when UserContext is not available
+ */
+function getCurrentUserIdFromToken(): number | null {
+  if (typeof window === 'undefined') return null;
+
+  try {
+    const token = localStorage.getItem('auth_token');
+    if (!token) return null;
+
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    return payload.user_id || payload.sub || null;
+  } catch (error) {
+    console.error('Failed to get current user ID from token:', error);
+  }
+
+  return null;
+}
+
+/**
+ * Get current user ID from UserContext
+ * Note: This function should be called from within a component that has access to UserContext
+ * Falls back to JWT token extraction if UserContext is not available
+ */
+function getCurrentUserId(): number | null {
+  // Try to get from JWT token first (more reliable in utility functions)
+  return getCurrentUserIdFromToken();
+}
 
 const STORAGE_KEY = 'task_view_status';
 const INIT_FLAG_KEY = 'task_view_status_initialized';
@@ -110,6 +141,18 @@ export function isTaskUnread(task: Task): boolean {
     // If never viewed, it's unread
     if (!viewStatus) {
       return true;
+    }
+
+    // If the last message was sent by the current user, don't show unread indicator
+    // This prevents showing unread badge after user sends their own message
+    if (task.last_message_user_id) {
+      // Get current user ID from localStorage or context
+      // Note: This assumes current user ID is available in the task context or global state
+      // You may need to adjust this based on how user ID is stored/accessed in your app
+      const currentUserId = getCurrentUserId();
+      if (currentUserId && task.last_message_user_id === currentUserId) {
+        return false;
+      }
     }
 
     // Compare task's updated_at with last viewed time

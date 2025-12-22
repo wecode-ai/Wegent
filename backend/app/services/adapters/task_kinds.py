@@ -441,6 +441,28 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             )
             member_counts = {row[0]: row[1] for row in member_count_results}
 
+        # Get last message sender user_id for each task
+        from app.models.subtask import Subtask
+        last_message_user_ids = {}
+        if task_ids_for_members:
+            last_message_results = db.execute(
+                text(
+                    """
+                    SELECT task_id, sender_user_id
+                    FROM subtasks s1
+                    WHERE s1.id = (
+                        SELECT MAX(s2.id)
+                        FROM subtasks s2
+                        WHERE s2.task_id = s1.task_id
+                        AND s2.sender_user_id > 0
+                    )
+                    AND s1.task_id IN :task_ids
+                """
+                ),
+                {"task_ids": task_ids_for_members},
+            ).fetchall()
+            last_message_user_ids = {row[0]: row[1] for row in last_message_results}
+
         # Build lightweight result without expensive JOIN operations
         result = []
         for task in tasks:
@@ -570,6 +592,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     "team_id": team_id,
                     "git_repo": git_repo,
                     "is_group_chat": is_group_chat,
+                    "last_message_user_id": last_message_user_ids.get(task.id),
                 }
             )
 
@@ -765,6 +788,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     "team_id": team_id,
                     "git_repo": git_repo,
                     "is_group_chat": is_group_chat,
+                    "last_message_user_id": last_message_user_ids.get(task.id),
                 }
             )
 
