@@ -1,24 +1,14 @@
-"""MCP module exports."""
+"""MCP module exports.
 
-from .adapter import MCPToolAdapter, adapt_mcp_tools
-from .client import (
-    MCPClient,
-    MCPSession,
-    MCPTool,
-    SSEMCPSession,
-    StdioMCPSession,
-    StreamableHTTPMCPSession,
-)
+This module provides MCP (Model Context Protocol) integration using the
+official langchain-mcp-adapters SDK.
+"""
+
+from .client import MCPClient, build_connections
 from .session import MCPSessionManager
 
 __all__ = [
-    "adapt_mcp_tools",
     "MCPClient",
-    "MCPSession",
     "MCPSessionManager",
-    "MCPTool",
-    "MCPToolAdapter",
-    "SSEMCPSession",
-    "StdioMCPSession",
-    "StreamableHTTPMCPSession",
+    "build_connections",
 ]

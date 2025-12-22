@@ -2,8 +2,9 @@
 
 import asyncio
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Type
+from typing import Any, Dict, List, Optional, Type, Union
 
+from langchain_core.tools.base import BaseTool as LangChainBaseTool
 from pydantic import BaseModel, Field
 
 
@@ -23,7 +24,7 @@ class ToolResult(BaseModel):
 
 
 class BaseTool(ABC):
-    """Base class for all tools."""
+    """Base class for custom tools."""
 
     name: str
     description: str
@@ -98,20 +99,31 @@ class BaseTool(ABC):
         }
 
 
+# Union type for all supported tool types
+AnyTool = Union[BaseTool, LangChainBaseTool]
+
+
 class ToolRegistry:
-    """Registry for managing available tools."""
+    """Registry for managing available tools.
+
+    Supports both custom BaseTool instances and LangChain BaseTool instances.
+    """
 
     def __init__(self):
         """Initialize tool registry."""
-        self._tools: Dict[str, BaseTool] = {}
+        self._custom_tools: Dict[str, BaseTool] = {}
+        self._langchain_tools: Dict[str, LangChainBaseTool] = {}
 
-    def register(self, tool: BaseTool) -> None:
+    def register(self, tool: AnyTool) -> None:
         """Register a tool.
 
         Args:
-            tool: Tool instance to register
+            tool: Tool instance to register (custom or LangChain)
         """
-        self._tools[tool.name] = tool
+        if isinstance(tool, LangChainBaseTool):
+            self._langchain_tools[tool.name] = tool
+        else:
+            self._custom_tools[tool.name] = tool
 
     def unregister(self, tool_name: str) -> None:
         """Unregister a tool.
@@ -119,9 +131,10 @@ class ToolRegistry:
         Args:
             tool_name: Name of tool to unregister
         """
-        self._tools.pop(tool_name, None)
+        self._custom_tools.pop(tool_name, None)
+        self._langchain_tools.pop(tool_name, None)
 
-    def get(self, tool_name: str) -> Optional[BaseTool]:
+    def get(self, tool_name: str) -> Optional[AnyTool]:
         """Get tool by name.
 
         Args:
@@ -130,15 +143,39 @@ class ToolRegistry:
         Returns:
             Tool instance or None
         """
-        return self._tools.get(tool_name)
+        return self._custom_tools.get(tool_name) or self._langchain_tools.get(tool_name)
 
-    def list_tools(self) -> List[BaseTool]:
+    def get_all_tools(self) -> List[AnyTool]:
+        """List all registered tools.
+
+        Returns:
+            List of tool instances (both custom and LangChain)
+        """
+        return list(self._custom_tools.values()) + list(self._langchain_tools.values())
+
+    def get_custom_tools(self) -> List[BaseTool]:
+        """List all custom tools.
+
+        Returns:
+            List of custom BaseTool instances
+        """
+        return list(self._custom_tools.values())
+
+    def get_langchain_tools(self) -> List[LangChainBaseTool]:
+        """List all LangChain tools.
+
+        Returns:
+            List of LangChain BaseTool instances
+        """
+        return list(self._langchain_tools.values())
+
+    def list_tools(self) -> List[AnyTool]:
         """List all registered tools.
 
         Returns:
             List of tool instances
         """
-        return list(self._tools.values())
+        return self.get_all_tools()
 
     def to_openai_format(self) -> List[Dict[str, Any]]:
         """Convert all tools to OpenAI format.
@@ -146,7 +183,26 @@ class ToolRegistry:
         Returns:
             List of OpenAI tool definitions
         """
-        return [tool.to_openai_format() for tool in self._tools.values()]
+        result = []
+        for tool in self._custom_tools.values():
+            result.append(tool.to_openai_format())
+        for tool in self._langchain_tools.values():
+            # Convert LangChain tools to OpenAI format
+            result.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description or "",
+                        "parameters": (
+                            tool.args_schema.model_json_schema()
+                            if tool.args_schema
+                            else {"type": "object", "properties": {}}
+                        ),
+                    },
+                }
+            )
+        return result
 
     def to_langchain_format(self) -> List[Dict[str, Any]]:
         """Convert all tools to LangChain format.
@@ -154,7 +210,7 @@ class ToolRegistry:
         Returns:
             List of LangChain tool definitions
         """
-        return [tool.to_langchain_format() for tool in self._tools.values()]
+        return [tool.to_langchain_format() for tool in self._custom_tools.values()]
 
     async def execute_tool(self, tool_name: str, **kwargs) -> ToolResult:
         """Execute a tool by name.
@@ -166,13 +222,23 @@ class ToolRegistry:
         Returns:
             ToolResult
         """
-        tool = self.get(tool_name)
-        if not tool:
-            return ToolResult(
-                success=False, output=None, error=f"Tool not found: {tool_name}"
-            )
+        # Check custom tools first
+        custom_tool = self._custom_tools.get(tool_name)
+        if custom_tool:
+            return await custom_tool.execute_with_timeout(**kwargs)
 
-        return await tool.execute_with_timeout(**kwargs)
+        # Check LangChain tools
+        lc_tool = self._langchain_tools.get(tool_name)
+        if lc_tool:
+            try:
+                result = await lc_tool.ainvoke(kwargs)
+                return ToolResult(success=True, output=result)
+            except Exception as e:
+                return ToolResult(success=False, output=None, error=str(e))
+
+        return ToolResult(
+            success=False, output=None, error=f"Tool not found: {tool_name}"
+        )
 
 
 # Global tool registry instance
