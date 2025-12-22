@@ -16,7 +16,15 @@ import asyncio
 import logging
 from typing import Any, Dict, Optional
 
-from shared.telemetry.context import copy_context_vars, restore_context_vars
+from shared.telemetry.context import (
+    SpanManager,
+    SpanNames,
+    TelemetryEventNames,
+    attach_otel_context,
+    copy_context_vars,
+    detach_otel_context,
+    restore_context_vars,
+)
 
 from app.api.ws.events import ServerEvents
 from app.core.config import settings
@@ -32,11 +40,6 @@ from app.services.chat.model_resolver import (
     get_model_config_for_bot,
 )
 from app.services.chat.session_manager import session_manager
-from app.services.chat.span_manager import (
-    ChatSpanManager,
-    SpanNames,
-    TelemetryEventNames,
-)
 from app.services.chat.ws_emitter import get_ws_emitter
 
 logger = logging.getLogger(__name__)
@@ -208,19 +211,10 @@ async def _stream_chat_response(
             logger.debug(f"Failed to restore trace context: {e}")
 
     # Restore OpenTelemetry context to maintain parent-child span relationships
-    if otel_context:
-        try:
-            from opentelemetry import context
-
-            context.attach(otel_context)
-            logger.debug(
-                "[ai_trigger] Restored OpenTelemetry context for parent-child spans"
-            )
-        except Exception as e:
-            logger.debug(f"Failed to restore OpenTelemetry context: {e}")
+    otel_token = attach_otel_context(otel_context) if otel_context else None
 
     # Create OpenTelemetry span manager for this streaming operation
-    span_manager = ChatSpanManager(SpanNames.CHAT_STREAM_RESPONSE)
+    span_manager = SpanManager(SpanNames.CHAT_STREAM_RESPONSE)
     span_manager.create_span()
     span_manager.enter_span()
 
@@ -562,6 +556,9 @@ async def _stream_chat_response(
             room=task_room,
         )
     finally:
+        # Detach OTEL context first (before exiting span)
+        detach_otel_context(otel_token)
+
         # Exit span context
         span_manager.exit_span()
 

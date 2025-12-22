@@ -21,6 +21,7 @@ from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 from pydantic import ValidationError
 from shared.telemetry.context import (
+    SpanNames,
     set_request_context,
     set_task_context,
     set_user_context,
@@ -47,7 +48,6 @@ from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.user import User
 from app.schemas.kind import Bot, Shell, Task, Team
 from app.services.chat.session_manager import session_manager
-from app.services.chat.span_manager import SpanNames
 
 logger = logging.getLogger(__name__)
 

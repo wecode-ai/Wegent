@@ -3,56 +3,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-OpenTelemetry Span Manager for Chat Services.
+Generic OpenTelemetry Span Manager.
 
-This module provides utilities for managing OpenTelemetry spans in chat streaming operations.
-It centralizes span creation, attribute setting, and error handling logic.
-
-Usage Example:
-    ```python
-    from app.services.chat.span_manager import (
-        ChatSpanManager,
-        TelemetryEventNames,
-        SpanNames
-    )
-
-    # Create span manager with standardized span name
-    span_manager = ChatSpanManager(SpanNames.CHAT_STREAM_RESPONSE)
-    span_manager.create_span()
-    span_manager.enter_span()
-
-    try:
-        # Set base attributes
-        span_manager.set_base_attributes(
-            task_id=123,
-            subtask_id=456,
-            user_id="user_123",
-            user_name="john"
-        )
-
-        # Set model attributes
-        span_manager.set_model_attributes(model_config)
-
-        # Your business logic here
-        ...
-
-        # Record success with event name
-        span_manager.record_success(
-            response_length=1024,
-            response_chunks=10,
-            event_name=TelemetryEventNames.MODEL_REQUEST_SUCCESS
-        )
-
-    except Exception as e:
-        # Record error with standardized event name
-        span_manager.record_error(TelemetryEventNames.GENERAL_ERROR, str(e))
-        # Or record exception directly
-        span_manager.record_exception(e)
-
-    finally:
-        # Always exit span
-        span_manager.exit_span()
-    ```
+This module provides a reusable SpanManager class for managing OpenTelemetry spans
+across all services (chat, executor, webhook, etc.).
 """
 
 import logging
@@ -67,47 +21,63 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
-# Span name constants
-class SpanNames:
-    """Standardized span names for chat operations."""
-
-    CHAT_STREAM_RESPONSE = "chat.stream_response"
-    WEBSOCKET_EVENT = "websocket.{event}"  # Format with event name
-
-
-# Telemetry event name constants for tracking both success and error events
-class TelemetryEventNames:
-    """Standardized event names for OpenTelemetry tracking (success and errors)."""
-
-    # Error events
-    BOT_NOT_FOUND = "BotNotFound"
-    PROVIDER_CREATION_FAILED = "ProviderCreationFailed"
-    STREAM_CHUNK_ERROR = "StreamChunkError"
-    GENERAL_ERROR = "GeneralError"
-
-    # Success events
-    STREAM_COMPLETED = "StreamCompleted"
-    MODEL_REQUEST_SUCCESS = "ModelRequestSuccess"
-
-
-# Backward compatibility alias (deprecated, use TelemetryEventNames instead)
-ErrorTypes = TelemetryEventNames
-
-
-class ChatSpanManager:
+class SpanManager:
     """
-    Manager for OpenTelemetry spans in chat streaming operations.
+    Generic OpenTelemetry span manager for any operation requiring tracing.
 
     This class encapsulates all span-related logic including:
     - Span creation and lifecycle management
     - Setting common attributes (user, task, model info)
     - Error recording with detailed context
     - Success recording with response metrics
+
+    Can be used by chat, executor, webhook, or any other service.
+
+    Usage Example:
+        ```python
+        from shared.telemetry.context import SpanManager, TelemetryEventNames
+
+        span_manager = SpanManager("chat.stream_response")
+        span_manager.create_span()
+        span_manager.enter_span()
+
+        try:
+            span_manager.set_base_attributes(
+                task_id=123,
+                subtask_id=456,
+                user_id="user_123",
+                user_name="john"
+            )
+            span_manager.set_model_attributes(model_config)
+
+            # Your business logic here
+            ...
+
+            span_manager.record_success(
+                response_length=1024,
+                response_chunks=10,
+                event_name=TelemetryEventNames.MODEL_REQUEST_SUCCESS
+            )
+
+        except Exception as e:
+            span_manager.record_error(TelemetryEventNames.GENERAL_ERROR, str(e))
+            span_manager.record_exception(e)
+
+        finally:
+            span_manager.exit_span()
+        ```
+
+    Or use as context manager:
+        ```python
+        with SpanManager("operation.name") as span_manager:
+            span_manager.set_base_attributes(...)
+            # Your logic here
+        ```
     """
 
-    def __init__(self, span_name: str = "chat.stream_response"):
+    def __init__(self, span_name: str = "operation"):
         """
-        Initialize the ChatSpanManager.
+        Initialize the SpanManager.
 
         Args:
             span_name: Name of the span to create
