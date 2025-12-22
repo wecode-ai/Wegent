@@ -11,7 +11,7 @@ It decouples the AI response logic from message saving, allowing for:
 - Future extensibility (e.g., queue-based processing)
 - Clean separation of concerns
 
-Now uses LangGraphChatService for direct chat streaming.
+Now uses LangGraphChatService with ChatConfigBuilder for direct chat streaming.
 """
 
 import asyncio
@@ -22,7 +22,6 @@ from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.subtask import Subtask
 from app.models.user import User
-from app.schemas.kind import Team
 
 logger = logging.getLogger(__name__)
 
@@ -123,9 +122,13 @@ async def _trigger_direct_chat(
 
     # Extract data from ORM objects before starting background task
     # This prevents DetachedInstanceError
+    task_data = {
+        "id": task.id,
+    }
     team_data = {
         "id": team.id,
         "user_id": team.user_id,
+        "name": team.name,
         "json": team.json,
     }
     user_data = {
@@ -136,8 +139,8 @@ async def _trigger_direct_chat(
     # Start streaming in background task using LangGraphChatService
     logger.info("[ai_trigger] Starting background stream task with LangGraph")
     stream_task = asyncio.create_task(
-        _stream_chat_response_langgraph(
-            task_id=task.id,
+        _stream_chat_response(
+            task_data=task_data,
             subtask_id=assistant_subtask.id,
             team_data=team_data,
             user_data=user_data,
@@ -151,8 +154,8 @@ async def _trigger_direct_chat(
     logger.info("[ai_trigger] Background stream task started")
 
 
-async def _stream_chat_response_langgraph(
-    task_id: int,
+async def _stream_chat_response(
+    task_data: dict[str, Any],
     subtask_id: int,
     team_data: dict[str, Any],
     user_data: dict[str, Any],
@@ -164,14 +167,11 @@ async def _stream_chat_response_langgraph(
     """
     Stream chat response using LangGraphChatService.
 
-    This replaces the original _stream_chat_response with LangGraph-based implementation.
+    Uses ChatConfigBuilder to prepare configuration and delegates
+    streaming to LangGraphChatService.stream_to_websocket().
     """
     from app.api.ws.events import ServerEvents
-    from app.services.chat.model_resolver import (
-        build_default_headers_with_placeholders,
-        get_bot_system_prompt,
-        get_model_config_for_bot,
-    )
+    from app.services.langgraph_chat.config import ChatConfigBuilder
     from app.services.langgraph_chat.service import (
         WebSocketStreamConfig,
         langgraph_chat_service,
@@ -180,96 +180,58 @@ async def _stream_chat_response_langgraph(
     db = SessionLocal()
 
     try:
-        # Get first bot for model config
-        team_crd = Team.model_validate(team_data["json"])
-        first_member = team_crd.spec.members[0]
-
-        bot = (
+        # Get team Kind object from database
+        team = (
             db.query(Kind)
             .filter(
-                Kind.user_id == team_data["user_id"],
-                Kind.kind == "Bot",
-                Kind.name == first_member.botRef.name,
-                Kind.namespace == first_member.botRef.namespace,
+                Kind.id == team_data["id"],
+                Kind.kind == "Team",
                 Kind.is_active,
             )
             .first()
         )
 
-        if not bot:
+        if not team:
             await namespace.emit(
                 ServerEvents.CHAT_ERROR,
-                {"subtask_id": subtask_id, "error": "Bot not found"},
+                {"subtask_id": subtask_id, "error": "Team not found"},
                 room=task_room,
             )
             return
 
-        # Get model config
-        model_config = get_model_config_for_bot(
-            db,
-            bot,
-            team_data["user_id"],
-            override_model_name=payload.force_override_bot_model,
-            force_override=payload.force_override_bot_model is not None,
+        # Use ChatConfigBuilder to prepare configuration
+        config_builder = ChatConfigBuilder(
+            db=db,
+            team=team,
+            user_id=user_data["id"],
+            user_name=user_data["user_name"],
         )
 
-        # Get system prompt
-        system_prompt = get_bot_system_prompt(
-            db, bot, team_data["user_id"], first_member.prompt
-        )
-
-        # Append clarification mode instructions if enabled
-        from app.services.chat.clarification_prompt import append_clarification_prompt
-
-        system_prompt = append_clarification_prompt(
-            system_prompt, payload.enable_clarification
-        )
+        try:
+            chat_config = config_builder.build(
+                override_model_name=payload.force_override_bot_model,
+                force_override=payload.force_override_bot_model is not None,
+                enable_clarification=payload.enable_clarification,
+                task_id=task_data["id"],
+            )
+        except ValueError as e:
+            await namespace.emit(
+                ServerEvents.CHAT_ERROR,
+                {"subtask_id": subtask_id, "error": str(e)},
+                room=task_room,
+            )
+            return
 
         # Handle attachment
         final_message = message
         if payload.attachment_id:
-            from app.models.subtask_attachment import AttachmentStatus
-            from app.services.attachment import attachment_service
-
-            attachment = attachment_service.get_attachment(
-                db=db,
-                attachment_id=payload.attachment_id,
-                user_id=user_data["id"],
+            final_message = await _process_attachment(
+                db, payload.attachment_id, user_data["id"], message
             )
-
-            if attachment and attachment.status == AttachmentStatus.READY:
-                final_message = attachment_service.build_message_with_attachment(
-                    message, attachment
-                )
-
-        # Build data sources for placeholder replacement
-        bot_spec = bot.json.get("spec", {}) if bot.json else {}
-        agent_config = bot_spec.get("agent_config", {})
-        user_info = {"id": user_data["id"], "name": user_data["user_name"]}
-        task_data_dict = {
-            "task_id": task_id,
-            "team_id": team_data["id"],
-            "user": user_info,
-            "prompt": message,
-        }
-        data_sources = {
-            "agent_config": agent_config,
-            "model_config": model_config,
-            "task_data": task_data_dict,
-            "user": user_info,
-        }
-
-        # Process headers
-        raw_default_headers = model_config.get("default_headers", {})
-        if raw_default_headers:
-            processed_headers = build_default_headers_with_placeholders(
-                raw_default_headers, data_sources
-            )
-            model_config["default_headers"] = processed_headers
 
         # Create WebSocket stream config
         ws_config = WebSocketStreamConfig(
-            task_id=task_id,
+            task_id=task_data["id"],
             subtask_id=subtask_id,
             task_room=task_room,
             user_id=user_data["id"],
@@ -282,8 +244,8 @@ async def _stream_chat_response_langgraph(
         # Use LangGraphChatService for streaming
         await langgraph_chat_service.stream_to_websocket(
             message=final_message,
-            model_config=model_config,
-            system_prompt=system_prompt,
+            model_config=chat_config.model_config,
+            system_prompt=chat_config.system_prompt,
             config=ws_config,
             namespace=namespace,
         )
@@ -297,3 +259,36 @@ async def _stream_chat_response_langgraph(
         )
     finally:
         db.close()
+
+
+async def _process_attachment(
+    db: Any,
+    attachment_id: int,
+    user_id: int,
+    message: str,
+) -> str:
+    """
+    Process attachment and build message with attachment content.
+
+    Args:
+        db: Database session
+        attachment_id: Attachment ID
+        user_id: User ID
+        message: Original message
+
+    Returns:
+        Message with attachment content prepended if applicable
+    """
+    from app.models.subtask_attachment import AttachmentStatus
+    from app.services.attachment import attachment_service
+
+    attachment = attachment_service.get_attachment(
+        db=db,
+        attachment_id=attachment_id,
+        user_id=user_id,
+    )
+
+    if attachment and attachment.status == AttachmentStatus.READY:
+        return attachment_service.build_message_with_attachment(message, attachment)
+
+    return message

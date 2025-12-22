@@ -7,18 +7,25 @@
 This module provides a LangGraph-based chat service that uses:
 - LangGraph StateGraph for agent workflow orchestration
 - LangChain for model abstraction and tool binding
+- Modular streaming infrastructure (SSE and WebSocket)
 - Database-based model resolution
 - Redis session management
-- SSE streaming responses
-- WebSocket streaming for real-time chat
+
+Architecture:
+- streaming/: Core streaming logic and emitters
+- config/: Chat configuration builders
+- agents/: LangGraph agent builders
+- messages/: Message conversion utilities
+- models/: LangChain model factory
+- storage/: Unified storage handler
+- tools/: Tool registry and implementations
 """
 
-import asyncio
 import json
 import logging
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
-from typing import Any, TypeVar
+from typing import Any
 
 from fastapi.responses import StreamingResponse
 from langchain_core.tools.base import BaseTool
@@ -29,11 +36,17 @@ from .agents import LangGraphAgentBuilder
 from .messages import MessageConverter
 from .models import LangChainModelFactory
 from .storage import storage_handler
+from .streaming import (
+    SSEEmitter,
+    StreamingConfig,
+    StreamingCore,
+    StreamingState,
+    WebSocketEmitter,
+    truncate_list_keep_ends,
+)
 from .tools import ToolRegistry, WebSearchTool
 
 logger = logging.getLogger(__name__)
-
-T = TypeVar("T")
 
 
 @dataclass
@@ -59,39 +72,10 @@ _SSE_HEADERS = {
     "Content-Encoding": "none",
 }
 
-# Semaphore for concurrent chat limit (lazy initialized)
-_chat_semaphore: asyncio.Semaphore | None = None
-
-
-def _get_chat_semaphore() -> asyncio.Semaphore:
-    """Get or create the chat semaphore for concurrency limiting."""
-    global _chat_semaphore
-    if _chat_semaphore is None:
-        _chat_semaphore = asyncio.Semaphore(settings.MAX_CONCURRENT_CHATS)
-    return _chat_semaphore
-
 
 def _sse_data(data: dict[str, Any]) -> str:
     """Format data as SSE event."""
     return f"data: {json.dumps(data)}\n\n"
-
-
-def truncate_list_keep_ends(items: list[T], first_n: int, last_n: int) -> list[T]:
-    """Truncate a list keeping first N and last M items.
-
-    Useful for chat history truncation to maintain context while limiting size.
-
-    Args:
-        items: List to truncate
-        first_n: Number of items to keep from the start
-        last_n: Number of items to keep from the end
-
-    Returns:
-        Truncated list, or original if len(items) <= first_n + last_n
-    """
-    if len(items) <= first_n + last_n:
-        return items
-    return items[:first_n] + items[-last_n:]
 
 
 class LangGraphChatService:
@@ -103,6 +87,9 @@ class LangGraphChatService:
     - Multi-step reasoning loops
     - Streaming with cancellation support
     - WebSocket streaming for real-time chat
+
+    The service delegates streaming logic to StreamingCore for consistency
+    between SSE and WebSocket modes.
     """
 
     def __init__(
@@ -266,33 +253,33 @@ class LangGraphChatService:
         is_group_chat: bool,
         max_iterations: int,
     ) -> StreamingResponse:
-        """Full streaming with database and session management."""
-        semaphore = _get_chat_semaphore()
+        """Full streaming with database and session management using StreamingCore."""
 
         async def generate() -> AsyncGenerator[str, None]:
-            acquired = False
-            cancel_event = await storage_handler.register_stream(subtask_id)
+            # Create SSE emitter
+            emitter = SSEEmitter()
+
+            # Create streaming state
+            state = StreamingState(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                user_id=0,  # Not needed for SSE
+                is_group_chat=is_group_chat,
+            )
+
+            # Create streaming core
+            core = StreamingCore(emitter, state, StreamingConfig())
 
             try:
-                # Acquire semaphore with timeout
-                try:
-                    acquired = await asyncio.wait_for(semaphore.acquire(), timeout=5.0)
-                except asyncio.TimeoutError:
-                    yield _sse_data({"error": "Too many concurrent chat requests"})
-                    await storage_handler.update_subtask_status(
-                        subtask_id, "FAILED", error="Too many concurrent chat requests"
-                    )
+                # Acquire resources
+                if not await core.acquire_resources():
+                    # Error already emitted by core
+                    if emitter.has_events():
+                        yield emitter.get_event()
                     return
 
-                # Update status to RUNNING
-                await storage_handler.update_subtask_status(subtask_id, "RUNNING")
-
                 # Get chat history
-                if is_group_chat:
-                    history = await self._get_group_chat_history(task_id)
-                    history = self._truncate_history(history)
-                else:
-                    history = await storage_handler.get_chat_history(task_id)
+                history = await self._get_chat_history(task_id, is_group_chat)
 
                 # Build messages
                 messages = MessageConverter.build_messages(
@@ -302,68 +289,35 @@ class LangGraphChatService:
                 # Create agent
                 agent = self._create_agent(model_config, max_iterations)
 
-                # Stream tokens using LangGraph
-                full_response = ""
-                last_redis_save = asyncio.get_event_loop().time()
-                last_db_save = asyncio.get_event_loop().time()
-
+                # Stream tokens
                 async for token in agent.stream_tokens(
-                    messages, cancel_event=cancel_event
+                    messages, cancel_event=core.cancel_event
                 ):
-                    if cancel_event.is_set():
-                        yield _sse_data(
-                            {"content": "", "done": True, "cancelled": True}
-                        )
-                        await storage_handler.update_subtask_status(
-                            subtask_id, "CANCELLED"
-                        )
+                    if not await core.process_token(token):
+                        # Cancelled
+                        if emitter.has_events():
+                            yield emitter.get_event()
                         return
 
-                    full_response += token
-                    yield _sse_data({"content": token, "done": False})
+                    # Yield any pending events
+                    while emitter.has_events():
+                        yield emitter.get_event()
 
-                    # Periodic saves
-                    current_time = asyncio.get_event_loop().time()
-                    if (
-                        current_time - last_redis_save
-                        >= settings.STREAMING_REDIS_SAVE_INTERVAL
-                    ):
-                        await storage_handler.save_streaming_content(
-                            subtask_id, full_response
-                        )
-                        last_redis_save = current_time
-                    if (
-                        current_time - last_db_save
-                        >= settings.STREAMING_DB_SAVE_INTERVAL
-                    ):
-                        await storage_handler.save_partial_response(
-                            subtask_id, full_response
-                        )
-                        last_db_save = current_time
+                # Finalize
+                await core.finalize()
 
-                # Save final result
-                result = {"value": full_response}
-                await storage_handler.save_streaming_content(subtask_id, full_response)
-                await storage_handler.publish_streaming_done(subtask_id, result)
-                await storage_handler.append_messages(task_id, message, full_response)
-                await storage_handler.update_subtask_status(
-                    subtask_id, "COMPLETED", result=result
-                )
-
-                yield _sse_data({"content": "", "done": True, "result": result})
+                # Yield final events
+                while emitter.has_events():
+                    yield emitter.get_event()
 
             except Exception as e:
                 logger.exception("[STREAM] subtask=%s error", subtask_id)
-                await storage_handler.update_subtask_status(
-                    subtask_id, "FAILED", error=str(e)
-                )
-                yield _sse_data({"error": str(e)})
+                await core.handle_error(e)
+                while emitter.has_events():
+                    yield emitter.get_event()
 
             finally:
-                await storage_handler.unregister_stream(subtask_id)
-                await storage_handler.delete_streaming_content(subtask_id)
-                if acquired:
-                    semaphore.release()
+                await core.release_resources()
 
         return StreamingResponse(
             generate(), media_type="text/event-stream", headers=_SSE_HEADERS
@@ -423,10 +377,9 @@ class LangGraphChatService:
         namespace: Any,
         max_iterations: int = 10,
     ) -> None:
-        """Stream chat response via WebSocket.
+        """Stream chat response via WebSocket using StreamingCore.
 
-        This method is designed to replace the streaming logic in ai_trigger.py.
-        It handles:
+        This method handles:
         - MCP tool loading and cleanup
         - Dynamic web search tool
         - Shutdown manager integration
@@ -440,7 +393,6 @@ class LangGraphChatService:
             namespace: ChatNamespace instance for emitting events
             max_iterations: Max tool loop iterations
         """
-        from app.api.ws.events import ServerEvents
         from app.core.shutdown import shutdown_manager
         from app.services.chat.ws_emitter import get_ws_emitter
 
@@ -448,12 +400,23 @@ class LangGraphChatService:
         task_id = config.task_id
         task_room = config.task_room
 
-        semaphore = _get_chat_semaphore()
-        acquired = False
-        mcp_client = None
-        extra_tools: list[BaseTool] = list(config.extra_tools)
-        offset = 0
-        full_response = ""
+        # Create WebSocket emitter
+        emitter = WebSocketEmitter(namespace, task_room)
+
+        # Create streaming state
+        state = StreamingState(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            user_id=config.user_id,
+            user_name=config.user_name,
+            is_group_chat=config.is_group_chat,
+            enable_web_search=config.enable_web_search,
+            search_engine=config.search_engine,
+            extra_tools=list(config.extra_tools),
+        )
+
+        # Create streaming core
+        core = StreamingCore(emitter, state, StreamingConfig())
 
         try:
             # Register with shutdown manager
@@ -462,53 +425,29 @@ class LangGraphChatService:
                     "[WS_STREAM] Rejecting stream during shutdown: subtask_id=%d",
                     subtask_id,
                 )
-                await namespace.emit(
-                    ServerEvents.CHAT_ERROR,
-                    {"subtask_id": subtask_id, "error": "Server is shutting down"},
-                    room=task_room,
-                )
+                await emitter.emit_error(subtask_id, "Server is shutting down")
                 return
 
-            # Acquire semaphore with timeout
-            try:
-                acquired = await asyncio.wait_for(semaphore.acquire(), timeout=5.0)
-            except asyncio.TimeoutError:
-                await namespace.emit(
-                    ServerEvents.CHAT_ERROR,
-                    {
-                        "subtask_id": subtask_id,
-                        "error": "Too many concurrent chat requests",
-                    },
-                    room=task_room,
-                )
-                await storage_handler.update_subtask_status(
-                    subtask_id, "FAILED", error="Too many concurrent chat requests"
-                )
+            # Acquire resources
+            if not await core.acquire_resources():
                 return
 
-            # Register stream for cancellation
-            cancel_event = await storage_handler.register_stream(subtask_id)
-
-            # Update status to RUNNING
-            await storage_handler.update_subtask_status(subtask_id, "RUNNING")
+            # Prepare extra tools
+            extra_tools: list[BaseTool] = list(config.extra_tools)
 
             # Load MCP tools if enabled
             if settings.CHAT_MCP_ENABLED:
                 mcp_client = await self._load_mcp_tools(task_id)
                 if mcp_client:
                     extra_tools.extend(mcp_client.get_tools())
+                    core.set_mcp_client(mcp_client)
 
             # Add web search tool if enabled for this request
             if config.enable_web_search and settings.WEB_SEARCH_ENABLED:
-                web_search_tool = WebSearchTool()
-                extra_tools.append(web_search_tool)
+                extra_tools.append(WebSearchTool())
 
             # Get chat history
-            if config.is_group_chat:
-                history = await self._get_group_chat_history(task_id)
-                history = self._truncate_history(history)
-            else:
-                history = await storage_handler.get_chat_history(task_id)
+            history = await self._get_chat_history(task_id, config.is_group_chat)
 
             # Build messages
             messages = MessageConverter.build_messages(history, message, system_prompt)
@@ -519,72 +458,15 @@ class LangGraphChatService:
             )
 
             # Stream tokens
-            last_redis_save = asyncio.get_event_loop().time()
-            last_db_save = asyncio.get_event_loop().time()
-
-            async for token in agent.stream_tokens(messages, cancel_event=cancel_event):
-                # Check for cancellation or shutdown
-                if cancel_event.is_set() or shutdown_manager.is_shutting_down:
-                    await namespace.emit(
-                        ServerEvents.CHAT_CANCELLED,
-                        {"subtask_id": subtask_id},
-                        room=task_room,
-                    )
-                    await storage_handler.update_subtask_status(subtask_id, "CANCELLED")
+            async for token in agent.stream_tokens(
+                messages, cancel_event=core.cancel_event
+            ):
+                if not await core.process_token(token):
+                    # Cancelled or shutdown
                     return
 
-                full_response += token
-
-                # Emit chunk via WebSocket
-                await namespace.emit(
-                    ServerEvents.CHAT_CHUNK,
-                    {
-                        "subtask_id": subtask_id,
-                        "content": token,
-                        "offset": offset,
-                    },
-                    room=task_room,
-                )
-                offset += len(token)
-
-                # Periodic saves
-                current_time = asyncio.get_event_loop().time()
-                if (
-                    current_time - last_redis_save
-                    >= settings.STREAMING_REDIS_SAVE_INTERVAL
-                ):
-                    await storage_handler.save_streaming_content(
-                        subtask_id, full_response
-                    )
-                    last_redis_save = current_time
-                if current_time - last_db_save >= settings.STREAMING_DB_SAVE_INTERVAL:
-                    await storage_handler.save_partial_response(
-                        subtask_id, full_response
-                    )
-                    last_db_save = current_time
-
-            # Stream completed successfully
-            result = {"value": full_response}
-
-            # Save final state
-            await storage_handler.save_streaming_content(subtask_id, full_response)
-            await storage_handler.publish_streaming_done(subtask_id, result)
-            await storage_handler.append_messages(task_id, message, full_response)
-            await storage_handler.update_subtask_status(
-                subtask_id, "COMPLETED", result=result
-            )
-
-            # Emit done event
-            await namespace.emit(
-                ServerEvents.CHAT_DONE,
-                {
-                    "task_id": task_id,
-                    "subtask_id": subtask_id,
-                    "offset": offset,
-                    "result": result,
-                },
-                room=task_room,
-            )
+            # Finalize
+            result = await core.finalize()
 
             # Notify user room for multi-device sync
             ws_emitter = get_ws_emitter()
@@ -593,35 +475,21 @@ class LangGraphChatService:
                     user_id=config.user_id,
                     task_id=task_id,
                     subtask_id=subtask_id,
-                    content=full_response,
+                    content=state.full_response,
                     result=result,
                 )
 
         except Exception as e:
             logger.exception("[WS_STREAM] subtask=%s error", subtask_id)
-            await namespace.emit(
-                ServerEvents.CHAT_ERROR,
-                {"subtask_id": subtask_id, "error": str(e)},
-                room=task_room,
-            )
-            await storage_handler.update_subtask_status(
-                subtask_id, "FAILED", error=str(e)
-            )
+            await core.handle_error(e)
 
         finally:
             # Cleanup
-            await storage_handler.unregister_stream(subtask_id)
-            await storage_handler.delete_streaming_content(subtask_id)
+            await core.release_resources()
             await shutdown_manager.unregister_stream(subtask_id)
 
             if subtask_id in getattr(namespace, "_active_streams", {}):
                 del namespace._active_streams[subtask_id]
-
-            if mcp_client:
-                await mcp_client.disconnect()
-
-            if acquired:
-                semaphore.release()
 
     async def _load_mcp_tools(self, task_id: int) -> Any:
         """Load MCP tools for a task.
@@ -639,9 +507,7 @@ class LangGraphChatService:
             if not mcp_servers_config:
                 return None
 
-            import json as json_module
-
-            config_data = json_module.loads(mcp_servers_config)
+            config_data = json.loads(mcp_servers_config)
             servers = config_data.get("mcpServers", config_data)
 
             if not servers:
@@ -661,6 +527,23 @@ class LangGraphChatService:
             return None
 
     # ==================== Helper Methods ====================
+
+    async def _get_chat_history(
+        self, task_id: int, is_group_chat: bool
+    ) -> list[dict[str, Any]]:
+        """Get chat history for a task.
+
+        Args:
+            task_id: Task ID
+            is_group_chat: Whether this is a group chat
+
+        Returns:
+            List of message dictionaries
+        """
+        if is_group_chat:
+            history = await self._get_group_chat_history(task_id)
+            return self._truncate_history(history)
+        return await storage_handler.get_chat_history(task_id)
 
     async def _get_group_chat_history(self, task_id: int) -> list[dict[str, Any]]:
         """Get chat history for group chat from database."""
