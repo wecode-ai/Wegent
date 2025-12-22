@@ -364,7 +364,9 @@ class ChatNamespace(socketio.AsyncNamespace):
         task_room = f"task:{payload.task_id}"
         await self.enter_room(sid, task_room)
 
-        logger.info(f"[WS] User {user_id} joined task room {payload.task_id}")
+        logger.info(
+            f"[WS] User {user_id} joined task room {payload.task_id} (room={task_room}, sid={sid})"
+        )
 
         # Check for active streaming
         streaming_info = await get_active_streaming(payload.task_id)
@@ -720,12 +722,11 @@ class ChatNamespace(socketio.AsyncNamespace):
                 )
 
             # Return unified response - same structure for all modes
-            response = {
+            return {
                 "task_id": task.id,
                 "subtask_id": user_subtask.id if user_subtask else None,
+                "message_id": user_subtask.message_id if user_subtask else None,
             }
-            logger.info(f"[WS] chat:send returning response: {response}")
-            return response
 
         except Exception as e:
             logger.exception(f"[WS] chat:send exception: {e}")
@@ -790,6 +791,12 @@ class ChatNamespace(socketio.AsyncNamespace):
         # Build attachments array (supports multiple attachments in the future)
         attachments_list = [attachment_info] if attachment_info else None
 
+        logger.info(
+            f"[WS] Broadcasting user message to room: room={task_room}, "
+            f"skip_sid={skip_sid}, message_id={user_subtask.message_id}, "
+            f"sender_user_id={user_id}, sender_user_name={user_name}"
+        )
+
         await self.emit(
             ServerEvents.CHAT_MESSAGE,
             {
@@ -808,6 +815,12 @@ class ChatNamespace(socketio.AsyncNamespace):
             },
             room=task_room,
             skip_sid=skip_sid,
+        )
+
+        logger.info(
+            f"[WS] User message broadcasted successfully: "
+            f"room={task_room}, message_id={user_subtask.message_id}, "
+            f"content_length={len(message)}"
         )
 
     async def on_chat_cancel(self, sid: str, data: dict) -> dict:
@@ -927,9 +940,21 @@ class ChatNamespace(socketio.AsyncNamespace):
                 await ws_emitter.emit_chat_cancelled(
                     task_id=subtask.task_id, subtask_id=payload.subtask_id
                 )
+
+                # Also emit chat:done with message_id for proper message ordering
+                # This ensures the cancelled message has message_id set for correct sorting
+                await ws_emitter.emit_chat_done(
+                    task_id=subtask.task_id,
+                    subtask_id=payload.subtask_id,
+                    offset=(
+                        len(payload.partial_content) if payload.partial_content else 0
+                    ),
+                    result=subtask.result or {},
+                    message_id=subtask.message_id,
+                )
             else:
                 logger.warning(
-                    f"[WS] chat:cancel WebSocket emitter not available, cannot broadcast chat:cancelled event"
+                    f"[WS] chat:cancel WebSocket emitter not available, cannot broadcast events"
                 )
 
             # Notify group chat members about the status change
