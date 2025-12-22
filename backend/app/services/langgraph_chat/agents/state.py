@@ -4,6 +4,7 @@
 
 """Agent state definitions for LangGraph."""
 
+import asyncio
 from typing import Annotated, Any
 
 from langchain_core.messages import BaseMessage
@@ -22,6 +23,8 @@ class AgentState(TypedDict):
         final_answer: Final response from agent
         error: Error message if execution failed
         metadata: Additional metadata for execution context
+        cancel_event: Optional asyncio.Event for cancellation
+        accumulated_content: Accumulated streaming content for persistence
     """
 
     # Messages with automatic aggregation via add_messages reducer
@@ -40,3 +43,7 @@ class AgentState(TypedDict):
 
     # Context metadata
     metadata: dict[str, Any]
+
+    # Streaming support
+    cancel_event: asyncio.Event | None
+    accumulated_content: str
