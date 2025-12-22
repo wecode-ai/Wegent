@@ -50,9 +50,7 @@ class MessageConverter:
             elif role == "user":
                 # Handle vision messages (content can be a list)
                 if isinstance(content, list):
-                    lc_messages.append(
-                        HumanMessage(content=content)
-                    )
+                    lc_messages.append(HumanMessage(content=content))
                 else:
                     lc_messages.append(HumanMessage(content=content))
             elif role == "assistant":
@@ -103,12 +101,14 @@ class MessageConverter:
                     msg_dict["tool_calls"] = msg.tool_calls
                 result.append(msg_dict)
             elif isinstance(msg, ToolMessage):
-                result.append({
-                    "role": "tool",
-                    "content": msg.content,
-                    "tool_call_id": msg.tool_call_id,
-                    "name": msg.name,
-                })
+                result.append(
+                    {
+                        "role": "tool",
+                        "content": msg.content,
+                        "tool_call_id": msg.tool_call_id,
+                        "name": msg.name,
+                    }
+                )
 
         return result
 
@@ -147,9 +147,7 @@ class MessageConverter:
         if isinstance(current_message, dict):
             # Vision or complex message
             if current_message.get("type") == "vision":
-                messages.append(
-                    MessageConverter.build_vision_message(current_message)
-                )
+                messages.append(MessageConverter.build_vision_message(current_message))
             else:
                 # Already formatted message dict
                 messages.append(current_message)
@@ -181,9 +179,7 @@ class MessageConverter:
             {"type": "text", "text": text},
             {
                 "type": "image_url",
-                "image_url": {
-                    "url": f"data:{mime_type};base64,{image_base64}"
-                },
+                "image_url": {"url": f"data:{mime_type};base64,{image_base64}"},
             },
         ]
 
@@ -280,7 +276,5 @@ class MessageConverter:
         encoded = base64.b64encode(image_data).decode("utf-8")
         return {
             "type": "image_url",
-            "image_url": {
-                "url": f"data:{mime_type};base64,{encoded}"
-            },
+            "image_url": {"url": f"data:{mime_type};base64,{encoded}"},
         }

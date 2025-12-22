@@ -19,7 +19,7 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools.base import BaseTool
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
@@ -144,15 +144,17 @@ class LangGraphAgentBuilder:
                         result = f"Tool {tool_name} not available"
 
                     # Store result
-                    tool_results.append({
-                        "tool_call_id": tool_call_id,
-                        "tool_name": tool_name,
-                        "result": (
-                            result.model_dump()
-                            if hasattr(result, "model_dump")
-                            else {"output": result}
-                        ),
-                    })
+                    tool_results.append(
+                        {
+                            "tool_call_id": tool_call_id,
+                            "tool_name": tool_name,
+                            "result": (
+                                result.model_dump()
+                                if hasattr(result, "model_dump")
+                                else {"output": result}
+                            ),
+                        }
+                    )
 
                     # Convert result to string
                     if isinstance(result, str):
@@ -214,7 +216,9 @@ class LangGraphAgentBuilder:
         last_message = messages[-1]
 
         # Check if max iterations reached
-        if state.get("iteration", 0) >= state.get("max_iterations", self.max_iterations):
+        if state.get("iteration", 0) >= state.get(
+            "max_iterations", self.max_iterations
+        ):
             logger.warning("Max iterations reached: %d", state.get("iteration", 0))
             return "end"
 
@@ -287,15 +291,19 @@ class LangGraphAgentBuilder:
             elif role == "assistant":
                 tool_calls = msg.get("tool_calls")
                 if tool_calls:
-                    lc_messages.append(AIMessage(content=content, tool_calls=tool_calls))
+                    lc_messages.append(
+                        AIMessage(content=content, tool_calls=tool_calls)
+                    )
                 else:
                     lc_messages.append(AIMessage(content=content))
             elif role == "tool":
-                lc_messages.append(ToolMessage(
-                    content=content,
-                    tool_call_id=msg.get("tool_call_id", ""),
-                    name=msg.get("name", ""),
-                ))
+                lc_messages.append(
+                    ToolMessage(
+                        content=content,
+                        tool_call_id=msg.get("tool_call_id", ""),
+                        name=msg.get("name", ""),
+                    )
+                )
 
         return lc_messages
 
@@ -401,7 +409,9 @@ class LangGraphAgentBuilder:
         exec_config = {"configurable": config} if config else None
 
         try:
-            async for event in graph.astream_events(initial_state, config=exec_config, version="v2"):
+            async for event in graph.astream_events(
+                initial_state, config=exec_config, version="v2"
+            ):
                 # Check cancellation
                 if cancel_event and cancel_event.is_set():
                     logger.info("Streaming cancelled by user")
@@ -427,7 +437,7 @@ class LangGraphAgentBuilder:
                     tool_name = event.get("name", "unknown")
                     logger.debug("Tool completed: %s", tool_name)
 
-        except Exception as e:
+        except Exception:
             logger.exception("Error in stream_tokens")
             raise
 

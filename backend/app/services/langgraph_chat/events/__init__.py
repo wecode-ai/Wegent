@@ -35,6 +35,7 @@ class EventEmitter:
             return self._ws_emitter
 
         from app.services.chat.ws_emitter import get_ws_emitter
+
         emitter = get_ws_emitter()
 
         # Only cache if we got a valid emitter

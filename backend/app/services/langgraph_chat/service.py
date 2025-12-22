@@ -20,13 +20,10 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 from fastapi.responses import StreamingResponse
-from langchain_core.messages import AIMessage
 
 from app.core.config import settings
 
 from .agents.graph_builder import LangGraphAgentBuilder
-from .agents.state import AgentState
-from .events import event_emitter
 from .messages import MessageConverter
 from .models import LangChainModelFactory
 from .storage import storage_handler
@@ -91,6 +88,7 @@ class LangGraphChatService:
         # Register built-in skills
         if enable_skills:
             from .tools.builtin import FileListSkill, FileReaderSkill
+
             self.tool_registry.register(FileReaderSkill(workspace_root=workspace_root))
             self.tool_registry.register(FileListSkill(workspace_root=workspace_root))
 
@@ -156,7 +154,9 @@ class LangGraphChatService:
         is_simple_mode = subtask_id is None or task_id is None
 
         if is_simple_mode:
-            return await self._simple_stream(message, model_config, system_prompt, max_iterations)
+            return await self._simple_stream(
+                message, model_config, system_prompt, max_iterations
+            )
 
         return await self._full_stream(
             message=message,
@@ -241,7 +241,9 @@ class LangGraphChatService:
                     history = await storage_handler.get_chat_history(task_id)
 
                 # Build messages
-                messages = MessageConverter.build_messages(history, message, system_prompt)
+                messages = MessageConverter.build_messages(
+                    history, message, system_prompt
+                )
 
                 # Create agent
                 agent = self._create_agent(model_config, max_iterations)
@@ -251,9 +253,13 @@ class LangGraphChatService:
                 last_redis_save = asyncio.get_event_loop().time()
                 last_db_save = asyncio.get_event_loop().time()
 
-                async for token in agent.stream_tokens(messages, cancel_event=cancel_event):
+                async for token in agent.stream_tokens(
+                    messages, cancel_event=cancel_event
+                ):
                     if cancel_event.is_set():
-                        yield _sse_data({"content": "", "done": True, "cancelled": True})
+                        yield _sse_data(
+                            {"content": "", "done": True, "cancelled": True}
+                        )
                         await storage_handler.update_subtask_status(
                             subtask_id, "CANCELLED"
                         )
@@ -264,11 +270,21 @@ class LangGraphChatService:
 
                     # Periodic saves
                     current_time = asyncio.get_event_loop().time()
-                    if current_time - last_redis_save >= settings.STREAMING_REDIS_SAVE_INTERVAL:
-                        await storage_handler.save_streaming_content(subtask_id, full_response)
+                    if (
+                        current_time - last_redis_save
+                        >= settings.STREAMING_REDIS_SAVE_INTERVAL
+                    ):
+                        await storage_handler.save_streaming_content(
+                            subtask_id, full_response
+                        )
                         last_redis_save = current_time
-                    if current_time - last_db_save >= settings.STREAMING_DB_SAVE_INTERVAL:
-                        await storage_handler.save_partial_response(subtask_id, full_response)
+                    if (
+                        current_time - last_db_save
+                        >= settings.STREAMING_DB_SAVE_INTERVAL
+                    ):
+                        await storage_handler.save_partial_response(
+                            subtask_id, full_response
+                        )
                         last_db_save = current_time
 
                 # Save final result
@@ -276,13 +292,17 @@ class LangGraphChatService:
                 await storage_handler.save_streaming_content(subtask_id, full_response)
                 await storage_handler.publish_streaming_done(subtask_id, result)
                 await storage_handler.append_messages(task_id, message, full_response)
-                await storage_handler.update_subtask_status(subtask_id, "COMPLETED", result=result)
+                await storage_handler.update_subtask_status(
+                    subtask_id, "COMPLETED", result=result
+                )
 
                 yield _sse_data({"content": "", "done": True, "result": result})
 
             except Exception as e:
                 logger.exception("[STREAM] subtask=%s error", subtask_id)
-                await storage_handler.update_subtask_status(subtask_id, "FAILED", error=str(e))
+                await storage_handler.update_subtask_status(
+                    subtask_id, "FAILED", error=str(e)
+                )
                 yield _sse_data({"error": str(e)})
 
             finally:
@@ -343,6 +363,7 @@ class LangGraphChatService:
     async def _get_group_chat_history(self, task_id: int) -> list[dict[str, Any]]:
         """Get chat history for group chat from database."""
         from app.services.chat.chat_service import chat_service
+
         return await chat_service._get_group_chat_history(task_id)
 
     def _truncate_history(self, history: list[dict[str, str]]) -> list[dict[str, str]]:
