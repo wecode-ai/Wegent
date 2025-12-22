@@ -122,6 +122,43 @@ export function useTraceAction() {
   );
 
   /**
+   * Create a traced version of an async function.
+   * The trace is recorded when the function is called, regardless of success/failure.
+   *
+   * @param name - The name of the action
+   * @param attributes - Attributes to add to the span (can be a function that receives args)
+   * @returns A function that wraps the original function with tracing
+   *
+   * @example
+   * ```tsx
+   * // Simple usage - trace with static attributes
+   * const handleShare = traced('share-task', { 'task.id': taskId })(async () => {
+   *   await taskApis.shareTask(taskId);
+   * });
+   *
+   * // With dynamic attributes based on function arguments
+   * const handleCopy = traced('copy-link', (url) => ({ 'copy.url': url }))(async (url: string) => {
+   *   await navigator.clipboard.writeText(url);
+   * });
+   * ```
+   */
+  const traced = useCallback(
+    <TArgs extends unknown[], TReturn>(
+      name: string,
+      attributes?: Attributes | ((...args: TArgs) => Attributes)
+    ) => {
+      return (fn: (...args: TArgs) => TReturn | Promise<TReturn>) => {
+        return async (...args: TArgs): Promise<TReturn> => {
+          const contextAttrs = buildContextAttributes();
+          const resolvedAttrs = typeof attributes === 'function' ? attributes(...args) : attributes;
+          return traceLocalAction(name, { ...contextAttrs, ...resolvedAttrs }, () => fn(...args));
+        };
+      };
+    },
+    [buildContextAttributes]
+  );
+
+  /**
    * Simplified trace API with predefined common events
    */
   const trace = useMemo(
@@ -180,6 +217,7 @@ export function useTraceAction() {
   return {
     // New simplified API
     trace,
+    traced,
     // Legacy API (for backward compatibility)
     traceAction,
     traceActionSync,
