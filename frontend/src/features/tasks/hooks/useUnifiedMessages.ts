@@ -48,6 +48,8 @@ export interface DisplayMessage {
   timestamp: number;
   /** Subtask ID from backend (set when confirmed) */
   subtaskId?: number;
+  /** Message ID from backend for ordering (primary sort key) */
+  messageId?: number;
   /** Error message if status is 'error' */
   error?: string;
   /** Attachments array */
@@ -216,6 +218,7 @@ export function useUnifiedMessages({
         content: msg.content,
         timestamp: msg.timestamp,
         subtaskId: msg.subtaskId,
+        messageId: msg.messageId,
         error: msg.error,
         attachments,
         botName: msg.botName || team?.name,
@@ -251,8 +254,24 @@ export function useUnifiedMessages({
       }
     }
 
-    // Sort messages by timestamp
-    const sortedMessages = messages.sort((a, b) => a.timestamp - b.timestamp);
+    // Sort messages by messageId (primary) and timestamp (secondary)
+    // This matches backend sorting logic which uses message_id + created_at
+    // Messages without messageId (e.g., pending messages) are sorted by timestamp only
+    const sortedMessages = messages.sort((a, b) => {
+      // If both have messageId, use it as primary sort key
+      if (a.messageId !== undefined && b.messageId !== undefined) {
+        if (a.messageId !== b.messageId) {
+          return a.messageId - b.messageId;
+        }
+        // Same messageId, use timestamp as secondary sort key
+        return a.timestamp - b.timestamp;
+      }
+      // If only one has messageId, the one with messageId comes first (it's from backend)
+      if (a.messageId !== undefined) return -1;
+      if (b.messageId !== undefined) return 1;
+      // Neither has messageId (both pending), sort by timestamp
+      return a.timestamp - b.timestamp;
+    });
 
     return {
       messages: sortedMessages,

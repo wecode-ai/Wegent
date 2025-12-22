@@ -795,6 +795,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             {
                 "subtask_id": user_subtask.id,
                 "task_id": task_id,
+                "message_id": user_subtask.message_id,
                 "role": "user",
                 "content": message,
                 "sender": {
