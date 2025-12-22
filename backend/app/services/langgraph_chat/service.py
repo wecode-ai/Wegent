@@ -1,9 +1,9 @@
 """LangGraph Chat Service - main service entry point with real LangGraph agent."""
 
 import json
-import time
 import uuid
-from typing import Any, AsyncIterator, Dict, List, Optional
+from collections.abc import AsyncIterator
+from typing import Any
 
 from langchain_core.messages import AIMessage
 
@@ -14,7 +14,7 @@ from .tools import SkillsRegistry, ToolRegistry, WebSearchTool
 from .tools.mcp import MCPSessionManager
 
 
-def extract_usage_from_response(response: Any) -> Dict[str, int]:
+def extract_usage_from_response(response: Any) -> dict[str, int]:
     """Extract token usage from LangChain response.
 
     Args:
@@ -60,9 +60,9 @@ class StreamChunk:
 
     def __init__(
         self,
-        delta: Dict[str, Any],
-        finish_reason: Optional[str] = None,
-        usage: Optional[Dict[str, int]] = None,
+        delta: dict[str, Any],
+        finish_reason: str | None = None,
+        usage: dict[str, int] | None = None,
     ):
         self.delta = delta
         self.finish_reason = finish_reason
@@ -75,9 +75,9 @@ class CompletionResponse:
     def __init__(
         self,
         content: str,
-        tool_calls: Optional[List[Dict[str, Any]]] = None,
+        tool_calls: list[dict[str, Any]] | None = None,
         finish_reason: str = "stop",
-        usage: Optional[Dict[str, int]] = None,
+        usage: dict[str, int] | None = None,
     ):
         self.content = content
         self.tool_calls = tool_calls
@@ -95,7 +95,7 @@ class LangGraphChatService:
     Uses LangChain/LangGraph framework for agent orchestration with:
     - Real LangGraph state management
     - Tool binding via LangChain
-    - OpenAI/Gemini/Anthropic SDK integration through LangChain
+    - OpenAI/Google/Anthropic SDK integration through LangChain
     - Multi-step reasoning with tool loops
     - MCP integration
     - Skills for large file handling
@@ -123,14 +123,14 @@ class LangGraphChatService:
         self.enable_checkpointing = enable_checkpointing
 
         # Initialize MCP if enabled
-        self.mcp_manager: Optional[MCPSessionManager] = None
+        self.mcp_manager: MCPSessionManager | None = None
         if enable_mcp and config.CHAT_MCP_ENABLED:
             mcp_config = config.get_mcp_servers_config()
             if mcp_config:
                 self.mcp_manager = MCPSessionManager(mcp_config)
 
         # Initialize Skills if enabled
-        self.skills_registry: Optional[SkillsRegistry] = None
+        self.skills_registry: SkillsRegistry | None = None
         if enable_skills and config.SKILLS_ENABLED:
             self.skills_registry = SkillsRegistry(workspace_root)
             # Register skills to global registry
@@ -180,15 +180,15 @@ class LangGraphChatService:
     async def chat_completion(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         stream: bool = False,
-        tools: Optional[List[Dict[str, Any]]] = None,
+        tools: list[dict[str, Any]] | None = None,
         tool_choice: str = "auto",
-        user_id: Optional[int] = None,
+        user_id: int | None = None,
         namespace: str = "default",
         deep_thinking: bool = False,
         max_tool_iterations: int = 10,
-        thread_id: Optional[str] = None,
+        thread_id: str | None = None,
         **kwargs,
     ) -> CompletionResponse | AsyncIterator[StreamChunk]:
         """Execute chat completion with LangGraph agent.
@@ -278,8 +278,8 @@ class LangGraphChatService:
     async def _execute_agent(
         self,
         agent_builder: LangGraphAgentBuilder,
-        messages: List[Dict[str, Any]],
-        config: Dict[str, Any],
+        messages: list[dict[str, Any]],
+        config: dict[str, Any],
     ) -> CompletionResponse:
         """Execute LangGraph agent workflow.
 
@@ -353,8 +353,8 @@ class LangGraphChatService:
     async def _stream_agent_execution(
         self,
         agent_builder: LangGraphAgentBuilder,
-        messages: List[Dict[str, Any]],
-        config: Dict[str, Any],
+        messages: list[dict[str, Any]],
+        config: dict[str, Any],
     ) -> AsyncIterator[StreamChunk]:
         """Stream LangGraph agent execution.
 
@@ -427,7 +427,7 @@ class LangGraphChatService:
     async def _execute_direct_llm(
         self,
         lc_model,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
     ) -> CompletionResponse:
         """Execute direct LLM call without tools.
 
@@ -473,7 +473,7 @@ class LangGraphChatService:
     async def _stream_direct_llm(
         self,
         lc_model,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
     ) -> AsyncIterator[StreamChunk]:
         """Stream direct LLM call without tools.
 
@@ -527,7 +527,7 @@ class LangGraphChatService:
             usage=accumulated_usage,
         )
 
-    def list_available_tools(self) -> List[Dict[str, Any]]:
+    def list_available_tools(self) -> list[dict[str, Any]]:
         """List all available tools.
 
         Returns:

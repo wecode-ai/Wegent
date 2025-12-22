@@ -1,15 +1,14 @@
 """LangGraph graph builder for agent workflows."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from langchain_core.tools import Tool
-from langchain_core.tools.base import BaseTool as LangChainBaseTool
+from langchain_core.tools.base import BaseTool
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 
-from ..tools.base import BaseTool, ToolRegistry
+from ..tools.base import ToolRegistry
 from .state import AgentState
 
 
@@ -36,8 +35,8 @@ class LangGraphAgentBuilder:
         self.max_iterations = max_iterations
         self.enable_checkpointing = enable_checkpointing
 
-        # Convert tools to LangChain format
-        self.langchain_tools = self._convert_tools_to_langchain()
+        # Get all LangChain tools from registry
+        self.langchain_tools: list[BaseTool] = self.tool_registry.get_all()
 
         # Bind tools to LLM
         if self.langchain_tools:
@@ -45,45 +44,7 @@ class LangGraphAgentBuilder:
         else:
             self.llm_with_tools = self.llm
 
-    def _convert_tools_to_langchain(self) -> List[LangChainBaseTool]:
-        """Convert tool registry to LangChain Tool objects.
-
-        Returns:
-            List of LangChain Tool instances
-        """
-        langchain_tools = []
-
-        # Add custom tools (converted to LangChain Tool)
-        for tool in self.tool_registry.get_custom_tools():
-            # Create async function wrapper for tool execution
-            # Use a factory to bind the current tool to avoid closure variable capture issue
-            def make_tool_func(bound_tool):
-                async def tool_func(**kwargs):
-                    result = await bound_tool.execute(**kwargs)
-                    if result.success:
-                        return result.output
-                    else:
-                        return f"Error: {result.error}"
-
-                return tool_func
-
-            tool_func_bound = make_tool_func(tool)
-
-            # Create LangChain Tool
-            lc_tool = Tool(
-                name=tool.name,
-                description=tool.description,
-                func=tool_func_bound,
-                coroutine=tool_func_bound,  # Use async version
-            )
-            langchain_tools.append(lc_tool)
-
-        # Add LangChain tools directly (from MCP SDK etc.)
-        langchain_tools.extend(self.tool_registry.get_langchain_tools())
-
-        return langchain_tools
-
-    async def call_model(self, state: AgentState) -> AgentState:
+    async def invoke_model(self, state: AgentState) -> AgentState:
         """Node: Call LLM with current messages and tools.
 
         Args:
@@ -103,7 +64,7 @@ class LangGraphAgentBuilder:
             "messages": [response],  # add_messages will append automatically
         }
 
-    async def execute_tools(self, state: AgentState) -> AgentState:
+    async def invoke_tools(self, state: AgentState) -> AgentState:
         """Node: Execute tool calls from LLM response.
 
         Args:
@@ -127,7 +88,7 @@ class LangGraphAgentBuilder:
 
                 try:
                     # Execute tool via registry
-                    result = await self.tool_registry.execute_tool(
+                    result = await self.tool_registry.invoke_tool(
                         tool_name, **tool_args
                     )
 
@@ -220,15 +181,15 @@ class LangGraphAgentBuilder:
         workflow = StateGraph(AgentState)
 
         # Add nodes
-        workflow.add_node("agent", self.call_model)
-        workflow.add_node("tools", self.execute_tools)
+        workflow.add_node("model", self.invoke_model)
+        workflow.add_node("tools", self.invoke_tools)
 
         # Set entry point
-        workflow.set_entry_point("agent")
+        workflow.set_entry_point("model")
 
         # Add conditional edges
         workflow.add_conditional_edges(
-            "agent",
+            "model",
             self.should_continue,
             {
                 "continue": "tools",
@@ -236,8 +197,8 @@ class LangGraphAgentBuilder:
             },
         )
 
-        # Add edge from tools back to agent
-        workflow.add_edge("tools", "agent")
+        # Add edge from tools back to model
+        workflow.add_edge("tools", "model")
 
         # Compile graph
         if self.enable_checkpointing:
@@ -248,9 +209,9 @@ class LangGraphAgentBuilder:
 
     async def execute(
         self,
-        messages: List[Dict[str, Any]],
-        config: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        messages: list[dict[str, Any]],
+        config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Execute agent workflow.
 
         Args:
@@ -295,8 +256,8 @@ class LangGraphAgentBuilder:
 
     async def stream_execute(
         self,
-        messages: List[Dict[str, Any]],
-        config: Optional[Dict[str, Any]] = None,
+        messages: list[dict[str, Any]],
+        config: dict[str, Any] | None = None,
     ):
         """Stream agent workflow execution.
 

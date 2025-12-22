@@ -1,11 +1,9 @@
 """LLM provider factory."""
 
-from typing import Optional
-
 from ..config import config
 from .anthropic_provider import AnthropicProvider
 from .base import BaseLLMProvider
-from .gemini_provider import GeminiProvider
+from .google_provider import GoogleProvider
 from .openai_provider import OpenAIProvider
 
 
@@ -15,16 +13,15 @@ class ProviderFactory:
     _provider_map = {
         "openai": OpenAIProvider,
         "anthropic": AnthropicProvider,
-        "google": GeminiProvider,
-        "gemini": GeminiProvider,
+        "google": GoogleProvider,
     }
 
     @classmethod
     def create_provider(
         cls,
         model: str,
-        api_key: Optional[str] = None,
-        base_url: Optional[str] = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
         **kwargs,
     ) -> BaseLLMProvider:
         """Create LLM provider based on model name.
@@ -95,7 +92,6 @@ class ProviderFactory:
             "openai": config.OPENAI_API_KEY,
             "anthropic": config.ANTHROPIC_API_KEY,
             "google": config.GOOGLE_API_KEY,
-            "gemini": config.GOOGLE_API_KEY,
         }
 
         api_key = key_map.get(provider_type, "")
@@ -105,7 +101,7 @@ class ProviderFactory:
         return api_key
 
     @classmethod
-    def _get_default_base_url(cls, provider_type: str) -> Optional[str]:
+    def _get_default_base_url(cls, provider_type: str) -> str | None:
         """Get default base URL from config.
 
         Args:

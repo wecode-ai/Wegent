@@ -1,7 +1,5 @@
 """LangChain model wrappers for providers."""
 
-from typing import Optional
-
 from langchain_anthropic import ChatAnthropic
 from langchain_core.language_models import BaseChatModel
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -50,7 +48,7 @@ class LangChainModelFactory:
                 streaming=kwargs.get("streaming", False),
             )
 
-        # Google Gemini models
+        # Google models
         elif any(prefix in model_lower for prefix in ["gemini-"]):
             return ChatGoogleGenerativeAI(
                 model=model,

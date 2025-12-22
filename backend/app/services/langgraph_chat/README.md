@@ -9,7 +9,7 @@
 - **多 LLM 提供商支持**
   - OpenAI (GPT-4o, GPT-4-turbo, etc.)
   - Anthropic (Claude 3.5 Sonnet, etc.)
-  - Google Gemini (Gemini 2.0 Flash, etc.)
+  - Google (Gemini 2.0 Flash, etc.)
   - 自动检测提供商，统一接口调用
 
 - **工具调用系统**
@@ -50,7 +50,7 @@ backend/app/services/langgraph_chat/
 │   ├── base.py                # BaseLLMProvider 抽象类
 │   ├── openai_provider.py     # OpenAI 适配器
 │   ├── anthropic_provider.py  # Anthropic 适配器
-│   ├── gemini_provider.py     # Google Gemini 适配器
+│   ├── google_provider.py     # Google 适配器
 │   └── factory.py             # Provider 工厂
 │
 ├── tools/                      # 工具系统

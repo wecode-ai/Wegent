@@ -1,4 +1,4 @@
-"""Google Gemini provider implementation."""
+"""Google provider implementation."""
 
 import json
 from typing import Any, AsyncIterator, Dict, List, Optional
@@ -10,13 +10,13 @@ from google.generativeai.types import GenerateContentResponse
 from .base import BaseLLMProvider, CompletionResponse, Message, StreamChunk
 
 
-class GeminiProvider(BaseLLMProvider):
-    """Google Gemini LLM provider using official SDK."""
+class GoogleProvider(BaseLLMProvider):
+    """Google LLM provider using official SDK."""
 
     def __init__(
         self, model: str, api_key: str, base_url: Optional[str] = None, **kwargs
     ):
-        """Initialize Gemini provider.
+        """Initialize Google provider.
 
         Args:
             model: Model name (e.g., gemini-2.0-flash-exp)

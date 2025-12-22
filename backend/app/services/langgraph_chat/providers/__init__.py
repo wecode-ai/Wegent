@@ -3,7 +3,7 @@
 from .anthropic_provider import AnthropicProvider
 from .base import BaseLLMProvider, CompletionResponse, Message, StreamChunk
 from .factory import ProviderFactory
-from .gemini_provider import GeminiProvider
+from .google_provider import GoogleProvider
 from .openai_provider import OpenAIProvider
 
 __all__ = [
@@ -13,6 +13,6 @@ __all__ = [
     "CompletionResponse",
     "OpenAIProvider",
     "AnthropicProvider",
-    "GeminiProvider",
+    "GoogleProvider",
     "ProviderFactory",
 ]
