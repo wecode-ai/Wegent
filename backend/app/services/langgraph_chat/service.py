@@ -195,7 +195,7 @@ class LangGraphChatService:
                 yield _sse_data({"content": "", "done": True})
 
             except Exception as e:
-                logger.exception("Simple stream error: %s", str(e))
+                logger.exception("Simple stream error")
                 yield _sse_data({"error": str(e)})
 
         return StreamingResponse(
@@ -281,7 +281,7 @@ class LangGraphChatService:
                 yield _sse_data({"content": "", "done": True, "result": result})
 
             except Exception as e:
-                logger.exception("[STREAM] subtask=%s error: %s", subtask_id, str(e))
+                logger.exception("[STREAM] subtask=%s error", subtask_id)
                 await storage_handler.update_subtask_status(subtask_id, "FAILED", error=str(e))
                 yield _sse_data({"error": str(e)})
 
@@ -372,4 +372,9 @@ class LangGraphChatService:
 
 
 # Global service instance
-langgraph_chat_service = LangGraphChatService()
+langgraph_chat_service = LangGraphChatService(
+    workspace_root=getattr(settings, "WORKSPACE_ROOT", "/workspace"),
+    enable_skills=getattr(settings, "ENABLE_SKILLS", True),
+    enable_web_search=settings.WEB_SEARCH_ENABLED,
+    enable_checkpointing=getattr(settings, "ENABLE_CHECKPOINTING", False),
+)

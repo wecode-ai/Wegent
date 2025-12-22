@@ -98,7 +98,7 @@ class LangGraphAgentBuilder:
                 "accumulated_content": accumulated,
             }
         except Exception as e:
-            logger.exception("Error invoking model: %s", str(e))
+            logger.exception("Error invoking model")
             return {
                 **state,
                 "error": str(e),
@@ -171,7 +171,7 @@ class LangGraphAgentBuilder:
                     tool_messages.append(tool_message)
 
                 except Exception as e:
-                    logger.exception("Error executing tool %s: %s", tool_name, str(e))
+                    logger.exception("Error executing tool %s", tool_name)
                     error_message = ToolMessage(
                         content=f"Error executing tool: {str(e)}",
                         tool_call_id=tool_call_id,
@@ -428,7 +428,7 @@ class LangGraphAgentBuilder:
                     logger.debug("Tool completed: %s", tool_name)
 
         except Exception as e:
-            logger.exception("Error in stream_tokens: %s", str(e))
+            logger.exception("Error in stream_tokens")
             raise
 
     def get_final_content(self, state: AgentState) -> str:
