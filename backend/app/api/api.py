@@ -12,6 +12,7 @@ from app.api.endpoints import (
     oidc,
     openapi_responses,
     quota,
+    rag,
     repository,
     subtasks,
     users,
@@ -74,4 +75,5 @@ api_router.include_router(
 api_router.include_router(
     knowledge.document_router, prefix="/knowledge-documents", tags=["knowledge"]
 )
+api_router.include_router(rag.router, prefix="/rag", tags=["rag"])
 api_router.include_router(k_router)

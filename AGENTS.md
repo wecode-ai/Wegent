@@ -797,8 +797,9 @@ Task (Team + Workspace) → Subtasks (messages/steps)
 
 **Components:**
 - `storage/factory.py` - Storage backend factory (creates backends from Retriever CRD)
-- `storage/elasticsearch_backend.py` - Elasticsearch storage implementation
-- `storage/base.py` - Base storage backend interface
+- `storage/base.py` - Base storage backend interface with `SUPPORTED_RETRIEVAL_METHODS` class variable
+- `storage/elasticsearch_backend.py` - Elasticsearch storage implementation (vector, full-text, hybrid)
+- `storage/qdrant_backend.py` - Qdrant vector database storage implementation (vector only)
 - `embedding/factory.py` - Embedding model factory (OpenAI + custom API support)
 - `document_service.py` - Document indexing, deletion, and management
 - `retrieval_service.py` - Vector search and hybrid retrieval (vector + BM25)
@@ -809,16 +810,27 @@ Task (Team + Workspace) → Subtasks (messages/steps)
 - **Retriever CRD Configuration**: Storage backends configured via Retriever Kind (no global config)
 - **Document indexing**: Support for MD, PDF, TXT, DOCX, and code files
 - **Semantic chunking**: Uses LlamaIndex `SemanticSplitterNodeParser`
-- **Vector storage**: Elasticsearch (Qdrant support planned)
+- **Vector storage**: Elasticsearch and Qdrant
 - **Embedding providers**: OpenAI and custom API support with retry mechanism
-- **Index strategies**: Fixed, rolling (hash-based sharding), or per-dataset
+- **Index strategies**: Fixed, rolling (hash-based sharding), per-dataset, or per-user
 - **Rollback protection**: Automatic cleanup on indexing failures
 - **Metadata filtering**: Knowledge base and custom metadata filtering
-- **Hybrid search**: Combines vector similarity and BM25 keyword matching with configurable weights
+- **Hybrid search**: Combines vector similarity and BM25 keyword matching with configurable weights (Elasticsearch only)
+
+**Storage Backend Comparison:**
+
+| Feature | Elasticsearch | Qdrant |
+|---------|--------------|--------|
+| Vector Search | ✅ | ✅ |
+| Full-Text Search (BM25) | ✅ | ❌ |
+| Hybrid Search | ✅ | ❌ |
+| Recommended Index Mode | `per_user` | `per_dataset` |
+| Authentication | Username/Password | API Key |
 
 **Retrieval Modes:**
-- **Vector mode** (`retrieval_mode="vector"`): Pure vector similarity search (default)
-- **Hybrid mode** (`retrieval_mode="hybrid"`): Combines vector search (default 0.7) + BM25 keyword search (default 0.3)
+- **Vector mode** (`retrieval_mode="vector"`): Pure vector similarity search (default, supported by all backends)
+- **Full-text mode** (`retrieval_mode="keyword"`): BM25 keyword search (Elasticsearch only)
+- **Hybrid mode** (`retrieval_mode="hybrid"`): Combines vector search (default 0.7) + BM25 keyword search (default 0.3) (Elasticsearch only)
 
 **Retriever CRD Example:**
 ```yaml
@@ -850,6 +862,28 @@ spec:
     hybrid:
       enabled: true
   description: "Elasticsearch retriever for RAG"
+```
+
+**Qdrant Retriever CRD Example:**
+```yaml
+apiVersion: agent.wecode.io/v1
+kind: Retriever
+metadata:
+  name: my-qdrant-retriever
+  namespace: default
+  displayName: "My Qdrant Retriever"
+spec:
+  storageConfig:
+    type: qdrant
+    url: "http://localhost:6333"
+    apiKey: "your-api-key"  # Optional
+    indexStrategy:
+      mode: per_dataset  # 'fixed', 'rolling', 'per_dataset', or 'per_user' (per_dataset recommended for Qdrant)
+      prefix: "wegent"  # Collection name prefix (default: wegent)
+  retrievalMethods:
+    vector:
+      enabled: true  # Only vector search is supported for Qdrant
+  description: "Qdrant retriever for RAG (vector search only)"
 ```
 
 **API Usage:**

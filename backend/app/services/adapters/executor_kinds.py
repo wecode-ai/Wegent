@@ -1036,6 +1036,7 @@ class ExecutorKindsService(
                 task_id=task_id,
                 subtask_id=last_non_pending_subtask.id,
                 result=last_non_pending_subtask.result,
+                message_id=last_non_pending_subtask.message_id,
             )
 
         db.add(task)
@@ -1218,6 +1219,7 @@ class ExecutorKindsService(
         task_id: int,
         subtask_id: int,
         result: Optional[Dict[str, Any]] = None,
+        message_id: Optional[int] = None,
     ) -> None:
         """
         Emit chat:done WebSocket event to notify frontend of completed subtask with message content.
@@ -1229,9 +1231,10 @@ class ExecutorKindsService(
             task_id: Task ID
             subtask_id: Subtask ID
             result: Result data containing the message content
+            message_id: Message ID for ordering (primary sort key)
         """
         logger.info(
-            f"[WS] _emit_chat_done_ws_event called for task={task_id} subtask={subtask_id}"
+            f"[WS] _emit_chat_done_ws_event called for task={task_id} subtask={subtask_id} message_id={message_id}"
         )
 
         async def emit_async():
@@ -1252,9 +1255,10 @@ class ExecutorKindsService(
                         subtask_id=subtask_id,
                         offset=offset,
                         result=result,
+                        message_id=message_id,
                     )
                     logger.info(
-                        f"[WS] Successfully emitted chat:done event for task={task_id} subtask={subtask_id}"
+                        f"[WS] Successfully emitted chat:done event for task={task_id} subtask={subtask_id} message_id={message_id}"
                     )
                 else:
                     logger.warning(
