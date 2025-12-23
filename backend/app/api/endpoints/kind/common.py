@@ -18,6 +18,8 @@ from app.schemas.kind import (
     GhostList,
     Model,
     ModelList,
+    Retriever,
+    RetrieverList,
     Shell,
     ShellList,
     Task,
@@ -39,6 +41,7 @@ KIND_SCHEMA_MAP = {
     "Team": Team,
     "Workspace": Workspace,
     "Task": Task,
+    "Retriever": Retriever,
 }
 
 # Map kind strings to their corresponding list schema classes
@@ -50,6 +53,7 @@ KIND_LIST_SCHEMA_MAP = {
     "Team": TeamList,
     "Workspace": WorkspaceList,
     "Task": TaskList,
+    "Retriever": RetrieverList,
 }
 
 # Map kind strings to their plural form for URL paths
@@ -61,6 +65,7 @@ KIND_URL_MAP = {
     "Team": "teams",
     "Workspace": "workspaces",
     "Task": "tasks",
+    "Retriever": "retrievers",
 }
 
 # Map URL paths to their corresponding kind

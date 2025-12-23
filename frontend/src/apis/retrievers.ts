@@ -74,6 +74,19 @@ export interface TestConnectionResponse {
   message: string;
 }
 
+// Storage Retrieval Methods Types
+export type RetrievalMethodType = 'vector' | 'keyword' | 'hybrid';
+
+export interface StorageRetrievalMethodsResponse {
+  data: Record<string, RetrievalMethodType[]>;
+  storage_types: string[];
+}
+
+export interface StorageTypeRetrievalMethodsResponse {
+  storage_type: string;
+  retrieval_methods: RetrievalMethodType[];
+}
+
 // Retriever Services
 export const retrieverApis = {
   /**
@@ -141,5 +154,28 @@ export const retrieverApis = {
    */
   async testConnection(config: TestConnectionRequest): Promise<TestConnectionResponse> {
     return apiClient.post('/retrievers/test-connection', config);
+  },
+
+  /**
+   * Get supported retrieval methods for all storage types
+   *
+   * Returns a mapping of storage type to supported retrieval methods.
+   * Example: { elasticsearch: ['vector', 'keyword', 'hybrid'], qdrant: ['vector'] }
+   */
+  async getStorageRetrievalMethods(): Promise<StorageRetrievalMethodsResponse> {
+    return apiClient.get('/retrievers/storage-types/retrieval-methods');
+  },
+
+  /**
+   * Get supported retrieval methods for a specific storage type
+   *
+   * @param storageType - Storage type name (e.g., 'elasticsearch', 'qdrant')
+   */
+  async getStorageTypeRetrievalMethods(
+    storageType: string
+  ): Promise<StorageTypeRetrievalMethodsResponse> {
+    return apiClient.get(
+      `/retrievers/storage-types/${encodeURIComponent(storageType)}/retrieval-methods`
+    );
   },
 };

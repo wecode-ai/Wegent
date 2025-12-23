@@ -6,8 +6,14 @@
 Splitter module for document chunking.
 """
 
-from app.services.rag.splitter.splitter import DocumentSplitter
+from app.services.rag.splitter.splitter import (
+    DocumentSplitter,
+    SemanticSplitter,
+    SentenceSplitter,
+)
 
 __all__ = [
     "DocumentSplitter",
+    "SemanticSplitter",
+    "SentenceSplitter",
 ]
