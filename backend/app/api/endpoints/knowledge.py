@@ -6,14 +6,16 @@
 API endpoints for knowledge base and document management.
 """
 
+import asyncio
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.db.session import SessionLocal
 from app.core import security
 from app.models.user import User
 from app.schemas.knowledge import (
@@ -30,7 +32,11 @@ from app.schemas.knowledge import (
     KnowledgeDocumentUpdate,
     ResourceScope,
 )
+from app.schemas.rag import SplitterConfig
 from app.services.knowledge_service import KnowledgeService
+from app.services.rag.document_service import DocumentService
+from app.services.rag.storage.factory import create_storage_backend
+from app.services.adapters.retriever_kinds import retriever_kinds_service
 
 logger = logging.getLogger(__name__)
 
@@ -80,10 +86,14 @@ def list_knowledge_bases(
         scope=resource_scope,
         group_name=group_name,
     )
-
     return KnowledgeBaseListResponse(
         total=len(knowledge_bases),
-        items=[KnowledgeBaseResponse.from_kind(kb) for kb in knowledge_bases],
+        items=[
+            KnowledgeBaseResponse.from_kind(
+                kb, KnowledgeService.get_document_count(db, kb.id)
+            )
+            for kb in knowledge_bases
+        ],
     )
 
 
@@ -126,10 +136,9 @@ def create_knowledge_base(
             user_id=current_user.id,
             data=data,
         )
-        # Close current transaction and start a new one to see committed data
-        # This is needed because KindServiceFactory uses its own session and commits
-        db.commit()  # Commit any pending changes in current session
-        # Fetch the created knowledge base using a fresh query
+        # Commit the transaction to persist the knowledge base
+        db.commit()
+        # Fetch the created knowledge base
         knowledge_base = KnowledgeService.get_knowledge_base(
             db=db,
             knowledge_base_id=kb_id,
@@ -140,7 +149,9 @@ def create_knowledge_base(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to retrieve created knowledge base",
             )
-        return KnowledgeBaseResponse.from_kind(knowledge_base)
+        return KnowledgeBaseResponse.from_kind(
+            knowledge_base, KnowledgeService.get_document_count(db, knowledge_base.id)
+        )
     except IntegrityError:
         db.rollback()
         raise HTTPException(
@@ -173,7 +184,9 @@ def get_knowledge_base(
             detail="Knowledge base not found or access denied",
         )
 
-    return KnowledgeBaseResponse.from_kind(knowledge_base)
+    return KnowledgeBaseResponse.from_kind(
+        knowledge_base, KnowledgeService.get_document_count(db, knowledge_base.id)
+    )
 
 
 @router.put("/{knowledge_base_id}", response_model=KnowledgeBaseResponse)
@@ -198,7 +211,9 @@ def update_knowledge_base(
                 detail="Knowledge base not found or access denied",
             )
 
-        return KnowledgeBaseResponse.from_kind(knowledge_base)
+        return KnowledgeBaseResponse.from_kind(
+            knowledge_base, KnowledgeService.get_document_count(db, knowledge_base.id)
+        )
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -264,9 +279,10 @@ def list_documents(
     response_model=KnowledgeDocumentResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def create_document(
+async def create_document(
     knowledge_base_id: int,
     data: KnowledgeDocumentCreate,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -275,20 +291,161 @@ def create_document(
 
     The attachment_id should reference an already uploaded attachment
     via /api/attachments/upload endpoint.
+
+    After creating the document, automatically triggers RAG indexing
+    if the knowledge base has retrieval_config configured.
     """
     try:
+        # Create document record
         document = KnowledgeService.create_document(
             db=db,
             knowledge_base_id=knowledge_base_id,
             user_id=current_user.id,
             data=data,
         )
+
+        # Get knowledge base to check for retrieval_config
+        knowledge_base = KnowledgeService.get_knowledge_base(
+            db=db,
+            knowledge_base_id=knowledge_base_id,
+            user_id=current_user.id,
+        )
+
+        # If knowledge base has retrieval_config, trigger RAG indexing
+        if knowledge_base:
+            spec = knowledge_base.json.get("spec", {})
+            retrieval_config = spec.get("retrievalConfig")
+
+            if retrieval_config:
+                # Extract configuration using snake_case format
+                retriever_name = retrieval_config.get("retriever_name")
+                retriever_namespace = retrieval_config.get("retriever_namespace", "default")
+                embedding_config = retrieval_config.get("embedding_config")
+
+                if retriever_name and embedding_config:
+                    # Extract embedding model info
+                    embedding_model_name = embedding_config.get("model_name")
+                    embedding_model_namespace = embedding_config.get("model_namespace", "default")
+
+                    # Schedule RAG indexing in background
+                    # Note: We use a synchronous function that creates its own event loop
+                    # because BackgroundTasks runs in a thread pool without an event loop.
+                    # We also don't pass db session because it will be closed
+                    # after the request ends. The background task creates its own session.
+                    background_tasks.add_task(
+                        _index_document_background,
+                        knowledge_base_id=str(knowledge_base_id),
+                        attachment_id=data.attachment_id,
+                        retriever_name=retriever_name,
+                        retriever_namespace=retriever_namespace,
+                        embedding_model_name=embedding_model_name,
+                        embedding_model_namespace=embedding_model_namespace,
+                        user_id=current_user.id,
+                        splitter_config=data.splitter_config,
+                    )
+                    logger.info(
+                        f"Scheduled RAG indexing for document {document.id} in knowledge base {knowledge_base_id}"
+                    )
+                else:
+                    logger.warning(
+                        f"Knowledge base {knowledge_base_id} has incomplete retrieval_config, skipping RAG indexing"
+                    )
+
         return KnowledgeDocumentResponse.model_validate(document)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
+
+
+def _index_document_background(
+    knowledge_base_id: str,
+    attachment_id: int,
+    retriever_name: str,
+    retriever_namespace: str,
+    embedding_model_name: str,
+    embedding_model_namespace: str,
+    user_id: int,
+    splitter_config: Optional[SplitterConfig] = None,
+):
+    """
+    Background task for RAG document indexing.
+
+    This is a synchronous function that creates its own event loop to run
+    the async indexing code. This is necessary because FastAPI's BackgroundTasks
+    runs tasks in a thread pool, which doesn't have an event loop.
+
+    This function also creates its own database session because the request-scoped
+    session will be closed after the HTTP response is sent.
+
+    Args:
+        knowledge_base_id: Knowledge base ID
+        attachment_id: Attachment ID
+        retriever_name: Retriever name
+        retriever_namespace: Retriever namespace
+        embedding_model_name: Embedding model name
+        embedding_model_namespace: Embedding model namespace
+        user_id: User ID
+        splitter_config: Optional splitter configuration
+    """
+    logger.info(
+        f"Background task started: indexing document for knowledge base {knowledge_base_id}, "
+        f"attachment {attachment_id}"
+    )
+
+    # Create a new database session for the background task
+    db = SessionLocal()
+    try:
+        # Get retriever from database
+        retriever_crd = retriever_kinds_service.get_retriever(
+            db=db,
+            user_id=user_id,
+            name=retriever_name,
+            namespace=retriever_namespace,
+        )
+
+        if not retriever_crd:
+            raise ValueError(
+                f"Retriever {retriever_name} (namespace: {retriever_namespace}) not found"
+            )
+
+        logger.info(f"Found retriever: {retriever_name}")
+
+        # Create storage backend from retriever
+        storage_backend = create_storage_backend(retriever_crd)
+        logger.info(f"Created storage backend: {type(storage_backend).__name__}")
+
+        # Create document service
+        doc_service = DocumentService(storage_backend=storage_backend)
+
+        # Run the async index_document in a new event loop
+        # This is necessary because BackgroundTasks runs in a thread without an event loop
+        result = asyncio.run(
+            doc_service.index_document(
+                knowledge_id=knowledge_base_id,
+                embedding_model_name=embedding_model_name,
+                embedding_model_namespace=embedding_model_namespace,
+                user_id=user_id,
+                db=db,
+                attachment_id=attachment_id,
+                splitter_config=splitter_config,
+            )
+        )
+
+        logger.info(
+            f"Successfully indexed document for knowledge base {knowledge_base_id}: {result}"
+        )
+    except Exception as e:
+        logger.error(
+            f"Failed to index document for knowledge base {knowledge_base_id}: {str(e)}",
+            exc_info=True,
+        )
+        # Don't raise exception to avoid blocking document creation
+    finally:
+        # Always close the database session
+        db.close()
+        logger.info(f"Background task completed for knowledge base {knowledge_base_id}")
 
 
 # Document-specific endpoints (without knowledge_base_id in path)

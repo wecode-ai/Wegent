@@ -14,6 +14,10 @@ Supported retrieval modes:
 from typing import Any, ClassVar, Dict, List, Optional
 
 from elasticsearch import Elasticsearch
+from elasticsearch.helpers.vectorstore._async.strategies import (
+    AsyncBM25Strategy,
+    AsyncDenseVectorStrategy,
+)
 from llama_index.core import StorageContext, VectorStoreIndex
 from llama_index.core.schema import BaseNode
 from llama_index.core.vector_stores import ExactMatchFilter, MetadataFilters
@@ -56,10 +60,38 @@ class ElasticsearchBackend(BaseStorageBackend):
         elif self.api_key:
             self.es_kwargs["api_key"] = self.api_key
 
-    def create_vector_store(self, index_name: str):
-        """Create Elasticsearch vector store."""
+    def create_vector_store(
+        self, index_name: str, retrieval_mode: str = "vector"
+    ) -> ElasticsearchStore:
+        """
+        Create Elasticsearch vector store with appropriate retrieval strategy.
+
+        Args:
+            index_name: Index name
+            retrieval_mode: Retrieval mode - 'vector', 'keyword', or 'hybrid'
+                - 'vector': Pure dense vector search (default)
+                - 'keyword': Pure BM25 text search
+                - 'hybrid': Combined vector + BM25 search
+
+        Returns:
+            ElasticsearchStore instance configured for the specified mode
+        """
+        # Select retrieval strategy based on mode
+        if retrieval_mode == "keyword":
+            # Pure BM25 keyword search
+            retrieval_strategy = AsyncBM25Strategy()
+        elif retrieval_mode == "hybrid":
+            # Hybrid search: vector + BM25 with RRF fusion
+            retrieval_strategy = AsyncDenseVectorStrategy(hybrid=True, rrf=True)
+        else:
+            # Default: Pure vector search
+            retrieval_strategy = AsyncDenseVectorStrategy(hybrid=False)
+
         return ElasticsearchStore(
-            index_name=index_name, es_url=self.url, **self.es_kwargs
+            index_name=index_name,
+            es_url=self.url,
+            retrieval_strategy=retrieval_strategy,
+            **self.es_kwargs,
         )
 
     def index_with_metadata(
@@ -160,8 +192,8 @@ class ElasticsearchBackend(BaseStorageBackend):
         score_threshold = retrieval_setting.get("score_threshold", 0.7)
         retrieval_mode = retrieval_setting.get("retrieval_mode", "vector")
 
-        # Create vector store
-        vector_store = self.create_vector_store(index_name)
+        # Create vector store with appropriate retrieval strategy
+        vector_store = self.create_vector_store(index_name, retrieval_mode)
 
         # Build metadata filters
         filters = self._build_metadata_filters(knowledge_id, metadata_condition)

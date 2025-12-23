@@ -8,9 +8,9 @@ Document indexing orchestration.
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Optional, Union
+from typing import Dict, Optional, Union, List, Optional
 
-from llama_index.core import SimpleDirectoryReader
+from llama_index.core import Document, SimpleDirectoryReader
 
 from app.schemas.rag import SplitterConfig
 from app.services.rag.splitter import SemanticSplitter, SentenceSplitter
@@ -43,7 +43,7 @@ class DocumentIndexer:
         self, knowledge_id: str, file_path: str, doc_ref: str, **kwargs
     ) -> Dict:
         """
-        Index a document (synchronous).
+        Index a document from file path (synchronous).
 
         This method is synchronous because it's called from asyncio.to_thread()
         in DocumentService to avoid event loop conflicts with LlamaIndex.
@@ -60,14 +60,87 @@ class DocumentIndexer:
         Raises:
             Exception: If indexing fails
         """
-        # Load document
+        # Load document from file
         documents = SimpleDirectoryReader(input_files=[file_path]).load_data()
+        source_file = Path(file_path).name
 
+        return self._index_documents(
+            documents=documents,
+            knowledge_id=knowledge_id,
+            doc_ref=doc_ref,
+            source_file=source_file,
+            **kwargs,
+        )
+
+    def index_from_text(
+        self,
+        knowledge_id: str,
+        text_content: str,
+        source_file: str,
+        doc_ref: str,
+        **kwargs,
+    ) -> Dict:
+        """
+        Index a document from pre-extracted text content (synchronous).
+
+        This method allows indexing documents directly from text that was
+        already extracted during attachment upload, avoiding redundant
+        file parsing and temporary file creation.
+
+        Args:
+            knowledge_id: Knowledge base ID
+            text_content: Pre-extracted text content from attachment
+            source_file: Original filename (used for metadata)
+            doc_ref: Document reference ID
+            **kwargs: Additional parameters (e.g., user_id for per_user index strategy)
+
+        Returns:
+            Indexing result dict
+
+        Raises:
+            Exception: If indexing fails
+        """
+        # Create LlamaIndex Document directly from text content
+        documents = [
+            Document(
+                text=text_content,
+                metadata={"filename": source_file},
+            )
+        ]
+
+        return self._index_documents(
+            documents=documents,
+            knowledge_id=knowledge_id,
+            doc_ref=doc_ref,
+            source_file=source_file,
+            **kwargs,
+        )
+
+    def _index_documents(
+        self,
+        documents: List[Document],
+        knowledge_id: str,
+        doc_ref: str,
+        source_file: str,
+        **kwargs,
+    ) -> Dict:
+        """
+        Internal method to index documents.
+
+        Args:
+            documents: List of LlamaIndex Document objects
+            knowledge_id: Knowledge base ID
+            doc_ref: Document reference ID
+            source_file: Source filename
+            **kwargs: Additional parameters
+
+        Returns:
+            Indexing result dict
+        """
         # Split documents into nodes
         nodes = self.splitter.split_documents(documents)
 
         # Prepare metadata
-        source_file = Path(file_path).name
         created_at = datetime.now(timezone.utc).isoformat()
 
         # Delegate to storage backend for metadata addition and indexing

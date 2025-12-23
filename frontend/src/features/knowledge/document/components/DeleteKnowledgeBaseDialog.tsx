@@ -33,7 +33,14 @@ export function DeleteKnowledgeBaseDialog({
 }: DeleteKnowledgeBaseDialogProps) {
   const { t } = useTranslation();
 
+  // Check if knowledge base has documents
+  const hasDocuments = !!(knowledgeBase && knowledgeBase.document_count > 0);
+
   const handleConfirm = async () => {
+    // Prevent deletion if there are documents
+    if (hasDocuments) {
+      return;
+    }
     try {
       await onConfirm();
     } catch {
@@ -47,14 +54,16 @@ export function DeleteKnowledgeBaseDialog({
         <DialogHeader>
           <DialogTitle>{t('knowledge.document.knowledgeBase.delete')}</DialogTitle>
           <DialogDescription>
-            {t('knowledge.document.knowledgeBase.confirmDelete')}
+            {hasDocuments
+              ? t('knowledge.document.knowledgeBase.cannotDeleteWithDocuments')
+              : t('knowledge.document.knowledgeBase.confirmDelete')}
           </DialogDescription>
         </DialogHeader>
         {knowledgeBase && (
           <div className="py-4">
             <p className="text-text-primary font-medium">{knowledgeBase.name}</p>
-            {knowledgeBase.document_count > 0 && (
-              <p className="text-sm text-text-secondary mt-2">
+            {hasDocuments && (
+              <p className="text-sm text-error mt-2">
                 {t('knowledge.document.knowledgeBase.deleteWarning', {
                   count: knowledgeBase.document_count,
                 })}
@@ -66,7 +75,7 @@ export function DeleteKnowledgeBaseDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
             {t('actions.cancel')}
           </Button>
-          <Button variant="destructive" onClick={handleConfirm} disabled={loading}>
+          <Button variant="destructive" onClick={handleConfirm} disabled={loading || hasDocuments}>
             {loading ? t('actions.deleting') : t('actions.delete')}
           </Button>
         </DialogFooter>

@@ -13,6 +13,7 @@ from typing import Dict, Optional
 
 from sqlalchemy.orm import Session
 
+from app.models.subtask_attachment import AttachmentStatus, SubtaskAttachment
 from app.schemas.rag import SplitterConfig
 from app.services.rag.embedding.factory import create_embedding_model_from_crd
 from app.services.rag.index import DocumentIndexer
@@ -34,10 +35,54 @@ class DocumentService:
         """
         self.storage_backend = storage_backend
 
+    def _get_attachment_text(
+        self, db: Session, attachment_id: int
+    ) -> tuple[str, str]:
+        """
+        Get extracted text content and filename from attachment.
+
+        The text content was already extracted during attachment upload,
+        so we can directly use it without re-parsing the file.
+
+        Args:
+            db: Database session
+            attachment_id: Attachment ID
+
+        Returns:
+            Tuple of (extracted_text, filename)
+
+        Raises:
+            ValueError: If attachment not found or has no extracted text
+        """
+        # Query attachment
+        attachment = (
+            db.query(SubtaskAttachment)
+            .filter(SubtaskAttachment.id == attachment_id)
+            .first()
+        )
+
+        if not attachment:
+            raise ValueError(f"Attachment {attachment_id} not found")
+
+        # Check attachment status
+        if attachment.status != AttachmentStatus.READY:
+            raise ValueError(
+                f"Attachment {attachment_id} is not ready (status: {attachment.status})"
+            )
+
+        # Get extracted text content
+        if not attachment.extracted_text:
+            raise ValueError(
+                f"Attachment {attachment_id} has no extracted text content"
+            )
+
+        return attachment.extracted_text, attachment.original_filename
+
     def _index_document_sync(
         self,
         knowledge_id: str,
-        file_path: str,
+        file_path: Optional[str],
+        attachment_id: Optional[int],
         embedding_model_name: str,
         embedding_model_namespace: str,
         user_id: int,
@@ -50,7 +95,8 @@ class DocumentService:
 
         Args:
             knowledge_id: Knowledge base ID
-            file_path: Path to document file
+            file_path: Path to document file (optional, mutually exclusive with attachment_id)
+            attachment_id: Attachment ID (optional, mutually exclusive with file_path)
             embedding_model_name: Embedding model name
             embedding_model_namespace: Embedding model namespace
             user_id: User ID
@@ -60,6 +106,9 @@ class DocumentService:
         Returns:
             Indexing result dict
         """
+        if file_path is None and attachment_id is None:
+            raise ValueError("Either file_path or attachment_id must be provided")
+
         # Generate document reference ID
         doc_ref = f"doc_{uuid.uuid4().hex[:12]}"
 
@@ -78,24 +127,38 @@ class DocumentService:
             splitter_config=splitter_config,
         )
 
-        # Index document (synchronous operation, pass user_id)
-        result = indexer.index_document(
-            knowledge_id=knowledge_id,
-            file_path=file_path,
-            doc_ref=doc_ref,
-            user_id=user_id,
-        )
+        if attachment_id is not None:
+            # Get pre-extracted text from attachment (no temp file needed)
+            text_content, filename = self._get_attachment_text(db, attachment_id)
+
+            # Index from text directly
+            result = indexer.index_from_text(
+                knowledge_id=knowledge_id,
+                text_content=text_content,
+                source_file=filename,
+                doc_ref=doc_ref,
+                user_id=user_id,
+            )
+        else:
+            # Index from file path
+            result = indexer.index_document(
+                knowledge_id=knowledge_id,
+                file_path=file_path,
+                doc_ref=doc_ref,
+                user_id=user_id,
+            )
 
         return result
 
     async def index_document(
         self,
         knowledge_id: str,
-        file_path: str,
         embedding_model_name: str,
         embedding_model_namespace: str,
         user_id: int,
         db: Session,
+        file_path: Optional[str] = None,
+        attachment_id: Optional[int] = None,
         splitter_config: Optional[SplitterConfig] = None,
     ) -> Dict:
         """
@@ -103,11 +166,12 @@ class DocumentService:
 
         Args:
             knowledge_id: Knowledge base ID
-            file_path: Path to document file
             embedding_model_name: Embedding model name
             embedding_model_namespace: Embedding model namespace
             user_id: User ID
             db: Database session
+            file_path: Path to document file (optional, mutually exclusive with attachment_id)
+            attachment_id: Attachment ID (optional, mutually exclusive with file_path)
             splitter_config: Optional splitter configuration. If None, defaults to SemanticSplitter
 
         Returns:
@@ -128,6 +192,7 @@ class DocumentService:
             self._index_document_sync,
             knowledge_id,
             file_path,
+            attachment_id,
             embedding_model_name,
             embedding_model_namespace,
             user_id,

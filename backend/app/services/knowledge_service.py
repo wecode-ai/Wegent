@@ -9,6 +9,7 @@ Knowledge base and document service using kinds table.
 from typing import Optional
 
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.kind import Kind
 from app.models.knowledge import (
@@ -35,7 +36,6 @@ from app.services.group_permission import (
     get_effective_role_in_group,
     get_user_groups,
 )
-from app.services.kind_factory import KindServiceFactory
 
 
 class KnowledgeService:
@@ -63,6 +63,8 @@ class KnowledgeService:
         Raises:
             ValueError: If validation fails or permission denied
         """
+        from datetime import datetime
+
         # Check permission for team knowledge base
         if data.namespace != "default":
             role = get_effective_role_in_group(db, user_id, data.namespace)
@@ -77,8 +79,29 @@ class KnowledgeService:
                     "Only Owner or Maintainer can create knowledge base in this group"
                 )
 
-        # Check duplicate name
-        existing = (
+        # Generate unique name for the Kind record
+        kb_name = f"kb-{user_id}-{data.namespace}-{data.name}"
+
+        # Check duplicate by Kind.name (unique identifier)
+        existing_by_name = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "KnowledgeBase",
+                Kind.user_id == user_id,
+                Kind.namespace == data.namespace,
+                Kind.name == kb_name,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
+        if existing_by_name:
+            raise ValueError(
+                f"Knowledge base with name '{data.name}' already exists"
+            )
+
+        # Also check by display name in spec to prevent duplicates
+        existing_by_display = (
             db.query(Kind)
             .filter(
                 Kind.kind == "KnowledgeBase",
@@ -89,7 +112,7 @@ class KnowledgeService:
             .all()
         )
 
-        for kb in existing:
+        for kb in existing_by_display:
             kb_spec = kb.json.get("spec", {})
             if kb_spec.get("name") == data.name:
                 raise ValueError(
@@ -101,20 +124,36 @@ class KnowledgeService:
             apiVersion="agent.wecode.io/v1",
             kind="KnowledgeBase",
             metadata=ObjectMeta(
-                name=f"kb-{user_id}-{data.namespace}-{data.name}",  # Generate unique name
+                name=kb_name,
                 namespace=data.namespace,
             ),
             spec=KnowledgeBaseSpec(
                 name=data.name,
                 description=data.description or "",
-                document_count=0,
+                retrievalConfig=data.retrieval_config,
             ),
         )
 
-        # Use KindServiceFactory to create
-        kind_service = KindServiceFactory.get_service("KnowledgeBase")
-        kb_id = kind_service.create_resource(user_id, kb_crd.model_dump())
-        return kb_id
+        # Build resource data
+        resource_data = kb_crd.model_dump()
+        if "status" not in resource_data or resource_data["status"] is None:
+            resource_data["status"] = {"state": "Available"}
+
+        # Create Kind record directly using the passed db session
+        db_resource = Kind(
+            user_id=user_id,
+            kind="KnowledgeBase",
+            name=kb_name,
+            namespace=data.namespace,
+            json=resource_data,
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+        )
+
+        db.add(db_resource)
+        db.flush()  # Flush to get the ID without committing
+
+        return db_resource.id
 
     @staticmethod
     def get_knowledge_base(
@@ -305,8 +344,25 @@ class KnowledgeService:
         if data.description is not None:
             spec["description"] = data.description
 
+        # Update retrieval config if provided (only allowed fields)
+        if data.retrieval_config is not None:
+            current_retrieval_config = spec.get("retrievalConfig", {})
+            if current_retrieval_config:
+                # Only update allowed fields, keep retriever and embedding_config unchanged
+                if data.retrieval_config.retrieval_mode is not None:
+                    current_retrieval_config["retrieval_mode"] = data.retrieval_config.retrieval_mode
+                if data.retrieval_config.top_k is not None:
+                    current_retrieval_config["top_k"] = data.retrieval_config.top_k
+                if data.retrieval_config.score_threshold is not None:
+                    current_retrieval_config["score_threshold"] = data.retrieval_config.score_threshold
+                if data.retrieval_config.hybrid_weights is not None:
+                    current_retrieval_config["hybrid_weights"] = data.retrieval_config.hybrid_weights.model_dump()
+                spec["retrievalConfig"] = current_retrieval_config
+
         kb_json["spec"] = spec
         kb.json = kb_json
+        # Mark JSON field as modified so SQLAlchemy detects the change
+        flag_modified(kb, "json")
 
         db.commit()
         db.refresh(kb)
@@ -319,7 +375,7 @@ class KnowledgeService:
         user_id: int,
     ) -> bool:
         """
-        Physically delete a knowledge base and its documents.
+        Delete a knowledge base.
 
         Args:
             db: Database session
@@ -345,15 +401,37 @@ class KnowledgeService:
                     "Only Owner or Maintainer can delete knowledge base in this group"
                 )
 
-        # Physically delete all documents in this knowledge base
-        db.query(KnowledgeDocument).filter(
-            KnowledgeDocument.kind_id == knowledge_base_id,
-        ).delete()
-
         # Physically delete the knowledge base
         db.delete(kb)
         db.commit()
         return True
+
+    @staticmethod
+    def get_document_count(
+        db: Session,
+        knowledge_base_id: int,
+    ) -> int:
+        """
+        Get the document count for a knowledge base.
+
+        Args:
+            db: Database session
+            knowledge_base_id: Knowledge base ID
+
+        Returns:
+            Number of active documents in the knowledge base
+        """
+        from sqlalchemy import func
+
+        return (
+            db.query(func.count(KnowledgeDocument.id))
+            .filter(
+                KnowledgeDocument.kind_id == knowledge_base_id,
+                KnowledgeDocument.is_active == True,
+            )
+            .scalar()
+            or 0
+        )
 
     # ============== Knowledge Document Operations ==============
 
@@ -399,15 +477,9 @@ class KnowledgeService:
             file_extension=data.file_extension,
             file_size=data.file_size,
             user_id=user_id,
+            splitter_config=data.splitter_config.model_dump() if data.splitter_config else None,  # Save splitter_config
         )
         db.add(document)
-
-        # Update document count in Kind spec
-        kb_json = kb.json
-        spec = kb_json.get("spec", {})
-        spec["document_count"] = spec.get("document_count", 0) + 1
-        kb_json["spec"] = spec
-        kb.json = kb_json
 
         db.commit()
         db.refresh(document)
@@ -527,6 +599,9 @@ class KnowledgeService:
         if data.status is not None:
             doc.status = DocumentStatus(data.status.value)
 
+        if data.splitter_config is not None:
+            doc.splitter_config = data.splitter_config.model_dump()
+
         db.commit()
         db.refresh(doc)
         return doc
@@ -569,14 +644,6 @@ class KnowledgeService:
                     "Only Owner or Maintainer can delete documents from this knowledge base"
                 )
 
-        # Update document count
-        if kb:
-            kb_json = kb.json
-            spec = kb_json.get("spec", {})
-            spec["document_count"] = max(0, spec.get("document_count", 0) - 1)
-            kb_json["spec"] = spec
-            kb.json = kb_json
-
         # Physically delete document
         db.delete(doc)
         db.commit()
@@ -617,7 +684,7 @@ class KnowledgeService:
                 id=kb.id,
                 name=kb.json.get("spec", {}).get("name", ""),
                 description=kb.json.get("spec", {}).get("description"),
-                document_count=kb.json.get("spec", {}).get("document_count", 0),
+                document_count=KnowledgeService.get_document_count(db, kb.id),
                 updated_at=kb.updated_at,
             )
             for kb in personal_kbs
@@ -661,9 +728,7 @@ class KnowledgeService:
                                 id=kb.id,
                                 name=kb.json.get("spec", {}).get("name", ""),
                                 description=kb.json.get("spec", {}).get("description"),
-                                document_count=kb.json.get("spec", {}).get(
-                                    "document_count", 0
-                                ),
+                                document_count=KnowledgeService.get_document_count(db, kb.id),
                                 updated_at=kb.updated_at,
                             )
                             for kb in group_kbs
