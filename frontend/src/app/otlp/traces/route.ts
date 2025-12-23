@@ -8,8 +8,12 @@
  * Proxies OpenTelemetry trace data from browser to OTEL Collector.
  * This avoids CORS issues since browser sends to same origin.
  *
- * The browser sends traces to /api/otlp/traces (same domain),
+ * The browser sends traces to /otlp/traces (same domain),
  * and this route forwards them to the internal OTEL Collector.
+ *
+ * NOTE: This route uses /otlp prefix (not /api/otlp) to avoid
+ * conflict with the /api/* rewrite rule in next.config.js that
+ * proxies all /api/* requests to the backend.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -19,10 +23,11 @@ import { NextRequest, NextResponse } from 'next/server';
  * Default: http://otel-collector:4318 (internal Docker network)
  * For local development: http://localhost:4318
  */
-const OTEL_COLLECTOR_ENDPOINT = process.env.OTEL_COLLECTOR_ENDPOINT || 'http://localhost:4318';
+const OTEL_COLLECTOR_ENDPOINT =
+  process.env.NEXT_PUBLIC_OTEL_COLLECTOR_ENDPOINT || 'http://localhost:4318';
 
 /**
- * POST /api/otlp/traces
+ * POST /otlp/traces
  *
  * Proxies OTLP trace data to the OpenTelemetry Collector.
  * Supports both JSON and Protobuf content types.
@@ -74,7 +79,7 @@ export async function POST(request: NextRequest): Promise<Response> {
 }
 
 /**
- * OPTIONS /api/otlp/traces
+ * OPTIONS /otlp/traces
  *
  * Handle CORS preflight requests (though not needed for same-origin).
  * Included for completeness.
