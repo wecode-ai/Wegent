@@ -289,6 +289,403 @@ class ExecutorKindsService(
 
         return agent_config
 
+    def _query_ghost(
+        self,
+        db: Session,
+        ghost_ref_name: str,
+        ghost_ref_namespace: str,
+        bot_user_id: int,
+    ) -> Optional[Kind]:
+        """
+        Query Ghost resource based on namespace.
+
+        Args:
+            db: Database session
+            ghost_ref_name: Ghost reference name
+            ghost_ref_namespace: Ghost reference namespace
+            bot_user_id: Bot's user_id for personal resource lookup
+
+        Returns:
+            Ghost Kind object or None
+        """
+        is_group = ghost_ref_namespace and ghost_ref_namespace != "default"
+
+        if is_group:
+            # Group resource - don't filter by user_id
+            return (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "Ghost",
+                    Kind.name == ghost_ref_name,
+                    Kind.namespace == ghost_ref_namespace,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+        else:
+            # Default namespace - first try user's ghost, then public ghost
+            ghost = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == bot_user_id,
+                    Kind.kind == "Ghost",
+                    Kind.name == ghost_ref_name,
+                    Kind.namespace == ghost_ref_namespace,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+            if not ghost:
+                ghost = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.user_id == 0,
+                        Kind.kind == "Ghost",
+                        Kind.name == ghost_ref_name,
+                        Kind.namespace == ghost_ref_namespace,
+                        Kind.is_active == True,
+                    )
+                    .first()
+                )
+            return ghost
+
+    def _query_shell(
+        self,
+        db: Session,
+        shell_ref_name: str,
+        shell_ref_namespace: str,
+        bot_user_id: int,
+    ) -> tuple[Optional[Kind], Optional[str]]:
+        """
+        Query Shell resource based on namespace.
+
+        Args:
+            db: Database session
+            shell_ref_name: Shell reference name
+            shell_ref_namespace: Shell reference namespace
+            bot_user_id: Bot's user_id for personal resource lookup
+
+        Returns:
+            Tuple of (Shell Kind object or None, base_image or None)
+        """
+        is_group = shell_ref_namespace and shell_ref_namespace != "default"
+        shell_base_image = None
+
+        if is_group:
+            # Group resource - don't filter by user_id
+            shell = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "Shell",
+                    Kind.name == shell_ref_name,
+                    Kind.namespace == shell_ref_namespace,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+            return shell, shell_base_image
+        else:
+            # Default namespace - first try user's shell
+            shell = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == bot_user_id,
+                    Kind.kind == "Shell",
+                    Kind.name == shell_ref_name,
+                    Kind.namespace == shell_ref_namespace,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+
+            if shell:
+                return shell, shell_base_image
+
+            # If user shell not found, try public shells (user_id = 0)
+            public_shell = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == 0,
+                    Kind.kind == "Shell",
+                    Kind.name == shell_ref_name,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+            if public_shell and public_shell.json:
+                shell_crd_temp = Shell.model_validate(public_shell.json)
+                shell_base_image = shell_crd_temp.spec.baseImage
+
+                # Create a mock shell object for compatibility
+                class MockShell:
+                    def __init__(self, json_data):
+                        self.json = json_data
+
+                return MockShell(public_shell.json), shell_base_image
+
+            return None, shell_base_image
+
+    def _query_model(
+        self,
+        db: Session,
+        model_ref_name: str,
+        model_ref_namespace: str,
+        bot_user_id: int,
+        bot_name: str,
+    ) -> Optional[Kind]:
+        """
+        Query Model resource based on namespace.
+
+        Args:
+            db: Database session
+            model_ref_name: Model reference name
+            model_ref_namespace: Model reference namespace
+            bot_user_id: Bot's user_id for personal resource lookup
+            bot_name: Bot name for logging
+
+        Returns:
+            Model Kind object or None
+        """
+        is_group = model_ref_namespace and model_ref_namespace != "default"
+
+        if is_group:
+            # Group resource - don't filter by user_id
+            return (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "Model",
+                    Kind.name == model_ref_name,
+                    Kind.namespace == model_ref_namespace,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+        else:
+            # Default namespace - first try user's private models
+            model = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == bot_user_id,
+                    Kind.kind == "Model",
+                    Kind.name == model_ref_name,
+                    Kind.namespace == model_ref_namespace,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+
+            if model:
+                return model
+
+            # If not found, try public models (user_id = 0)
+            public_model = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == 0,
+                    Kind.kind == "Model",
+                    Kind.name == model_ref_name,
+                    Kind.namespace == model_ref_namespace,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+            if public_model:
+                logger.info(
+                    f"Found model '{model_ref_name}' in public models for bot {bot_name}"
+                )
+            return public_model
+
+    def _resolve_model_by_type(
+        self,
+        db: Session,
+        model_name: str,
+        bind_model_type: Optional[str],
+        bind_model_namespace: str,
+        bot_user_id: int,
+    ) -> Optional[Kind]:
+        """
+        Resolve model by bind_model_type.
+
+        Args:
+            db: Database session
+            model_name: Model name to resolve
+            bind_model_type: Model type ('public', 'user', 'group', or None)
+            bind_model_namespace: Model namespace
+            bot_user_id: Bot's user_id for personal resource lookup
+
+        Returns:
+            Model Kind object or None
+        """
+        if bind_model_type == "public":
+            # Explicitly public model - query with user_id = 0
+            return (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == 0,
+                    Kind.kind == "Model",
+                    Kind.name == model_name,
+                    Kind.namespace == "default",
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+        elif bind_model_type == "group":
+            # Group model - query without user_id filter
+            return (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "Model",
+                    Kind.name == model_name,
+                    Kind.namespace == bind_model_namespace,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+        elif bind_model_type == "user":
+            # User's private model - query with bot's user_id
+            return (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == bot_user_id,
+                    Kind.kind == "Model",
+                    Kind.name == model_name,
+                    Kind.namespace == bind_model_namespace,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+        else:
+            # No explicit type - use fallback logic
+            # First try user's private models
+            model_kind = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == bot_user_id,
+                    Kind.kind == "Model",
+                    Kind.name == model_name,
+                    Kind.namespace == "default",
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+            # If not found, try public models
+            if not model_kind:
+                model_kind = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.user_id == 0,
+                        Kind.kind == "Model",
+                        Kind.name == model_name,
+                        Kind.namespace == "default",
+                        Kind.is_active == True,
+                    )
+                    .first()
+                )
+            return model_kind
+
+    def _resolve_model_config(
+        self,
+        db: Session,
+        agent_config: Dict[str, Any],
+        task_crd: Task,
+        bot_user_id: int,
+    ) -> Dict[str, Any]:
+        """
+        Resolve model configuration with support for bind_model and task-level override.
+
+        Args:
+            db: Database session
+            agent_config: Current agent configuration
+            task_crd: Task CRD for task-level model info
+            bot_user_id: Bot's user_id for model lookup
+
+        Returns:
+            Resolved agent configuration
+        """
+        if not isinstance(agent_config, dict):
+            return agent_config
+
+        agent_config_data = agent_config
+
+        try:
+            # 1. Get Task-level model information
+            task_model_name = None
+            force_override = False
+
+            if task_crd.metadata.labels:
+                task_model_name = task_crd.metadata.labels.get("modelId")
+                force_override = (
+                    task_crd.metadata.labels.get("forceOverrideBotModel") == "true"
+                )
+
+            # 2. Determine which model name to use
+            model_name_to_use = None
+
+            if force_override and task_model_name:
+                # Force override: use Task-specified model
+                model_name_to_use = task_model_name
+                logger.info(f"Using task model (force override): {model_name_to_use}")
+            else:
+                # Check for bind_model in agent_config
+                bind_model_name = agent_config.get("bind_model")
+                if isinstance(bind_model_name, str) and bind_model_name.strip():
+                    model_name_to_use = bind_model_name.strip()
+                    logger.info(f"Using bot bound model: {model_name_to_use}")
+                # Fallback to task-specified model
+                if not model_name_to_use and task_model_name:
+                    model_name_to_use = task_model_name
+                    logger.info(
+                        f"Using task model (no bot binding): {model_name_to_use}"
+                    )
+
+            # 3. Query kinds table for Model CRD and replace config
+            if model_name_to_use:
+                bind_model_type = agent_config.get("bind_model_type")
+                bind_model_namespace = agent_config.get(
+                    "bind_model_namespace", "default"
+                )
+
+                model_kind = self._resolve_model_by_type(
+                    db,
+                    model_name_to_use,
+                    bind_model_type,
+                    bind_model_namespace,
+                    bot_user_id,
+                )
+
+                if model_kind and model_kind.json:
+                    try:
+                        model_crd = Model.model_validate(model_kind.json)
+                        model_config = model_crd.spec.modelConfig
+                        if isinstance(model_config, dict):
+                            # Decrypt API key for executor
+                            if (
+                                "env" in model_config
+                                and "api_key" in model_config["env"]
+                            ):
+                                model_config["env"]["api_key"] = decrypt_api_key(
+                                    model_config["env"]["api_key"]
+                                )
+                            agent_config_data = model_config
+                            logger.info(
+                                f"Successfully loaded model config from kinds: {model_name_to_use} (type={bind_model_type})"
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to parse model CRD {model_name_to_use}: {e}"
+                        )
+                else:
+                    logger.warning(
+                        f"Model '{model_name_to_use}' not found in kinds table (type={bind_model_type}, namespace={bind_model_namespace})"
+                    )
+
+        except Exception as e:
+            logger.error(f"Failed to resolve model config: {e}")
+            # On any error, fallback to original agent_config
+            agent_config_data = agent_config
+
+        return agent_config_data
+
     def _format_subtasks_response(
         self, db: Session, subtasks: List[Subtask]
     ) -> Dict[str, List[Dict]]:
@@ -430,88 +827,31 @@ class ExecutorKindsService(
 
                 bot_crd = Bot.model_validate(bot.json)
 
-                # Get ghost for system prompt and mcp servers
-                ghost = (
-                    db.query(Kind)
-                    .filter(
-                        Kind.user_id == team.user_id,
-                        Kind.kind == "Ghost",
-                        Kind.name == bot_crd.spec.ghostRef.name,
-                        Kind.namespace == bot_crd.spec.ghostRef.namespace,
-                        Kind.is_active == True,
-                    )
-                    .first()
+                # Query ghost, shell, model using helper methods
+                ghost = self._query_ghost(
+                    db,
+                    bot_crd.spec.ghostRef.name,
+                    bot_crd.spec.ghostRef.namespace,
+                    bot.user_id,
                 )
 
-                # Get shell for agent name - first check user's custom shells, then public shells
-                shell = (
-                    db.query(Kind)
-                    .filter(
-                        Kind.user_id == team.user_id,
-                        Kind.kind == "Shell",
-                        Kind.name == bot_crd.spec.shellRef.name,
-                        Kind.namespace == bot_crd.spec.shellRef.namespace,
-                        Kind.is_active == True,
-                    )
-                    .first()
+                shell, shell_base_image = self._query_shell(
+                    db,
+                    bot_crd.spec.shellRef.name,
+                    bot_crd.spec.shellRef.namespace,
+                    bot.user_id,
                 )
-
-                # If user shell not found, try public shells
-                shell_base_image = None
-                if not shell:
-
-                    public_shell = (
-                        db.query(Kind)
-                        .filter(
-                            Kind.name == bot_crd.spec.shellRef.name,
-                            Kind.is_active == True,
-                        )
-                        .first()
-                    )
-                    if public_shell and public_shell.json:
-                        shell_crd_temp = Shell.model_validate(public_shell.json)
-                        shell_base_image = shell_crd_temp.spec.baseImage
-
-                        # Create a mock shell object for compatibility
-                        class MockShell:
-                            def __init__(self, json_data):
-                                self.json = json_data
-
-                        shell = MockShell(public_shell.json)
 
                 # Get model for agent config (modelRef is optional)
-                # Try to find in kinds table (user's private models) first, then public_models table
                 model = None
                 if bot_crd.spec.modelRef:
-                    model = (
-                        db.query(Kind)
-                        .filter(
-                            Kind.user_id == team.user_id,
-                            Kind.kind == "Model",
-                            Kind.name == bot_crd.spec.modelRef.name,
-                            Kind.namespace == bot_crd.spec.modelRef.namespace,
-                            Kind.is_active == True,
-                        )
-                        .first()
+                    model = self._query_model(
+                        db,
+                        bot_crd.spec.modelRef.name,
+                        bot_crd.spec.modelRef.namespace,
+                        bot.user_id,
+                        bot.name,
                     )
-
-                    # If not found in kinds table, try public_models table
-                    if not model:
-
-                        public_model = (
-                            db.query(Kind)
-                            .filter(
-                                Kind.name == bot_crd.spec.modelRef.name,
-                                Kind.namespace == bot_crd.spec.modelRef.namespace,
-                                Kind.is_active == True,
-                            )
-                            .first()
-                        )
-                        if public_model:
-                            model = public_model
-                            logger.info(
-                                f"Found model '{bot_crd.spec.modelRef.name}' in public_models table for bot {bot.name}"
-                            )
 
                 # Extract data from components
                 system_prompt = ""
@@ -564,121 +904,11 @@ class ExecutorKindsService(
                 bot_prompt = system_prompt
                 if team_member_info and team_member_info.prompt:
                     bot_prompt += f"\n{team_member_info.prompt}"
-                agent_config_data = agent_config
 
-                # Model resolution logic with support for bind_model and task-level override
-                try:
-                    if isinstance(agent_config, dict):
-                        # 1. Get Task-level model information
-                        task_model_name = None
-                        force_override = False
-
-                        if task_crd.metadata.labels:
-                            task_model_name = task_crd.metadata.labels.get("modelId")
-                            force_override = (
-                                task_crd.metadata.labels.get("forceOverrideBotModel")
-                                == "true"
-                            )
-
-                        # 2. Determine which model name to use
-                        model_name_to_use = None
-
-                        if force_override and task_model_name:
-                            # Force override: use Task-specified model
-                            model_name_to_use = task_model_name
-                            logger.info(
-                                f"Using task model (force override): {model_name_to_use}"
-                            )
-                        else:
-                            # Check for bind_model in agent_config
-                            bind_model_name = agent_config.get("bind_model")
-                            if (
-                                isinstance(bind_model_name, str)
-                                and bind_model_name.strip()
-                            ):
-                                model_name_to_use = bind_model_name.strip()
-                                logger.info(
-                                    f"Using bot bound model: {model_name_to_use}"
-                                )
-                            # Fallback to task-specified model
-                            if not model_name_to_use and task_model_name:
-                                model_name_to_use = task_model_name
-                                logger.info(
-                                    f"Using task model (no bot binding): {model_name_to_use}"
-                                )
-
-                        # 3. Query kinds table for Model CRD and replace config
-                        if model_name_to_use:
-                            # First try to find in kinds table (user's private models)
-                            model_kind = (
-                                db.query(Kind)
-                                .filter(
-                                    Kind.kind == "Model",
-                                    Kind.name == model_name_to_use,
-                                    Kind.namespace == "default",
-                                    Kind.is_active == True,
-                                )
-                                .first()
-                            )
-
-                            if model_kind and model_kind.json:
-                                try:
-                                    model_crd = Model.model_validate(model_kind.json)
-                                    model_config = model_crd.spec.modelConfig
-                                    if isinstance(model_config, dict):
-                                        # Decrypt API key for executor
-                                        if (
-                                            "env" in model_config
-                                            and "api_key" in model_config["env"]
-                                        ):
-                                            model_config["env"]["api_key"] = (
-                                                decrypt_api_key(
-                                                    model_config["env"]["api_key"]
-                                                )
-                                            )
-                                        agent_config_data = model_config
-                                        logger.info(
-                                            f"Successfully loaded model config from kinds: {model_name_to_use}"
-                                        )
-                                except Exception as e:
-                                    logger.warning(
-                                        f"Failed to parse model CRD {model_name_to_use}: {e}"
-                                    )
-                            else:
-                                # Fallback to public_models table (legacy)
-                                model_row = (
-                                    db.query(Kind)
-                                    .filter(Kind.name == model_name_to_use)
-                                    .first()
-                                )
-                                if model_row and model_row.json:
-                                    model_config = model_row.json.get("spec", {}).get(
-                                        "modelConfig", {}
-                                    )
-                                    if isinstance(model_config, dict):
-                                        # Decrypt API key for executor (public models may also have encrypted keys)
-                                        if (
-                                            "env" in model_config
-                                            and "api_key" in model_config["env"]
-                                        ):
-                                            model_config["env"]["api_key"] = (
-                                                decrypt_api_key(
-                                                    model_config["env"]["api_key"]
-                                                )
-                                            )
-                                        agent_config_data = model_config
-                                        logger.info(
-                                            f"Successfully loaded model config from public_models: {model_name_to_use}"
-                                        )
-                                else:
-                                    logger.warning(
-                                        f"Model '{model_name_to_use}' not found in kinds or public_models table"
-                                    )
-
-                except Exception as e:
-                    logger.error(f"Failed to resolve model config: {e}")
-                    # On any error, fallback to original agent_config
-                    agent_config_data = agent_config
+                # Resolve model config using helper method
+                agent_config_data = self._resolve_model_config(
+                    db, agent_config, task_crd, bot.user_id
+                )
 
                 bots.append(
                     {

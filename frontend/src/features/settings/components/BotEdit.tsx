@@ -30,6 +30,7 @@ import {
   isPredefinedModel,
   getModelFromConfig,
   getModelTypeFromConfig,
+  getModelNamespaceFromConfig,
   createPredefinedModelConfig,
 } from '@/features/settings/services/bots';
 import { modelApis, UnifiedModel, ModelTypeEnum } from '@/apis/models';
@@ -120,6 +121,9 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const [isCustomModel, setIsCustomModel] = useState(false);
   const [selectedModel, setSelectedModel] = useState('');
   const [selectedModelType, setSelectedModelType] = useState<ModelTypeEnum | undefined>(undefined);
+  const [selectedModelNamespace, setSelectedModelNamespace] = useState<string | undefined>(
+    undefined
+  );
   const [selectedProtocol, setSelectedProtocol] = useState('');
 
   // Current editing object
@@ -433,7 +437,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     };
 
     fetchModels();
-  }, [agentName, shells, toast, t, baseBot]);
+  }, [agentName, shells, toast, t, baseBot, scope, groupName]);
   // Reset base form when switching editing object
   useEffect(() => {
     setBotName(baseBot?.name || '');
@@ -462,6 +466,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       // Default to dropdown (predefined model) mode when no config exists
       setIsCustomModel(false);
       setSelectedModel('');
+      setSelectedModelNamespace(undefined);
       setSelectedProtocol('');
       return;
     }
@@ -471,10 +476,13 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
     if (isPredefined) {
       const modelName = getModelFromConfig(baseBot.agent_config);
+      const modelNamespace = getModelNamespaceFromConfig(baseBot.agent_config);
       setSelectedModel(modelName);
+      setSelectedModelNamespace(modelNamespace);
       setSelectedProtocol('');
     } else {
       setSelectedModel('');
+      setSelectedModelNamespace(undefined);
       // Extract protocol from agent_config for custom configs
       const protocol = ((baseBot.agent_config as Record<string, unknown>).protocol as string) || '';
       setSelectedProtocol(protocol);
@@ -559,10 +567,11 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       const configObj = JSON.parse(agentConfig.trim());
       parsedAgentConfig = { ...configObj, protocol: selectedProtocol };
     } else {
-      parsedAgentConfig = createPredefinedModelConfig(selectedModel, selectedModelType) as Record<
-        string,
-        unknown
-      >;
+      parsedAgentConfig = createPredefinedModelConfig(
+        selectedModel,
+        selectedModelType,
+        selectedModelNamespace
+      ) as Record<string, unknown>;
     }
 
     let parsedMcpConfig: Record<string, unknown> = {};
@@ -735,8 +744,12 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         return;
       }
     } else {
-      // Use createPredefinedModelConfig to include bind_model_type
-      parsedAgentConfig = createPredefinedModelConfig(selectedModel, selectedModelType);
+      // Use createPredefinedModelConfig to include bind_model_type and namespace
+      parsedAgentConfig = createPredefinedModelConfig(
+        selectedModel,
+        selectedModelType,
+        selectedModelNamespace
+      );
     }
 
     let parsedMcpConfig: Record<string, unknown> | null = null;
@@ -1134,12 +1147,17 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                   />
                 ) : (
                   <Select
-                    value={selectedModel ? `${selectedModel}:${selectedModelType || ''}` : ''}
+                    value={
+                      selectedModel
+                        ? `${selectedModel}:${selectedModelType || ''}:${selectedModelNamespace || 'default'}`
+                        : ''
+                    }
                     onValueChange={value => {
-                      // Value format: "modelName:modelType"
-                      const [modelName, modelType] = value.split(':');
+                      // Value format: "modelName:modelType:namespace"
+                      const [modelName, modelType, modelNamespace] = value.split(':');
                       setSelectedModel(modelName);
                       setSelectedModelType((modelType as ModelTypeEnum) || undefined);
+                      setSelectedModelNamespace(modelNamespace || 'default');
                     }}
                     disabled={loadingModels || !agentName || models.length === 0 || readOnly}
                   >
@@ -1162,8 +1180,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                       ) : (
                         models.map(model => (
                           <SelectItem
-                            key={`${model.name}:${model.type}`}
-                            value={`${model.name}:${model.type}`}
+                            key={`${model.name}:${model.type}:${model.namespace || 'default'}`}
+                            value={`${model.name}:${model.type}:${model.namespace || 'default'}`}
                           >
                             {model.displayName || model.name}
                             {model.type === 'public' && (
