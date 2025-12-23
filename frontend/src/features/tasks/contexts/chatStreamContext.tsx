@@ -1407,6 +1407,10 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         });
 
         for (const subtask of sortedSubtasks) {
+          // Track subtask to task mapping for WebSocket event handling
+          // This is crucial for chat:chunk events to find the correct task
+          subtaskToTaskRef.current.set(subtask.id, taskId);
+
           // Backend returns role as uppercase 'USER' or 'ASSISTANT'
           const isUserMessage = subtask.role === 'USER' || subtask.role?.toUpperCase() === 'USER';
           const messageType: MessageType = isUserMessage ? 'user' : 'ai';
@@ -1421,15 +1425,20 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
               status = 'pending';
             } else {
               // For AI messages with RUNNING status:
-              // Only set to 'streaming' if we already have this message in streaming state
-              // (created by chat:start event). Otherwise, skip it - the message will be
-              // created when chat:start event arrives.
+              // Check if we already have this message in streaming state from chat:start event.
+              // If so, keep the frontend version (it has the latest streaming content).
+              // If not (e.g., page refresh), create it with backend content.
               const existingMessage = currentState.messages.get(messageId);
               if (existingMessage && existingMessage.status === 'streaming') {
+                // Keep the frontend streaming message - it has the latest content
+                // We'll add it back later in the "preserve pending/streaming messages" section
                 status = 'streaming';
-              } else {
-                // Skip this AI message - it will be created by chat:start event
+                // Skip adding this message from backend - we'll preserve the frontend version
                 continue;
+              } else {
+                // No existing streaming message (e.g., page refresh)
+                // Create it with backend content so user can see the running task
+                status = 'streaming';
               }
             }
           } else if (subtask.status === 'FAILED' || subtask.status === 'CANCELLED') {
@@ -1502,7 +1511,24 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
 
         for (const [msgId, msg] of currentState.messages) {
           // Skip messages that were created from backend (they're already in newMessages)
-          if (msgId.startsWith('user-backend-') || msgId.startsWith('ai-')) {
+          if (msgId.startsWith('user-backend-')) {
+            continue;
+          }
+
+          // For AI messages (ai-{subtaskId}), check if we should keep the frontend version
+          // This happens when the backend has a RUNNING status AI message but frontend
+          // already has a streaming version with more recent content
+          if (msgId.startsWith('ai-') && msg.status === 'streaming') {
+            // Keep the frontend streaming AI message if it's not already in newMessages
+            // (it was skipped in the backend loop because we want to preserve frontend content)
+            if (!newMessages.has(msgId)) {
+              newMessages.set(msgId, msg);
+            }
+            continue;
+          }
+
+          // Skip other AI messages that are already in newMessages
+          if (msgId.startsWith('ai-')) {
             continue;
           }
 
