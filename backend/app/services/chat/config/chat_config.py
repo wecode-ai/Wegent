@@ -205,7 +205,7 @@ class ChatConfigBuilder:
         model_config = get_model_config_for_bot(
             self.db,
             bot,
-            self.user_id,
+            self.team.user_id,
             override_model_name=override_model_name,
             force_override=force_override,
         )
@@ -262,7 +262,7 @@ class ChatConfigBuilder:
         system_prompt = get_bot_system_prompt(
             self.db,
             bot,
-            self.user_id,
+            self.team.user_id,
             team_member_prompt,
         )
 
