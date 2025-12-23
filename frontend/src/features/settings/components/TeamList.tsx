@@ -839,7 +839,18 @@ export default function TeamList({
       )}
 
       {/* Bot list dialog */}
-      <Dialog open={botListVisible} onOpenChange={setBotListVisible}>
+      <Dialog
+        open={botListVisible}
+        onOpenChange={open => {
+          setBotListVisible(open);
+          // Refresh bots list when dialog is closed to sync any changes made in BotList
+          if (!open) {
+            fetchBotsList(scope, groupName)
+              .then(setBotsSorted)
+              .catch(() => {});
+          }
+        }}
+      >
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
           <DialogHeader>
             <DialogTitle>{t('bots.title')}</DialogTitle>
