@@ -25,7 +25,6 @@ from langchain_core.tools.base import BaseTool
 from app.core.config import settings
 
 from ..storage import storage_handler
-from .emitters import StreamEmitter
 
 logger = logging.getLogger(__name__)
 
