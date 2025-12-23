@@ -49,7 +49,7 @@ export default function DeepThinkingToggle({
           </Button>
         </TooltipTrigger>
         <TooltipContent side="top">
-          <p>{enabled ? t('deep_thinking.disable') : t('deep_thinking.enable')}</p>
+          <p>{t('deep_thinking.label')}</p>
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>

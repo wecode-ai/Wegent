@@ -205,8 +205,7 @@
     "select_engine": "选择搜索引擎"
   },
   "deep_thinking": {
-    "enable": "启用深度思考",
-    "disable": "禁用深度思考"
+    "label": "深度思考"
   },
   "clarification_toggle": {
     "enable": "启用智能追问模式",
