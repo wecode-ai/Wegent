@@ -128,7 +128,7 @@ class ChatService:
     def _create_agent(
         self,
         model_config: dict[str, Any],
-        max_iterations: int = 10,
+        max_iterations: int = settings.CHAT_TOOL_MAX_REQUESTS,
         extra_tools: list[BaseTool] | None = None,
         streaming: bool = True,
         **model_kwargs,
@@ -180,7 +180,7 @@ class ChatService:
         subtask_id: int | None = None,
         task_id: int | None = None,
         is_group_chat: bool = False,
-        max_iterations: int = 10,
+        max_iterations: int = settings.CHAT_TOOL_MAX_REQUESTS,
     ) -> StreamingResponse:
         """Stream chat response via SSE.
 
@@ -337,7 +337,7 @@ class ChatService:
         model_config: dict[str, Any],
         system_prompt: str = "",
         history: list[dict[str, Any]] | None = None,
-        max_iterations: int = 10,
+        max_iterations: int = settings.CHAT_TOOL_MAX_REQUESTS,
     ) -> dict[str, Any]:
         """Non-streaming chat completion using LangGraph agent.
 
@@ -381,7 +381,7 @@ class ChatService:
         system_prompt: str,
         config: WebSocketStreamConfig,
         namespace: Any,
-        max_iterations: int = 10,
+        max_iterations: int = settings.CHAT_TOOL_MAX_REQUESTS,
     ) -> None:
         """Stream chat response via WebSocket using StreamingCore.
 

@@ -96,15 +96,18 @@ class FileReaderSkill(BaseTool):
     def _read_chunk(self, path: Path, offset: int, limit: int) -> tuple[str, int, bool]:
         """Read a chunk of lines from file."""
         lines = []
-        total = 0
+        lines_after = 0  # Track if there are more lines
 
         with path.open("r", encoding="utf-8", errors="replace") as f:
             for i, line in enumerate(f):
-                total = i + 1
                 if offset <= i < offset + limit:
                     lines.append(line.rstrip("\n"))
+                elif i >= offset + limit:
+                    lines_after += 1
+                    if lines_after > 0:
+                        break  # Found at least one more line
 
-        return "\n".join(lines), total, offset + limit < total
+        return "\n".join(lines), -1, lines_after > 0  # -1 = unknown total
 
 
 class FileListInput(BaseModel):

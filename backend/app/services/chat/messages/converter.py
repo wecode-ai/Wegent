@@ -162,7 +162,7 @@ class MessageConverter:
                     image_base64 = base64.b64encode(compressed_data).decode("utf-8")
             except Exception:
                 # If decoding/compression fails, proceed with original (might fail later)
-                pass
+                logger.exception("Failed to process image data in build_vision_message")
 
         content: list[dict[str, Any]] = []
 

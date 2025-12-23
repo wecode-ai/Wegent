@@ -980,7 +980,6 @@ POST /api/rag/test-connection?retriever_name=my-es-retriever&retriever_namespace
     - Example: `{"mcpServers":{"image-gen":{"type":"sse","url":"http://localhost:8080/sse"}}}`
 - `CHAT_TOOL_*` - Tool calling flow limits for Chat Shell
   - `CHAT_TOOL_MAX_REQUESTS` - Maximum LLM requests in tool calling flow (default: 5)
-  - `CHAT_TOOL_MAX_TIME_SECONDS` - Maximum time for tool calling flow in seconds (default: 30.0)
 - `CHAT_MAX_IMAGE_SIZE_MB` - Maximum image size for vision messages in MB (default: 10). Images larger than this will be automatically compressed.
 - `GROUP_CHAT_HISTORY_*` - Group chat history truncation configuration
   - `GROUP_CHAT_HISTORY_FIRST_MESSAGES` - Number of first messages to keep for AI context (default: 10)
