@@ -130,13 +130,13 @@ class TestTraceWebSocketEventDecorator:
 
                     await ns.trigger_event("chat:send", "sid123", event_data)
 
-                    # Verify event data was extracted
+                    # Verify event data was extracted (using dot notation)
                     calls = mock_span.set_attribute.call_args_list
                     attribute_dict = {call[0][0]: call[0][1] for call in calls}
 
-                    assert attribute_dict["task_id"] == 789
+                    assert attribute_dict["task.id"] == 789
                     assert attribute_dict["team_id"] == 456
-                    assert attribute_dict["subtask_id"] == 123
+                    assert attribute_dict["subtask.id"] == 123
 
     @pytest.mark.asyncio
     async def test_decorator_handles_none_values_safely(self):
@@ -178,19 +178,19 @@ class TestTraceWebSocketEventDecorator:
                     calls = mock_span.set_attribute.call_args_list
                     attribute_dict = {call[0][0]: call[0][1] for call in calls}
 
-                    # task_id=None should not be set
+                    # task.id=None should not be set (using dot notation)
                     assert (
-                        "task_id" not in attribute_dict
-                        or attribute_dict.get("task_id") is not None
+                        "task.id" not in attribute_dict
+                        or attribute_dict.get("task.id") is not None
                     )
 
                     # team_id=456 should be set
                     assert attribute_dict.get("team_id") == 456
 
-                    # subtask_id=None should not be set
+                    # subtask.id=None should not be set (using dot notation)
                     assert (
-                        "subtask_id" not in attribute_dict
-                        or attribute_dict.get("subtask_id") is not None
+                        "subtask.id" not in attribute_dict
+                        or attribute_dict.get("subtask.id") is not None
                     )
 
     @pytest.mark.asyncio
