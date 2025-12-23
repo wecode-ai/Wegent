@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""LangGraph Chat Service - main service entry point.
+"""Chat Service - main service entry point.
 
 This module provides a LangGraph-based chat service that uses:
 - LangGraph StateGraph for agent workflow orchestration
@@ -21,6 +21,7 @@ Architecture:
 - tools/: Tool registry and implementations
 """
 
+import asyncio
 import json
 import logging
 from collections.abc import AsyncGenerator
@@ -79,8 +80,8 @@ def _sse_data(data: dict[str, Any]) -> str:
     return f"data: {json.dumps(data)}\n\n"
 
 
-class LangGraphChatService:
-    """Main service for LangGraph-based chat completions.
+class ChatService:
+    """Main service for chat completions.
 
     This service uses LangGraph's StateGraph for orchestrating:
     - Model invocation (with tool binding)
@@ -100,7 +101,7 @@ class LangGraphChatService:
         enable_web_search: bool = False,
         enable_checkpointing: bool = False,
     ):
-        """Initialize LangGraph Chat Service.
+        """Initialize Chat Service.
 
         Args:
             workspace_root: Root directory for file operations
@@ -576,10 +577,164 @@ class LangGraphChatService:
         return await storage_handler.get_chat_history(task_id)
 
     async def _get_group_chat_history(self, task_id: int) -> list[dict[str, Any]]:
-        """Get chat history for group chat from database."""
-        from app.services.chat.chat_service import chat_service
+        """
+        Get chat history for group chat mode from database.
 
-        return await chat_service._get_group_chat_history(task_id)
+        In group chat mode, we need to include user names in the messages
+        so the AI can distinguish between different users.
+
+        User messages are formatted as: "User[username]: message content"
+        The "User" prefix indicates that the content in brackets is a username.
+        Assistant messages remain unchanged.
+
+        For messages with attachments:
+        - Image attachments are included as vision content (base64 encoded)
+        - Document attachments have their extracted text prepended to the message
+
+        Args:
+            task_id: Task ID
+
+        Returns:
+            List of message dictionaries with role and content
+            Content can be a string or a list (for vision messages)
+        """
+        return await asyncio.to_thread(self._get_group_chat_history_sync, task_id)
+
+    def _get_group_chat_history_sync(self, task_id: int) -> list[dict[str, Any]]:
+        """Synchronous implementation of group chat history retrieval."""
+        from app.models.subtask import Subtask, SubtaskStatus
+        from app.models.user import User
+        from app.services.attachment import attachment_service
+        from app.services.chat.db_handler import _db_session
+
+        history: list[dict[str, Any]] = []
+        with _db_session() as db:
+            # Query all subtasks for this task (for debugging)
+            all_subtasks = (
+                db.query(Subtask)
+                .filter(Subtask.task_id == task_id)
+                .order_by(Subtask.message_id.asc())
+                .all()
+            )
+            logger.info(
+                f"[GROUP_CHAT_HISTORY] task_id={task_id}, "
+                f"total_subtasks={len(all_subtasks)}, "
+                f"subtask_details=[{', '.join([f'(id={s.id}, role={s.role.value}, status={s.status.value}, msg_id={s.message_id})' for s in all_subtasks])}]"
+            )
+
+            subtasks = (
+                db.query(Subtask, User.user_name)
+                .outerjoin(User, Subtask.sender_user_id == User.id)
+                .filter(
+                    Subtask.task_id == task_id,
+                    Subtask.status == SubtaskStatus.COMPLETED,
+                )
+                .order_by(Subtask.message_id.asc())
+                .all()
+            )
+
+            # Build completed details string separately to avoid f-string escaping issues
+            completed_details = ", ".join(
+                [
+                    f"(id={s.id}, role={s.role.value}, sender={u or 'N/A'})"
+                    for s, u in subtasks
+                ]
+            )
+            logger.info(
+                f"[GROUP_CHAT_HISTORY] task_id={task_id}, "
+                f"completed_subtasks={len(subtasks)}, "
+                f"completed_details=[{completed_details}]"
+            )
+
+            for subtask, sender_username in subtasks:
+                msg = self._build_history_message(
+                    db, subtask, sender_username, attachment_service
+                )
+                if msg:
+                    history.append(msg)
+                    logger.debug(
+                        f"[GROUP_CHAT_HISTORY] Added message: role={msg.get('role')}, "
+                        f"content_preview={str(msg.get('content', ''))[:100]}..."
+                    )
+
+        logger.info(
+            f"[GROUP_CHAT_HISTORY] task_id={task_id}, "
+            f"final_history_count={len(history)}, "
+            f"history_roles=[{', '.join([m.get('role', 'unknown') for m in history])}]"
+        )
+        return history
+
+    def _build_history_message(
+        self,
+        db,
+        subtask,
+        sender_username: str | None,
+        attachment_service,
+    ) -> dict[str, Any] | None:
+        """Build a single history message from a subtask."""
+        from app.models.subtask import SubtaskRole
+
+        if subtask.role == SubtaskRole.USER:
+            return self._build_user_message(
+                db, subtask, sender_username, attachment_service
+            )
+        elif subtask.role == SubtaskRole.ASSISTANT:
+            return self._build_assistant_message(subtask)
+        return None
+
+    def _build_user_message(
+        self,
+        db,
+        subtask,
+        sender_username: str | None,
+        attachment_service,
+    ) -> dict[str, Any]:
+        """Build a user message with optional attachments."""
+        from app.models.subtask_attachment import AttachmentStatus, SubtaskAttachment
+
+        # Build text content with username prefix
+        text_content = subtask.prompt or ""
+        if sender_username:
+            text_content = f"User[{sender_username}]: {text_content}"
+
+        # Get attachments
+        attachments = (
+            db.query(SubtaskAttachment)
+            .filter(
+                SubtaskAttachment.subtask_id == subtask.id,
+                SubtaskAttachment.status == AttachmentStatus.READY,
+            )
+            .all()
+        )
+
+        if not attachments:
+            return {"role": "user", "content": text_content}
+
+        # Process attachments
+        vision_parts: list[dict[str, Any]] = []
+        for attachment in attachments:
+            vision_block = attachment_service.build_vision_content_block(attachment)
+            if vision_block:
+                vision_parts.append(vision_block)
+            else:
+                doc_prefix = attachment_service.build_document_text_prefix(attachment)
+                if doc_prefix:
+                    text_content = f"{doc_prefix}{text_content}"
+
+        # Build final content
+        if vision_parts:
+            return {
+                "role": "user",
+                "content": [{"type": "text", "text": text_content}, *vision_parts],
+            }
+        return {"role": "user", "content": text_content}
+
+    def _build_assistant_message(self, subtask) -> dict[str, Any] | None:
+        """Build an assistant message from subtask result."""
+        if not subtask.result or not isinstance(subtask.result, dict):
+            return None
+        content = subtask.result.get("value", "")
+        return {"role": "assistant", "content": content} if content else None
 
     def _truncate_history(self, history: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Truncate chat history keeping first N and last M messages."""
@@ -607,7 +762,7 @@ class LangGraphChatService:
 
 
 # Global service instance
-langgraph_chat_service = LangGraphChatService(
+chat_service = ChatService(
     workspace_root=getattr(settings, "WORKSPACE_ROOT", "/workspace"),
     enable_skills=getattr(settings, "ENABLE_SKILLS", True),
     enable_web_search=settings.WEB_SEARCH_ENABLED,

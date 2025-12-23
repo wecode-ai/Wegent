@@ -11,7 +11,7 @@ It decouples the AI response logic from message saving, allowing for:
 - Future extensibility (e.g., queue-based processing)
 - Clean separation of concerns
 
-Now uses LangGraphChatService with ChatConfigBuilder for direct chat streaming.
+Now uses ChatService with ChatConfigBuilder for direct chat streaming.
 """
 
 import asyncio
@@ -102,7 +102,7 @@ async def _trigger_direct_chat(
     namespace: Any,
 ) -> None:
     """
-    Trigger direct chat (Chat Shell) AI response using LangGraphChatService.
+    Trigger direct chat (Chat Shell) AI response using ChatService.
 
     Emits chat:start event and starts streaming in background task.
     """
@@ -137,8 +137,8 @@ async def _trigger_direct_chat(
         "user_name": user.user_name,
     }
 
-    # Start streaming in background task using LangGraphChatService
-    logger.info("[ai_trigger] Starting background stream task with LangGraph")
+    # Start streaming in background task using ChatService
+    logger.info("[ai_trigger] Starting background stream task with ChatService")
     stream_task = asyncio.create_task(
         _stream_chat_response(
             task_data=task_data,
@@ -168,16 +168,16 @@ async def _stream_chat_response(
     namespace: Any,
 ) -> None:
     """
-    Stream chat response using LangGraphChatService.
+    Stream chat response using ChatService.
 
     Uses ChatConfigBuilder to prepare configuration and delegates
-    streaming to LangGraphChatService.stream_to_websocket().
+    streaming to ChatService.stream_to_websocket().
     """
     from app.api.ws.events import ServerEvents
-    from app.services.langgraph_chat.config import ChatConfigBuilder
-    from app.services.langgraph_chat.service import (
+    from app.services.chat.config import ChatConfigBuilder
+    from app.services.chat.service import (
         WebSocketStreamConfig,
-        langgraph_chat_service,
+        chat_service,
     )
 
     db = SessionLocal()
@@ -245,8 +245,8 @@ async def _stream_chat_response(
             message_id=message_id,
         )
 
-        # Use LangGraphChatService for streaming
-        await langgraph_chat_service.stream_to_websocket(
+        # Use ChatService for streaming
+        await chat_service.stream_to_websocket(
             message=final_message,
             model_config=chat_config.model_config,
             system_prompt=chat_config.system_prompt,
