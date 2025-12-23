@@ -145,10 +145,10 @@ def _set_event_data_attributes(span, event_data: dict) -> None:
         span: OpenTelemetry span
         event_data: Event payload dict
     """
-    # Common event data fields
-    _safe_set_attribute(span, "task_id", event_data.get("task_id"))
+    # Common event data fields (using dot notation for OpenTelemetry standards)
+    _safe_set_attribute(span, "task.id", event_data.get("task_id"))
     _safe_set_attribute(span, "team_id", event_data.get("team_id"))
-    _safe_set_attribute(span, "subtask_id", event_data.get("subtask_id"))
+    _safe_set_attribute(span, "subtask.id", event_data.get("subtask_id"))
 
 
 def _safe_set_attribute(span, key: str, value: Any) -> None:

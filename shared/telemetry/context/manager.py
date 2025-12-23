@@ -159,8 +159,8 @@ class SpanManager:
             return
 
         try:
-            self.span.set_attribute("task_id", task_id)
-            self.span.set_attribute("subtask_id", subtask_id)
+            self.span.set_attribute("task.id", task_id)
+            self.span.set_attribute("subtask.id", subtask_id)
             self.span.set_attribute("user.id", str(user_id))
             self.span.set_attribute("user.name", user_name)
         except Exception as e:
