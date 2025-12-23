@@ -672,7 +672,8 @@ wegent/
 ├── backend/              # FastAPI backend
 │   ├── app/
 │   │   ├── api/          # Route handlers (auth, bots, models, shells, teams, tasks, chat, git, executors, dify, quota, admin, groups)
-│   │   ├── core/         # Config, security, cache, YAML init
+│   │   │   └── ws/       # WebSocket handlers (Socket.IO chat namespace)
+│   │   ├── core/         # Config, security, cache, YAML init, Socket.IO server
 │   │   ├── models/       # SQLAlchemy models (Kind, User, Subtask, Namespace, NamespaceMember, SharedTeam, SharedTask, SkillBinary, SubtaskAttachment)
 │   │   ├── schemas/      # Pydantic schemas & CRD definitions (namespace.py, namespace_member.py)
 │   │   ├── services/     # Business logic (chat/, adapters/, search/, kind.py, repository.py, group_service.py, group_permission.py)
@@ -686,9 +687,9 @@ wegent/
 │       │   ├── admin/    # Admin panel
 │       │   ├── login/    # Login pages (password, OIDC)
 │       │   ├── shared/   # Public shared task page
-│       │   ├── tasks/    # Tasks management
-│       │   └── api/      # API routes (chat/stream, chat/cancel)
+│       │   └── tasks/    # Tasks management
 │       ├── apis/         # API clients (client.ts + module-specific)
+│       ├── contexts/     # Global contexts (SocketContext for WebSocket)
 │       ├── components/
 │       │   ├── ui/       # shadcn/ui components (28 components)
 │       │   └── common/   # Shared business components (ResourceListItem, UnifiedAddButton)
@@ -700,12 +701,12 @@ wegent/
 │       │   ├── login/    # Login feature components
 │       │   ├── onboarding/# Onboarding tour
 │       │   ├── settings/ # Settings management (Bots, Models, Shells, Teams, Skills, Groups)
-│       │   ├── tasks/    # Chat/Code interface, Workbench, streaming
+│       │   ├── tasks/    # Chat/Code interface, Workbench, WebSocket streaming
 │       │   └── theme/    # Theme provider and toggle
-│       ├── hooks/        # Custom hooks (useChatStream, useTranslation, useAttachment, useStreamingRecovery)
+│       ├── hooks/        # Custom hooks (useChatStream, useTranslation, useAttachment)
 │       ├── i18n/         # Internationalization (en, zh-CN)
 │       ├── lib/          # Utility functions (cn)
-│       └── types/        # TypeScript types
+│       └── types/        # TypeScript types (includes socket.ts for WebSocket events)
 ├── executor/             # Task executor (runs in Docker)
 │   ├── agents/           # ClaudeCode, Agno, Dify, ImageValidator
 │   ├── callback/         # Progress callback handlers
@@ -779,11 +780,13 @@ Task (Team + Workspace) → Subtasks (messages/steps)
 
 **Key directories:**
 - `app/api/` - Route handlers
+- `app/api/ws/` - WebSocket handlers (Socket.IO chat namespace)
 - `app/services/adapters/` - CRD service implementations
-- `app/services/chat/` - Streaming chat with model resolver
+- `app/services/chat/` - Chat services with WebSocket emitter
 - `app/services/attachment/` - File attachment storage with pluggable backends
 - `app/services/rag/` - RAG (Retrieval-Augmented Generation) services
 - `app/repository/` - Git providers (GitHub, GitLab, Gitee, Gerrit)
+- `app/core/socketio.py` - Socket.IO server configuration with Redis adapter
 
 **Common tasks:**
 - Add endpoint: Create in `app/api/`, schema in `app/schemas/`, logic in `app/services/`
@@ -1121,22 +1124,26 @@ git commit -m "chore: merge alembic heads"
 |---------|----------|---------|
 | `UserContext` | `features/common/UserContext.tsx` | User auth state, login/logout |
 | `TaskContext` | `features/tasks/contexts/taskContext.tsx` | Task list, pagination, search |
-| `ChatStreamContext` | `features/tasks/contexts/chatStreamContext.tsx` | Streaming chat state |
+| `ChatStreamContext` | `features/tasks/contexts/chatStreamContext.tsx` | WebSocket-based streaming chat state |
+| `SocketContext` | `contexts/SocketContext.tsx` | Global Socket.IO connection management |
 | `ThemeContext` | `features/theme/ThemeProvider.tsx` | Theme (light/dark) |
 
 **Route Group Layout:** (`src/app/(tasks)/layout.tsx`)
 ```tsx
 <UserProvider>
-  <TaskContextProvider>
-    <ChatStreamProvider>
-      {children}
-    </ChatStreamProvider>
-  </TaskContextProvider>
+  <SocketProvider>
+    <TaskContextProvider>
+      <ChatStreamProvider>
+        {children}
+      </ChatStreamProvider>
+    </TaskContextProvider>
+  </SocketProvider>
 </UserProvider>
 ```
 
 **Key Features:**
-- Streaming chat with recovery (`useStreamingRecovery` hook)
+- WebSocket-based real-time chat with Socket.IO
+- Automatic reconnection and stream recovery
 - PDF export (`ExportPdfButton`, `pdf-generator.ts`)
 - Task/Team sharing (`TaskShareModal`, `TeamShareModal`)
 - Group management (`GroupManager`, `GroupMembersDialog`)
@@ -1144,12 +1151,9 @@ git commit -m "chore: merge alembic heads"
 - Dify integration (`DifyAppSelector`, `DifyParamsForm`)
 - Web search integration (Globe icon toggle in chat interface)
 
-**API Routes:**
-- `/api/chat/stream` - Proxies SSE to backend (required for streaming)
-- `/api/chat/cancel` - Cancel streaming chat
-
 **Environment Variables:**
 - `NEXT_PUBLIC_API_URL` - Backend API URL
+- `NEXT_PUBLIC_SOCKET_DIRECT_URL` - Direct WebSocket URL (optional, for direct connection bypassing proxy)
 - `NEXT_PUBLIC_LOGIN_MODE` - Authentication mode ('password', 'oidc', 'all')
 
 ### Executor
@@ -1254,7 +1258,7 @@ spec:
 | `/api/shells` | Shell management (unified, validate-image) |
 | `/api/teams` | Team CRUD, sharing |
 | `/api/tasks` | Task CRUD, cancel, sharing |
-| `/api/chat` | Streaming chat, cancel, resume-stream |
+| `/api/chat` | WebSocket-based streaming chat (Socket.IO namespace: `/chat`) |
 | `/api/subtasks` | Subtask management |
 | `/api/attachments` | File upload/download |
 | `/api/git` | Repository, branches, diff |
@@ -1506,7 +1510,7 @@ docker exec -it wegent-redis redis-cli
 
 **Common issues:**
 - Database connection failed: Check MySQL running, verify credentials
-- Streaming not working: Ensure `/api/chat/stream` proxy route exists in frontend
+- WebSocket not connecting: Ensure Socket.IO server is running, check CORS configuration, verify JWT token
 - Task stuck in PENDING: Check executor_manager logs, verify `TASK_API_DOMAIN`
 
 ---
