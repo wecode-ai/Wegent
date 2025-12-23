@@ -126,7 +126,7 @@ frontend/
 - 实现声明式 API，处理资源 CRUD 操作
 - 管理用户认证和授权
 - 协调执行层进行任务调度
-- 提供 WebSocket 支持实时通信
+- 提供 WebSocket 支持实时聊天通信（Socket.IO）
 
 **技术栈**：
 - **框架**: FastAPI 0.68+
@@ -135,6 +135,7 @@ frontend/
 - **认证**: JWT (PyJWT), OAuth (Authlib)
 - **异步支持**: asyncio, aiohttp
 - **缓存**: Redis 客户端
+- **实时通信**: Socket.IO (python-socketio) 配合 Redis 适配器
 
 **核心特性**：
 - 🚀 高性能异步 API
@@ -314,12 +315,47 @@ sequenceDiagram
 
 | 通信类型 | 协议 | 用途 |
 |----------|------|------|
-| **前端 ↔ 后端** | HTTP/HTTPS, WebSocket | API 调用、实时更新 |
+| **前端 ↔ 后端** | HTTP/HTTPS, WebSocket (Socket.IO) | API 调用、实时聊天流式传输 |
 | **后端 ↔ 数据库** | MySQL 协议 | 数据持久化 |
-| **后端 ↔ Redis** | Redis 协议 | 缓存操作 |
+| **后端 ↔ Redis** | Redis 协议 | 缓存操作、Socket.IO 适配器 |
 | **后端 ↔ Executor Manager** | HTTP | 任务调度 |
 | **Executor Manager ↔ Executor** | Docker API | 容器管理 |
 | **Executor ↔ 智能体** | 进程调用 | 任务执行 |
+
+### WebSocket 架构（Socket.IO）
+
+聊天系统使用 Socket.IO 进行双向实时通信：
+
+**命名空间**: `/chat`
+**路径**: `/socket.io`
+
+**客户端 → 服务器事件**:
+| 事件 | 用途 |
+|------|------|
+| `chat:send` | 发送聊天消息 |
+| `chat:cancel` | 取消正在进行的流式响应 |
+| `chat:resume` | 重连后恢复流式响应 |
+| `task:join` | 加入任务房间 |
+| `task:leave` | 离开任务房间 |
+| `history:sync` | 同步消息历史 |
+
+**服务器 → 客户端事件**:
+| 事件 | 用途 |
+|------|------|
+| `chat:start` | AI 开始生成响应 |
+| `chat:chunk` | 流式内容片段 |
+| `chat:done` | AI 响应完成 |
+| `chat:error` | 发生错误 |
+| `chat:cancelled` | 流式响应被取消 |
+| `chat:message` | 非流式消息（群聊） |
+| `task:created` | 新任务创建 |
+| `task:status` | 任务状态更新 |
+
+**基于房间的消息路由**:
+- 用户房间: `user:{user_id}` - 用于个人通知
+- 任务房间: `task:{task_id}` - 用于聊天流式传输和群聊
+
+**Redis 适配器**: 支持多工作进程水平扩展
 
 ---
 

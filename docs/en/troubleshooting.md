@@ -256,6 +256,58 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 - Check Network tab
 - Inspect request and response headers
 
+### Issue 7: WebSocket Connection Fails
+
+**Symptoms**: Chat not working, real-time updates not received, Socket.IO connection errors in console
+
+**Solutions**:
+
+**1. Check Socket.IO server status**
+```bash
+# View backend logs for Socket.IO initialization
+docker-compose logs backend | grep -i "socket"
+
+# Verify Socket.IO endpoint is accessible
+curl -I http://localhost:8000/socket.io/
+```
+
+**2. Verify JWT token**
+```bash
+# Check if token is valid (in browser console)
+localStorage.getItem('token')
+
+# Token should be passed in Socket.IO auth
+```
+
+**3. Check CORS configuration for WebSocket**
+```python
+# backend/app/core/socketio.py
+# Ensure CORS origins are correctly configured
+SOCKETIO_CORS_ORIGINS = "*"  # Or specific origins
+```
+
+**4. Verify Redis connection (required for multi-worker)**
+```bash
+# Redis is required for Socket.IO adapter
+docker-compose exec redis redis-cli ping
+```
+
+**5. Check frontend Socket.IO configuration**
+```typescript
+// frontend/src/contexts/SocketContext.tsx
+// Verify connection parameters
+const socket = io(API_URL + '/chat', {
+  path: '/socket.io',
+  auth: { token },
+  transports: ['websocket', 'polling'],
+});
+```
+
+**6. Debug WebSocket in browser**
+- Open F12 developer tools
+- Go to Network tab → WS filter
+- Check WebSocket connection status and messages
+
 ---
 
 ## ⚙️ Task Execution Issues
