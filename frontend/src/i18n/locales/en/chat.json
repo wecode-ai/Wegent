@@ -204,6 +204,9 @@
     "disable": "Disable web search",
     "select_engine": "Select search engine"
   },
+  "deep_thinking": {
+    "label": "Deep Thinking"
+  },
   "clarification_toggle": {
     "enable": "Enable smart follow-up mode",
     "disable": "Disable smart follow-up mode"

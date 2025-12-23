@@ -736,7 +736,11 @@ class ChatNamespace(socketio.AsyncNamespace):
 
             # Trigger AI response if needed (decoupled logic in ai_trigger.py)
             if should_trigger_ai and assistant_subtask:
-                from app.services.chat.ai_trigger import trigger_ai_response
+                # Choose AI trigger based on enable_deep_thinking flag
+                if payload.enable_deep_thinking:
+                    from app.services.chat_v2.ai_trigger import trigger_ai_response
+                else:
+                    from app.services.chat.ai_trigger import trigger_ai_response
 
                 await trigger_ai_response(
                     task=task,
