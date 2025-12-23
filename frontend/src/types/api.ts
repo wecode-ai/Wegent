@@ -494,3 +494,24 @@ export interface SystemConfigResponse {
 export interface SystemConfigUpdate {
   teams: number[];
 }
+
+// Knowledge Base / RAG Types
+export interface KnowledgeBaseRef {
+  knowledge_id: string;
+  retriever_name: string;
+  retriever_namespace: string;
+}
+
+export interface KnowledgeBase {
+  knowledge_id: string;
+  name: string;
+  description: string;
+  retriever_name: string;
+  retriever_namespace: string;
+  document_count: number;
+  created_at?: string;
+}
+
+export interface KnowledgeBasesResponse {
+  knowledge_bases: KnowledgeBase[];
+}

@@ -492,6 +492,84 @@ class ElasticsearchBackend(BaseStorageBackend):
             "knowledge_id": knowledge_id,
         }
 
+    async def list_knowledge_bases(self, **kwargs) -> List[Dict[str, Any]]:
+        """
+        List all knowledge bases in Elasticsearch.
+
+        This method aggregates unique knowledge_id values from all indices
+        matching the index strategy pattern.
+
+        Args:
+            **kwargs: Additional parameters (e.g., user_id for per_user index strategy)
+
+        Returns:
+            List of knowledge base dicts
+        """
+        es_client = Elasticsearch(self.url, **self.es_kwargs)
+        mode = self.index_strategy.get("mode", "per_dataset")
+        prefix = self._validate_prefix(mode)
+
+        try:
+            # Get all indices matching the pattern
+            if mode == "fixed":
+                fixed_name = self.index_strategy.get("fixedName")
+                indices = [fixed_name] if fixed_name else []
+            elif mode == "per_user":
+                user_id = kwargs.get("user_id")
+                if not user_id:
+                    return []
+                indices = [f"{prefix}_user_{user_id}"]
+            else:
+                # For per_dataset and rolling modes, get all indices with prefix
+                pattern = f"{prefix}_*"
+                all_indices = es_client.cat.indices(index=pattern, format="json")
+                indices = [idx["index"] for idx in all_indices]
+
+            # Aggregate knowledge_id values from all indices
+            knowledge_bases = {}
+            for index_name in indices:
+                try:
+                    # Aggregate unique knowledge_ids
+                    agg_query = {
+                        "size": 0,
+                        "aggs": {
+                            "knowledge_ids": {
+                                "terms": {
+                                    "field": "metadata.knowledge_id.keyword",
+                                    "size": 1000,
+                                },
+                                "aggs": {
+                                    "doc_count": {"value_count": {"field": "metadata.doc_ref.keyword"}},
+                                    "created_at": {"max": {"field": "metadata.created_at"}},
+                                },
+                            }
+                        },
+                    }
+
+                    response = es_client.search(index=index_name, body=agg_query)
+
+                    for bucket in response["aggregations"]["knowledge_ids"]["buckets"]:
+                        kb_id = bucket["key"]
+                        if kb_id not in knowledge_bases:
+                            knowledge_bases[kb_id] = {
+                                "knowledge_id": kb_id,
+                                "name": kb_id,
+                                "description": "",
+                                "document_count": bucket["doc_count"]["value"],
+                                "created_at": bucket.get("created_at", {}).get("value_as_string"),
+                            }
+                        else:
+                            # Merge document counts
+                            knowledge_bases[kb_id]["document_count"] += bucket["doc_count"]["value"]
+
+                except Exception:
+                    continue
+
+            return list(knowledge_bases.values())
+
+        except Exception:
+            return []
+
     def test_connection(self) -> bool:
         """Test connection to Elasticsearch."""
         try:

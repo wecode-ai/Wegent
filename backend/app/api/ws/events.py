@@ -65,6 +65,14 @@ class ServerEvents:
 # ============================================================
 
 
+class KnowledgeBaseRef(BaseModel):
+    """Reference to a knowledge base for RAG retrieval."""
+
+    knowledge_id: str = Field(..., description="Knowledge base ID")
+    retriever_name: str = Field(..., description="Retriever name")
+    retriever_namespace: str = Field(default="default", description="Retriever namespace")
+
+
 class ChatSendPayload(BaseModel):
     """Payload for chat:send event."""
 
@@ -86,6 +94,9 @@ class ChatSendPayload(BaseModel):
     )
     is_group_chat: bool = Field(
         False, description="Whether this is a group chat (for new tasks)"
+    )
+    knowledge_bases: Optional[List[KnowledgeBaseRef]] = Field(
+        None, description="Knowledge bases to use for RAG retrieval"
     )
     # Repository info for code tasks
     git_url: Optional[str] = Field(None, description="Git repository URL")

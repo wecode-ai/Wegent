@@ -573,6 +573,68 @@ class ChatNamespace(socketio.AsyncNamespace):
             )
             logger.info(f"[WS] chat:send StreamChatRequest created")
 
+            # Process RAG if knowledge bases are provided
+            original_message = payload.message
+            if payload.knowledge_bases and should_trigger_ai:
+                logger.info(
+                    f"[WS] chat:send processing RAG with {len(payload.knowledge_bases)} knowledge bases"
+                )
+                try:
+                    from app.services.chat.rag_integration import (
+                        assemble_rag_prompt,
+                        retrieve_from_knowledge_bases,
+                    )
+
+                    # Get default embedding model (can be configured later)
+                    # For now, use a default embedding model
+                    embedding_model_name = "bge-m3"
+                    embedding_model_namespace = "default"
+
+                    # Retrieve chunks from knowledge bases
+                    retrieved_chunks = await retrieve_from_knowledge_bases(
+                        query=payload.message,
+                        knowledge_bases=payload.knowledge_bases,
+                        embedding_model_name=embedding_model_name,
+                        embedding_model_namespace=embedding_model_namespace,
+                        user_id=user_id,
+                        db=db,
+                    )
+
+                    if retrieved_chunks:
+                        logger.info(
+                            f"[WS] chat:send RAG retrieved {len(retrieved_chunks)} chunks"
+                        )
+                        # Assemble prompt with RAG context
+                        rag_prompt = assemble_rag_prompt(
+                            query=payload.message,
+                            retrieved_chunks=retrieved_chunks,
+                        )
+                        payload.message = rag_prompt
+                        request.message = rag_prompt
+                        logger.info(
+                            f"[WS] chat:send RAG prompt assembled, length={len(rag_prompt)}"
+                        )
+                    else:
+                        logger.info("[WS] chat:send RAG retrieved no chunks")
+
+                except Exception as e:
+                    logger.error(f"[WS] chat:send RAG processing failed: {e}", exc_info=True)
+                    # Continue with original message if RAG fails
+
+            # Store knowledge base info in user subtask metadata for badge display
+            knowledge_base_metadata = None
+            if payload.knowledge_bases:
+                knowledge_base_metadata = {
+                    "knowledge_bases": [
+                        {
+                            "knowledge_id": kb.knowledge_id,
+                            "retriever_name": kb.retriever_name,
+                            "retriever_namespace": kb.retriever_namespace,
+                        }
+                        for kb in payload.knowledge_bases
+                    ]
+                }
+
             # Create task and subtasks
             # Use different methods based on supports_direct_chat:
             # - If supports_direct_chat is True: use _create_task_and_subtasks (async, for Chat Shell)
@@ -676,6 +738,20 @@ class ChatNamespace(socketio.AsyncNamespace):
                     )
 
                 user_subtask_for_attachment = user_subtask
+
+            # Update user subtask with knowledge base metadata
+            if knowledge_base_metadata and user_subtask_for_attachment:
+                try:
+                    user_subtask_for_attachment.metadata = knowledge_base_metadata
+                    db.commit()
+                    logger.info(
+                        f"[WS] chat:send stored knowledge base metadata in subtask {user_subtask_for_attachment.id}"
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"[WS] chat:send failed to store knowledge base metadata: {e}"
+                    )
+                    db.rollback()
 
             # Link attachment to user subtask if provided
             # This is important for group chat history to include attachment content

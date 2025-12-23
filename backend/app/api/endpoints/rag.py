@@ -352,6 +352,82 @@ async def list_documents(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/knowledge-bases")
+async def list_knowledge_bases(
+    scope: str = Query("all", description="Scope: personal, group, or all"),
+    group_name: Optional[str] = Query(None, description="Group name for group scope"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    List all knowledge bases accessible to the user.
+
+    This endpoint aggregates unique knowledge_id values from indexed documents
+    across all accessible retrievers, providing metadata like document count.
+
+    Args:
+        scope: Scope filter - 'personal', 'group', or 'all' (default: 'all')
+        group_name: Optional group name for group scope filtering
+        db: Database session
+        current_user: Current user
+
+    Returns:
+        List of knowledge bases with metadata
+
+    Raises:
+        HTTPException: If listing fails
+    """
+    try:
+        from app.services.adapters.retriever_kinds import retriever_kinds_service
+
+        # Get all accessible retrievers based on scope
+        retrievers = retriever_kinds_service.list_retrievers(
+            db=db, user_id=current_user.id, scope=scope, group_name=group_name
+        )
+
+        # Aggregate knowledge bases across all retrievers
+        knowledge_bases = {}
+
+        for retriever in retrievers:
+            try:
+                # Create storage backend
+                storage_backend = create_storage_backend(retriever)
+
+                # Get unique knowledge_ids from this retriever
+                kb_list = await storage_backend.list_knowledge_bases(
+                    user_id=current_user.id
+                )
+
+                for kb in kb_list:
+                    kb_id = kb["knowledge_id"]
+                    if kb_id not in knowledge_bases:
+                        knowledge_bases[kb_id] = {
+                            "knowledge_id": kb_id,
+                            "name": kb.get("name", kb_id),
+                            "description": kb.get("description", ""),
+                            "retriever_name": retriever.name,
+                            "retriever_namespace": retriever.namespace,
+                            "document_count": kb.get("document_count", 0),
+                            "created_at": kb.get("created_at"),
+                        }
+                    else:
+                        # Merge document counts if same knowledge base exists in multiple retrievers
+                        knowledge_bases[kb_id]["document_count"] += kb.get(
+                            "document_count", 0
+                        )
+
+            except Exception as e:
+                logger.warning(
+                    f"Failed to list knowledge bases from retriever {retriever.name}: {e}"
+                )
+                continue
+
+        return {"knowledge_bases": list(knowledge_bases.values())}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/test-connection")
 async def test_retriever_connection(
     retriever_name: str = Query(...),
