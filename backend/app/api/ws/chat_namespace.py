@@ -40,6 +40,7 @@ from app.api.ws.events import (
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.kind import Kind
+from app.models.task import TaskResource
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.user import User
 from app.schemas.kind import Bot, Shell, Task, Team
@@ -125,11 +126,11 @@ async def can_access_task(user_id: int, task_id: int) -> bool:
     db = SessionLocal()
     try:
         task = (
-            db.query(Kind)
+            db.query(TaskResource)
             .filter(
-                Kind.id == task_id,
-                Kind.kind == "Task",
-                Kind.is_active == True,
+                TaskResource.id == task_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active == True,
             )
             .first()
         )
@@ -523,11 +524,11 @@ class ChatNamespace(socketio.AsyncNamespace):
             task_json = {}
             if payload.task_id:
                 existing_task = (
-                    db.query(Kind)
+                    db.query(TaskResource)
                     .filter(
-                        Kind.id == payload.task_id,
-                        Kind.kind == "Task",
-                        Kind.is_active == True,
+                        TaskResource.id == payload.task_id,
+                        TaskResource.kind == "Task",
+                        TaskResource.is_active == True,
                     )
                     .first()
                 )
@@ -635,13 +636,13 @@ class ChatNamespace(socketio.AsyncNamespace):
                     task_id=payload.task_id,
                 )
 
-                # Get the task Kind object from database
+                # Get the task TaskResource object from database
                 task = (
-                    db.query(Kind)
+                    db.query(TaskResource)
                     .filter(
-                        Kind.id == task_dict["id"],
-                        Kind.kind == "Task",
-                        Kind.is_active == True,
+                        TaskResource.id == task_dict["id"],
+                        TaskResource.kind == "Task",
+                        TaskResource.is_active == True,
                     )
                     .first()
                 )
@@ -931,11 +932,11 @@ class ChatNamespace(socketio.AsyncNamespace):
 
             # Update task status
             task = (
-                db.query(Kind)
+                db.query(TaskResource)
                 .filter(
-                    Kind.id == subtask.task_id,
-                    Kind.kind == "Task",
-                    Kind.is_active == True,
+                    TaskResource.id == subtask.task_id,
+                    TaskResource.kind == "Task",
+                    TaskResource.is_active == True,
                 )
                 .first()
             )

@@ -16,6 +16,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.config import settings
 from app.models.kind import Kind
+from app.models.task import TaskResource
 from app.models.shared_team import SharedTeam
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.user import User
@@ -63,8 +64,8 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
 
         # Check if already exists
         existing_task = (
-            db.query(Kind)
-            .filter(Kind.id == task_id, Kind.kind == "Task", Kind.is_active == True)
+            db.query(TaskResource)
+            .filter(TaskResource.id == task_id, TaskResource.kind == "Task", TaskResource.is_active == True)
             .first()
         )
         if existing_task:
@@ -203,7 +204,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 "apiVersion": "agent.wecode.io/v1",
             }
 
-            workspace = Kind(
+            workspace = TaskResource(
                 user_id=user.id,
                 kind="Workspace",
                 name=workspace_name,
@@ -254,7 +255,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 "apiVersion": "agent.wecode.io/v1",
             }
 
-            task = Kind(
+            task = TaskResource(
                 id=task_id,  # Use the provided task_id
                 user_id=user.id,
                 kind="Task",
@@ -287,7 +288,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         count_sql = text(
             """
             SELECT COUNT(DISTINCT k.id)
-            FROM kinds k
+            FROM tasks k
             LEFT JOIN task_members tm ON k.id = tm.task_id AND tm.user_id = :user_id AND tm.status = 'ACTIVE'
             WHERE k.kind = 'Task'
             AND k.is_active = true
@@ -300,7 +301,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         ids_sql = text(
             """
             SELECT DISTINCT k.id, k.created_at
-            FROM kinds k
+            FROM tasks k
             LEFT JOIN task_members tm ON k.id = tm.task_id AND tm.user_id = :user_id AND tm.status = 'ACTIVE'
             WHERE k.kind = 'Task'
             AND k.is_active = true
@@ -318,7 +319,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             return [], 0
 
         # Load full task data for the selected IDs
-        tasks = db.query(Kind).filter(Kind.id.in_(task_ids)).all()
+        tasks = db.query(TaskResource).filter(TaskResource.id.in_(task_ids)).all()
 
         # Filter out DELETE status tasks in application layer and restore order
         id_to_task = {}
@@ -372,7 +373,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         count_sql = text(
             """
             SELECT COUNT(DISTINCT k.id)
-            FROM kinds k
+            FROM tasks k
             LEFT JOIN task_members tm ON k.id = tm.task_id AND tm.user_id = :user_id AND tm.status = 'ACTIVE'
             WHERE k.kind = 'Task'
             AND k.is_active = true
@@ -385,7 +386,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         ids_sql = text(
             """
             SELECT DISTINCT k.id, k.created_at
-            FROM kinds k
+            FROM tasks k
             LEFT JOIN task_members tm ON k.id = tm.task_id AND tm.user_id = :user_id AND tm.status = 'ACTIVE'
             WHERE k.kind = 'Task'
             AND k.is_active = true
@@ -403,7 +404,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             return [], 0
 
         # Load full task data for the selected IDs
-        tasks = db.query(Kind).filter(Kind.id.in_(task_ids)).all()
+        tasks = db.query(TaskResource).filter(TaskResource.id.in_(task_ids)).all()
 
         # Filter out DELETE status tasks in application layer and restore order
         id_to_task = {}
@@ -524,7 +525,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 text(
                     """
                     SELECT JSON_EXTRACT(json, '$.spec.repository.gitRepo') as git_repo
-                    FROM kinds
+                    FROM tasks
                     WHERE user_id = :user_id
                     AND kind = 'Workspace'
                     AND name = :name
@@ -587,7 +588,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         ids_sql = text(
             """
             SELECT DISTINCT k.id, k.created_at
-            FROM kinds k
+            FROM tasks k
             LEFT JOIN task_members tm ON k.id = tm.task_id AND tm.user_id = :user_id AND tm.status = 'ACTIVE'
             WHERE k.kind = 'Task'
             AND k.is_active = true
@@ -606,7 +607,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             return []
 
         # Load full task data for the selected IDs
-        tasks = db.query(Kind).filter(Kind.id.in_(task_ids)).all()
+        tasks = db.query(TaskResource).filter(TaskResource.id.in_(task_ids)).all()
 
         # Filter out DELETE status tasks and restore order
         id_to_task = {}
@@ -719,7 +720,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 text(
                     """
                     SELECT JSON_EXTRACT(json, '$.spec.repository.gitRepo') as git_repo
-                    FROM kinds
+                    FROM tasks
                     WHERE user_id = :user_id
                     AND kind = 'Workspace'
                     AND name = :name
@@ -781,7 +782,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         # Use raw SQL to get task IDs without JSON_EXTRACT in WHERE clause
         count_sql = text(
             """
-            SELECT COUNT(*) FROM kinds
+            SELECT COUNT(*) FROM tasks
             WHERE user_id = :user_id
             AND kind = 'Task'
             AND is_active = true
@@ -792,7 +793,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         # Get task IDs sorted by created_at (fetch more to account for filtering)
         ids_sql = text(
             """
-            SELECT id FROM kinds
+            SELECT id FROM tasks
             WHERE user_id = :user_id
             AND kind = 'Task'
             AND is_active = true
@@ -809,7 +810,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             return [], 0
 
         # Load full task data for the selected IDs
-        tasks = db.query(Kind).filter(Kind.id.in_(task_ids)).all()
+        tasks = db.query(TaskResource).filter(TaskResource.id.in_(task_ids)).all()
 
         # Filter by title and DELETE status in application layer, restore order
         title_lower = title.lower()
@@ -862,11 +863,11 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
 
         # First, try to find task owned by user
         task = (
-            db.query(Kind)
+            db.query(TaskResource)
             .filter(
-                Kind.id == task_id,
-                Kind.kind == "Task",
-                Kind.is_active == True,
+                TaskResource.id == task_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active == True,
                 text("JSON_EXTRACT(json, '$.status.status') != 'DELETE'"),
             )
             .first()
@@ -888,11 +889,11 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             if member:
                 # User is a member, fetch the task without user_id filter
                 task = (
-                    db.query(Kind)
+                    db.query(TaskResource)
                     .filter(
-                        Kind.id == task_id,
-                        Kind.kind == "Task",
-                        Kind.is_active == True,
+                        TaskResource.id == task_id,
+                        TaskResource.kind == "Task",
+                        TaskResource.is_active == True,
                         text("JSON_EXTRACT(json, '$.status.status') != 'DELETE'"),
                     )
                     .first()
@@ -1161,11 +1162,11 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         Update user Task
         """
         task = (
-            db.query(Kind)
+            db.query(TaskResource)
             .filter(
-                Kind.id == task_id,
-                Kind.kind == "Task",
-                Kind.is_active == True,
+                TaskResource.id == task_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active == True,
             )
             .first()
         )
@@ -1246,13 +1247,13 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             ]
         ):
             workspace = (
-                db.query(Kind)
+                db.query(TaskResource)
                 .filter(
-                    Kind.user_id == user_id,
-                    Kind.kind == "Workspace",
-                    Kind.name == task_crd.spec.workspaceRef.name,
-                    Kind.namespace == task_crd.spec.workspaceRef.namespace,
-                    Kind.is_active == True,
+                    TaskResource.user_id == user_id,
+                    TaskResource.kind == "Workspace",
+                    TaskResource.name == task_crd.spec.workspaceRef.name,
+                    TaskResource.namespace == task_crd.spec.workspaceRef.namespace,
+                    TaskResource.is_active == True,
                 )
                 .first()
             )
@@ -1306,11 +1307,11 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
 
         # First check if user is the task owner
         task = (
-            db.query(Kind)
+            db.query(TaskResource)
             .filter(
-                Kind.id == task_id,
-                Kind.kind == "Task",
-                Kind.is_active == True,
+                TaskResource.id == task_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active == True,
             )
             .first()
         )
@@ -1321,11 +1322,11 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
 
             # Check if this is a group chat task and user is a member
             task = (
-                db.query(Kind)
+                db.query(TaskResource)
                 .filter(
-                    Kind.id == task_id,
-                    Kind.kind == "Task",
-                    Kind.is_active == True,
+                    TaskResource.id == task_id,
+                    TaskResource.kind == "Task",
+                    TaskResource.is_active == True,
                 )
                 .first()
             )
@@ -1452,11 +1453,11 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         # Check if this is a Chat Shell task by looking at the source label
         is_chat_shell = False
         task_kind = (
-            db.query(Kind)
+            db.query(TaskResource)
             .filter(
-                Kind.id == task_id,
-                Kind.kind == "Task",
-                Kind.is_active == True,
+                TaskResource.id == task_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active == True,
             )
             .first()
         )
@@ -1592,7 +1593,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
 
     def create_task_id(self, db: Session, user_id: int) -> int:
         """
-        Create new task id using kinds table auto increment (pre-allocation mechanism)
+        Create new task id using tasks table auto increment (pre-allocation mechanism)
         Compatible with concurrent scenarios
         """
         import json as json_lib
@@ -1604,7 +1605,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             existing_placeholder = db.execute(
                 text(
                     """
-                SELECT id FROM kinds
+                SELECT id FROM tasks
                 WHERE user_id = :user_id AND kind = 'Placeholder' AND is_active = false
                 LIMIT 1
             """
@@ -1629,7 +1630,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             result = db.execute(
                 text(
                     """
-                INSERT INTO kinds (user_id, kind, name, namespace, json, is_active, created_at, updated_at)
+                INSERT INTO tasks (user_id, kind, name, namespace, json, is_active, created_at, updated_at)
                 VALUES (:user_id, 'Placeholder', 'temp-placeholder', 'default', :json, false, NOW(), NOW())
             """
                 ),
@@ -1660,7 +1661,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
 
         # Check if task_id exists and get its kind
         existing_record = db.execute(
-            text("SELECT kind FROM kinds WHERE id = :task_id"), {"task_id": task_id}
+            text("SELECT kind FROM tasks WHERE id = :task_id"), {"task_id": task_id}
         ).fetchone()
 
         if existing_record:
@@ -1668,7 +1669,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
 
             # If it's a Placeholder, delete it and return True
             if kind == "Placeholder":
-                db.execute(text("DELETE FROM kinds WHERE id = :id"), {"id": task_id})
+                db.execute(text("DELETE FROM tasks WHERE id = :id"), {"id": task_id})
                 db.commit()
                 return True
 
@@ -1687,13 +1688,13 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
 
         # Get workspace data
         workspace = (
-            db.query(Kind)
+            db.query(TaskResource)
             .filter(
-                Kind.user_id == user_id,
-                Kind.kind == "Workspace",
-                Kind.name == task_crd.spec.workspaceRef.name,
-                Kind.namespace == task_crd.spec.workspaceRef.namespace,
-                Kind.is_active == True,
+                TaskResource.user_id == user_id,
+                TaskResource.kind == "Workspace",
+                TaskResource.name == task_crd.spec.workspaceRef.name,
+                TaskResource.namespace == task_crd.spec.workspaceRef.namespace,
+                TaskResource.is_active == True,
             )
             .first()
         )
@@ -2093,13 +2094,13 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         if workspace_refs:
             workspace_names, workspace_namespaces = zip(*workspace_refs)
             workspaces = (
-                db.query(Kind)
+                db.query(TaskResource)
                 .filter(
-                    Kind.user_id == user_id,
-                    Kind.kind == "Workspace",
-                    Kind.name.in_(workspace_names),
-                    Kind.namespace.in_(workspace_namespaces),
-                    Kind.is_active == True,
+                    TaskResource.user_id == user_id,
+                    TaskResource.kind == "Workspace",
+                    TaskResource.name.in_(workspace_names),
+                    TaskResource.namespace.in_(workspace_namespaces),
+                    TaskResource.is_active == True,
                 )
                 .all()
             )
@@ -2254,7 +2255,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         for task_id_str, data in result.items():
             task_id = int(task_id_str)
             # First check task JSON, fallback to member count
-            task = db.query(Kind).filter(Kind.id == task_id).first()
+            task = db.query(TaskResource).filter(TaskResource.id == task_id).first()
             if task and task.json:
                 is_group_chat = task.json.get("spec", {}).get("is_group_chat", False)
                 if not is_group_chat:
