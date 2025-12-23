@@ -38,7 +38,7 @@ async def emit_task_status_update(
         progress: Optional progress percentage
     """
     try:
-        from app.services.chat.ws_emitter import get_ws_emitter
+        from app.services.chat.streaming import get_ws_emitter
 
         ws_emitter = get_ws_emitter()
         if ws_emitter:
@@ -196,7 +196,7 @@ class DatabaseHandler:
             # No running event loop in current thread
             # Try to use the main event loop reference from ws_emitter
             try:
-                from app.services.chat.ws_emitter import get_main_event_loop
+                from app.services.chat.streaming import get_main_event_loop
 
                 main_loop = get_main_event_loop()
                 if main_loop and main_loop.is_running():

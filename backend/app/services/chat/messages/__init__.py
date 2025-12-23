@@ -2,13 +2,20 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Message converter module for LangGraph Chat Service.
+"""Message utilities for Chat Service.
 
-For dict-to-LangChain conversion, use langchain_core.messages.utils.convert_to_messages.
+Provides:
+- MessageConverter: Core message conversion logic
+- message_builder: Legacy builder (deprecated, use MessageConverter)
 """
 
 from langchain_core.messages.utils import convert_to_messages
 
+from .builder import message_builder
 from .converter import MessageConverter
 
-__all__ = ["MessageConverter", "convert_to_messages"]
+__all__ = [
+    "MessageConverter",
+    "message_builder",
+    "convert_to_messages",
+]

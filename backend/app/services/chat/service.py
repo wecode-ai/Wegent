@@ -400,7 +400,7 @@ class ChatService:
             max_iterations: Max tool loop iterations
         """
         from app.core.shutdown import shutdown_manager
-        from app.services.chat.ws_emitter import get_ws_emitter
+        from app.services.chat.streaming import get_ws_emitter
 
         subtask_id = config.subtask_id
         task_id = config.task_id
@@ -605,7 +605,7 @@ class ChatService:
         from app.models.subtask import Subtask, SubtaskStatus
         from app.models.user import User
         from app.services.attachment import attachment_service
-        from app.services.chat.db_handler import _db_session
+        from app.services.chat.storage.db import _db_session
 
         history: list[dict[str, Any]] = []
         with _db_session() as db:

@@ -2,19 +2,21 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Storage module for LangGraph Chat Service.
+"""Storage module for Chat Service.
 
-Provides unified access to db_handler and session_manager.
-
-Usage:
-    from .storage import storage_handler
-    await storage_handler.update_subtask_status(subtask_id, "RUNNING")
-    await storage_handler.get_chat_history(task_id)
+Provides unified access to database and session storage.
 """
 
+from .db import db_handler
 from .proxy import StorageProxy
+from .session import session_manager
 
 # Global storage handler instance
 storage_handler = StorageProxy()
 
-__all__ = ["storage_handler", "StorageProxy"]
+__all__ = [
+    "storage_handler",
+    "StorageProxy",
+    "db_handler",
+    "session_manager",
+]

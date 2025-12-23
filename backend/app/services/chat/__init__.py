@@ -21,9 +21,11 @@ Architecture:
 - tools/: Tool registry and implementations
 """
 
+from .ai_trigger import trigger_ai_response
 from .service import ChatService, chat_service
 
 __all__ = [
     "ChatService",
     "chat_service",
+    "trigger_ai_response",
 ]

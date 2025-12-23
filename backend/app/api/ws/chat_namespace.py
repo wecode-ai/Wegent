@@ -37,7 +37,7 @@ from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.user import User
 from app.schemas.kind import Bot, Shell, Task, Team
-from app.services.chat.session_manager import session_manager
+from app.services.chat.storage.session import session_manager
 
 logger = logging.getLogger(__name__)
 
@@ -670,7 +670,7 @@ class ChatNamespace(socketio.AsyncNamespace):
 
             # Emit task:created event to user room for task list update
             from app.api.ws.events import ServerEvents
-            from app.services.chat.ws_emitter import get_ws_emitter
+            from app.services.chat.streaming import get_ws_emitter
 
             ws_emitter = get_ws_emitter()
             if ws_emitter:
@@ -930,7 +930,7 @@ class ChatNamespace(socketio.AsyncNamespace):
 
             # Broadcast chat:cancelled event to all task room members via WebSocket
             # This ensures all group chat members see the streaming has stopped
-            from app.services.chat.ws_emitter import get_ws_emitter
+            from app.services.chat.streaming import get_ws_emitter
 
             ws_emitter = get_ws_emitter()
             if ws_emitter:

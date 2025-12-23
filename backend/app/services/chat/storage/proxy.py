@@ -24,8 +24,8 @@ class StorageProxy:
     def _ensure_handlers(cls):
         """Lazy load handlers to avoid circular imports."""
         if cls._db_handler is None:
-            from app.services.chat.db_handler import db_handler
-            from app.services.chat.session_manager import session_manager
+            from .db import db_handler
+            from .session import session_manager
 
             cls._db_handler = db_handler
             cls._session_manager = session_manager
