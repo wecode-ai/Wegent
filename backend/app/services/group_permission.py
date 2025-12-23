@@ -164,3 +164,33 @@ def get_effective_role_in_group(
                 return parent_role
 
     return None
+
+
+def check_user_group_permission(
+    user_id: int, group_name: str, min_role: str = "Reporter"
+) -> bool:
+    """
+    Check if user has required permission level in a group.
+    This is a standalone function that manages its own DB session.
+
+    Permission hierarchy: Owner > Maintainer > Developer > Reporter
+    A user with a higher role can perform actions of lower roles.
+
+    Args:
+        user_id: User ID
+        group_name: Group name (namespace)
+        min_role: Minimum required role as string ("Reporter", "Developer", "Maintainer", "Owner")
+
+    Returns:
+        True if user has permission, False otherwise
+    """
+    from app.db.session import SessionLocal
+
+    # Convert string role to GroupRole enum
+    try:
+        required_role = GroupRole(min_role)
+    except ValueError:
+        return False
+
+    with SessionLocal() as db:
+        return check_group_permission(db, user_id, group_name, required_role)

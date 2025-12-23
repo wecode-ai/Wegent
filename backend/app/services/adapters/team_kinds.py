@@ -91,17 +91,20 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 )
             namespace = group_name
 
-        # Check duplicate team name under the same namespace (only active teams)
-        existing = (
-            db.query(Kind)
-            .filter(
-                Kind.kind == "Team",
-                Kind.name == obj_in.name,
-                Kind.namespace == namespace,
-                Kind.is_active == True,
-            )
-            .first()
+        # Check duplicate team name (only active teams)
+        # For personal teams (default namespace): check uniqueness per user
+        # For group teams: check uniqueness within the group namespace
+        existing_query = db.query(Kind).filter(
+            Kind.kind == "Team",
+            Kind.name == obj_in.name,
+            Kind.namespace == namespace,
+            Kind.is_active == True,
         )
+        if namespace == "default":
+            # Personal team: also filter by user_id
+            existing_query = existing_query.filter(Kind.user_id == user_id)
+        existing = existing_query.first()
+
         if existing:
             raise HTTPException(
                 status_code=400,
@@ -131,7 +134,6 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 db.query(Kind)
                 .filter(
                     Kind.id == bot_id,
-                    Kind.user_id == user_id,
                     Kind.kind == "Bot",
                     Kind.is_active == True,
                 )
@@ -369,24 +371,41 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         t_preload = time.time()
 
         # Collect all bot refs from all teams
-        all_bot_refs = []  # List of (user_id, name, namespace)
+        # Separate personal bots from group bots since group bots can be created by any group member
+        all_bot_refs = []  # List of (user_id, name, namespace) for personal teams
+        group_bot_refs = set()  # Set of (name, namespace) for group teams
         context_user_ids = set()
         for team_data in teams_data:
             context_user_ids.add(team_data.context_user_id)
             team_crd = Team.model_validate(team_data.team_json)
+            is_group_team = (
+                team_data.team_namespace and team_data.team_namespace != "default"
+            )
             for member in team_crd.spec.members:
-                all_bot_refs.append(
-                    (
-                        team_data.context_user_id,
-                        member.botRef.name,
-                        member.botRef.namespace,
+                if is_group_team:
+                    # For group teams, bots can be created by any group member
+                    group_bot_refs.add(
+                        (
+                            member.botRef.name,
+                            member.botRef.namespace,
+                        )
                     )
-                )
+                else:
+                    all_bot_refs.append(
+                        (
+                            team_data.context_user_id,
+                            member.botRef.name,
+                            member.botRef.namespace,
+                        )
+                    )
 
-        # Batch fetch all bots (bots are always user-owned, not public)
+        # Batch fetch all bots
         from sqlalchemy import and_, or_
 
-        bots_cache = {}  # (user_id, name, namespace) -> Kind
+        bots_cache = {}  # (user_id, name, namespace) -> Kind for personal bots
+        group_bots_cache = {}  # (name, namespace) -> Kind for group bots
+
+        # Query personal bots (with user_id filter)
         if all_bot_refs:
             bot_conditions = []
             for uid, name, ns in all_bot_refs:
@@ -403,16 +422,55 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             for bot in bots_query:
                 bots_cache[(bot.user_id, bot.name, bot.namespace)] = bot
 
+        # Query group bots (without user_id filter)
+        if group_bot_refs:
+            group_bot_conditions = []
+            for name, ns in group_bot_refs:
+                group_bot_conditions.append(
+                    and_(Kind.name == name, Kind.namespace == ns)
+                )
+            group_bots_query = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "Bot",
+                    Kind.is_active == True,
+                    or_(*group_bot_conditions),
+                )
+                .all()
+            )
+            for bot in group_bots_query:
+                group_bots_cache[(bot.name, bot.namespace)] = bot
+
         logger.info(
-            f"[get_user_teams] batch fetch bots took {time.time() - t_preload:.3f}s, fetched {len(bots_cache)} bots"
+            f"[get_user_teams] batch fetch bots took {time.time() - t_preload:.3f}s, fetched {len(bots_cache)} personal bots, {len(group_bots_cache)} group bots"
         )
 
-        # Collect all shell refs and model refs from bots
+        # Collect all shell refs and model refs from bots (both personal and group bots)
         t_shell_model = time.time()
         all_shell_refs = set()  # (user_id, name, namespace)
         all_model_refs = set()  # (user_id, name, namespace)
 
+        # Collect from personal bots
         for bot in bots_cache.values():
+            bot_crd = Bot.model_validate(bot.json)
+            all_shell_refs.add(
+                (
+                    bot.user_id,
+                    bot_crd.spec.shellRef.name,
+                    bot_crd.spec.shellRef.namespace,
+                )
+            )
+            if bot_crd.spec.modelRef:
+                all_model_refs.add(
+                    (
+                        bot.user_id,
+                        bot_crd.spec.modelRef.name,
+                        bot_crd.spec.modelRef.namespace,
+                    )
+                )
+
+        # Collect from group bots
+        for bot in group_bots_cache.values():
             bot_crd = Bot.model_validate(bot.json)
             all_shell_refs.add(
                 (
@@ -544,6 +602,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         # Build cache dict for passing to conversion methods
         preloaded_cache = {
             "bots": bots_cache,
+            "group_bots": group_bots_cache,  # Add group bots cache for group resources
             "shells": shells_cache,
             "public_shells": public_shells_cache,
             "models": models_cache,
@@ -610,7 +669,6 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             db.query(Kind)
             .filter(
                 Kind.id == team_id,
-                Kind.user_id == user_id,
                 Kind.kind == "Team",
                 Kind.is_active == True,
             )
@@ -620,7 +678,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         if not team:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        return self._convert_to_team_dict(team, db, user_id)
+        return self._convert_to_team_dict(team, db, team.user_id)
 
     def get_team_detail(
         self, db: Session, *, team_id: int, user_id: int
@@ -669,12 +727,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         detailed_bots = []
         for bot_info in team_dict["bots"]:
             bot_id = bot_info["bot_id"]
-            # Get bot from kinds table using original user context
+            # Get bot from kinds table
             bot = (
                 db.query(Kind)
                 .filter(
                     Kind.id == bot_id,
-                    Kind.user_id == original_user_id,
                     Kind.kind == "Bot",
                     Kind.is_active == True,
                 )
@@ -682,7 +739,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             )
 
             if bot:
-                bot_dict = self._convert_bot_to_dict(bot, db, original_user_id)
+                bot_dict = self._convert_bot_to_dict(bot, db, bot.user_id)
                 detailed_bots.append(
                     {
                         "bot": bot_dict,
@@ -749,21 +806,24 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         update_data = obj_in.model_dump(exclude_unset=True)
 
-        # If updating name, ensure uniqueness under the same namespace (only active teams), excluding current team
+        # If updating name, ensure uniqueness (only active teams), excluding current team
+        # For personal teams (default namespace): check uniqueness per user
+        # For group teams: check uniqueness within the group namespace
         if "name" in update_data:
             new_name = update_data["name"]
             if new_name != team.name:
-                conflict = (
-                    db.query(Kind)
-                    .filter(
-                        Kind.kind == "Team",
-                        Kind.name == new_name,
-                        Kind.namespace == team.namespace,
-                        Kind.is_active == True,
-                        Kind.id != team.id,
-                    )
-                    .first()
+                conflict_query = db.query(Kind).filter(
+                    Kind.kind == "Team",
+                    Kind.name == new_name,
+                    Kind.namespace == team.namespace,
+                    Kind.is_active == True,
+                    Kind.id != team.id,
                 )
+                if team.namespace == "default":
+                    # Personal team: also filter by user_id
+                    conflict_query = conflict_query.filter(Kind.user_id == user_id)
+                conflict = conflict_query.first()
+
                 if conflict:
                     raise HTTPException(
                         status_code=400,
@@ -814,7 +874,6 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     db.query(Kind)
                     .filter(
                         Kind.id == bot_id,
-                        Kind.user_id == user_id,
                         Kind.kind == "Bot",
                         Kind.is_active == True,
                     )
@@ -1128,7 +1187,6 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             db.query(Kind)
             .filter(
                 Kind.id.in_(bot_id_list),
-                Kind.user_id == user_id,
                 Kind.kind == "Bot",
                 Kind.is_active == True,
             )
@@ -1317,26 +1375,30 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         bots = []
         shell_types = set()
 
+        # Determine if this is a group resource
+        is_group_resource = team.namespace and team.namespace != "default"
+
         t_bot_loop = time.time()
         for member in team_crd.spec.members:
             # Find bot in kinds table
+            # For group resources, don't filter by user_id since bots may be created by different users
             t_find_bot = time.time()
-            bot = (
-                db.query(Kind)
-                .filter(
-                    Kind.user_id == user_id,
-                    Kind.kind == "Bot",
-                    Kind.name == member.botRef.name,
-                    Kind.namespace == member.botRef.namespace,
-                    Kind.is_active == True,
-                )
-                .first()
+            bot_query = db.query(Kind).filter(
+                Kind.kind == "Bot",
+                Kind.name == member.botRef.name,
+                Kind.namespace == member.botRef.namespace,
+                Kind.is_active == True,
             )
+            if not is_group_resource:
+                bot_query = bot_query.filter(Kind.user_id == user_id)
+            bot = bot_query.first()
             find_bot_time = time.time() - t_find_bot
 
             if bot:
                 t_summary = time.time()
-                bot_summary = self._get_bot_summary(bot, db, user_id)
+                # For group resources, use bot's user_id to find related components
+                summary_user_id = bot.user_id if is_group_resource else user_id
+                bot_summary = self._get_bot_summary(bot, db, summary_user_id)
                 summary_time = time.time() - t_summary
                 if find_bot_time > 0.1 or summary_time > 0.1:
                     logger.info(
@@ -1368,26 +1430,26 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         agent_type = None
         if bots:
             first_bot_id = bots[0]["bot_id"]
-            first_bot = (
-                db.query(Kind)
-                .filter(
-                    Kind.id == first_bot_id,
-                    Kind.user_id == user_id,
-                    Kind.kind == "Bot",
-                    Kind.is_active.is_(True),
-                )
-                .first()
+            # For group resources, don't filter by user_id
+            first_bot_query = db.query(Kind).filter(
+                Kind.id == first_bot_id,
+                Kind.kind == "Bot",
+                Kind.is_active.is_(True),
             )
+            if not is_group_resource:
+                first_bot_query = first_bot_query.filter(Kind.user_id == user_id)
+            first_bot = first_bot_query.first()
 
             if first_bot:
                 bot_crd = Bot.model_validate(first_bot.json)
                 shell_type = None
 
-                # First check user's custom shells
+                # First check user's custom shells (for group resources, use bot's user_id)
+                shell_user_id = first_bot.user_id if is_group_resource else user_id
                 shell = (
                     db.query(Kind)
                     .filter(
-                        Kind.user_id == user_id,
+                        Kind.user_id == shell_user_id,
                         Kind.kind == "Shell",
                         Kind.name == bot_crd.spec.shellRef.name,
                         Kind.namespace == bot_crd.spec.shellRef.namespace,
@@ -1478,19 +1540,26 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             db: Database session (only used for fallback queries if cache miss)
             user_id: The user ID for context
             cache: Preloaded cache containing:
-                - bots: Dict[(user_id, name, namespace), Kind]
+                - bots: Dict[(user_id, name, namespace), Kind] for personal bots
+                - group_bots: Dict[(name, namespace), Kind] for group bots
                 - shells: Dict[(user_id, name, namespace), Kind]
-                - public_shells: Dict[(name, namespace), Kind]
+                - public_shells: Dict[name, Kind]
                 - models: Dict[(user_id, name, namespace), Kind]
-                - public_models: Dict[(name, namespace), Kind]
+                - public_models: Dict[name, Kind]
         """
         team_crd = Team.model_validate(team.json)
+
+        # Determine if this is a group resource
+        is_group_resource = team.namespace and team.namespace != "default"
 
         # Convert members to bots format and collect shell_types for is_mix_team calculation
         bots = []
         shell_types = set()
 
         bots_cache = cache.get("bots", {})
+        group_bots_cache = cache.get(
+            "group_bots", {}
+        )  # (name, namespace) -> Kind for group bots
         shells_cache = cache.get("shells", {})
         public_shells_cache = cache.get(
             "public_shells", {}
@@ -1500,12 +1569,22 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         for member in team_crd.spec.members:
             # Find bot in cache
-            bot = bots_cache.get((user_id, member.botRef.name, member.botRef.namespace))
+            # For group resources, lookup by (name, namespace) only
+            if is_group_resource:
+                bot = group_bots_cache.get(
+                    (member.botRef.name, member.botRef.namespace)
+                )
+            else:
+                bot = bots_cache.get(
+                    (user_id, member.botRef.name, member.botRef.namespace)
+                )
 
             if bot:
+                # For group resources, use bot's user_id for shell/model lookup
+                lookup_user_id = bot.user_id if is_group_resource else user_id
                 bot_summary = self._get_bot_summary_with_cache(
                     bot,
-                    user_id,
+                    lookup_user_id,
                     shells_cache,
                     public_shells_cache,  # This is now name -> Kind
                     models_cache,
@@ -1530,12 +1609,18 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         agent_type = None
         if bots:
             first_bot_id = bots[0]["bot_id"]
-            # Find first bot in cache
+            # Find first bot in cache (check both caches for group resources)
             first_bot = None
-            for key, bot in bots_cache.items():
-                if bot.id == first_bot_id:
-                    first_bot = bot
-                    break
+            if is_group_resource:
+                for key, bot in group_bots_cache.items():
+                    if bot.id == first_bot_id:
+                        first_bot = bot
+                        break
+            else:
+                for key, bot in bots_cache.items():
+                    if bot.id == first_bot_id:
+                        first_bot = bot
+                        break
 
             if first_bot:
                 bot_crd = Bot.model_validate(first_bot.json)
@@ -1544,7 +1629,13 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 shell_ref_namespace = bot_crd.spec.shellRef.namespace
 
                 # First check user's custom shells in cache
-                shell = shells_cache.get((user_id, shell_ref_name, shell_ref_namespace))
+                # For group resources, use bot's user_id
+                shell_lookup_user_id = (
+                    first_bot.user_id if is_group_resource else user_id
+                )
+                shell = shells_cache.get(
+                    (shell_lookup_user_id, shell_ref_name, shell_ref_namespace)
+                )
 
                 if shell:
                     shell_crd = Shell.model_validate(shell.json)
@@ -1563,7 +1654,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                         )
                     else:
                         logger.warning(
-                            f"[_convert_to_team_dict_with_cache] Shell not found in cache: user_id={user_id}, name={shell_ref_name}, namespace={shell_ref_namespace}. "
+                            f"[_convert_to_team_dict_with_cache] Shell not found in cache: user_id={shell_lookup_user_id}, name={shell_ref_name}, namespace={shell_ref_namespace}. "
                             f"public_shells_cache keys: {list(public_shells_cache.keys())}"
                         )
 
@@ -2014,7 +2105,6 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 db.query(Kind)
                 .filter(
                     Kind.id == bot_id,
-                    Kind.user_id == original_user_id,
                     Kind.kind == "Bot",
                     Kind.is_active == True,
                 )

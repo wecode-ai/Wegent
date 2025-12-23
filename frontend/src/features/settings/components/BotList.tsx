@@ -37,9 +37,10 @@ import { useToast } from '@/hooks/use-toast';
 interface BotListProps {
   scope?: 'personal' | 'group' | 'all';
   groupName?: string;
+  groupRoleMap?: Map<string, 'Owner' | 'Maintainer' | 'Developer' | 'Reporter'>;
 }
 
-export default function BotList({ scope = 'personal', groupName }: BotListProps) {
+export default function BotList({ scope = 'personal', groupName, groupRoleMap }: BotListProps) {
   const { t } = useTranslation('common');
   const { toast } = useToast();
   const [bots, setBots] = useState<Bot[]>([]);
@@ -187,6 +188,62 @@ export default function BotList({ scope = 'personal', groupName }: BotListProps)
     setRunningTasksInfo(null);
   };
 
+  // Helper function to check if a bot is a group resource
+  const isGroupBot = (bot: Bot) => {
+    return bot.namespace && bot.namespace !== 'default';
+  };
+
+  // Helper function to check permissions for a specific group resource
+  const canEditGroupResource = (namespace: string) => {
+    if (!groupRoleMap) return false;
+    const role = groupRoleMap.get(namespace);
+    return role === 'Owner' || role === 'Maintainer' || role === 'Developer';
+  };
+
+  const canDeleteGroupResource = (namespace: string) => {
+    if (!groupRoleMap) return false;
+    const role = groupRoleMap.get(namespace);
+    return role === 'Owner' || role === 'Maintainer';
+  };
+
+  // Check if user can create in the current group context
+  // When scope is 'group', check the specific groupName; only Owner/Maintainer can create
+  const canCreateInCurrentGroup = (() => {
+    if (scope !== 'group' || !groupName || !groupRoleMap) return false;
+    const role = groupRoleMap.get(groupName);
+    return role === 'Owner' || role === 'Maintainer';
+  })();
+
+  // Check if edit button should be shown
+  const shouldShowEdit = (bot: Bot) => {
+    // For group bots, check group permissions
+    if (isGroupBot(bot)) {
+      return canEditGroupResource(bot.namespace!);
+    }
+    // For personal bots, always show
+    return true;
+  };
+
+  // Check if delete button should be shown
+  const shouldShowDelete = (bot: Bot) => {
+    // For group bots, check group permissions
+    if (isGroupBot(bot)) {
+      return canDeleteGroupResource(bot.namespace!);
+    }
+    // For personal bots, always show
+    return true;
+  };
+
+  // Check if copy button should be shown (same permission as create)
+  const shouldShowCopy = (bot: Bot) => {
+    // For group bots, check group permissions (need create permission)
+    if (isGroupBot(bot)) {
+      return canDeleteGroupResource(bot.namespace!); // Maintainer/Owner can create
+    }
+    // For personal bots, always show
+    return true;
+  };
+
   return (
     <>
       <div className="space-y-3">
@@ -259,34 +316,40 @@ export default function BotList({ scope = 'personal', groupName }: BotListProps)
                               </div>
                             </ResourceListItem>
                             <div className="flex items-center gap-1 flex-shrink-0 ml-3">
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => handleEditBot(bot)}
-                                title={t('bots.edit')}
-                                className="h-8 w-8"
-                              >
-                                <PencilIcon className="w-4 h-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => handleCloneBot(bot)}
-                                title={t('bots.copy')}
-                                className="h-8 w-8"
-                              >
-                                <DocumentDuplicateIcon className="w-4 h-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => handleDeleteBot(bot?.id)}
-                                disabled={isCheckingTasks}
-                                title={t('bots.delete')}
-                                className="h-8 w-8 hover:text-error"
-                              >
-                                <TrashIcon className="w-4 h-4" />
-                              </Button>
+                              {shouldShowEdit(bot) && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleEditBot(bot)}
+                                  title={t('bots.edit')}
+                                  className="h-8 w-8"
+                                >
+                                  <PencilIcon className="w-4 h-4" />
+                                </Button>
+                              )}
+                              {shouldShowCopy(bot) && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleCloneBot(bot)}
+                                  title={t('bots.copy')}
+                                  className="h-8 w-8"
+                                >
+                                  <DocumentDuplicateIcon className="w-4 h-4" />
+                                </Button>
+                              )}
+                              {shouldShowDelete(bot) && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleDeleteBot(bot?.id)}
+                                  disabled={isCheckingTasks}
+                                  title={t('bots.delete')}
+                                  className="h-8 w-8 hover:text-error"
+                                >
+                                  <TrashIcon className="w-4 h-4" />
+                                </Button>
+                              )}
                             </div>
                           </div>
                         </Card>
@@ -299,9 +362,11 @@ export default function BotList({ scope = 'personal', groupName }: BotListProps)
                   </div>
                   <div className="border-t border-border pt-3 mt-3 bg-base">
                     <div className="flex justify-center">
-                      <UnifiedAddButton onClick={handleCreateBot}>
-                        {t('bots.new_bot')}
-                      </UnifiedAddButton>
+                      {(scope === 'personal' || canCreateInCurrentGroup) && (
+                        <UnifiedAddButton onClick={handleCreateBot}>
+                          {t('bots.new_bot')}
+                        </UnifiedAddButton>
+                      )}
                     </div>
                   </div>
                 </>

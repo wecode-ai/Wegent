@@ -62,15 +62,15 @@ export async function checkBotRunningTasks(id: number): Promise<CheckRunningTask
 }
 /**
  * Check if the agent config is for a predefined model.
- * A predefined model config contains 'bind_model' and optionally 'bind_model_type'.
+ * A predefined model config contains 'bind_model' and optionally 'bind_model_type' and 'bind_model_namespace'.
  * @param config The agent configuration object.
  * @returns True if it's a predefined model, false otherwise.
  */
 export const isPredefinedModel = (config: Record<string, unknown>): boolean => {
   if (!config) return false;
   const keys = new Set(Object.keys(config));
-  // Allow bind_model and optional bind_model_type
-  const allowedKeys = new Set(['bind_model', 'bind_model_type']);
+  // Allow bind_model, optional bind_model_type, and optional bind_model_namespace
+  const allowedKeys = new Set(['bind_model', 'bind_model_type', 'bind_model_namespace']);
   return keys.has('bind_model') && [...keys].every(k => allowedKeys.has(k));
 };
 
@@ -102,18 +102,35 @@ export const getModelTypeFromConfig = (
 };
 
 /**
- * Create a predefined model configuration with type.
+ * Get the model namespace from a predefined model configuration.
+ * @param config The agent configuration object.
+ * @returns The model namespace, or undefined if not specified.
+ */
+export const getModelNamespaceFromConfig = (
+  config: Record<string, unknown>
+): string | undefined => {
+  if (!config) return undefined;
+  return config.bind_model_namespace as string | undefined;
+};
+
+/**
+ * Create a predefined model configuration with type and namespace.
  * @param modelName The model name.
  * @param modelType The model type ('public', 'user', or 'group').
+ * @param modelNamespace The model namespace (defaults to 'default').
  * @returns The agent configuration object.
  */
 export const createPredefinedModelConfig = (
   modelName: string,
-  modelType?: 'public' | 'user' | 'group'
+  modelType?: 'public' | 'user' | 'group',
+  modelNamespace?: string
 ): Record<string, unknown> => {
   const config: Record<string, unknown> = { bind_model: modelName };
   if (modelType) {
     config.bind_model_type = modelType;
+  }
+  if (modelNamespace && modelNamespace !== 'default') {
+    config.bind_model_namespace = modelNamespace;
   }
   return config;
 };
