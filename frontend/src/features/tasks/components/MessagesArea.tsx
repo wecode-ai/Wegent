@@ -390,33 +390,8 @@ export default function MessagesArea({
     );
   }, [selectedTaskDetail, toast, t, tCommon, traceAction]);
 
-  // Check if team uses Chat Shell (streaming mode, no polling needed)
-  const effectiveTeam = selectedTaskDetail?.id
-    ? selectedTaskDetail?.team || selectedTeam || null
-    : selectedTeam || selectedTaskDetail?.team || null;
-  const isChatShell = effectiveTeam?.agent_type?.toLowerCase() === 'chat';
-
-  // Auto-refresh for non-Chat Shell tasks
-  useEffect(() => {
-    let intervalId: NodeJS.Timeout | null = null;
-
-    if (isChatShell) return;
-
-    if (
-      selectedTaskDetail?.id &&
-      selectedTaskDetail.status !== 'COMPLETED' &&
-      selectedTaskDetail.status !== 'FAILED' &&
-      selectedTaskDetail.status !== 'CANCELLED'
-    ) {
-      intervalId = setInterval(() => {
-        refreshSelectedTaskDetail(true);
-      }, 5000);
-    }
-
-    return () => {
-      if (intervalId) clearInterval(intervalId);
-    };
-  }, [selectedTaskDetail?.id, selectedTaskDetail?.status, refreshSelectedTaskDetail, isChatShell]);
+  // Removed polling - relying entirely on WebSocket real-time updates
+  // Task details will be updated via WebSocket events in taskContext
 
   // Notify parent component when content changes (for scroll management)
   useLayoutEffect(() => {
