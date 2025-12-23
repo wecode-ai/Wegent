@@ -418,7 +418,7 @@ class SharedTaskService:
                     )
 
                     # Save workspace to database
-                    new_workspace = Kind(
+                    new_workspace = TaskResourceModel(
                         kind="Workspace",
                         name=workspace_name,
                         user_id=new_user_id,
@@ -513,7 +513,9 @@ class SharedTaskService:
         unique_task_name = f"Copy of {original_task.name}-{timestamp}"
 
         # Create new task with updated team reference
-        new_task = Kind(
+        from app.models.task import TaskResource
+
+        new_task = TaskResource(
             kind="Task",
             name=unique_task_name,
             user_id=new_user_id,
