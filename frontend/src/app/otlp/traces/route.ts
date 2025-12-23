@@ -23,7 +23,8 @@ import { NextRequest, NextResponse } from 'next/server';
  * Default: http://otel-collector:4318 (internal Docker network)
  * For local development: http://localhost:4318
  */
-const OTEL_COLLECTOR_ENDPOINT = process.env.OTEL_COLLECTOR_ENDPOINT || 'http://localhost:4318';
+const OTEL_COLLECTOR_ENDPOINT =
+  process.env.NEXT_PUBLIC_OTEL_COLLECTOR_ENDPOINT || 'http://localhost:4318';
 
 /**
  * POST /otlp/traces
