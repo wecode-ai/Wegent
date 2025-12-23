@@ -16,8 +16,19 @@ Now uses ChatService with ChatConfigBuilder for direct chat streaming.
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, Dict, Optional
 
+from shared.telemetry.context import (
+    SpanManager,
+    SpanNames,
+    TelemetryEventNames,
+    attach_otel_context,
+    copy_context_vars,
+    detach_otel_context,
+    restore_context_vars,
+)
+
+from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.subtask import Subtask
@@ -137,6 +148,20 @@ async def _trigger_direct_chat(
         "user_name": user.user_name,
     }
 
+    # Copy ContextVars (request_id, user_id, etc.) AND trace context before starting background task
+    # This ensures logging context and trace parent-child relationships are preserved in the background task
+    trace_context = None
+    otel_context = None
+    try:
+        if settings.OTEL_ENABLED:
+            from opentelemetry import context
+
+            trace_context = copy_context_vars()
+            # Also copy OpenTelemetry context for parent-child span relationships
+            otel_context = context.get_current()
+    except Exception as e:
+        logger.debug(f"Failed to copy trace context: {e}")
+
     # Start streaming in background task using ChatService
     logger.info("[ai_trigger] Starting background stream task with ChatService")
     stream_task = asyncio.create_task(
@@ -150,6 +175,8 @@ async def _trigger_direct_chat(
             payload=payload,
             task_room=task_room,
             namespace=namespace,
+            trace_context=trace_context,
+            otel_context=otel_context,
         )
     )
     namespace._active_streams[assistant_subtask.id] = stream_task
@@ -166,6 +193,8 @@ async def _stream_chat_response(
     payload: Any,
     task_room: str,
     namespace: Any,
+    trace_context: Optional[Dict[str, Any]] = None,
+    otel_context: Optional[Any] = None,
 ) -> None:
     """
     Stream chat response using ChatService.
@@ -173,6 +202,25 @@ async def _stream_chat_response(
     Uses ChatConfigBuilder to prepare configuration and delegates
     streaming to ChatService.stream_to_websocket().
     """
+    # Restore trace context at the start of background task
+    # This ensures logging uses the correct request_id and user context
+    if trace_context:
+        try:
+            restore_context_vars(trace_context)
+            logger.debug(
+                f"[ai_trigger] Restored trace context: request_id={trace_context.get('request_id')}"
+            )
+        except Exception as e:
+            logger.debug(f"Failed to restore trace context: {e}")
+
+    # Restore OpenTelemetry context to maintain parent-child span relationships
+    otel_token = attach_otel_context(otel_context) if otel_context else None
+
+    # Create OpenTelemetry span manager for this streaming operation
+    span_manager = SpanManager(SpanNames.CHAT_STREAM_RESPONSE)
+    span_manager.create_span()
+    span_manager.enter_span()
+
     from app.api.ws.events import ServerEvents
     from app.services.chat_v2.config import ChatConfigBuilder
     from app.services.chat_v2.service import (
@@ -183,6 +231,14 @@ async def _stream_chat_response(
     db = SessionLocal()
 
     try:
+        # Set base attributes (user and task info)
+        span_manager.set_base_attributes(
+            task_id=task_data["id"],
+            subtask_id=subtask_id,
+            user_id=str(user_data["id"]),
+            user_name=user_data["user_name"],
+        )
+
         # Get team Kind object from database
         team = (
             db.query(Kind)
@@ -195,9 +251,11 @@ async def _stream_chat_response(
         )
 
         if not team:
+            error_msg = "Team not found"
+            span_manager.record_error(TelemetryEventNames.TEAM_NOT_FOUND, error_msg)
             await namespace.emit(
                 ServerEvents.CHAT_ERROR,
-                {"subtask_id": subtask_id, "error": "Team not found"},
+                {"subtask_id": subtask_id, "error": error_msg},
                 room=task_room,
             )
             return
@@ -218,12 +276,19 @@ async def _stream_chat_response(
                 task_id=task_data["id"],
             )
         except ValueError as e:
+            error_msg = str(e)
+            span_manager.record_error(
+                TelemetryEventNames.CONFIG_BUILD_FAILED, error_msg
+            )
             await namespace.emit(
                 ServerEvents.CHAT_ERROR,
-                {"subtask_id": subtask_id, "error": str(e)},
+                {"subtask_id": subtask_id, "error": error_msg},
                 room=task_room,
             )
             return
+
+        # Add model info to span
+        span_manager.set_model_attributes(chat_config.model_config)
 
         # Handle attachment
         final_message = message
@@ -254,14 +319,27 @@ async def _stream_chat_response(
             namespace=namespace,
         )
 
+        # Mark span as successful
+        span_manager.record_success(
+            event_name=TelemetryEventNames.STREAM_COMPLETED,
+        )
+
     except Exception as e:
         logger.exception("[ai_trigger] Stream error subtask=%d: %s", subtask_id, e)
+        # Record error in span
+        span_manager.record_exception(e)
         await namespace.emit(
             ServerEvents.CHAT_ERROR,
             {"subtask_id": subtask_id, "error": str(e)},
             room=task_room,
         )
     finally:
+        # Detach OTEL context first (before exiting span)
+        detach_otel_context(otel_token)
+
+        # Exit span context
+        span_manager.exit_span()
+
         db.close()
 
 
