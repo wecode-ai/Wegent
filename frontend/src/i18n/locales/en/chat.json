@@ -205,7 +205,8 @@
     "select_engine": "Select search engine"
   },
   "deep_thinking": {
-    "label": "Deep Thinking"
+    "enable": "Enable deep thinking",
+    "disable": "Disable deep thinking"
   },
   "clarification_toggle": {
     "enable": "Enable smart follow-up mode",
