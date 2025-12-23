@@ -572,8 +572,103 @@ class UrlParser:
 
         return None
 
+    def _preprocess_html(self, html: str) -> str:
+        """
+        Preprocess HTML to remove hidden elements and other noise before conversion.
+
+        This removes elements with display:none, visibility:hidden, and other
+        hidden content that shouldn't be included in the extracted text.
+        """
+        try:
+            from bs4 import BeautifulSoup
+
+            soup = BeautifulSoup(html, "html.parser")
+
+            # Collect elements to remove (avoid modifying during iteration)
+            elements_to_remove = []
+
+            # Find elements with inline style display:none or visibility:hidden
+            for element in soup.find_all(style=True):
+                if element is None or not hasattr(element, "get"):
+                    continue
+                style = element.get("style", "") or ""
+                style = style.lower()
+                if "display:none" in style.replace(" ", "") or "display: none" in style:
+                    elements_to_remove.append(element)
+                elif (
+                    "visibility:hidden" in style.replace(" ", "")
+                    or "visibility: hidden" in style
+                ):
+                    elements_to_remove.append(element)
+
+            # Find common hidden element patterns (popups, modals, dialogs)
+            # These are often hidden by default and contain placeholder text
+            hidden_classes = [
+                "popcard",
+                "popup",
+                "modal",
+                "dialog",
+                "tooltip",
+                "dropdown-menu",
+                "hidden",
+                "hide",
+                "invisible",
+            ]
+            for class_name in hidden_classes:
+                for element in soup.find_all(
+                    class_=lambda x: x and class_name in str(x).lower()
+                ):
+                    if element is None or not hasattr(element, "get"):
+                        continue
+                    # Check if the element has display:none
+                    style = element.get("style", "") or ""
+                    style = style.lower()
+                    if (
+                        "display:none" in style.replace(" ", "")
+                        or "display: none" in style
+                    ):
+                        elements_to_remove.append(element)
+
+            # Find elements with aria-hidden="true"
+            for element in soup.find_all(attrs={"aria-hidden": "true"}):
+                if element is not None:
+                    elements_to_remove.append(element)
+
+            # Find noscript tags (content for browsers without JS)
+            for element in soup.find_all("noscript"):
+                if element is not None:
+                    elements_to_remove.append(element)
+
+            # Find template tags (Vue/React templates)
+            for element in soup.find_all("template"):
+                if element is not None:
+                    elements_to_remove.append(element)
+
+            # Remove all collected elements
+            for element in elements_to_remove:
+                try:
+                    if element is not None and element.parent is not None:
+                        element.decompose()
+                except Exception:
+                    pass  # Element may have already been removed
+
+            return str(soup)
+        except ImportError:
+            # If BeautifulSoup is not available, use regex as fallback
+            # Remove elements with style="display: none" or style="display:none"
+            html = re.sub(
+                r'<[^>]+style\s*=\s*["\'][^"\']*display\s*:\s*none[^"\']*["\'][^>]*>.*?</[^>]+>',
+                "",
+                html,
+                flags=re.DOTALL | re.IGNORECASE,
+            )
+            return html
+
     def _html_to_markdown(self, html: str) -> str:
         """Convert HTML to markdown."""
+        # Preprocess HTML to remove hidden elements
+        html = self._preprocess_html(html)
+
         try:
             # Try to use html2text if available
             import html2text
