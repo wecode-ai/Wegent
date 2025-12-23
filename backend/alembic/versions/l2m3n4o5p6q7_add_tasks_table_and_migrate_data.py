@@ -53,7 +53,7 @@ def upgrade() -> None:
     )
 
     # Step 2: Migrate data from 'kinds' to 'tasks', preserving original IDs
-    # First, we need to disable foreign key checks and handle auto_increment
+    # MySQL automatically updates AUTO_INCREMENT when explicitly inserting IDs
     op.execute(
         """
         INSERT INTO tasks (id, user_id, kind, name, namespace, json, is_active, created_at, updated_at)
@@ -63,19 +63,7 @@ def upgrade() -> None:
         """
     )
 
-    # Step 3: Update auto_increment value to be higher than the max migrated ID
-    # This ensures new inserts won't conflict with migrated IDs
-    op.execute(
-        """
-        SET @max_id = (SELECT COALESCE(MAX(id), 0) FROM tasks);
-        SET @sql = CONCAT('ALTER TABLE tasks AUTO_INCREMENT = ', @max_id + 1);
-        PREPARE stmt FROM @sql;
-        EXECUTE stmt;
-        DEALLOCATE PREPARE stmt;
-        """
-    )
-
-    # Step 4: Hard delete migrated data from 'kinds' table
+    # Step 3: Hard delete migrated data from 'kinds' table
     op.execute(
         """
         DELETE FROM kinds WHERE kind IN ('Task', 'Workspace')
@@ -90,6 +78,7 @@ def downgrade() -> None:
     2. Drop the 'tasks' table
     """
     # Step 1: Migrate data back from 'tasks' to 'kinds', preserving IDs
+    # MySQL automatically updates AUTO_INCREMENT when explicitly inserting IDs
     op.execute(
         """
         INSERT INTO kinds (id, user_id, kind, name, namespace, json, is_active, created_at, updated_at)
@@ -98,16 +87,5 @@ def downgrade() -> None:
         """
     )
 
-    # Step 2: Update auto_increment value in kinds table
-    op.execute(
-        """
-        SET @max_id = (SELECT COALESCE(MAX(id), 0) FROM kinds);
-        SET @sql = CONCAT('ALTER TABLE kinds AUTO_INCREMENT = ', @max_id + 1);
-        PREPARE stmt FROM @sql;
-        EXECUTE stmt;
-        DEALLOCATE PREPARE stmt;
-        """
-    )
-
-    # Step 3: Drop the 'tasks' table
+    # Step 2: Drop the 'tasks' table
     op.drop_table("tasks")
