@@ -13,6 +13,7 @@ from app.services.kind_impl import (
     GhostKindService,
     KnowledgeBaseKindService,
     ModelKindService,
+    RetrieverKindService,
     ShellKindService,
     TaskKindService,
     TeamKindService,
@@ -51,5 +52,7 @@ class KindServiceFactory:
             return TaskKindService()
         elif kind == "KnowledgeBase":
             return KnowledgeBaseKindService()
+        elif kind == "Retriever":
+            return RetrieverKindService()
         else:
             raise ValueError(f"Unknown kind: {kind}")

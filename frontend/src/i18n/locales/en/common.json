@@ -481,6 +481,12 @@
     "name_invalid_hint": "Can only contain lowercase letters, numbers, and hyphens",
     "group_required_title": "Please select a group first",
     "group_required_message": "You must select a target group when creating a retriever in group mode",
+    "retrieval_methods": "Retrieval Methods",
+    "retrieval_methods_hint": "Select which retrieval methods to enable for this retriever. At least one method must be enabled.",
+    "loading_retrieval_methods": "Loading available methods...",
+    "retrieval_method_vector": "Vector Search",
+    "retrieval_method_keyword": "Full-Text Search",
+    "retrieval_method_hybrid": "Hybrid Search",
     "errors": {
       "load_retrievers_failed": "Failed to load retrievers",
       "create_failed": "Failed to create retriever",

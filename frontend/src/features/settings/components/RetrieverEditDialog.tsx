@@ -4,7 +4,7 @@
 
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 
 // Storage type configuration for extensibility
 const STORAGE_TYPE_CONFIG = {
@@ -15,6 +15,8 @@ const STORAGE_TYPE_CONFIG = {
       supportsUsernamePassword: true,
       supportsApiKey: false,
     },
+    // Fallback retrieval methods (used if API call fails)
+    fallbackRetrievalMethods: ['vector', 'keyword', 'hybrid'] as const,
   },
   qdrant: {
     defaultUrl: 'http://localhost:6333',
@@ -23,11 +25,21 @@ const STORAGE_TYPE_CONFIG = {
       supportsUsernamePassword: false,
       supportsApiKey: true,
     },
+    // Fallback retrieval methods (used if API call fails)
+    fallbackRetrievalMethods: ['vector'] as const,
   },
 } as const;
+
+// Retrieval method labels for display
+const RETRIEVAL_METHOD_LABELS: Record<string, string> = {
+  vector: 'retrievers.retrieval_method_vector',
+  keyword: 'retrievers.retrieval_method_keyword',
+  hybrid: 'retrievers.retrieval_method_hybrid',
+};
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Select,
   SelectContent,
@@ -45,7 +57,12 @@ import {
 import { Loader2 } from 'lucide-react';
 import { EyeIcon, EyeSlashIcon, BeakerIcon } from '@heroicons/react/24/outline';
 import { useTranslation } from '@/hooks/useTranslation';
-import { retrieverApis, UnifiedRetriever, RetrieverCRD } from '@/apis/retrievers';
+import {
+  retrieverApis,
+  UnifiedRetriever,
+  RetrieverCRD,
+  RetrievalMethodType,
+} from '@/apis/retrievers';
 
 interface RetrieverEditDialogProps {
   open: boolean;
@@ -87,6 +104,51 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
 
+  // Retrieval methods state
+  const [availableRetrievalMethods, setAvailableRetrievalMethods] = useState<RetrievalMethodType[]>(
+    [...STORAGE_TYPE_CONFIG.elasticsearch.fallbackRetrievalMethods]
+  );
+  const [enabledRetrievalMethods, setEnabledRetrievalMethods] = useState<RetrievalMethodType[]>([
+    'vector',
+  ]);
+  const [loadingRetrievalMethods, setLoadingRetrievalMethods] = useState(false);
+
+  // Fetch retrieval methods for a storage type from API
+  const fetchRetrievalMethods = useCallback(async (type: 'elasticsearch' | 'qdrant') => {
+    setLoadingRetrievalMethods(true);
+    try {
+      const response = await retrieverApis.getStorageTypeRetrievalMethods(type);
+      const methods = response.retrieval_methods as RetrievalMethodType[];
+      setAvailableRetrievalMethods(methods);
+      return methods;
+    } catch (error) {
+      console.error('Failed to fetch retrieval methods:', error);
+      // Use fallback from config
+      const fallback = [...STORAGE_TYPE_CONFIG[type].fallbackRetrievalMethods];
+      setAvailableRetrievalMethods(fallback);
+      return fallback;
+    } finally {
+      setLoadingRetrievalMethods(false);
+    }
+  }, []);
+
+  // Handle retrieval method toggle
+  const handleRetrievalMethodToggle = useCallback(
+    (method: RetrievalMethodType, checked: boolean) => {
+      setEnabledRetrievalMethods(prev => {
+        if (checked) {
+          // Add method if not already present
+          return prev.includes(method) ? prev : [...prev, method];
+        } else {
+          // Remove method, but ensure at least one method is enabled
+          const newMethods = prev.filter(m => m !== method);
+          return newMethods.length > 0 ? newMethods : prev;
+        }
+      });
+    },
+    []
+  );
+
   // Reset form when dialog opens/closes or retriever changes
   useEffect(() => {
     if (open) {
@@ -98,9 +160,12 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
               retriever.name,
               retriever.namespace
             );
+            const loadedStorageType = fullRetriever.spec.storageConfig.type as
+              | 'elasticsearch'
+              | 'qdrant';
             setRetrieverName(fullRetriever.metadata.name);
             setDisplayName(fullRetriever.metadata.displayName || '');
-            setStorageType(fullRetriever.spec.storageConfig.type as 'elasticsearch' | 'qdrant');
+            setStorageType(loadedStorageType);
             setUrl(fullRetriever.spec.storageConfig.url);
             setUsername(fullRetriever.spec.storageConfig.username || '');
             setPassword(fullRetriever.spec.storageConfig.password || '');
@@ -117,6 +182,28 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
               String(fullRetriever.spec.storageConfig.indexStrategy.rollingStep || 5000)
             );
             setIndexPrefix(fullRetriever.spec.storageConfig.indexStrategy.prefix || 'wegent');
+
+            // Load retrieval methods from spec or fetch available methods
+            const availableMethods = await fetchRetrievalMethods(loadedStorageType);
+            if (fullRetriever.spec.retrievalMethods) {
+              // Load enabled methods from spec
+              const enabledMethods: RetrievalMethodType[] = [];
+              if (fullRetriever.spec.retrievalMethods.vector?.enabled) {
+                enabledMethods.push('vector');
+              }
+              if (fullRetriever.spec.retrievalMethods.keyword?.enabled) {
+                enabledMethods.push('keyword');
+              }
+              if (fullRetriever.spec.retrievalMethods.hybrid?.enabled) {
+                enabledMethods.push('hybrid');
+              }
+              // Filter to only include available methods
+              const validMethods = enabledMethods.filter(m => availableMethods.includes(m));
+              setEnabledRetrievalMethods(validMethods.length > 0 ? validMethods : ['vector']);
+            } else {
+              // Default to vector only
+              setEnabledRetrievalMethods(['vector']);
+            }
           } catch (error) {
             console.error('Failed to load retriever:', error);
             toast({
@@ -131,23 +218,29 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
         // Reset for new retriever
         setRetrieverName('');
         setDisplayName('');
-        setStorageType('elasticsearch');
+        const defaultStorageType = 'elasticsearch';
+        setStorageType(defaultStorageType);
         setUrl('');
         setUsername('');
         setPassword('');
         setApiKey('');
         // Set recommended index mode based on storage type
-        setIndexMode(STORAGE_TYPE_CONFIG[storageType].recommendedIndexMode);
+        setIndexMode(STORAGE_TYPE_CONFIG[defaultStorageType].recommendedIndexMode);
         setFixedIndexName('');
         setRollingStep('5000');
         setIndexPrefix('wegent');
+        // Fetch retrieval methods for default storage type and enable all by default
+        fetchRetrievalMethods(defaultStorageType).then(methods => {
+          // Default to all available methods for new retrievers
+          setEnabledRetrievalMethods([...methods]);
+        });
       }
       setShowPassword(false);
       setShowApiKey(false);
     }
-  }, [open, retriever, toast, t]);
+  }, [open, retriever, toast, t, fetchRetrievalMethods]);
 
-  const handleStorageTypeChange = (value: 'elasticsearch' | 'qdrant') => {
+  const handleStorageTypeChange = async (value: 'elasticsearch' | 'qdrant') => {
     setStorageType(value);
     const config = STORAGE_TYPE_CONFIG[value];
     setUrl(config.defaultUrl);
@@ -155,6 +248,10 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
     if (!isEditing) {
       setIndexMode(config.recommendedIndexMode);
     }
+    // Fetch retrieval methods for the new storage type and enable all by default
+    const availableMethods = await fetchRetrievalMethods(value);
+    // Enable all available methods for the new storage type
+    setEnabledRetrievalMethods([...availableMethods]);
   };
 
   const handleTestConnection = async () => {
@@ -272,6 +369,21 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
 
     setSaving(true);
     try {
+      // Build retrieval methods config
+      const retrievalMethodsConfig: RetrieverCRD['spec']['retrievalMethods'] = {
+        vector: {
+          enabled: enabledRetrievalMethods.includes('vector'),
+          defaultWeight: 0.7,
+        },
+        keyword: {
+          enabled: enabledRetrievalMethods.includes('keyword'),
+          defaultWeight: 0.3,
+        },
+        hybrid: {
+          enabled: enabledRetrievalMethods.includes('hybrid'),
+        },
+      };
+
       const retrieverCRD: RetrieverCRD = {
         apiVersion: 'agent.wecode.io/v1',
         kind: 'Retriever',
@@ -294,6 +406,7 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
               ...(indexPrefix && { prefix: indexPrefix.trim() }),
             },
           },
+          retrievalMethods: retrievalMethodsConfig,
         },
       };
 
@@ -572,6 +685,43 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
               <p className="text-xs text-text-muted">{t('retrievers.index_prefix_hint')}</p>
             </div>
           )}
+
+          {/* Retrieval Methods */}
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">{t('retrievers.retrieval_methods')}</Label>
+            <div className="flex flex-wrap gap-4">
+              {loadingRetrievalMethods ? (
+                <div className="flex items-center gap-2 text-text-muted">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span className="text-sm">{t('retrievers.loading_retrieval_methods')}</span>
+                </div>
+              ) : (
+                availableRetrievalMethods.map(method => (
+                  <div key={method} className="flex items-center space-x-2">
+                    <Checkbox
+                      id={`retrieval-method-${method}`}
+                      checked={enabledRetrievalMethods.includes(method)}
+                      onCheckedChange={checked =>
+                        handleRetrievalMethodToggle(method, checked as boolean)
+                      }
+                      disabled={
+                        // Disable unchecking if it's the only enabled method
+                        enabledRetrievalMethods.length === 1 &&
+                        enabledRetrievalMethods.includes(method)
+                      }
+                    />
+                    <Label
+                      htmlFor={`retrieval-method-${method}`}
+                      className="text-sm font-normal cursor-pointer"
+                    >
+                      {t(RETRIEVAL_METHOD_LABELS[method] || method)}
+                    </Label>
+                  </div>
+                ))
+              )}
+            </div>
+            <p className="text-xs text-text-muted">{t('retrievers.retrieval_methods_hint')}</p>
+          </div>
         </div>
 
         <DialogFooter className="flex items-center justify-between sm:justify-between">
