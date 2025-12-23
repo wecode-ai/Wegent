@@ -30,6 +30,8 @@ interface ChatInputProps {
   team?: Team | null;
   // Callback when file is pasted (e.g., image from clipboard)
   onPasteFile?: (file: File) => void;
+  // URL parser callback - called when text changes for URL detection
+  onTextChange?: (text: string) => void;
 }
 
 export default function ChatInput({
@@ -45,6 +47,7 @@ export default function ChatInput({
   isGroupChat = false,
   team = null,
   onPasteFile,
+  onTextChange,
 }: ChatInputProps) {
   const { t, i18n } = useTranslation('chat');
 
@@ -247,6 +250,11 @@ export default function ChatInput({
       setMessage(text);
       setShowPlaceholder(!text);
 
+      // Notify parent of text change for URL parsing
+      if (onTextChange) {
+        onTextChange(text);
+      }
+
       // Check for @ trigger in group chat mode
       if (isGroupChat && team) {
         const lastChar = text[text.length - 1];
@@ -284,7 +292,7 @@ export default function ChatInput({
         }
       }
     },
-    [disabled, setMessage, getTextWithNewlines, isGroupChat, team, showMentionMenu]
+    [disabled, setMessage, getTextWithNewlines, isGroupChat, team, showMentionMenu, onTextChange]
   );
 
   // Handle mention selection

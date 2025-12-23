@@ -1730,3 +1730,77 @@ async def get_search_engines(
         "enabled": True,
         "engines": engines,
     }
+
+
+class ParseUrlsRequest(BaseModel):
+    """Request body for parsing URLs."""
+
+    urls: list[str]
+
+
+class ParsedUrlResponse(BaseModel):
+    """Response for a single parsed URL."""
+
+    url: str
+    type: str
+    title: Optional[str] = None
+    content: Optional[str] = None
+    truncated: bool = False
+    error: Optional[str] = None
+    size: Optional[int] = None
+
+
+class ParseUrlsResponse(BaseModel):
+    """Response body for parsed URLs."""
+
+    results: list[ParsedUrlResponse]
+
+
+@router.post("/parse-urls", response_model=ParseUrlsResponse)
+async def parse_urls(
+    request: ParseUrlsRequest,
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Parse URLs and extract their content.
+
+    Supports:
+    - Webpages: Converted to Markdown
+    - Images: Converted to base64 data URL
+    - PDFs: Text content extracted
+
+    Args:
+        request: ParseUrlsRequest with list of URLs
+
+    Returns:
+        ParseUrlsResponse with parsed content for each URL
+    """
+    from app.services.chat.url_parser import url_parser
+
+    # Limit number of URLs to prevent abuse
+    max_urls = 5
+    if len(request.urls) > max_urls:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many URLs. Maximum {max_urls} URLs allowed per request.",
+        )
+
+    # Parse all URLs
+    results = await url_parser.parse_urls(request.urls)
+
+    # Convert to response format
+    response_results = []
+    for result in results:
+        response_results.append(
+            ParsedUrlResponse(
+                url=result.url,
+                type=result.type.value,
+                title=result.title,
+                content=result.content,
+                truncated=result.truncated,
+                error=result.error,
+                size=result.size,
+            )
+        )
+
+    return ParseUrlsResponse(results=response_results)

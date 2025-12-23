@@ -292,5 +292,19 @@
   "common": {
     "cancel": "Cancel",
     "close": "Close"
+  },
+  "urlPreview": {
+    "title": "Parsed Links",
+    "loading": "loading",
+    "parsed": "parsed",
+    "failed": "failed",
+    "expand": "Expand",
+    "collapse": "Collapse",
+    "remove": "Remove",
+    "truncated": "truncated",
+    "typeWebpage": "Webpage",
+    "typeImage": "Image",
+    "typePdf": "PDF",
+    "typeUnknown": "Unknown"
   }
 }

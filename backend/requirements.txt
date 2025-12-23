@@ -101,6 +101,10 @@ pillow>=10.0.0
 emoji>=2.8.0
 beautifulsoup4>=4.12.0
 
+# URL parsing for Chat Shell
+html2text>=2024.2.26
+pypdf>=4.0.0
+
 # RAG (Retrieval-Augmented Generation) dependencies
 llama-index-core>=0.12.0
 llama-index-vector-stores-elasticsearch>=0.4.0

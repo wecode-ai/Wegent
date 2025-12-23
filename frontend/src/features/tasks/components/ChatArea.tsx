@@ -42,6 +42,8 @@ import { useAttachment } from '@/hooks/useAttachment';
 import { chatApis, SearchEngine } from '@/apis/chat';
 import { GroupChatSyncManager } from './group-chat';
 import type { SubtaskWithSender } from '@/apis/group-chat';
+import UrlPreview from './UrlPreview';
+import { useUrlParser } from '../hooks/useUrlParser';
 
 const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18;
 
@@ -259,6 +261,16 @@ export default function ChatArea({
     isReadyToSend: isAttachmentReadyToSend,
   } = useAttachment();
 
+  // URL parser state - for Chat Shell only
+  const {
+    state: urlParserState,
+    parseUrlsFromText,
+    removeUrl: removeUrlFromParser,
+    clearAll: clearAllUrls,
+    getParsedUrlsArray,
+    hasValidUrls,
+  } = useUrlParser();
+
   // Memoize the params change handler to prevent infinite re-renders
   const handleExternalApiParamsChange = useCallback((params: Record<string, string>) => {
     setExternalApiParams(params);
@@ -268,6 +280,16 @@ export default function ChatArea({
   const handleAppModeChange = useCallback((mode: string | undefined) => {
     setAppMode(mode);
   }, []);
+
+  // Handle text change for URL parsing - only for Chat Shell
+  const handleTextChangeForUrlParsing = useCallback(
+    (text: string) => {
+      if (selectedTeam && isChatShell(selectedTeam)) {
+        parseUrlsFromText(text);
+      }
+    },
+    [selectedTeam, parseUrlsFromText]
+  );
 
   const chatAreaRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -1010,6 +1032,8 @@ export default function ChatArea({
       setTaskInputMessage('');
       // Reset attachment immediately after sending (clear from input area)
       resetAttachment();
+      // Clear parsed URLs after sending
+      clearAllUrls();
 
       // When default model is selected, don't pass model_id (use bot's predefined model)
       const modelId = selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.name;
@@ -1021,6 +1045,33 @@ export default function ChatArea({
         // Backend will extract these parameters for external API calls
         const paramsJson = JSON.stringify(externalApiParams);
         finalMessage = `[EXTERNAL_API_PARAMS]${paramsJson}[/EXTERNAL_API_PARAMS]\n${message}`;
+      }
+
+      // Add URL context if there are parsed URLs (for Chat Shell only)
+      if (hasValidUrls && selectedTeam && isChatShell(selectedTeam)) {
+        const parsedUrls = getParsedUrlsArray();
+        const urlContextParts: string[] = [];
+
+        for (const urlResult of parsedUrls) {
+          if (!urlResult.isLoading && !urlResult.error && urlResult.content) {
+            if (urlResult.type === 'image') {
+              // For images, we need to handle differently (multimodal)
+              // For now, include the base64 data URL in context
+              urlContextParts.push(
+                `[URL Context]\nSource: ${urlResult.url}\nType: image\n[Image data embedded]\n[/URL Context]`
+              );
+            } else {
+              // For webpages and PDFs, include text content
+              urlContextParts.push(
+                `[URL Context]\nSource: ${urlResult.url}\nType: ${urlResult.type}${urlResult.title ? `\nTitle: ${urlResult.title}` : ''}\nContent:\n---\n${urlResult.content}\n---\n[/URL Context]`
+              );
+            }
+          }
+        }
+
+        if (urlContextParts.length > 0) {
+          finalMessage = urlContextParts.join('\n\n') + '\n\n' + finalMessage;
+        }
       }
 
       try {
@@ -1180,6 +1231,9 @@ export default function ChatArea({
       markTaskAsViewed,
       user?.id,
       user?.user_name,
+      clearAllUrls,
+      hasValidUrls,
+      getParsedUrlsArray,
     ]
   );
 
@@ -1474,6 +1528,16 @@ export default function ChatArea({
                       />
                     </div>
                   )}
+                  {/* URL Preview - show parsed URLs above chat input (Chat Shell only) */}
+                  {isChatShell(selectedTeam) && getParsedUrlsArray().length > 0 && (
+                    <div className="px-3 pt-2">
+                      <UrlPreview
+                        parsedUrls={getParsedUrlsArray()}
+                        onRemove={removeUrlFromParser}
+                        disabled={isLoading || isStreaming}
+                      />
+                    </div>
+                  )}
                   {/* Chat Input with inline badge */}
                   {!shouldHideChatInput && (
                     <div className="px-3 pt-2">
@@ -1494,6 +1558,7 @@ export default function ChatArea({
                             ? handleFileSelect
                             : undefined
                         }
+                        onTextChange={handleTextChangeForUrlParsing}
                       />
                     </div>
                   )}
@@ -1725,6 +1790,16 @@ export default function ChatArea({
                     />
                   </div>
                 )}
+                {/* URL Preview - show parsed URLs above chat input (Chat Shell only) */}
+                {isChatShell(selectedTeam) && getParsedUrlsArray().length > 0 && (
+                  <div className="px-3 pt-2">
+                    <UrlPreview
+                      parsedUrls={getParsedUrlsArray()}
+                      onRemove={removeUrlFromParser}
+                      disabled={isLoading || isStreaming}
+                    />
+                  </div>
+                )}
                 {/* Chat Input - hide for workflow mode */}
                 {!shouldHideChatInput && (
                   <div className="px-3 pt-2">
@@ -1744,6 +1819,7 @@ export default function ChatArea({
                           ? handleFileSelect
                           : undefined
                       }
+                      onTextChange={handleTextChangeForUrlParsing}
                     />
                   </div>
                 )}

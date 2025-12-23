@@ -291,5 +291,19 @@
   "common": {
     "cancel": "取消",
     "close": "关闭"
+  },
+  "urlPreview": {
+    "title": "已解析的链接",
+    "loading": "解析中",
+    "parsed": "已解析",
+    "failed": "解析失败",
+    "expand": "展开",
+    "collapse": "收起",
+    "remove": "移除",
+    "truncated": "已截断",
+    "typeWebpage": "网页",
+    "typeImage": "图片",
+    "typePdf": "PDF",
+    "typeUnknown": "未知"
   }
 }
