@@ -59,7 +59,7 @@ export async function POST(request: NextRequest): Promise<Response> {
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(`[OTLP Proxy] Collector error: ${response.status} - ${errorText}`);
+      console.error(`[OTLP Proxy] Collector error: ${response.status} - ${errorText}, OTEL_COLLECTOR_ENDPOINT: ${OTEL_COLLECTOR_ENDPOINT}`);
       return NextResponse.json(
         { error: 'Failed to send traces to collector' },
         { status: response.status }
@@ -70,7 +70,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     return NextResponse.json({ success: true }, { status: 200 });
   } catch (error) {
     // Log the error but don't expose internal details
-    console.error('[OTLP Proxy] Error forwarding traces:', error);
+    console.error(`[OTLP Proxy] OTEL_COLLECTOR_ENDPOINT: ${OTEL_COLLECTOR_ENDPOINT}, Error forwarding traces:`, error);
 
     // Return a generic error response
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
