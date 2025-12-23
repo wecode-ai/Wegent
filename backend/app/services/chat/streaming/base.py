@@ -16,6 +16,7 @@ Both SSE and WebSocket streaming use this core logic.
 
 import asyncio
 import logging
+import threading
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -30,13 +31,16 @@ logger = logging.getLogger(__name__)
 
 # Semaphore for concurrent chat limit (lazy initialized)
 _chat_semaphore: asyncio.Semaphore | None = None
+_semaphore_lock = threading.Lock()
 
 
 def get_chat_semaphore() -> asyncio.Semaphore:
     """Get or create the chat semaphore for concurrency limiting."""
     global _chat_semaphore
     if _chat_semaphore is None:
-        _chat_semaphore = asyncio.Semaphore(settings.MAX_CONCURRENT_CHATS)
+        with _semaphore_lock:
+            if _chat_semaphore is None:
+                _chat_semaphore = asyncio.Semaphore(settings.MAX_CONCURRENT_CHATS)
     return _chat_semaphore
 
 
@@ -168,21 +172,22 @@ class StreamingCore:
 
     async def release_resources(self) -> None:
         """Release all acquired resources."""
-        # Unregister stream
-        await storage_handler.unregister_stream(self.state.subtask_id)
+        try:
+            # Unregister stream
+            await storage_handler.unregister_stream(self.state.subtask_id)
 
-        # Delete streaming content cache
-        await storage_handler.delete_streaming_content(self.state.subtask_id)
+            # Delete streaming content cache
+            await storage_handler.delete_streaming_content(self.state.subtask_id)
 
-        # Disconnect MCP client if present
-        if self._mcp_client:
-            await self._mcp_client.disconnect()
-            self._mcp_client = None
-
-        # Release semaphore
-        if self._acquired:
-            self._semaphore.release()
-            self._acquired = False
+            # Disconnect MCP client if present
+            if self._mcp_client:
+                await self._mcp_client.disconnect()
+                self._mcp_client = None
+        finally:
+            # Release semaphore
+            if self._acquired:
+                self._semaphore.release()
+                self._acquired = False
 
     def is_cancelled(self) -> bool:
         """Check if streaming has been cancelled."""

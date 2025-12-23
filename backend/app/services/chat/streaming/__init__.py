@@ -14,7 +14,7 @@ from .base import (
     truncate_list_keep_ends,
 )
 from .emitters import SSEEmitter, StreamEmitter, WebSocketEmitter
-from .global_emitter import get_ws_emitter, init_ws_emitter
+from .global_emitter import get_main_event_loop, get_ws_emitter, init_ws_emitter
 
 __all__ = [
     "StreamingCore",
@@ -26,4 +26,5 @@ __all__ = [
     "truncate_list_keep_ends",
     "get_ws_emitter",
     "init_ws_emitter",
+    "get_main_event_loop",
 ]

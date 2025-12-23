@@ -49,7 +49,7 @@ def _detect_provider(model_type: str, model_id: str) -> str:
     # Fall back to model_id prefix detection
     model_lower = model_id.lower()
     for prefixes, provider in _PROVIDER_PATTERNS:
-        if any(p in model_lower for p in prefixes):
+        if any(model_lower.startswith(p.lower()) for p in prefixes):
             return provider
 
     # Default to OpenAI for unknown models (common for OpenAI-compatible APIs)
@@ -207,7 +207,7 @@ class LangChainModelFactory:
         """
         model_lower = model_id.lower()
         for prefixes, provider in _PROVIDER_PATTERNS:
-            if any(p in model_lower for p in prefixes):
+            if any(model_lower.startswith(p.lower()) for p in prefixes):
                 return provider
         return None
 

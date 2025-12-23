@@ -53,7 +53,7 @@ async def lifespan(app: FastAPI):
 
     # ==================== STARTUP ====================
     # Initialize chat service HTTP client
-    from app.services.chat.base import get_http_client
+    from app.services.chat.utils.http import get_http_client
 
     await get_http_client()
     logger.info("✓ Chat service HTTP client initialized")
@@ -230,7 +230,7 @@ async def lifespan(app: FastAPI):
     # Note: Chat namespace is already registered in create_socketio_asgi_app()
     logger.info("Initializing Socket.IO...")
     from app.core.socketio import get_sio
-    from app.services.chat.ws_emitter import init_ws_emitter
+    from app.services.chat.streaming import init_ws_emitter
 
     sio = get_sio()
     init_ws_emitter(sio)
@@ -282,7 +282,7 @@ async def lifespan(app: FastAPI):
         logger.info("No active streams, proceeding with shutdown")
 
     # Step 3: Close chat service HTTP client
-    from app.services.chat.base import close_http_client
+    from app.services.chat.utils.http import close_http_client
 
     await close_http_client()
     logger.info("✓ Chat service HTTP client closed")
