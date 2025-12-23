@@ -42,8 +42,6 @@ export async function POST(request: NextRequest): Promise<Response> {
     return NextResponse.json({ message: 'Telemetry is disabled' }, { status: 200 });
   }
 
-  console.log('[OTLP Proxy] Forwarding traces to collector at', OTEL_COLLECTOR_ENDPOINT);
-
   try {
     // Get the raw body as ArrayBuffer to preserve binary data (protobuf)
     const body = await request.arrayBuffer();
