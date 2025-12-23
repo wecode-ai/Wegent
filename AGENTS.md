@@ -675,7 +675,7 @@ wegent/
 │   │   ├── core/         # Config, security, cache, YAML init
 │   │   ├── models/       # SQLAlchemy models (Kind, User, Subtask, Namespace, NamespaceMember, SharedTeam, SharedTask, SkillBinary, SubtaskAttachment)
 │   │   ├── schemas/      # Pydantic schemas & CRD definitions (namespace.py, namespace_member.py)
-│   │   ├── services/     # Business logic (chat/, adapters/, search/, langgraph_chat/, kind.py, repository.py, group_service.py, group_permission.py)
+│   │   ├── services/     # Business logic (chat/, adapters/, search/, kind.py, repository.py, group_service.py, group_permission.py)
 │   │   └── repository/   # Git providers (GitHub, GitLab, Gitee, Gerrit)
 │   ├── alembic/          # Database migrations
 │   └── init_data/        # YAML initialization data
@@ -780,7 +780,7 @@ Task (Team + Workspace) → Subtasks (messages/steps)
 **Key directories:**
 - `app/api/` - Route handlers
 - `app/services/adapters/` - CRD service implementations
-- `app/services/chat/` - Streaming chat with model resolver
+- `app/services/chat/` - Chat service (LangGraph-based) with streaming and tools
 - `app/services/attachment/` - File attachment storage with pluggable backends
 - `app/services/rag/` - RAG (Retrieval-Augmented Generation) services
 - `app/repository/` - Git providers (GitHub, GitLab, Gitee, Gerrit)
@@ -973,7 +973,7 @@ POST /api/rag/test-connection?retriever_name=my-es-retriever&retriever_namespace
 - `WEB_SEARCH_*` - Web search configuration (see `backend/app/services/search/README.md`)
   - `WEB_SEARCH_ENABLED` - Enable/disable web search feature (default: false)
   - `WEB_SEARCH_ENGINES` - JSON string containing adapter configuration
-- `CHAT_MCP_*` - MCP (Model Context Protocol) configuration for Chat Shell (see `backend/app/services/chat/tools/README.md`)
+- `CHAT_MCP_*` - MCP (Model Context Protocol) configuration for Chat Shell
   - `CHAT_MCP_ENABLED` - Enable/disable MCP tools in Chat Shell mode (default: false)
   - `CHAT_MCP_SERVERS` - JSON configuration for MCP servers (similar to Claude Desktop format)
     - Supported server types: `stdio`, `sse`, `streamable-http`
@@ -981,6 +981,7 @@ POST /api/rag/test-connection?retriever_name=my-es-retriever&retriever_namespace
 - `CHAT_TOOL_*` - Tool calling flow limits for Chat Shell
   - `CHAT_TOOL_MAX_REQUESTS` - Maximum LLM requests in tool calling flow (default: 5)
   - `CHAT_TOOL_MAX_TIME_SECONDS` - Maximum time for tool calling flow in seconds (default: 30.0)
+- `CHAT_MAX_IMAGE_SIZE_MB` - Maximum image size for vision messages in MB (default: 10). Images larger than this will be automatically compressed.
 - `GROUP_CHAT_HISTORY_*` - Group chat history truncation configuration
   - `GROUP_CHAT_HISTORY_FIRST_MESSAGES` - Number of first messages to keep for AI context (default: 10)
   - `GROUP_CHAT_HISTORY_LAST_MESSAGES` - Number of last messages to keep for AI context (default: 20)
