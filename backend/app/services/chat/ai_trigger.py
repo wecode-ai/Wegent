@@ -115,6 +115,7 @@ async def _trigger_direct_chat(
         {
             "task_id": task.id,
             "subtask_id": assistant_subtask.id,
+            "message_id": assistant_subtask.message_id,
         },
         room=task_room,
     )
@@ -142,6 +143,7 @@ async def _trigger_direct_chat(
         _stream_chat_response(
             task_data=task_data,
             subtask_id=assistant_subtask.id,
+            message_id=assistant_subtask.message_id,
             team_data=team_data,
             user_data=user_data,
             message=message,
@@ -157,6 +159,7 @@ async def _trigger_direct_chat(
 async def _stream_chat_response(
     task_data: dict[str, Any],
     subtask_id: int,
+    message_id: int,
     team_data: dict[str, Any],
     user_data: dict[str, Any],
     message: str,
@@ -239,6 +242,7 @@ async def _stream_chat_response(
             is_group_chat=payload.is_group_chat,
             enable_web_search=payload.enable_web_search,
             search_engine=payload.search_engine,
+            message_id=message_id,
         )
 
         # Use LangGraphChatService for streaming

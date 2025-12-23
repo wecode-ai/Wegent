@@ -272,6 +272,31 @@ class DatabaseHandler:
         except Exception:
             logger.exception("Error saving partial response for subtask %s", subtask_id)
 
+    async def get_subtask_message_id(self, subtask_id: int) -> int | None:
+        """Get the message_id for a subtask.
+
+        Args:
+            subtask_id: The subtask ID
+
+        Returns:
+            The message_id if found, None otherwise
+        """
+        return await self._run_in_executor(
+            self._get_subtask_message_id_sync, subtask_id
+        )
+
+    def _get_subtask_message_id_sync(self, subtask_id: int) -> int | None:
+        """Synchronous get subtask message_id."""
+        from app.models.subtask import Subtask
+
+        try:
+            with _db_session() as db:
+                if subtask := db.get(Subtask, subtask_id):
+                    return subtask.message_id
+        except Exception:
+            logger.exception("Error getting message_id for subtask %s", subtask_id)
+        return None
+
 
 # Global database handler instance
 db_handler = DatabaseHandler()

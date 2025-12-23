@@ -53,6 +53,7 @@ class StreamEmitter(ABC):
         subtask_id: int,
         offset: int,
         result: dict[str, Any],
+        message_id: int | None = None,
     ) -> None:
         """Emit stream completion event."""
         pass
@@ -97,6 +98,7 @@ class SSEEmitter(StreamEmitter):
         subtask_id: int,
         offset: int,
         result: dict[str, Any],
+        message_id: int | None = None,
     ) -> None:
         """Emit done event as SSE data."""
         self._events.append(
@@ -173,6 +175,7 @@ class WebSocketEmitter(StreamEmitter):
         subtask_id: int,
         offset: int,
         result: dict[str, Any],
+        message_id: int | None = None,
     ) -> None:
         """Emit chat:done event."""
         from app.api.ws.events import ServerEvents
@@ -184,10 +187,11 @@ class WebSocketEmitter(StreamEmitter):
                 "subtask_id": subtask_id,
                 "offset": offset,
                 "result": result,
+                "message_id": message_id,
             },
             room=self.task_room,
         )
-        logger.info("[WS_EMITTER] chat:done emitted")
+        logger.info("[WS_EMITTER] chat:done emitted message_id=%s", message_id)
 
     async def emit_error(self, subtask_id: int, error: str) -> None:
         """Emit chat:error event."""

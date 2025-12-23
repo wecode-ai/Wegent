@@ -114,9 +114,11 @@ class LangChainModelFactory:
             "params": lambda cfg, kw: {
                 "model": cfg["model_id"],
                 "google_api_key": cfg["api_key"],
+                "base_url": cfg.get("base_url") or None,
                 "temperature": kw.get("temperature", 1.0),
-                "max_tokens": kw.get("max_tokens"),
+                "max_output_tokens": kw.get("max_tokens"),
                 "streaming": kw.get("streaming", False),
+                "additional_headers": cfg.get("headers") or None,
             },
         },
     }

@@ -62,6 +62,7 @@ class WebSocketStreamConfig:
     enable_web_search: bool = False
     search_engine: str | None = None
     extra_tools: list[BaseTool] = field(default_factory=list)
+    message_id: int | None = None  # Message ID for ordering in frontend
 
 
 # SSE response headers
@@ -417,6 +418,7 @@ class LangGraphChatService:
             enable_web_search=config.enable_web_search,
             search_engine=config.search_engine,
             extra_tools=list(config.extra_tools),
+            message_id=config.message_id,
         )
 
         # Create streaming core

@@ -56,6 +56,7 @@ class StreamingState:
     enable_web_search: bool = False
     search_engine: str | None = None
     extra_tools: list[BaseTool] = field(default_factory=list)
+    message_id: int | None = None  # Message ID for ordering in frontend
 
     # Runtime state
     full_response: str = ""
@@ -281,10 +282,11 @@ class StreamingCore:
             result,
         )
 
-        # Append messages to chat history
-        await storage_handler.append_messages(
+        # Append assistant message to chat history
+        # Note: User message is already saved before streaming starts
+        await storage_handler.append_message(
             self.state.task_id,
-            "",  # User message already saved
+            "assistant",
             self.state.full_response,
         )
 
@@ -295,12 +297,20 @@ class StreamingCore:
             result=result,
         )
 
-        # Emit done event
+        # Use message_id from state if available, otherwise fetch from DB
+        message_id = self.state.message_id
+        if message_id is None:
+            message_id = await storage_handler.get_subtask_message_id(
+                self.state.subtask_id
+            )
+
+        # Emit done event with message_id for proper ordering
         await self.emitter.emit_done(
             self.state.task_id,
             self.state.subtask_id,
             self.state.offset,
             result,
+            message_id=message_id,
         )
 
         return result
