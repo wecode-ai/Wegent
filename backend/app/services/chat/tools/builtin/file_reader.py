@@ -55,7 +55,7 @@ class FileReaderSkill(BaseTool):
 
     def __init__(
         self, workspace_root: str = "/workspace", max_lines: int = 500, **kwargs
-    ):
+    ) -> None:
         super().__init__(**kwargs)
         self.workspace_root = workspace_root
         self.max_lines = max_lines
@@ -132,7 +132,7 @@ class FileListSkill(BaseTool):
 
     workspace_root: str = "/workspace"
 
-    def __init__(self, workspace_root: str = "/workspace", **kwargs):
+    def __init__(self, workspace_root: str = "/workspace", **kwargs) -> None:
         super().__init__(**kwargs)
         self.workspace_root = workspace_root
 

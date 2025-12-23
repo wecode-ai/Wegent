@@ -107,7 +107,13 @@ class MessageConverter:
             while quality > 10:
                 output.seek(0)
                 output.truncate()
-                img.save(output, format=fmt, quality=quality)
+
+                if fmt in ("JPEG", "WEBP"):
+                    img.save(output, format=fmt, quality=quality)
+                else:
+                    # For PNG and others, quality param is ignored, try optimize
+                    img.save(output, format=fmt, optimize=True)
+
                 compressed_data = output.getvalue()
 
                 if len(compressed_data) <= MAX_IMAGE_SIZE_BYTES:
@@ -119,6 +125,11 @@ class MessageConverter:
 
                 quality -= 10
 
+                # For non-quality formats (like PNG), quality loop is ineffective
+                # so we break after first attempt (with optimize=True) and move to resizing
+                if fmt not in ("JPEG", "WEBP"):
+                    break
+
             # If still too big, resize
             width, height = img.size
             ratio = 0.8
@@ -129,7 +140,12 @@ class MessageConverter:
 
                 output.seek(0)
                 output.truncate()
-                img.save(output, format=fmt, quality=quality)
+
+                if fmt in ("JPEG", "WEBP"):
+                    img.save(output, format=fmt, quality=quality)
+                else:
+                    img.save(output, format=fmt, optimize=True)
+
                 compressed_data = output.getvalue()
 
             final_size = len(compressed_data)
