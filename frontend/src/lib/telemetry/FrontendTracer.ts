@@ -14,8 +14,11 @@
  * Use the `useTraceAction` hook or `traceLocalAction` function to manually
  * trace meaningful user actions with proper context and attributes.
  *
- * Traces are sent to /api/otlp/traces (same origin) to avoid CORS issues,
+ * Traces are sent to /otlp/traces (same origin) to avoid CORS issues,
  * which then proxies to the OTEL Collector.
+ *
+ * NOTE: We use /otlp prefix instead of /api/otlp to avoid conflict with
+ * the /api/* rewrite rule in next.config.js that proxies to backend.
  */
 
 import {
@@ -43,7 +46,7 @@ let isInitialized = false;
 export interface FrontendTracerConfig {
   /** Service name for traces (default: wegent-frontend) */
   serviceName?: string;
-  /** OTLP endpoint URL (default: /api/otlp/traces) */
+  /** OTLP endpoint URL (default: /otlp/traces) */
   otlpEndpoint?: string;
   /** Batch delay in milliseconds (default: 500) */
   batchDelayMs?: number;
@@ -78,7 +81,7 @@ const DEFAULT_IGNORE_URLS: RegExp[] = [
  */
 const defaultConfig: Required<FrontendTracerConfig> = {
   serviceName: process.env.NEXT_PUBLIC_OTEL_SERVICE_NAME || 'wegent-frontend',
-  otlpEndpoint: '/api/otlp/traces',
+  otlpEndpoint: '/otlp/traces',
   batchDelayMs: 500,
   traceFetch: true,
   traceDocumentLoad: true,
