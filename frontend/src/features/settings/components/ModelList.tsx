@@ -188,9 +188,13 @@ const ModelList: React.FC<ModelListProps> = ({
     return role === 'Owner' || role === 'Maintainer';
   };
 
-  const canCreateInAnyGroup =
-    groupRoleMap &&
-    Array.from(groupRoleMap.values()).some(role => role === 'Owner' || role === 'Maintainer');
+  // Check if user can create in the current group context
+  // When scope is 'group', check the specific groupName; only Owner/Maintainer can create
+  const canCreateInCurrentGroup = (() => {
+    if (scope !== 'group' || !groupName || !groupRoleMap) return false;
+    const role = groupRoleMap.get(groupName);
+    return role === 'Owner' || role === 'Maintainer';
+  })();
   // Convert DisplayModel to ModelCRD for editing
   const convertToModelCRD = (displayModel: DisplayModel): ModelCRD => {
     const env = (displayModel.config?.env as Record<string, unknown>) || {};
@@ -619,7 +623,7 @@ const ModelList: React.FC<ModelListProps> = ({
         )}
 
         {/* Add Button */}
-        {!loading && (scope === 'personal' || canCreateInAnyGroup) && (
+        {!loading && (scope === 'personal' || canCreateInCurrentGroup) && (
           <div className="border-t border-border pt-3 mt-3 bg-base">
             <div className="flex justify-center">
               <UnifiedAddButton onClick={handleCreate}>{t('models.create')}</UnifiedAddButton>

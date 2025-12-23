@@ -50,12 +50,19 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 interface TeamListProps {
   scope?: 'personal' | 'group' | 'all';
   groupName?: string;
+  groupRoleMap?: Map<string, 'Owner' | 'Maintainer' | 'Developer' | 'Reporter'>;
+  onEditResource?: (namespace: string) => void;
 }
 
 // Mode filter type
 type ModeFilter = 'all' | 'chat' | 'code';
 
-export default function TeamList({ scope = 'personal', groupName }: TeamListProps) {
+export default function TeamList({
+  scope = 'personal',
+  groupName,
+  groupRoleMap,
+  onEditResource,
+}: TeamListProps) {
   const { t } = useTranslation('common');
   const { toast } = useToast();
   const [teams, setTeams] = useState<Team[]>([]);
@@ -146,6 +153,10 @@ export default function TeamList({ scope = 'personal', groupName }: TeamListProp
   };
 
   const handleEditTeam = (team: Team) => {
+    // Notify parent to update group selector if editing a group resource
+    if (onEditResource && team.namespace && team.namespace !== 'default') {
+      onEditResource(team.namespace);
+    }
     setPrefillTeam(null);
     setEditingTeamId(team.id);
     setEditDialogOpen(true);
@@ -240,6 +251,32 @@ export default function TeamList({ scope = 'personal', groupName }: TeamListProp
       return bindMode.includes(modeFilter);
     });
   }, [teams, modeFilter]);
+
+  // Helper function to check if a team is a group resource
+  const isGroupTeam = (team: Team) => {
+    return team.namespace && team.namespace !== 'default';
+  };
+
+  // Helper function to check permissions for a specific group resource
+  const canEditGroupResource = (namespace: string) => {
+    if (!groupRoleMap) return false;
+    const role = groupRoleMap.get(namespace);
+    return role === 'Owner' || role === 'Maintainer' || role === 'Developer';
+  };
+
+  const canDeleteGroupResource = (namespace: string) => {
+    if (!groupRoleMap) return false;
+    const role = groupRoleMap.get(namespace);
+    return role === 'Owner' || role === 'Maintainer';
+  };
+
+  // Check if user can create in the current group context
+  // When scope is 'group', check the specific groupName; only Owner/Maintainer can create
+  const canCreateInCurrentGroup = (() => {
+    if (scope !== 'group' || !groupName || !groupRoleMap) return false;
+    const role = groupRoleMap.get(groupName);
+    return role === 'Owner' || role === 'Maintainer';
+  })();
 
   const handleDelete = async (teamId: number) => {
     setTeamToDelete(teamId);
@@ -354,12 +391,24 @@ export default function TeamList({ scope = 'personal', groupName }: TeamListProp
 
   // Check if edit button should be shown
   const shouldShowEdit = (team: Team) => {
-    return team.share_status !== 2; // Shared teams don't show edit button
+    // Shared teams don't show edit button
+    if (team.share_status === 2) return false;
+    // For group teams, check group permissions
+    if (isGroupTeam(team)) {
+      return canEditGroupResource(team.namespace!);
+    }
+    // For personal teams, always show
+    return true;
   };
 
   // Check if delete/unbind button should be shown
-  const shouldShowDelete = (_team: Team) => {
-    return true; // All teams show delete/unbind button
+  const shouldShowDelete = (team: Team) => {
+    // For group teams, check group permissions
+    if (isGroupTeam(team)) {
+      return canDeleteGroupResource(team.namespace!);
+    }
+    // For personal teams, always show
+    return true;
   };
 
   // Check if this is a shared team (need to show "unbind" instead of "delete")
@@ -369,7 +418,20 @@ export default function TeamList({ scope = 'personal', groupName }: TeamListProp
 
   // Check if share button should be shown
   const shouldShowShare = (team: Team) => {
-    return !team.share_status || team.share_status === 0 || team.share_status === 1; // Personal teams (no share_status or share_status=0) show share button
+    // Group teams don't support sharing (for now)
+    if (isGroupTeam(team)) return false;
+    // Personal teams (no share_status or share_status=0 or share_status=1) show share button
+    return !team.share_status || team.share_status === 0 || team.share_status === 1;
+  };
+
+  // Check if copy button should be shown (same permission as create)
+  const shouldShowCopy = (team: Team) => {
+    // For group teams, check group permissions (need create permission)
+    if (isGroupTeam(team)) {
+      return canDeleteGroupResource(team.namespace!); // Maintainer/Owner can create
+    }
+    // For personal teams, always show
+    return true;
   };
 
   return (
@@ -526,15 +588,17 @@ export default function TeamList({ scope = 'personal', groupName }: TeamListProp
                               <PencilIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                             </Button>
                           )}
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleCopyTeam(team)}
-                            title={t('teams.copy')}
-                            className="h-7 w-7 sm:h-8 sm:w-8"
-                          >
-                            <DocumentDuplicateIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                          </Button>
+                          {shouldShowCopy(team) && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleCopyTeam(team)}
+                              title={t('teams.copy')}
+                              className="h-7 w-7 sm:h-8 sm:w-8"
+                            >
+                              <DocumentDuplicateIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                            </Button>
+                          )}
                           <Button
                             variant="ghost"
                             size="icon"
@@ -584,22 +648,26 @@ export default function TeamList({ scope = 'personal', groupName }: TeamListProp
               </div>
               <div className="border-t border-border pt-3 mt-3 bg-base">
                 <div className="flex justify-center gap-3">
-                  <UnifiedAddButton onClick={handleCreateTeam}>
-                    {t('teams.new_team')}
-                  </UnifiedAddButton>
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button variant="primary" onClick={handleOpenWizard} className="gap-2">
-                          <SparklesIcon className="w-4 h-4" />
-                          {t('wizard.wizard_button')}
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>{t('wizard.wizard_button_tooltip')}</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
+                  {(scope === 'personal' || canCreateInCurrentGroup) && (
+                    <UnifiedAddButton onClick={handleCreateTeam}>
+                      {t('teams.new_team')}
+                    </UnifiedAddButton>
+                  )}
+                  {(scope === 'personal' || canCreateInCurrentGroup) && (
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button variant="primary" onClick={handleOpenWizard} className="gap-2">
+                            <SparklesIcon className="w-4 h-4" />
+                            {t('wizard.wizard_button')}
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>{t('wizard.wizard_button_tooltip')}</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  )}
                   <UnifiedAddButton
                     variant="outline"
                     onClick={() => setBotListVisible(true)}
@@ -778,7 +846,7 @@ export default function TeamList({ scope = 'personal', groupName }: TeamListProp
             <DialogDescription>{t('bots.description')}</DialogDescription>
           </DialogHeader>
           <div className="flex-1 overflow-y-auto">
-            <BotList scope={scope} groupName={groupName} />
+            <BotList scope={scope} groupName={groupName} groupRoleMap={groupRoleMap} />
           </div>
         </DialogContent>
       </Dialog>

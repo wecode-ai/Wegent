@@ -104,21 +104,29 @@ def _task_to_response_object(
     output = []
     if subtasks:
         for subtask in subtasks:
-            # Only include assistant messages in output
-            if subtask.role == SubtaskRole.ASSISTANT and subtask.result:
+            if subtask.role == SubtaskRole.USER:
+                msg = OutputMessage(
+                    id=f"msg_{subtask.id}",
+                    status=_subtask_status_to_message_status(subtask.status.value),
+                    content=[OutputTextContent(text=subtask.prompt)],
+                    role="user",
+                )
+                output.append(msg)
+
+            if subtask.role == SubtaskRole.ASSISTANT:
                 result_text = ""
                 if isinstance(subtask.result, dict):
-                    result_text = str(subtask.result)
+                    result_text = subtask.result.get("value", str(subtask.result))
                 elif isinstance(subtask.result, str):
                     result_text = subtask.result
 
-                if result_text:
-                    msg = OutputMessage(
-                        id=f"msg_{subtask.id}",
-                        status=_subtask_status_to_message_status(subtask.status.value),
-                        content=[OutputTextContent(text=result_text)],
-                    )
-                    output.append(msg)
+                msg = OutputMessage(
+                    id=f"msg_{subtask.id}",
+                    status=_subtask_status_to_message_status(subtask.status.value),
+                    content=[OutputTextContent(text=result_text)],
+                    role="assistant",
+                )
+                output.append(msg)
 
     # Build error if failed
     error = None
@@ -294,7 +302,7 @@ async def create_response(
                     Kind.name == bot_name,
                     Kind.namespace == bot_namespace,
                     Kind.kind == "Bot",
-                    Kind.user_id == current_user.id,
+                    Kind.user_id == team.user_id,
                     Kind.is_active == True,
                 )
                 .first()
@@ -347,9 +355,20 @@ async def create_response(
     if previous_task_id:
         prev_resp_id = f"resp_{previous_task_id}"
 
+    # Get subtasks for output
+    subtasks = (
+        db.query(Subtask)
+        .filter(
+            Subtask.task_id == task_dict.get("id"), Subtask.user_id == current_user.id
+        )
+        .order_by(Subtask.message_id.asc())
+        .all()
+    )
+
     return _task_to_response_object(
         task_dict,
         request_body.model,
+        subtasks,
         previous_response_id=prev_resp_id,
     )
 
