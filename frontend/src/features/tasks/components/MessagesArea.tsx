@@ -108,6 +108,7 @@ interface MessagesAreaProps {
   onContentChange?: () => void;
   onSendMessage?: (content: string) => void;
   isGroupChat?: boolean;
+  onRetry?: (message: Message) => void;
 }
 
 export default function MessagesArea({
@@ -118,6 +119,7 @@ export default function MessagesArea({
   onShareButtonRender,
   onSendMessage,
   isGroupChat = false,
+  onRetry,
 }: MessagesAreaProps) {
   const { t } = useTranslation('chat');
   const { t: tCommon } = useTranslation('common');
@@ -550,6 +552,8 @@ export default function MessagesArea({
       recoveredContent: msg.recoveredContent,
       isRecovered: msg.isRecovered,
       isIncomplete: msg.isIncomplete,
+      status: msg.status,
+      error: msg.error,
     };
   }, []);
 
@@ -603,6 +607,7 @@ export default function MessagesArea({
                 t={t}
                 onSendMessage={onSendMessage}
                 isCurrentUserMessage={isCurrentUserMessage}
+                onRetry={onRetry}
               />
             );
           })}

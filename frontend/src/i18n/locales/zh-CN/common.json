@@ -34,6 +34,9 @@
     "upload": "上传",
     "view": "查看"
   },
+  "errors": {
+    "request_failed": "请求大模型接口失败，请点击重试"
+  },
   "validation": {
     "required": "此字段为必填项",
     "max_length": "最大长度为 {{max}} 个字符"

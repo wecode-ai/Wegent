@@ -224,6 +224,15 @@ async def _stream_chat_response(
     full_response = ""
     mcp_session = None  # Initialize for cleanup in finally block
 
+    # Get subtask message_id for error events
+    subtask_message_id = None
+    try:
+        subtask = db.query(Subtask).filter(Subtask.id == subtask_id).first()
+        if subtask:
+            subtask_message_id = subtask.message_id
+    except Exception as e:
+        logger.warning(f"Failed to get subtask message_id: {e}")
+
     try:
         # Set base attributes (user and task info)
         span_manager.set_base_attributes(
@@ -260,7 +269,11 @@ async def _stream_chat_response(
 
             await namespace.emit(
                 ServerEvents.CHAT_ERROR,
-                {"subtask_id": subtask_id, "error": error_msg},
+                {
+                    "subtask_id": subtask_id,
+                    "error": error_msg,
+                    "message_id": subtask_message_id,
+                },
                 room=task_room,
             )
             return
@@ -406,7 +419,11 @@ async def _stream_chat_response(
 
             await namespace.emit(
                 ServerEvents.CHAT_ERROR,
-                {"subtask_id": subtask_id, "error": error_msg},
+                {
+                    "subtask_id": subtask_id,
+                    "error": error_msg,
+                    "message_id": subtask_message_id,
+                },
                 room=task_room,
             )
             return
@@ -484,6 +501,7 @@ async def _stream_chat_response(
                     {
                         "subtask_id": subtask_id,
                         "error": error_msg,
+                        "message_id": subtask_message_id,
                     },
                     room=task_room,
                 )
@@ -511,8 +529,6 @@ async def _stream_chat_response(
             )
 
             # Get message_id from database for proper message ordering
-            from app.models.subtask import Subtask
-
             subtask = db.query(Subtask).filter(Subtask.id == subtask_id).first()
             message_id = subtask.message_id if subtask else None
 
@@ -552,7 +568,11 @@ async def _stream_chat_response(
 
         await namespace.emit(
             ServerEvents.CHAT_ERROR,
-            {"subtask_id": subtask_id, "error": str(e)},
+            {
+                "subtask_id": subtask_id,
+                "error": str(e),
+                "message_id": subtask_message_id,
+            },
             room=task_room,
         )
     finally:

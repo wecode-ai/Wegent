@@ -34,6 +34,9 @@
     "upload": "Upload",
     "view": "View"
   },
+  "errors": {
+    "request_failed": "LLM API request failed, please click retry"
+  },
   "validation": {
     "required": "This field is required",
     "max_length": "Maximum length is {{max}} characters"

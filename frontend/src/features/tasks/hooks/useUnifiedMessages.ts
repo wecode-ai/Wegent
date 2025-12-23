@@ -273,6 +273,20 @@ export function useUnifiedMessages({
       return a.timestamp - b.timestamp;
     });
 
+    // Log messages with their messageId and status for debugging
+    console.log('[useUnifiedMessages] Message sorting:', {
+      taskId,
+      totalMessages: sortedMessages.length,
+      messages: sortedMessages.map(msg => ({
+        type: msg.type,
+        status: msg.status,
+        messageId: msg.messageId,
+        subtaskId: msg.subtaskId,
+        hasError: !!msg.error,
+        contentPreview: msg.content?.substring(0, 30),
+      })),
+    });
+
     return {
       messages: sortedMessages,
       // Compute isStreaming from messages - a task is streaming if any AI message has status='streaming'

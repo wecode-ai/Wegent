@@ -630,7 +630,20 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
    * Handle chat:error event from WebSocket
    */
   const handleChatError = useCallback((data: ChatErrorPayload) => {
-    const { subtask_id, error } = data;
+    const eventId = Math.random().toString(36).substr(2, 9);
+    console.log(
+      `[ChatStreamContext][chat:error][${eventId}] RAW data received:`,
+      data,
+      typeof data
+    );
+    const { subtask_id, error, message_id } = data;
+
+    console.log(`[ChatStreamContext][chat:error][${eventId}] Received error event:`, {
+      subtask_id,
+      error,
+      message_id,
+      hasMessageId: message_id !== undefined,
+    });
 
     // Find task ID from subtask
     let taskId = subtaskToTaskRef.current.get(subtask_id);
@@ -663,10 +676,28 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       const newMessages = new Map(currentState.messages);
       const existingMessage = newMessages.get(aiMessageId);
       if (existingMessage) {
-        newMessages.set(aiMessageId, {
+        const updatedMessage = {
           ...existingMessage,
-          status: 'error',
+          status: 'error' as const,
           error: error,
+          // Set messageId from backend for proper sorting
+          messageId: message_id,
+        };
+
+        console.log('[ChatStreamContext][chat:error] Updating AI message:', {
+          aiMessageId,
+          subtask_id,
+          oldMessageId: existingMessage.messageId,
+          newMessageId: message_id,
+          updatedMessage,
+        });
+
+        newMessages.set(aiMessageId, updatedMessage);
+      } else {
+        console.warn('[ChatStreamContext][chat:error] AI message not found:', {
+          aiMessageId,
+          subtask_id,
+          availableMessages: Array.from(newMessages.keys()),
         });
       }
 
@@ -683,10 +714,11 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     const callbacks = callbacksRef.current.get(taskId);
     callbacks?.onError?.(errorObj);
 
-    console.error('[ChatStreamContext] chat:error received', {
+    console.error(`[ChatStreamContext][chat:error][${eventId}] processed`, {
       task_id: taskId,
       subtask_id,
       error,
+      message_id,
     });
   }, []);
   /**
@@ -1419,17 +1451,24 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           const messageId = isUserMessage ? `user-backend-${subtask.id}` : `ai-${subtask.id}`;
 
           // Determine message status based on subtask status
+          // Check if frontend already has error state from chat:error WebSocket event
+          const existingMessage = currentState.messages.get(messageId);
+          const hasFrontendError =
+            existingMessage && existingMessage.status === 'error' && existingMessage.error;
+
           let status: MessageStatus = 'completed';
           if (subtask.status === 'RUNNING' || subtask.status === 'PENDING') {
             if (isUserMessage) {
               status = 'pending';
             } else {
-              // For AI messages with RUNNING status:
-              // Check if we already have this message in streaming state from chat:start event.
-              // If so, keep the frontend version (it has the latest streaming content).
-              // If not (e.g., page refresh), create it with backend content.
-              const existingMessage = currentState.messages.get(messageId);
-              if (existingMessage && existingMessage.status === 'streaming') {
+              // For AI messages with RUNNING/PENDING status:
+              // 1. If frontend already has error state (from chat:error event), preserve it
+              //    This handles the case where backend DB hasn't been updated yet
+              if (hasFrontendError) {
+                status = 'error';
+              }
+              // 2. If frontend has streaming state, keep it
+              else if (existingMessage && existingMessage.status === 'streaming') {
                 // Keep the frontend streaming message - it has the latest content
                 // We'll add it back later in the "preserve pending/streaming messages" section
                 status = 'streaming';
@@ -1477,6 +1516,14 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           const senderUserName =
             subtask.sender_user_name || (isCurrentUserMessage ? currentUserName : undefined);
 
+          // Determine error field using OR logic:
+          // 1. Use frontend error if it exists (from chat:error WebSocket event)
+          // 2. Otherwise use backend error_message (from FAILED/CANCELLED status)
+          // This preserves frontend error state when backend DB hasn't been updated yet
+          const errorField = hasFrontendError
+            ? existingMessage.error
+            : subtask.error_message || undefined;
+
           const message: UnifiedMessage = {
             id: messageId,
             type: messageType,
@@ -1493,7 +1540,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
             subtaskStatus: subtask.status,
             // Store full result for executor tasks (contains thinking, workbench)
             result: subtask.result as UnifiedMessage['result'],
-            error: subtask.error_message || undefined,
+            error: errorField,
           };
 
           newMessages.set(messageId, message);
