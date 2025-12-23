@@ -333,12 +333,13 @@ def delete_group(db: Session, group_name: str, user_id: int) -> None:
             detail="Cannot delete group with subgroups. Delete subgroups first.",
         )
 
-    # Check for resources in this namespace
+    # Check for resources in this namespace (excluding Task resources)
     resources = (
         db.query(Kind)
         .filter(
             Kind.namespace == group_name,
             Kind.is_active == True,
+            Kind.kind != "Task",  # Task resources are allowed when deleting group
         )
         .first()
     )
