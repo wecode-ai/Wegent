@@ -943,20 +943,43 @@ async def stream_chat(
             }
             yield f"data: {json.dumps(first_msg)}\n\n"
 
-            # Get the actual stream from chat service (use final_message with attachment content)
-            stream_response = await chat_service.chat_stream(
-                subtask_id=assistant_subtask.id,
-                task_id=task.id,
+            # Use chat_completion (non-streaming) for Chat Shell direct mode
+            result = await chat_service.chat_completion(
                 message=final_message,
                 model_config=model_config,
                 system_prompt=system_prompt,
-                tools=tools,
-                is_group_chat=is_group_chat,
             )
+            content = result.get("content", "")
 
-            # Forward the stream
-            async for chunk in stream_response.body_iterator:
-                yield chunk
+            # Send content in one chunk
+            chunk_msg = {
+                "content": content,
+                "done": False,
+            }
+            yield f"data: {json.dumps(chunk_msg)}\n\n"
+
+            # Send done message
+            done_msg = {
+                "content": "",
+                "done": True,
+                "result": {"value": content},
+            }
+            yield f"data: {json.dumps(done_msg)}\n\n"
+
+            # Save the assistant response to database
+            assistant_subtask.result = {"value": content}
+            assistant_subtask.status = SubtaskStatus.COMPLETED
+            db.commit()
+
+        except Exception as e:
+            logger.exception("[CHAT_STREAM] Error in stream_chat")
+            error_msg = {"error": str(e)}
+            yield f"data: {json.dumps(error_msg)}\n\n"
+
+            # Update subtask as failed
+            assistant_subtask.status = SubtaskStatus.FAILED
+            assistant_subtask.error = str(e)
+            db.commit()
         finally:
             # Clear task-level streaming status when done
             if is_group_chat:

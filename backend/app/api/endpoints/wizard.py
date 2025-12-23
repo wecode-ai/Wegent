@@ -1188,6 +1188,9 @@ async def test_system_prompt_stream(
     Test a system prompt with streaming response.
     This allows users to see the AI response in real-time
     before finalizing the configuration.
+
+    Note: Returns response in SSE format for compatibility,
+    but uses non-streaming backend for simplicity.
     """
     # Get model for testing
     model_kind = _get_model_for_wizard(db, current_user, request.model_name)
@@ -1200,11 +1203,31 @@ async def test_system_prompt_stream(
         user_name=current_user.user_name or "",
     )
 
-    # Use chat_service.chat_stream in simple mode (no subtask_id/task_id)
-    return await chat_service.chat_stream(
-        message=request.test_message,
-        model_config=model_config,
-        system_prompt=request.system_prompt,
+    # Use chat_completion (non-streaming) and simulate SSE format
+    async def generate_sse():
+        try:
+            result = await chat_service.chat_completion(
+                message=request.test_message,
+                model_config=model_config,
+                system_prompt=request.system_prompt,
+            )
+            content = result.get("content", "")
+
+            # Simulate streaming by sending in one chunk
+            yield f"data: {json.dumps({'content': content, 'done': False})}\n\n"
+            yield f"data: {json.dumps({'content': '', 'done': True})}\n\n"
+        except Exception as e:
+            logger.exception("Test prompt error")
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+    return StreamingResponse(
+        generate_sse(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 
