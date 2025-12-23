@@ -196,7 +196,7 @@ class ChatConfigBuilder:
         Returns:
             Model configuration dictionary
         """
-        from app.services.chat.models.resolver import (
+        from app.services.chat_v2.models.resolver import (
             build_default_headers_with_placeholders,
             get_model_config_for_bot,
         )
@@ -252,7 +252,7 @@ class ChatConfigBuilder:
         Returns:
             Combined system prompt
         """
-        from app.services.chat.models.resolver import get_bot_system_prompt
+        from app.services.chat_v2.models.resolver import get_bot_system_prompt
 
         # Get team member prompt from first member if not provided
         if team_member_prompt is None and self._team_crd.spec.members:
@@ -268,7 +268,7 @@ class ChatConfigBuilder:
 
         # Append clarification mode instructions if enabled
         if enable_clarification:
-            from app.services.chat.utils.prompts import (
+            from app.services.chat_v2.utils.prompts import (
                 append_clarification_prompt,
             )
 

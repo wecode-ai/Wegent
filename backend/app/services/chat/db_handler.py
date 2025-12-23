@@ -38,7 +38,7 @@ async def emit_task_status_update(
         progress: Optional progress percentage
     """
     try:
-        from app.services.chat.streaming import get_ws_emitter
+        from app.services.chat.ws_emitter import get_ws_emitter
 
         ws_emitter = get_ws_emitter()
         if ws_emitter:
@@ -196,7 +196,7 @@ class DatabaseHandler:
             # No running event loop in current thread
             # Try to use the main event loop reference from ws_emitter
             try:
-                from app.services.chat.streaming import get_main_event_loop
+                from app.services.chat.ws_emitter import get_main_event_loop
 
                 main_loop = get_main_event_loop()
                 if main_loop and main_loop.is_running():
@@ -221,11 +221,11 @@ class DatabaseHandler:
                         )
                     else:
                         logger.warning(
-                            f"Could not emit task:status event - no running event loop available for task={task_id}"
+                            f"Could not emit task:status event - no running event loop available"
                         )
             except RuntimeError:
                 logger.warning(
-                    f"Could not emit task:status event - no event loop available for task={task_id}"
+                    f"Could not emit task:status event - no event loop available"
                 )
 
     def _apply_status_update(self, status_obj, last_subtask) -> None:
@@ -271,31 +271,6 @@ class DatabaseHandler:
                     subtask.updated_at = datetime.now()
         except Exception:
             logger.exception("Error saving partial response for subtask %s", subtask_id)
-
-    async def get_subtask_message_id(self, subtask_id: int) -> int | None:
-        """Get the message_id for a subtask.
-
-        Args:
-            subtask_id: The subtask ID
-
-        Returns:
-            The message_id if found, None otherwise
-        """
-        return await self._run_in_executor(
-            self._get_subtask_message_id_sync, subtask_id
-        )
-
-    def _get_subtask_message_id_sync(self, subtask_id: int) -> int | None:
-        """Synchronous get subtask message_id."""
-        from app.models.subtask import Subtask
-
-        try:
-            with _db_session() as db:
-                if subtask := db.get(Subtask, subtask_id):
-                    return subtask.message_id
-        except Exception:
-            logger.exception("Error getting message_id for subtask %s", subtask_id)
-        return None
 
 
 # Global database handler instance

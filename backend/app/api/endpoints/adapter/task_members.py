@@ -27,7 +27,7 @@ from app.schemas.task_member import (
     TaskMemberListResponse,
     TaskMemberResponse,
 )
-from app.services.chat.streaming import get_ws_emitter
+from app.services.chat.ws_emitter import get_ws_emitter
 from app.services.task_invite_service import task_invite_service
 from app.services.task_member_service import task_member_service
 

@@ -780,7 +780,7 @@ Task (Team + Workspace) → Subtasks (messages/steps)
 **Key directories:**
 - `app/api/` - Route handlers
 - `app/services/adapters/` - CRD service implementations
-- `app/services/chat/` - Chat service (LangGraph-based) with streaming and tools
+- `app/services/chat/` - Streaming chat with model resolver
 - `app/services/attachment/` - File attachment storage with pluggable backends
 - `app/services/rag/` - RAG (Retrieval-Augmented Generation) services
 - `app/repository/` - Git providers (GitHub, GitLab, Gitee, Gerrit)
@@ -973,14 +973,14 @@ POST /api/rag/test-connection?retriever_name=my-es-retriever&retriever_namespace
 - `WEB_SEARCH_*` - Web search configuration (see `backend/app/services/search/README.md`)
   - `WEB_SEARCH_ENABLED` - Enable/disable web search feature (default: false)
   - `WEB_SEARCH_ENGINES` - JSON string containing adapter configuration
-- `CHAT_MCP_*` - MCP (Model Context Protocol) configuration for Chat Shell
+- `CHAT_MCP_*` - MCP (Model Context Protocol) configuration for Chat Shell (see `backend/app/services/chat/tools/README.md`)
   - `CHAT_MCP_ENABLED` - Enable/disable MCP tools in Chat Shell mode (default: false)
   - `CHAT_MCP_SERVERS` - JSON configuration for MCP servers (similar to Claude Desktop format)
     - Supported server types: `stdio`, `sse`, `streamable-http`
     - Example: `{"mcpServers":{"image-gen":{"type":"sse","url":"http://localhost:8080/sse"}}}`
 - `CHAT_TOOL_*` - Tool calling flow limits for Chat Shell
   - `CHAT_TOOL_MAX_REQUESTS` - Maximum LLM requests in tool calling flow (default: 5)
-- `CHAT_MAX_IMAGE_SIZE_MB` - Maximum image size for vision messages in MB (default: 10). Images larger than this will be automatically compressed.
+  - `CHAT_TOOL_MAX_TIME_SECONDS` - Maximum time for tool calling flow in seconds (default: 30.0)
 - `GROUP_CHAT_HISTORY_*` - Group chat history truncation configuration
   - `GROUP_CHAT_HISTORY_FIRST_MESSAGES` - Number of first messages to keep for AI context (default: 10)
   - `GROUP_CHAT_HISTORY_LAST_MESSAGES` - Number of last messages to keep for AI context (default: 20)
@@ -998,6 +998,78 @@ alembic downgrade -1                               # Rollback one
 ```
 
 **Development:** Auto-migrate when `ENVIRONMENT=development` and `DB_AUTO_MIGRATE=True`
+
+#### OpenTelemetry Tracing
+
+**⚠️ IMPORTANT: Use decorators for WebSocket and async function tracing**
+
+**WebSocket Event Tracing:**
+
+When adding new WebSocket event handlers in `backend/app/api/ws/`, always use the provided decorators:
+
+```python
+from app.api.ws.decorators import trace_websocket_event
+from app.api.ws.context_decorators import auto_task_context
+
+# For trigger_event or custom event dispatchers
+@trace_websocket_event(
+    exclude_events={"connect"},  # Events to skip
+    extract_event_data=True,      # Auto-extract task_id, team_id, subtask_id
+)
+async def trigger_event(self, event: str, sid: str, *args):
+    return await self._execute_handler(event, sid, *args)
+
+# For event handlers (auto-validates payload + sets task context)
+@auto_task_context(ChatSendPayload, task_id_field="task_id")
+async def on_chat_send(self, sid: str, data: dict) -> dict:
+    payload = data  # Already validated by decorator
+    # Business logic here
+```
+
+**Benefits:**
+- Eliminates 90%+ tracing boilerplate
+- Auto-generates request_id for each event
+- Auto-restores user context from session
+- Auto-validates Pydantic payloads
+- Auto-extracts and sets task/subtask context
+- Handles None values safely (prevents OTLP export errors)
+
+**General Async Function Tracing:**
+
+For non-WebSocket async functions, use the shared decorator:
+
+```python
+from shared.telemetry.decorators import trace_async
+
+@trace_async(
+    span_name="execute_task",
+    tracer_name="executor.agents.claude_code",
+    extract_attributes=lambda self, *args, **kwargs: {
+        "task.id": str(self.task_id),
+        "agent.type": self.get_name(),
+    }
+)
+async def execute_async(self) -> TaskStatus:
+    # Business logic here
+    pass
+```
+
+**Attribute Naming Standards:**
+
+Always use dot notation for span attributes (defined in `shared/telemetry/context/attributes.py`):
+
+| Attribute | Correct Format | ❌ Wrong Format |
+|-----------|---------------|----------------|
+| Task ID | `"task.id"` | ~~`"task_id"`~~ |
+| Subtask ID | `"subtask.id"` | ~~`"subtask_id"`~~ |
+| Team ID | `"team.id"` | ~~`"team_id"`~~ |
+| User ID | `"user.id"` | ~~`"user_id"`~~ |
+| User Name | `"user.name"` | ~~`"user_name"`~~ |
+
+**Environment Variables:**
+- `OTEL_ENABLED` - Enable/disable OpenTelemetry (default: false)
+- `OTEL_EXPORTER_OTLP_ENDPOINT` - OTLP collector endpoint
+- `OTEL_SERVICE_NAME` - Service name for traces
 
 #### Resolving Alembic Multiple Heads
 

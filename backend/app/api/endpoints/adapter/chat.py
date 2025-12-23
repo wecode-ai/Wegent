@@ -22,13 +22,13 @@ from app.models.kind import Kind
 from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
 from app.models.user import User
 from app.schemas.kind import Bot, Shell, Task, Team
-from app.services.chat.models.resolver import (
+from app.services.chat.base import ChatServiceBase
+from app.services.chat.chat_service import chat_service
+from app.services.chat.model_resolver import (
     build_default_headers_with_placeholders,
     get_bot_system_prompt,
     get_model_config_for_bot,
 )
-from app.services.chat.service import chat_service
-from app.services.chat.utils.http import ChatServiceBase
 
 logger = logging.getLogger(__name__)
 
@@ -478,7 +478,7 @@ async def _create_task_and_subtasks(
     # Initialize Redis chat history from existing subtasks if needed
     # This is crucial for shared tasks that were copied with historical messages
     if existing_subtasks:
-        from app.services.chat.storage.session import session_manager
+        from app.services.chat.session_manager import session_manager
 
         # Check if history exists in Redis
         redis_history = await session_manager.get_chat_history(task_id)
@@ -546,7 +546,7 @@ async def _notify_group_members_task_updated(
         sender_user_id: User ID of the message sender (to exclude from notification)
     """
     from app.models.task_member import MemberStatus, TaskMember
-    from app.services.chat.streaming import get_ws_emitter
+    from app.services.chat.ws_emitter import get_ws_emitter
 
     ws_emitter = get_ws_emitter()
     if not ws_emitter:
@@ -920,7 +920,7 @@ async def stream_chat(
     from fastapi.responses import StreamingResponse
 
     async def generate_with_ids():
-        from app.services.chat.storage.session import session_manager
+        from app.services.chat.session_manager import session_manager
 
         # Set task-level streaming status for group chat
         task_json = task.json or {}
@@ -1006,7 +1006,7 @@ async def _handle_resume_stream(
     from fastapi.responses import StreamingResponse
 
     from app.models.task_member import MemberStatus, TaskMember
-    from app.services.chat.storage.session import session_manager
+    from app.services.chat.session_manager import session_manager
 
     # Verify subtask ownership first
     subtask = (
@@ -1360,7 +1360,7 @@ async def cancel_chat(
 
     # Signal the streaming loop to stop via Redis (cross-worker)
     # This will cause the LLM API call to be interrupted
-    from app.services.chat.storage.session import session_manager
+    from app.services.chat.session_manager import session_manager
 
     await session_manager.cancel_stream(request.subtask_id)
 
@@ -1473,7 +1473,7 @@ async def get_streaming_content(
         raise HTTPException(status_code=404, detail="Subtask not found")
 
     # 1. Try to get from Redis first (most recent)
-    from app.services.chat.storage.session import session_manager
+    from app.services.chat.session_manager import session_manager
 
     redis_content = await session_manager.get_streaming_content(subtask_id)
 
@@ -1579,7 +1579,7 @@ async def resume_stream(
     async def generate_resume():
         import asyncio
 
-        from app.services.chat.storage.session import session_manager
+        from app.services.chat.session_manager import session_manager
 
         try:
             # 1. Send cached content first (from Redis)

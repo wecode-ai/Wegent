@@ -48,7 +48,9 @@
     "content_recovered": "Content Recovered",
     "content_recovered_desc": "Content has been recovered after page refresh",
     "content_incomplete": "Response Incomplete",
-    "content_incomplete_desc": "Connection was lost, this is the partial content generated"
+    "content_incomplete_desc": "Connection was lost, this is the partial content generated",
+    "like": "Like",
+    "dislike": "Dislike"
   },
   "shared_task": {
     "share_task": "Share",

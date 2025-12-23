@@ -1296,7 +1296,7 @@ class ExecutorKindsService(
 
         async def emit_async():
             try:
-                from app.services.chat.streaming import get_ws_emitter
+                from app.services.chat.ws_emitter import get_ws_emitter
 
                 ws_emitter = get_ws_emitter()
                 if ws_emitter:
@@ -1336,7 +1336,7 @@ class ExecutorKindsService(
                 f"[WS] No running event loop in current thread, trying main event loop for task={task_id}"
             )
             try:
-                from app.services.chat.streaming import get_main_event_loop
+                from app.services.chat.ws_emitter import get_main_event_loop
 
                 main_loop = get_main_event_loop()
                 if main_loop and main_loop.is_running():
@@ -1386,7 +1386,7 @@ class ExecutorKindsService(
 
         async def emit_async():
             try:
-                from app.services.chat.streaming import get_ws_emitter
+                from app.services.chat.ws_emitter import get_ws_emitter
 
                 ws_emitter = get_ws_emitter()
                 if ws_emitter:
@@ -1420,7 +1420,7 @@ class ExecutorKindsService(
                 f"[WS] No running event loop in current thread, trying main event loop for task={task_id}"
             )
             try:
-                from app.services.chat.streaming import get_main_event_loop
+                from app.services.chat.ws_emitter import get_main_event_loop
 
                 main_loop = get_main_event_loop()
                 if main_loop and main_loop.is_running():
@@ -1469,7 +1469,7 @@ class ExecutorKindsService(
 
         async def emit_async():
             try:
-                from app.services.chat.streaming import get_ws_emitter
+                from app.services.chat.ws_emitter import get_ws_emitter
 
                 ws_emitter = get_ws_emitter()
                 if ws_emitter:
@@ -1512,7 +1512,7 @@ class ExecutorKindsService(
                 f"[WS] No running event loop in current thread, trying main event loop for task={task_id}"
             )
             try:
-                from app.services.chat.streaming import get_main_event_loop
+                from app.services.chat.ws_emitter import get_main_event_loop
 
                 main_loop = get_main_event_loop()
                 if main_loop and main_loop.is_running():
@@ -1563,7 +1563,7 @@ class ExecutorKindsService(
 
         async def emit_async():
             try:
-                from app.services.chat.streaming import get_ws_emitter
+                from app.services.chat.ws_emitter import get_ws_emitter
 
                 ws_emitter = get_ws_emitter()
                 if ws_emitter:
@@ -1593,7 +1593,7 @@ class ExecutorKindsService(
             loop.create_task(emit_async())
         except RuntimeError:
             try:
-                from app.services.chat.streaming import get_main_event_loop
+                from app.services.chat.ws_emitter import get_main_event_loop
 
                 main_loop = get_main_event_loop()
                 if main_loop and main_loop.is_running():
