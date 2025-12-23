@@ -38,7 +38,7 @@ class OutputMessage(BaseModel):
     type: Literal["message"] = "message"
     id: str  # Format: msg_{subtask_id}
     status: Literal["in_progress", "completed", "incomplete"]
-    role: Literal["assistant"] = "assistant"
+    role: Literal["assistant", "user"]
     content: List[OutputTextContent]
 
 

@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import ConflictException, NotFoundException
 from app.db.session import SessionLocal
 from app.models.kind import Kind
+from app.services.group_permission import check_user_group_permission
 
 logger = logging.getLogger(__name__)
 
@@ -34,33 +35,75 @@ class KindBaseService(ABC):
     def _build_filters(
         self, user_id: int, namespace: str, name: Optional[str] = None
     ) -> List:
-        """Build database query filters"""
+        """Build database query filters
+
+        For personal resources (namespace='default'), filter by user_id.
+        For group resources, filter by namespace only (permission check is done separately).
+        """
         filters = [
-            Kind.user_id == user_id,
             Kind.kind == self.kind,
             Kind.namespace == namespace,
             Kind.is_active == True,
         ]
+
+        # For personal resources, filter by user_id
+        # For group resources, we query by namespace only
+        if namespace == "default":
+            filters.append(Kind.user_id == user_id)
 
         if name:
             filters.append(Kind.name == name)
 
         return filters
 
+    def _check_group_permission(
+        self, user_id: int, namespace: str, min_role: str = "Reporter"
+    ) -> bool:
+        """Check if user has permission to access resources in the given namespace
+
+        Args:
+            user_id: User ID
+            namespace: Resource namespace
+            min_role: Minimum required role (Reporter, Developer, Maintainer, Owner)
+
+        Returns:
+            bool: True if user has permission, False otherwise
+        """
+        if namespace == "default":
+            return True
+
+        # Check group permission
+        return check_user_group_permission(user_id, namespace, min_role)
+
     def list_resources(self, user_id: int, namespace: str) -> List[Kind]:
         """List all resources in a namespace"""
+        # Check group permission for non-default namespaces
+        if not self._check_group_permission(user_id, namespace, "Reporter"):
+            return []
+
         with self.get_db() as db:
             filters = self._build_filters(user_id, namespace)
             return db.query(Kind).filter(and_(*filters)).all()
 
     def get_resource(self, user_id: int, namespace: str, name: str) -> Optional[Kind]:
         """Get a specific resource"""
+        # Check group permission for non-default namespaces
+        if not self._check_group_permission(user_id, namespace, "Reporter"):
+            return None
+
         with self.get_db() as db:
             filters = self._build_filters(user_id, namespace, name)
             return db.query(Kind).filter(and_(*filters)).first()
 
     def create_resource(self, user_id: int, resource: Dict[str, Any]) -> int:
         """Create a new resource and return its ID"""
+        # Check group permission for non-default namespaces (need Maintainer or Owner)
+        namespace = resource.get("metadata", {}).get("namespace", "default")
+        if not self._check_group_permission(user_id, namespace, "Maintainer"):
+            raise NotFoundException(
+                f"Namespace '{namespace}' not found or permission denied"
+            )
+
         with self.get_db() as db:
             # Check if resource already exists
             existing = self.get_resource(
@@ -110,6 +153,12 @@ class KindBaseService(ABC):
         self, user_id: int, namespace: str, name: str, resource: Dict[str, Any]
     ) -> int:
         """Update an existing resource and return its ID"""
+        # Check group permission for non-default namespaces (need Developer or above)
+        if not self._check_group_permission(user_id, namespace, "Developer"):
+            raise NotFoundException(
+                f"{self.kind} '{name}' not found or permission denied"
+            )
+
         with self.get_db() as db:
             filters = self._build_filters(user_id, namespace, name)
             db_resource = db.query(Kind).filter(and_(*filters)).first()
@@ -146,6 +195,12 @@ class KindBaseService(ABC):
 
     def soft_delete_resource(self, user_id: int, namespace: str, name: str) -> bool:
         """Soft delete a resource (mark as inactive)"""
+        # Check group permission for non-default namespaces (need Maintainer or Owner)
+        if not self._check_group_permission(user_id, namespace, "Maintainer"):
+            raise NotFoundException(
+                f"{self.kind} '{name}' not found or permission denied"
+            )
+
         with self.get_db() as db:
             filters = self._build_filters(user_id, namespace, name)
             db_resource = db.query(Kind).filter(and_(*filters)).first()
@@ -173,6 +228,12 @@ class KindBaseService(ABC):
 
     def delete_resource(self, user_id: int, namespace: str, name: str) -> bool:
         """Hard delete a resource (permanently remove from database)"""
+        # Check group permission for non-default namespaces (need Maintainer or Owner)
+        if not self._check_group_permission(user_id, namespace, "Maintainer"):
+            raise NotFoundException(
+                f"{self.kind} '{name}' not found or permission denied"
+            )
+
         with self.get_db() as db:
             filters = self._build_filters(user_id, namespace, name)
             db_resource = db.query(Kind).filter(and_(*filters)).first()

@@ -70,14 +70,15 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         A predefined model config has:
         - bind_model: model name
         - bind_model_type: optional, 'public' or 'user' (defaults to auto-detect)
+        - bind_model_namespace: optional, namespace for the model
 
         It should NOT have other keys like 'env', 'protocol' etc.
         """
         if not agent_config:
             return False
         keys = set(agent_config.keys())
-        # Allow bind_model and optional bind_model_type
-        allowed_keys = {"bind_model", "bind_model_type"}
+        # Allow bind_model, optional bind_model_type, and optional bind_model_namespace
+        allowed_keys = {"bind_model", "bind_model_type", "bind_model_namespace"}
         return "bind_model" in keys and keys.issubset(allowed_keys)
 
     def _get_model_name_from_config(self, agent_config: Dict[str, Any]) -> str:
@@ -100,6 +101,19 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         if not agent_config:
             return None
         return agent_config.get("bind_model_type")
+
+    def _get_model_namespace_from_config(
+        self, agent_config: Dict[str, Any]
+    ) -> Optional[str]:
+        """
+        Get model namespace from agent_config's bind_model_namespace field.
+
+        Returns:
+            The model namespace, or None if not specified (defaults to bot's namespace)
+        """
+        if not agent_config:
+            return None
+        return agent_config.get("bind_model_namespace")
 
     def _get_protocol_from_config(self, agent_config: Dict[str, Any]) -> Optional[str]:
         """
@@ -315,7 +329,20 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         if self._is_predefined_model(obj_in.agent_config):
             # Reference existing model by bind_model name
             model_ref_name = self._get_model_name_from_config(obj_in.agent_config)
-            model_ref_namespace = namespace
+            model_type = self._get_model_type_from_config(obj_in.agent_config)
+            # For public/user models, namespace should be 'default'
+            # For group models, use the specified namespace or bot's namespace
+            if model_type == "group":
+                model_ref_namespace = (
+                    self._get_model_namespace_from_config(obj_in.agent_config)
+                    or namespace
+                )
+            else:
+                # public or user models use 'default' namespace
+                model_ref_namespace = (
+                    self._get_model_namespace_from_config(obj_in.agent_config)
+                    or "default"
+                )
             # Don't create a new model, just reference the existing one
         else:
             # Create private Model for custom config
@@ -411,6 +438,93 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         # Return bot-like structure
         return self._convert_to_bot_dict(bot, ghost, shell, model, obj_in.agent_config)
 
+    def query_bots_by_namespaces(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        namespaces: List[str],
+        skip: int = 0,
+        limit: int = 100,
+    ) -> List[Kind]:
+        """
+        Query bots from specified namespaces with namespace-specific logic.
+        Public method that can be called by other services.
+
+        Query logic:
+        - If namespace='default': first query user_id==user_id, if not found then query user_id==0 (public)
+        - If namespace!='default': query without user_id condition (group bots)
+
+        Args:
+            db: Database session
+            user_id: User ID
+            namespaces: List of namespaces to query
+            skip: Number of records to skip
+            limit: Maximum number of records to return
+
+        Returns:
+            List of Bot Kind objects
+        """
+        # Separate default and non-default namespaces
+        default_namespaces = [ns for ns in namespaces if ns == "default"]
+        group_namespaces = [ns for ns in namespaces if ns != "default"]
+
+        bots = []
+
+        # Query for default namespace: first try user_id==user_id, then user_id==0
+        if default_namespaces:
+            # First query: user's personal bots in default namespace
+            user_bots = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == user_id,
+                    Kind.kind == "Bot",
+                    Kind.namespace == "default",
+                    Kind.is_active == True,
+                )
+                .order_by(Kind.created_at.desc())
+                .offset(skip)
+                .limit(limit)
+                .all()
+            )
+
+            if user_bots:
+                bots.extend(user_bots)
+            else:
+                # If no user bots found, query public bots (user_id==0)
+                public_bots = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.user_id == 0,
+                        Kind.kind == "Bot",
+                        Kind.namespace == "default",
+                        Kind.is_active == True,
+                    )
+                    .order_by(Kind.created_at.desc())
+                    .offset(skip)
+                    .limit(limit)
+                    .all()
+                )
+                bots.extend(public_bots)
+
+        # Query for group namespaces: no user_id condition
+        if group_namespaces:
+            group_bots = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "Bot",
+                    Kind.namespace.in_(group_namespaces),
+                    Kind.is_active == True,
+                )
+                .order_by(Kind.created_at.desc())
+                .offset(skip)
+                .limit(limit)
+                .all()
+            )
+            bots.extend(group_bots)
+
+        return bots
+
     def get_user_bots(
         self,
         db: Session,
@@ -456,19 +570,9 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         if not namespaces_to_query:
             return []
 
-        # Query bots from all target namespaces
-        bots = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == user_id,
-                Kind.kind == "Bot",
-                Kind.namespace.in_(namespaces_to_query),
-                Kind.is_active == True,
-            )
-            .order_by(Kind.created_at.desc())
-            .offset(skip)
-            .limit(limit)
-            .all()
+        # Use the extracted query method
+        bots = self.query_bots_by_namespaces(
+            db, user_id=user_id, namespaces=namespaces_to_query, skip=skip, limit=limit
         )
 
         if not bots:
@@ -511,7 +615,6 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             db.query(Kind)
             .filter(
                 Kind.id == bot_id,
-                Kind.user_id == user_id,
                 Kind.kind == "Bot",
                 Kind.is_active == True,
             )
@@ -521,8 +624,8 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         if not bot:
             raise HTTPException(status_code=404, detail="Bot not found")
 
-        # Get related Ghost, Shell, Model
-        ghost, shell, model = self._get_bot_components(db, bot, user_id)
+        # Get related Ghost, Shell, Model (use bot.user_id for component queries)
+        ghost, shell, model = self._get_bot_components(db, bot, bot.user_id)
         return self._convert_to_bot_dict(bot, ghost, shell, model)
 
     def get_bot_detail(
@@ -553,7 +656,6 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             db.query(Kind)
             .filter(
                 Kind.id == bot_id,
-                Kind.user_id == user_id,
                 Kind.kind == "Bot",
                 Kind.is_active == True,
             )
@@ -570,18 +672,20 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         if "name" in update_data:
             new_name = update_data["name"]
             if new_name != bot.name:
-                conflict = (
-                    db.query(Kind)
-                    .filter(
-                        Kind.user_id == user_id,
-                        Kind.kind == "Bot",
-                        Kind.name == new_name,
-                        Kind.namespace == "default",
-                        Kind.is_active == True,
-                        Kind.id != bot.id,
-                    )
-                    .first()
-                )
+                # Build dynamic filter conditions based on namespace
+                filter_conditions = [
+                    Kind.kind == "Bot",
+                    Kind.name == new_name,
+                    Kind.namespace == obj_in.namespace,
+                    Kind.is_active == True,
+                    Kind.id != bot.id,
+                ]
+
+                # Only add user_id filter for default namespace
+                if obj_in.namespace == "default":
+                    filter_conditions.append(Kind.user_id == user_id)
+
+                conflict = db.query(Kind).filter(*filter_conditions).first()
                 if conflict:
                     raise HTTPException(
                         status_code=400,
@@ -599,6 +703,9 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             new_name = update_data["name"]
             # Update bot
             bot.name = new_name
+            bot_crd = Bot.model_validate(bot.json)
+            bot_crd.metadata.name = new_name
+            bot.json = bot_crd.model_dump()
             flag_modified(bot, "json")  # Mark JSON field as modified
         if "shell_name" in update_data:
             # Update Bot's shellRef to point directly to the user-selected Shell
@@ -636,8 +743,22 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 # For predefined model, update bot's modelRef to point to the selected model
                 model_name = self._get_model_name_from_config(new_agent_config)
                 model_type = self._get_model_type_from_config(new_agent_config)
+                # For public/user models, namespace should be 'default'
+                # For group models, use the specified namespace or bot's namespace
+                if model_type == "group":
+                    model_namespace = (
+                        self._get_model_namespace_from_config(new_agent_config)
+                        or bot.namespace
+                        or "default"
+                    )
+                else:
+                    # public or user models use 'default' namespace
+                    model_namespace = (
+                        self._get_model_namespace_from_config(new_agent_config)
+                        or "default"
+                    )
                 logger.info(
-                    f"[DEBUG] Predefined model detected, updating modelRef to: {model_name}, type: {model_type}"
+                    f"[DEBUG] Predefined model detected, updating modelRef to: {model_name}, type: {model_type}, namespace: {model_namespace}"
                 )
 
                 # Update bot's modelRef
@@ -646,11 +767,11 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
 
                 if bot_crd.spec.modelRef:
                     bot_crd.spec.modelRef.name = model_name
-                    bot_crd.spec.modelRef.namespace = "default"
+                    bot_crd.spec.modelRef.namespace = model_namespace
                 else:
                     # Create new modelRef if it doesn't exist
                     bot_crd.spec.modelRef = ModelRef(
-                        name=model_name, namespace="default"
+                        name=model_name, namespace=model_namespace
                     )
                 bot.json = bot_crd.model_dump()
                 flag_modified(bot, "json")
@@ -692,7 +813,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
 
                 # Get the new model for response using type hint
                 model = self._get_model_by_name_and_type(
-                    db, model_name, "default", user_id, model_type
+                    db, model_name, model_namespace, user_id, model_type
                 )
                 return_agent_config = new_agent_config
             else:
@@ -757,6 +878,8 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                     # 3. model is a Kind but not dedicated to this bot (shared model)
                     logger.info("[DEBUG] Creating new private model for custom config")
 
+                    # Use the bot's namespace for the custom model
+                    bot_namespace = bot.namespace or "default"
                     model_json = {
                         "kind": "Model",
                         "spec": {
@@ -767,7 +890,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                         "status": {"state": "Available"},
                         "metadata": {
                             "name": f"{bot.name}-model",
-                            "namespace": "default",
+                            "namespace": bot_namespace,
                         },
                         "apiVersion": "agent.wecode.io/v1",
                     }
@@ -776,7 +899,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                         user_id=user_id,
                         kind="Model",
                         name=dedicated_model_name,
-                        namespace="default",
+                        namespace=bot_namespace,
                         json=model_json,
                         is_active=True,
                     )
@@ -788,11 +911,11 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
 
                     if bot_crd.spec.modelRef:
                         bot_crd.spec.modelRef.name = dedicated_model_name
-                        bot_crd.spec.modelRef.namespace = "default"
+                        bot_crd.spec.modelRef.namespace = bot_namespace
                     else:
                         # Create new modelRef
                         bot_crd.spec.modelRef = ModelRef(
-                            name=dedicated_model_name, namespace="default"
+                            name=dedicated_model_name, namespace=bot_namespace
                         )
                     bot.json = bot_crd.model_dump()
                     flag_modified(bot, "json")
@@ -949,7 +1072,6 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             db.query(Kind)
             .filter(
                 Kind.id == bot_id,
-                Kind.user_id == user_id,
                 Kind.kind == "Bot",
                 Kind.is_active == True,
             )
@@ -995,7 +1117,6 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             db.query(Kind)
             .filter(
                 Kind.id == bot_id,
-                Kind.user_id == user_id,
                 Kind.kind == "Bot",
                 Kind.is_active == True,
             )
@@ -1097,6 +1218,9 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         """
         Get Ghost, Shell, Model components for a bot.
         Model can be from kinds table (private) or public_models table.
+
+        For group resources (namespace != 'default'), components are queried without
+        user_id filter since they may be created by different users in the same group.
         """
         import logging
 
@@ -1111,18 +1235,19 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             f"[DEBUG] _get_bot_components: bot.name={bot.name}, modelRef.name={model_ref_name}, modelRef.namespace={model_ref_namespace}"
         )
 
-        # Get ghost
-        ghost = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == user_id,
-                Kind.kind == "Ghost",
-                Kind.name == bot_crd.spec.ghostRef.name,
-                Kind.namespace == bot_crd.spec.ghostRef.namespace,
-                Kind.is_active == True,
-            )
-            .first()
+        # Determine if this is a group resource
+        is_group_resource = bot.namespace and bot.namespace != "default"
+
+        # Get ghost - for group resources, don't filter by user_id
+        ghost_query = db.query(Kind).filter(
+            Kind.kind == "Ghost",
+            Kind.name == bot_crd.spec.ghostRef.name,
+            Kind.namespace == bot_crd.spec.ghostRef.namespace,
+            Kind.is_active == True,
         )
+        if not is_group_resource:
+            ghost_query = ghost_query.filter(Kind.user_id == user_id)
+        ghost = ghost_query.first()
 
         # Get shell - try user's custom shells first, then public shells
         shell_ref_name = bot_crd.spec.shellRef.name
@@ -1153,6 +1278,10 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         """
         Batch-fetch Ghost/Shell/Model components for multiple bots to avoid N+1 queries.
         Models can be from kinds table (private) or public_models table.
+
+        For group resources (namespace != 'default'), components are queried without
+        user_id filter since they may be created by different users in the same group.
+
         Returns:
           - bot_crds: {bot.id: Bot} mapping to avoid repeated parsing
           - ghost_map: {(name, namespace): Kind}
@@ -1162,26 +1291,40 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         if not bots:
             return {}, {}, {}, {}
 
-        ghost_keys = set()
+        # Separate keys for personal and group resources
+        personal_ghost_keys = set()
+        group_ghost_keys = set()
+        personal_model_keys = set()
+        group_model_keys = set()
         shell_keys = set()
-        model_keys = set()
         bot_crds = {}
 
         for bot in bots:
             # Parse bot.json once and reuse later
             bot_crd = Bot.model_validate(bot.json)
             bot_crds[bot.id] = bot_crd
-            ghost_keys.add(
-                (bot_crd.spec.ghostRef.name, bot_crd.spec.ghostRef.namespace)
-            )
+
+            is_group_resource = bot.namespace and bot.namespace != "default"
+            ghost_key = (bot_crd.spec.ghostRef.name, bot_crd.spec.ghostRef.namespace)
+
+            if is_group_resource:
+                group_ghost_keys.add(ghost_key)
+            else:
+                personal_ghost_keys.add(ghost_key)
+
             shell_keys.add(
                 (bot_crd.spec.shellRef.name, bot_crd.spec.shellRef.namespace)
             )
             # modelRef is optional, only add if it exists
             if bot_crd.spec.modelRef:
-                model_keys.add(
-                    (bot_crd.spec.modelRef.name, bot_crd.spec.modelRef.namespace)
+                model_key = (
+                    bot_crd.spec.modelRef.name,
+                    bot_crd.spec.modelRef.namespace,
                 )
+                if is_group_resource:
+                    group_model_keys.add(model_key)
+                else:
+                    personal_model_keys.add(model_key)
 
         def build_or_filters(kind_name: str, keys: set):
             # Compose OR of AND clauses: or_(and_(kind==X, name==N, namespace==NS), ...)
@@ -1198,29 +1341,67 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 else None
             )
 
-        base_filter = and_(Kind.user_id == user_id, Kind.is_active == True)
-
         ghosts = []
-        shells = []
         models = []
 
-        ghost_filter = build_or_filters("Ghost", ghost_keys)
-        if ghost_filter is not None:
-            ghosts = db.query(Kind).filter(base_filter).filter(ghost_filter).all()
+        # Query personal ghosts (with user_id filter)
+        if personal_ghost_keys:
+            personal_ghost_filter = build_or_filters("Ghost", personal_ghost_keys)
+            if personal_ghost_filter is not None:
+                personal_ghosts = (
+                    db.query(Kind)
+                    .filter(Kind.user_id == user_id, Kind.is_active == True)
+                    .filter(personal_ghost_filter)
+                    .all()
+                )
+                ghosts.extend(personal_ghosts)
+
+        # Query group ghosts (without user_id filter)
+        if group_ghost_keys:
+            group_ghost_filter = build_or_filters("Ghost", group_ghost_keys)
+            if group_ghost_filter is not None:
+                group_ghosts = (
+                    db.query(Kind)
+                    .filter(Kind.is_active == True)
+                    .filter(group_ghost_filter)
+                    .all()
+                )
+                ghosts.extend(group_ghosts)
 
         # Use unified shell query function that checks both user shells and public shells
         shell_map = get_shells_by_names_batch(db, shell_keys, user_id)
 
-        model_filter = build_or_filters("Model", model_keys)
-        if model_filter is not None:
-            models = db.query(Kind).filter(base_filter).filter(model_filter).all()
+        # Query personal models (with user_id filter)
+        if personal_model_keys:
+            personal_model_filter = build_or_filters("Model", personal_model_keys)
+            if personal_model_filter is not None:
+                personal_models = (
+                    db.query(Kind)
+                    .filter(Kind.user_id == user_id, Kind.is_active == True)
+                    .filter(personal_model_filter)
+                    .all()
+                )
+                models.extend(personal_models)
+
+        # Query group models (without user_id filter)
+        if group_model_keys:
+            group_model_filter = build_or_filters("Model", group_model_keys)
+            if group_model_filter is not None:
+                group_models = (
+                    db.query(Kind)
+                    .filter(Kind.is_active == True)
+                    .filter(group_model_filter)
+                    .all()
+                )
+                models.extend(group_models)
 
         ghost_map = {(g.name, g.namespace): g for g in ghosts}
         # shell_map is already populated by get_shells_by_names_batch
         model_map = {(m.name, m.namespace): m for m in models}
 
         # For models not found in kinds table (user models), try to find in public models (user_id=0)
-        missing_model_keys = model_keys - set(model_map.keys())
+        all_model_keys = personal_model_keys | group_model_keys
+        missing_model_keys = all_model_keys - set(model_map.keys())
         if missing_model_keys:
 
             def build_public_model_or_filters(keys: set):
@@ -1321,10 +1502,13 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             is_custom_config = model_crd.spec.isCustomConfig
             protocol = model_crd.spec.protocol
 
-            # Get the modelRef name from bot to determine if it's a dedicated private model
+            # Get the modelRef name and namespace from bot to determine if it's a dedicated private model
             bot_crd = Bot.model_validate(bot.json)
             model_ref_name = (
                 bot_crd.spec.modelRef.name if bot_crd.spec.modelRef else None
+            )
+            model_ref_namespace = (
+                bot_crd.spec.modelRef.namespace if bot_crd.spec.modelRef else "default"
             )
             dedicated_model_name = f"{bot.name}-model"
 
@@ -1344,16 +1528,28 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                     "bind_model": model.name,
                     "bind_model_type": "public",  # Identify as public model
                 }
+                # Include namespace if not default
+                if model_ref_namespace and model_ref_namespace != "default":
+                    agent_config["bind_model_namespace"] = model_ref_namespace
                 logger.info(
                     f"[DEBUG] _convert_to_bot_dict: Public model, returning bind_model format: {agent_config}"
                 )
             elif not is_dedicated_private_model:
                 # This is a shared/predefined model (not dedicated to this bot)
                 # Return bind_model format with type so frontend can display the dropdown
+                # Determine model type: 'group' for group models, 'user' for personal models
+                model_type = (
+                    "group"
+                    if model_ref_namespace and model_ref_namespace != "default"
+                    else "user"
+                )
                 agent_config = {
                     "bind_model": model_ref_name,
-                    "bind_model_type": "user",  # Identify as user-defined model
+                    "bind_model_type": model_type,
                 }
+                # Include namespace if not default
+                if model_ref_namespace and model_ref_namespace != "default":
+                    agent_config["bind_model_namespace"] = model_ref_namespace
                 logger.info(
                     f"[DEBUG] _convert_to_bot_dict: Shared model (modelRef={model_ref_name}), returning bind_model format: {agent_config}"
                 )
@@ -1369,10 +1565,19 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             else:
                 # This is a dedicated private model but not marked as custom config
                 # Return bind_model format with type for backward compatibility
+                # Determine model type: 'group' for group models, 'user' for personal models
+                model_type = (
+                    "group"
+                    if model_ref_namespace and model_ref_namespace != "default"
+                    else "user"
+                )
                 agent_config = {
                     "bind_model": model_ref_name,
-                    "bind_model_type": "user",  # Identify as user-defined model
+                    "bind_model_type": model_type,
                 }
+                # Include namespace if not default
+                if model_ref_namespace and model_ref_namespace != "default":
+                    agent_config["bind_model_namespace"] = model_ref_namespace
                 logger.info(
                     f"[DEBUG] _convert_to_bot_dict: Dedicated model without isCustomConfig, returning bind_model format: {agent_config}"
                 )
@@ -1387,6 +1592,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             "id": bot.id,
             "user_id": bot.user_id,
             "name": bot.name,
+            "namespace": bot.namespace,  # Namespace for group bots (default: 'default')
             "shell_name": shell_name,  # The shell name user selected (e.g., 'ClaudeCode', 'my-custom-shell')
             "shell_type": shell_type,  # The actual agent type (e.g., 'ClaudeCode', 'Agno', 'Dify')
             "agent_config": agent_config,
