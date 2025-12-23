@@ -48,7 +48,9 @@
     "content_recovered": "已恢复内容",
     "content_recovered_desc": "页面刷新后已恢复之前的内容",
     "content_incomplete": "回答未完成",
-    "content_incomplete_desc": "连接已断开，这是生成的部分内容"
+    "content_incomplete_desc": "连接已断开，这是生成的部分内容",
+    "like": "喜欢",
+    "dislike": "不喜欢"
   },
   "shared_task": {
     "share_task": "分享",
