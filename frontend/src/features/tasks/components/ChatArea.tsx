@@ -1553,7 +1553,11 @@ export default function ChatArea({
                           forceOverride={forceOverride}
                           setForceOverride={setForceOverride}
                           selectedTeam={selectedTeam}
-                          disabled={hasMessages || isLoading}
+                          disabled={
+                            isLoading ||
+                            isStreaming ||
+                            (hasMessages && !isChatShell(selectedTeam))
+                          }
                           compact={shouldCollapseSelectors}
                         />
                       )}
@@ -1793,7 +1797,11 @@ export default function ChatArea({
                         forceOverride={forceOverride}
                         setForceOverride={setForceOverride}
                         selectedTeam={selectedTeam}
-                        disabled={hasMessages || isLoading}
+                        disabled={
+                          isLoading ||
+                          isStreaming ||
+                          (hasMessages && !isChatShell(selectedTeam))
+                        }
                         compact={shouldCollapseSelectors}
                       />
                     )}
