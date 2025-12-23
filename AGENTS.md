@@ -999,6 +999,78 @@ alembic downgrade -1                               # Rollback one
 
 **Development:** Auto-migrate when `ENVIRONMENT=development` and `DB_AUTO_MIGRATE=True`
 
+#### OpenTelemetry Tracing
+
+**⚠️ IMPORTANT: Use decorators for WebSocket and async function tracing**
+
+**WebSocket Event Tracing:**
+
+When adding new WebSocket event handlers in `backend/app/api/ws/`, always use the provided decorators:
+
+```python
+from app.api.ws.decorators import trace_websocket_event
+from app.api.ws.context_decorators import auto_task_context
+
+# For trigger_event or custom event dispatchers
+@trace_websocket_event(
+    exclude_events={"connect"},  # Events to skip
+    extract_event_data=True,      # Auto-extract task_id, team_id, subtask_id
+)
+async def trigger_event(self, event: str, sid: str, *args):
+    return await self._execute_handler(event, sid, *args)
+
+# For event handlers (auto-validates payload + sets task context)
+@auto_task_context(ChatSendPayload, task_id_field="task_id")
+async def on_chat_send(self, sid: str, data: dict) -> dict:
+    payload = data  # Already validated by decorator
+    # Business logic here
+```
+
+**Benefits:**
+- Eliminates 90%+ tracing boilerplate
+- Auto-generates request_id for each event
+- Auto-restores user context from session
+- Auto-validates Pydantic payloads
+- Auto-extracts and sets task/subtask context
+- Handles None values safely (prevents OTLP export errors)
+
+**General Async Function Tracing:**
+
+For non-WebSocket async functions, use the shared decorator:
+
+```python
+from shared.telemetry.decorators import trace_async
+
+@trace_async(
+    span_name="execute_task",
+    tracer_name="executor.agents.claude_code",
+    extract_attributes=lambda self, *args, **kwargs: {
+        "task.id": str(self.task_id),
+        "agent.type": self.get_name(),
+    }
+)
+async def execute_async(self) -> TaskStatus:
+    # Business logic here
+    pass
+```
+
+**Attribute Naming Standards:**
+
+Always use dot notation for span attributes (defined in `shared/telemetry/context/attributes.py`):
+
+| Attribute | Correct Format | ❌ Wrong Format |
+|-----------|---------------|----------------|
+| Task ID | `"task.id"` | ~~`"task_id"`~~ |
+| Subtask ID | `"subtask.id"` | ~~`"subtask_id"`~~ |
+| Team ID | `"team.id"` | ~~`"team_id"`~~ |
+| User ID | `"user.id"` | ~~`"user_id"`~~ |
+| User Name | `"user.name"` | ~~`"user_name"`~~ |
+
+**Environment Variables:**
+- `OTEL_ENABLED` - Enable/disable OpenTelemetry (default: false)
+- `OTEL_EXPORTER_OTLP_ENDPOINT` - OTLP collector endpoint
+- `OTEL_SERVICE_NAME` - Service name for traces
+
 #### Resolving Alembic Multiple Heads
 
 When multiple developers create migrations simultaneously, Alembic may have multiple heads after merging branches.
