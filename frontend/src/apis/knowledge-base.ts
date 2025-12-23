@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2025 Weibo, Inc.
+// SPDX-FileCopyrightText: 2025 WeCode, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -15,7 +15,8 @@ export const knowledgeBaseApi = {
     if (params?.group_name) queryParams.append('group_name', params.group_name);
 
     const queryString = queryParams.toString();
-    const url = `/rag/knowledge-bases${queryString ? `?${queryString}` : ''}`;
+    // Use the correct endpoint from /api/knowledge-bases
+    const url = `/knowledge-bases${queryString ? `?${queryString}` : ''}`;
 
     const response = await client.get<KnowledgeBasesResponse>(url);
     return response;

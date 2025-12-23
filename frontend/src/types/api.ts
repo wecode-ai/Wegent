@@ -497,21 +497,39 @@ export interface SystemConfigUpdate {
 
 // Knowledge Base / RAG Types
 export interface KnowledgeBaseRef {
-  knowledge_id: string;
+  knowledge_id: number; // Knowledge base ID (database ID)
   retriever_name: string;
   retriever_namespace: string;
 }
 
 export interface KnowledgeBase {
-  knowledge_id: string;
+  id: number; // Knowledge base ID
   name: string;
-  description: string;
-  retriever_name: string;
-  retriever_namespace: string;
+  description?: string;
+  user_id: number;
+  namespace: string;
   document_count: number;
-  created_at?: string;
+  is_active: boolean;
+  retrieval_config?: {
+    retriever_name: string;
+    retriever_namespace?: string;
+    embedding_config?: {
+      model_name: string;
+      model_namespace?: string;
+    };
+    top_k?: number;
+    score_threshold?: number;
+    retrieval_mode?: string;
+    hybrid_weights?: {
+      vector_weight?: number;
+      keyword_weight?: number;
+    };
+  };
+  created_at: string;
+  updated_at: string;
 }
 
 export interface KnowledgeBasesResponse {
-  knowledge_bases: KnowledgeBase[];
+  total: number;
+  items: KnowledgeBase[];
 }

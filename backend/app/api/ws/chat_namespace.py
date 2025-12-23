@@ -448,6 +448,102 @@ class ChatNamespace(socketio.AsyncNamespace):
     # Chat Events
     # ============================================================
 
+    async def _process_rag_if_needed(
+        self,
+        payload: ChatSendPayload,
+        request: Any,
+        should_trigger_ai: bool,
+        user_id: int,
+        db: Session,
+    ) -> Optional[Dict]:
+        """
+        Process RAG retrieval if knowledge bases are provided.
+
+        This method:
+        1. Extracts knowledge base IDs from payload
+        2. Calls RAG integration service to retrieve and assemble prompt
+        3. Updates payload and request with RAG-enhanced message
+        4. Returns metadata for storing in subtask
+
+        Args:
+            payload: Chat send payload
+            request: Stream chat request
+            should_trigger_ai: Whether AI should be triggered
+            user_id: User ID
+            db: Database session
+
+        Returns:
+            Knowledge base metadata dict for subtask storage, or None
+        """
+        if not payload.knowledge_bases or not should_trigger_ai:
+            return None
+
+        logger.info(
+            f"[WS] chat:send processing RAG with {len(payload.knowledge_bases)} knowledge bases"
+        )
+
+        # Build metadata for subtask storage
+        knowledge_base_metadata = {
+            "knowledge_bases": [
+                {
+                    "knowledge_id": kb.knowledge_id,
+                    "retriever_name": kb.retriever_name,
+                    "retriever_namespace": kb.retriever_namespace,
+                }
+                for kb in payload.knowledge_bases
+            ]
+        }
+
+        try:
+            from app.services.chat.rag_integration import retrieve_and_assemble_rag_prompt
+
+            # Extract knowledge base IDs (convert string IDs to int if needed)
+            kb_ids = []
+            for kb in payload.knowledge_bases:
+                try:
+                    # knowledge_id may be string like "kb_001" or int
+                    if isinstance(kb.knowledge_id, int):
+                        kb_ids.append(kb.knowledge_id)
+                    elif kb.knowledge_id.isdigit():
+                        kb_ids.append(int(kb.knowledge_id))
+                    else:
+                        logger.warning(
+                            f"[WS] chat:send skipping non-numeric knowledge_id: {kb.knowledge_id}"
+                        )
+                except (ValueError, AttributeError):
+                    logger.warning(
+                        f"[WS] chat:send failed to parse knowledge_id: {kb.knowledge_id}"
+                    )
+                    continue
+
+            if not kb_ids:
+                logger.warning("[WS] chat:send no valid knowledge base IDs found")
+                return knowledge_base_metadata
+
+            # Retrieve and assemble RAG prompt
+            rag_prompt = await retrieve_and_assemble_rag_prompt(
+                query=payload.message,
+                knowledge_base_ids=kb_ids,
+                user_id=user_id,
+                db=db,
+            )
+
+            if rag_prompt:
+                logger.info(
+                    f"[WS] chat:send RAG prompt assembled, length={len(rag_prompt)}"
+                )
+                # Update payload and request with RAG-enhanced message
+                payload.message = rag_prompt
+                request.message = rag_prompt
+            else:
+                logger.info("[WS] chat:send RAG retrieved no chunks")
+
+        except Exception as e:
+            logger.error(f"[WS] chat:send RAG processing failed: {e}", exc_info=True)
+            # Continue with original message if RAG fails
+
+        return knowledge_base_metadata
+
     @auto_task_context(ChatSendPayload, task_id_field="task_id")
     async def on_chat_send(self, sid: str, data: dict) -> dict:
         """
@@ -574,66 +670,13 @@ class ChatNamespace(socketio.AsyncNamespace):
             logger.info(f"[WS] chat:send StreamChatRequest created")
 
             # Process RAG if knowledge bases are provided
-            original_message = payload.message
-            if payload.knowledge_bases and should_trigger_ai:
-                logger.info(
-                    f"[WS] chat:send processing RAG with {len(payload.knowledge_bases)} knowledge bases"
-                )
-                try:
-                    from app.services.chat.rag_integration import (
-                        assemble_rag_prompt,
-                        retrieve_from_knowledge_bases,
-                    )
-
-                    # Get default embedding model (can be configured later)
-                    # For now, use a default embedding model
-                    embedding_model_name = "bge-m3"
-                    embedding_model_namespace = "default"
-
-                    # Retrieve chunks from knowledge bases
-                    retrieved_chunks = await retrieve_from_knowledge_bases(
-                        query=payload.message,
-                        knowledge_bases=payload.knowledge_bases,
-                        embedding_model_name=embedding_model_name,
-                        embedding_model_namespace=embedding_model_namespace,
-                        user_id=user_id,
-                        db=db,
-                    )
-
-                    if retrieved_chunks:
-                        logger.info(
-                            f"[WS] chat:send RAG retrieved {len(retrieved_chunks)} chunks"
-                        )
-                        # Assemble prompt with RAG context
-                        rag_prompt = assemble_rag_prompt(
-                            query=payload.message,
-                            retrieved_chunks=retrieved_chunks,
-                        )
-                        payload.message = rag_prompt
-                        request.message = rag_prompt
-                        logger.info(
-                            f"[WS] chat:send RAG prompt assembled, length={len(rag_prompt)}"
-                        )
-                    else:
-                        logger.info("[WS] chat:send RAG retrieved no chunks")
-
-                except Exception as e:
-                    logger.error(f"[WS] chat:send RAG processing failed: {e}", exc_info=True)
-                    # Continue with original message if RAG fails
-
-            # Store knowledge base info in user subtask metadata for badge display
-            knowledge_base_metadata = None
-            if payload.knowledge_bases:
-                knowledge_base_metadata = {
-                    "knowledge_bases": [
-                        {
-                            "knowledge_id": kb.knowledge_id,
-                            "retriever_name": kb.retriever_name,
-                            "retriever_namespace": kb.retriever_namespace,
-                        }
-                        for kb in payload.knowledge_bases
-                    ]
-                }
+            knowledge_base_metadata = await self._process_rag_if_needed(
+                payload=payload,
+                request=request,
+                should_trigger_ai=should_trigger_ai,
+                user_id=user_id,
+                db=db,
+            )
 
             # Create task and subtasks
             # Use different methods based on supports_direct_chat:

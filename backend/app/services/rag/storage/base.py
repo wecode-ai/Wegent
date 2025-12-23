@@ -277,24 +277,6 @@ class BaseStorageBackend(ABC):
         pass
 
     @abstractmethod
-    async def list_knowledge_bases(self, **kwargs) -> List[Dict[str, Any]]:
-        """
-        List all knowledge bases in this storage backend.
-
-        Args:
-            **kwargs: Additional parameters (e.g., user_id for per_user index strategy)
-
-        Returns:
-            List of knowledge base dicts with:
-                - knowledge_id: Knowledge base ID
-                - name: Display name (default to knowledge_id)
-                - description: Optional description
-                - document_count: Number of documents
-                - created_at: Optional creation timestamp
-        """
-        pass
-
-    @abstractmethod
     def test_connection(self) -> bool:
         """
         Test connection to storage backend.
