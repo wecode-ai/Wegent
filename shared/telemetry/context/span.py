@@ -457,3 +457,88 @@ def set_repository_context(
 
     if attributes:
         set_span_attributes(attributes)
+
+
+# ============================================================================
+# OpenTelemetry Context Management for Async Boundaries
+# ============================================================================
+
+
+def attach_otel_context(otel_context: Any) -> Optional[object]:
+    """
+    Safely attach OpenTelemetry context for cross-async-boundary propagation.
+
+    This is useful when creating background tasks with asyncio.create_task(),
+    where the OpenTelemetry context doesn't automatically propagate.
+    The returned token must be passed to detach_otel_context() for cleanup.
+
+    Args:
+        otel_context: OpenTelemetry context object from context.get_current()
+
+    Returns:
+        Token for later detachment, or None if attachment failed
+
+    Example:
+        ```python
+        from opentelemetry import context
+        from shared.telemetry.context import attach_otel_context, detach_otel_context
+
+        # Capture context before creating background task
+        otel_context = context.get_current()
+
+        async def background_task():
+            # Restore context in background task
+            token = attach_otel_context(otel_context)
+            try:
+                # Your logic here - spans will have correct parent
+                ...
+            finally:
+                detach_otel_context(token)
+        ```
+    """
+    if not otel_context:
+        return None
+
+    try:
+        from opentelemetry import context
+
+        token = context.attach(otel_context)
+        logger.debug(
+            "Attached OpenTelemetry context for parent-child span relationships"
+        )
+        return token
+    except Exception as e:
+        logger.debug(f"Failed to attach OpenTelemetry context: {e}")
+        return None
+
+
+def detach_otel_context(token: Optional[object]) -> None:
+    """
+    Safely detach OpenTelemetry context.
+
+    This should always be called in a finally block to ensure proper cleanup,
+    even if an exception occurs.
+
+    Args:
+        token: Token returned from attach_otel_context()
+
+    Example:
+        ```python
+        token = attach_otel_context(otel_context)
+        try:
+            # Your logic here
+            ...
+        finally:
+            detach_otel_context(token)
+        ```
+    """
+    if not token:
+        return
+
+    try:
+        from opentelemetry import context
+
+        context.detach(token)
+        logger.debug("Detached OpenTelemetry context")
+    except Exception as e:
+        logger.debug(f"Failed to detach OpenTelemetry context: {e}")

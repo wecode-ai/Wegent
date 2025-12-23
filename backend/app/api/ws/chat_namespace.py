@@ -11,13 +11,19 @@ It handles authentication, room management, and chat events.
 
 import asyncio
 import logging
+import uuid
 from datetime import datetime
 from typing import Any, Dict, Optional
 
 import socketio
 from jose import jwt
-from pydantic import ValidationError
+from shared.telemetry.context import (
+    set_request_context,
+    set_user_context,
+)
 
+from app.api.ws.context_decorators import auto_task_context
+from app.api.ws.decorators import trace_websocket_event
 from app.api.ws.events import (
     ChatCancelPayload,
     ChatResumePayload,
@@ -239,12 +245,22 @@ class ChatNamespace(socketio.AsyncNamespace):
             "history:sync": "on_history_sync",
         }
 
+    @trace_websocket_event(
+        exclude_events={"connect"},  # connect is handled separately in on_connect
+        extract_event_data=True,  # auto-extract task_id, team_id, subtask_id
+    )
     async def trigger_event(self, event: str, sid: str, *args):
         """
         Override trigger_event to handle colon-separated event names.
 
         python-socketio's default behavior converts on_xxx methods to xxx events,
         but we need to support colon-separated event names like 'chat:send'.
+
+        The @trace_websocket_event decorator automatically handles:
+        - Generating unique request_id for each event
+        - Restoring user context from session
+        - Creating OpenTelemetry span with event metadata
+        - Recording exceptions and span status
 
         Args:
             event: Event name (e.g., 'chat:send')
@@ -254,6 +270,10 @@ class ChatNamespace(socketio.AsyncNamespace):
         Returns:
             Result from the event handler
         """
+        return await self._execute_handler(event, sid, *args)
+
+    async def _execute_handler(self, event: str, sid: str, *args):
+        """Execute the event handler for the given event."""
         # Check if this is a colon-separated event we handle
         if event in self._event_handlers:
             handler_name = self._event_handlers[event]
@@ -281,6 +301,10 @@ class ChatNamespace(socketio.AsyncNamespace):
         Raises:
             ConnectionRefusedError: If authentication fails
         """
+        # Generate unique request ID for this WebSocket connection
+        request_id = str(uuid.uuid4())[:8]
+        set_request_context(request_id)
+
         logger.info(f"[WS] Connection attempt sid={sid}")
 
         # Check auth token
@@ -305,8 +329,12 @@ class ChatNamespace(socketio.AsyncNamespace):
             {
                 "user_id": user.id,
                 "user_name": user.user_name,
+                "request_id": request_id,
             },
         )
+
+        # Set user context for trace logging
+        set_user_context(user_id=str(user.id), user_name=user.user_name)
 
         # Join user room
         user_room = f"user:{user.id}"
@@ -324,6 +352,14 @@ class ChatNamespace(socketio.AsyncNamespace):
         try:
             session = await self.get_session(sid)
             user_id = session.get("user_id", "unknown")
+            request_id = session.get("request_id")
+
+            # Restore request context for trace logging
+            if request_id:
+                set_request_context(request_id)
+            if user_id != "unknown":
+                set_user_context(user_id=str(user_id))
+
             logger.info(f"[WS] Disconnected user={user_id} sid={sid}")
         except Exception:
             logger.info(f"[WS] Disconnected sid={sid}")
@@ -332,6 +368,7 @@ class ChatNamespace(socketio.AsyncNamespace):
     # Task Room Events
     # ============================================================
 
+    @auto_task_context(TaskJoinPayload)
     async def on_task_join(self, sid: str, data: dict) -> dict:
         """
         Handle task:join event.
@@ -345,10 +382,7 @@ class ChatNamespace(socketio.AsyncNamespace):
         Returns:
             {"streaming": {...}} or {"streaming": None} or {"error": "..."}
         """
-        try:
-            payload = TaskJoinPayload(**data)
-        except ValidationError as e:
-            return {"error": f"Invalid payload: {e}"}
+        payload = data  # Already validated by decorator
 
         session = await self.get_session(sid)
         user_id = session.get("user_id")
@@ -387,6 +421,7 @@ class ChatNamespace(socketio.AsyncNamespace):
 
         return {"streaming": None}
 
+    @auto_task_context(TaskLeavePayload)
     async def on_task_leave(self, sid: str, data: dict) -> dict:
         """
         Handle task:leave event.
@@ -398,10 +433,7 @@ class ChatNamespace(socketio.AsyncNamespace):
         Returns:
             {"success": true}
         """
-        try:
-            payload = TaskLeavePayload(**data)
-        except ValidationError as e:
-            return {"error": f"Invalid payload: {e}"}
+        payload = data  # Already validated by decorator
 
         task_room = f"task:{payload.task_id}"
         await self.leave_room(sid, task_room)
@@ -416,6 +448,7 @@ class ChatNamespace(socketio.AsyncNamespace):
     # Chat Events
     # ============================================================
 
+    @auto_task_context(ChatSendPayload, task_id_field="task_id")
     async def on_chat_send(self, sid: str, data: dict) -> dict:
         """
         Handle chat:send event.
@@ -431,14 +464,10 @@ class ChatNamespace(socketio.AsyncNamespace):
         """
         logger.info(f"[WS] chat:send received sid={sid} data={data}")
 
-        try:
-            payload = ChatSendPayload(**data)
-            logger.info(
-                f"[WS] chat:send payload parsed: team_id={payload.team_id}, task_id={payload.task_id}, message_len={len(payload.message) if payload.message else 0}"
-            )
-        except ValidationError as e:
-            logger.error(f"[WS] chat:send validation error: {e}")
-            return {"error": f"Invalid payload: {e}"}
+        payload = data  # Already validated by decorator
+        logger.info(
+            f"[WS] chat:send payload parsed: team_id={payload.team_id}, task_id={payload.task_id}, message_len={len(payload.message) if payload.message else 0}"
+        )
 
         session = await self.get_session(sid)
         user_id = session.get("user_id")
@@ -823,6 +852,9 @@ class ChatNamespace(socketio.AsyncNamespace):
             f"content_length={len(message)}"
         )
 
+    @auto_task_context(
+        ChatCancelPayload, task_id_field=None, subtask_id_field="subtask_id"
+    )
     async def on_chat_cancel(self, sid: str, data: dict) -> dict:
         """
         Handle chat:cancel event.
@@ -834,11 +866,7 @@ class ChatNamespace(socketio.AsyncNamespace):
         Returns:
             {"success": true} or {"error": "..."}
         """
-        try:
-            payload = ChatCancelPayload(**data)
-        except ValidationError as e:
-            logger.error(f"[WS] chat:cancel validation error: {e}")
-            return {"error": f"Invalid payload: {e}"}
+        payload = data  # Already validated by decorator
 
         session = await self.get_session(sid)
         user_id = session.get("user_id")
@@ -978,6 +1006,9 @@ class ChatNamespace(socketio.AsyncNamespace):
         finally:
             db.close()
 
+    @auto_task_context(
+        ChatResumePayload, task_id_field="task_id", subtask_id_field="subtask_id"
+    )
     async def on_chat_resume(self, sid: str, data: dict) -> dict:
         """
         Handle chat:resume event.
@@ -989,10 +1020,7 @@ class ChatNamespace(socketio.AsyncNamespace):
         Returns:
             {"success": true} or {"error": "..."}
         """
-        try:
-            payload = ChatResumePayload(**data)
-        except ValidationError as e:
-            return {"error": f"Invalid payload: {e}"}
+        payload = data  # Already validated by decorator
 
         session = await self.get_session(sid)
         user_id = session.get("user_id")
@@ -1028,6 +1056,7 @@ class ChatNamespace(socketio.AsyncNamespace):
 
         return {"success": True}
 
+    @auto_task_context(HistorySyncPayload)
     async def on_history_sync(self, sid: str, data: dict) -> dict:
         """
         Handle history:sync event.
@@ -1039,10 +1068,7 @@ class ChatNamespace(socketio.AsyncNamespace):
         Returns:
             {"messages": [...]} or {"error": "..."}
         """
-        try:
-            payload = HistorySyncPayload(**data)
-        except ValidationError as e:
-            return {"error": f"Invalid payload: {e}"}
+        payload = data  # Already validated by decorator
 
         session = await self.get_session(sid)
         user_id = session.get("user_id")
