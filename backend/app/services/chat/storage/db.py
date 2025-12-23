@@ -221,11 +221,11 @@ class DatabaseHandler:
                         )
                     else:
                         logger.warning(
-                            f"Could not emit task:status event - no running event loop available"
+                            f"Could not emit task:status event - no running event loop available for task={task_id}"
                         )
             except RuntimeError:
                 logger.warning(
-                    f"Could not emit task:status event - no event loop available"
+                    f"Could not emit task:status event - no event loop available for task={task_id}"
                 )
 
     def _apply_status_update(self, status_obj, last_subtask) -> None:

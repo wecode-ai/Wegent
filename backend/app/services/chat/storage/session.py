@@ -292,9 +292,7 @@ class SessionManager:
             subtask_id: The subtask ID to unregister
         """
         # Clean up local event
-        was_cancelled = False
         if subtask_id in self._local_events:
-            was_cancelled = self._local_events[subtask_id].is_set()
             del self._local_events[subtask_id]
 
         # Clean up Redis cancellation flag
