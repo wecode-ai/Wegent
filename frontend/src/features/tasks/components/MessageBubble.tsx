@@ -18,6 +18,10 @@ import {
   XCircle,
   Ban,
   User,
+  Globe,
+  FileText,
+  Image,
+  ExternalLink,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -577,7 +581,121 @@ const MessageBubble = memo(
       );
     };
 
+    // Helper function to parse URL Context blocks from message content
+    // Returns: { urlContexts: ParsedUrlContext[], userMessage: string }
+    interface ParsedUrlContext {
+      url: string;
+      type: string;
+      title?: string;
+    }
+
+    const parseUrlContexts = (
+      content: string
+    ): { urlContexts: ParsedUrlContext[]; userMessage: string } => {
+      const urlContexts: ParsedUrlContext[] = [];
+      let userMessage = content;
+
+      // Extract all [URL Context] blocks (supports both old and new formats)
+      const urlContextRegex =
+        /\[URL Context\]\nSource: ([^\n]+)\nType: ([^\n]+)(?:\nTitle: ([^\n]+))?[\s\S]*?\[\/URL Context\]/g;
+      let match;
+
+      while ((match = urlContextRegex.exec(content)) !== null) {
+        urlContexts.push({
+          url: match[1],
+          type: match[2],
+          title: match[3],
+        });
+      }
+
+      // Remove all [URL Context] blocks from content
+      userMessage = content.replace(/\[URL Context\][\s\S]*?\[\/URL Context\]\n*/g, '').trim();
+
+      // Remove [URL Context Reference] wrapper if present (new format: user message first, then URL context at end)
+      userMessage = userMessage
+        .replace(/\n*\[URL Context Reference\][\s\S]*?\[\/URL Context Reference\]\n*/g, '')
+        .trim();
+
+      // Extract user message from [User Message] block if present (old format)
+      const userMessageMatch = userMessage.match(
+        /\[User Message\]\n([\s\S]*?)\n\[\/User Message\]/
+      );
+      if (userMessageMatch) {
+        userMessage = userMessageMatch[1].trim();
+      }
+
+      return { urlContexts, userMessage };
+    };
+
+    // Helper function to render URL context as attachment-style cards
+    const renderUrlContextCards = (urlContexts: ParsedUrlContext[]) => {
+      if (urlContexts.length === 0) return null;
+
+      const getTypeIcon = (type: string) => {
+        switch (type.toLowerCase()) {
+          case 'webpage':
+            return <Globe className="h-4 w-4 text-blue-500" />;
+          case 'image':
+            return <Image className="h-4 w-4 text-green-500" aria-hidden="true" />;
+          case 'pdf':
+            return <FileText className="h-4 w-4 text-red-500" />;
+          default:
+            return <Globe className="h-4 w-4 text-text-muted" />;
+        }
+      };
+
+      const getUrlDomain = (url: string): string => {
+        try {
+          const parsed = new URL(url);
+          return parsed.hostname.replace('www.', '');
+        } catch {
+          return '';
+        }
+      };
+
+      return (
+        <div className="flex flex-wrap gap-2 mb-3">
+          {urlContexts.map((ctx, idx) => (
+            <a
+              key={`url-ctx-${idx}`}
+              href={ctx.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 px-3 py-2 bg-muted rounded-lg border border-border hover:bg-hover transition-colors max-w-full"
+            >
+              <div className="flex-shrink-0">{getTypeIcon(ctx.type)}</div>
+              <div className="flex-1 min-w-0 overflow-hidden">
+                <div className="text-sm font-medium text-text-primary truncate">
+                  {ctx.title || getUrlDomain(ctx.url) || ctx.url}
+                </div>
+                <div className="text-xs text-text-muted truncate">{getUrlDomain(ctx.url)}</div>
+              </div>
+              <ExternalLink className="h-3 w-3 text-text-muted flex-shrink-0" />
+            </a>
+          ))}
+        </div>
+      );
+    };
+
     const renderPlainMessage = (message: Message) => {
+      // Check if this message contains URL Context blocks (from URL parsing feature)
+      if (message.type === 'user' && message.content.includes('[URL Context]')) {
+        const { urlContexts, userMessage } = parseUrlContexts(message.content);
+
+        if (urlContexts.length > 0) {
+          return (
+            <div className="space-y-3">
+              {/* Render URL contexts as attachment-style cards */}
+              {renderUrlContextCards(urlContexts)}
+              {/* Render the actual user message */}
+              {userMessage && (
+                <div className="text-sm break-all whitespace-pre-wrap">{userMessage}</div>
+              )}
+            </div>
+          );
+        }
+      }
+
       // Check if this is an external API params message
       if (message.type === 'user' && message.content.includes('[EXTERNAL_API_PARAMS]')) {
         const paramsMatch = message.content.match(

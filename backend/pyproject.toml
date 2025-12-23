@@ -81,6 +81,9 @@ dependencies = [
     "emoji>=2.9.0",
     "mcp>=1.0.0",
 
+    # Browser automation for JavaScript-rendered pages
+    "playwright>=1.40.0",
+
     # WebSocket support
     "python-socketio>=5.10.0",
 

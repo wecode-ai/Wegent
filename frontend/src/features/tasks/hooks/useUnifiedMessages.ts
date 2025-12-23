@@ -139,13 +139,27 @@ export function useUnifiedMessages({
     // 2. We have subtasks
     // 3. The task has changed (different from last synced) OR messages are empty
     //    (force resync after clearAllStreams to fix double-click blank message bug)
+
+    // DEBUG: Log sync decision
+    console.log('[useUnifiedMessages][DEBUG] Sync check:', {
+      taskId,
+      subtasksCount: subtasks?.length || 0,
+      lastSyncedTaskId: lastSyncedTaskIdRef.current,
+      hasMessages,
+      messagesSize: streamState?.messages?.size || 0,
+      existingMessageIds: streamState?.messages ? Array.from(streamState.messages.keys()) : [],
+    });
+
     if (
       taskId &&
       subtasks &&
       subtasks.length > 0 &&
       (taskId !== lastSyncedTaskIdRef.current || !hasMessages)
     ) {
-      console.log('[useUnifiedMessages] Syncing backend messages for task', taskId);
+      console.log('[useUnifiedMessages][DEBUG] Triggering syncBackendMessages for task', taskId, {
+        subtaskIds: subtasks.map(s => s.id),
+        subtaskRoles: subtasks.map(s => s.role),
+      });
       syncBackendMessages(taskId, subtasks, {
         teamName: team?.name,
         isGroupChat,
@@ -266,9 +280,9 @@ export function useUnifiedMessages({
         // Same messageId, use timestamp as secondary sort key
         return a.timestamp - b.timestamp;
       }
-      // If only one has messageId, the one with messageId comes first (it's from backend)
-      if (a.messageId !== undefined) return -1;
-      if (b.messageId !== undefined) return 1;
+      // If only one has messageId, sort by timestamp instead of putting messageId first
+      // This ensures user messages (which may not have messageId yet) are sorted correctly
+      // relative to AI messages (which have messageId from chat:done)
       // Neither has messageId (both pending), sort by timestamp
       return a.timestamp - b.timestamp;
     });

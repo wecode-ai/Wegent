@@ -53,6 +53,11 @@ const COLLAPSE_QUOTA_THRESHOLD = 520;
 // Level 2: Collapse selectors with text to icon-only mode
 const COLLAPSE_SELECTORS_THRESHOLD = 420;
 
+// Helper function to escape special regex characters in a string
+function escapeRegExp(string: string): string {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 // Slogan Display Component - shows above input when no messages
 // Always renders a container with fixed height to prevent layout shift when switching tabs
 function SloganDisplay({ slogan }: { slogan: ChatSloganItem | null }) {
@@ -263,12 +268,13 @@ export default function ChatArea({
 
   // URL parser state - for Chat Shell only
   const {
-    state: urlParserState,
+    state: _urlParserState,
     parseUrlsFromText,
     removeUrl: removeUrlFromParser,
     clearAll: clearAllUrls,
     getParsedUrlsArray,
     hasValidUrls,
+    isAnyUrlLoading,
   } = useUrlParser();
 
   // Memoize the params change handler to prevent infinite re-renders
@@ -872,9 +878,16 @@ export default function ChatArea({
 
   // Unified canSubmit flag for both button and keyboard submission
   // This ensures consistent behavior between clicking the send button and pressing Enter
+  // Also disable when URLs are being parsed to prevent sending incomplete data
   const canSubmit = React.useMemo(() => {
-    return !isLoading && !isStreaming && !isModelSelectionRequired && isAttachmentReadyToSend;
-  }, [isLoading, isStreaming, isModelSelectionRequired, isAttachmentReadyToSend]);
+    return (
+      !isLoading &&
+      !isStreaming &&
+      !isModelSelectionRequired &&
+      isAttachmentReadyToSend &&
+      !isAnyUrlLoading
+    );
+  }, [isLoading, isStreaming, isModelSelectionRequired, isAttachmentReadyToSend, isAnyUrlLoading]);
 
   const handleTeamChange = (team: Team | null) => {
     console.log('[ChatArea] handleTeamChange called:', team?.name || 'null', team?.id || 'null');
@@ -1025,10 +1038,6 @@ export default function ChatArea({
         attachmentId: attachmentState.attachment?.id,
       });
 
-      // OPTIMIZATION: Set local pending state IMMEDIATELY for instant UI feedback
-      // This happens synchronously before any async operations
-      setLocalPendingMessage(message);
-
       setTaskInputMessage('');
       // Reset attachment immediately after sending (clear from input area)
       resetAttachment();
@@ -1047,7 +1056,12 @@ export default function ChatArea({
         finalMessage = `[EXTERNAL_API_PARAMS]${paramsJson}[/EXTERNAL_API_PARAMS]\n${message}`;
       }
 
+      // Track the display message for pending UI (may be cleaned of URLs)
+      let displayMessage = message;
+
       // Add URL context if there are parsed URLs (for Chat Shell only)
+      // The URL context is added as a hidden prefix that will be sent to the AI
+      // but displayed as attachment-style cards in the UI
       if (hasValidUrls && selectedTeam && isChatShell(selectedTeam)) {
         const parsedUrls = getParsedUrlsArray();
         const urlContextParts: string[] = [];
@@ -1070,9 +1084,35 @@ export default function ChatArea({
         }
 
         if (urlContextParts.length > 0) {
-          finalMessage = urlContextParts.join('\n\n') + '\n\n' + finalMessage;
+          // Remove the parsed URLs from the user's message to avoid duplication
+          // The URL content is already included in urlContextParts
+          let cleanedMessage = finalMessage;
+          for (const urlResult of parsedUrls) {
+            if (!urlResult.isLoading && !urlResult.error && urlResult.content) {
+              // Remove the URL from the message (with optional surrounding whitespace)
+              cleanedMessage = cleanedMessage
+                .replace(new RegExp(`\\s*${escapeRegExp(urlResult.url)}\\s*`, 'g'), ' ')
+                .trim();
+            }
+          }
+          // Update displayMessage to use the cleaned version (without URLs)
+          // This prevents showing duplicate URL in the pending message
+          displayMessage = cleanedMessage;
+          // Use the cleaned message (without URLs) as the display message
+          // Put user message FIRST, then append URL context at the end
+          // This ensures task title is extracted from user's actual message, not URL context
+          finalMessage =
+            cleanedMessage +
+            '\n\n[URL Context Reference]\n' +
+            urlContextParts.join('\n\n') +
+            '\n[/URL Context Reference]';
         }
       }
+
+      // OPTIMIZATION: Set local pending state IMMEDIATELY for instant UI feedback
+      // This happens synchronously before any async operations
+      // Use displayMessage (cleaned of URLs if applicable) to avoid showing duplicate URL
+      setLocalPendingMessage(displayMessage);
 
       try {
         // For new tasks, generate a temporary ID for tracking
@@ -1102,28 +1142,27 @@ export default function ChatArea({
             task_type: taskType,
           },
           {
-            pendingUserMessage: message,
+            // Use finalMessage (with URL Context) so MessageBubble can render URL cards
+            // The URL Context block will be parsed and displayed as attachment-style cards
+            pendingUserMessage: finalMessage,
             pendingAttachment: attachmentState.attachment,
             immediateTaskId: immediateTaskId,
             // Pass current user info for group chat sender display
             currentUserId: user?.id,
             currentUserName: user?.user_name,
-            onTaskIdResolved: (realTaskId: number) => {
-              // Update streaming task ID when real task ID is resolved
-              setStreamingTaskId(realTaskId);
-
-              // Refresh task list immediately when task ID is resolved
-              // This ensures the new task appears in the sidebar while streaming
-              refreshTasks();
-
-              // Note: We don't update URL here to avoid triggering TaskParamSync
-              // which would call setSelectedTask and trigger refreshSelectedTaskDetail.
-              // URL will be updated when message is sent.
-            },
             // Called immediately after message is sent (before AI response)
             // NOTE: NO REFRESH - the UI displays pendingUserMessage from state
             // The message will remain visible until user sends another message or switches tasks
-            onMessageSent: (completedTaskId: number, _subtaskId: number) => {
+            onMessageSent: (
+              _localMessageId: string,
+              completedTaskId: number,
+              _subtaskId: number
+            ) => {
+              // Update streaming task ID when real task ID is resolved
+              if (completedTaskId > 0) {
+                setStreamingTaskId(completedTaskId);
+              }
+
               // If this was a new task (first message), update URL and task list
               if (completedTaskId && !selectedTaskDetail?.id) {
                 const params = new URLSearchParams(Array.from(searchParams.entries()));
@@ -1147,23 +1186,6 @@ export default function ChatArea({
               }
               // NO REFRESH of task detail - pendingUserMessage is displayed from state
               // This prevents the progress bar flash issue
-            },
-            // Called when AI response completes (chat:done event) - only for Chat Shell
-            // For non-Chat Shell (executor types), AI response is handled by executor_manager
-            // Note: isStreaming is already set to false by handleChatDone in chatStreamContext
-            // streamingContent is preserved, so MessagesArea will display it as a completed message
-            // NO REFRESH needed - the UI displays streamingContent from state
-            onAIComplete: (_completedTaskId: number, _subtaskId: number) => {
-              // Don't reset streamingTaskId immediately - wait for task detail refresh
-              // This prevents selectedTaskDetail from becoming undefined
-              setIsLoading(false);
-              // Refresh task detail to update subtask status after stream completion or cancellation
-              // After refresh completes, reset streamingTaskId
-              setTimeout(() => {
-                refreshSelectedTaskDetail(false);
-                // Now it's safe to clear streamingTaskId
-                setStreamingTaskId(null);
-              }, 300);
             },
             onError: (error: Error) => {
               // Reset all streaming state on error
@@ -1512,30 +1534,35 @@ export default function ChatArea({
                     </div>
                   )}
 
-                  {/* File Upload Preview - show above input on its own row */}
+                  {/* Attachment Area - show file uploads and parsed URLs together */}
                   {(attachmentState.attachment ||
                     attachmentState.isUploading ||
-                    attachmentState.error) && (
-                    <div className="px-3 pt-2">
-                      <FileUpload
-                        attachment={attachmentState.attachment}
-                        isUploading={attachmentState.isUploading}
-                        uploadProgress={attachmentState.uploadProgress}
-                        error={attachmentState.error}
-                        disabled={hasMessages || isLoading || isStreaming}
-                        onFileSelect={handleFileSelect}
-                        onRemove={handleAttachmentRemove}
-                      />
-                    </div>
-                  )}
-                  {/* URL Preview - show parsed URLs above chat input (Chat Shell only) */}
-                  {isChatShell(selectedTeam) && getParsedUrlsArray().length > 0 && (
-                    <div className="px-3 pt-2">
-                      <UrlPreview
-                        parsedUrls={getParsedUrlsArray()}
-                        onRemove={removeUrlFromParser}
-                        disabled={isLoading || isStreaming}
-                      />
+                    attachmentState.error ||
+                    (isChatShell(selectedTeam) && getParsedUrlsArray().length > 0)) && (
+                    <div className="px-3 pt-2 flex flex-wrap items-center gap-2">
+                      {/* File Upload Preview */}
+                      {(attachmentState.attachment ||
+                        attachmentState.isUploading ||
+                        attachmentState.error) && (
+                        <FileUpload
+                          attachment={attachmentState.attachment}
+                          isUploading={attachmentState.isUploading}
+                          uploadProgress={attachmentState.uploadProgress}
+                          error={attachmentState.error}
+                          disabled={hasMessages || isLoading || isStreaming}
+                          onFileSelect={handleFileSelect}
+                          onRemove={handleAttachmentRemove}
+                        />
+                      )}
+                      {/* URL Preview - show parsed URLs as compact items */}
+                      {isChatShell(selectedTeam) && getParsedUrlsArray().length > 0 && (
+                        <UrlPreview
+                          parsedUrls={getParsedUrlsArray()}
+                          onRemove={removeUrlFromParser}
+                          disabled={isLoading || isStreaming}
+                          compact={true}
+                        />
+                      )}
                     </div>
                   )}
                   {/* Chat Input with inline badge */}
@@ -1679,6 +1706,7 @@ export default function ChatArea({
                             isStreaming ||
                             isModelSelectionRequired ||
                             !isAttachmentReadyToSend ||
+                            isAnyUrlLoading ||
                             (shouldHideChatInput ? false : !taskInputMessage.trim())
                           }
                           isLoading={isLoading}
@@ -1706,6 +1734,7 @@ export default function ChatArea({
                             isStreaming ||
                             isModelSelectionRequired ||
                             !isAttachmentReadyToSend ||
+                            isAnyUrlLoading ||
                             (shouldHideChatInput ? false : !taskInputMessage.trim())
                           }
                           isLoading={isLoading}
@@ -1773,31 +1802,35 @@ export default function ChatArea({
                     </p>
                   </div>
                 )}
-
-                {/* File Upload Preview - show above input when file is selected */}
+                {/* Attachment Area - show file uploads and parsed URLs together */}
                 {(attachmentState.attachment ||
                   attachmentState.isUploading ||
-                  attachmentState.error) && (
-                  <div className="px-3 pt-2">
-                    <FileUpload
-                      attachment={attachmentState.attachment}
-                      isUploading={attachmentState.isUploading}
-                      uploadProgress={attachmentState.uploadProgress}
-                      error={attachmentState.error}
-                      disabled={isLoading || isStreaming}
-                      onFileSelect={handleFileSelect}
-                      onRemove={handleAttachmentRemove}
-                    />
-                  </div>
-                )}
-                {/* URL Preview - show parsed URLs above chat input (Chat Shell only) */}
-                {isChatShell(selectedTeam) && getParsedUrlsArray().length > 0 && (
-                  <div className="px-3 pt-2">
-                    <UrlPreview
-                      parsedUrls={getParsedUrlsArray()}
-                      onRemove={removeUrlFromParser}
-                      disabled={isLoading || isStreaming}
-                    />
+                  attachmentState.error ||
+                  (isChatShell(selectedTeam) && getParsedUrlsArray().length > 0)) && (
+                  <div className="px-3 pt-2 flex flex-wrap items-center gap-2">
+                    {/* File Upload Preview */}
+                    {(attachmentState.attachment ||
+                      attachmentState.isUploading ||
+                      attachmentState.error) && (
+                      <FileUpload
+                        attachment={attachmentState.attachment}
+                        isUploading={attachmentState.isUploading}
+                        uploadProgress={attachmentState.uploadProgress}
+                        error={attachmentState.error}
+                        disabled={isLoading || isStreaming}
+                        onFileSelect={handleFileSelect}
+                        onRemove={handleAttachmentRemove}
+                      />
+                    )}
+                    {/* URL Preview - show parsed URLs as compact items */}
+                    {isChatShell(selectedTeam) && getParsedUrlsArray().length > 0 && (
+                      <UrlPreview
+                        parsedUrls={getParsedUrlsArray()}
+                        onRemove={removeUrlFromParser}
+                        disabled={isLoading || isStreaming}
+                        compact={true}
+                      />
+                    )}
                   </div>
                 )}
                 {/* Chat Input - hide for workflow mode */}
@@ -1930,6 +1963,7 @@ export default function ChatArea({
                           isStreaming ||
                           isModelSelectionRequired ||
                           !isAttachmentReadyToSend ||
+                          isAnyUrlLoading ||
                           (shouldHideChatInput ? false : !taskInputMessage.trim())
                         }
                         isLoading={isLoading}
@@ -1957,6 +1991,7 @@ export default function ChatArea({
                           isStreaming ||
                           isModelSelectionRequired ||
                           !isAttachmentReadyToSend ||
+                          isAnyUrlLoading ||
                           (shouldHideChatInput ? false : !taskInputMessage.trim())
                         }
                         isLoading={isLoading}

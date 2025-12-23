@@ -7,6 +7,9 @@ URL Parser Service for Chat Shell.
 
 Provides automatic URL detection and content parsing functionality.
 Supports webpage, image, and PDF content extraction.
+
+For websites that require JavaScript rendering (e.g., 微博, Twitter),
+uses Playwright headless browser as a fallback.
 """
 
 import asyncio
@@ -28,13 +31,45 @@ logger = logging.getLogger(__name__)
 # Configuration constants with defaults
 URL_PARSER_MAX_CHARS = getattr(settings, "URL_PARSER_MAX_CHARS", 200000)
 URL_PARSER_TIMEOUT = getattr(settings, "URL_PARSER_TIMEOUT", 30)
-URL_PARSER_MAX_IMAGE_SIZE = getattr(settings, "URL_PARSER_MAX_IMAGE_SIZE", 10 * 1024 * 1024)
+URL_PARSER_MAX_IMAGE_SIZE = getattr(
+    settings, "URL_PARSER_MAX_IMAGE_SIZE", 10 * 1024 * 1024
+)
+# Timeout for Playwright browser operations (longer than HTTP timeout)
+URL_PARSER_BROWSER_TIMEOUT = getattr(settings, "URL_PARSER_BROWSER_TIMEOUT", 60)
 
 # Image file extensions
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg"}
 
 # PDF file extension
 PDF_EXTENSION = ".pdf"
+
+# Domains that require JavaScript rendering (visitor verification, dynamic content, etc.)
+JS_REQUIRED_DOMAINS = {
+    "weibo.com",
+    "m.weibo.cn",
+    "weibo.cn",
+    "twitter.com",
+    "x.com",
+    "instagram.com",
+    "facebook.com",
+    "linkedin.com",
+    "tiktok.com",
+    "douyin.com",
+    "xiaohongshu.com",
+    "xhs.com",
+    "bilibili.com",
+    "zhihu.com",
+}
+
+# Patterns that indicate a page requires JavaScript (visitor verification pages)
+JS_REQUIRED_PATTERNS = [
+    "Visitor System",
+    "访客系统",
+    "请完成安全验证",
+    "Please complete security verification",
+    "Enable JavaScript",
+    "需要启用 JavaScript",
+]
 
 
 class UrlType(str, Enum):
@@ -64,8 +99,62 @@ class UrlParser:
 
     def __init__(self):
         self.timeout = URL_PARSER_TIMEOUT
+        self.browser_timeout = URL_PARSER_BROWSER_TIMEOUT
         self.max_chars = URL_PARSER_MAX_CHARS
         self.max_image_size = URL_PARSER_MAX_IMAGE_SIZE
+        self._playwright = None
+        self._browser = None
+
+    def _requires_js_rendering(self, url: str) -> bool:
+        """Check if URL requires JavaScript rendering based on domain."""
+        try:
+            parsed = urlparse(url)
+            domain = parsed.netloc.lower()
+            # Remove www. prefix for matching
+            if domain.startswith("www."):
+                domain = domain[4:]
+            return domain in JS_REQUIRED_DOMAINS
+        except Exception:
+            return False
+
+    def _content_requires_js(self, html_content: str) -> bool:
+        """Check if HTML content indicates JavaScript is required (e.g., visitor verification page)."""
+        for pattern in JS_REQUIRED_PATTERNS:
+            if pattern in html_content:
+                return True
+        return False
+
+    async def _get_browser(self):
+        """Get or create Playwright browser instance (lazy initialization)."""
+        if self._browser is None:
+            try:
+                from playwright.async_api import async_playwright
+
+                self._playwright = await async_playwright().start()
+                # Use Chromium for best compatibility
+                self._browser = await self._playwright.chromium.launch(
+                    headless=True,
+                    args=[
+                        "--no-sandbox",
+                        "--disable-setuid-sandbox",
+                        "--disable-dev-shm-usage",
+                        "--disable-gpu",
+                    ],
+                )
+                logger.info("Playwright browser initialized successfully")
+            except Exception as e:
+                logger.error(f"Failed to initialize Playwright browser: {e}")
+                raise
+        return self._browser
+
+    async def _close_browser(self):
+        """Close Playwright browser instance."""
+        if self._browser:
+            await self._browser.close()
+            self._browser = None
+        if self._playwright:
+            await self._playwright.stop()
+            self._playwright = None
 
     async def parse_urls(self, urls: list[str]) -> list[ParsedUrlResult]:
         """
@@ -118,6 +207,28 @@ class UrlParser:
             # Detect URL type from extension first
             url_type = self._detect_type_from_url(url)
 
+            # Check if this domain requires JavaScript rendering
+            needs_js = self._requires_js_rendering(url)
+
+            # For images and PDFs, always use direct HTTP request
+            if url_type in (UrlType.IMAGE, UrlType.PDF):
+                async with httpx.AsyncClient(
+                    timeout=self.timeout,
+                    follow_redirects=True,
+                    headers={
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                    },
+                ) as client:
+                    return await self._fetch_and_parse(client, url, url_type)
+
+            # For known JS-required domains, use Playwright directly
+            if needs_js:
+                logger.info(
+                    f"URL {url} requires JavaScript rendering, using Playwright"
+                )
+                return await self._parse_with_playwright(url)
+
+            # For other URLs, try HTTP first
             async with httpx.AsyncClient(
                 timeout=self.timeout,
                 follow_redirects=True,
@@ -125,11 +236,7 @@ class UrlParser:
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 },
             ) as client:
-                # For images and PDFs detected by extension, use GET directly
-                if url_type in (UrlType.IMAGE, UrlType.PDF):
-                    return await self._fetch_and_parse(client, url, url_type)
-
-                # For other URLs, do HEAD request first to check content type
+                # Do HEAD request first to check content type
                 try:
                     head_response = await client.head(url)
                     content_type = head_response.headers.get("content-type", "").lower()
@@ -138,7 +245,16 @@ class UrlParser:
                     # HEAD failed, try GET directly
                     url_type = UrlType.WEBPAGE
 
-                return await self._fetch_and_parse(client, url, url_type)
+                result = await self._fetch_and_parse(client, url, url_type)
+
+                # Check if the content indicates JavaScript is required
+                if result.content and self._content_requires_js(result.content):
+                    logger.info(
+                        f"URL {url} returned JS-required page, retrying with Playwright"
+                    )
+                    return await self._parse_with_playwright(url)
+
+                return result
 
         except httpx.TimeoutException:
             return ParsedUrlResult(
@@ -158,6 +274,102 @@ class UrlParser:
                 url=url,
                 type=UrlType.UNKNOWN,
                 error=f"Parse error: {str(e)}",
+            )
+
+    async def _parse_with_playwright(self, url: str) -> ParsedUrlResult:
+        """
+        Parse a URL using Playwright headless browser.
+        Used for websites that require JavaScript rendering.
+
+        Args:
+            url: URL to parse
+
+        Returns:
+            ParsedUrlResult object
+        """
+        try:
+            browser = await self._get_browser()
+            context = await browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                viewport={"width": 1920, "height": 1080},
+                locale="zh-CN",
+            )
+            page = await context.new_page()
+
+            try:
+                # Navigate to the URL with timeout
+                # Use "domcontentloaded" instead of "networkidle" because some sites
+                # (like Weibo) never reach networkidle due to continuous resource loading
+                try:
+                    await page.goto(
+                        url,
+                        wait_until="domcontentloaded",
+                        timeout=self.browser_timeout * 1000,
+                    )
+                except Exception as goto_error:
+                    # If domcontentloaded also fails, try with "commit" (earliest event)
+                    logger.warning(
+                        f"domcontentloaded failed for {url}, trying with commit: {goto_error}"
+                    )
+                    await page.goto(
+                        url, wait_until="commit", timeout=self.browser_timeout * 1000
+                    )
+
+                # Wait for the page to stabilize - give JS time to render content
+                # Use a shorter initial wait, then check if content is ready
+                await asyncio.sleep(3)
+
+                # Try to wait for body to have meaningful content
+                try:
+                    await page.wait_for_selector("body", timeout=5000)
+                except Exception:
+                    pass  # Continue even if selector wait fails
+
+                # Get the page title
+                title = await page.title()
+
+                # Get the page content
+                html_content = await page.content()
+
+                # Check if we still got a verification page
+                if self._content_requires_js(html_content):
+                    # Try waiting longer for the page to load
+                    logger.info(
+                        f"Still got verification page for {url}, waiting longer..."
+                    )
+                    await asyncio.sleep(5)
+                    html_content = await page.content()
+                    title = await page.title()
+
+                # Convert HTML to markdown
+                markdown_content = self._html_to_markdown(html_content)
+
+                # Truncate if necessary
+                truncated = False
+                if len(markdown_content) > self.max_chars:
+                    markdown_content = markdown_content[: self.max_chars]
+                    markdown_content += "\n\n[Content truncated...]"
+                    truncated = True
+
+                return ParsedUrlResult(
+                    url=url,
+                    type=UrlType.WEBPAGE,
+                    title=title if title else None,
+                    content=markdown_content,
+                    truncated=truncated,
+                    size=len(html_content.encode("utf-8")),
+                )
+
+            finally:
+                await page.close()
+                await context.close()
+
+        except Exception as e:
+            logger.exception(f"Error parsing URL with Playwright: {url}")
+            return ParsedUrlResult(
+                url=url,
+                type=UrlType.WEBPAGE,
+                error=f"Failed to parse with browser: {str(e)}",
             )
 
     def _detect_type_from_url(self, url: str) -> UrlType:
@@ -407,8 +619,12 @@ class UrlParser:
 
         # Last resort: regex-based tag stripping
         # Remove script and style content
-        html = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL | re.IGNORECASE)
-        html = re.sub(r"<style[^>]*>.*?</style>", "", html, flags=re.DOTALL | re.IGNORECASE)
+        html = re.sub(
+            r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL | re.IGNORECASE
+        )
+        html = re.sub(
+            r"<style[^>]*>.*?</style>", "", html, flags=re.DOTALL | re.IGNORECASE
+        )
 
         # Remove all HTML tags
         text = re.sub(r"<[^>]+>", "", html)
