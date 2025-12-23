@@ -113,6 +113,7 @@ class WebSocketEmitter:
         subtask_id: int,
         offset: int,
         result: Optional[Dict[str, Any]] = None,
+        message_id: Optional[int] = None,
     ) -> None:
         """
         Emit chat:done event to task room.
@@ -122,6 +123,7 @@ class WebSocketEmitter:
             subtask_id: Subtask ID
             offset: Final offset
             result: Optional result data
+            message_id: Message ID for ordering (primary sort key)
         """
         await self.sio.emit(
             ServerEvents.CHAT_DONE,
@@ -130,11 +132,14 @@ class WebSocketEmitter:
                 "subtask_id": subtask_id,
                 "offset": offset,
                 "result": result or {},
+                "message_id": message_id,
             },
             room=f"task:{task_id}",
             namespace=self.namespace,
         )
-        logger.debug(f"[WS] emit chat:done task={task_id} subtask={subtask_id}")
+        logger.debug(
+            f"[WS] emit chat:done task={task_id} subtask={subtask_id} message_id={message_id}"
+        )
 
     async def emit_chat_error(
         self,
@@ -180,11 +185,14 @@ class WebSocketEmitter:
         """
         await self.sio.emit(
             ServerEvents.CHAT_CANCELLED,
-            {"subtask_id": subtask_id},
+            {
+                "task_id": task_id,
+                "subtask_id": subtask_id,
+            },
             room=f"task:{task_id}",
             namespace=self.namespace,
         )
-        logger.debug(f"[WS] emit chat:cancelled task={task_id} subtask={subtask_id}")
+        logger.info(f"[WS] emit chat:cancelled task={task_id} subtask={subtask_id}")
 
     # ============================================================
     # Non-streaming Messages (to task room, exclude sender)
@@ -194,6 +202,7 @@ class WebSocketEmitter:
         self,
         task_id: int,
         subtask_id: int,
+        message_id: int,
         role: str,
         content: str,
         sender: Dict[str, Any],
@@ -206,6 +215,7 @@ class WebSocketEmitter:
         Args:
             task_id: Task ID
             subtask_id: Subtask ID
+            message_id: Message ID for ordering (primary sort key)
             role: Message role (user/assistant/system)
             content: Message content
             sender: Sender info dict
@@ -217,6 +227,7 @@ class WebSocketEmitter:
             {
                 "subtask_id": subtask_id,
                 "task_id": task_id,
+                "message_id": message_id,
                 "role": role,
                 "content": content,
                 "sender": sender,

@@ -30,6 +30,7 @@ import ClarificationAnswerSummary from './ClarificationAnswerSummary';
 import AttachmentPreview from './AttachmentPreview';
 import StreamingWaitIndicator from './StreamingWaitIndicator';
 import type { ClarificationData, FinalPromptData, ClarificationAnswer } from '@/types/api';
+import { useTraceAction } from '@/hooks/useTraceAction';
 export interface Message {
   type: 'user' | 'ai';
   content: string;
@@ -69,10 +70,13 @@ const CopyButton = ({
   content,
   className,
   tooltip,
+  onCopySuccess,
 }: {
   content: string;
   className?: string;
   tooltip?: string;
+  /** Optional callback when copy succeeds - used for telemetry */
+  onCopySuccess?: () => void;
 }) => {
   const [copied, setCopied] = useState(false);
 
@@ -82,6 +86,7 @@ const CopyButton = ({
         await navigator.clipboard.writeText(content);
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
+        onCopySuccess?.();
         return;
       } catch (err) {
         console.error('Failed to copy text: ', err);
@@ -98,6 +103,7 @@ const CopyButton = ({
       document.body.removeChild(textarea);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
+      onCopySuccess?.();
     } catch (err) {
       console.error('Fallback copy failed: ', err);
     }
@@ -134,6 +140,7 @@ const CopyButton = ({
 const BubbleTools = ({
   contentToCopy,
   tools = [],
+  onCopySuccess,
 }: {
   contentToCopy: string;
   tools?: Array<{
@@ -142,10 +149,12 @@ const BubbleTools = ({
     icon: React.ReactNode;
     onClick: () => void;
   }>;
+  /** Optional callback when copy succeeds - used for telemetry */
+  onCopySuccess?: () => void;
 }) => {
   return (
     <div className="absolute bottom-2 left-2 flex items-center gap-1 z-10">
-      <CopyButton content={contentToCopy} />
+      <CopyButton content={contentToCopy} onCopySuccess={onCopySuccess} />
       {tools.map(tool => (
         <Button
           key={tool.key}
@@ -307,6 +316,9 @@ const MessageBubble = memo(
     paragraphAction,
     isCurrentUserMessage,
   }: MessageBubbleProps) {
+    // Use trace hook for telemetry (auto-includes user and task context)
+    const { trace } = useTraceAction();
+
     // Determine if this is a user-type message (for styling purposes)
     const isUserTypeMessage = msg.type === 'user';
 
@@ -540,6 +552,7 @@ const MessageBubble = memo(
           />
           <BubbleTools
             contentToCopy={`${promptPart ? promptPart + '\n\n' : ''}${normalizedResult}`}
+            onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
             tools={[
               {
                 key: 'download',
@@ -555,6 +568,7 @@ const MessageBubble = memo(
                   a.download = 'message.md';
                   a.click();
                   URL.revokeObjectURL(url);
+                  trace.download(msg.type, msg.subtaskId);
                 },
               },
             ]}
@@ -1168,6 +1182,7 @@ const MessageBubble = memo(
             {/* Show copy and download buttons */}
             <BubbleTools
               contentToCopy={contentToRender}
+              onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
               tools={[
                 {
                   key: 'download',
@@ -1183,6 +1198,7 @@ const MessageBubble = memo(
                     a.download = 'message.md';
                     a.click();
                     URL.revokeObjectURL(url);
+                    trace.download(msg.type, msg.subtaskId);
                   },
                 },
               ]}
@@ -1224,6 +1240,7 @@ const MessageBubble = memo(
               {/* Show copy and download buttons during streaming */}
               <BubbleTools
                 contentToCopy={contentToRender}
+                onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
                 tools={[
                   {
                     key: 'download',
@@ -1239,6 +1256,7 @@ const MessageBubble = memo(
                       a.download = 'message.md';
                       a.click();
                       URL.revokeObjectURL(url);
+                      trace.download(msg.type, msg.subtaskId);
                     },
                   },
                 ]}
@@ -1319,6 +1337,7 @@ const MessageBubble = memo(
                   content={msg.content}
                   className="h-6 w-6 hover:bg-muted"
                   tooltip={t('actions.copy') || 'Copy'}
+                  onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
                 />
               </div>
             )}

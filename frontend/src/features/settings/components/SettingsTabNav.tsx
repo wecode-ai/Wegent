@@ -31,13 +31,15 @@ export type SettingsTabId =
   | 'personal-models'
   | 'personal-shells'
   | 'personal-team'
+  | 'personal-retrievers'
   | 'group-manager'
   | 'group-models'
   | 'group-shells'
+  | 'group-team'
+  | 'group-retrievers'
   | 'general'
   | 'integrations'
-  | 'api-keys'
-  | 'group-team';
+  | 'api-keys';
 
 // Scope type for resource tabs
 type ResourceScope = 'personal' | 'group';
@@ -118,6 +120,12 @@ export function SettingsTabNav({
         groupId: 'group-shells',
         label: t('settings.shells'),
       },
+      {
+        key: 'retrievers',
+        personalId: 'personal-retrievers',
+        groupId: 'group-retrievers',
+        label: t('settings.retrievers'),
+      },
     ],
     [t]
   );
@@ -160,7 +168,7 @@ export function SettingsTabNav({
     if (newScope !== currentScope) {
       setCurrentScope(newScope);
     }
-  }, [activeTab]);
+  }, [activeTab, currentScope, getCurrentScope]);
 
   // Get the current resource tab key
   const getCurrentResourceKey = (): string | null => {

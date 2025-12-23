@@ -11,6 +11,7 @@ This module handles the tool calling flow during chat completions:
 - Building messages for tool results
 """
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
@@ -29,6 +30,8 @@ class ToolCall:
     name: str
     arguments: str
     index: int = 0
+    # Gemini thought_signature for function calling (required for Gemini 3 Pro)
+    thought_signature: str | None = None
 
     def parse_arguments(self) -> dict[str, Any]:
         """Parse arguments JSON safely."""
@@ -45,24 +48,40 @@ class ToolCall:
 class ToolCallAccumulator:
     """Accumulates streaming tool call chunks."""
 
-    calls: dict[int, dict[str, str]] = field(default_factory=dict)
+    calls: dict[int, dict[str, Any]] = field(default_factory=dict)
 
-    def add_chunk(self, chunk: dict[str, Any]) -> None:
-        """Add a tool call chunk."""
+    def add_chunk(
+        self, chunk: dict[str, Any], thought_signature: str | None = None
+    ) -> None:
+        """Add a tool call chunk with optional thought_signature."""
         idx = chunk.get("index", 0)
         if idx not in self.calls:
-            self.calls[idx] = {"id": "", "name": "", "arguments": ""}
+            self.calls[idx] = {
+                "id": "",
+                "name": "",
+                "arguments": "",
+                "thought_signature": None,
+            }
 
         for key in ("id", "name"):
             if chunk.get(key):
                 self.calls[idx][key] = chunk[key]
         if chunk.get("arguments"):
             self.calls[idx]["arguments"] += chunk["arguments"]
+        # Store thought_signature if provided (only set once, don't overwrite)
+        if thought_signature and not self.calls[idx]["thought_signature"]:
+            self.calls[idx]["thought_signature"] = thought_signature
 
     def get_calls(self) -> list[ToolCall]:
         """Get accumulated tool calls."""
         return [
-            ToolCall(id=tc["id"], name=tc["name"], arguments=tc["arguments"], index=idx)
+            ToolCall(
+                id=tc["id"],
+                name=tc["name"],
+                arguments=tc["arguments"],
+                index=idx,
+                thought_signature=tc.get("thought_signature"),
+            )
             for idx, tc in sorted(self.calls.items())
         ]
 
@@ -114,11 +133,28 @@ class ToolHandler:
         return result
 
     async def execute_all(self, tool_calls: list[ToolCall]) -> list[dict[str, Any]]:
-        """Execute multiple tool calls and return message format results."""
-        logger.info("Executing %d tool calls", len(tool_calls))
+        """
+        Execute multiple tool calls concurrently and return message format results.
+
+        Tool calls are executed in parallel using asyncio.gather for improved
+        performance. Results are returned in the same order as the input tool_calls.
+        """
+        logger.info("Executing %d tool calls concurrently", len(tool_calls))
+
+        # Execute all tool calls concurrently
+        execution_results = await asyncio.gather(
+            *[self.execute(tc) for tc in tool_calls],
+            return_exceptions=True,
+        )
+
+        # Build results in the same order as tool_calls
         results = []
-        for tc in tool_calls:
-            result = await self.execute(tc)
+        for tc, result in zip(tool_calls, execution_results):
+            # Handle exceptions from gather
+            if isinstance(result, Exception):
+                logger.error("Tool %s failed with exception: %s", tc.name, result)
+                result = f"Tool execution failed: {result}"
+
             results.append(
                 {
                     "role": "tool",
@@ -127,6 +163,7 @@ class ToolHandler:
                     "content": result,
                 }
             )
+
         logger.info("All %d tool calls completed", len(tool_calls))
         return results
 
@@ -134,8 +171,16 @@ class ToolHandler:
     def build_assistant_message(
         content: str, tool_calls: list[ToolCall]
     ) -> dict[str, Any]:
-        """Build an assistant message with tool calls."""
-        return {
+        """Build an assistant message with tool calls.
+
+        Includes thought_signatures for Gemini 3 Pro function calling support.
+        """
+        # Collect thought_signatures for Gemini provider
+        thought_signatures = [tc.thought_signature for tc in tool_calls]
+        # Only include thought_signatures if any are present
+        has_signatures = any(sig for sig in thought_signatures)
+
+        msg: dict[str, Any] = {
             "role": "assistant",
             "content": content or None,
             "tool_calls": [
@@ -147,6 +192,11 @@ class ToolHandler:
                 for tc in tool_calls
             ],
         }
+
+        if has_signatures:
+            msg["thought_signatures"] = thought_signatures
+
+        return msg
 
     @property
     def has_tools(self) -> bool:

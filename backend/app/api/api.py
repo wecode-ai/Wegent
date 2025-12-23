@@ -12,6 +12,7 @@ from app.api.endpoints import (
     oidc,
     openapi_responses,
     quota,
+    rag,
     repository,
     subtasks,
     users,
@@ -26,6 +27,7 @@ from app.api.endpoints.adapter import (
     dify,
     executors,
     models,
+    retrievers,
     shells,
     task_members,
     tasks,
@@ -58,6 +60,7 @@ api_router.include_router(repository.router, prefix="/git", tags=["repository"])
 api_router.include_router(executors.router, prefix="/executors", tags=["executors"])
 api_router.include_router(quota.router, prefix="/quota", tags=["quota"])
 api_router.include_router(dify.router, prefix="/dify", tags=["dify"])
+api_router.include_router(retrievers.router, prefix="/retrievers", tags=["retrievers"])
 api_router.include_router(wiki.router, prefix="/wiki", tags=["wiki"])
 api_router.include_router(
     wiki.internal_router, prefix="/internal/wiki", tags=["wiki-internal"]
@@ -72,4 +75,5 @@ api_router.include_router(
 api_router.include_router(
     knowledge.document_router, prefix="/knowledge-documents", tags=["knowledge"]
 )
+api_router.include_router(rag.router, prefix="/rag", tags=["rag"])
 api_router.include_router(k_router)
