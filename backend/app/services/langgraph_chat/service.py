@@ -446,9 +446,12 @@ class LangGraphChatService:
                     extra_tools.extend(mcp_client.get_tools())
                     core.set_mcp_client(mcp_client)
 
-            # Add web search tool if enabled for this request
-            if config.enable_web_search and settings.WEB_SEARCH_ENABLED:
-                extra_tools.append(WebSearchTool())
+            # Always add web search tool if web search is enabled in settings
+            # Regardless of frontend enable_web_search toggle
+            if settings.WEB_SEARCH_ENABLED:
+                # Use specified search engine or default to first one
+                search_engine = config.search_engine if config.search_engine else None
+                extra_tools.append(WebSearchTool(engine_name=search_engine))
 
             # Get chat history
             history = await self._get_chat_history(task_id, config.is_group_chat)

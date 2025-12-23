@@ -27,6 +27,9 @@ class WebSearchTool(BaseTool):
     )
     args_schema: type[BaseModel] = WebSearchInput
 
+    # Optional: specify which search engine to use (None = use first available)
+    engine_name: str | None = None
+
     def _run(
         self,
         query: str,
@@ -56,8 +59,8 @@ class WebSearchTool(BaseTool):
             # Import search service
             from app.services.search import get_search_service
 
-            # Get search service instance
-            search_service = get_search_service()
+            # Get search service instance (use specified engine or default to first)
+            search_service = get_search_service(self.engine_name)
             if not search_service:
                 return json.dumps(
                     {
