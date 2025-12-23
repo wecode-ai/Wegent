@@ -106,6 +106,24 @@ export default function ChatArea({
   const [hasRestoredPreferences, setHasRestoredPreferences] = useState(false);
   const isMobile = useMediaQuery('(max-width: 640px)');
 
+  // Multi-model compare mode state
+  const [compareMode, setCompareMode] = useState(false);
+  const [selectedModels, setSelectedModels] = useState<Model[]>([]);
+
+  // Handle compare mode toggle
+  const handleCompareModeChange = useCallback((enabled: boolean) => {
+    setCompareMode(enabled);
+    if (!enabled) {
+      // When exiting compare mode, clear selected models
+      setSelectedModels([]);
+    }
+  }, []);
+
+  // Handle selected models change in compare mode
+  const handleSelectedModelsChange = useCallback((models: Model[]) => {
+    setSelectedModels(models);
+  }, []);
+
   const [taskInputMessage, setTaskInputMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   // Unified error prompt using antd message.error, no local error state needed
@@ -349,6 +367,7 @@ export default function ChatArea({
     getStreamState,
     isTaskStreaming,
     sendMessage: contextSendMessage,
+    sendCompareMessage: contextSendCompareMessage,
     stopStream: contextStopStream,
     resetStream: contextResetStream,
     resumeStream: contextResumeStream,
@@ -1022,121 +1041,193 @@ export default function ChatArea({
         const paramsJson = JSON.stringify(externalApiParams);
         finalMessage = `[EXTERNAL_API_PARAMS]${paramsJson}[/EXTERNAL_API_PARAMS]\n${message}`;
       }
-
       try {
         // For new tasks, generate a temporary ID for tracking
         // NOTE: We do NOT set streamingTaskId here - it will be set when chat:start event is received
         // This ensures AI response rendering is only triggered by server push events
         const immediateTaskId = selectedTaskDetail?.id || -Date.now();
-        // Use the global context to send message with callbacks
-        // Pass immediateTaskId to ensure ChatArea and context use the same temporary ID
-        const tempTaskId = await contextSendMessage(
-          {
-            message: finalMessage,
-            team_id: selectedTeam?.id ?? 0,
-            task_id: selectedTaskDetail?.id,
-            model_id: modelId,
-            force_override_bot_model: forceOverride,
-            attachment_id: attachmentState.attachment?.id,
-            enable_web_search: enableWebSearch,
-            search_engine: selectedSearchEngine || undefined,
-            enable_clarification: enableClarification,
-            is_group_chat: selectedTaskDetail?.is_group_chat || false,
-            // Pass repository info for code tasks
-            git_url: showRepositorySelector ? selectedRepo?.git_url : undefined,
-            git_repo: showRepositorySelector ? selectedRepo?.git_repo : undefined,
-            git_repo_id: showRepositorySelector ? selectedRepo?.git_repo_id : undefined,
-            git_domain: showRepositorySelector ? selectedRepo?.git_domain : undefined,
-            branch_name: showRepositorySelector ? selectedBranch?.name : undefined,
-            task_type: taskType,
-          },
-          {
-            pendingUserMessage: message,
-            pendingAttachment: attachmentState.attachment,
-            immediateTaskId: immediateTaskId,
-            // Pass current user info for group chat sender display
-            currentUserId: user?.id,
-            currentUserName: user?.user_name,
-            onTaskIdResolved: (realTaskId: number) => {
-              // Update streaming task ID when real task ID is resolved
-              setStreamingTaskId(realTaskId);
 
-              // Refresh task list immediately when task ID is resolved
-              // This ensures the new task appears in the sidebar while streaming
-              refreshTasks();
+        // Check if we should use compare mode (multi-model comparison)
+        const shouldUseCompareMode = compareMode && selectedModels.length >= 2;
 
-              // Note: We don't update URL here to avoid triggering TaskParamSync
-              // which would call setSelectedTask and trigger refreshSelectedTaskDetail.
-              // URL will be updated when message is sent.
+        if (shouldUseCompareMode) {
+          // Use multi-model compare message
+          console.log(
+            '[ChatArea] Using compare mode with models:',
+            selectedModels.map(m => m.name)
+          );
+          const compareTaskId = await contextSendCompareMessage(
+            {
+              message: finalMessage,
+              team_id: selectedTeam?.id ?? 0,
+              task_id: selectedTaskDetail?.id,
+              models: selectedModels.map(m => ({
+                name: m.name,
+                display_name: m.displayName || m.name,
+                type: m.type === 'public' || m.type === 'user' ? m.type : 'user',
+              })),
+              attachment_id: attachmentState.attachment?.id,
+              enable_web_search: enableWebSearch,
+              search_engine: selectedSearchEngine || undefined,
+              // Pass repository info for code tasks
+              git_url: showRepositorySelector ? selectedRepo?.git_url : undefined,
+              git_repo: showRepositorySelector ? selectedRepo?.git_repo : undefined,
+              git_repo_id: showRepositorySelector ? selectedRepo?.git_repo_id : undefined,
+              git_domain: showRepositorySelector ? selectedRepo?.git_domain : undefined,
+              branch_name: showRepositorySelector ? selectedBranch?.name : undefined,
+              task_type: taskType,
             },
-            // Called immediately after message is sent (before AI response)
-            // NOTE: NO REFRESH - the UI displays pendingUserMessage from state
-            // The message will remain visible until user sends another message or switches tasks
-            onMessageSent: (completedTaskId: number, _subtaskId: number) => {
-              // If this was a new task (first message), update URL and task list
-              if (completedTaskId && !selectedTaskDetail?.id) {
-                const params = new URLSearchParams(Array.from(searchParams.entries()));
-                params.set('taskId', String(completedTaskId));
-                router.push(`?${params.toString()}`);
-
-                // Update task list in sidebar (but don't refresh task detail)
+            {
+              pendingUserMessage: message,
+              pendingAttachment: attachmentState.attachment,
+              immediateTaskId: immediateTaskId,
+              onTaskIdResolved: (realTaskId: number) => {
+                setStreamingTaskId(realTaskId);
                 refreshTasks();
-              }
+              },
+              onMessageSent: (completedTaskId: number, _userSubtaskId: number) => {
+                if (completedTaskId && !selectedTaskDetail?.id) {
+                  const params = new URLSearchParams(Array.from(searchParams.entries()));
+                  params.set('taskId', String(completedTaskId));
+                  router.push(`?${params.toString()}`);
+                  refreshTasks();
+                }
+              },
+              onAllComplete: (_completedTaskId: number, _compareGroupId: string) => {
+                setIsLoading(false);
+                setTimeout(() => {
+                  refreshSelectedTaskDetail(false);
+                  setStreamingTaskId(null);
+                }, 300);
+              },
+              onError: (error: Error) => {
+                resetStreamingState();
+                toast({
+                  variant: 'destructive',
+                  title: error.message,
+                });
+              },
+            }
+          );
 
-              // For group chat: mark task as viewed when user sends a message
-              // This prevents showing unread indicator for the sender's own messages
-              // The backend updates task.updated_at when any message is sent,
-              // so we need to update viewedAt to match
-              if (selectedTaskDetail?.is_group_chat && completedTaskId) {
-                markTaskAsViewed(
-                  completedTaskId,
-                  selectedTaskDetail.status,
-                  new Date().toISOString()
-                );
-              }
-              // NO REFRESH of task detail - pendingUserMessage is displayed from state
-              // This prevents the progress bar flash issue
-            },
-            // Called when AI response completes (chat:done event) - only for Chat Shell
-            // For non-Chat Shell (executor types), AI response is handled by executor_manager
-            // Note: isStreaming is already set to false by handleChatDone in chatStreamContext
-            // streamingContent is preserved, so MessagesArea will display it as a completed message
-            // NO REFRESH needed - the UI displays streamingContent from state
-            onAIComplete: (_completedTaskId: number, _subtaskId: number) => {
-              // Don't reset streamingTaskId immediately - wait for task detail refresh
-              // This prevents selectedTaskDetail from becoming undefined
-              setIsLoading(false);
-              // Refresh task detail to update subtask status after stream completion or cancellation
-              // After refresh completes, reset streamingTaskId
-              setTimeout(() => {
-                refreshSelectedTaskDetail(false);
-                // Now it's safe to clear streamingTaskId
-                setStreamingTaskId(null);
-              }, 300);
-            },
-            onError: (error: Error) => {
-              // Reset all streaming state on error
-              resetStreamingState();
-
-              toast({
-                variant: 'destructive',
-                title: error.message,
-              });
-            },
+          if (compareTaskId !== immediateTaskId && compareTaskId > 0) {
+            setStreamingTaskId(compareTaskId);
           }
-        );
 
-        // Update streaming task ID if it changed (e.g., from immediate to returned)
-        // Only update if we got a different ID back
-        if (tempTaskId !== immediateTaskId && tempTaskId > 0) {
-          setStreamingTaskId(tempTaskId);
+          // Manually trigger scroll to bottom after sending message
+          setTimeout(() => scrollToBottom(true), 0);
+        } else {
+          // Use regular single-model message
+          // Use the global context to send message with callbacks
+          // Pass immediateTaskId to ensure ChatArea and context use the same temporary ID
+          const tempTaskId = await contextSendMessage(
+            {
+              message: finalMessage,
+              team_id: selectedTeam?.id ?? 0,
+              task_id: selectedTaskDetail?.id,
+              model_id: modelId,
+              force_override_bot_model: forceOverride,
+              attachment_id: attachmentState.attachment?.id,
+              enable_web_search: enableWebSearch,
+              search_engine: selectedSearchEngine || undefined,
+              enable_clarification: enableClarification,
+              is_group_chat: selectedTaskDetail?.is_group_chat || false,
+              // Pass repository info for code tasks
+              git_url: showRepositorySelector ? selectedRepo?.git_url : undefined,
+              git_repo: showRepositorySelector ? selectedRepo?.git_repo : undefined,
+              git_repo_id: showRepositorySelector ? selectedRepo?.git_repo_id : undefined,
+              git_domain: showRepositorySelector ? selectedRepo?.git_domain : undefined,
+              branch_name: showRepositorySelector ? selectedBranch?.name : undefined,
+              task_type: taskType,
+            },
+            {
+              pendingUserMessage: message,
+              pendingAttachment: attachmentState.attachment,
+              immediateTaskId: immediateTaskId,
+              // Pass current user info for group chat sender display
+              currentUserId: user?.id,
+              currentUserName: user?.user_name,
+              onTaskIdResolved: (realTaskId: number) => {
+                // Update streaming task ID when real task ID is resolved
+                setStreamingTaskId(realTaskId);
+
+                // Refresh task list immediately when task ID is resolved
+                // This ensures the new task appears in the sidebar while streaming
+                refreshTasks();
+
+                // Note: We don't update URL here to avoid triggering TaskParamSync
+                // which would call setSelectedTask and trigger refreshSelectedTaskDetail.
+                // URL will be updated when message is sent.
+              },
+              // Called immediately after message is sent (before AI response)
+              // NOTE: NO REFRESH - the UI displays pendingUserMessage from state
+              // The message will remain visible until user sends another message or switches tasks
+              onMessageSent: (completedTaskId: number, _subtaskId: number) => {
+                // If this was a new task (first message), update URL and task list
+                if (completedTaskId && !selectedTaskDetail?.id) {
+                  const params = new URLSearchParams(Array.from(searchParams.entries()));
+                  params.set('taskId', String(completedTaskId));
+                  router.push(`?${params.toString()}`);
+
+                  // Update task list in sidebar (but don't refresh task detail)
+                  refreshTasks();
+                }
+
+                // For group chat: mark task as viewed when user sends a message
+                // This prevents showing unread indicator for the sender's own messages
+                // The backend updates task.updated_at when any message is sent,
+                // so we need to update viewedAt to match
+                if (selectedTaskDetail?.is_group_chat && completedTaskId) {
+                  markTaskAsViewed(
+                    completedTaskId,
+                    selectedTaskDetail.status,
+                    new Date().toISOString()
+                  );
+                }
+                // NO REFRESH of task detail - pendingUserMessage is displayed from state
+                // This prevents the progress bar flash issue
+              },
+              // Called when AI response completes (chat:done event) - only for Chat Shell
+              // For non-Chat Shell (executor types), AI response is handled by executor_manager
+              // Note: isStreaming is already set to false by handleChatDone in chatStreamContext
+              // streamingContent is preserved, so MessagesArea will display it as a completed message
+              // NO REFRESH needed - the UI displays streamingContent from state
+              onAIComplete: (_completedTaskId: number, _subtaskId: number) => {
+                // Don't reset streamingTaskId immediately - wait for task detail refresh
+                // This prevents selectedTaskDetail from becoming undefined
+                setIsLoading(false);
+                // Refresh task detail to update subtask status after stream completion or cancellation
+                // After refresh completes, reset streamingTaskId
+                setTimeout(() => {
+                  refreshSelectedTaskDetail(false);
+                  // Now it's safe to clear streamingTaskId
+                  setStreamingTaskId(null);
+                }, 300);
+              },
+              onError: (error: Error) => {
+                // Reset all streaming state on error
+                resetStreamingState();
+
+                toast({
+                  variant: 'destructive',
+                  title: error.message,
+                });
+              },
+            }
+          );
+
+          // Update streaming task ID if it changed (e.g., from immediate to returned)
+          // Only update if we got a different ID back
+          if (tempTaskId !== immediateTaskId && tempTaskId > 0) {
+            setStreamingTaskId(tempTaskId);
+          }
+
+          // Note: For new tasks, the selected task is now set in onTaskIdResolved callback
+          // when the real task ID is received from the backend
+
+          // Manually trigger scroll to bottom after sending message
+          setTimeout(() => scrollToBottom(true), 0);
         }
-
-        // Note: For new tasks, the selected task is now set in onTaskIdResolved callback
-        // when the real task ID is received from the backend
-
-        // Manually trigger scroll to bottom after sending message
-        setTimeout(() => scrollToBottom(true), 0);
       } catch (err) {
         toast({
           variant: 'destructive',
@@ -1160,6 +1251,9 @@ export default function ChatArea({
       selectedTaskDetail?.is_group_chat,
       selectedTaskDetail?.status,
       contextSendMessage,
+      contextSendCompareMessage,
+      compareMode,
+      selectedModels,
       forceOverride,
       enableWebSearch,
       selectedSearchEngine,
@@ -1555,6 +1649,10 @@ export default function ChatArea({
                           selectedTeam={selectedTeam}
                           disabled={hasMessages || isLoading}
                           compact={shouldCollapseSelectors}
+                          compareMode={compareMode}
+                          onCompareModeChange={handleCompareModeChange}
+                          selectedModels={selectedModels}
+                          onSelectedModelsChange={handleSelectedModelsChange}
                         />
                       )}
                       {/* Repository and Branch Selectors - inside input box */}
@@ -1795,6 +1893,10 @@ export default function ChatArea({
                         selectedTeam={selectedTeam}
                         disabled={hasMessages || isLoading}
                         compact={shouldCollapseSelectors}
+                        compareMode={compareMode}
+                        onCompareModeChange={handleCompareModeChange}
+                        selectedModels={selectedModels}
+                        onSelectedModelsChange={handleSelectedModelsChange}
                       />
                     )}
                     {/* Repository and Branch Selectors - inside input box */}

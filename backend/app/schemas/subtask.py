@@ -60,6 +60,11 @@ class SubtaskBase(BaseModel):
     progress: int = 0
     result: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None
+    # Multi-model comparison fields
+    model_name: Optional[str] = None
+    model_display_name: Optional[str] = None
+    compare_group_id: Optional[str] = None
+    is_selected_response: bool = False
 
 
 class SubtaskCreate(SubtaskBase):
@@ -114,6 +119,8 @@ class SubtaskInDB(SubtaskBase):
     sender_user_id: Optional[int] = None  # User ID when sender_type=USER
     sender_user_name: Optional[str] = None  # User name for display
     reply_to_subtask_id: Optional[int] = None  # Quoted message ID
+    # Multi-model comparison fields (inherited from SubtaskBase)
+    # model_name, model_display_name, compare_group_id, is_selected_response
 
     @field_serializer("result")
     def mask_result(self, value: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:

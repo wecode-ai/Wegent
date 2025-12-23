@@ -7,7 +7,16 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { useTaskContext } from '../contexts/taskContext';
 import type { TaskDetail, TaskDetailSubtask, Team, GitRepoInfo, GitBranch } from '@/types/api';
-import { Share2, FileText, ChevronDown, Download, MessageSquare, Users } from 'lucide-react';
+import {
+  Share2,
+  FileText,
+  ChevronDown,
+  Download,
+  MessageSquare,
+  Users,
+  Check,
+  Loader2,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -15,6 +24,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown';
+import { Badge } from '@/components/ui/badge';
+import { Card } from '@/components/ui/card';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useToast } from '@/hooks/use-toast';
 import { useTheme } from '@/features/theme/ThemeProvider';
@@ -30,6 +42,9 @@ import { TaskMembersPanel } from './group-chat';
 import { useUser } from '@/features/common/UserContext';
 import { useUnifiedMessages, type DisplayMessage } from '../hooks/useUnifiedMessages';
 import { useTraceAction } from '@/hooks/useTraceAction';
+import { useChatStreamContext } from '../contexts/chatStreamContext';
+import MarkdownRenderer from './MarkdownRenderer';
+import { cn } from '@/lib/utils';
 
 /**
  * Component to render a streaming message with typewriter effect.
@@ -97,6 +112,106 @@ function StreamingMessageBubble({
       isWaiting={Boolean(isStreaming && !hasContent && !hasThinking)}
       onSendMessage={onSendMessage}
     />
+  );
+}
+
+/**
+ * Component to render a single compare response card
+ */
+interface CompareResponseCardProps {
+  message: DisplayMessage;
+  isSelected?: boolean;
+  isStreaming?: boolean;
+  onSelect?: () => void;
+}
+
+function CompareResponseCard({
+  message,
+  isSelected,
+  isStreaming,
+  onSelect,
+}: CompareResponseCardProps) {
+  // Use typewriter effect for streaming content
+  const displayContent = useTypewriter(message.content || '');
+  const content = isStreaming ? displayContent : message.content || '';
+
+  return (
+    <Card
+      className={cn(
+        'flex flex-col h-full overflow-hidden transition-all bg-base',
+        isSelected && 'ring-2 ring-primary',
+        onSelect && 'cursor-pointer hover:border-primary/50'
+      )}
+      onClick={onSelect}
+    >
+      {/* Header with model name */}
+      <div className="flex items-center justify-between px-3 py-2 border-b bg-base">
+        <div className="flex items-center gap-2">
+          <Badge variant="secondary" className="text-xs">
+            {message.modelDisplayName || message.modelName || 'Model'}
+          </Badge>
+          {isStreaming && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+        </div>
+        {isSelected && (
+          <Badge variant="default" className="text-xs gap-1">
+            <Check className="h-3 w-3" />
+            Selected
+          </Badge>
+        )}
+      </div>
+
+      {/* Content area */}
+      <ScrollArea className="flex-1 p-3 bg-base">
+        <div className="prose prose-sm dark:prose-invert max-w-none">
+          <MarkdownRenderer content={content} />
+        </div>
+      </ScrollArea>
+    </Card>
+  );
+}
+
+/**
+ * Component to render a group of compare responses side by side
+ */
+interface CompareResponseGroupProps {
+  messages: DisplayMessage[];
+  taskId: number;
+}
+
+function CompareResponseGroup({ messages, taskId }: CompareResponseGroupProps) {
+  const { selectCompareResponse } = useChatStreamContext();
+
+  // Determine grid columns based on number of responses
+  const gridCols = useMemo(() => {
+    const count = messages.length;
+    if (count <= 2) return 'grid-cols-2';
+    if (count <= 3) return 'grid-cols-3';
+    return 'grid-cols-4';
+  }, [messages.length]);
+
+  const handleSelect = useCallback(
+    (message: DisplayMessage) => {
+      if (message.subtaskId && message.compareGroupId) {
+        selectCompareResponse(taskId, message.compareGroupId, message.subtaskId);
+      }
+    },
+    [selectCompareResponse, taskId]
+  );
+
+  return (
+    <div className="w-full my-4">
+      <div className={cn('grid gap-4', gridCols)} style={{ minHeight: '300px' }}>
+        {messages.map(msg => (
+          <CompareResponseCard
+            key={msg.id}
+            message={msg}
+            isSelected={msg.isSelectedResponse}
+            isStreaming={msg.status === 'streaming'}
+            onSelect={() => handleSelect(msg)}
+          />
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -553,6 +668,78 @@ export default function MessagesArea({
     };
   }, []);
 
+  // Group messages for compare mode rendering
+  // Messages with the same compareGroupId should be rendered side by side
+  type MessageItem =
+    | { type: 'single'; message: DisplayMessage; index: number }
+    | { type: 'compare-group'; messages: DisplayMessage[]; compareGroupId: string };
+
+  const groupedMessages = useMemo((): MessageItem[] => {
+    const result: MessageItem[] = [];
+    const compareGroups = new Map<string, DisplayMessage[]>();
+    let currentIndex = 0;
+
+    // Debug: Log messages with compareGroupId
+    const compareMessages = messages.filter(m => m.compareGroupId);
+    if (compareMessages.length > 0) {
+      console.log(
+        '[MessagesArea] Found compare messages:',
+        compareMessages.map(m => ({
+          id: m.id,
+          compareGroupId: m.compareGroupId,
+          modelName: m.modelName,
+          status: m.status,
+        }))
+      );
+    }
+
+    for (const msg of messages) {
+      if (msg.compareGroupId && msg.type === 'ai') {
+        // This is a compare mode message, group it
+        const existing = compareGroups.get(msg.compareGroupId);
+        if (existing) {
+          existing.push(msg);
+        } else {
+          compareGroups.set(msg.compareGroupId, [msg]);
+        }
+      } else {
+        // Flush any pending compare groups before this message
+        // (compare groups should be rendered after the user message that triggered them)
+        // Regular message
+        result.push({ type: 'single', message: msg, index: currentIndex++ });
+      }
+    }
+
+    // Now we need to insert compare groups at the right positions
+    // Re-process to maintain order
+    const finalResult: MessageItem[] = [];
+    const processedGroups = new Set<string>();
+
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i];
+
+      if (msg.compareGroupId && msg.type === 'ai') {
+        // Check if we've already processed this group
+        if (!processedGroups.has(msg.compareGroupId)) {
+          processedGroups.add(msg.compareGroupId);
+          const groupMessages = compareGroups.get(msg.compareGroupId);
+          if (groupMessages && groupMessages.length > 0) {
+            finalResult.push({
+              type: 'compare-group',
+              messages: groupMessages,
+              compareGroupId: msg.compareGroupId,
+            });
+          }
+        }
+        // Skip individual compare messages as they're handled in groups
+      } else {
+        finalResult.push({ type: 'single', message: msg, index: i });
+      }
+    }
+
+    return finalResult;
+  }, [messages]);
+
   return (
     <div
       className="flex-1 w-full max-w-3xl mx-auto flex flex-col"
@@ -562,10 +749,24 @@ export default function MessagesArea({
       {/* Messages Area */}
       {(messages.length > 0 || streamingSubtaskIds.length > 0 || selectedTaskDetail?.id) && (
         <div className="flex-1 space-y-8 messages-container">
-          {messages.map((msg, index) => {
+          {groupedMessages.map((item, itemIndex) => {
+            if (item.type === 'compare-group') {
+              // Render compare group side by side
+              return (
+                <CompareResponseGroup
+                  key={`compare-group-${item.compareGroupId}`}
+                  messages={item.messages}
+                  taskId={selectedTaskDetail?.id || 0}
+                />
+              );
+            }
+
+            // Single message rendering
+            const msg = item.message;
+            const index = item.index;
             const messageKey = msg.subtaskId
               ? `${msg.type}-${msg.subtaskId}`
-              : `msg-${index}-${msg.timestamp}`;
+              : `msg-${itemIndex}-${msg.timestamp}`;
 
             // Determine if this is the current user's message (for group chat alignment)
             const isCurrentUserMessage =

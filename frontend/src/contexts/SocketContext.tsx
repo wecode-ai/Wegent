@@ -33,6 +33,16 @@ import {
   ChatMessagePayload,
   ChatSendPayload,
   ChatSendAck,
+  ChatCompareSendPayload,
+  ChatCompareSendAck,
+  ChatCompareSelectPayload,
+  ChatCompareSelectAck,
+  ChatCompareStartPayload,
+  ChatCompareChunkPayload,
+  ChatCompareDonePayload,
+  ChatCompareAllDonePayload,
+  ChatCompareErrorPayload,
+  ChatCompareSelectedPayload,
   TaskCreatedPayload,
   TaskStatusPayload,
   TaskInvitedPayload,
@@ -70,6 +80,10 @@ interface SocketContextType {
   leaveTask: (taskId: number) => void;
   /** Send a chat message via WebSocket */
   sendChatMessage: (payload: ChatSendPayload) => Promise<ChatSendAck>;
+  /** Send a multi-model compare message via WebSocket */
+  sendCompareMessage: (payload: ChatCompareSendPayload) => Promise<ChatCompareSendAck>;
+  /** Select a response from multi-model comparison */
+  selectCompareResponse: (payload: ChatCompareSelectPayload) => Promise<ChatCompareSelectAck>;
   /** Cancel a chat stream via WebSocket */
   cancelChatStream: (
     subtaskId: number,
@@ -78,6 +92,8 @@ interface SocketContextType {
   ) => Promise<{ success: boolean; error?: string }>;
   /** Register chat event handlers */
   registerChatHandlers: (handlers: ChatEventHandlers) => () => void;
+  /** Register compare event handlers */
+  registerCompareHandlers: (handlers: CompareEventHandlers) => () => void;
   /** Register task event handlers */
   registerTaskHandlers: (handlers: TaskEventHandlers) => () => void;
 }
@@ -91,6 +107,16 @@ export interface ChatEventHandlers {
   onChatCancelled?: (data: ChatCancelledPayload) => void;
   /** Handler for chat:message event (other users' messages in group chat) */
   onChatMessage?: (data: ChatMessagePayload) => void;
+}
+
+/** Multi-model compare event handlers */
+export interface CompareEventHandlers {
+  onCompareStart?: (data: ChatCompareStartPayload) => void;
+  onCompareChunk?: (data: ChatCompareChunkPayload) => void;
+  onCompareDone?: (data: ChatCompareDonePayload) => void;
+  onCompareAllDone?: (data: ChatCompareAllDonePayload) => void;
+  onCompareError?: (data: ChatCompareErrorPayload) => void;
+  onCompareSelected?: (data: ChatCompareSelectedPayload) => void;
 }
 
 /** Task event handlers for task list updates */
@@ -350,6 +376,57 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   );
 
   /**
+   * Send a multi-model compare message via WebSocket
+   */
+  const sendCompareMessage = useCallback(
+    async (payload: ChatCompareSendPayload): Promise<ChatCompareSendAck> => {
+      const currentSocket = socketRef.current;
+
+      console.log('[Socket.IO] sendCompareMessage called', {
+        hasSocket: !!currentSocket,
+        isConnected: currentSocket?.connected,
+        socketId: currentSocket?.id,
+        modelsCount: payload.models?.length,
+        payload: { ...payload, message: payload.message?.substring(0, 50) + '...' },
+      });
+
+      if (!currentSocket?.connected) {
+        console.error('[Socket.IO] sendCompareMessage failed: not connected');
+        return { error: 'Not connected to server' };
+      }
+
+      return new Promise(resolve => {
+        console.log('[Socket.IO] Emitting chat:compare_send event');
+        currentSocket.emit('chat:compare_send', payload, (response: ChatCompareSendAck) => {
+          console.log('[Socket.IO] chat:compare_send response received', response);
+          resolve(response);
+        });
+      });
+    },
+    []
+  );
+
+  /**
+   * Select a response from multi-model comparison
+   */
+  const selectCompareResponse = useCallback(
+    async (payload: ChatCompareSelectPayload): Promise<ChatCompareSelectAck> => {
+      if (!socket?.connected) {
+        console.error('[Socket.IO] selectCompareResponse failed - not connected');
+        return { success: false, error: 'Not connected to server' };
+      }
+
+      return new Promise(resolve => {
+        socket.emit('chat:compare_select', payload, (response: ChatCompareSelectAck) => {
+          console.log('[Socket.IO] chat:compare_select response received', response);
+          resolve(response);
+        });
+      });
+    },
+    [socket]
+  );
+
+  /**
    * Register chat event handlers
    * Returns a cleanup function to unregister handlers
    */
@@ -377,6 +454,44 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         if (onChatError) socket.off(ServerEvents.CHAT_ERROR, onChatError);
         if (onChatCancelled) socket.off(ServerEvents.CHAT_CANCELLED, onChatCancelled);
         if (onChatMessage) socket.off(ServerEvents.CHAT_MESSAGE, onChatMessage);
+      };
+    },
+    [socket]
+  );
+
+  /**
+   * Register multi-model compare event handlers
+   * Returns a cleanup function to unregister handlers
+   */
+  const registerCompareHandlers = useCallback(
+    (handlers: CompareEventHandlers): (() => void) => {
+      if (!socket) {
+        return () => {};
+      }
+
+      const {
+        onCompareStart,
+        onCompareChunk,
+        onCompareDone,
+        onCompareAllDone,
+        onCompareError,
+        onCompareSelected,
+      } = handlers;
+
+      if (onCompareStart) socket.on(ServerEvents.CHAT_COMPARE_START, onCompareStart);
+      if (onCompareChunk) socket.on(ServerEvents.CHAT_COMPARE_CHUNK, onCompareChunk);
+      if (onCompareDone) socket.on(ServerEvents.CHAT_COMPARE_DONE, onCompareDone);
+      if (onCompareAllDone) socket.on(ServerEvents.CHAT_COMPARE_ALL_DONE, onCompareAllDone);
+      if (onCompareError) socket.on(ServerEvents.CHAT_COMPARE_ERROR, onCompareError);
+      if (onCompareSelected) socket.on(ServerEvents.CHAT_COMPARE_SELECTED, onCompareSelected);
+
+      return () => {
+        if (onCompareStart) socket.off(ServerEvents.CHAT_COMPARE_START, onCompareStart);
+        if (onCompareChunk) socket.off(ServerEvents.CHAT_COMPARE_CHUNK, onCompareChunk);
+        if (onCompareDone) socket.off(ServerEvents.CHAT_COMPARE_DONE, onCompareDone);
+        if (onCompareAllDone) socket.off(ServerEvents.CHAT_COMPARE_ALL_DONE, onCompareAllDone);
+        if (onCompareError) socket.off(ServerEvents.CHAT_COMPARE_ERROR, onCompareError);
+        if (onCompareSelected) socket.off(ServerEvents.CHAT_COMPARE_SELECTED, onCompareSelected);
       };
     },
     [socket]
@@ -474,8 +589,11 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         joinTask,
         leaveTask,
         sendChatMessage,
+        sendCompareMessage,
+        selectCompareResponse,
         cancelChatStream,
         registerChatHandlers,
+        registerCompareHandlers,
         registerTaskHandlers,
       }}
     >

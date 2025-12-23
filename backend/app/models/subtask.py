@@ -70,6 +70,18 @@ class Subtask(Base):
     )  # 0 for non-user senders
     reply_to_subtask_id = Column(Integer, nullable=False, default=0)  # 0 for no reply
 
+    # Multi-model comparison fields
+    model_name = Column(
+        String(256), nullable=True
+    )  # Name of the model that generated this response
+    model_display_name = Column(String(256), nullable=True)  # Display name for UI
+    compare_group_id = Column(
+        String(64), nullable=True
+    )  # Group ID to link responses from the same comparison request
+    is_selected_response = Column(
+        Boolean, nullable=False, default=False
+    )  # Whether this response was selected by the user
+
     # Relationship to SubtaskAttachment (no foreign key constraint, use primaryjoin)
     attachments = relationship(
         "SubtaskAttachment",

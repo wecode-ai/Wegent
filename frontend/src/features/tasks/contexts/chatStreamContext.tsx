@@ -37,7 +37,7 @@ import React, {
   useEffect,
   ReactNode,
 } from 'react';
-import { useSocket, ChatEventHandlers } from '@/contexts/SocketContext';
+import { useSocket, ChatEventHandlers, CompareEventHandlers } from '@/contexts/SocketContext';
 import {
   ChatSendPayload,
   ChatStartPayload,
@@ -46,6 +46,13 @@ import {
   ChatErrorPayload,
   ChatCancelledPayload,
   ChatMessagePayload,
+  ChatCompareSendPayload,
+  ChatCompareStartPayload,
+  ChatCompareChunkPayload,
+  ChatCompareDonePayload,
+  ChatCompareAllDonePayload,
+  ChatCompareErrorPayload,
+  ModelConfig,
 } from '@/types/socket';
 import type { TaskDetailSubtask, Team } from '@/types/api';
 
@@ -100,6 +107,50 @@ export interface UnifiedMessage {
     thinking?: unknown[];
     workbench?: Record<string, unknown>;
   };
+  /** Compare group ID for multi-model comparison */
+  compareGroupId?: string;
+  /** Model name for multi-model comparison */
+  modelName?: string;
+  /** Model display name for multi-model comparison */
+  modelDisplayName?: string;
+  /** Whether this response is selected in multi-model comparison */
+  isSelectedResponse?: boolean;
+}
+
+/**
+ * State for a single model response in multi-model comparison
+ */
+export interface CompareModelResponse {
+  /** Subtask ID for this model's response */
+  subtaskId: number;
+  /** Model name */
+  modelName: string;
+  /** Model display name */
+  modelDisplayName: string;
+  /** Response content */
+  content: string;
+  /** Response status */
+  status: MessageStatus;
+  /** Error message if any */
+  error?: string;
+}
+
+/**
+ * State for a multi-model comparison group
+ */
+export interface CompareGroupState {
+  /** Compare group ID */
+  compareGroupId: string;
+  /** Task ID */
+  taskId: number;
+  /** User message subtask ID */
+  userSubtaskId?: number;
+  /** Model responses */
+  responses: Map<string, CompareModelResponse>;
+  /** Whether all models have completed */
+  allDone: boolean;
+  /** Selected subtask ID (after user selection) */
+  selectedSubtaskId?: number;
 }
 
 /**
@@ -193,6 +244,35 @@ interface SyncBackendMessagesOptions {
 }
 
 /**
+ * Request parameters for sending a multi-model compare message
+ */
+export interface CompareMessageRequest {
+  /** User message */
+  message: string;
+  /** Team ID */
+  team_id: number;
+  /** Task ID for multi-turn conversations (optional) */
+  task_id?: number;
+  /** Custom title for new tasks (optional) */
+  title?: string;
+  /** Models to compare (2-4 models) */
+  models: ModelConfig[];
+  /** Attachment ID for file upload (optional) */
+  attachment_id?: number;
+  /** Enable web search for this message */
+  enable_web_search?: boolean;
+  /** Search engine to use (when web search is enabled) */
+  search_engine?: string;
+  // Repository info for code tasks
+  git_url?: string;
+  git_repo?: string;
+  git_repo_id?: number;
+  git_domain?: string;
+  branch_name?: string;
+  task_type?: 'chat' | 'code';
+}
+
+/**
  * Context type for chat stream management
  */
 interface ChatStreamContextType {
@@ -223,6 +303,31 @@ interface ChatStreamContextType {
       currentUserName?: string;
     }
   ) => Promise<number>;
+  /** Send a multi-model compare message */
+  sendCompareMessage: (
+    request: CompareMessageRequest,
+    options?: {
+      pendingUserMessage?: string;
+      pendingAttachment?: unknown;
+      /** Callback when all models complete */
+      onAllComplete?: (taskId: number, compareGroupId: string) => void;
+      onError?: (error: Error) => void;
+      /** Callback when task ID is resolved (for new tasks) */
+      onTaskIdResolved?: (taskId: number) => void;
+      /** Temporary task ID for immediate UI feedback (for new tasks) */
+      immediateTaskId?: number;
+      /** Callback when user message is sent successfully (before AI response) */
+      onMessageSent?: (taskId: number, userSubtaskId: number) => void;
+    }
+  ) => Promise<number>;
+  /** Get compare group state */
+  getCompareGroupState: (compareGroupId: string) => CompareGroupState | undefined;
+  /** Select a response from multi-model comparison */
+  selectCompareResponse: (
+    taskId: number,
+    compareGroupId: string,
+    selectedSubtaskId: number
+  ) => Promise<void>;
   /**
    * Stop the stream for a specific task
    * @param taskId - Task ID
@@ -287,8 +392,32 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
   const [clearVersion, setClearVersion] = useState(0);
 
   // Get socket context
-  const { isConnected, sendChatMessage, cancelChatStream, registerChatHandlers, joinTask } =
-    useSocket();
+  const {
+    isConnected,
+    sendChatMessage,
+    sendCompareMessage: socketSendCompareMessage,
+    selectCompareResponse: socketSelectCompareResponse,
+    cancelChatStream,
+    registerChatHandlers,
+    registerCompareHandlers,
+    joinTask,
+  } = useSocket();
+
+  // State for multi-model comparison groups
+  const [compareGroups, setCompareGroups] = useState<Map<string, CompareGroupState>>(new Map());
+
+  // Refs for compare callbacks
+  const compareCallbacksRef = useRef<
+    Map<
+      string,
+      {
+        onAllComplete?: (taskId: number, compareGroupId: string) => void;
+        onError?: (error: Error) => void;
+        onTaskIdResolved?: (taskId: number) => void;
+        onMessageSent?: (taskId: number, userSubtaskId: number) => void;
+      }
+    >
+  >(new Map());
 
   // Refs for callbacks (don't need to trigger re-renders)
   const callbacksRef = useRef<
@@ -815,6 +944,303 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  // ==================== Multi-Model Compare Event Handlers ====================
+
+  /**
+   * Handle chat:compare_start event from WebSocket
+   * This indicates all models have started generating responses in compare mode
+   * The payload contains an array of models with their subtask IDs
+   */
+  const handleCompareStart = useCallback((data: ChatCompareStartPayload) => {
+    const { task_id, compare_group_id, models } = data;
+
+    console.log('[ChatStreamContext][compare:start]', {
+      taskId: task_id,
+      compareGroupId: compare_group_id,
+      models: models,
+    });
+
+    // Track subtask to task mapping for all models
+    for (const model of models) {
+      if (model.subtask_id) {
+        subtaskToTaskRef.current.set(model.subtask_id, task_id);
+      }
+    }
+
+    // Update compare group state with all models
+    setCompareGroups(prev => {
+      const newMap = new Map(prev);
+      const existingGroup = newMap.get(compare_group_id) || {
+        compareGroupId: compare_group_id,
+        taskId: task_id,
+        responses: new Map(),
+        allDone: false,
+      };
+
+      // Add all model responses
+      for (const model of models) {
+        existingGroup.responses.set(model.model_name, {
+          subtaskId: model.subtask_id,
+          modelName: model.model_name,
+          modelDisplayName: model.model_display_name,
+          content: '',
+          status: 'streaming',
+        });
+      }
+
+      newMap.set(compare_group_id, existingGroup);
+      return newMap;
+    });
+
+    // Also add to stream state messages for display
+    setStreamStates(prev => {
+      const newMap = new Map(prev);
+      const currentState = newMap.get(task_id) || { ...defaultStreamState };
+      const newMessages = new Map(currentState.messages);
+
+      // Add a message for each model
+      for (const model of models) {
+        const aiMessageId = `ai-compare-${compare_group_id}-${model.model_name}`;
+        newMessages.set(aiMessageId, {
+          id: aiMessageId,
+          type: 'ai',
+          status: 'streaming',
+          content: '',
+          timestamp: Date.now(),
+          subtaskId: model.subtask_id,
+          compareGroupId: compare_group_id,
+          modelName: model.model_name,
+          modelDisplayName: model.model_display_name,
+        });
+      }
+
+      newMap.set(task_id, {
+        ...currentState,
+        messages: newMessages,
+      });
+      return newMap;
+    });
+  }, []);
+
+  /**
+   * Handle chat:compare_chunk event from WebSocket
+   * Accumulate streaming content for a specific model in compare mode
+   */
+  const handleCompareChunk = useCallback((data: ChatCompareChunkPayload) => {
+    const { subtask_id, compare_group_id, model_name, content } = data;
+
+    // Find task ID from subtask
+    const taskId = subtaskToTaskRef.current.get(subtask_id);
+    if (!taskId) {
+      console.warn('[ChatStreamContext][compare:chunk] Unknown subtask:', subtask_id);
+      return;
+    }
+
+    // Update compare group state
+    setCompareGroups(prev => {
+      const newMap = new Map(prev);
+      const group = newMap.get(compare_group_id);
+      if (group) {
+        const response = group.responses.get(model_name);
+        if (response) {
+          group.responses.set(model_name, {
+            ...response,
+            content: response.content + content,
+          });
+          newMap.set(compare_group_id, { ...group });
+        }
+      }
+      return newMap;
+    });
+
+    // Update stream state messages
+    const aiMessageId = `ai-compare-${compare_group_id}-${model_name}`;
+    setStreamStates(prev => {
+      const newMap = new Map(prev);
+      const currentState = newMap.get(taskId);
+      if (!currentState) return prev;
+
+      const newMessages = new Map(currentState.messages);
+      const existingMessage = newMessages.get(aiMessageId);
+      if (existingMessage) {
+        newMessages.set(aiMessageId, {
+          ...existingMessage,
+          content: existingMessage.content + content,
+        });
+      }
+
+      newMap.set(taskId, {
+        ...currentState,
+        messages: newMessages,
+      });
+      return newMap;
+    });
+  }, []);
+
+  /**
+   * Handle chat:compare_done event from WebSocket
+   * A single model has completed its response in compare mode
+   */
+  const handleCompareDone = useCallback((data: ChatCompareDonePayload) => {
+    const { subtask_id, compare_group_id, model_name, result } = data;
+
+    // Find task ID from subtask
+    const taskId = subtaskToTaskRef.current.get(subtask_id);
+    if (!taskId) {
+      console.warn('[ChatStreamContext][compare:done] Unknown subtask:', subtask_id);
+      return;
+    }
+
+    const finalContent = (result?.value as string) || '';
+
+    console.log('[ChatStreamContext][compare:done]', {
+      taskId,
+      subtaskId: subtask_id,
+      compareGroupId: compare_group_id,
+      modelName: model_name,
+      contentLen: finalContent.length,
+    });
+
+    // Update compare group state
+    setCompareGroups(prev => {
+      const newMap = new Map(prev);
+      const group = newMap.get(compare_group_id);
+      if (group) {
+        const response = group.responses.get(model_name);
+        if (response) {
+          group.responses.set(model_name, {
+            ...response,
+            content: finalContent || response.content,
+            status: 'completed',
+          });
+          newMap.set(compare_group_id, { ...group });
+        }
+      }
+      return newMap;
+    });
+
+    // Update stream state messages
+    const aiMessageId = `ai-compare-${compare_group_id}-${model_name}`;
+    setStreamStates(prev => {
+      const newMap = new Map(prev);
+      const currentState = newMap.get(taskId);
+      if (!currentState) return prev;
+
+      const newMessages = new Map(currentState.messages);
+      const existingMessage = newMessages.get(aiMessageId);
+      if (existingMessage) {
+        newMessages.set(aiMessageId, {
+          ...existingMessage,
+          content: finalContent || existingMessage.content,
+          status: 'completed',
+        });
+      }
+
+      newMap.set(taskId, {
+        ...currentState,
+        messages: newMessages,
+      });
+      return newMap;
+    });
+  }, []);
+
+  /**
+   * Handle chat:compare_all_done event from WebSocket
+   * All models have completed their responses in compare mode
+   */
+  const handleCompareAllDone = useCallback((data: ChatCompareAllDonePayload) => {
+    const { task_id, compare_group_id } = data;
+
+    console.log('[ChatStreamContext][compare:all_done]', {
+      taskId: task_id,
+      compareGroupId: compare_group_id,
+    });
+
+    // Update compare group state
+    setCompareGroups(prev => {
+      const newMap = new Map(prev);
+      const group = newMap.get(compare_group_id);
+      if (group) {
+        newMap.set(compare_group_id, {
+          ...group,
+          allDone: true,
+        });
+      }
+      return newMap;
+    });
+
+    // Call completion callback
+    const callbacks = compareCallbacksRef.current.get(compare_group_id);
+    callbacks?.onAllComplete?.(task_id, compare_group_id);
+  }, []);
+
+  /**
+   * Handle chat:compare_error event from WebSocket
+   * A model encountered an error in compare mode
+   */
+  const handleCompareError = useCallback((data: ChatCompareErrorPayload) => {
+    const { subtask_id, compare_group_id, model_name, error } = data;
+
+    // Find task ID from subtask
+    const taskId = subtaskToTaskRef.current.get(subtask_id);
+
+    console.error('[ChatStreamContext][compare:error]', {
+      taskId,
+      subtaskId: subtask_id,
+      compareGroupId: compare_group_id,
+      modelName: model_name,
+      error,
+    });
+
+    // Update compare group state
+    setCompareGroups(prev => {
+      const newMap = new Map(prev);
+      const group = newMap.get(compare_group_id);
+      if (group) {
+        const response = group.responses.get(model_name);
+        if (response) {
+          group.responses.set(model_name, {
+            ...response,
+            status: 'error',
+            error: error,
+          });
+          newMap.set(compare_group_id, { ...group });
+        }
+      }
+      return newMap;
+    });
+
+    // Update stream state messages if taskId is known
+    if (taskId) {
+      const aiMessageId = `ai-compare-${compare_group_id}-${model_name}`;
+      setStreamStates(prev => {
+        const newMap = new Map(prev);
+        const currentState = newMap.get(taskId);
+        if (!currentState) return prev;
+
+        const newMessages = new Map(currentState.messages);
+        const existingMessage = newMessages.get(aiMessageId);
+        if (existingMessage) {
+          newMessages.set(aiMessageId, {
+            ...existingMessage,
+            status: 'error',
+            error: error,
+          });
+        }
+
+        newMap.set(taskId, {
+          ...currentState,
+          messages: newMessages,
+        });
+        return newMap;
+      });
+    }
+
+    // Call error callback
+    const callbacks = compareCallbacksRef.current.get(compare_group_id);
+    callbacks?.onError?.(new Error(error));
+  }, []);
+
   // Register WebSocket event handlers
   useEffect(() => {
     const handlers: ChatEventHandlers = {
@@ -836,6 +1262,27 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     handleChatError,
     handleChatCancelled,
     handleChatMessage,
+  ]);
+
+  // Register compare event handlers
+  useEffect(() => {
+    const handlers: CompareEventHandlers = {
+      onCompareStart: handleCompareStart,
+      onCompareChunk: handleCompareChunk,
+      onCompareDone: handleCompareDone,
+      onCompareAllDone: handleCompareAllDone,
+      onCompareError: handleCompareError,
+    };
+
+    const cleanup = registerCompareHandlers(handlers);
+    return cleanup;
+  }, [
+    registerCompareHandlers,
+    handleCompareStart,
+    handleCompareChunk,
+    handleCompareDone,
+    handleCompareAllDone,
+    handleCompareError,
   ]);
 
   /**
@@ -1477,8 +1924,16 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           const senderUserName =
             subtask.sender_user_name || (isCurrentUserMessage ? currentUserName : undefined);
 
+          // For compare mode messages, use special message ID format
+          // and set compare mode fields from backend subtask
+          const isCompareMode = !!subtask.compare_group_id;
+          const finalMessageId =
+            isCompareMode && !isUserMessage
+              ? `ai-compare-${subtask.compare_group_id}-${subtask.model_name || subtask.id}`
+              : messageId;
+
           const message: UnifiedMessage = {
-            id: messageId,
+            id: finalMessageId,
             type: messageType,
             status,
             content,
@@ -1494,9 +1949,14 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
             // Store full result for executor tasks (contains thinking, workbench)
             result: subtask.result as UnifiedMessage['result'],
             error: subtask.error_message || undefined,
+            // Multi-model comparison fields from backend
+            compareGroupId: subtask.compare_group_id,
+            modelName: subtask.model_name,
+            modelDisplayName: subtask.model_display_name,
+            isSelectedResponse: subtask.is_selected_response,
           };
 
-          newMessages.set(messageId, message);
+          newMessages.set(finalMessageId, message);
         }
         // Then, preserve any pending/streaming messages from frontend that don't have
         // a matching backend subtask yet
@@ -1512,6 +1972,15 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         for (const [msgId, msg] of currentState.messages) {
           // Skip messages that were created from backend (they're already in newMessages)
           if (msgId.startsWith('user-backend-')) {
+            continue;
+          }
+
+          // For compare mode messages (ai-compare-*), always preserve them
+          // These messages have compareGroupId and are managed by compare event handlers
+          if (msgId.startsWith('ai-compare-') && msg.compareGroupId) {
+            if (!newMessages.has(msgId)) {
+              newMessages.set(msgId, msg);
+            }
             continue;
           }
 
@@ -1569,9 +2038,341 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         });
 
         return newMap;
+        return newMap;
       });
     },
     []
+  );
+
+  /**
+   * Get compare group state by compare group ID
+   */
+  const getCompareGroupState = useCallback(
+    (compareGroupId: string): CompareGroupState | undefined => {
+      return compareGroups.get(compareGroupId);
+    },
+    [compareGroups]
+  );
+
+  /**
+   * Send a multi-model compare message via WebSocket
+   *
+   * Flow:
+   * 1. Add user message with status='pending' to messages Map immediately
+   * 2. Send compare message via WebSocket
+   * 3. On success: call onMessageSent callback
+   * 4. Wait for chat:compare_start -> chat:compare_chunk -> chat:compare_done -> chat:compare_all_done events
+   */
+  const sendCompareMessage = useCallback(
+    async (
+      request: CompareMessageRequest,
+      options?: {
+        pendingUserMessage?: string;
+        pendingAttachment?: unknown;
+        onAllComplete?: (taskId: number, compareGroupId: string) => void;
+        onError?: (error: Error) => void;
+        onTaskIdResolved?: (taskId: number) => void;
+        immediateTaskId?: number;
+        onMessageSent?: (taskId: number, userSubtaskId: number) => void;
+      }
+    ): Promise<number> => {
+      console.log('[ChatStreamContext] sendCompareMessage called', {
+        isConnected,
+        teamId: request.team_id,
+        taskId: request.task_id,
+        modelsCount: request.models.length,
+        messagePreview: request.message?.substring(0, 50),
+      });
+
+      // Check WebSocket connection
+      if (!isConnected) {
+        console.error('[ChatStreamContext] WebSocket not connected');
+        const error = new Error('WebSocket not connected');
+        options?.onError?.(error);
+        throw error;
+      }
+
+      // Validate models count (2-4 models)
+      if (request.models.length < 2 || request.models.length > 4) {
+        const error = new Error('Compare mode requires 2-4 models');
+        options?.onError?.(error);
+        throw error;
+      }
+
+      // Use provided immediateTaskId or generate one for new tasks
+      const immediateTaskId = options?.immediateTaskId || request.task_id || -Date.now();
+
+      // Create a new user message for this send operation
+      const userMessageId = generateMessageId('user');
+      const userMessage: UnifiedMessage = {
+        id: userMessageId,
+        type: 'user',
+        status: 'pending',
+        content: options?.pendingUserMessage || request.message,
+        attachment: options?.pendingAttachment,
+        timestamp: Date.now(),
+      };
+
+      // Add user message to the unified messages Map immediately
+      setStreamStates(prev => {
+        const newMap = new Map(prev);
+        const currentState = newMap.get(immediateTaskId) || { ...defaultStreamState };
+
+        const newMessages = new Map(currentState.messages);
+        newMessages.set(userMessageId, userMessage);
+
+        newMap.set(immediateTaskId, {
+          ...currentState,
+          isStopping: false,
+          error: null,
+          subtaskId: null,
+          messages: newMessages,
+        });
+        return newMap;
+      });
+
+      // Convert request to WebSocket payload
+      const payload: ChatCompareSendPayload = {
+        task_id: request.task_id,
+        team_id: request.team_id,
+        message: request.message,
+        title: request.title,
+        models: request.models,
+        attachment_id: request.attachment_id,
+        enable_web_search: request.enable_web_search,
+        search_engine: request.search_engine,
+        git_url: request.git_url,
+        git_repo: request.git_repo,
+        git_repo_id: request.git_repo_id,
+        git_domain: request.git_domain,
+        branch_name: request.branch_name,
+        task_type: request.task_type,
+      };
+
+      try {
+        // Send compare message via WebSocket
+        const response = await socketSendCompareMessage(payload);
+
+        // Handle undefined or error response
+        if (!response) {
+          const error = new Error('Failed to send compare message: no response from server');
+          setStreamStates(prev => {
+            const newMap = new Map(prev);
+            const currentState = newMap.get(immediateTaskId);
+            if (currentState) {
+              const newMessages = new Map(currentState.messages);
+              const msg = newMessages.get(userMessageId);
+              if (msg) {
+                newMessages.set(userMessageId, { ...msg, status: 'error', error: error.message });
+              }
+              newMap.set(immediateTaskId, { ...currentState, error, messages: newMessages });
+            }
+            return newMap;
+          });
+          options?.onError?.(error);
+          throw error;
+        }
+
+        if (response.error) {
+          const error = new Error(response.error);
+          setStreamStates(prev => {
+            const newMap = new Map(prev);
+            const currentState = newMap.get(immediateTaskId);
+            if (currentState) {
+              const newMessages = new Map(currentState.messages);
+              const msg = newMessages.get(userMessageId);
+              if (msg) {
+                newMessages.set(userMessageId, { ...msg, status: 'error', error: response.error });
+              }
+              newMap.set(immediateTaskId, { ...currentState, error, messages: newMessages });
+            }
+            return newMap;
+          });
+          options?.onError?.(error);
+          throw error;
+        }
+
+        const realTaskId = response.task_id || immediateTaskId;
+        const compareGroupId = response.compare_group_id;
+        const userSubtaskId = response.user_subtask_id;
+        const messageId = response.message_id;
+
+        // Store callbacks for compare events
+        if (compareGroupId) {
+          compareCallbacksRef.current.set(compareGroupId, {
+            onAllComplete: options?.onAllComplete,
+            onError: options?.onError,
+            onTaskIdResolved: options?.onTaskIdResolved,
+            onMessageSent: options?.onMessageSent,
+          });
+        }
+
+        // Update user message status to completed
+        setStreamStates(prev => {
+          const newMap = new Map(prev);
+          const currentState = newMap.get(immediateTaskId);
+          if (currentState) {
+            const newMessages = new Map(currentState.messages);
+            const msg = newMessages.get(userMessageId);
+            if (msg) {
+              newMessages.set(userMessageId, {
+                ...msg,
+                status: 'completed',
+                subtaskId: userSubtaskId,
+                messageId,
+              });
+            }
+
+            // If we got a real task ID different from immediate, migrate state
+            if (realTaskId !== immediateTaskId && realTaskId > 0) {
+              // Check if compare:start already created messages on the real task ID
+              // This can happen when compare:start arrives before sendCompareMessage response
+              const existingRealState = newMap.get(realTaskId);
+              if (existingRealState && existingRealState.messages.size > 0) {
+                // Merge messages: keep compare mode messages from real task, add user message
+                const mergedMessages = new Map(existingRealState.messages);
+                for (const [msgId, msgData] of newMessages) {
+                  mergedMessages.set(msgId, msgData);
+                }
+                newMap.delete(immediateTaskId);
+                newMap.set(realTaskId, { ...existingRealState, messages: mergedMessages });
+              } else {
+                newMap.delete(immediateTaskId);
+                newMap.set(realTaskId, { ...currentState, messages: newMessages });
+              }
+            } else {
+              newMap.set(immediateTaskId, { ...currentState, messages: newMessages });
+            }
+          }
+          return newMap;
+        });
+
+        // Notify about resolved task ID
+        if (realTaskId !== immediateTaskId && realTaskId > 0) {
+          options?.onTaskIdResolved?.(realTaskId);
+          await joinTask(realTaskId);
+        } else if (request.task_id && request.task_id > 0) {
+          await joinTask(request.task_id);
+        }
+
+        // Track user subtask to task mapping
+        if (userSubtaskId) {
+          subtaskToTaskRef.current.set(userSubtaskId, realTaskId);
+        }
+
+        console.log('[ChatStreamContext] Compare message sent successfully', {
+          immediateTaskId,
+          realTaskId,
+          compareGroupId,
+          userSubtaskId,
+        });
+
+        // Call onMessageSent callback
+        const finalTaskId = realTaskId > 0 ? realTaskId : immediateTaskId;
+        options?.onMessageSent?.(finalTaskId, userSubtaskId || 0);
+
+        return realTaskId;
+      } catch (error) {
+        // Update user message status to error
+        setStreamStates(prev => {
+          const newMap = new Map(prev);
+          const currentState = newMap.get(immediateTaskId);
+          if (currentState) {
+            const newMessages = new Map(currentState.messages);
+            const msg = newMessages.get(userMessageId);
+            if (msg) {
+              newMessages.set(userMessageId, {
+                ...msg,
+                status: 'error',
+                error: (error as Error).message,
+              });
+            }
+            newMap.set(immediateTaskId, {
+              ...currentState,
+              error: error as Error,
+              messages: newMessages,
+            });
+          }
+          return newMap;
+        });
+        throw error;
+      }
+    },
+    [isConnected, socketSendCompareMessage, joinTask]
+  );
+
+  /**
+   * Select a response from multi-model comparison
+   * This marks the selected response as the chosen one and notifies the backend
+   */
+  const selectCompareResponse = useCallback(
+    async (taskId: number, compareGroupId: string, selectedSubtaskId: number): Promise<void> => {
+      console.log('[ChatStreamContext] selectCompareResponse called', {
+        taskId,
+        compareGroupId,
+        selectedSubtaskId,
+      });
+
+      try {
+        const response = await socketSelectCompareResponse({
+          task_id: taskId,
+          compare_group_id: compareGroupId,
+          selected_subtask_id: selectedSubtaskId,
+        });
+
+        if (response.error) {
+          throw new Error(response.error);
+        }
+
+        // Update compare group state
+        setCompareGroups(prev => {
+          const newMap = new Map(prev);
+          const group = newMap.get(compareGroupId);
+          if (group) {
+            newMap.set(compareGroupId, {
+              ...group,
+              selectedSubtaskId,
+            });
+          }
+          return newMap;
+        });
+
+        // Update stream state messages to mark selected response
+        setStreamStates(prev => {
+          const newMap = new Map(prev);
+          const currentState = newMap.get(taskId);
+          if (currentState) {
+            const newMessages = new Map(currentState.messages);
+
+            // Update all compare messages in this group
+            for (const [msgId, msg] of newMessages) {
+              if (msg.compareGroupId === compareGroupId) {
+                newMessages.set(msgId, {
+                  ...msg,
+                  isSelectedResponse: msg.subtaskId === selectedSubtaskId,
+                });
+              }
+            }
+
+            newMap.set(taskId, {
+              ...currentState,
+              messages: newMessages,
+            });
+          }
+          return newMap;
+        });
+
+        console.log('[ChatStreamContext] Compare response selected successfully', {
+          taskId,
+          compareGroupId,
+          selectedSubtaskId,
+        });
+      } catch (error) {
+        console.error('[ChatStreamContext] Failed to select compare response:', error);
+        throw error;
+      }
+    },
+    [socketSelectCompareResponse]
   );
 
   return (
@@ -1581,6 +2382,9 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         isTaskStreaming,
         getStreamingTaskIds,
         sendMessage,
+        sendCompareMessage,
+        getCompareGroupState,
+        selectCompareResponse,
         stopStream,
         resetStream,
         clearAllStreams,
@@ -1593,7 +2397,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     </ChatStreamContext.Provider>
   );
 }
-
 /**
  * Hook to use chat stream context
  */

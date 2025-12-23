@@ -293,5 +293,28 @@
   "common": {
     "cancel": "取消",
     "close": "关闭"
+  },
+  "compare": {
+    "mode": "对比模式",
+    "selectModels": "选择要对比的模型",
+    "modelsSelected": "个模型已选择",
+    "searchModels": "搜索模型...",
+    "noModels": "未找到模型",
+    "publicModel": "公共模型",
+    "userModel": "我的模型",
+    "selectHint": "选择 2-4 个模型来对比它们的响应",
+    "selectAtLeastTwo": "请至少选择 2 个模型",
+    "comparing": "正在对比",
+    "models": "个模型",
+    "allCompleted": "全部完成",
+    "selectHint2": "点击选择一个回答作为最终答案",
+    "pending": "等待中",
+    "streaming": "生成中...",
+    "completed": "已完成",
+    "error": "错误",
+    "waitingResponse": "等待响应...",
+    "selectThis": "选择此回答",
+    "selectedResponse": "已选择",
+    "viewOtherResponses": "查看其他回答"
   }
 }

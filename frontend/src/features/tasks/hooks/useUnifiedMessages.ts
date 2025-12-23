@@ -76,8 +76,15 @@ export interface DisplayMessage {
   isRecovered?: boolean;
   /** Whether content is incomplete */
   isIncomplete?: boolean;
+  /** Compare group ID for multi-model comparison */
+  compareGroupId?: string;
+  /** Model name for multi-model comparison */
+  modelName?: string;
+  /** Model display name for multi-model comparison */
+  modelDisplayName?: string;
+  /** Whether this response is selected in multi-model comparison */
+  isSelectedResponse?: boolean;
 }
-
 interface UseUnifiedMessagesOptions {
   /** Selected team for display */
   team: Team | null;
@@ -134,16 +141,24 @@ export function useUnifiedMessages({
   useEffect(() => {
     const hasMessages = streamState?.messages && streamState.messages.size > 0;
 
+    // Check if there are any streaming messages (including compare mode)
+    // If so, skip sync to avoid overwriting streaming content
+    const hasStreamingMessages = streamState?.messages
+      ? Array.from(streamState.messages.values()).some(msg => msg.status === 'streaming')
+      : false;
+
     // Only sync when:
     // 1. We have a taskId
     // 2. We have subtasks
     // 3. The task has changed (different from last synced) OR messages are empty
     //    (force resync after clearAllStreams to fix double-click blank message bug)
+    // 4. No streaming messages (to avoid overwriting compare mode or regular streaming)
     if (
       taskId &&
       subtasks &&
       subtasks.length > 0 &&
-      (taskId !== lastSyncedTaskIdRef.current || !hasMessages)
+      (taskId !== lastSyncedTaskIdRef.current || !hasMessages) &&
+      !hasStreamingMessages
     ) {
       console.log('[useUnifiedMessages] Syncing backend messages for task', taskId);
       syncBackendMessages(taskId, subtasks, {
@@ -230,6 +245,11 @@ export function useUnifiedMessages({
         thinking: msg.result?.thinking,
         isCurrentUser: msg.type === 'user' && (msg.senderUserId === user?.id || !msg.senderUserId),
         showSender: isGroupChat && msg.type === 'user',
+        // Multi-model comparison fields
+        compareGroupId: msg.compareGroupId,
+        modelName: msg.modelName,
+        modelDisplayName: msg.modelDisplayName,
+        isSelectedResponse: msg.isSelectedResponse,
       };
       messages.push(displayMsg);
 

@@ -1122,6 +1122,11 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 "sender_user_id": subtask.sender_user_id,
                 "sender_user_name": getattr(subtask, "sender_user_name", None),
                 "reply_to_subtask_id": subtask.reply_to_subtask_id,
+                # Multi-model comparison fields
+                "model_name": subtask.model_name,
+                "model_display_name": subtask.model_display_name,
+                "compare_group_id": subtask.compare_group_id,
+                "is_selected_response": subtask.is_selected_response,
             }
             subtasks_dict.append(subtask_dict)
 

@@ -14,6 +14,8 @@ export const ClientEvents = {
   CHAT_SEND: 'chat:send',
   CHAT_CANCEL: 'chat:cancel',
   CHAT_RESUME: 'chat:resume',
+  CHAT_COMPARE_SEND: 'chat:compare_send',
+  CHAT_COMPARE_SELECT: 'chat:compare_select',
   TASK_JOIN: 'task:join',
   TASK_LEAVE: 'task:leave',
   HISTORY_SYNC: 'history:sync',
@@ -30,6 +32,14 @@ export const ServerEvents = {
   CHAT_DONE: 'chat:done',
   CHAT_ERROR: 'chat:error',
   CHAT_CANCELLED: 'chat:cancelled',
+
+  // Multi-model comparison events
+  CHAT_COMPARE_START: 'chat:compare_start',
+  CHAT_COMPARE_CHUNK: 'chat:compare_chunk',
+  CHAT_COMPARE_DONE: 'chat:compare_done',
+  CHAT_COMPARE_ALL_DONE: 'chat:compare_all_done',
+  CHAT_COMPARE_ERROR: 'chat:compare_error',
+  CHAT_COMPARE_SELECTED: 'chat:compare_selected',
 
   // Non-streaming messages (to task room, exclude sender)
   CHAT_MESSAGE: 'chat:message',
@@ -93,6 +103,37 @@ export interface TaskLeavePayload {
 export interface HistorySyncPayload {
   task_id: number;
   after_message_id: number;
+}
+
+// Multi-model comparison payloads
+export interface ModelConfig {
+  name: string;
+  display_name?: string;
+  type?: 'public' | 'user';
+}
+
+export interface ChatCompareSendPayload {
+  task_id?: number;
+  team_id: number;
+  message: string;
+  title?: string;
+  models: ModelConfig[];
+  attachment_id?: number;
+  enable_web_search?: boolean;
+  search_engine?: string;
+  // Repository info for code tasks
+  git_url?: string;
+  git_repo?: string;
+  git_repo_id?: number;
+  git_domain?: string;
+  branch_name?: string;
+  task_type?: 'chat' | 'code';
+}
+
+export interface ChatCompareSelectPayload {
+  task_id: number;
+  compare_group_id: string;
+  selected_subtask_id: number;
 }
 
 // ============================================================
@@ -230,6 +271,56 @@ export interface UnreadCountPayload {
   count: number;
 }
 
+// Multi-model comparison server payloads
+export interface CompareModelInfo {
+  model_name: string;
+  model_display_name: string;
+  subtask_id: number;
+}
+
+export interface ChatCompareStartPayload {
+  task_id: number;
+  compare_group_id: string;
+  models: CompareModelInfo[];
+}
+
+export interface ChatCompareChunkPayload {
+  subtask_id: number;
+  compare_group_id: string;
+  model_name: string;
+  content: string;
+  offset: number;
+}
+
+export interface ChatCompareDonePayload {
+  subtask_id: number;
+  compare_group_id: string;
+  model_name: string;
+  offset: number;
+  result: Record<string, unknown>;
+}
+
+export interface ChatCompareAllDonePayload {
+  task_id: number;
+  compare_group_id: string;
+  message_id?: number;
+}
+
+export interface ChatCompareErrorPayload {
+  subtask_id: number;
+  compare_group_id: string;
+  model_name: string;
+  error: string;
+  type?: string;
+}
+
+export interface ChatCompareSelectedPayload {
+  task_id: number;
+  compare_group_id: string;
+  selected_subtask_id: number;
+  model_name: string;
+}
+
 // ============================================================
 // ACK Responses
 // ============================================================
@@ -263,6 +354,24 @@ export interface HistorySyncAck {
 }
 
 export interface GenericAck {
+  success: boolean;
+  error?: string;
+}
+
+export interface ChatCompareSendAck {
+  task_id?: number;
+  compare_group_id?: string;
+  user_subtask_id?: number;
+  message_id?: number;
+  models?: Array<{
+    model_name: string;
+    model_display_name?: string;
+    subtask_id: number;
+  }>;
+  error?: string;
+}
+
+export interface ChatCompareSelectAck {
   success: boolean;
   error?: string;
 }

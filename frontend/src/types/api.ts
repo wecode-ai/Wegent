@@ -291,6 +291,11 @@ export interface TaskDetailSubtask {
   sender_user_id?: number;
   sender_user_name?: string;
   reply_to_subtask_id?: number;
+  // Multi-model comparison fields
+  compare_group_id?: string;
+  model_name?: string;
+  model_display_name?: string;
+  is_selected_response?: boolean;
 }
 
 export interface Task {

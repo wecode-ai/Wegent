@@ -26,6 +26,8 @@ from app.api.ws.context_decorators import auto_task_context
 from app.api.ws.decorators import trace_websocket_event
 from app.api.ws.events import (
     ChatCancelPayload,
+    ChatCompareSelectPayload,
+    ChatCompareSendPayload,
     ChatResumePayload,
     ChatSendAck,
     ChatSendPayload,
@@ -240,6 +242,8 @@ class ChatNamespace(socketio.AsyncNamespace):
             "chat:send": "on_chat_send",
             "chat:cancel": "on_chat_cancel",
             "chat:resume": "on_chat_resume",
+            "chat:compare_send": "on_chat_compare_send",
+            "chat:compare_select": "on_chat_compare_select",
             "task:join": "on_task_join",
             "task:leave": "on_task_leave",
             "history:sync": "on_history_sync",
@@ -1113,6 +1117,343 @@ class ChatNamespace(socketio.AsyncNamespace):
 
         finally:
             db.close()
+
+    # ============================================================
+    # Multi-Model Comparison Events
+    # ============================================================
+
+    @auto_task_context(ChatCompareSendPayload, task_id_field="task_id")
+    async def on_chat_compare_send(self, sid: str, data: dict) -> dict:
+        """
+        Handle chat:compare_send event for multi-model comparison.
+
+        Creates task/subtasks and starts concurrent streaming from multiple models.
+
+        Args:
+            sid: Socket ID
+            data: ChatCompareSendPayload fields
+
+        Returns:
+            {"task_id": int, "compare_group_id": str, "models": [...]} or {"error": "..."}
+        """
+        import uuid
+
+        logger.info(f"[WS] chat:compare_send received sid={sid}")
+
+        payload = data  # Already validated by decorator
+
+        session = await self.get_session(sid)
+        user_id = session.get("user_id")
+        user_name = session.get("user_name")
+
+        if not user_id:
+            return {"error": "Not authenticated"}
+
+        # Validate number of models
+        if len(payload.models) < 2 or len(payload.models) > 4:
+            return {"error": "Must select 2-4 models for comparison"}
+
+        db = SessionLocal()
+        try:
+            # Get user
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user:
+                return {"error": "User not found"}
+
+            # Get team
+            team = (
+                db.query(Kind)
+                .filter(
+                    Kind.id == payload.team_id,
+                    Kind.kind == "Team",
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+
+            if not team:
+                return {"error": "Team not found"}
+
+            # Import helpers
+            from app.api.endpoints.adapter.chat import (
+                StreamChatRequest,
+                _should_use_direct_chat,
+            )
+
+            # Check if team supports direct chat
+            supports_direct_chat = _should_use_direct_chat(db, team, user_id)
+            if not supports_direct_chat:
+                return {
+                    "error": "Multi-model comparison only supports Chat Shell teams"
+                }
+
+            # Generate unique compare_group_id
+            compare_group_id = str(uuid.uuid4())[:16]
+
+            # Create or get task
+            task = None
+            if payload.task_id:
+                task = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.id == payload.task_id,
+                        Kind.kind == "Task",
+                        Kind.is_active == True,
+                    )
+                    .first()
+                )
+
+            if not task:
+                # Create new task
+                from datetime import datetime
+
+                from sqlalchemy.orm.attributes import flag_modified
+
+                from app.schemas.kind import ObjectMeta, Task, TaskSpec, TaskStatus
+
+                team_crd = Team.model_validate(team.json)
+                task_title = (
+                    payload.title or payload.message[:50] or "Multi-Model Comparison"
+                )
+
+                # Create workspace for the task
+                workspace_name = f"workspace-{uuid.uuid4().hex[:8]}"
+                workspace_json = {
+                    "kind": "Workspace",
+                    "spec": {
+                        "repository": {
+                            "gitUrl": payload.git_url or "",
+                            "gitRepo": payload.git_repo or "",
+                            "gitRepoId": payload.git_repo_id or 0,
+                            "gitDomain": payload.git_domain or "",
+                            "branchName": payload.branch_name or "",
+                        }
+                    },
+                    "status": {"state": "Available"},
+                    "metadata": {"name": workspace_name, "namespace": "default"},
+                    "apiVersion": "agent.wecode.io/v1",
+                }
+
+                workspace = Kind(
+                    user_id=user_id,
+                    kind="Workspace",
+                    name=workspace_name,
+                    namespace="default",
+                    json=workspace_json,
+                    is_active=True,
+                )
+                db.add(workspace)
+                db.flush()
+
+                task_spec = TaskSpec(
+                    title=task_title,
+                    prompt=payload.message,
+                    teamRef={"name": team.name, "namespace": team.namespace},
+                    workspaceRef={"name": workspace_name, "namespace": "default"},
+                )
+                task_status = TaskStatus(
+                    status="PENDING",
+                    progress=0,
+                    createdAt=datetime.now(),
+                    updatedAt=datetime.now(),
+                )
+                task_crd = Task(
+                    apiVersion="agent.wecode.io/v1",
+                    kind="Task",
+                    metadata=ObjectMeta(name=f"task-{uuid.uuid4().hex[:8]}"),
+                    spec=task_spec,
+                    status=task_status,
+                )
+
+                task = Kind(
+                    user_id=user_id,
+                    kind="Task",
+                    name=task_crd.metadata.name,
+                    namespace="default",
+                    json=task_crd.model_dump(mode="json"),
+                    is_active=True,
+                )
+                db.add(task)
+                db.flush()
+
+            # Get next message_id
+            max_message_id = (
+                db.query(Subtask.message_id)
+                .filter(Subtask.task_id == task.id)
+                .order_by(Subtask.message_id.desc())
+                .first()
+            )
+            next_message_id = (max_message_id[0] if max_message_id else 0) + 1
+
+            # Create user subtask
+            user_subtask = Subtask(
+                user_id=user_id,
+                task_id=task.id,
+                team_id=payload.team_id,
+                title=payload.message[:100],
+                bot_ids=[],
+                role=SubtaskRole.USER,
+                prompt=payload.message,
+                message_id=next_message_id,
+                status=SubtaskStatus.COMPLETED,
+                progress=100,
+                compare_group_id=compare_group_id,
+                sender_type="USER",
+                sender_user_id=user_id,
+            )
+            db.add(user_subtask)
+            db.flush()
+
+            # Create assistant subtasks (one per model)
+            assistant_subtasks = []
+            for i, model in enumerate(payload.models):
+                assistant_subtask = Subtask(
+                    user_id=user_id,
+                    task_id=task.id,
+                    team_id=payload.team_id,
+                    title=f"Response from {model.display_name or model.name}",
+                    bot_ids=[],
+                    role=SubtaskRole.ASSISTANT,
+                    message_id=next_message_id
+                    + 1,  # All model responses share same message_id
+                    status=SubtaskStatus.PENDING,
+                    progress=0,
+                    model_name=model.name,
+                    model_display_name=model.display_name or model.name,
+                    compare_group_id=compare_group_id,
+                    is_selected_response=False,
+                )
+                db.add(assistant_subtask)
+                db.flush()
+                assistant_subtasks.append(assistant_subtask)
+
+            db.commit()
+
+            # Link attachment to user subtask if provided
+            if payload.attachment_id:
+                from app.services.attachment import attachment_service
+
+                attachment_service.link_attachment_to_subtask(
+                    db=db,
+                    attachment_id=payload.attachment_id,
+                    subtask_id=user_subtask.id,
+                    user_id=user_id,
+                )
+
+            # Join task room
+            task_room = f"task:{task.id}"
+            await self.enter_room(sid, task_room)
+
+            # Broadcast user message to room (exclude sender)
+            await self._broadcast_user_message(
+                db=db,
+                user_subtask=user_subtask,
+                task_id=task.id,
+                message=payload.message,
+                user_id=user_id,
+                user_name=user_name,
+                attachment_id=payload.attachment_id,
+                task_room=task_room,
+                skip_sid=sid,
+            )
+
+            # Trigger multi-model AI responses
+            from app.services.chat.multi_model_trigger import (
+                trigger_multi_model_response,
+            )
+
+            await trigger_multi_model_response(
+                task=task,
+                user_subtask=user_subtask,
+                assistant_subtasks=assistant_subtasks,
+                team=team,
+                user=user,
+                message=payload.message,
+                payload=payload,
+                task_room=task_room,
+                compare_group_id=compare_group_id,
+                namespace=self,
+            )
+
+            # Return response with all model info
+            models_response = [
+                {
+                    "model_name": st.model_name,
+                    "model_display_name": st.model_display_name,
+                    "subtask_id": st.id,
+                }
+                for st in assistant_subtasks
+            ]
+
+            return {
+                "task_id": task.id,
+                "compare_group_id": compare_group_id,
+                "user_subtask_id": user_subtask.id,
+                "message_id": user_subtask.message_id,
+                "models": models_response,
+            }
+
+        except Exception as e:
+            logger.exception(f"[WS] chat:compare_send exception: {e}")
+            return {"error": str(e)}
+        finally:
+            db.close()
+
+    @auto_task_context(ChatCompareSelectPayload, task_id_field="task_id")
+    async def on_chat_compare_select(self, sid: str, data: dict) -> dict:
+        """
+        Handle chat:compare_select event.
+
+        Marks the selected response as the chosen one.
+
+        Args:
+            sid: Socket ID
+            data: {"task_id": int, "compare_group_id": str, "selected_subtask_id": int}
+
+        Returns:
+            {"success": true} or {"error": "..."}
+        """
+        payload = data  # Already validated by decorator
+
+        session = await self.get_session(sid)
+        user_id = session.get("user_id")
+
+        if not user_id:
+            return {"error": "Not authenticated"}
+
+        # Verify access
+        if not await can_access_task(user_id, payload.task_id):
+            return {"error": "Access denied"}
+
+        # Select the response
+        from app.services.chat.multi_model_trigger import select_best_response
+
+        result = await select_best_response(
+            task_id=payload.task_id,
+            compare_group_id=payload.compare_group_id,
+            selected_subtask_id=payload.selected_subtask_id,
+            user_id=user_id,
+        )
+
+        if result.get("error"):
+            return result
+
+        # Broadcast selection to task room
+        task_room = f"task:{payload.task_id}"
+        from app.api.ws.events import ServerEvents
+
+        await self.emit(
+            ServerEvents.CHAT_COMPARE_SELECTED,
+            {
+                "task_id": payload.task_id,
+                "compare_group_id": payload.compare_group_id,
+                "selected_subtask_id": payload.selected_subtask_id,
+                "model_name": result.get("model_name"),
+            },
+            room=task_room,
+        )
+
+        return {"success": True}
 
 
 def register_chat_namespace(sio: socketio.AsyncServer):

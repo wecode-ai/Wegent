@@ -6,7 +6,7 @@
 
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { Cog6ToothIcon } from '@heroicons/react/24/outline';
-import { Check, Brain } from 'lucide-react';
+import { Check, Brain, GitCompare } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Team, BotSummary } from '@/types/api';
@@ -14,6 +14,7 @@ import { modelApis, UnifiedModel, ModelTypeEnum } from '@/apis/models';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { Tag } from '@/components/ui/tag';
+import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { paths } from '@/config/paths';
 import {
@@ -40,6 +41,11 @@ export interface Model {
 // Special constant for default model option
 export const DEFAULT_MODEL_NAME = '__default__';
 
+// Maximum number of models that can be selected in compare mode
+export const MAX_COMPARE_MODELS = 4;
+// Minimum number of models required for compare mode
+export const MIN_COMPARE_MODELS = 2;
+
 // Extended Team type with bot details (using BotSummary for agent_config)
 interface TeamWithBotDetails extends Team {
   bots: Array<{
@@ -60,6 +66,14 @@ interface ModelSelectorProps {
   isLoading?: boolean;
   /** When true, display only icon without text (for responsive collapse) */
   compact?: boolean;
+  /** Enable multi-model compare mode */
+  compareMode?: boolean;
+  /** Callback when compare mode is toggled */
+  onCompareModeChange?: (enabled: boolean) => void;
+  /** Selected models for comparison (used when compareMode is true) */
+  selectedModels?: Model[];
+  /** Callback when selected models change (used when compareMode is true) */
+  onSelectedModelsChange?: (models: Model[]) => void;
 }
 
 const LAST_SELECTED_MODEL_KEY = 'last_selected_model_id';
@@ -111,8 +125,13 @@ export default function ModelSelector({
   disabled,
   isLoading: externalLoading,
   compact = false,
+  compareMode = false,
+  onCompareModeChange,
+  selectedModels = [],
+  onSelectedModelsChange,
 }: ModelSelectorProps) {
   const { t } = useTranslation('common');
+  const { t: tChat } = useTranslation('chat');
   const router = useRouter();
   const isMobile = useMediaQuery('(max-width: 767px)');
   const [models, setModels] = useState<Model[]>([]);
@@ -332,9 +351,50 @@ export default function ModelSelector({
     return `${model.name}:${model.type || ''}`;
   };
 
+  // Check if a model is selected in compare mode
+  const isModelSelectedInCompareMode = useCallback(
+    (model: Model): boolean => {
+      return selectedModels.some(m => m.name === model.name && m.type === model.type);
+    },
+    [selectedModels]
+  );
+
+  // Handle model selection in compare mode (multi-select)
+  const handleCompareModelToggle = useCallback(
+    (model: Model) => {
+      if (!onSelectedModelsChange) return;
+
+      const isSelected = isModelSelectedInCompareMode(model);
+      if (isSelected) {
+        // Remove model from selection
+        onSelectedModelsChange(
+          selectedModels.filter(m => !(m.name === model.name && m.type === model.type))
+        );
+      } else {
+        // Add model to selection (if under max limit)
+        if (selectedModels.length < MAX_COMPARE_MODELS) {
+          onSelectedModelsChange([...selectedModels, model]);
+        }
+      }
+    },
+    [selectedModels, onSelectedModelsChange, isModelSelectedInCompareMode]
+  );
+
   // Handle model selection
   // Value format: "modelName:modelType" to uniquely identify models
   const handleModelSelect = (value: string) => {
+    // In compare mode, toggle selection instead of single select
+    if (compareMode) {
+      if (value === DEFAULT_MODEL_NAME) return; // Default not allowed in compare mode
+      const [modelName, modelType] = value.split(':');
+      const model = filteredModels.find(m => m.name === modelName && m.type === modelType);
+      if (model) {
+        handleCompareModelToggle(model);
+      }
+      // Don't close popover in compare mode to allow multiple selections
+      return;
+    }
+
     if (value === DEFAULT_MODEL_NAME) {
       const defaultModel = { name: DEFAULT_MODEL_NAME, provider: '', modelId: '' };
       setSelectedModel(defaultModel);
@@ -353,6 +413,23 @@ export default function ModelSelector({
     }
     setIsOpen(false);
   };
+
+  // Handle compare mode toggle
+  const handleCompareModeToggle = useCallback(() => {
+    if (onCompareModeChange) {
+      const newMode = !compareMode;
+      onCompareModeChange(newMode);
+      // Clear selections when toggling mode
+      if (newMode && onSelectedModelsChange) {
+        // When entering compare mode, start with current model if selected
+        if (selectedModel && selectedModel.name !== DEFAULT_MODEL_NAME) {
+          onSelectedModelsChange([selectedModel]);
+        } else {
+          onSelectedModelsChange([]);
+        }
+      }
+    }
+  }, [compareMode, onCompareModeChange, onSelectedModelsChange, selectedModel]);
 
   // Handle force override checkbox
   const handleForceOverrideChange = (checked: boolean | 'indeterminate') => {
@@ -393,6 +470,14 @@ export default function ModelSelector({
 
   // Get display text for trigger
   const getTriggerDisplayText = () => {
+    // In compare mode, show selected count
+    if (compareMode) {
+      if (selectedModels.length === 0) {
+        return tChat('compare.selectModels', '选择要对比的模型');
+      }
+      return `${selectedModels.length} ${tChat('compare.modelsSelected', '个模型已选择')}`;
+    }
+
     if (!selectedModel) {
       if (isLoading) {
         return t('actions.loading');
@@ -425,10 +510,15 @@ export default function ModelSelector({
 
   // Tooltip content for model selector
   // In compact mode, show selected model name in tooltip
-  const tooltipContent =
-    compact && selectedModel
-      ? `${t('task_submit.model_tooltip', '选择用于对话的 AI 模型')}: ${getTriggerDisplayText()}`
-      : t('task_submit.model_tooltip', '选择用于对话的 AI 模型');
+  const tooltipContent = useMemo(() => {
+    if (compareMode) {
+      return tChat('compare.selectHint', '选择 2-4 个模型来对比它们的响应');
+    }
+    if (compact && selectedModel) {
+      return `${t('task_submit.model_tooltip', '选择用于对话的 AI 模型')}: ${getTriggerDisplayText()}`;
+    }
+    return t('task_submit.model_tooltip', '选择用于对话的 AI 模型');
+  }, [compareMode, compact, selectedModel, t, tChat, getTriggerDisplayText]);
 
   return (
     <div
@@ -449,17 +539,28 @@ export default function ModelSelector({
                   className={cn(
                     'flex items-center gap-1 min-w-0 rounded-md px-2 py-1',
                     'transition-colors',
-                    isModelRequired
-                      ? 'text-error hover:text-error hover:bg-error/10'
-                      : 'text-text-muted hover:text-text-primary hover:bg-muted',
+                    compareMode
+                      ? 'text-primary hover:text-primary hover:bg-primary/10'
+                      : isModelRequired
+                        ? 'text-error hover:text-error hover:bg-error/10'
+                        : 'text-text-muted hover:text-text-primary hover:bg-muted',
                     isLoading || externalLoading ? 'animate-pulse' : '',
                     'focus:outline-none focus:ring-0',
                     'disabled:cursor-not-allowed disabled:opacity-50'
                   )}
                 >
-                  <Brain className="h-4 w-4 flex-shrink-0" />
+                  {compareMode ? (
+                    <GitCompare className="h-4 w-4 flex-shrink-0" />
+                  ) : (
+                    <Brain className="h-4 w-4 flex-shrink-0" />
+                  )}
                   {!compact && (
                     <span className="truncate text-xs min-w-0">{getTriggerDisplayText()}</span>
+                  )}
+                  {compareMode && selectedModels.length > 0 && (
+                    <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
+                      {selectedModels.length}
+                    </Badge>
                   )}
                 </button>
               </PopoverTrigger>
@@ -506,8 +607,8 @@ export default function ModelSelector({
                     {t('branches.no_match')}
                   </CommandEmpty>
                   <CommandGroup>
-                    {/* Default option - only show when all bots have predefined models */}
-                    {showDefaultOption && (
+                    {/* Default option - only show when all bots have predefined models and NOT in compare mode */}
+                    {showDefaultOption && !compareMode && (
                       <CommandItem
                         key={DEFAULT_MODEL_NAME}
                         value={`${DEFAULT_MODEL_NAME} ${t('task_submit.default_model', '默认')} ${t('task_submit.use_bot_model', '使用 Bot 预设模型')}`}
@@ -547,65 +648,119 @@ export default function ModelSelector({
                         </div>
                       </CommandItem>
                     )}
-                    {filteredModels.map(model => (
-                      <CommandItem
-                        key={getModelKey(model)}
-                        value={`${model.name} ${model.displayName || ''} ${model.provider} ${model.modelId} ${model.type}`}
-                        onSelect={() => handleModelSelect(getModelKey(model))}
-                        className={cn(
-                          'group cursor-pointer select-none',
-                          'px-3 py-1.5 text-sm text-text-primary',
-                          'rounded-md mx-1 my-[2px]',
-                          'data-[selected=true]:bg-primary/10 data-[selected=true]:text-primary',
-                          'aria-selected:bg-hover',
-                          '!flex !flex-row !items-start !gap-3'
-                        )}
-                      >
-                        <Check
+                    {filteredModels.map(model => {
+                      const isSelectedInCompare = isModelSelectedInCompareMode(model);
+                      const isSelectedSingle =
+                        selectedModel?.name === model.name && selectedModel?.type === model.type;
+                      const isAtMaxLimit =
+                        selectedModels.length >= MAX_COMPARE_MODELS && !isSelectedInCompare;
+
+                      return (
+                        <CommandItem
+                          key={getModelKey(model)}
+                          value={`${model.name} ${model.displayName || ''} ${model.provider} ${model.modelId} ${model.type}`}
+                          onSelect={() => handleModelSelect(getModelKey(model))}
+                          disabled={compareMode && isAtMaxLimit}
                           className={cn(
-                            'h-3 w-3 shrink-0 mt-0.5 ml-1',
-                            selectedModel?.name === model.name && selectedModel?.type === model.type
-                              ? 'opacity-100 text-primary'
-                              : 'opacity-0 text-text-muted'
+                            'group cursor-pointer select-none',
+                            'px-3 py-1.5 text-sm text-text-primary',
+                            'rounded-md mx-1 my-[2px]',
+                            'data-[selected=true]:bg-primary/10 data-[selected=true]:text-primary',
+                            'aria-selected:bg-hover',
+                            '!flex !flex-row !items-start !gap-3',
+                            compareMode && isSelectedInCompare && 'bg-primary/5',
+                            compareMode && isAtMaxLimit && 'opacity-50 cursor-not-allowed'
                           )}
-                        />
-                        <div className="flex items-center gap-2 min-w-0 flex-1">
-                          <Brain className="w-3.5 h-3.5 flex-shrink-0 text-text-muted" />
-                          <div className="flex flex-col min-w-0 flex-1">
-                            <div className="flex items-center gap-1.5 flex-nowrap">
-                              <span
-                                className="font-medium text-xs text-text-secondary truncate min-w-0"
-                                title={getModelDisplayText(model)}
-                              >
-                                {getModelDisplayText(model)}
-                              </span>
-                              {model.type === 'public' && (
-                                <Tag
-                                  variant="info"
-                                  className="text-[10px] flex-shrink-0 whitespace-nowrap"
+                        >
+                          {compareMode ? (
+                            <Checkbox
+                              checked={isSelectedInCompare}
+                              disabled={isAtMaxLimit && !isSelectedInCompare}
+                              className="h-3.5 w-3.5 shrink-0 mt-0.5 ml-1"
+                              onClick={e => e.stopPropagation()}
+                              onCheckedChange={() => handleCompareModelToggle(model)}
+                            />
+                          ) : (
+                            <Check
+                              className={cn(
+                                'h-3 w-3 shrink-0 mt-0.5 ml-1',
+                                isSelectedSingle
+                                  ? 'opacity-100 text-primary'
+                                  : 'opacity-0 text-text-muted'
+                              )}
+                            />
+                          )}
+                          <div className="flex items-center gap-2 min-w-0 flex-1">
+                            <Brain
+                              className={cn(
+                                'w-3.5 h-3.5 flex-shrink-0',
+                                compareMode && isSelectedInCompare
+                                  ? 'text-primary'
+                                  : 'text-text-muted'
+                              )}
+                            />
+                            <div className="flex flex-col min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5 flex-nowrap">
+                                <span
+                                  className={cn(
+                                    'font-medium text-xs truncate min-w-0',
+                                    compareMode && isSelectedInCompare
+                                      ? 'text-primary'
+                                      : 'text-text-secondary'
+                                  )}
+                                  title={getModelDisplayText(model)}
                                 >
-                                  {t('models.public', '公共')}
-                                </Tag>
+                                  {getModelDisplayText(model)}
+                                </span>
+                                {model.type === 'public' && (
+                                  <Tag
+                                    variant="info"
+                                    className="text-[10px] flex-shrink-0 whitespace-nowrap"
+                                  >
+                                    {t('models.public', '公共')}
+                                  </Tag>
+                                )}
+                              </div>
+                              {model.modelId && (
+                                <span
+                                  className="text-[10px] text-text-muted truncate"
+                                  title={model.modelId}
+                                >
+                                  {model.modelId}
+                                </span>
                               )}
                             </div>
-                            {model.modelId && (
-                              <span
-                                className="text-[10px] text-text-muted truncate"
-                                title={model.modelId}
-                              >
-                                {model.modelId}
-                              </span>
-                            )}
                           </div>
-                        </div>
-                      </CommandItem>
-                    ))}
+                        </CommandItem>
+                      );
+                    })}
                   </CommandGroup>
                 </>
               )}
             </CommandList>
-            {/* Force override checkbox in dropdown footer - always show when model is selected */}
-            {selectedModel && !isMixedTeam && (
+            {/* Compare mode status and hint */}
+            {compareMode && (
+              <div className="border-t border-border px-3 py-2 bg-primary/5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-text-secondary">
+                    {selectedModels.length < MIN_COMPARE_MODELS
+                      ? tChat('compare.selectAtLeastTwo', '请至少选择 2 个模型')
+                      : `${selectedModels.length}/${MAX_COMPARE_MODELS} ${tChat('compare.modelsSelected', '个模型已选择')}`}
+                  </span>
+                  {selectedModels.length >= MIN_COMPARE_MODELS && (
+                    <button
+                      type="button"
+                      onClick={() => setIsOpen(false)}
+                      className="text-xs text-primary hover:text-primary/80 font-medium"
+                    >
+                      {t('actions.confirm', '确定')}
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+            {/* Force override checkbox in dropdown footer - only show when NOT in compare mode and model is selected */}
+            {!compareMode && selectedModel && !isMixedTeam && (
               <div className="border-t border-border px-3 py-2">
                 <label
                   className="flex items-center gap-2 cursor-pointer text-xs text-text-secondary hover:text-text-primary"
@@ -622,23 +777,49 @@ export default function ModelSelector({
                 </label>
               </div>
             )}
-            {/* Model Settings Link */}
-            <div
-              className="border-t border-border bg-base cursor-pointer group flex items-center space-x-2 px-2.5 py-2 text-xs text-text-secondary hover:bg-muted transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary w-full"
-              onClick={() => router.push(paths.settings.models.getHref())}
-              role="button"
-              tabIndex={0}
-              onKeyDown={e => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  router.push(paths.settings.models.getHref());
-                }
-              }}
-            >
-              <Cog6ToothIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
-              <span className="font-medium group-hover:text-text-primary">
-                {t('models.manage', '模型设置')}
-              </span>
+            {/* Compare mode toggle and Model Settings Link */}
+            <div className="border-t border-border flex items-center">
+              {/* Compare mode toggle - only show when onCompareModeChange is provided */}
+              {onCompareModeChange && !disabled && (
+                <button
+                  type="button"
+                  onClick={handleCompareModeToggle}
+                  className={cn(
+                    'flex-1 flex items-center justify-center gap-1.5 px-2.5 py-2 text-xs transition-colors duration-150',
+                    compareMode
+                      ? 'text-primary bg-primary/5 hover:bg-primary/10'
+                      : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                  )}
+                >
+                  <GitCompare className="w-3.5 h-3.5" />
+                  <span className="font-medium">
+                    {compareMode
+                      ? tChat('compare.mode', '对比模式')
+                      : tChat('compare.mode', '对比模式')}
+                  </span>
+                </button>
+              )}
+              {/* Divider */}
+              {onCompareModeChange && !disabled && <div className="w-px h-6 bg-border" />}
+              {/* Model Settings Link */}
+              <div
+                className={cn(
+                  'flex items-center justify-center gap-1.5 px-2.5 py-2 text-xs text-text-secondary hover:bg-muted hover:text-text-primary transition-colors duration-150 cursor-pointer',
+                  onCompareModeChange && !disabled ? 'flex-1' : 'w-full'
+                )}
+                onClick={() => router.push(paths.settings.models.getHref())}
+                role="button"
+                tabIndex={0}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    router.push(paths.settings.models.getHref());
+                  }
+                }}
+              >
+                <Cog6ToothIcon className="w-3.5 h-3.5" />
+                <span className="font-medium">{t('models.manage', '模型设置')}</span>
+              </div>
             </div>
           </Command>
         </PopoverContent>

@@ -294,5 +294,28 @@
   "common": {
     "cancel": "Cancel",
     "close": "Close"
+  },
+  "compare": {
+    "mode": "Compare Mode",
+    "selectModels": "Select models to compare",
+    "modelsSelected": "models selected",
+    "searchModels": "Search models...",
+    "noModels": "No models found",
+    "publicModel": "Public Model",
+    "userModel": "My Model",
+    "selectHint": "Select 2-4 models to compare their responses",
+    "selectAtLeastTwo": "Please select at least 2 models",
+    "comparing": "Comparing",
+    "models": "models",
+    "allCompleted": "All completed",
+    "selectHint2": "Click on a response to select it as the final answer",
+    "pending": "Pending",
+    "streaming": "Generating...",
+    "completed": "Completed",
+    "error": "Error",
+    "waitingResponse": "Waiting for response...",
+    "selectThis": "Select this response",
+    "selectedResponse": "Selected",
+    "viewOtherResponses": "View other responses"
   }
 }
