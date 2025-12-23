@@ -20,22 +20,22 @@ Approach:
 import logging
 import time
 import uuid
-import jwt
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends, Query, HTTPException, BackgroundTasks
+import jwt
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
-from sqlalchemy.orm import Session
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 try:
     # Import target module to access router and services
-    from app.api.endpoints import oidc as oidc_module
     from app.api.dependencies import get_db
-    from app.core.security import create_access_token
-    from app.core.config import settings
-    from app.models.user import User
+    from app.api.endpoints import oidc as oidc_module
     from app.core import security
+    from app.core.config import settings
+    from app.core.security import create_access_token
+    from app.models.user import User
     from app.services.oidc import oidc_service
 except Exception:
     oidc_module = None  # type: ignore
@@ -46,12 +46,12 @@ except Exception:
     security = None  # type: ignore
     oidc_service = None  # type: ignore
 
-# wecode services
-from wecode.service.get_user_gitinfo import get_user_gitinfo
-from app.services.user import user_service
 from app.schemas.user import UserUpdate
 from app.services.k_batch import apply_default_resources_async
+from app.services.user import user_service
 
+# wecode services
+from wecode.service.get_user_gitinfo import get_user_gitinfo
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -77,7 +77,9 @@ async def _patched_oidc_callback(
 
     # Verify state parameter (JWT)
     try:
-        payload = jwt.decode(state, settings.OIDC_STATE_SECRET_KEY, algorithms=["HS256"])
+        payload = jwt.decode(
+            state, settings.OIDC_STATE_SECRET_KEY, algorithms=["HS256"]
+        )
         nonce = payload["nonce"]
         now = int(time.time())
         if now > payload["exp"]:
@@ -107,7 +109,11 @@ async def _patched_oidc_callback(
         user_data = {**claims, **user_info}
 
         user_id = user_data.get("sub")
-        email = user_data.get("email") or user_data.get("preferred_username") or f"{user_id}@unknown.email"
+        email = (
+            user_data.get("email")
+            or user_data.get("preferred_username")
+            or f"{user_id}@unknown.email"
+        )
         name = user_data.get("name") or user_data.get("preferred_username") or user_id
 
         if not user_id:
@@ -133,8 +139,10 @@ async def _patched_oidc_callback(
             db.commit()
             db.refresh(user)
             created_new_user = True
-            logger.info(f"Created new OIDC user: user_id={user.id}, user_name={user.user_name}")
-            
+            logger.info(
+                f"Created new OIDC user: user_id={user.id}, user_name={user.user_name}"
+            )
+
             # Apply default resources for new user
             background_tasks.add_task(apply_default_resources_async, user.id)
         else:
@@ -143,10 +151,14 @@ async def _patched_oidc_callback(
                 user.email = email
                 db.commit()
                 db.refresh(user)
-            logger.info(f"Found existing OIDC user: user_id={user.id}, user_name={user.user_name}")
+            logger.info(
+                f"Found existing OIDC user: user_id={user.id}, user_name={user.user_name}"
+            )
 
         if not user.is_active:
-            logger.warning(f"User not active: user_id={user.id}, user_name={user.user_name}")
+            logger.warning(
+                f"User not active: user_id={user.id}, user_name={user.user_name}"
+            )
             raise Exception("User not active")
 
         # Wecode-specific: for newly created user, fetch and validate git token info from paas,
@@ -155,29 +167,37 @@ async def _patched_oidc_callback(
             try:
                 # Fetch and validate git token info
                 new_gitlab_info = get_user_gitinfo.get_and_validate_git_info(user_name)
- 
+
                 # Merge existing git_info (keep non-gitlab info)
                 merged_git_info = []
                 if user.git_info:
                     for existing_item in user.git_info:
                         if existing_item.get("type") != "gitlab":
                             merged_git_info.append(existing_item)
- 
+
                 if new_gitlab_info:
                     merged_git_info.extend(new_gitlab_info)
- 
+
                 if merged_git_info:
                     user_update = UserUpdate(git_info=merged_git_info)
                     # Validation already done in wecode/service/get_user_gitinfo, skip here
-                    user_service.update_current_user(db=db, user=user, obj_in=user_update, validate_git_info=False)
-                    logger.info(f"OIDC new user git_info initialized: user_id={user.id}, count={len(merged_git_info)}")
+                    user_service.update_current_user(
+                        db=db, user=user, obj_in=user_update, validate_git_info=False
+                    )
+                    logger.info(
+                        f"OIDC new user git_info initialized: user_id={user.id}, count={len(merged_git_info)}"
+                    )
             except Exception as e:
                 # Do not interrupt login flow, log error
                 logger.error(f"OIDC git_info initialization failed: {str(e)}")
 
-        jwt_token = create_access_token(data={"sub": user.user_name})
+        jwt_token = create_access_token(
+            data={"sub": user.user_name, "user_id": user.id}
+        )
 
-        logger.info(f"OIDC login success: user_id={user.id}, user_name={user.user_name}")
+        logger.info(
+            f"OIDC login success: user_id={user.id}, user_name={user.user_name}"
+        )
 
         redirect_url = f"{settings.FRONTEND_URL}/login/oidc?access_token={jwt_token}&token_type=bearer&login_success=true"
 
@@ -206,7 +226,12 @@ def apply_patch() -> None:
         path = getattr(route, "path", None)
         methods = getattr(route, "methods", set())
         endpoint = getattr(route, "endpoint", None)
-        if path == "/callback" and ("GET" in methods) and callable(endpoint) and not getattr(endpoint, "_wecode_patched", False):
+        if (
+            path == "/callback"
+            and ("GET" in methods)
+            and callable(endpoint)
+            and not getattr(endpoint, "_wecode_patched", False)
+        ):
             # Replace route endpoint
             setattr(_patched_oidc_callback, "_wecode_patched", True)
             route.endpoint = _patched_oidc_callback
