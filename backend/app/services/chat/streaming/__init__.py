@@ -4,7 +4,7 @@
 
 """Streaming module for Chat Service.
 
-This module provides unified streaming infrastructure for both SSE and WebSocket.
+This module provides WebSocket streaming infrastructure.
 """
 
 from .base import (
@@ -19,13 +19,11 @@ from .global_emitter import (
     get_ws_emitter,
     init_ws_emitter,
 )
-from .sse_emitter import SSEEmitter
 
 __all__ = [
     "StreamingCore",
     "StreamingConfig",
     "StreamingState",
-    "SSEEmitter",
     "WebSocketEmitter",
     "truncate_list_keep_ends",
     "get_ws_emitter",

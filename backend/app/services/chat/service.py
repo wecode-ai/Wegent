@@ -7,7 +7,7 @@
 This module provides a LangGraph-based chat service that uses:
 - LangGraph StateGraph for agent workflow orchestration
 - LangChain for model abstraction and tool binding
-- Modular streaming infrastructure (SSE and WebSocket)
+- WebSocket streaming infrastructure
 - Database-based model resolution
 - Redis session management
 
@@ -24,11 +24,9 @@ Architecture:
 import asyncio
 import json
 import logging
-from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from typing import Any
 
-from fastapi.responses import StreamingResponse
 from langchain_core.tools.base import BaseTool
 
 from app.core.config import settings
@@ -38,7 +36,6 @@ from .messages import MessageConverter
 from .models import LangChainModelFactory
 from .storage import storage_handler
 from .streaming import (
-    SSEEmitter,
     StreamingConfig,
     StreamingCore,
     StreamingState,
@@ -64,20 +61,6 @@ class WebSocketStreamConfig:
     search_engine: str | None = None
     extra_tools: list[BaseTool] = field(default_factory=list)
     message_id: int | None = None  # Message ID for ordering in frontend
-
-
-# SSE response headers
-_SSE_HEADERS = {
-    "Cache-Control": "no-cache",
-    "Connection": "keep-alive",
-    "X-Accel-Buffering": "no",
-    "Content-Encoding": "none",
-}
-
-
-def _sse_data(data: dict[str, Any]) -> str:
-    """Format data as SSE event."""
-    return f"data: {json.dumps(data)}\n\n"
 
 
 class ChatService:
@@ -168,165 +151,6 @@ class ChatService:
             tool_registry=tool_registry,
             max_iterations=max_iterations,
             enable_checkpointing=self.enable_checkpointing,
-        )
-
-    # ==================== SSE Streaming API ====================
-
-    async def chat_stream(
-        self,
-        message: str | dict[str, Any],
-        model_config: dict[str, Any],
-        system_prompt: str = "",
-        subtask_id: int | None = None,
-        task_id: int | None = None,
-        is_group_chat: bool = False,
-        max_iterations: int = settings.CHAT_TOOL_MAX_REQUESTS,
-    ) -> StreamingResponse:
-        """Stream chat response via SSE.
-
-        Uses LangGraph's stream_tokens for token-level streaming.
-
-        Args:
-            message: User message (string or dict)
-            model_config: Model configuration from ModelResolver
-            system_prompt: System prompt
-            subtask_id: Subtask ID (None for simple mode)
-            task_id: Task ID (None for simple mode)
-            is_group_chat: Whether this is a group chat
-            max_iterations: Max tool loop iterations
-
-        Returns:
-            StreamingResponse with SSE events
-        """
-        is_simple_mode = subtask_id is None or task_id is None
-
-        if is_simple_mode:
-            return await self._simple_stream(
-                message, model_config, system_prompt, max_iterations
-            )
-
-        return await self._full_stream(
-            message=message,
-            model_config=model_config,
-            system_prompt=system_prompt,
-            subtask_id=subtask_id,
-            task_id=task_id,
-            is_group_chat=is_group_chat,
-            max_iterations=max_iterations,
-        )
-
-    async def _simple_stream(
-        self,
-        message: str | dict[str, Any],
-        model_config: dict[str, Any],
-        system_prompt: str,
-        max_iterations: int,
-    ) -> StreamingResponse:
-        """Simple streaming without database operations."""
-
-        async def generate() -> AsyncGenerator[str, None]:
-            try:
-                # Build messages
-                messages = MessageConverter.build_messages(
-                    history=[],
-                    current_message=message,
-                    system_prompt=system_prompt,
-                )
-
-                # Create agent and stream
-                agent = self._create_agent(model_config, max_iterations)
-
-                async for token in agent.stream_tokens(messages):
-                    yield _sse_data({"content": token, "done": False})
-
-                yield _sse_data({"content": "", "done": True})
-
-            except Exception as e:
-                logger.exception("Simple stream error")
-                yield _sse_data({"error": str(e)})
-
-        return StreamingResponse(
-            generate(), media_type="text/event-stream", headers=_SSE_HEADERS
-        )
-
-    async def _full_stream(
-        self,
-        message: str | dict[str, Any],
-        model_config: dict[str, Any],
-        system_prompt: str,
-        subtask_id: int,
-        task_id: int,
-        is_group_chat: bool,
-        max_iterations: int,
-    ) -> StreamingResponse:
-        """Full streaming with database and session management using StreamingCore."""
-
-        async def generate() -> AsyncGenerator[str, None]:
-            # Create SSE emitter
-            emitter = SSEEmitter()
-
-            # Create streaming state
-            state = StreamingState(
-                task_id=task_id,
-                subtask_id=subtask_id,
-                user_id=0,  # Not needed for SSE
-                is_group_chat=is_group_chat,
-            )
-
-            # Create streaming core
-            core = StreamingCore(emitter, state, StreamingConfig())
-
-            try:
-                # Acquire resources
-                if not await core.acquire_resources():
-                    # Error already emitted by core
-                    if emitter.has_events():
-                        yield emitter.get_event()
-                    return
-
-                # Get chat history
-                history = await self._get_chat_history(task_id, is_group_chat)
-
-                # Build messages
-                messages = MessageConverter.build_messages(
-                    history, message, system_prompt
-                )
-
-                # Create agent
-                agent = self._create_agent(model_config, max_iterations)
-
-                # Stream tokens
-                async for token in agent.stream_tokens(
-                    messages, cancel_event=core.cancel_event
-                ):
-                    if not await core.process_token(token):
-                        # Cancelled
-                        if emitter.has_events():
-                            yield emitter.get_event()
-                        return
-
-                    # Yield any pending events
-                    while emitter.has_events():
-                        yield emitter.get_event()
-
-                # Finalize
-                await core.finalize()
-
-                # Yield final events
-                while emitter.has_events():
-                    yield emitter.get_event()
-
-            except Exception as e:
-                logger.exception("[STREAM] subtask=%s error", subtask_id)
-                await core.handle_error(e)
-                while emitter.has_events():
-                    yield emitter.get_event()
-
-            finally:
-                await core.release_resources()
-
-        return StreamingResponse(
-            generate(), media_type="text/event-stream", headers=_SSE_HEADERS
         )
 
     # ==================== Non-Streaming API ====================

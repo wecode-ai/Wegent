@@ -2,13 +2,11 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import json
 from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-from sse_starlette.sse import EventSourceResponse
 
 from app.api.dependencies import get_db
 from app.core import security
@@ -193,109 +191,3 @@ async def get_streaming_status(
             else None
         ),
     )
-
-
-@router.get("/tasks/{task_id}/stream/subscribe")
-async def subscribe_group_stream(
-    task_id: int,
-    subtask_id: int = Query(..., description="Subtask ID to subscribe to"),
-    offset: Optional[int] = Query(0, description="Character offset for resuming"),
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
-):
-    """
-    Subscribe to a group chat stream via SSE.
-    Allows group members to receive streaming updates from any member's AI interaction.
-    """
-    from app.services.task_member_service import task_member_service
-
-    # Check if user is authorized
-    is_member = task_member_service.is_member(db, task_id, current_user.id)
-    if not is_member:
-        from fastapi import HTTPException
-
-        raise HTTPException(status_code=403, detail="Not authorized")
-
-    async def event_generator():
-        """Generate SSE events for the subscribed stream."""
-        # Get current cached content
-        current_content = await session_manager.get_streaming_content(subtask_id)
-
-        # If offset is provided and we have cached content, send the portion after offset
-        if offset > 0 and current_content:
-            remaining_content = current_content[offset:]
-            if remaining_content:
-                yield {
-                    "event": "message",
-                    "data": json.dumps(
-                        {
-                            "content": remaining_content,
-                            "done": False,
-                            "subtask_id": subtask_id,
-                        }
-                    ),
-                }
-
-        # Subscribe to Redis Pub/Sub for real-time updates
-        redis_client, pubsub = await session_manager.subscribe_streaming_channel(
-            subtask_id
-        )
-
-        if not redis_client or not pubsub:
-            # Failed to subscribe, send error and close
-            yield {
-                "event": "error",
-                "data": json.dumps({"error": "Failed to subscribe to stream"}),
-            }
-            return
-
-        try:
-            # Listen for messages from Redis Pub/Sub
-            while True:
-                message = await pubsub.get_message(
-                    ignore_subscribe_messages=True, timeout=30.0
-                )
-
-                if message and message["type"] == "message":
-                    chunk_data = message["data"]
-
-                    # Check if it's a done signal (JSON encoded)
-                    if isinstance(chunk_data, bytes):
-                        chunk_data = chunk_data.decode("utf-8")
-
-                    try:
-                        # Try to parse as JSON (done signal)
-                        parsed = json.loads(chunk_data)
-                        if parsed.get("__type__") == "STREAM_DONE":
-                            # Send done event
-                            yield {
-                                "event": "message",
-                                "data": json.dumps(
-                                    {
-                                        "content": "",
-                                        "done": True,
-                                        "result": parsed.get("result"),
-                                        "subtask_id": subtask_id,
-                                    }
-                                ),
-                            }
-                            break
-                    except json.JSONDecodeError:
-                        # Regular text chunk
-                        yield {
-                            "event": "message",
-                            "data": json.dumps(
-                                {
-                                    "content": chunk_data,
-                                    "done": False,
-                                    "subtask_id": subtask_id,
-                                }
-                            ),
-                        }
-
-        finally:
-            # Clean up Redis connections
-            await pubsub.unsubscribe()
-            await redis_client.aclose()
-
-    return EventSourceResponse(event_generator())
