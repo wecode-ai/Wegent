@@ -16,12 +16,31 @@ import asyncio
 import logging
 from typing import Any, Dict, Optional
 
+from shared.telemetry.context import (
+    SpanManager,
+    SpanNames,
+    TelemetryEventNames,
+    attach_otel_context,
+    copy_context_vars,
+    detach_otel_context,
+    restore_context_vars,
+)
+
+from app.api.ws.events import ServerEvents
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.subtask import Subtask
 from app.models.user import User
 from app.schemas.kind import Bot, Shell, Task, Team
+from app.services.chat.chat_service import chat_service
+from app.services.chat.model_resolver import (
+    build_default_headers_with_placeholders,
+    get_bot_system_prompt,
+    get_model_config_for_bot,
+)
+from app.services.chat.session_manager import session_manager
+from app.services.chat.ws_emitter import get_ws_emitter
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +148,20 @@ async def _trigger_direct_chat(
         "user_name": user.user_name,
     }
 
+    # Copy ContextVars (request_id, user_id, etc.) AND trace context before starting background task
+    # This ensures logging context and trace parent-child relationships are preserved in the background task
+    trace_context = None
+    otel_context = None
+    try:
+        if settings.OTEL_ENABLED:
+            from opentelemetry import context
+
+            trace_context = copy_context_vars()
+            # Also copy OpenTelemetry context for parent-child span relationships
+            otel_context = context.get_current()
+    except Exception as e:
+        logger.debug(f"Failed to copy trace context: {e}")
+
     # Start streaming in background task
     logger.info(f"[ai_trigger] Starting background stream task")
     stream_task = asyncio.create_task(
@@ -140,6 +173,8 @@ async def _trigger_direct_chat(
             message=message,
             payload=payload,
             namespace=namespace,
+            trace_context=trace_context,
+            otel_context=otel_context,
         )
     )
     namespace._active_streams[assistant_subtask.id] = stream_task
@@ -154,21 +189,34 @@ async def _stream_chat_response(
     message: str,
     payload: Any,
     namespace: Any,
+    trace_context: Optional[Dict[str, Any]] = None,
+    otel_context: Optional[Any] = None,
 ):
     """
     Stream chat response to task room.
 
-    This is the actual streaming logic, moved from ChatNamespace.
+    Args:
+        trace_context: Trace context copied from parent task (for logging context)
+        otel_context: OpenTelemetry context from parent (for parent-child span relationships)
     """
-    from app.api.ws.events import ServerEvents
-    from app.services.chat.chat_service import chat_service
-    from app.services.chat.model_resolver import (
-        build_default_headers_with_placeholders,
-        get_bot_system_prompt,
-        get_model_config_for_bot,
-    )
-    from app.services.chat.session_manager import session_manager
-    from app.services.chat.ws_emitter import get_ws_emitter
+    # Restore trace context at the start of background task
+    # This ensures logging uses the correct request_id and user context
+    if trace_context:
+        try:
+            restore_context_vars(trace_context)
+            logger.debug(
+                f"[ai_trigger] Restored trace context: request_id={trace_context.get('request_id')}"
+            )
+        except Exception as e:
+            logger.debug(f"Failed to restore trace context: {e}")
+
+    # Restore OpenTelemetry context to maintain parent-child span relationships
+    otel_token = attach_otel_context(otel_context) if otel_context else None
+
+    # Create OpenTelemetry span manager for this streaming operation
+    span_manager = SpanManager(SpanNames.CHAT_STREAM_RESPONSE)
+    span_manager.create_span()
+    span_manager.enter_span()
 
     db = SessionLocal()
     task_room = f"task:{task_id}"
@@ -177,6 +225,14 @@ async def _stream_chat_response(
     mcp_session = None  # Initialize for cleanup in finally block
 
     try:
+        # Set base attributes (user and task info)
+        span_manager.set_base_attributes(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            user_id=str(user_data["id"]),
+            user_name=user_data["user_name"],
+        )
+
         # Get first bot for model config
         team_crd = Team.model_validate(team_data["json"])
         first_member = team_crd.spec.members[0]
@@ -194,9 +250,17 @@ async def _stream_chat_response(
         )
 
         if not bot:
+            error_msg = "Bot not found"
+            logger.error(
+                f"[ai_trigger] {error_msg}: task_id={task_id}, subtask_id={subtask_id}"
+            )
+
+            # Record error in span
+            span_manager.record_error(TelemetryEventNames.BOT_NOT_FOUND, error_msg)
+
             await namespace.emit(
                 ServerEvents.CHAT_ERROR,
-                {"subtask_id": subtask_id, "error": "Bot not found"},
+                {"subtask_id": subtask_id, "error": error_msg},
                 room=task_room,
             )
             return
@@ -285,6 +349,9 @@ async def _stream_chat_response(
             )
             model_config["default_headers"] = processed_headers
 
+        # Add model info to span for all requests (success and error)
+        span_manager.set_model_attributes(model_config)
+
         # Register stream for cancellation
         cancel_event = await session_manager.register_stream(subtask_id)
 
@@ -327,9 +394,19 @@ async def _stream_chat_response(
         provider = get_provider(model_config, client)
 
         if not provider:
+            error_msg = "Failed to create provider"
+            logger.error(
+                f"[ai_trigger] {error_msg}: task_id={task_id}, subtask_id={subtask_id}, model_config={model_config}"
+            )
+
+            # Record error in span
+            span_manager.record_error(
+                TelemetryEventNames.PROVIDER_CREATION_FAILED, error_msg
+            )
+
             await namespace.emit(
                 ServerEvents.CHAT_ERROR,
-                {"subtask_id": subtask_id, "error": "Failed to create provider"},
+                {"subtask_id": subtask_id, "error": error_msg},
                 room=task_room,
             )
             return
@@ -390,11 +467,23 @@ async def _stream_chat_response(
                     last_db_save = current_time
 
             elif chunk.type == ChunkType.ERROR:
+                error_msg = chunk.error or "Unknown error"
+
+                logger.error(
+                    f"[ai_trigger] Stream chunk error: task_id={task_id}, subtask_id={subtask_id}, "
+                    f"error={error_msg}"
+                )
+
+                # Record error in span with detailed context (includes model info)
+                span_manager.record_error(
+                    TelemetryEventNames.STREAM_CHUNK_ERROR, error_msg, model_config
+                )
+
                 await namespace.emit(
                     ServerEvents.CHAT_ERROR,
                     {
                         "subtask_id": subtask_id,
-                        "error": chunk.error or "Unknown error",
+                        "error": error_msg,
                     },
                     room=task_room,
                 )
@@ -448,14 +537,31 @@ async def _stream_chat_response(
                     result=result,
                 )
 
+            # Mark span as successful
+            span_manager.record_success(
+                response_length=len(full_response),
+                response_chunks=offset,
+                event_name=TelemetryEventNames.STREAM_COMPLETED,
+            )
+
     except Exception as e:
         logger.exception(f"[ai_trigger] Stream error subtask={subtask_id}: {e}")
+
+        # Record error in span
+        span_manager.record_exception(e)
+
         await namespace.emit(
             ServerEvents.CHAT_ERROR,
             {"subtask_id": subtask_id, "error": str(e)},
             room=task_room,
         )
     finally:
+        # Detach OTEL context first (before exiting span)
+        detach_otel_context(otel_token)
+
+        # Exit span context
+        span_manager.exit_span()
+
         # Cleanup
         await session_manager.unregister_stream(subtask_id)
         await session_manager.delete_streaming_content(subtask_id)
