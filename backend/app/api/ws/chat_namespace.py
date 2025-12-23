@@ -17,17 +17,13 @@ from typing import Any, Dict, Optional
 
 import socketio
 from jose import jwt
-from opentelemetry import trace
-from opentelemetry.trace import Status, StatusCode
-from pydantic import ValidationError
 from shared.telemetry.context import (
-    SpanNames,
     set_request_context,
-    set_task_context,
     set_user_context,
 )
-from shared.telemetry.core import is_telemetry_enabled
 
+from app.api.ws.context_decorators import auto_task_context
+from app.api.ws.decorators import trace_websocket_event
 from app.api.ws.events import (
     ChatCancelPayload,
     ChatResumePayload,
@@ -249,12 +245,22 @@ class ChatNamespace(socketio.AsyncNamespace):
             "history:sync": "on_history_sync",
         }
 
+    @trace_websocket_event(
+        exclude_events={"connect"},  # connect is handled separately in on_connect
+        extract_event_data=True,  # auto-extract task_id, team_id, subtask_id
+    )
     async def trigger_event(self, event: str, sid: str, *args):
         """
         Override trigger_event to handle colon-separated event names.
 
         python-socketio's default behavior converts on_xxx methods to xxx events,
         but we need to support colon-separated event names like 'chat:send'.
+
+        The @trace_websocket_event decorator automatically handles:
+        - Generating unique request_id for each event
+        - Restoring user context from session
+        - Creating OpenTelemetry span with event metadata
+        - Recording exceptions and span status
 
         Args:
             event: Event name (e.g., 'chat:send')
@@ -264,66 +270,7 @@ class ChatNamespace(socketio.AsyncNamespace):
         Returns:
             Result from the event handler
         """
-        # Generate a new request_id for each WebSocket event (except connect)
-        # This allows each event to have its own trace in Jaeger
-        if event != "connect":
-            event_request_id = str(uuid.uuid4())[:8]
-            set_request_context(event_request_id)
-
-            # Restore user context from session
-            try:
-                session = await self.get_session(sid)
-                user_id = session.get("user_id")
-                user_name = session.get("user_name")
-                if user_id:
-                    set_user_context(user_id=str(user_id), user_name=user_name)
-            except Exception:
-                pass
-
-        # Create OpenTelemetry span for WebSocket event tracing
-        span_context = None
-        try:
-            if settings.OTEL_ENABLED and is_telemetry_enabled():
-                tracer = trace.get_tracer(__name__)
-                span_name = SpanNames.WEBSOCKET_EVENT.format(event=event)
-                span_context = tracer.start_as_current_span(span_name)
-        except Exception as e:
-            logger.debug(f"Failed to create span for WebSocket event: {e}")
-
-        # Execute handler with or without span
-        if span_context:
-            with span_context as span:
-                span.set_attribute("websocket.event", event)
-                span.set_attribute("websocket.sid", sid)
-                span.set_attribute("websocket.namespace", self.namespace)
-
-                # Add event data as attributes if available
-                if args and len(args) > 0 and isinstance(args[0], dict):
-                    event_data = args[0]
-                    if "task_id" in event_data:
-                        span.set_attribute("task_id", event_data["task_id"])
-                    if "team_id" in event_data:
-                        span.set_attribute("team_id", event_data["team_id"])
-                    if "subtask_id" in event_data:
-                        span.set_attribute("subtask_id", event_data["subtask_id"])
-
-                try:
-                    result = await self._execute_handler(event, sid, *args)
-
-                    # Mark span as successful
-                    if span.is_recording():
-                        span.set_status(Status(StatusCode.OK))
-
-                    return result
-                except Exception as e:
-                    # Record exception in span
-                    if span.is_recording():
-                        span.record_exception(e)
-                        span.set_status(Status(StatusCode.ERROR, description=str(e)))
-                    raise
-        else:
-            # No span, execute without tracing
-            return await self._execute_handler(event, sid, *args)
+        return await self._execute_handler(event, sid, *args)
 
     async def _execute_handler(self, event: str, sid: str, *args):
         """Execute the event handler for the given event."""
@@ -421,6 +368,7 @@ class ChatNamespace(socketio.AsyncNamespace):
     # Task Room Events
     # ============================================================
 
+    @auto_task_context(TaskJoinPayload)
     async def on_task_join(self, sid: str, data: dict) -> dict:
         """
         Handle task:join event.
@@ -434,10 +382,7 @@ class ChatNamespace(socketio.AsyncNamespace):
         Returns:
             {"streaming": {...}} or {"streaming": None} or {"error": "..."}
         """
-        try:
-            payload = TaskJoinPayload(**data)
-        except ValidationError as e:
-            return {"error": f"Invalid payload: {e}"}
+        payload = data  # Already validated by decorator
 
         session = await self.get_session(sid)
         user_id = session.get("user_id")
@@ -448,9 +393,6 @@ class ChatNamespace(socketio.AsyncNamespace):
         # Check permission
         if not await can_access_task(user_id, payload.task_id):
             return {"error": "Access denied"}
-
-        # Set task context for trace logging
-        set_task_context(task_id=payload.task_id)
 
         # Join task room
         task_room = f"task:{payload.task_id}"
@@ -479,6 +421,7 @@ class ChatNamespace(socketio.AsyncNamespace):
 
         return {"streaming": None}
 
+    @auto_task_context(TaskLeavePayload)
     async def on_task_leave(self, sid: str, data: dict) -> dict:
         """
         Handle task:leave event.
@@ -490,13 +433,7 @@ class ChatNamespace(socketio.AsyncNamespace):
         Returns:
             {"success": true}
         """
-        try:
-            payload = TaskLeavePayload(**data)
-        except ValidationError as e:
-            return {"error": f"Invalid payload: {e}"}
-
-        # Set task context for trace logging
-        set_task_context(task_id=payload.task_id)
+        payload = data  # Already validated by decorator
 
         task_room = f"task:{payload.task_id}"
         await self.leave_room(sid, task_room)
@@ -511,6 +448,7 @@ class ChatNamespace(socketio.AsyncNamespace):
     # Chat Events
     # ============================================================
 
+    @auto_task_context(ChatSendPayload, task_id_field="task_id")
     async def on_chat_send(self, sid: str, data: dict) -> dict:
         """
         Handle chat:send event.
@@ -526,18 +464,10 @@ class ChatNamespace(socketio.AsyncNamespace):
         """
         logger.info(f"[WS] chat:send received sid={sid} data={data}")
 
-        try:
-            payload = ChatSendPayload(**data)
-            logger.info(
-                f"[WS] chat:send payload parsed: team_id={payload.team_id}, task_id={payload.task_id}, message_len={len(payload.message) if payload.message else 0}"
-            )
-
-            # Set task context for trace logging if task_id is provided
-            if payload.task_id:
-                set_task_context(task_id=payload.task_id)
-        except ValidationError as e:
-            logger.error(f"[WS] chat:send validation error: {e}")
-            return {"error": f"Invalid payload: {e}"}
+        payload = data  # Already validated by decorator
+        logger.info(
+            f"[WS] chat:send payload parsed: team_id={payload.team_id}, task_id={payload.task_id}, message_len={len(payload.message) if payload.message else 0}"
+        )
 
         session = await self.get_session(sid)
         user_id = session.get("user_id")
@@ -922,6 +852,9 @@ class ChatNamespace(socketio.AsyncNamespace):
             f"content_length={len(message)}"
         )
 
+    @auto_task_context(
+        ChatCancelPayload, task_id_field=None, subtask_id_field="subtask_id"
+    )
     async def on_chat_cancel(self, sid: str, data: dict) -> dict:
         """
         Handle chat:cancel event.
@@ -933,14 +866,7 @@ class ChatNamespace(socketio.AsyncNamespace):
         Returns:
             {"success": true} or {"error": "..."}
         """
-        try:
-            payload = ChatCancelPayload(**data)
-
-            # Set task context for trace logging
-            set_task_context(subtask_id=payload.subtask_id)
-        except ValidationError as e:
-            logger.error(f"[WS] chat:cancel validation error: {e}")
-            return {"error": f"Invalid payload: {e}"}
+        payload = data  # Already validated by decorator
 
         session = await self.get_session(sid)
         user_id = session.get("user_id")
@@ -1080,6 +1006,9 @@ class ChatNamespace(socketio.AsyncNamespace):
         finally:
             db.close()
 
+    @auto_task_context(
+        ChatResumePayload, task_id_field="task_id", subtask_id_field="subtask_id"
+    )
     async def on_chat_resume(self, sid: str, data: dict) -> dict:
         """
         Handle chat:resume event.
@@ -1091,13 +1020,7 @@ class ChatNamespace(socketio.AsyncNamespace):
         Returns:
             {"success": true} or {"error": "..."}
         """
-        try:
-            payload = ChatResumePayload(**data)
-
-            # Set task context for trace logging
-            set_task_context(task_id=payload.task_id, subtask_id=payload.subtask_id)
-        except ValidationError as e:
-            return {"error": f"Invalid payload: {e}"}
+        payload = data  # Already validated by decorator
 
         session = await self.get_session(sid)
         user_id = session.get("user_id")
@@ -1133,6 +1056,7 @@ class ChatNamespace(socketio.AsyncNamespace):
 
         return {"success": True}
 
+    @auto_task_context(HistorySyncPayload)
     async def on_history_sync(self, sid: str, data: dict) -> dict:
         """
         Handle history:sync event.
@@ -1144,13 +1068,7 @@ class ChatNamespace(socketio.AsyncNamespace):
         Returns:
             {"messages": [...]} or {"error": "..."}
         """
-        try:
-            payload = HistorySyncPayload(**data)
-
-            # Set task context for trace logging
-            set_task_context(task_id=payload.task_id)
-        except ValidationError as e:
-            return {"error": f"Invalid payload: {e}"}
+        payload = data  # Already validated by decorator
 
         session = await self.get_session(sid)
         user_id = session.get("user_id")
