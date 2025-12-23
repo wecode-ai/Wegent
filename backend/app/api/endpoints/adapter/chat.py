@@ -35,6 +35,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+class KnowledgeBaseRef(BaseModel):
+    """Reference to a knowledge base for RAG retrieval."""
+
+    knowledge_base_id: int
+    name: str  # For display purposes
+
+
 class StreamChatRequest(BaseModel):
     """Request body for streaming chat."""
 
@@ -61,6 +68,8 @@ class StreamChatRequest(BaseModel):
     offset: Optional[int] = None  # Character offset for resuming (0 = new stream)
     # Group chat flag
     is_group_chat: bool = False  # Whether this is a group chat
+    # Knowledge base integration
+    knowledge_bases: Optional[list[KnowledgeBaseRef]] = None  # Knowledge bases for RAG
 
 
 def _get_shell_type(db: Session, bot: Kind, user_id: int) -> str:
@@ -914,6 +923,49 @@ async def stream_chat(
 
     logger.info(f"Streaming chat for model_config={model_config}")
 
+    # Execute RAG retrieval if knowledge_bases provided
+    citations = []
+    knowledge_context = ""
+    knowledge_fallback = False
+
+    if request.knowledge_bases:
+        from app.services.chat.knowledge_retriever import (
+            ChatKnowledgeRetriever,
+            KnowledgeBaseRef as KBRef,
+        )
+
+        try:
+            retriever = ChatKnowledgeRetriever(db, current_user.id)
+
+            # Convert request knowledge bases to internal format
+            kb_refs = [
+                KBRef(kb.knowledge_base_id, kb.name)
+                for kb in request.knowledge_bases
+            ]
+
+            knowledge_context, citations, has_results = await retriever.retrieve_and_synthesize(
+                query=final_message,
+                knowledge_bases=kb_refs,
+            )
+
+            if not has_results:
+                knowledge_fallback = True
+                logger.info(f"No RAG results found for query: {final_message[:50]}")
+        except Exception as e:
+            logger.error(f"RAG retrieval failed: {e}", exc_info=True)
+            knowledge_fallback = True
+
+    # Build final prompt with knowledge context if available
+    if knowledge_context:
+        from app.services.chat.knowledge_retriever import build_prompt_with_knowledge
+
+        final_message = await build_prompt_with_knowledge(
+            user_message=final_message,
+            knowledge_context=knowledge_context,
+            has_knowledge_results=bool(citations),
+        )
+        logger.info(f"Enhanced prompt with {len(citations)} knowledge chunks")
+
     # Create streaming response with task_id and subtask_id in first message
     import json
 
@@ -942,6 +994,24 @@ async def stream_chat(
                 "done": False,
             }
             yield f"data: {json.dumps(first_msg)}\n\n"
+
+            # Send citation events if available
+            for citation in citations:
+                citation_event = {
+                    "type": "citation",
+                    "data": citation.to_dict(),
+                }
+                yield f"data: {json.dumps(citation_event)}\n\n"
+
+            # Send fallback notification if RAG failed
+            if knowledge_fallback and request.knowledge_bases:
+                fallback_event = {
+                    "type": "metadata",
+                    "data": {
+                        "knowledge_base_fallback": True,
+                    },
+                }
+                yield f"data: {json.dumps(fallback_event)}\n\n"
 
             # Get the actual stream from chat service (use final_message with attachment content)
             stream_response = await chat_service.chat_stream(
