@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core import security
 from app.models.kind import Kind
+from app.models.task import TaskResource
 from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
 from app.models.user import User
 from app.schemas.kind import Bot, Shell, Task, Team
@@ -232,12 +233,12 @@ async def _create_task_and_subtasks(
     if task_id:
         # Get existing task - check both ownership and membership
         task = (
-            db.query(Kind)
+            db.query(TaskResource)
             .filter(
-                Kind.id == task_id,
-                Kind.user_id == user.id,
-                Kind.kind == "Task",
-                Kind.is_active,
+                TaskResource.id == task_id,
+                TaskResource.user_id == user.id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active,
             )
             .first()
         )
@@ -259,11 +260,11 @@ async def _create_task_and_subtasks(
             if member:
                 # User is a group member, get task without user_id check
                 task = (
-                    db.query(Kind)
+                    db.query(TaskResource)
                     .filter(
-                        Kind.id == task_id,
-                        Kind.kind == "Task",
-                        Kind.is_active,
+                        TaskResource.id == task_id,
+                        TaskResource.kind == "Task",
+                        TaskResource.is_active,
                     )
                     .first()
                 )
@@ -308,7 +309,7 @@ async def _create_task_and_subtasks(
             "apiVersion": "agent.wecode.io/v1",
         }
 
-        workspace = Kind(
+        workspace = TaskResource(
             user_id=user.id,
             kind="Workspace",
             name=workspace_name,
@@ -371,7 +372,7 @@ async def _create_task_and_subtasks(
             "apiVersion": "agent.wecode.io/v1",
         }
 
-        task = Kind(
+        task = TaskResource(
             id=new_task_id,
             user_id=user.id,
             kind="Task",
@@ -708,12 +709,12 @@ async def stream_chat(
     if request.task_id:
         # Get existing task - first try as owner
         task_kind = (
-            db.query(Kind)
+            db.query(TaskResource)
             .filter(
-                Kind.id == request.task_id,
-                Kind.user_id == current_user.id,
-                Kind.kind == "Task",
-                Kind.is_active,
+                TaskResource.id == request.task_id,
+                TaskResource.user_id == current_user.id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active,
             )
             .first()
         )
@@ -735,11 +736,11 @@ async def stream_chat(
             if member:
                 # User is a group member, get task without user_id check
                 task_kind = (
-                    db.query(Kind)
+                    db.query(TaskResource)
                     .filter(
-                        Kind.id == request.task_id,
-                        Kind.kind == "Task",
-                        Kind.is_active,
+                        TaskResource.id == request.task_id,
+                        TaskResource.kind == "Task",
+                        TaskResource.is_active,
                     )
                     .first()
                 )
@@ -1383,11 +1384,11 @@ async def cancel_chat(
 
     # Also update the task status to COMPLETED so conversation can continue
     task = (
-        db.query(Kind)
+        db.query(TaskResource)
         .filter(
-            Kind.id == subtask.task_id,
-            Kind.kind == "Task",
-            Kind.is_active == True,
+            TaskResource.id == subtask.task_id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active == True,
         )
         .first()
     )

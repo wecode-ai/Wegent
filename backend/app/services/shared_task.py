@@ -170,14 +170,16 @@ class SharedTaskService:
                         workspace_ref = task_crd.spec.workspaceRef
 
                         # Find the workspace by name and namespace
+                        from app.models.task import TaskResource as TaskResourceModel
+
                         workspace = (
-                            db.query(Kind)
+                            db.query(TaskResourceModel)
                             .filter(
-                                Kind.name == workspace_ref.name,
-                                Kind.namespace == workspace_ref.namespace,
-                                Kind.user_id == user_id,
-                                Kind.kind == "Workspace",
-                                Kind.is_active == True,
+                                TaskResourceModel.name == workspace_ref.name,
+                                TaskResourceModel.namespace == workspace_ref.namespace,
+                                TaskResourceModel.user_id == user_id,
+                                TaskResourceModel.kind == "Workspace",
+                                TaskResourceModel.is_active == True,
                             )
                             .first()
                         )
@@ -342,12 +344,14 @@ class SharedTaskService:
                 f"git_url={git_url}, git_domain={git_domain}"
             )
             # Find workspace by gitRepoId in workspace JSON
+            from app.models.task import TaskResource as TaskResourceModel
+
             all_workspaces = (
-                db.query(Kind)
+                db.query(TaskResourceModel)
                 .filter(
-                    Kind.user_id == new_user_id,
-                    Kind.kind == "Workspace",
-                    Kind.is_active == True,
+                    TaskResourceModel.user_id == new_user_id,
+                    TaskResourceModel.kind == "Workspace",
+                    TaskResourceModel.is_active == True,
                 )
                 .all()
             )

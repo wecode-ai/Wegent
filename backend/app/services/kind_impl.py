@@ -390,14 +390,16 @@ class TaskKindService(KindBaseService):
         workspace_name = task_crd.spec.workspaceRef.name
         workspace_namespace = task_crd.spec.workspaceRef.namespace or "default"
 
+        from app.models.task import TaskResource
+
         workspace = (
-            db.query(Kind)
+            db.query(TaskResource)
             .filter(
-                Kind.user_id == user_id,
-                Kind.kind == "Workspace",
-                Kind.namespace == workspace_namespace,
-                Kind.name == workspace_name,
-                Kind.is_active == True,
+                TaskResource.user_id == user_id,
+                TaskResource.kind == "Workspace",
+                TaskResource.namespace == workspace_namespace,
+                TaskResource.name == workspace_name,
+                TaskResource.is_active == True,
             )
             .first()
         )
@@ -409,13 +411,13 @@ class TaskKindService(KindBaseService):
 
         # Check the status of existing task, if not COMPLETED status, modification is not allowed
         existing_task = (
-            db.query(Kind)
+            db.query(TaskResource)
             .filter(
-                Kind.user_id == user_id,
-                Kind.kind == "Task",
-                Kind.namespace == resource["metadata"]["namespace"],
-                Kind.name == resource["metadata"]["name"],
-                Kind.is_active == True,
+                TaskResource.user_id == user_id,
+                TaskResource.kind == "Task",
+                TaskResource.namespace == resource["metadata"]["namespace"],
+                TaskResource.name == resource["metadata"]["name"],
+                TaskResource.is_active == True,
             )
             .first()
         )
