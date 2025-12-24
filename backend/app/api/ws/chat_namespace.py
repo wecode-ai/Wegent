@@ -738,8 +738,10 @@ class ChatNamespace(socketio.AsyncNamespace):
             if should_trigger_ai and assistant_subtask:
                 # Choose AI trigger based on enable_deep_thinking flag
                 if payload.enable_deep_thinking:
+                    logger.info("enable_deep_thinking is true, using chat_v2")
                     from app.services.chat_v2.ai_trigger import trigger_ai_response
                 else:
+                    logger.info("enable_deep_thinking is false, using chat")
                     from app.services.chat.ai_trigger import trigger_ai_response
 
                 await trigger_ai_response(

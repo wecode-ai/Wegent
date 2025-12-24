@@ -127,6 +127,16 @@ class MCPClient:
         self._client = MultiServerMCPClient(connections=self.connections)
         # Use the new API: get_tools() is now an async method that handles connection
         self._tools = await self._client.get_tools()
+
+        # Add detailed logging for tool registration
+        for tool in self._tools:
+            logger.info(
+                "[MCP] Registered tool: name='%s', description='%s', type='%s'",
+                getattr(tool, "name", "UNKNOWN"),
+                getattr(tool, "description", "NO_DESCRIPTION"),
+                type(tool).__name__,
+            )
+
         logger.info(
             "Connected to MCP servers: %s, loaded %d tools",
             ", ".join(self.list_servers()),
