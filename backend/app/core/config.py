@@ -144,6 +144,9 @@ class Settings(BaseSettings):
     # Web search configuration
     WEB_SEARCH_ENABLED: bool = False  # Enable/disable web search feature
     WEB_SEARCH_ENGINES: str = "{}"  # JSON configuration for search API adapter
+    WEB_SEARCH_DEFAULT_MAX_RESULTS: int = (
+        100  # Default max results when not specified by LLM or engine config
+    )
 
     # Wizard configuration
     # The name of the public model to use for wizard AI features (follow-up questions, prompt generation)
