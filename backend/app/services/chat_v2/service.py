@@ -126,7 +126,11 @@ class ChatService:
 
         # Register web search if enabled globally
         if enable_web_search and settings.WEB_SEARCH_ENABLED:
-            self.tool_registry.register(WebSearchTool())
+            self.tool_registry.register(
+                WebSearchTool(
+                    default_max_results=settings.WEB_SEARCH_DEFAULT_MAX_RESULTS
+                )
+            )
 
     def _create_agent(
         self,
@@ -555,7 +559,7 @@ class ChatService:
         task_room = config.task_room
 
         # Create WebSocket emitter
-        emitter = WebSocketEmitter(namespace, task_room)
+        emitter = WebSocketEmitter(namespace, task_room, task_id)
 
         # Create streaming state
         state = StreamingState(
@@ -605,7 +609,12 @@ class ChatService:
             if settings.WEB_SEARCH_ENABLED:
                 # Use specified search engine or default to first one
                 search_engine = config.search_engine if config.search_engine else None
-                extra_tools.append(WebSearchTool(engine_name=search_engine))
+                extra_tools.append(
+                    WebSearchTool(
+                        engine_name=search_engine,
+                        default_max_results=settings.WEB_SEARCH_DEFAULT_MAX_RESULTS,
+                    )
+                )
 
             # Get chat history
             history = await self._get_chat_history(task_id, config.is_group_chat)

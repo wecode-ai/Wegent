@@ -436,6 +436,10 @@ export default function ChatArea({
       // Also reset the previousTaskIdRef to prevent stale state issues
       previousTaskIdRef.current = undefined;
 
+      // Reset prevTaskIdForModelRef to prevent model sync when creating new task
+      // This ensures user's model selection is preserved after clicking "New Chat"
+      prevTaskIdForModelRef.current = undefined;
+
       // Reset hasRestoredPreferences to allow team preference restoration for new task
       // This ensures the team selector can re-initialize when starting a new conversation
       setHasRestoredPreferences(false);
@@ -700,26 +704,45 @@ export default function ChatArea({
   }, [detailTeamId, teams, selectedTeam?.id, setSelectedTeam, selectedTaskDetail?.team]);
 
   // Set model and override flag when viewing existing task
+  // Track previous task ID to only run when task actually changes
+  const prevTaskIdForModelRef = useRef<number | null | undefined>(undefined);
   useEffect(() => {
     if (!selectedTaskDetail?.id || !selectedTeam) {
+      return;
+    }
+
+    // Only sync model when task ID actually changes (not on every render)
+    // This prevents overwriting user's model selection when they manually change it
+    const taskIdChanged = prevTaskIdForModelRef.current !== selectedTaskDetail.id;
+    if (!taskIdChanged) {
+      // Task ID hasn't changed, don't override user's selection
+      return;
+    }
+
+    // IMPORTANT: Only sync model when switching FROM an existing task TO another task
+    // When prevTaskIdForModelRef.current is undefined, it means:
+    // 1. Initial page load, OR
+    // 2. User just sent a message and created a new task
+    // In both cases, we should NOT override the user's model selection
+    // We only sync model when user explicitly switches to a different existing task
+    const isUserSwitchingTasks =
+      prevTaskIdForModelRef.current !== undefined && prevTaskIdForModelRef.current !== null;
+
+    prevTaskIdForModelRef.current = selectedTaskDetail.id;
+
+    // Skip model sync if this is not a user-initiated task switch
+    if (!isUserSwitchingTasks) {
       return;
     }
 
     const taskModelId = selectedTaskDetail.model_id;
 
     const handleDefaultModel = () => {
-      if (selectedModel?.name !== DEFAULT_MODEL_NAME) {
-        setSelectedModel({ name: DEFAULT_MODEL_NAME, provider: '', modelId: '' });
-      }
-      if (forceOverride) {
-        setForceOverride(false);
-      }
+      setSelectedModel({ name: DEFAULT_MODEL_NAME, provider: '', modelId: '' });
+      setForceOverride(false);
     };
 
     const handleExplicitModel = (modelName: string) => {
-      if (selectedModel?.name === modelName) {
-        return;
-      }
       setSelectedModel({
         name: modelName,
         provider: '',
@@ -756,15 +779,13 @@ export default function ChatArea({
     }
 
     handleExplicitModel(taskModelId);
-    if (!forceOverride) {
-      setForceOverride(true);
-    }
+    setForceOverride(true);
   }, [
     selectedTaskDetail?.id,
     selectedTaskDetail?.model_id,
     selectedTeam,
-    selectedModel?.name,
-    forceOverride,
+    // NOTE: selectedModel and forceOverride are intentionally excluded
+    // to prevent overwriting user's manual selection
     setSelectedModel,
     setForceOverride,
   ]);
@@ -1001,22 +1022,20 @@ export default function ChatArea({
             // Pass current user info for group chat sender display
             currentUserId: user?.id,
             currentUserName: user?.user_name,
-            onTaskIdResolved: (realTaskId: number) => {
-              // Update streaming task ID when real task ID is resolved
-              setStreamingTaskId(realTaskId);
-
-              // Refresh task list immediately when task ID is resolved
-              // This ensures the new task appears in the sidebar while streaming
-              refreshTasks();
-
-              // Note: We don't update URL here to avoid triggering TaskParamSync
-              // which would call setSelectedTask and trigger refreshSelectedTaskDetail.
-              // URL will be updated when message is sent.
-            },
             // Called immediately after message is sent (before AI response)
             // NOTE: NO REFRESH - the UI displays pendingUserMessage from state
             // The message will remain visible until user sends another message or switches tasks
-            onMessageSent: (completedTaskId: number, _subtaskId: number) => {
+            // New signature: (localMessageId, taskId, subtaskId) for precise message update
+            onMessageSent: (
+              _localMessageId: string,
+              completedTaskId: number,
+              _subtaskId: number
+            ) => {
+              // Update streaming task ID when real task ID is resolved
+              if (completedTaskId > 0) {
+                setStreamingTaskId(completedTaskId);
+              }
+
               // If this was a new task (first message), update URL and task list
               if (completedTaskId && !selectedTaskDetail?.id) {
                 const params = new URLSearchParams(Array.from(searchParams.entries()));
@@ -1040,23 +1059,6 @@ export default function ChatArea({
               }
               // NO REFRESH of task detail - pendingUserMessage is displayed from state
               // This prevents the progress bar flash issue
-            },
-            // Called when AI response completes (chat:done event) - only for Chat Shell
-            // For non-Chat Shell (executor types), AI response is handled by executor_manager
-            // Note: isStreaming is already set to false by handleChatDone in chatStreamContext
-            // streamingContent is preserved, so MessagesArea will display it as a completed message
-            // NO REFRESH needed - the UI displays streamingContent from state
-            onAIComplete: (_completedTaskId: number, _subtaskId: number) => {
-              // Don't reset streamingTaskId immediately - wait for task detail refresh
-              // This prevents selectedTaskDetail from becoming undefined
-              setIsLoading(false);
-              // Refresh task detail to update subtask status after stream completion or cancellation
-              // After refresh completes, reset streamingTaskId
-              setTimeout(() => {
-                refreshSelectedTaskDetail(false);
-                // Now it's safe to clear streamingTaskId
-                setStreamingTaskId(null);
-              }, 300);
             },
             onError: (error: Error) => {
               // Reset all streaming state on error
@@ -1534,7 +1536,9 @@ export default function ChatArea({
                           forceOverride={forceOverride}
                           setForceOverride={setForceOverride}
                           selectedTeam={selectedTeam}
-                          disabled={hasMessages || isLoading}
+                          disabled={
+                            isLoading || isStreaming || (hasMessages && !isChatShell(selectedTeam))
+                          }
                           compact={shouldCollapseSelectors}
                         />
                       )}
@@ -1770,7 +1774,9 @@ export default function ChatArea({
                         forceOverride={forceOverride}
                         setForceOverride={setForceOverride}
                         selectedTeam={selectedTeam}
-                        disabled={hasMessages || isLoading}
+                        disabled={
+                          isLoading || isStreaming || (hasMessages && !isChatShell(selectedTeam))
+                        }
                         compact={shouldCollapseSelectors}
                       />
                     )}

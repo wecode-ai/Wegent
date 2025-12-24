@@ -81,7 +81,7 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
   scope,
   groupName,
 }) => {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation(['common', 'wizard']);
   const isEditing = !!retriever;
   const isGroupScope = scope === 'group';
 
@@ -618,12 +618,12 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
                 <SelectItem value="per_user">
                   {t('retrievers.index_strategy_per_user')}
                   {STORAGE_TYPE_CONFIG[storageType].recommendedIndexMode === 'per_user' &&
-                    ` (${t('wizard.recommended')})`}
+                    ` (${t('wizard:recommended')})`}
                 </SelectItem>
                 <SelectItem value="per_dataset">
                   {t('retrievers.index_strategy_per_dataset')}
                   {STORAGE_TYPE_CONFIG[storageType].recommendedIndexMode === 'per_dataset' &&
-                    ` (${t('wizard.recommended')})`}
+                    ` (${t('wizard:recommended')})`}
                 </SelectItem>
                 <SelectItem value="fixed">{t('retrievers.index_strategy_fixed')}</SelectItem>
                 <SelectItem value="rolling">{t('retrievers.index_strategy_rolling')}</SelectItem>

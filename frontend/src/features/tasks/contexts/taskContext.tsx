@@ -494,6 +494,17 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTask, leaveTask, joinTask]);
 
+  // Re-join task room when WebSocket reconnects
+  // This handles the case where page is refreshed and selectedTask is set from URL
+  // before WebSocket connection is established
+  useEffect(() => {
+    if (isConnected && selectedTask) {
+      console.log(`[TaskContext] WebSocket connected, re-joining room for task ${selectedTask.id}`);
+      joinTask(selectedTask.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConnected]);
+
   // Mark task as viewed when selectedTaskDetail is loaded
   // This ensures we have the correct status and timestamps from the backend
   useEffect(() => {

@@ -52,7 +52,7 @@ export function QuickAccessCards({
   showWizardButton = false,
 }: QuickAccessCardsProps) {
   const router = useRouter();
-  const { t } = useTranslation('common');
+  const { t } = useTranslation(['common', 'wizard']);
   const [isPending, startTransition] = useTransition();
   const [quickAccessTeams, setQuickAccessTeams] = useState<QuickAccessTeam[]>([]);
   const [isQuickAccessLoading, setIsQuickAccessLoading] = useState(true);
@@ -511,7 +511,7 @@ export function QuickAccessCards({
                 </button>
               </TooltipTrigger>
               <TooltipContent side="top">
-                <p>{t('wizard.wizard_button_tooltip')}</p>
+                <p>{t('wizard:wizard_button_tooltip')}</p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>

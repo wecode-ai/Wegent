@@ -42,7 +42,7 @@ export default function TeamCreationWizard({
   scope = 'personal',
   groupName,
 }: TeamCreationWizardProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation(['common', 'wizard']);
   const [state, dispatch] = useReducer(wizardReducer, initialWizardState);
 
   const handleClose = useCallback(() => {
@@ -286,7 +286,7 @@ export default function TeamCreationWizard({
     // Step 1 -> Step 2: Generate follow-up questions
     if (currentStep === 1) {
       if (!state.coreAnswers.purpose.trim()) {
-        dispatch({ type: 'SET_ERROR', error: t('wizard.purpose_required') });
+        dispatch({ type: 'SET_ERROR', error: t('wizard:purpose_required') });
         return;
       }
 
@@ -327,7 +327,7 @@ export default function TeamCreationWizard({
     // Step 4: Create
     if (currentStep === 4) {
       if (!state.agentName.trim()) {
-        dispatch({ type: 'SET_ERROR', error: t('wizard.name_required') });
+        dispatch({ type: 'SET_ERROR', error: t('wizard:name_required') });
         return;
       }
       await handleCreate();
@@ -410,12 +410,12 @@ export default function TeamCreationWizard({
   const getNextButtonText = () => {
     if (state.currentStep === 2) {
       if (state.isFollowupComplete || state.currentFollowupRound >= 6) {
-        return t('wizard.continue');
+        return t('wizard:continue');
       }
-      return t('wizard.next_question');
+      return t('wizard:next_question');
     }
     if (state.currentStep === 4) {
-      return t('wizard.create_agent');
+      return t('wizard:create_agent');
     }
     return t('common.next');
   };
@@ -433,7 +433,7 @@ export default function TeamCreationWizard({
         <DialogHeader className="flex-shrink-0">
           <DialogTitle className="flex items-center gap-2">
             <Wand2 className="w-5 h-5 text-primary" />
-            {t('wizard.title')}
+            {t('wizard:title')}
           </DialogTitle>
         </DialogHeader>
 
@@ -462,7 +462,7 @@ export default function TeamCreationWizard({
           <div>
             {state.currentStep === 2 && !state.isFollowupComplete && (
               <Button variant="ghost" onClick={handleSkipFollowUp} disabled={state.isLoading}>
-                {t('wizard.skip_questions')}
+                {t('wizard:skip_questions')}
               </Button>
             )}
           </div>
