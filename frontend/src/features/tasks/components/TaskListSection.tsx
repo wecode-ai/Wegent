@@ -63,13 +63,6 @@ export default function TaskListSection({
   const [_loading, setLoading] = useState(false);
   const [longPressTaskId, setLongPressTaskId] = useState<number | null>(null);
 
-  // Detect touch device for always showing menu on mobile
-  const [isTouchDevice, setIsTouchDevice] = useState(false);
-
-  useEffect(() => {
-    setIsTouchDevice('ontouchstart' in window || navigator.maxTouchPoints > 0);
-  }, []);
-
   // Touch interaction state
   const [touchState, setTouchState] = useState<{
     startX: number;
@@ -379,8 +372,7 @@ export default function TaskListSection({
           )}
       <div className="space-y-1">
         {tasks.map(task => {
-          const showMenu =
-            hoveredTaskId === task.id || longPressTaskId === task.id || isTouchDevice;
+          const showMenu = hoveredTaskId === task.id || longPressTaskId === task.id;
 
           // Collapsed mode: Show only status icon with tooltip
           if (isCollapsed) {
@@ -493,7 +485,7 @@ export default function TaskListSection({
 
                     <div className="flex-shrink-0">
                       <div
-                        className={`transition-opacity duration-150 ${
+                        className={`transition-opacity duration-150 [@media(hover:none)]:opacity-100 [@media(hover:none)]:pointer-events-auto ${
                           showMenu ? 'opacity-100' : 'opacity-0 pointer-events-none'
                         }`}
                         onTouchStart={e => e.stopPropagation()}
