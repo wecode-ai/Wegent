@@ -538,13 +538,18 @@ class ChatService:
         If a server name exists in both configurations, the bot's configuration
         takes precedence to allow per-bot customization.
 
+        Protection mechanisms:
+        - Timeout protection: MCP connection with timeout (30s default)
+        - Exception isolation: All MCP errors are caught and logged
+        - Graceful degradation: Returns None on failure, chat continues without MCP tools
+
         Args:
             task_id: Task ID for session management
             bot_name: Bot name to query Ghost MCP configuration
             bot_namespace: Bot namespace for Ghost query
 
         Returns:
-            MCPClient instance or None
+            MCPClient instance or None (None on any failure to protect backend stability)
         """
         try:
             from .tools.mcp import MCPClient
@@ -562,20 +567,34 @@ class ChatService:
                             len(backend_servers),
                         )
                 except json.JSONDecodeError as e:
-                    logger.warning(
-                        "[MCP] Failed to parse CHAT_MCP_SERVERS: %s", str(e)
-                    )
+                    logger.warning("[MCP] Failed to parse CHAT_MCP_SERVERS: %s", str(e))
 
             # Step 2: Load bot's MCP configuration from Ghost CRD
             bot_servers = {}
             if bot_name and bot_namespace:
-                bot_servers = await self._get_bot_mcp_servers(bot_name, bot_namespace)
-                if bot_servers:
-                    logger.info(
-                        "[MCP] Loaded %d bot MCP servers from Ghost %s/%s",
-                        len(bot_servers),
+                try:
+                    bot_servers = await asyncio.wait_for(
+                        self._get_bot_mcp_servers(bot_name, bot_namespace), timeout=5.0
+                    )
+                    if bot_servers:
+                        logger.info(
+                            "[MCP] Loaded %d bot MCP servers from Ghost %s/%s",
+                            len(bot_servers),
+                            bot_namespace,
+                            bot_name,
+                        )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "[MCP] Timeout querying bot MCP servers for %s/%s",
                         bot_namespace,
                         bot_name,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "[MCP] Failed to load bot MCP servers for %s/%s: %s",
+                        bot_namespace,
+                        bot_name,
+                        str(e),
                     )
 
             # Step 3: Merge configurations (bot config takes precedence)
@@ -600,19 +619,39 @@ class ChatService:
             )
 
             # Step 4: Create MCP client with merged configuration
+            # Add timeout protection for MCP connection
             client = MCPClient(merged_servers)
-            await client.connect()
-            logger.info(
-                "[MCP] Loaded %d tools from %d MCP servers for task %d",
-                len(client.get_tools()),
-                len(merged_servers),
-                task_id,
-            )
-            return client
+            try:
+                # Timeout for connecting to MCP servers (30 seconds)
+                await asyncio.wait_for(client.connect(), timeout=30.0)
+                logger.info(
+                    "[MCP] Loaded %d tools from %d MCP servers for task %d",
+                    len(client.get_tools()),
+                    len(merged_servers),
+                    task_id,
+                )
+                return client
+            except asyncio.TimeoutError:
+                logger.error(
+                    "[MCP] Timeout connecting to MCP servers for task %d (bot=%s/%s)",
+                    task_id,
+                    bot_namespace,
+                    bot_name,
+                )
+                return None
+            except Exception as e:
+                logger.error(
+                    "[MCP] Failed to connect to MCP servers for task %d: %s",
+                    task_id,
+                    str(e),
+                )
+                return None
 
         except Exception:
+            # Catch all exceptions to protect backend stability
+            # MCP tool loading should NEVER crash the chat service
             logger.exception(
-                "[MCP] Failed to load MCP tools for task %d (bot=%s/%s)",
+                "[MCP] Unexpected error loading MCP tools for task %d (bot=%s/%s)",
                 task_id,
                 bot_namespace,
                 bot_name,
@@ -696,7 +735,9 @@ class ChatService:
 
         except Exception:
             logger.exception(
-                "[MCP] Failed to query bot MCP servers for %s/%s", bot_namespace, bot_name
+                "[MCP] Failed to query bot MCP servers for %s/%s",
+                bot_namespace,
+                bot_name,
             )
             return {}
         finally:

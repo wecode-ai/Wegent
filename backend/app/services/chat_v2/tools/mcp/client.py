@@ -5,9 +5,17 @@
 """MCP (Model Context Protocol) client using langchain-mcp-adapters SDK.
 
 This module provides a thin wrapper around the official langchain-mcp-adapters
-MultiServerMCPClient with async context manager support.
+MultiServerMCPClient with async context manager support and protection mechanisms
+for backend stability.
+
+Protection mechanisms:
+- Connection timeout: 30s default timeout for server connections
+- Tool wrapping: All MCP tools are wrapped with timeout and exception handling
+- Graceful degradation: Failed tools return error messages instead of crashing
 """
 
+import asyncio
+import functools
 import logging
 from typing import Any
 
@@ -23,6 +31,68 @@ logger = logging.getLogger(__name__)
 
 # Type alias for connection types
 Connection = SSEConnection | StdioConnection | StreamableHttpConnection
+
+# Default timeout for MCP tool execution (60 seconds)
+DEFAULT_TOOL_TIMEOUT = 60.0
+
+
+def wrap_tool_with_protection(
+    tool: BaseTool, timeout: float = DEFAULT_TOOL_TIMEOUT
+) -> BaseTool:
+    """Wrap an MCP tool with timeout and exception protection.
+
+    This ensures that:
+    - Tool execution has a timeout limit
+    - Exceptions don't crash the chat service
+    - Failed tools return error messages instead of raising exceptions
+
+    Args:
+        tool: Original MCP tool
+        timeout: Timeout in seconds for tool execution
+
+    Returns:
+        Protected tool instance
+    """
+    original_run = tool._run if hasattr(tool, "_run") else None
+    original_arun = tool._arun if hasattr(tool, "_arun") else None
+
+    def protected_run(*args, **kwargs):
+        """Synchronous tool execution with protection."""
+        try:
+            if original_run:
+                return original_run(*args, **kwargs)
+            return f"Error: Tool {tool.name} has no synchronous implementation"
+        except Exception as e:
+            error_msg = f"MCP tool '{tool.name}' failed: {str(e)}"
+            logger.error("[MCP] %s", error_msg)
+            return error_msg
+
+    async def protected_arun(*args, **kwargs):
+        """Asynchronous tool execution with timeout and exception protection."""
+        try:
+            if original_arun:
+                # Apply timeout protection
+                result = await asyncio.wait_for(
+                    original_arun(*args, **kwargs), timeout=timeout
+                )
+                return result
+            return f"Error: Tool {tool.name} has no async implementation"
+        except asyncio.TimeoutError:
+            error_msg = f"MCP tool '{tool.name}' timed out after {timeout}s"
+            logger.error("[MCP] %s", error_msg)
+            return error_msg
+        except Exception as e:
+            error_msg = f"MCP tool '{tool.name}' failed: {str(e)}"
+            logger.error("[MCP] %s", error_msg)
+            return error_msg
+
+    # Replace tool's run methods with protected versions
+    if original_run:
+        tool._run = protected_run
+    if original_arun:
+        tool._arun = protected_arun
+
+    return tool
 
 
 def build_connections(config: dict[str, dict[str, Any]]) -> dict[str, Connection]:
@@ -120,25 +190,32 @@ class MCPClient:
 
         As of langchain-mcp-adapters 0.1.0, we use client.get_tools() directly
         instead of using the client as a context manager.
+
+        All loaded tools are automatically wrapped with protection mechanisms:
+        - Timeout protection (60s default per tool call)
+        - Exception isolation (errors return error messages instead of raising)
         """
         if not self.connections:
             return
 
         self._client = MultiServerMCPClient(connections=self.connections)
         # Use the new API: get_tools() is now an async method that handles connection
-        self._tools = await self._client.get_tools()
+        raw_tools = await self._client.get_tools()
+
+        # Wrap all tools with protection mechanisms
+        self._tools = [wrap_tool_with_protection(tool) for tool in raw_tools]
 
         # Add detailed logging for tool registration
         for tool in self._tools:
             logger.info(
-                "[MCP] Registered tool: name='%s', description='%s', type='%s'",
+                "[MCP] Registered tool (protected): name='%s', description='%s', type='%s'",
                 getattr(tool, "name", "UNKNOWN"),
                 getattr(tool, "description", "NO_DESCRIPTION"),
                 type(tool).__name__,
             )
 
         logger.info(
-            "Connected to MCP servers: %s, loaded %d tools",
+            "Connected to MCP servers: %s, loaded %d protected tools",
             ", ".join(self.list_servers()),
             len(self._tools),
         )
