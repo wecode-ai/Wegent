@@ -4,9 +4,7 @@
 
 import { paths } from '../config/paths';
 import { POST_LOGIN_REDIRECT_KEY, sanitizeRedirectPath } from '@/features/login/constants';
-
-// API Configuration and Client
-const API_BASE_URL = '/api';
+import { getApiBaseUrl, fetchRuntimeConfig } from '@/lib/runtime-config';
 
 // Token management
 import { getToken, removeToken } from './user';
@@ -25,13 +23,39 @@ export class ApiError extends Error {
 // HTTP Client with interceptors
 class APIClient {
   private baseURL: string;
+  private initialized: boolean = false;
 
-  constructor(baseURL: string) {
-    this.baseURL = baseURL;
+  constructor() {
+    // Start with default, will be updated after runtime config is fetched
+    this.baseURL = '/api';
+  }
+
+  /**
+   * Initialize the client with runtime configuration
+   * This should be called early in app initialization
+   */
+  async initialize(): Promise<void> {
+    if (this.initialized) return;
+    try {
+      await fetchRuntimeConfig();
+      this.baseURL = getApiBaseUrl();
+      this.initialized = true;
+    } catch (err) {
+      console.warn('[APIClient] Failed to initialize with runtime config:', err);
+      // Keep using default '/api'
+    }
+  }
+
+  /**
+   * Get the current base URL (updates from runtime config if available)
+   */
+  private getBaseURL(): string {
+    // Always try to get the latest from runtime config
+    return getApiBaseUrl();
   }
 
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-    const url = `${this.baseURL}${endpoint}`;
+    const url = `${this.getBaseURL()}${endpoint}`;
     const token = getToken();
 
     const config: RequestInit = {
@@ -119,6 +143,6 @@ class APIClient {
   }
 }
 
-export const apiClient = new APIClient(API_BASE_URL);
+export const apiClient = new APIClient();
 
 export default apiClient;

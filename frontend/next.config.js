@@ -57,7 +57,9 @@ const nextConfig = {
     optimizePackageImports: ['react-icons'],
   },
   async rewrites() {
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    // Priority: RUNTIME_API_URL > NEXT_PUBLIC_API_URL > default
+    const apiUrl =
+      process.env.RUNTIME_API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
     return [
       {
         source: '/api/:path*',

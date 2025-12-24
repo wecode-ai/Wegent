@@ -117,7 +117,11 @@ services:
       - "${WEGENT_FRONTEND_PORT:-3000}:3000"
     environment:
       - NODE_ENV=production
-      - NEXT_PUBLIC_API_URL=http://backend:8000
+      # Build-time configuration (baked into the image)
+      # Runtime configuration (can be changed without rebuilding)
+      # These override NEXT_PUBLIC_* values at runtime
+      - RUNTIME_API_URL=${RUNTIME_API_URL:-}
+      - RUNTIME_SOCKET_DIRECT_URL=${RUNTIME_SOCKET_DIRECT_URL:-}
     working_dir: /app
     depends_on:
       - backend

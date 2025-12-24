@@ -38,10 +38,8 @@ import {
   TaskInvitedPayload,
 } from '@/types/socket';
 
-// Socket.IO connection configuration
-// Default: Use relative path (proxy through Next.js server)
-// Set NEXT_PUBLIC_SOCKET_DIRECT_URL to connect directly to backend (bypass proxy)
-const API_URL = process.env.NEXT_PUBLIC_SOCKET_DIRECT_URL || '';
+import { fetchRuntimeConfig, getSocketUrl } from '@/lib/runtime-config';
+
 const SOCKETIO_PATH = '/socket.io';
 
 interface SocketContextType {
@@ -114,30 +112,17 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   const socketRef = useRef<Socket | null>(null);
 
   /**
-   * Connect to Socket.IO server
+   * Internal function to create socket connection
    */
-  const connect = useCallback((token: string) => {
-    // Check if already connected using ref
-    if (socketRef.current?.connected) {
-      console.log('[Socket.IO] Already connected, skipping');
-      return;
-    }
-
-    // Disconnect existing socket if any
-    if (socketRef.current) {
-      console.log('[Socket.IO] Disconnecting existing socket');
-      socketRef.current.disconnect();
-      socketRef.current = null;
-    }
-
-    console.log('[Socket.IO] Connecting to server...', API_URL + '/chat');
+  const createSocketConnection = useCallback((token: string, socketUrl: string) => {
+    console.log('[Socket.IO] Connecting to server...', socketUrl + '/chat');
 
     // Create new socket connection
     // Transport strategy:
     // 1. Try WebSocket first (preferred for load-balanced environments without sticky sessions)
     // 2. If WebSocket fails (e.g., load balancer doesn't support it), fall back to polling
     // Note: Polling requires sticky sessions in load-balanced environments
-    const newSocket = io(API_URL + '/chat', {
+    const newSocket = io(socketUrl + '/chat', {
       path: SOCKETIO_PATH,
       auth: { token },
       autoConnect: true,
@@ -203,6 +188,35 @@ export function SocketProvider({ children }: { children: ReactNode }) {
 
     setSocket(newSocket);
   }, []); // No dependencies - use refs instead
+
+  /**
+   * Connect to Socket.IO server
+   * Fetches runtime config first to allow runtime URL changes
+   */
+  const connect = useCallback(
+    (token: string) => {
+      // Check if already connected using ref
+      if (socketRef.current?.connected) {
+        console.log('[Socket.IO] Already connected, skipping');
+        return;
+      }
+
+      // Disconnect existing socket if any
+      if (socketRef.current) {
+        console.log('[Socket.IO] Disconnecting existing socket');
+        socketRef.current.disconnect();
+        socketRef.current = null;
+      }
+
+      // Fetch runtime config then connect
+      // This allows RUNTIME_SOCKET_DIRECT_URL to be changed without rebuilding
+      fetchRuntimeConfig().then(config => {
+        const socketUrl = config.socketDirectUrl || getSocketUrl();
+        createSocketConnection(token, socketUrl);
+      });
+    },
+    [createSocketConnection]
+  );
 
   /**
    * Disconnect from server
