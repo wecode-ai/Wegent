@@ -6,7 +6,7 @@
 
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { Cog6ToothIcon } from '@heroicons/react/24/outline';
-import { Check, Brain } from 'lucide-react';
+import { Check, Brain, ChevronDown } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Team, BotSummary } from '@/types/api';
@@ -28,6 +28,9 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { isPredefinedModel, getModelFromConfig } from '@/features/settings/services/bots';
 
+// Region type for model deployment location
+export type ModelRegion = 'domestic' | 'overseas' | undefined;
+
 // Model type for component props (extended with type information)
 export interface Model {
   name: string;
@@ -35,6 +38,7 @@ export interface Model {
   modelId: string;
   displayName?: string | null; // Human-readable display name
   type?: ModelTypeEnum; // 'public' | 'user' - identifies model source
+  region?: ModelRegion; // 'domestic' | 'overseas' - deployment region
 }
 
 // Special constant for default model option
@@ -450,11 +454,11 @@ export default function ModelSelector({
                   aria-controls="model-selector-popover"
                   disabled={isDisabled}
                   className={cn(
-                    'flex items-center gap-1 min-w-0 rounded-md px-2 py-1',
-                    'transition-colors',
+                    'flex items-center gap-1 min-w-0 rounded-full pl-2.5 pr-3 py-2.5 h-9',
+                    'border transition-colors',
                     isModelRequired
-                      ? 'text-error hover:text-error hover:bg-error/10'
-                      : 'text-text-muted hover:text-text-primary hover:bg-muted',
+                      ? 'border-error text-error bg-error/5 hover:bg-error/10'
+                      : 'border-border bg-base text-text-primary hover:bg-hover',
                     isLoading || externalLoading ? 'animate-pulse' : '',
                     'focus:outline-none focus:ring-0',
                     'disabled:cursor-not-allowed disabled:opacity-50'
@@ -464,6 +468,7 @@ export default function ModelSelector({
                   {!compact && (
                     <span className="truncate text-xs min-w-0">{getTriggerDisplayText()}</span>
                   )}
+                  <ChevronDown className="h-2.5 w-2.5 flex-shrink-0 opacity-60" />
                 </button>
               </PopoverTrigger>
             </TooltipTrigger>
@@ -517,37 +522,37 @@ export default function ModelSelector({
                         onSelect={() => handleModelSelect(DEFAULT_MODEL_NAME)}
                         className={cn(
                           'group cursor-pointer select-none',
-                          'px-3 py-1.5 text-sm text-text-primary',
+                          'px-3 py-2 text-sm text-text-primary',
                           'rounded-md mx-1 my-[2px]',
                           'data-[selected=true]:bg-primary/10 data-[selected=true]:text-primary',
                           'aria-selected:bg-hover',
-                          '!flex !flex-row !items-start !gap-3'
+                          '!flex !flex-row !items-center !justify-between !gap-2'
                         )}
                       >
+                        <div className="flex flex-col min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-medium text-sm text-text-primary">
+                              {t('task_submit.default_model', '默认模型')}
+                            </span>
+                            <Tag
+                              variant="info"
+                              className="text-[10px] flex-shrink-0 whitespace-nowrap"
+                            >
+                              {t('models.public', '公共')}
+                            </Tag>
+                          </div>
+                          <span className="text-xs text-text-muted">
+                            {t('task_submit.use_bot_model', '使用Bot预设模型')}
+                          </span>
+                        </div>
                         <Check
                           className={cn(
-                            'h-3 w-3 shrink-0 mt-0.5 ml-1',
+                            'h-3.5 w-3.5 shrink-0',
                             selectedModel?.name === DEFAULT_MODEL_NAME
                               ? 'opacity-100 text-primary'
-                              : 'opacity-0 text-text-muted'
+                              : 'opacity-0'
                           )}
                         />
-                        <div className="flex items-center gap-2 min-w-0 flex-1">
-                          <Brain className="w-3.5 h-3.5 flex-shrink-0 text-primary" />
-                          <div className="flex flex-col min-w-0 flex-1">
-                            <span className="font-medium text-xs text-text-secondary">
-                              {t('task_submit.default_model', '默认')}
-                              {getBoundModelDisplayNames().length > 0 && (
-                                <span className="text-text-muted ml-1">
-                                  ({getBoundModelDisplayNames().join(', ')})
-                                </span>
-                              )}
-                            </span>
-                            <span className="text-[10px] text-text-muted">
-                              {t('task_submit.use_bot_model', '使用 Bot 预设模型')}
-                            </span>
-                          </div>
-                        </div>
                       </CommandItem>
                     )}
                     {filteredModels.map(model => (
@@ -557,91 +562,94 @@ export default function ModelSelector({
                         onSelect={() => handleModelSelect(getModelKey(model))}
                         className={cn(
                           'group cursor-pointer select-none',
-                          'px-3 py-1.5 text-sm text-text-primary',
+                          'px-3 py-2 text-sm text-text-primary',
                           'rounded-md mx-1 my-[2px]',
                           'data-[selected=true]:bg-primary/10 data-[selected=true]:text-primary',
                           'aria-selected:bg-hover',
-                          '!flex !flex-row !items-start !gap-3'
+                          '!flex !flex-row !items-center !justify-between !gap-2'
                         )}
                       >
-                        <Check
-                          className={cn(
-                            'h-3 w-3 shrink-0 mt-0.5 ml-1',
-                            selectedModel?.name === model.name && selectedModel?.type === model.type
-                              ? 'opacity-100 text-primary'
-                              : 'opacity-0 text-text-muted'
-                          )}
-                        />
-                        <div className="flex items-center gap-2 min-w-0 flex-1">
-                          <Brain className="w-3.5 h-3.5 flex-shrink-0 text-text-muted" />
-                          <div className="flex flex-col min-w-0 flex-1">
-                            <div className="flex items-center gap-1.5 flex-nowrap">
-                              <span
-                                className="font-medium text-xs text-text-secondary truncate min-w-0"
-                                title={getModelDisplayText(model)}
+                        <div className="flex flex-col min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span
+                              className="font-medium text-sm text-text-primary truncate min-w-0"
+                              title={getModelDisplayText(model)}
+                            >
+                              {getModelDisplayText(model)}
+                            </span>
+                            {model.type === 'public' && (
+                              <Tag
+                                variant="info"
+                                className="text-[10px] flex-shrink-0 whitespace-nowrap"
                               >
-                                {getModelDisplayText(model)}
-                              </span>
-                              {model.type === 'public' && (
-                                <Tag
-                                  variant="info"
-                                  className="text-[10px] flex-shrink-0 whitespace-nowrap"
-                                >
-                                  {t('models.public', '公共')}
-                                </Tag>
-                              )}
-                            </div>
-                            {model.modelId && (
-                              <span
-                                className="text-[10px] text-text-muted truncate"
-                                title={model.modelId}
-                              >
-                                {model.modelId}
-                              </span>
+                                {t('models.public', '公共')}
+                              </Tag>
                             )}
                           </div>
+                          {model.modelId && (
+                            <span
+                              className="text-xs text-text-muted truncate"
+                              title={model.modelId}
+                            >
+                              {model.modelId}
+                            </span>
+                          )}
                         </div>
+                        <Check
+                          className={cn(
+                            'h-3.5 w-3.5 shrink-0',
+                            selectedModel?.name === model.name && selectedModel?.type === model.type
+                              ? 'opacity-100 text-primary'
+                              : 'opacity-0'
+                          )}
+                        />
                       </CommandItem>
                     ))}
                   </CommandGroup>
                 </>
               )}
             </CommandList>
-            {/* Force override checkbox in dropdown footer - always show when model is selected */}
-            {selectedModel && !isMixedTeam && (
-              <div className="border-t border-border px-3 py-2">
-                <label
-                  className="flex items-center gap-2 cursor-pointer text-xs text-text-secondary hover:text-text-primary"
-                  onClick={e => e.stopPropagation()}
+            {/* Footer options - override and settings */}
+            <div className="border-t border-border">
+              {/* Force override checkbox - always show when model is selected */}
+              {selectedModel && !isMixedTeam && (
+                <div
+                  className="flex items-center gap-2 px-3 py-2.5 cursor-pointer hover:bg-hover transition-colors duration-150"
+                  onClick={e => {
+                    e.stopPropagation();
+                    handleForceOverrideChange(!forceOverride);
+                  }}
                 >
                   <Checkbox
                     id="force-override-model-dropdown"
                     checked={forceOverride}
                     onCheckedChange={handleForceOverrideChange}
                     disabled={disabled || externalLoading}
-                    className="h-3.5 w-3.5"
+                    className="h-4 w-4"
                   />
-                  <span>{t('task_submit.force_override_model', '强制覆盖 Bot 绑定的模型')}</span>
-                </label>
+                  <span className="text-xs text-text-secondary">
+                    {t('task_submit.override_default_model', '覆盖默认模型')}
+                  </span>
+                </div>
+              )}
+              {/* Model Settings Link */}
+              <div
+                className="flex items-center gap-2 px-3 py-2.5 cursor-pointer group hover:bg-hover transition-colors duration-150"
+                onClick={() => router.push(paths.settings.models.getHref())}
+                role="button"
+                tabIndex={0}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    router.push(paths.settings.models.getHref());
+                  }
+                }}
+              >
+                <Cog6ToothIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
+                <span className="text-xs text-text-secondary group-hover:text-text-primary">
+                  {t('models.manage', '模型设置')}
+                </span>
               </div>
-            )}
-            {/* Model Settings Link */}
-            <div
-              className="border-t border-border bg-base cursor-pointer group flex items-center space-x-2 px-2.5 py-2 text-xs text-text-secondary hover:bg-muted transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary w-full"
-              onClick={() => router.push(paths.settings.models.getHref())}
-              role="button"
-              tabIndex={0}
-              onKeyDown={e => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  router.push(paths.settings.models.getHref());
-                }
-              }}
-            >
-              <Cog6ToothIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
-              <span className="font-medium group-hover:text-text-primary">
-                {t('models.manage', '模型设置')}
-              </span>
             </div>
           </Command>
         </PopoverContent>

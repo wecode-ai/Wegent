@@ -5,9 +5,11 @@
 'use client';
 
 import React from 'react';
+import { Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useTranslation } from '@/hooks/useTranslation';
 import { cn } from '@/lib/utils';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface DeepThinkingToggleProps {
   enabled: boolean;
@@ -20,30 +22,35 @@ export default function DeepThinkingToggle({
   onToggle,
   disabled = false,
 }: DeepThinkingToggleProps) {
-  const { i18n } = useTranslation('chat');
+  const { t } = useTranslation('chat');
 
-  const handleToggle = (e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleToggle = () => {
     onToggle(!enabled);
   };
 
-  // Get text based on language
-  const text = i18n.language?.startsWith('zh') ? '深度思考' : 'Deep Thinking';
-
   return (
-    <Button
-      variant="ghost"
-      size="sm"
-      onClick={handleToggle}
-      disabled={disabled}
-      className={cn(
-        'h-6 px-2 text-xs rounded-md flex-shrink-0 transition-colors',
-        enabled
-          ? 'bg-primary/10 text-primary hover:bg-primary/20'
-          : 'text-text-muted hover:bg-surface hover:text-text-primary'
-      )}
-    >
-      {text}
-    </Button>
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={handleToggle}
+            disabled={disabled}
+            className={cn(
+              'h-8 w-8 rounded-full flex-shrink-0 transition-colors',
+              enabled
+                ? 'border-primary bg-primary/10 text-primary hover:bg-primary/20'
+                : 'border-border bg-base text-text-primary hover:bg-hover'
+            )}
+          >
+            <Sparkles className="h-4 w-4" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="top">
+          <p>{enabled ? t('deep_thinking.disable') : t('deep_thinking.enable')}</p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }

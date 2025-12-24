@@ -201,9 +201,9 @@ export default function ChatPage() {
                 variant="outline"
                 size="sm"
                 onClick={() => setIsCreateGroupChatOpen(true)}
-                className="gap-2"
+                className="gap-1 h-8 pl-2 pr-3 rounded-[7px] text-sm"
               >
-                <UserGroupIcon className="h-4 w-4" />
+                <UserGroupIcon className="h-3.5 w-3.5" />
                 <span className="hidden sm:inline">{t('groupChat.create.button')}</span>
               </Button>
             )}

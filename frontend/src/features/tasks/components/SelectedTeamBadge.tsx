@@ -7,7 +7,6 @@
 import { XMarkIcon } from '@heroicons/react/24/outline';
 import type { Team } from '@/types/api';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { TeamIconDisplay } from '@/features/settings/components/teams/TeamIconDisplay';
 
 interface SelectedTeamBadgeProps {
   team: Team;
@@ -18,6 +17,7 @@ interface SelectedTeamBadgeProps {
 /**
  * Badge component to display the currently selected team
  * Shown at the top-left inside the chat input area
+ * Figma: rounded-[24px] px-[10px] py-[6px] bg-white text-[#5d5ec9] text-[16px]
  */
 export function SelectedTeamBadge({
   team,
@@ -25,8 +25,7 @@ export function SelectedTeamBadge({
   showClearButton = false,
 }: SelectedTeamBadgeProps) {
   const badgeContent = (
-    <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-primary/30 bg-primary/5 text-primary text-xs">
-      <TeamIconDisplay iconId={team.icon} size="xs" className="flex-shrink-0" />
+    <div className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-base text-primary text-base leading-[18px]">
       <span className="font-medium truncate max-w-[120px]">{team.name}</span>
       {showClearButton && onClear && (
         <button
@@ -37,7 +36,7 @@ export function SelectedTeamBadge({
           className="ml-0.5 p-0.5 rounded-full hover:bg-primary/10 transition-colors"
           title="Clear selection"
         >
-          <XMarkIcon className="w-2.5 h-2.5" />
+          <XMarkIcon className="w-3 h-3" />
         </button>
       )}
     </div>

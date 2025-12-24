@@ -19,6 +19,7 @@ export default {
     extend: {
       fontFamily: {
         sans: [
+          '"PingFang SC"',
           '-apple-system',
           'BlinkMacSystemFont',
           '"Segoe UI"',
