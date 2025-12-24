@@ -670,6 +670,14 @@ class ChatService:
         Returns:
             Dictionary of MCP servers from ghost.spec.mcpServers, or empty dict
         """
+        return await asyncio.to_thread(
+            self._get_bot_mcp_servers_sync, bot_name, bot_namespace
+        )
+
+    def _get_bot_mcp_servers_sync(
+        self, bot_name: str, bot_namespace: str
+    ) -> dict[str, Any]:
+        """Synchronous implementation of bot MCP servers query."""
         from app.db.session import SessionLocal
         from app.models.kind import Kind
         from app.schemas.kind import Bot, Ghost
