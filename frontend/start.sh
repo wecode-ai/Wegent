@@ -210,7 +210,8 @@ EOF
 fi
 
 # Export environment variables (will override .env.local values)
-export NEXT_PUBLIC_API_URL=$API_URL
+export RUNTIME_INTERNAL_API_URL=$API_URL
+export NEXT_PUBLIC_SOCKET_DIRECT_URL=$API_URL
 echo -e "${GREEN}✓ Using API URL: $API_URL (via environment variable)${NC}"
 echo -e "${YELLOW}Note: .env.local file is not modified, using runtime environment variables${NC}"
 echo ""

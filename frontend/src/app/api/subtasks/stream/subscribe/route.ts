@@ -14,9 +14,7 @@
  */
 
 import { NextRequest } from 'next/server';
-
-// Get backend URL from environment
-const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { getInternalApiUrl } from '@/lib/server-config';
 
 export async function GET(request: NextRequest) {
   try {
@@ -44,7 +42,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Build backend URL
-    const backendUrl = `${BACKEND_URL}/api/subtasks/tasks/${taskId}/stream/subscribe?subtask_id=${subtaskId}&offset=${offset}`;
+    const backendUrl = `${getInternalApiUrl()}/api/subtasks/tasks/${taskId}/stream/subscribe?subtask_id=${subtaskId}&offset=${offset}`;
 
     // Forward request to backend with Authorization header
     const backendResponse = await fetch(backendUrl, {
