@@ -58,6 +58,8 @@
     "used_tool": "Used tool",
     "times": "times",
     "used_tools": "Used tools",
+    "using_tools": "Using tools",
+    "tool_completed": "Tool completed",
     "query": "Query",
     "search_completed": "Search completed",
     "found": "Found"
