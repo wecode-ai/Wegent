@@ -64,6 +64,7 @@ class WebSocketStreamConfig:
     search_engine: str | None = None
     extra_tools: list[BaseTool] = field(default_factory=list)
     message_id: int | None = None  # Message ID for ordering in frontend
+    shell_type: str = "Chat"  # Shell type for frontend display
 
 
 # SSE response headers
@@ -295,9 +296,128 @@ class ChatService:
                 # Create agent
                 agent = self._create_agent(model_config, max_iterations)
 
+                # Define tool event handler to capture thinking steps
+                def handle_tool_event(kind: str, event_data: dict):
+                    """Handle tool events and add thinking steps."""
+                    tool_name = event_data.get("name", "unknown")
+                    run_id = event_data.get("run_id", "")
+
+                    if kind == "tool_start":
+                        # Extract tool input for better display
+                        tool_input = event_data.get("data", {}).get("input", {})
+
+                        # Build friendly title based on tool type
+                        if tool_name == "web_search":
+                            query = tool_input.get("query", "")
+                            title = (
+                                f"正在搜索: {query}" if query else "正在进行网页搜索"
+                            )
+                        else:
+                            title = f"正在使用工具: {tool_name}"
+
+                        state.add_thinking_step(
+                            {
+                                "title": title,
+                                "next_action": "continue",
+                                "run_id": run_id,  # Track run_id for pairing
+                                "details": {
+                                    "type": "tool_use",
+                                    "tool_name": tool_name,
+                                    "status": "started",
+                                    "input": tool_input,
+                                },
+                            }
+                        )
+                        # Immediately emit thinking step via SSE
+                        asyncio.create_task(
+                            emitter.emit_chunk(
+                                content="",
+                                offset=state.offset,
+                                subtask_id=state.subtask_id,
+                                result=state.get_current_result(),
+                            )
+                        )
+                    elif kind == "tool_end":
+                        # Extract tool output for better display
+                        tool_output = event_data.get("data", {}).get("output", "")
+
+                        # Convert output to JSON-serializable format
+                        # LangGraph may return ToolMessage objects which are not JSON serializable
+                        serializable_output = tool_output
+                        if hasattr(tool_output, "content"):
+                            # It's a LangChain message object, extract content
+                            serializable_output = tool_output.content
+                        elif not isinstance(
+                            tool_output, (str, dict, list, int, float, bool, type(None))
+                        ):
+                            # Try to convert to string for other non-serializable types
+                            serializable_output = str(tool_output)
+
+                        # Try to parse output and build friendly title
+                        title = f"工具完成: {tool_name}"
+                        if tool_name == "web_search" and serializable_output:
+                            try:
+                                import json
+
+                                output_data = (
+                                    json.loads(serializable_output)
+                                    if isinstance(serializable_output, str)
+                                    else serializable_output
+                                )
+                                count = output_data.get("count", 0)
+                                query = output_data.get("query", "")
+                                if count > 0:
+                                    title = f"为你搜索到了 {count} 条相关数据"
+                                else:
+                                    title = "未搜索到相关数据"
+                            except Exception:
+                                pass
+
+                        # Find the matching tool_start step by run_id and update it
+                        # This ensures start and end are displayed together in order
+                        matching_start_idx = None
+                        for idx, step in enumerate(state.thinking):
+                            if (
+                                step.get("run_id") == run_id
+                                and step.get("details", {}).get("status") == "started"
+                            ):
+                                matching_start_idx = idx
+                                break
+
+                        result_step = {
+                            "title": title,
+                            "next_action": "continue",
+                            "run_id": run_id,
+                            "details": {
+                                "type": "tool_result",
+                                "tool_name": tool_name,
+                                "status": "completed",
+                                "output": serializable_output,
+                            },
+                        }
+
+                        # Insert result right after its corresponding start
+                        if matching_start_idx is not None:
+                            state.thinking.insert(matching_start_idx + 1, result_step)
+                        else:
+                            # Fallback: append if no matching start found
+                            state.add_thinking_step(result_step)
+
+                        # Immediately emit thinking step via SSE
+                        asyncio.create_task(
+                            emitter.emit_chunk(
+                                content="",
+                                offset=state.offset,
+                                subtask_id=state.subtask_id,
+                                result=state.get_current_result(),
+                            )
+                        )
+
                 # Stream tokens
                 async for token in agent.stream_tokens(
-                    messages, cancel_event=core.cancel_event
+                    messages,
+                    cancel_event=core.cancel_event,
+                    on_tool_event=handle_tool_event,
                 ):
                     if not await core.process_token(token):
                         # Cancelled
@@ -420,6 +540,7 @@ class ChatService:
             search_engine=config.search_engine,
             extra_tools=list(config.extra_tools),
             message_id=config.message_id,
+            shell_type=config.shell_type,  # Pass shell_type from config
         )
 
         # Create streaming core
@@ -474,10 +595,127 @@ class ChatService:
                 len(extra_tools),
             )
 
+            # Define tool event handler to capture thinking steps
+            def handle_tool_event(kind: str, event_data: dict):
+                """Handle tool events and add thinking steps."""
+                tool_name = event_data.get("name", "unknown")
+                run_id = event_data.get("run_id", "")
+
+                if kind == "tool_start":
+                    # Extract tool input for better display
+                    tool_input = event_data.get("data", {}).get("input", {})
+
+                    # Build friendly title based on tool type
+                    if tool_name == "web_search":
+                        query = tool_input.get("query", "")
+                        title = f"正在搜索: {query}" if query else "正在进行网页搜索"
+                    else:
+                        title = f"正在使用工具: {tool_name}"
+
+                    state.add_thinking_step(
+                        {
+                            "title": title,
+                            "next_action": "continue",
+                            "run_id": run_id,  # Track run_id for pairing
+                            "details": {
+                                "type": "tool_use",
+                                "tool_name": tool_name,
+                                "status": "started",
+                                "input": tool_input,
+                            },
+                        }
+                    )
+                    # Immediately emit thinking step via WebSocket
+                    asyncio.create_task(
+                        emitter.emit_chunk(
+                            content="",
+                            offset=state.offset,
+                            subtask_id=state.subtask_id,
+                            result=state.get_current_result(),
+                        )
+                    )
+                elif kind == "tool_end":
+                    # Extract tool output for better display
+                    tool_output = event_data.get("data", {}).get("output", "")
+
+                    # Convert output to JSON-serializable format
+                    # LangGraph may return ToolMessage objects which are not JSON serializable
+                    serializable_output = tool_output
+                    if hasattr(tool_output, "content"):
+                        # It's a LangChain message object, extract content
+                        serializable_output = tool_output.content
+                    elif not isinstance(
+                        tool_output, (str, dict, list, int, float, bool, type(None))
+                    ):
+                        # Try to convert to string for other non-serializable types
+                        serializable_output = str(tool_output)
+
+                    # Try to parse output and build friendly title
+                    title = f"工具完成: {tool_name}"
+                    if tool_name == "web_search" and serializable_output:
+                        try:
+                            import json
+
+                            output_data = (
+                                json.loads(serializable_output)
+                                if isinstance(serializable_output, str)
+                                else serializable_output
+                            )
+                            count = output_data.get("count", 0)
+                            query = output_data.get("query", "")
+                            if count > 0:
+                                title = f"为你搜索到了 {count} 条相关数据"
+                            else:
+                                title = "未搜索到相关数据"
+                        except Exception:
+                            pass
+
+                    # Find the matching tool_start step by run_id and update it
+                    # This ensures start and end are displayed together in order
+                    matching_start_idx = None
+                    for idx, step in enumerate(state.thinking):
+                        if (
+                            step.get("run_id") == run_id
+                            and step.get("details", {}).get("status") == "started"
+                        ):
+                            matching_start_idx = idx
+                            break
+
+                    result_step = {
+                        "title": title,
+                        "next_action": "continue",
+                        "run_id": run_id,
+                        "details": {
+                            "type": "tool_result",
+                            "tool_name": tool_name,
+                            "status": "completed",
+                            "output": serializable_output,
+                        },
+                    }
+
+                    # Insert result right after its corresponding start
+                    if matching_start_idx is not None:
+                        state.thinking.insert(matching_start_idx + 1, result_step)
+                    else:
+                        # Fallback: append if no matching start found
+                        state.add_thinking_step(result_step)
+
+                    # Immediately emit thinking step via WebSocket
+                    asyncio.create_task(
+                        emitter.emit_chunk(
+                            content="",
+                            offset=state.offset,
+                            subtask_id=state.subtask_id,
+                            result=state.get_current_result(),
+                        )
+                    )
+
             # Stream tokens
             token_count = 0
             async for token in agent.stream_tokens(
-                messages, cancel_event=core.cancel_event
+                messages,
+                cancel_event=core.cancel_event,
+                on_tool_event=handle_tool_event,
             ):
                 token_count += 1
                 if not await core.process_token(token):

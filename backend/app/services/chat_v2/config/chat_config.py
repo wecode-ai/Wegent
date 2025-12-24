@@ -36,6 +36,7 @@ class ChatConfig:
     # Bot information
     bot_name: str = ""
     bot_namespace: str = "default"
+    shell_type: str = "Chat"  # Shell type from bot (Chat, ClaudeCode, Agno, etc.)
 
     # Agent configuration from bot
     agent_config: dict[str, Any] = field(default_factory=dict)
@@ -86,12 +87,16 @@ class ChatConfigBuilder:
         # Parse team CRD
         self._team_crd = Team.model_validate(team.json)
 
+        # Cache shell_type for the first bot to avoid repeated database queries
+        self._cached_shell_type: str | None = None
+
     def build(
         self,
         override_model_name: str | None = None,
         force_override: bool = False,
         team_member_prompt: str | None = None,
         enable_clarification: bool = False,
+        enable_deep_thinking: bool = False,
         task_id: int = 0,
     ) -> ChatConfig:
         """Build complete chat configuration.
@@ -101,6 +106,7 @@ class ChatConfigBuilder:
             force_override: If True, override takes highest priority
             team_member_prompt: Optional additional prompt from team member
             enable_clarification: Whether to enable clarification mode
+            enable_deep_thinking: Whether to enable deep thinking mode with search guidance
             task_id: Task ID for placeholder replacement
 
         Returns:
@@ -124,6 +130,7 @@ class ChatConfigBuilder:
             bot,
             team_member_prompt,
             enable_clarification,
+            enable_deep_thinking,
         )
 
         # Get agent config
@@ -133,11 +140,17 @@ class ChatConfigBuilder:
         # Parse bot CRD for name/namespace
         bot_crd = Bot.model_validate(bot.json)
 
+        # Get shell_type from cache or query database (only once per builder instance)
+        if self._cached_shell_type is None:
+            self._cached_shell_type = self._resolve_shell_type(bot_crd)
+        shell_type = self._cached_shell_type
+
         return ChatConfig(
             model_config=model_config,
             system_prompt=system_prompt,
             bot_name=bot_crd.metadata.name if bot_crd.metadata else bot.name,
             bot_namespace=bot_crd.metadata.namespace if bot_crd.metadata else "default",
+            shell_type=shell_type,
             agent_config=agent_config,
             user_id=self.user_id,
             user_name=self.user_name,
@@ -241,6 +254,7 @@ class ChatConfigBuilder:
         bot: Kind,
         team_member_prompt: str | None,
         enable_clarification: bool,
+        enable_deep_thinking: bool,
     ) -> str:
         """Get system prompt for the bot.
 
@@ -248,10 +262,13 @@ class ChatConfigBuilder:
             bot: Bot Kind object
             team_member_prompt: Optional additional prompt from team member
             enable_clarification: Whether to enable clarification mode
+            enable_deep_thinking: Whether to enable deep thinking mode with search guidance
 
         Returns:
             Combined system prompt
         """
+        from datetime import datetime
+
         from app.services.chat_v2.models.resolver import get_bot_system_prompt
 
         # Get team member prompt from first member if not provided
@@ -266,6 +283,13 @@ class ChatConfigBuilder:
             team_member_prompt,
         )
 
+        # Append current date/time information
+        now = datetime.now()
+        current_time_info = (
+            f"\n\nCurrent date and time: {now.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        )
+        system_prompt += current_time_info
+
         # Append clarification mode instructions if enabled
         if enable_clarification:
             from app.services.chat_v2.utils.prompts import (
@@ -273,6 +297,14 @@ class ChatConfigBuilder:
             )
 
             system_prompt = append_clarification_prompt(system_prompt, True)
+
+        # Append deep thinking mode instructions if enabled
+        if enable_deep_thinking:
+            from app.services.chat_v2.utils.prompts import (
+                append_deep_thinking_prompt,
+            )
+
+            system_prompt = append_deep_thinking_prompt(system_prompt, True)
 
         # CRITICAL: Log the final system prompt being sent to the LLM
         logger.info(
@@ -294,3 +326,67 @@ class ChatConfigBuilder:
         if self._team_crd.spec.members:
             return self._team_crd.spec.members[0].prompt
         return None
+
+    def _resolve_shell_type(self, bot_crd: Bot) -> str:
+        """Resolve shell_type from bot's shellRef.
+
+        This method queries the Shell CRD to get the shell_type.
+        It's called once per builder instance and the result is cached.
+
+        Args:
+            bot_crd: Parsed Bot CRD
+
+        Returns:
+            Shell type string (e.g., "Chat", "ClaudeCode", "Agno")
+        """
+        from app.schemas.kind import Shell
+
+        # Default value
+        shell_type = "Chat"
+
+        if not (bot_crd.spec and bot_crd.spec.shellRef):
+            return shell_type
+
+        shell_ref = bot_crd.spec.shellRef
+
+        # Query user's private shell first
+        shell = (
+            self.db.query(Kind)
+            .filter(
+                Kind.user_id == self.user_id,
+                Kind.kind == "Shell",
+                Kind.name == shell_ref.name,
+                Kind.namespace == shell_ref.namespace,
+                Kind.is_active,
+            )
+            .first()
+        )
+
+        # If not found in user's shells, try public shells (user_id = 0)
+        if not shell:
+            shell = (
+                self.db.query(Kind)
+                .filter(
+                    Kind.user_id == 0,
+                    Kind.kind == "Shell",
+                    Kind.name == shell_ref.name,
+                    Kind.is_active,
+                )
+                .first()
+            )
+
+        # Extract shell_type from Shell CRD
+        if shell and shell.json:
+            shell_crd = Shell.model_validate(shell.json)
+            if shell_crd.spec and shell_crd.spec.shellType:
+                shell_type = shell_crd.spec.shellType
+
+        logger.debug(
+            "[ChatConfigBuilder] Resolved shell_type=%s for bot=%s (shell_ref=%s/%s)",
+            shell_type,
+            bot_crd.metadata.name if bot_crd.metadata else "unknown",
+            shell_ref.namespace,
+            shell_ref.name,
+        )
+
+        return shell_type

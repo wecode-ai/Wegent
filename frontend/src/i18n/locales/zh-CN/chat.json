@@ -50,7 +50,17 @@
     "content_incomplete": "回答未完成",
     "content_incomplete_desc": "连接已断开，这是生成的部分内容",
     "like": "喜欢",
-    "dislike": "不喜欢"
+    "dislike": "不喜欢",
+    "searching": "搜索中",
+    "searched_for": "为你搜索",
+    "results": "条结果",
+    "using_tool": "使用工具中",
+    "used_tool": "已使用工具",
+    "times": "次",
+    "used_tools": "使用了工具",
+    "query": "查询",
+    "search_completed": "搜索完成",
+    "found": "找到"
   },
   "shared_task": {
     "share_task": "分享",

@@ -14,7 +14,7 @@ This module provides a simplified LangGraph agent implementation using:
 import asyncio
 import logging
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import Any, Callable
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage
@@ -146,6 +146,7 @@ class LangGraphAgentBuilder:
         messages: list[dict[str, Any]],
         config: dict[str, Any] | None = None,
         cancel_event: asyncio.Event | None = None,
+        on_tool_event: Callable[[str, dict], None] | None = None,
     ) -> AsyncGenerator[str, None]:
         """Stream tokens from agent execution.
 
@@ -157,6 +158,7 @@ class LangGraphAgentBuilder:
             messages: Initial conversation messages
             config: Optional configuration
             cancel_event: Optional cancellation event
+            on_tool_event: Optional callback for tool events (kind, event_data)
 
         Yields:
             Content tokens as they are generated
@@ -283,15 +285,44 @@ class LangGraphAgentBuilder:
                                 break
 
                 elif kind == "on_tool_start":
+                    tool_name = event.get("name", "unknown")
+                    # Get run_id to track tool execution pairs
+                    run_id = event.get("run_id", "")
                     logger.info(
-                        "[stream_tokens] Tool started: %s", event.get("name", "unknown")
+                        "[stream_tokens] Tool started: %s (run_id=%s)",
+                        tool_name,
+                        run_id,
                     )
+                    # Notify callback if provided
+                    if on_tool_event:
+                        on_tool_event(
+                            "tool_start",
+                            {
+                                "name": tool_name,
+                                "run_id": run_id,
+                                "data": event.get("data", {}),
+                            },
+                        )
 
                 elif kind == "on_tool_end":
+                    tool_name = event.get("name", "unknown")
+                    # Get run_id to match with tool_start
+                    run_id = event.get("run_id", "")
                     logger.info(
-                        "[stream_tokens] Tool completed: %s",
-                        event.get("name", "unknown"),
+                        "[stream_tokens] Tool completed: %s (run_id=%s)",
+                        tool_name,
+                        run_id,
                     )
+                    # Notify callback if provided
+                    if on_tool_event:
+                        on_tool_event(
+                            "tool_end",
+                            {
+                                "name": tool_name,
+                                "run_id": run_id,
+                                "data": event.get("data", {}),
+                            },
+                        )
 
             # If no content was streamed but we have final content, yield it
             # This handles non-streaming models

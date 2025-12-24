@@ -49,7 +49,7 @@ class StreamingState:
     """State container for a streaming session.
 
     Holds all the context needed during streaming, including
-    identifiers, content accumulation, and timing information.
+    identifiers, content accumulation, thinking steps, and timing information.
     """
 
     task_id: int
@@ -61,17 +61,35 @@ class StreamingState:
     search_engine: str | None = None
     extra_tools: list[BaseTool] = field(default_factory=list)
     message_id: int | None = None  # Message ID for ordering in frontend
+    shell_type: str = (
+        "Chat"  # Shell type (Chat, ClaudeCode, Agno, etc.) for frontend display
+    )
 
     # Runtime state
     full_response: str = ""
     offset: int = 0
     last_redis_save: float = 0.0
     last_db_save: float = 0.0
+    thinking: list[dict[str, Any]] = field(default_factory=list)  # Tool call steps
 
     def append_content(self, token: str) -> None:
         """Append token to accumulated response."""
         self.full_response += token
         self.offset += len(token)
+
+    def add_thinking_step(self, step: dict[str, Any]) -> None:
+        """Add a thinking step (tool call)."""
+        self.thinking.append(step)
+
+    def get_current_result(self) -> dict[str, Any]:
+        """Get current result with thinking steps for WebSocket emission."""
+        result: dict[str, Any] = {
+            "value": self.full_response,
+            "shell_type": self.shell_type,  # Include shell_type for frontend display
+        }
+        if self.thinking:
+            result["thinking"] = self.thinking
+        return result
 
 
 @dataclass
@@ -235,11 +253,14 @@ class StreamingCore:
         # Accumulate content
         self.state.append_content(token)
 
-        # Emit chunk to client
+        # Emit chunk to client with result data (including shell_type and thinking if available)
+        # Always send result to include shell_type for frontend display logic
+        result = self.state.get_current_result()
         await self.emitter.emit_chunk(
             token,
             self.state.offset - len(token),  # offset before this token
             self.state.subtask_id,
+            result=result,  # Include result with shell_type for frontend display
         )
 
         # Periodic saves
@@ -259,11 +280,16 @@ class StreamingCore:
             )
             self.state.last_redis_save = current_time
 
-        # Save to DB
+        # Save to DB with thinking data
         if current_time - self.state.last_db_save >= self.config.db_save_interval:
-            await storage_handler.save_partial_response(
+            # Get current result with thinking steps (same as finalize)
+            result = self.state.get_current_result()
+            result["streaming"] = True
+            # Use update_subtask_status to save the complete result
+            await storage_handler.update_subtask_status(
                 self.state.subtask_id,
-                self.state.full_response,
+                "RUNNING",
+                result=result,
             )
             self.state.last_db_save = current_time
 
@@ -271,9 +297,9 @@ class StreamingCore:
         """Finalize streaming and save results.
 
         Returns:
-            Result dictionary with the full response
+            Result dictionary with the full response and thinking steps
         """
-        result = {"value": self.state.full_response}
+        result = self.state.get_current_result()
 
         # Save final content to Redis
         await storage_handler.save_streaming_content(
