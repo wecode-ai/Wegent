@@ -308,9 +308,33 @@ class ChatService:
                         # Extract tool input for better display
                         tool_input = event_data.get("data", {}).get("input", {})
 
+                        # Convert input to JSON-serializable format
+                        # LangGraph may pass ToolRuntime or other non-serializable objects
+                        serializable_input = {}
+                        if isinstance(tool_input, dict):
+                            for key, value in tool_input.items():
+                                if isinstance(
+                                    value,
+                                    (str, dict, list, int, float, bool, type(None)),
+                                ):
+                                    serializable_input[key] = value
+                                else:
+                                    # Convert non-serializable objects to string
+                                    serializable_input[key] = str(value)
+                        elif isinstance(
+                            tool_input, (str, list, int, float, bool, type(None))
+                        ):
+                            serializable_input = tool_input
+                        else:
+                            serializable_input = str(tool_input)
+
                         # Build friendly title based on tool type
                         if tool_name == "web_search":
-                            query = tool_input.get("query", "")
+                            query = (
+                                serializable_input
+                                if isinstance(serializable_input, dict)
+                                else {}
+                            ).get("query", "")
                             title = (
                                 f"正在搜索: {query}" if query else "正在进行网页搜索"
                             )
@@ -325,8 +349,9 @@ class ChatService:
                                 "details": {
                                     "type": "tool_use",
                                     "tool_name": tool_name,
+                                    "name": tool_name,  # Frontend expects 'name' field
                                     "status": "started",
-                                    "input": tool_input,
+                                    "input": serializable_input,
                                 },
                             }
                         )
@@ -394,7 +419,8 @@ class ChatService:
                                 "type": "tool_result",
                                 "tool_name": tool_name,
                                 "status": "completed",
-                                "output": serializable_output,
+                                "output": serializable_output,  # Keep for backward compatibility
+                                "content": serializable_output,  # Frontend expects 'content' field
                             },
                         }
 
@@ -609,9 +635,32 @@ class ChatService:
                     # Extract tool input for better display
                     tool_input = event_data.get("data", {}).get("input", {})
 
+                    # Convert input to JSON-serializable format
+                    # LangGraph may pass ToolRuntime or other non-serializable objects
+                    serializable_input = {}
+                    if isinstance(tool_input, dict):
+                        for key, value in tool_input.items():
+                            if isinstance(
+                                value, (str, dict, list, int, float, bool, type(None))
+                            ):
+                                serializable_input[key] = value
+                            else:
+                                # Convert non-serializable objects to string
+                                serializable_input[key] = str(value)
+                    elif isinstance(
+                        tool_input, (str, list, int, float, bool, type(None))
+                    ):
+                        serializable_input = tool_input
+                    else:
+                        serializable_input = str(tool_input)
+
                     # Build friendly title based on tool type
                     if tool_name == "web_search":
-                        query = tool_input.get("query", "")
+                        query = (
+                            serializable_input
+                            if isinstance(serializable_input, dict)
+                            else {}
+                        ).get("query", "")
                         title = f"正在搜索: {query}" if query else "正在进行网页搜索"
                     else:
                         title = f"正在使用工具: {tool_name}"
@@ -624,8 +673,9 @@ class ChatService:
                             "details": {
                                 "type": "tool_use",
                                 "tool_name": tool_name,
+                                "name": tool_name,  # Frontend expects 'name' field
                                 "status": "started",
-                                "input": tool_input,
+                                "input": serializable_input,
                             },
                         }
                     )
@@ -693,7 +743,8 @@ class ChatService:
                             "type": "tool_result",
                             "tool_name": tool_name,
                             "status": "completed",
-                            "output": serializable_output,
+                            "output": serializable_output,  # Keep for backward compatibility
+                            "content": serializable_output,  # Frontend expects 'content' field
                         },
                     }
 
