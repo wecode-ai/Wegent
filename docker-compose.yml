@@ -110,7 +110,7 @@ services:
   frontend:
     # build:
     #   dockerfile: docker/frontend/Dockerfile
-    image: test
+    image: ghcr.io/wecode-ai/wegent-web:1.0.28
     container_name: wegent-frontend
     restart: always
     ports:
