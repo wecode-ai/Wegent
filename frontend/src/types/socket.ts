@@ -56,6 +56,7 @@ export interface ChatSendPayload {
   message: string;
   title?: string;
   attachment_id?: number;
+  enable_deep_thinking?: boolean;
   enable_web_search?: boolean;
   search_engine?: string;
   enable_clarification?: boolean;

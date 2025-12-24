@@ -167,6 +167,8 @@ export interface ChatMessageRequest {
   search_engine?: string;
   /** Enable clarification mode for this message */
   enable_clarification?: boolean;
+  /** Enable deep thinking mode for this message */
+  enable_deep_thinking?: boolean;
   /** Mark this as a group chat task */
   is_group_chat?: boolean;
   // Repository info for code tasks
@@ -938,6 +940,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         enable_web_search: request.enable_web_search,
         search_engine: request.search_engine,
         enable_clarification: request.enable_clarification,
+        enable_deep_thinking: request.enable_deep_thinking,
         force_override_bot_model: request.model_id,
         force_override_bot_model_type: request.force_override_bot_model ? 'user' : undefined,
         is_group_chat: request.is_group_chat,
