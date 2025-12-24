@@ -66,6 +66,72 @@ def _mask_api_key(api_key: str) -> str:
     return "***" if api_key else "EMPTY"
 
 
+def _has_auth_headers(headers: dict[str, Any] | None) -> bool:
+    """
+    Check if headers contain authentication-related keys.
+
+    This is used to detect when users are using proxy endpoints that
+    provide authentication via custom headers instead of api_key.
+
+    Args:
+        headers: Dictionary of HTTP headers
+
+    Returns:
+        True if headers contain auth-related keys
+    """
+    if not headers:
+        return False
+
+    # Common authentication header names (case-insensitive)
+    auth_keys = {
+        "authorization",
+        "x-api-key",
+        "api-key",
+        "x-auth-token",
+        "auth-token",
+        "authentication",
+    }
+
+    return any(key.lower() in auth_keys for key in headers.keys())
+
+
+def _prepare_anthropic_api_key(
+    api_key: str, default_headers: dict[str, Any] | None
+) -> str:
+    """
+    Prepare API key for ChatAnthropic initialization.
+
+    ChatAnthropic SDK validates that either api_key or auth token is set,
+    throwing error: "Could not resolve authentication method. Expected either
+    api_key or auth token to be set."
+
+    When using proxy endpoints with custom auth headers, we need to provide
+    a placeholder api_key to pass SDK validation, while actual auth is
+    handled via extra_headers.
+
+    Args:
+        api_key: Original API key (may be empty)
+        default_headers: Custom headers that may contain auth
+
+    Returns:
+        Original api_key if valid, or placeholder if custom auth headers exist
+    """
+    # If api_key is valid (non-empty), use it as-is
+    if api_key and api_key.strip():
+        return api_key
+
+    # If no api_key but has auth headers, use placeholder to pass SDK validation
+    if _has_auth_headers(default_headers):
+        logger.info(
+            "[factory] Using placeholder api_key for Anthropic SDK "
+            "as authentication is provided via custom headers"
+        )
+        return "sk-ant-placeholder-for-custom-auth"
+
+    # No api_key and no auth headers - will fail, but let SDK handle the error
+    return api_key
+
+
 class LangChainModelFactory:
     """Factory for creating LangChain chat model instances from model config.
 
@@ -97,7 +163,9 @@ class LangChainModelFactory:
             "class": ChatAnthropic,
             "params": lambda cfg, kw: {
                 "model": cfg["model_id"],
-                "api_key": cfg["api_key"],
+                "api_key": _prepare_anthropic_api_key(
+                    cfg["api_key"], cfg.get("default_headers")
+                ),
                 "anthropic_api_url": cfg.get("base_url") or None,
                 "temperature": kw.get("temperature", 1.0),
                 "max_tokens": kw.get("max_tokens", 4096),
