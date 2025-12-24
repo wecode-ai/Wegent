@@ -46,8 +46,14 @@ export default function TaskListSection({
   showTitle = true,
 }: TaskListSectionProps) {
   const router = useRouter();
-  const { selectedTaskDetail, setSelectedTask, refreshTasks, viewStatusVersion, markTaskAsViewed } =
-    useTaskContext();
+  const {
+    selectedTask,
+    selectedTaskDetail,
+    setSelectedTask,
+    refreshTasks,
+    viewStatusVersion,
+    markTaskAsViewed,
+  } = useTaskContext();
   const { clearAllStreams } = useChatStreamContext();
   const { t } = useTranslation('common');
   // Use viewStatusVersion to trigger re-render when task view status changes
@@ -92,6 +98,10 @@ export default function TaskListSection({
     // This is simpler and more reliable than using task timestamps which may vary
     // between list items and task details
     markTaskAsViewed(task.id, task.status);
+
+    // IMPORTANT: Set selected task immediately to prevent visual flicker
+    // This ensures the task is highlighted before navigation completes
+    setSelectedTask(task);
 
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams();
@@ -395,7 +405,9 @@ export default function TaskListSection({
                   <TooltipTrigger asChild>
                     <div
                       className={`flex items-center justify-center py-1.5 px-2 h-8 rounded-xl cursor-pointer ${
-                        selectedTaskDetail?.id === task.id ? 'bg-primary/10' : 'hover:bg-hover'
+                        selectedTask?.id === task.id || selectedTaskDetail?.id === task.id
+                          ? 'bg-primary/10'
+                          : 'hover:bg-hover'
                       }`}
                       onClick={() => handleTaskClick(task)}
                     >
@@ -441,7 +453,9 @@ export default function TaskListSection({
                 <TooltipTrigger asChild>
                   <div
                     className={`flex items-center gap-2 py-1.5 px-2 h-8 rounded-xl cursor-pointer ${
-                      selectedTaskDetail?.id === task.id ? 'bg-primary/10' : 'hover:bg-hover'
+                      selectedTask?.id === task.id || selectedTaskDetail?.id === task.id
+                        ? 'bg-primary/10'
+                        : 'hover:bg-hover'
                     }`}
                     onClick={() => handleTaskClick(task)}
                     onTouchStart={handleTouchStart(task)}
