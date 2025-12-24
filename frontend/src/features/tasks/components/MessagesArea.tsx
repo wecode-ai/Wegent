@@ -437,16 +437,19 @@ export default function MessagesArea({
           </Button>
         )}
 
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleShareTask}
-          disabled={isSharing}
-          className="flex items-center gap-2"
-        >
-          <Share2 className="h-4 w-4" />
-          {isSharing ? tCommon('shared_task.sharing') : tCommon('shared_task.share_link')}
-        </Button>
+        {/* Hide share link button for group chat tasks */}
+        {!isGroupChatTask && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleShareTask}
+            disabled={isSharing}
+            className="flex items-center gap-2"
+          >
+            <Share2 className="h-4 w-4" />
+            {isSharing ? tCommon('shared_task.sharing') : tCommon('shared_task.share_link')}
+          </Button>
+        )}
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
