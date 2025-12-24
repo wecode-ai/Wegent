@@ -112,3 +112,29 @@ def get_available_engines() -> list[dict[str, str]]:
         {"name": k, "display_name": v.get("display_name", k)}
         for k, v in config["engines"].items()
     ]
+
+
+def get_engine_max_results(engine_name: str | None = None) -> int:
+    """
+    Get the max_results configuration for a specific engine.
+    If engine_name is None, returns the first configured engine's max_results.
+    Returns 10 as fallback if not found.
+    """
+    config = _get_engines_config()
+    if not config or "engines" not in config:
+        return 10
+
+    engines = config["engines"]
+
+    # Select engine: requested one, or first available one
+    selected_name = (
+        engine_name
+        if engine_name and engine_name in engines
+        else next(iter(engines), None)
+    )
+
+    if not selected_name:
+        return 10
+
+    engine_config = engines[selected_name]
+    return engine_config.get("max_results", 10)

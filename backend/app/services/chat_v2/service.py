@@ -126,7 +126,12 @@ class ChatService:
 
         # Register web search if enabled globally
         if enable_web_search and settings.WEB_SEARCH_ENABLED:
-            self.tool_registry.register(WebSearchTool())
+            from app.services.search import get_engine_max_results
+
+            default_max_results = get_engine_max_results(None)
+            self.tool_registry.register(
+                WebSearchTool(default_max_results=default_max_results)
+            )
 
     def _create_agent(
         self,
@@ -603,9 +608,17 @@ class ChatService:
             # Always add web search tool if web search is enabled in settings
             # Regardless of frontend enable_web_search toggle
             if settings.WEB_SEARCH_ENABLED:
+                from app.services.search import get_engine_max_results
+
                 # Use specified search engine or default to first one
                 search_engine = config.search_engine if config.search_engine else None
-                extra_tools.append(WebSearchTool(engine_name=search_engine))
+                default_max_results = get_engine_max_results(search_engine)
+                extra_tools.append(
+                    WebSearchTool(
+                        engine_name=search_engine,
+                        default_max_results=default_max_results,
+                    )
+                )
 
             # Get chat history
             history = await self._get_chat_history(task_id, config.is_group_chat)
