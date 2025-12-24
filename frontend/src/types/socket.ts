@@ -104,6 +104,7 @@ export interface ChatStartPayload {
   task_id: number;
   subtask_id: number;
   bot_name?: string;
+  shell_type?: string; // Shell type for frontend display (Chat, ClaudeCode, Agno, etc.)
 }
 
 export interface ChatChunkPayload {

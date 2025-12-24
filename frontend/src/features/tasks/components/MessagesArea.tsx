@@ -81,6 +81,8 @@ function StreamingMessageBubble({
     subtaskId: message.subtaskId,
     // Pass thinking data for executor tasks (Claude Code, etc.)
     thinking: message.thinking as Message['thinking'],
+    // Pass result with shell_type for component selection
+    result: message.result,
   };
 
   return (
@@ -437,16 +439,19 @@ export default function MessagesArea({
           </Button>
         )}
 
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleShareTask}
-          disabled={isSharing}
-          className="flex items-center gap-2"
-        >
-          <Share2 className="h-4 w-4" />
-          {isSharing ? tCommon('shared_task.sharing') : tCommon('shared_task.share_link')}
-        </Button>
+        {/* Hide share link button for group chat tasks */}
+        {!isGroupChatTask && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleShareTask}
+            disabled={isSharing}
+            className="flex items-center gap-2"
+          >
+            <Share2 className="h-4 w-4" />
+            {isSharing ? tCommon('shared_task.sharing') : tCommon('shared_task.share_link')}
+          </Button>
+        )}
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -547,6 +552,7 @@ export default function MessagesArea({
       senderUserId: msg.senderUserId,
       shouldShowSender: msg.shouldShowSender,
       thinking: msg.thinking as Message['thinking'],
+      result: msg.result, // Include result with shell_type for component selection
       recoveredContent: msg.recoveredContent,
       isRecovered: msg.isRecovered,
       isIncomplete: msg.isIncomplete,
