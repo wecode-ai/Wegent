@@ -258,6 +258,7 @@ export default function CodePage() {
             taskDetail={selectedTaskDetail}
             onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
             onTaskDeleted={handleTaskDeleted}
+            className={isCollapsed && !isMobile ? '!pl-24' : ''}
           >
             {shareButton}
             {isMobile ? <ThemeToggle /> : <GithubStarButton />}

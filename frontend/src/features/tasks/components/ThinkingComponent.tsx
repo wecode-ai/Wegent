@@ -436,6 +436,11 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
   };
   // Check if content should be collapsible (more than 3 lines or long single lines)
   const shouldCollapse = (content: string): boolean => {
+    // Add null/undefined check
+    if (!content || typeof content !== 'string') {
+      return false;
+    }
+
     const lines = content.split('\n');
 
     // Check if there are more than 3 lines
@@ -1128,7 +1133,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
 
   return (
     <div
-      className="w-full rounded-lg border border-border bg-surface/80 shadow-sm relative"
+      className="w-full rounded-lg border border-border shadow-sm relative bg-surface/80"
       data-thinking-inline
     >
       <button
@@ -1137,9 +1142,9 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
         className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left transition-colors hover:bg-surface/60"
       >
         <div className="flex items-center gap-2">
-          <Brain className="h-4 w-4 text-blue-400" />
+          <Brain className="text-blue-400 h-4 w-4" />
           <span
-            className={`text-sm font-medium ${isThinkingCompleted ? 'text-blue-300' : 'text-blue-400'}`}
+            className={`font-medium text-sm ${isThinkingCompleted ? 'text-blue-300' : 'text-blue-400'}`}
           >
             {!isOpen && isThinkingCompleted
               ? formatCollapsedTitle()
@@ -1149,9 +1154,9 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
           </span>
         </div>
         {isOpen ? (
-          <ChevronUp className="h-4 w-4 text-text-tertiary" />
+          <ChevronUp className="text-text-tertiary h-4 w-4" />
         ) : (
-          <ChevronDown className="h-4 w-4 text-text-tertiary" />
+          <ChevronDown className="text-text-tertiary h-4 w-4" />
         )}
       </button>
 
@@ -1159,7 +1164,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
         <div className="relative">
           <div
             ref={contentRef}
-            className="space-y-3 px-3 pb-3 pt-1 max-h-[400px] overflow-y-auto custom-scrollbar"
+            className="overflow-y-auto custom-scrollbar space-y-3 px-3 pb-3 pt-1 max-h-[400px]"
           >
             {items.map((item, index) => {
               const confidenceText = formatConfidence(item.confidence);
@@ -1168,10 +1173,10 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
               return (
                 <div
                   key={index}
-                  className="rounded-md border border-border/60 bg-surface p-3 shadow-sm relative"
+                  className="rounded-md border border-border/60 bg-surface shadow-sm relative p-3"
                 >
                   {/* Title */}
-                  <div className="mb-2 text-xs font-semibold text-blue-300">
+                  <div className="mb-2 font-semibold text-blue-300 text-xs">
                     {getThinkingText(item.title)}
                   </div>
 
