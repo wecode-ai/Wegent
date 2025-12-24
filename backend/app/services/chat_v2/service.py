@@ -763,6 +763,8 @@ class ChatService:
 
             if subtask_id in getattr(namespace, "_active_streams", {}):
                 del namespace._active_streams[subtask_id]
+            if subtask_id in getattr(namespace, "_stream_versions", {}):
+                del namespace._stream_versions[subtask_id]
 
     async def _load_mcp_tools(
         self, task_id: int, bot_name: str = "", bot_namespace: str = "default"

@@ -167,6 +167,7 @@ async def _trigger_direct_chat(
         )
     )
     namespace._active_streams[assistant_subtask.id] = stream_task
+    namespace._stream_versions[assistant_subtask.id] = "v2"
     logger.info("[ai_trigger] Background stream task started")
 
 
