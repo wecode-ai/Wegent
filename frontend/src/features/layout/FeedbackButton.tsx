@@ -29,7 +29,7 @@ export function FeedbackButton({
 
   const baseClassName = showLabel
     ? 'flex items-center gap-3 text-sm text-text-primary hover:bg-muted transition-colors duration-150'
-    : 'px-3 py-1 bg-muted border border-border rounded-full flex items-center gap-1 text-sm font-medium text-text-primary hover:bg-border/40 transition-colors duration-200';
+    : 'h-9 px-3 bg-muted border border-border rounded-full flex items-center gap-1 text-sm font-medium text-text-primary hover:bg-border/40 transition-colors duration-200';
 
   const mergedClassName = `${baseClassName} ${className}`.trim();
 

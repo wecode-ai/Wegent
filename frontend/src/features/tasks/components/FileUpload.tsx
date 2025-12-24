@@ -320,11 +320,11 @@ export default function FileUpload({
             <TooltipTrigger asChild>
               <Button
                 type="button"
-                variant="ghost"
+                variant="outline"
                 size="icon"
                 onClick={handleClick}
                 disabled={disabled}
-                className="h-8 w-8 text-text-muted hover:text-text-primary hover:bg-muted"
+                className="h-9 w-9 rounded-full border-border bg-base text-text-primary hover:bg-hover"
               >
                 <Paperclip className="h-4 w-4" />
               </Button>
