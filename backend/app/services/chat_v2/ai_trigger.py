@@ -118,17 +118,14 @@ async def _trigger_direct_chat(
     Emits chat:start event and starts streaming in background task.
     """
     from app.api.ws.events import ServerEvents
+    from app.services.chat.ws_emitter import get_ws_emitter
 
-    # Emit chat:start event
+    # Emit chat:start event using global emitter for cross-worker broadcasting
     logger.info("[ai_trigger] Emitting chat:start event")
-    await namespace.emit(
-        ServerEvents.CHAT_START,
-        {
-            "task_id": task.id,
-            "subtask_id": assistant_subtask.id,
-            "message_id": assistant_subtask.message_id,
-        },
-        room=task_room,
+    emitter = get_ws_emitter()
+    await emitter.emit_chat_start(
+        task_id=task.id,
+        subtask_id=assistant_subtask.id,
     )
     logger.info("[ai_trigger] chat:start emitted")
 
@@ -253,10 +250,12 @@ async def _stream_chat_response(
         if not team:
             error_msg = "Team not found"
             span_manager.record_error(TelemetryEventNames.TEAM_NOT_FOUND, error_msg)
-            await namespace.emit(
-                ServerEvents.CHAT_ERROR,
-                {"subtask_id": subtask_id, "error": error_msg},
-                room=task_room,
+            from app.services.chat.ws_emitter import get_ws_emitter
+            error_emitter = get_ws_emitter()
+            await error_emitter.emit_chat_error(
+                task_id=task_data["id"],
+                subtask_id=subtask_id,
+                error=error_msg,
             )
             return
 
@@ -280,10 +279,12 @@ async def _stream_chat_response(
             span_manager.record_error(
                 TelemetryEventNames.CONFIG_BUILD_FAILED, error_msg
             )
-            await namespace.emit(
-                ServerEvents.CHAT_ERROR,
-                {"subtask_id": subtask_id, "error": error_msg},
-                room=task_room,
+            from app.services.chat.ws_emitter import get_ws_emitter
+            error_emitter = get_ws_emitter()
+            await error_emitter.emit_chat_error(
+                task_id=task_data["id"],
+                subtask_id=subtask_id,
+                error=error_msg,
             )
             return
 
@@ -328,10 +329,13 @@ async def _stream_chat_response(
         logger.exception("[ai_trigger] Stream error subtask=%d: %s", subtask_id, e)
         # Record error in span
         span_manager.record_exception(e)
-        await namespace.emit(
-            ServerEvents.CHAT_ERROR,
-            {"subtask_id": subtask_id, "error": str(e)},
-            room=task_room,
+        # Use global emitter for cross-worker broadcasting
+        from app.services.chat.ws_emitter import get_ws_emitter
+        error_emitter = get_ws_emitter()
+        await error_emitter.emit_chat_error(
+            task_id=task_data["id"],
+            subtask_id=subtask_id,
+            error=str(e),
         )
     finally:
         # Detach OTEL context first (before exiting span)
