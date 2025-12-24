@@ -207,21 +207,6 @@ trigger_update_front_web:
           - frontend/**/*
           - wecode/docker/frontend/**/*
 
-wegent-preview-web:
-  stage: package
-  retry: 1
-  variables:
-    SERVICE: wegent-preview-web
-    DOCKERFILE_PATH: wecode/docker/frontend_preview
-  script:
-    - build_image
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "develop"'
-      when: never
-    - changes:
-      - frontend/**/*
-      - wecode/docker/frontend_preview/**/*
-
 wegent-ops-web:
   stage: package
   retry: 1
