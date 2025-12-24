@@ -178,6 +178,7 @@ async def _trigger_direct_chat(
         )
     )
     namespace._active_streams[assistant_subtask.id] = stream_task
+    namespace._stream_versions[assistant_subtask.id] = "v1"
     logger.info(f"[ai_trigger] Background stream task started")
 
 
@@ -567,6 +568,8 @@ async def _stream_chat_response(
         await session_manager.delete_streaming_content(subtask_id)
         if subtask_id in namespace._active_streams:
             del namespace._active_streams[subtask_id]
+        if subtask_id in getattr(namespace, "_stream_versions", {}):
+            del namespace._stream_versions[subtask_id]
         # Cleanup MCP session when stream ends
         if mcp_session:
             from app.services.chat.tools import cleanup_mcp_session

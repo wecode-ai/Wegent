@@ -11,6 +11,7 @@ import { Tag } from '@/components/ui/tag';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Switch } from '@/components/ui/switch';
 import { CpuChipIcon, PencilIcon, TrashIcon, GlobeAltIcon } from '@heroicons/react/24/outline';
 import { Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
@@ -60,10 +61,12 @@ const PublicModelList: React.FC = () => {
     name: string;
     namespace: string;
     config: string;
+    is_active: boolean;
   }>({
     name: '',
     namespace: 'default',
     config: '{}',
+    is_active: true,
   });
   const [configError, setConfigError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -171,6 +174,9 @@ const PublicModelList: React.FC = () => {
         updateData.namespace = formData.namespace;
       }
       updateData.json = config;
+      if (formData.is_active !== selectedModel.is_active) {
+        updateData.is_active = formData.is_active;
+      }
 
       await adminApis.updatePublicModel(selectedModel.id, updateData);
       toast({ title: t('public_models.success.updated') });
@@ -214,6 +220,7 @@ const PublicModelList: React.FC = () => {
       name: '',
       namespace: 'default',
       config: '{}',
+      is_active: true,
     });
     setConfigError('');
     setSelectedModel(null);
@@ -225,6 +232,7 @@ const PublicModelList: React.FC = () => {
       name: model.name,
       namespace: model.namespace,
       config: JSON.stringify(model.json, null, 2),
+      is_active: model.is_active,
     });
     setIsEditDialogOpen(true);
   };
@@ -442,6 +450,21 @@ const PublicModelList: React.FC = () => {
                 className={`font-mono text-sm min-h-[200px] ${configError ? 'border-error' : ''}`}
               />
               {configError && <p className="text-xs text-error">{configError}</p>}
+            </div>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="edit-is-active">{t('public_models.columns.status')}</Label>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-text-muted">
+                  {formData.is_active
+                    ? t('public_models.status.active')
+                    : t('public_models.status.inactive')}
+                </span>
+                <Switch
+                  id="edit-is-active"
+                  checked={formData.is_active}
+                  onCheckedChange={checked => setFormData({ ...formData, is_active: checked })}
+                />
+              </div>
             </div>
           </div>
           <DialogFooter>

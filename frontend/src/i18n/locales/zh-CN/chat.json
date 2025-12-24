@@ -58,6 +58,8 @@
     "used_tool": "已使用工具",
     "times": "次",
     "used_tools": "使用了工具",
+    "using_tools": "使用工具中",
+    "tool_completed": "工具完成",
     "query": "查询",
     "search_completed": "搜索完成",
     "found": "找到"

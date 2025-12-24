@@ -1531,14 +1531,6 @@ export default function ChatArea({
                             onRemove={handleAttachmentRemove}
                           />
                         )}
-                      {/* Deep Thinking Toggle Button - only show for chat shell */}
-                      {isChatShell(selectedTeam) && (
-                        <DeepThinkingToggle
-                          enabled={enableDeepThinking}
-                          onToggle={setEnableDeepThinking}
-                          disabled={isLoading || isStreaming}
-                        />
-                      )}
                       {/* Clarification Toggle Button - only show for chat shell */}
                       {isChatShell(selectedTeam) && (
                         <ClarificationToggle
@@ -1584,6 +1576,14 @@ export default function ChatArea({
                     <div className="ml-auto flex items-center gap-2 flex-shrink-0">
                       {!shouldHideQuotaUsage && (
                         <QuotaUsage className="flex-shrink-0" compact={shouldUseCompactQuota} />
+                      )}
+                      {/* Deep Thinking Toggle Button - only show for chat shell */}
+                      {isChatShell(selectedTeam) && (
+                        <DeepThinkingToggle
+                          enabled={enableDeepThinking}
+                          onToggle={setEnableDeepThinking}
+                          disabled={isLoading || isStreaming}
+                        />
                       )}
                       {isStreaming || isStopping ? (
                         isStopping ? (
@@ -1767,14 +1767,6 @@ export default function ChatArea({
                           onRemove={handleAttachmentRemove}
                         />
                       )}
-                    {/* Deep Thinking Toggle Button - only show for chat shell */}
-                    {isChatShell(selectedTeam) && (
-                      <DeepThinkingToggle
-                        enabled={enableDeepThinking}
-                        onToggle={setEnableDeepThinking}
-                        disabled={isLoading || isStreaming}
-                      />
-                    )}
                     {/* Clarification Toggle Button - only show for chat shell */}
                     {isChatShell(selectedTeam) && (
                       <ClarificationToggle
@@ -1820,6 +1812,14 @@ export default function ChatArea({
                   <div className="ml-auto flex items-center gap-2 flex-shrink-0">
                     {!shouldHideQuotaUsage && (
                       <QuotaUsage className="flex-shrink-0" compact={shouldUseCompactQuota} />
+                    )}
+                    {/* Deep Thinking Toggle Button - only show for chat shell */}
+                    {isChatShell(selectedTeam) && (
+                      <DeepThinkingToggle
+                        enabled={enableDeepThinking}
+                        onToggle={setEnableDeepThinking}
+                        disabled={isLoading || isStreaming}
+                      />
                     )}
                     {isStreaming || isStopping ? (
                       isStopping ? (
