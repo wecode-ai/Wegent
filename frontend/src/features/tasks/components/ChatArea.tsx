@@ -5,7 +5,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { CircleStop, Upload } from 'lucide-react';
+import { CircleStop, Upload, ShieldX } from 'lucide-react';
 import MessagesArea from './MessagesArea';
 import ChatInput from './ChatInput';
 import SendButton from './SendButton';
@@ -269,7 +269,11 @@ export default function ChatArea({
     refreshSelectedTaskDetail,
     setSelectedTask,
     markTaskAsViewed,
+    accessDenied,
+    clearAccessDenied,
   } = useTaskContext();
+
+  const { t } = useTranslation();
 
   const detailTeamId = useMemo<number | null>(() => {
     if (!selectedTaskDetail?.team) {
@@ -1309,6 +1313,51 @@ export default function ChatArea({
   }, [hasMessages]);
 
   // Style reference: TaskParamWrapper.tsx
+  // Handle access denied state - show error UI when user doesn't have permission
+  if (accessDenied) {
+    const handleGoHome = () => {
+      clearAccessDenied();
+      setSelectedTask(null);
+      router.push('/chat');
+    };
+
+    return (
+      <div
+        ref={chatAreaRef}
+        className="flex-1 flex flex-col min-h-0 w-full relative"
+        style={{ height: '100%', boxSizing: 'border-box' }}
+      >
+        <div className="flex-1 flex items-center justify-center p-6">
+          <div className="max-w-lg w-full">
+            {/* Error Icon */}
+            <div className="flex justify-center mb-6">
+              <div className="w-20 h-20 rounded-full bg-destructive/10 flex items-center justify-center">
+                <ShieldX className="h-10 w-10 text-destructive" />
+              </div>
+            </div>
+
+            {/* Error Title */}
+            <h1 className="text-2xl font-semibold text-center mb-3 text-text-primary">
+              {t('tasks.access_denied_title')}
+            </h1>
+
+            {/* Error Description */}
+            <p className="text-center text-text-muted mb-8 leading-relaxed">
+              {t('tasks.access_denied_description')}
+            </p>
+
+            {/* Action Button */}
+            <div className="flex justify-center">
+              <Button onClick={handleGoHome} variant="default" size="default" className="min-w-[160px]">
+                {t('tasks.access_denied_go_home')}
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       ref={chatAreaRef}
