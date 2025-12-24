@@ -918,8 +918,25 @@ class ChatNamespace(socketio.AsyncNamespace):
             )
 
             if is_chat_shell:
-                # For Chat Shell tasks, use session_manager
-                await session_manager.cancel_stream(payload.subtask_id)
+                # For Chat Shell tasks, determine which session_manager to use
+                # based on whether deep thinking mode is enabled
+                # Check if this subtask was created with enable_deep_thinking flag
+                # by checking if it's in chat_v2's active streams
+                use_chat_v2 = payload.subtask_id in getattr(self, "_active_streams", {})
+
+                if use_chat_v2:
+                    # Use chat_v2 session_manager
+                    logger.info(
+                        f"[WS] chat:cancel Using chat_v2 session_manager for subtask_id={payload.subtask_id}"
+                    )
+                    from app.services.chat_v2.storage import session_manager as session_manager_v2
+                    await session_manager_v2.cancel_stream(payload.subtask_id)
+                else:
+                    # Use chat session_manager
+                    logger.info(
+                        f"[WS] chat:cancel Using chat session_manager for subtask_id={payload.subtask_id}"
+                    )
+                    await session_manager.cancel_stream(payload.subtask_id)
             else:
                 # For Executor tasks, call executor_manager API
                 await call_executor_cancel(subtask.task_id)
