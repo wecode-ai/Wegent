@@ -313,6 +313,8 @@ async def _stream_chat_response(
             enable_web_search=payload.enable_web_search,
             search_engine=payload.search_engine,
             message_id=message_id,
+            bot_name=chat_config.bot_name,
+            bot_namespace=chat_config.bot_namespace,
             shell_type=chat_config.shell_type,  # Pass shell_type from chat_config
         )
 

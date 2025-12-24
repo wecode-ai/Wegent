@@ -62,6 +62,8 @@ class WebSocketStreamConfig:
     is_group_chat: bool = False
     enable_web_search: bool = False
     search_engine: str | None = None
+    bot_name: str = ""
+    bot_namespace: str = "default"
     extra_tools: list[BaseTool] = field(default_factory=list)
     message_id: int | None = None  # Message ID for ordering in frontend
     shell_type: str = "Chat"  # Shell type for frontend display
@@ -565,7 +567,9 @@ class ChatService:
 
             # Load MCP tools if enabled
             if settings.CHAT_MCP_ENABLED:
-                mcp_client = await self._load_mcp_tools(task_id)
+                mcp_client = await self._load_mcp_tools(
+                    task_id, config.bot_name, config.bot_namespace
+                )
                 if mcp_client:
                     extra_tools.extend(mcp_client.get_tools())
                     core.set_mcp_client(mcp_client)
@@ -760,40 +764,230 @@ class ChatService:
             if subtask_id in getattr(namespace, "_active_streams", {}):
                 del namespace._active_streams[subtask_id]
 
-    async def _load_mcp_tools(self, task_id: int) -> Any:
-        """Load MCP tools for a task.
+    async def _load_mcp_tools(
+        self, task_id: int, bot_name: str = "", bot_namespace: str = "default"
+    ) -> Any:
+        """Load MCP tools for a task, merging backend and bot configurations.
+
+        This method combines MCP server configurations from two sources:
+        1. Backend environment variable (CHAT_MCP_SERVERS) - global configuration
+        2. Bot's Ghost CRD (ghost.spec.mcpServers) - bot-specific configuration
+
+        If a server name exists in both configurations, the bot's configuration
+        takes precedence to allow per-bot customization.
+
+        Protection mechanisms:
+        - Timeout protection: MCP connection with timeout (30s default)
+        - Exception isolation: All MCP errors are caught and logged
+        - Graceful degradation: Returns None on failure, chat continues without MCP tools
 
         Args:
             task_id: Task ID for session management
+            bot_name: Bot name to query Ghost MCP configuration
+            bot_namespace: Bot namespace for Ghost query
 
         Returns:
-            MCPClient instance or None
+            MCPClient instance or None (None on any failure to protect backend stability)
         """
         try:
             from .tools.mcp import MCPClient
 
+            # Step 1: Load backend MCP configuration
+            backend_servers = {}
             mcp_servers_config = getattr(settings, "CHAT_MCP_SERVERS", "")
-            if not mcp_servers_config:
+            if mcp_servers_config:
+                try:
+                    config_data = json.loads(mcp_servers_config)
+                    backend_servers = config_data.get("mcpServers", config_data)
+                    if backend_servers:
+                        logger.info(
+                            "[MCP] Loaded %d backend MCP servers from CHAT_MCP_SERVERS",
+                            len(backend_servers),
+                        )
+                except json.JSONDecodeError as e:
+                    logger.warning("[MCP] Failed to parse CHAT_MCP_SERVERS: %s", str(e))
+
+            # Step 2: Load bot's MCP configuration from Ghost CRD
+            bot_servers = {}
+            if bot_name and bot_namespace:
+                try:
+                    bot_servers = await asyncio.wait_for(
+                        self._get_bot_mcp_servers(bot_name, bot_namespace), timeout=5.0
+                    )
+                    if bot_servers:
+                        logger.info(
+                            "[MCP] Loaded %d bot MCP servers from Ghost %s/%s",
+                            len(bot_servers),
+                            bot_namespace,
+                            bot_name,
+                        )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "[MCP] Timeout querying bot MCP servers for %s/%s",
+                        bot_namespace,
+                        bot_name,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "[MCP] Failed to load bot MCP servers for %s/%s: %s",
+                        bot_namespace,
+                        bot_name,
+                        str(e),
+                    )
+
+            # Step 3: Merge configurations (bot config takes precedence)
+            merged_servers = {**backend_servers, **bot_servers}
+
+            if not merged_servers:
+                logger.info(
+                    "[MCP] No MCP servers configured for task %d (bot=%s/%s)",
+                    task_id,
+                    bot_namespace,
+                    bot_name,
+                )
                 return None
 
-            config_data = json.loads(mcp_servers_config)
-            servers = config_data.get("mcpServers", config_data)
-
-            if not servers:
-                return None
-
-            client = MCPClient(servers)
-            await client.connect()
             logger.info(
-                "[MCP] Loaded %d tools for task %d",
-                len(client.get_tools()),
+                "[MCP] Merged MCP configuration: %d servers (backend=%d, bot=%d, merged=%d) for task %d",
+                len(merged_servers),
+                len(backend_servers),
+                len(bot_servers),
+                len(merged_servers),
                 task_id,
             )
-            return client
+
+            # Step 4: Create MCP client with merged configuration
+            # Add timeout protection for MCP connection
+            client = MCPClient(merged_servers)
+            try:
+                # Timeout for connecting to MCP servers (30 seconds)
+                await asyncio.wait_for(client.connect(), timeout=30.0)
+                logger.info(
+                    "[MCP] Loaded %d tools from %d MCP servers for task %d",
+                    len(client.get_tools()),
+                    len(merged_servers),
+                    task_id,
+                )
+                return client
+            except asyncio.TimeoutError:
+                logger.error(
+                    "[MCP] Timeout connecting to MCP servers for task %d (bot=%s/%s)",
+                    task_id,
+                    bot_namespace,
+                    bot_name,
+                )
+                return None
+            except Exception as e:
+                logger.error(
+                    "[MCP] Failed to connect to MCP servers for task %d: %s",
+                    task_id,
+                    str(e),
+                )
+                return None
 
         except Exception:
-            logger.exception("[MCP] Failed to load MCP tools for task %d", task_id)
+            # Catch all exceptions to protect backend stability
+            # MCP tool loading should NEVER crash the chat service
+            logger.exception(
+                "[MCP] Unexpected error loading MCP tools for task %d (bot=%s/%s)",
+                task_id,
+                bot_namespace,
+                bot_name,
+            )
             return None
+
+    async def _get_bot_mcp_servers(
+        self, bot_name: str, bot_namespace: str
+    ) -> dict[str, Any]:
+        """Query bot's Ghost CRD to get MCP server configuration.
+
+        Args:
+            bot_name: Bot name
+            bot_namespace: Bot namespace
+
+        Returns:
+            Dictionary of MCP servers from ghost.spec.mcpServers, or empty dict
+        """
+        return await asyncio.to_thread(
+            self._get_bot_mcp_servers_sync, bot_name, bot_namespace
+        )
+
+    def _get_bot_mcp_servers_sync(
+        self, bot_name: str, bot_namespace: str
+    ) -> dict[str, Any]:
+        """Synchronous implementation of bot MCP servers query."""
+        from app.db.session import SessionLocal
+        from app.models.kind import Kind
+        from app.schemas.kind import Bot, Ghost
+
+        db = SessionLocal()
+        try:
+            # Query bot Kind
+            bot_kind = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "Bot",
+                    Kind.name == bot_name,
+                    Kind.namespace == bot_namespace,
+                    Kind.is_active,
+                )
+                .first()
+            )
+
+            if not bot_kind or not bot_kind.json:
+                logger.debug(
+                    "[MCP] Bot %s/%s not found or has no JSON", bot_namespace, bot_name
+                )
+                return {}
+
+            # Parse Bot CRD to get ghostRef
+            bot_crd = Bot.model_validate(bot_kind.json)
+            if not bot_crd.spec or not bot_crd.spec.ghostRef:
+                logger.debug("[MCP] Bot %s/%s has no ghostRef", bot_namespace, bot_name)
+                return {}
+
+            ghost_name = bot_crd.spec.ghostRef.name
+            ghost_namespace = bot_crd.spec.ghostRef.namespace
+
+            # Query Ghost Kind
+            ghost_kind = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "Ghost",
+                    Kind.name == ghost_name,
+                    Kind.namespace == ghost_namespace,
+                    Kind.is_active,
+                )
+                .first()
+            )
+
+            if not ghost_kind or not ghost_kind.json:
+                logger.debug(
+                    "[MCP] Ghost %s/%s not found or has no JSON",
+                    ghost_namespace,
+                    ghost_name,
+                )
+                return {}
+
+            # Parse Ghost CRD to get mcpServers
+            ghost_crd = Ghost.model_validate(ghost_kind.json)
+            if not ghost_crd.spec or not ghost_crd.spec.mcpServers:
+                logger.debug(
+                    "[MCP] Ghost %s/%s has no mcpServers", ghost_namespace, ghost_name
+                )
+                return {}
+
+            return ghost_crd.spec.mcpServers
+
+        except Exception:
+            logger.exception(
+                "[MCP] Failed to query bot MCP servers for %s/%s",
+                bot_namespace,
+                bot_name,
+            )
+            return {}
+        finally:
+            db.close()
 
     # ==================== Helper Methods ====================
 
