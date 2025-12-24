@@ -281,11 +281,16 @@ app.add_middleware(
 
 **2. 检查前端 API URL**
 ```bash
-# frontend/.env.local
-NEXT_PUBLIC_API_URL=http://localhost:8000
+# frontend/.env.local 或环境变量
+# 运行时变量（推荐，可在不重新构建的情况下更改）：
+RUNTIME_INTERNAL_API_URL=http://localhost:8000
+RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000
 
-# 确保与后端地址一致
+# 旧版（已弃用）：
+# NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
+
+> **注意**: 前端现在使用 `RUNTIME_INTERNAL_API_URL` 替代 `NEXT_PUBLIC_API_URL`。运行时变量可以在不重新构建应用的情况下更改。
 
 **3. 使用浏览器开发工具调试**
 - 打开 F12 开发者工具

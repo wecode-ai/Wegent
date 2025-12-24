@@ -133,8 +133,9 @@ BACKEND_PID=$!
 echo -e "\n${YELLOW}Step 4: Starting Frontend...${NC}"
 cd "$PROJECT_ROOT/frontend"
 
-# Set environment variables for frontend
-export NEXT_PUBLIC_API_URL="http://localhost:8000"
+# Set runtime environment variables for frontend (can be changed without rebuilding)
+export RUNTIME_INTERNAL_API_URL="http://localhost:8000"
+export RUNTIME_SOCKET_DIRECT_URL="http://localhost:8000"
 
 # Install dependencies if needed
 if [ ! -d "node_modules" ]; then
