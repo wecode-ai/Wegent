@@ -124,15 +124,12 @@ async def _trigger_direct_chat(
     """
     from app.api.ws.events import ServerEvents
 
-    # Emit chat:start event
+    # Emit chat:start event using global emitter for cross-worker broadcasting
     logger.info(f"[ai_trigger] Emitting chat:start event")
-    await namespace.emit(
-        ServerEvents.CHAT_START,
-        {
-            "task_id": task.id,
-            "subtask_id": assistant_subtask.id,
-        },
-        room=task_room,
+    emitter = get_ws_emitter()
+    await emitter.emit_chat_start(
+        task_id=task.id,
+        subtask_id=assistant_subtask.id,
     )
     logger.info(f"[ai_trigger] chat:start emitted")
 
@@ -259,10 +256,11 @@ async def _stream_chat_response(
             # Record error in span
             span_manager.record_error(TelemetryEventNames.BOT_NOT_FOUND, error_msg)
 
-            await namespace.emit(
-                ServerEvents.CHAT_ERROR,
-                {"subtask_id": subtask_id, "error": error_msg},
-                room=task_room,
+            emitter = get_ws_emitter()
+            await emitter.emit_chat_error(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                error=error_msg,
             )
             return
 
@@ -367,6 +365,9 @@ async def _stream_chat_response(
         from app.services.chat.providers import get_provider
         from app.services.chat.providers.base import ChunkType
 
+        # Get global emitter
+        emitter = get_ws_emitter()
+
         # Check if this is a group chat - get history from database with user names
         is_group_chat = payload.is_group_chat
         if is_group_chat:
@@ -405,10 +406,10 @@ async def _stream_chat_response(
                 TelemetryEventNames.PROVIDER_CREATION_FAILED, error_msg
             )
 
-            await namespace.emit(
-                ServerEvents.CHAT_ERROR,
-                {"subtask_id": subtask_id, "error": error_msg},
-                room=task_room,
+            await emitter.emit_chat_error(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                error=error_msg,
             )
             return
 
@@ -429,10 +430,9 @@ async def _stream_chat_response(
         async for chunk in stream_gen:
             if cancel_event.is_set() or await session_manager.is_cancelled(subtask_id):
                 # Cancelled
-                await namespace.emit(
-                    ServerEvents.CHAT_CANCELLED,
-                    {"subtask_id": subtask_id},
-                    room=task_room,
+                await emitter.emit_chat_cancelled(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
                 )
                 break
 
@@ -440,14 +440,11 @@ async def _stream_chat_response(
                 full_response += chunk.content
 
                 # Emit chunk
-                await namespace.emit(
-                    ServerEvents.CHAT_CHUNK,
-                    {
-                        "subtask_id": subtask_id,
-                        "content": chunk.content,
-                        "offset": offset,
-                    },
-                    room=task_room,
+                await emitter.emit_chat_chunk(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    content=chunk.content,
+                    offset=offset,
                 )
                 offset += len(chunk.content)
 
@@ -480,13 +477,10 @@ async def _stream_chat_response(
                     TelemetryEventNames.STREAM_CHUNK_ERROR, error_msg, model_config
                 )
 
-                await namespace.emit(
-                    ServerEvents.CHAT_ERROR,
-                    {
-                        "subtask_id": subtask_id,
-                        "error": error_msg,
-                    },
-                    room=task_room,
+                await emitter.emit_chat_error(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    error=error_msg,
                 )
                 await db_handler.update_subtask_status(
                     subtask_id, "FAILED", error=chunk.error
@@ -551,10 +545,12 @@ async def _stream_chat_response(
         # Record error in span
         span_manager.record_exception(e)
 
-        await namespace.emit(
-            ServerEvents.CHAT_ERROR,
-            {"subtask_id": subtask_id, "error": str(e)},
-            room=task_room,
+        # Use global emitter for cross-worker broadcasting
+        error_emitter = get_ws_emitter()
+        await error_emitter.emit_chat_error(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            error=str(e),
         )
     finally:
         # Detach OTEL context first (before exiting span)

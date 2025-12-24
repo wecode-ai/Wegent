@@ -153,35 +153,35 @@ class SSEEmitter(StreamEmitter):
 
 
 class WebSocketEmitter(StreamEmitter):
-    """WebSocket emitter using Socket.IO namespace.
+    """WebSocket emitter using global ws_emitter for cross-worker broadcasting.
 
-    Emits events through a Socket.IO namespace to a specific room.
+    Uses the global ws_emitter (with Redis adapter) to ensure events are
+    broadcast to all backend replicas in multi-instance deployments.
     """
 
-    def __init__(self, namespace: Any, task_room: str):
+    def __init__(self, namespace: Any, task_room: str, task_id: int):
         """Initialize WebSocket emitter.
 
         Args:
-            namespace: Socket.IO namespace instance
+            namespace: Socket.IO namespace instance (kept for compatibility)
             task_room: Room name for broadcasting events
+            task_id: Task ID for emitting events
         """
         self.namespace = namespace
         self.task_room = task_room
+        self.task_id = task_id
 
     async def emit_start(
         self, task_id: int, subtask_id: int, shell_type: str = "Chat"
     ) -> None:
-        """Emit chat:start event with shell_type."""
-        from app.api.ws.events import ServerEvents
+        """Emit chat:start event using global emitter with shell_type."""
+        from app.services.chat.ws_emitter import get_ws_emitter
 
-        await self.namespace.emit(
-            ServerEvents.CHAT_START,
-            {
-                "task_id": task_id,
-                "subtask_id": subtask_id,
-                "shell_type": shell_type,  # Include shell_type for frontend display logic
-            },
-            room=self.task_room,
+        emitter = get_ws_emitter()
+        await emitter.emit_chat_start(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            shell_type=shell_type,
         )
         logger.info("[WS_EMITTER] chat:start emitted with shell_type=%s", shell_type)
 
@@ -192,11 +192,11 @@ class WebSocketEmitter(StreamEmitter):
         subtask_id: int,
         result: dict[str, Any] | None = None,
     ) -> None:
-        """Emit chat:chunk event with optional result data (thinking, workbench).
+        """Emit chat:chunk event using global emitter with optional result data.
 
         This follows the same pattern as executor tasks to enable thinking/workbench display.
         """
-        from app.api.ws.events import ServerEvents
+        from app.services.chat.ws_emitter import get_ws_emitter
 
         logger.debug(
             "[WS_EMITTER] emit_chunk: subtask_id=%d, offset=%d, content_len=%d, has_result=%s",
@@ -205,19 +205,13 @@ class WebSocketEmitter(StreamEmitter):
             len(content),
             result is not None,
         )
-        payload: dict[str, Any] = {
-            "subtask_id": subtask_id,
-            "content": content,
-            "offset": offset,
-        }
-        # Include full result if provided (for chat_v2 thinking/workbench display)
-        if result is not None:
-            payload["result"] = result
-
-        await self.namespace.emit(
-            ServerEvents.CHAT_CHUNK,
-            payload,
-            room=self.task_room,
+        emitter = get_ws_emitter()
+        await emitter.emit_chat_chunk(
+            task_id=self.task_id,
+            subtask_id=subtask_id,
+            content=content,
+            offset=offset,
+            result=result,
         )
 
     async def emit_done(
@@ -228,40 +222,38 @@ class WebSocketEmitter(StreamEmitter):
         result: dict[str, Any],
         message_id: int | None = None,
     ) -> None:
-        """Emit chat:done event."""
-        from app.api.ws.events import ServerEvents
+        """Emit chat:done event using global emitter."""
+        from app.services.chat.ws_emitter import get_ws_emitter
 
-        await self.namespace.emit(
-            ServerEvents.CHAT_DONE,
-            {
-                "task_id": task_id,
-                "subtask_id": subtask_id,
-                "offset": offset,
-                "result": result,
-                "message_id": message_id,
-            },
-            room=self.task_room,
+        emitter = get_ws_emitter()
+        await emitter.emit_chat_done(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            offset=offset,
+            result=result,
+            message_id=message_id,
         )
         logger.info("[WS_EMITTER] chat:done emitted message_id=%s", message_id)
 
     async def emit_error(self, subtask_id: int, error: str) -> None:
-        """Emit chat:error event."""
-        from app.api.ws.events import ServerEvents
+        """Emit chat:error event using global emitter."""
+        from app.services.chat.ws_emitter import get_ws_emitter
 
-        await self.namespace.emit(
-            ServerEvents.CHAT_ERROR,
-            {"subtask_id": subtask_id, "error": error},
-            room=self.task_room,
+        emitter = get_ws_emitter()
+        await emitter.emit_chat_error(
+            task_id=self.task_id,
+            subtask_id=subtask_id,
+            error=error,
         )
         logger.warning("[WS_EMITTER] chat:error emitted: %s", error)
 
     async def emit_cancelled(self, subtask_id: int) -> None:
-        """Emit chat:cancelled event."""
-        from app.api.ws.events import ServerEvents
+        """Emit chat:cancelled event using global emitter."""
+        from app.services.chat.ws_emitter import get_ws_emitter
 
-        await self.namespace.emit(
-            ServerEvents.CHAT_CANCELLED,
-            {"subtask_id": subtask_id},
-            room=self.task_room,
+        emitter = get_ws_emitter()
+        await emitter.emit_chat_cancelled(
+            task_id=self.task_id,
+            subtask_id=subtask_id,
         )
         logger.info("[WS_EMITTER] chat:cancelled emitted")
