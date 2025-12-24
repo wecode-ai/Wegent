@@ -243,6 +243,7 @@ async def _stream_chat_response(
             error_msg = "Team not found"
             span_manager.record_error(TelemetryEventNames.TEAM_NOT_FOUND, error_msg)
             from app.services.chat.ws_emitter import get_ws_emitter
+
             error_emitter = get_ws_emitter()
             await error_emitter.emit_chat_error(
                 task_id=task_data["id"],
@@ -273,6 +274,7 @@ async def _stream_chat_response(
                 TelemetryEventNames.CONFIG_BUILD_FAILED, error_msg
             )
             from app.services.chat.ws_emitter import get_ws_emitter
+
             error_emitter = get_ws_emitter()
             await error_emitter.emit_chat_error(
                 task_id=task_data["id"],
@@ -344,6 +346,7 @@ async def _stream_chat_response(
         span_manager.record_exception(e)
         # Use global emitter for cross-worker broadcasting
         from app.services.chat.ws_emitter import get_ws_emitter
+
         error_emitter = get_ws_emitter()
         await error_emitter.emit_chat_error(
             task_id=task_data["id"],
