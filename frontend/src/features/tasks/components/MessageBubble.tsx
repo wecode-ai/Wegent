@@ -1293,8 +1293,8 @@ const MessageBubble = memo(
               <div className="absolute -bottom-8 left-2 flex items-center gap-1 z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                 <CopyButton
                   content={msg.content}
-                  className="h-6 w-6 hover:bg-muted"
-                  tooltip={t('actions.copy') || 'Copy'}
+                  className="h-[30px] w-[30px] !rounded-full bg-fill-tert hover:!bg-fill-sec"
+                  tooltip={t('chat:actions.copy') || 'Copy'}
                   onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
                 />
               </div>
