@@ -97,7 +97,13 @@ class LangChainModelFactory:
             "class": ChatAnthropic,
             "params": lambda cfg, kw: {
                 "model": cfg["model_id"],
-                "api_key": cfg["api_key"],
+                # Anthropic client requires api_key. If missing but using custom base_url (proxy),
+                # provide dummy key to pass validation.
+                "api_key": (
+                    cfg["api_key"]
+                    if cfg["api_key"]
+                    else ("dummy" if cfg.get("base_url") else None)
+                ),
                 "anthropic_api_url": cfg.get("base_url") or None,
                 "temperature": kw.get("temperature", 1.0),
                 "max_tokens": kw.get("max_tokens", 4096),
