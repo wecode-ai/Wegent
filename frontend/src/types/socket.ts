@@ -56,6 +56,7 @@ export interface ChatSendPayload {
   message: string;
   title?: string;
   attachment_id?: number;
+  enable_deep_thinking?: boolean;
   enable_web_search?: boolean;
   search_engine?: string;
   enable_clarification?: boolean;
@@ -103,6 +104,7 @@ export interface ChatStartPayload {
   task_id: number;
   subtask_id: number;
   bot_name?: string;
+  shell_type?: string; // Shell type for frontend display (Chat, ClaudeCode, Agno, etc.)
 }
 
 export interface ChatChunkPayload {

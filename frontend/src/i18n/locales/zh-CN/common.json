@@ -389,7 +389,10 @@
     "mark_all_read": "全部标记为已读",
     "open_from": "<> Code",
     "open_from_vscode": "VSCode",
-    "open_from_git": "Git"
+    "open_from_git": "Git",
+    "access_denied_title": "无访问权限",
+    "access_denied_description": "您没有权限访问此任务。请联系任务创建者，通过「邀请成员」功能邀请您加入。",
+    "access_denied_go_home": "返回聊天页"
   },
   "settings": {
     "title": "设置",

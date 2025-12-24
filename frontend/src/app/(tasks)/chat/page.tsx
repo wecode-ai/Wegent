@@ -32,6 +32,7 @@ import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContex
 import { paths } from '@/config/paths';
 import { Button } from '@/components/ui/button';
 import { useTranslation } from '@/hooks/useTranslation';
+import PoweredByFooter from '@/components/common/PoweredByFooter';
 
 export default function ChatPage() {
   const { t } = useTranslation();
@@ -193,6 +194,7 @@ export default function ChatPage() {
             taskDetail={selectedTaskDetail}
             onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
             onTaskDeleted={handleTaskDeleted}
+            className={isCollapsed && !isMobile ? '!pl-24' : ''}
           >
             {/* Create Group Chat Button - only show when no task is open */}
             {!hasOpenTask && (
@@ -223,6 +225,8 @@ export default function ChatPage() {
       </div>
       {/* Create Group Chat Dialog */}
       <CreateGroupChatDialog open={isCreateGroupChatOpen} onOpenChange={setIsCreateGroupChatOpen} />
+      {/* Show footer only when no task is selected */}
+      {!taskId && <PoweredByFooter />}
     </>
   );
 }

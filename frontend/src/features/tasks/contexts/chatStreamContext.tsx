@@ -99,6 +99,7 @@ export interface UnifiedMessage {
     value?: string;
     thinking?: unknown[];
     workbench?: Record<string, unknown>;
+    shell_type?: string; // Shell type for frontend display (Chat, ClaudeCode, Agno, etc.)
   };
 }
 
@@ -167,6 +168,8 @@ export interface ChatMessageRequest {
   search_engine?: string;
   /** Enable clarification mode for this message */
   enable_clarification?: boolean;
+  /** Enable deep thinking mode for this message */
+  enable_deep_thinking?: boolean;
   /** Mark this as a group chat task */
   is_group_chat?: boolean;
   // Repository info for code tasks
@@ -368,7 +371,16 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
    * Creates a new AI message in the unified messages Map
    */
   const handleChatStart = useCallback((data: ChatStartPayload) => {
-    const { task_id, subtask_id } = data;
+    const { task_id, subtask_id, shell_type } = data;
+
+    // DEBUG: Log the complete chat:start event payload
+    console.log('[ChatStreamContext][chat:start] Received event:', {
+      full_data: data,
+      task_id,
+      subtask_id,
+      shell_type,
+      has_shell_type: !!shell_type,
+    });
 
     // Track subtask to task mapping
     if (subtask_id) {
@@ -376,6 +388,10 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     }
 
     const aiMessageId = generateMessageId('ai', subtask_id);
+
+    // Build initial result object with shell_type if available
+    const initialResult = shell_type ? { shell_type } : undefined;
+    console.log('[ChatStreamContext][chat:start] Initial result:', initialResult);
 
     setStreamStates(prev => {
       const newMap = new Map(prev);
@@ -393,12 +409,14 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           content: '',
           timestamp: Date.now(),
           subtaskId: subtask_id,
+          result: initialResult, // Include shell_type from chat:start event
         });
 
         console.log('[ChatStreamContext][chat:start] Added AI message to existing task', {
           taskId: task_id,
           aiMessageId,
           subtaskId: subtask_id,
+          shell_type,
         });
         logMessagesState('chat:start', task_id, newMessages);
 
@@ -426,6 +444,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
             content: '',
             timestamp: Date.now(),
             subtaskId: subtask_id,
+            result: initialResult, // Include shell_type from chat:start event
           });
 
           // Move state from temp ID to real ID
@@ -487,6 +506,15 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
   const handleChatChunk = useCallback((data: ChatChunkPayload) => {
     const { subtask_id, content, result } = data;
 
+    // DEBUG: Log result to check shell_type
+    if (result) {
+      console.log('[ChatStreamContext] Received chunk with result:', {
+        subtask_id,
+        result,
+        shell_type: (result as { shell_type?: string })?.shell_type,
+      });
+    }
+
     // Find task ID from subtask
     let taskId = subtaskToTaskRef.current.get(subtask_id);
 
@@ -518,6 +546,14 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       const newMessages = new Map(currentState.messages);
       const existingMessage = newMessages.get(aiMessageId);
       if (existingMessage) {
+        // DEBUG: Log existing message result
+        console.log('[ChatStreamContext][chunk] Existing message:', {
+          msgId: aiMessageId,
+          hasExistingResult: !!existingMessage.result,
+          existingResult: existingMessage.result,
+          newResult: result,
+        });
+
         // For executor tasks, result contains full data (thinking, workbench)
         // Content is accumulated, but result is replaced with latest
         const updatedMessage: UnifiedMessage = {
@@ -528,6 +564,14 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         if (result) {
           updatedMessage.result = result as UnifiedMessage['result'];
         }
+
+        // DEBUG: Log updated message result
+        console.log('[ChatStreamContext][chunk] Updated message result:', {
+          msgId: aiMessageId,
+          hasResult: !!updatedMessage.result,
+          result: updatedMessage.result,
+        });
+
         newMessages.set(aiMessageId, updatedMessage);
       }
 
@@ -598,6 +642,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         newMessages.set(aiMessageId, {
           ...existingMessage,
           status: 'completed',
+          subtaskStatus: 'COMPLETED', // Update subtaskStatus for ThinkingComponent
           content: finalContent || existingMessage.content,
           // Set messageId from backend for proper sorting
           messageId: message_id,
@@ -666,6 +711,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         newMessages.set(aiMessageId, {
           ...existingMessage,
           status: 'error',
+          subtaskStatus: 'FAILED', // Update subtaskStatus for ThinkingComponent
           error: error,
         });
       }
@@ -723,6 +769,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         newMessages.set(aiMessageId, {
           ...existingMessage,
           status: 'completed',
+          subtaskStatus: 'CANCELLED', // Update subtaskStatus for ThinkingComponent
         });
       }
 
@@ -938,6 +985,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         enable_web_search: request.enable_web_search,
         search_engine: request.search_engine,
         enable_clarification: request.enable_clarification,
+        enable_deep_thinking: request.enable_deep_thinking,
         force_override_bot_model: request.model_id,
         force_override_bot_model_type: request.force_override_bot_model ? 'user' : undefined,
         is_group_chat: request.is_group_chat,
