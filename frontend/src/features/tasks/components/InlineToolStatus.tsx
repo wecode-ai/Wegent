@@ -37,16 +37,17 @@ const InlineToolStatus = memo(function InlineToolStatus({
 }: InlineToolStatusProps) {
   const { t } = useTranslation('chat');
 
-  // Process thinking steps into paired search entries
-  interface SearchEntry {
+  // Process thinking steps into paired tool entries
+  interface ToolEntry {
+    toolName: string;
     query: string;
-    status: 'searching' | 'completed';
+    status: 'running' | 'completed';
     resultCount?: number;
     startIndex: number;
     endIndex?: number;
   }
 
-  const searchEntries: SearchEntry[] = [];
+  const toolEntries: ToolEntry[] = [];
   const toolStartMap = new Map<string, number>(); // Map run_id to start index
 
   if (thinking && thinking.length > 0) {
@@ -56,29 +57,44 @@ const InlineToolStatus = memo(function InlineToolStatus({
 
       // Track tool_use starts
       if (details.type === 'tool_use' && details.status === 'started') {
-        const toolName = details.tool_name || 'unknown';
-        if (toolName === 'web_search' && details.input) {
-          const query = (details.input as { query?: string }).query || '';
-          const runId = (step as { run_id?: string }).run_id || `${index}`;
+        const toolName: string =
+          (typeof details.tool_name === 'string' ? details.tool_name : '') ||
+          (typeof details.name === 'string' ? details.name : '') ||
+          'unknown';
+        const runId = (step as { run_id?: string }).run_id || `${index}`;
 
-          toolStartMap.set(runId, searchEntries.length);
-          searchEntries.push({
-            query,
-            status: 'searching',
-            startIndex: index,
-          });
+        let query: string = '';
+        if (toolName === 'web_search' && details.input) {
+          query = (details.input as { query?: string }).query || '';
+        } else if (toolName === 'wegentFetch' && details.input) {
+          query = (details.input as { url?: string }).url || '';
+        } else {
+          // For other tools, show a generic description
+          const titleStr = typeof step.title === 'string' ? step.title : '';
+          query = titleStr || toolName;
         }
+
+        toolStartMap.set(runId, toolEntries.length);
+        toolEntries.push({
+          toolName,
+          query,
+          status: 'running',
+          startIndex: index,
+        });
       }
       // Match tool_result with tool_use
       else if (details.type === 'tool_result' && details.status === 'completed') {
-        const toolName = details.tool_name || 'unknown';
-        if (toolName === 'web_search') {
-          const runId = (step as { run_id?: string }).run_id || '';
-          const startIdx = toolStartMap.get(runId);
+        const toolName: string =
+          (typeof details.tool_name === 'string' ? details.tool_name : '') ||
+          (typeof details.name === 'string' ? details.name : '') ||
+          'unknown';
+        const runId = (step as { run_id?: string }).run_id || '';
+        const startIdx = toolStartMap.get(runId);
 
-          let resultCount: number | undefined;
+        let resultCount: number | undefined;
+        if (toolName === 'web_search') {
           try {
-            const output = details.output;
+            const output = details.output || details.content;
             let outputData: { count?: number };
 
             if (typeof output === 'string') {
@@ -91,40 +107,40 @@ const InlineToolStatus = memo(function InlineToolStatus({
           } catch {
             // Ignore parse errors
           }
+        }
 
-          // Update the corresponding search entry
-          if (startIdx !== undefined && searchEntries[startIdx]) {
-            searchEntries[startIdx].status = 'completed';
-            searchEntries[startIdx].resultCount = resultCount;
-            searchEntries[startIdx].endIndex = index;
-          }
+        // Update the corresponding tool entry
+        if (startIdx !== undefined && toolEntries[startIdx]) {
+          toolEntries[startIdx].status = 'completed';
+          toolEntries[startIdx].resultCount = resultCount;
+          toolEntries[startIdx].endIndex = index;
         }
       }
     });
   }
 
-  // Check if any search is still in progress
-  const hasSearching = searchEntries.some(entry => entry.status === 'searching');
+  // Check if any tool is still running
+  const hasRunning = toolEntries.some(entry => entry.status === 'running');
 
-  // Default to expanded if there's an active search
+  // Default to expanded if there's an active tool
   // IMPORTANT: Call useState before any early returns
-  const [isExpanded, setIsExpanded] = useState(hasSearching);
+  const [isExpanded, setIsExpanded] = useState(hasRunning);
 
   // Early return after hooks
-  if (!thinking || thinking.length === 0 || searchEntries.length === 0) {
+  if (!thinking || thinking.length === 0 || toolEntries.length === 0) {
     return null;
   }
 
   const isRunning = taskStatus === 'RUNNING';
 
-  // Count total searches
-  const searchCount = searchEntries.length;
+  // Count total tools
+  const toolCount = toolEntries.length;
 
   // Summary text
   const summaryText = isRunning
-    ? `${t('messages.searching') || '搜索中'}...`
-    : searchCount > 0
-      ? `${t('messages.searched_for') || '为你搜索'} · ${searchCount} ${t('messages.times') || '次'}`
+    ? `${t('messages.using_tools') || '使用工具中'}...`
+    : toolCount > 0
+      ? `${t('messages.used_tools') || '使用了工具'} · ${toolCount} ${t('messages.times') || '次'}`
       : `${t('messages.used_tools') || '使用了工具'}`;
 
   return (
@@ -151,33 +167,35 @@ const InlineToolStatus = memo(function InlineToolStatus({
       {/* Expandable timeline */}
       {isExpanded && (
         <div className="mt-2 ml-4 border-l-2 border-blue-500/20 pl-4 space-y-3">
-          {searchEntries.map((entry, index) => (
+          {toolEntries.map((entry, index) => (
             <div key={index} className="space-y-2">
-              {/* Search start */}
+              {/* Tool start */}
               <div className="relative">
                 <div className="absolute -left-[21px] top-1.5 w-3 h-3 rounded-full border-2 border-blue-500/40 bg-surface" />
                 <div className="text-xs space-y-1">
                   <div className="flex items-center gap-2">
-                    {entry.status === 'searching' ? (
+                    {entry.status === 'running' ? (
                       <Loader2 className="h-3 w-3 animate-spin text-blue-500" />
                     ) : (
                       <CheckCircle2 className="h-3 w-3 text-blue-500" />
                     )}
                     <span className="font-medium text-blue-600 dark:text-blue-400">
-                      {entry.status === 'searching'
-                        ? t('messages.searching') || '搜索中'
-                        : t('messages.search_completed') || '搜索完成'}
+                      {entry.status === 'running'
+                        ? `${t('messages.using_tool') || '使用工具'}: ${entry.toolName}`
+                        : `${t('messages.tool_completed') || '工具完成'}: ${entry.toolName}`}
                     </span>
                   </div>
                   {entry.query && (
                     <div className="text-text-secondary ml-5">
-                      {t('messages.query') || '查询'}: {entry.query}
+                      {entry.toolName === 'web_search'
+                        ? `${t('messages.query') || '查询'}: ${entry.query}`
+                        : entry.query}
                     </div>
                   )}
                 </div>
               </div>
 
-              {/* Search result (only if completed) */}
+              {/* Tool result (only if completed) */}
               {entry.status === 'completed' && (
                 <div className="relative">
                   <div className="absolute -left-[21px] top-1.5 w-3 h-3 rounded-full border-2 border-green-500/40 bg-surface" />
@@ -185,9 +203,9 @@ const InlineToolStatus = memo(function InlineToolStatus({
                     <div className="flex items-center gap-2">
                       <CheckCircle2 className="h-3 w-3 text-green-500" />
                       <span className="font-medium text-green-600 dark:text-green-400">
-                        {typeof entry.resultCount === 'number'
+                        {entry.toolName === 'web_search' && typeof entry.resultCount === 'number'
                           ? `${t('messages.found') || '找到'} ${entry.resultCount} ${t('messages.results') || '条结果'}`
-                          : t('messages.search_completed') || '搜索完成'}
+                          : t('messages.tool_completed') || '工具完成'}
                       </span>
                     </div>
                   </div>

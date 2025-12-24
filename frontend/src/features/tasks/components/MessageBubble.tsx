@@ -372,7 +372,12 @@ const MessageBubble = memo(
     const renderMarkdownResult = (rawResult: string, promptPart?: string) => {
       const trimmed = (rawResult ?? '').trim();
       const fencedMatch = trimmed.match(/^```(?:\s*(?:markdown|md))?\s*\n([\s\S]*?)\n```$/);
-      const normalizedResult = fencedMatch ? fencedMatch[1] : trimmed;
+      let normalizedResult = fencedMatch ? fencedMatch[1] : trimmed;
+
+      // Pre-process markdown to handle edge cases where ** is followed by punctuation
+      // Markdown parsers don't recognize **'text'** or **text**。 as bold
+      // Convert these patterns to HTML <strong> tags for proper rendering
+      normalizedResult = normalizedResult.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
 
       const progressMatch = normalizedResult.match(/^__PROGRESS_BAR__:(.*?):(\d+)$/);
       if (progressMatch) {
@@ -1052,7 +1057,9 @@ const MessageBubble = memo(
     const renderRecoveredContent = () => {
       if (!msg.recoveredContent || msg.subtaskStatus !== 'RUNNING') return null;
 
-      const contentToRender = msg.recoveredContent;
+      // Pre-process markdown to handle edge cases where ** is followed by punctuation
+      // Same fix as in renderMarkdownResult - convert all ** to <strong> tags
+      const contentToRender = msg.recoveredContent.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
 
       // Try to parse clarification format from recovered/streaming content
       // This ensures clarification forms are rendered correctly during streaming
