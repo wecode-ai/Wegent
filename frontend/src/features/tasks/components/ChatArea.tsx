@@ -45,9 +45,7 @@ import type { SubtaskWithSender } from '@/apis/group-chat';
 const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18;
 
 // Responsive collapse thresholds based on container width
-// Level 1: Collapse quota to icon mode (priority)
-const COLLAPSE_QUOTA_THRESHOLD = 520;
-// Level 2: Collapse selectors with text to icon-only mode
+// Collapse selectors with text to icon-only mode
 const COLLAPSE_SELECTORS_THRESHOLD = 420;
 
 // Slogan Display Component - shows above input when no messages
@@ -256,9 +254,7 @@ export default function ChatArea({
   }, []);
 
   // Determine collapse levels based on container width
-  // Priority: 1. Collapse quota first, 2. Then collapse selectors to icon-only mode
-  const shouldCollapseQuota =
-    controlsContainerWidth > 0 && controlsContainerWidth < COLLAPSE_QUOTA_THRESHOLD;
+  // Collapse selectors to icon-only mode when space is limited
   const shouldCollapseSelectors =
     controlsContainerWidth > 0 && controlsContainerWidth < COLLAPSE_SELECTORS_THRESHOLD;
 
@@ -781,16 +777,8 @@ export default function ChatArea({
     return selectedTeam.name.trim().length > SHOULD_HIDE_QUOTA_NAME_LIMIT;
   }, [selectedTeam, isMobile]);
 
-  // Determine if compact quota mode should be used (icon only)
-  // Priority: 1. On mobile, always use compact mode to save space
-  // Priority: 2. Collapse quota first when container width is insufficient
-  const shouldUseCompactQuota = React.useMemo(() => {
-    // Priority 1: On mobile, always use compact mode
-    if (isMobile) return true;
-    // Priority 2: Container width-based collapse (responsive to actual space)
-    if (shouldCollapseQuota) return true;
-    return false;
-  }, [isMobile, shouldCollapseQuota]);
+  // Always use compact mode (icon only) to save space
+  const shouldUseCompactQuota = true;
 
   // Check if model selection is required but not fulfilled
   // For legacy teams without predefined models, user MUST select a model before sending
