@@ -30,7 +30,7 @@ export default function CollapsedSidebarButtons({
   }, [tasks, getUnreadCount, viewStatusVersion]);
 
   return (
-    <div className="fixed top-4 left-4 z-50 flex items-center gap-1">
+    <div className="fixed top-2 sm:top-3 left-4 z-50 flex items-center gap-1">
       <TooltipProvider>
         <Tooltip delayDuration={300}>
           <TooltipTrigger asChild>
