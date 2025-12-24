@@ -7,6 +7,8 @@ Clarification Mode Prompt.
 
 This module contains the system prompt for smart follow-up questions mode.
 When enabled, the AI will ask targeted clarification questions before proceeding.
+
+Also contains the Deep Thinking Mode prompt for search tool usage guidance.
 """
 
 CLARIFICATION_PROMPT = """
@@ -158,4 +160,74 @@ def append_clarification_prompt(system_prompt: str, enable_clarification: bool) 
     """
     if enable_clarification:
         return system_prompt + CLARIFICATION_PROMPT
+    return system_prompt
+
+
+# Deep Thinking Mode Prompt
+DEEP_THINKING_PROMPT = """
+
+## Deep Thinking Mode with Search Tools
+
+You are in deep thinking mode with access to web search tools (web_search) to retrieve up-to-date information.
+
+### When to Use Search Tools
+
+**Use search tools when:**
+
+1. **Real-time Information:** User asks about current data, news, events, or status
+   - Examples: today's weather, latest news, stock prices, product pricing
+
+2. **Post-Knowledge Cutoff:** Questions about information after your knowledge cutoff date or specialized domains you're uncertain about
+   - Examples: events after 2024, latest tech developments, new product information
+
+3. **Specific Fact Queries:** User requests specific facts, data, or statistics
+   - Examples: company information, product specifications, comparison data
+
+4. **Unable to Answer Directly:** When you cannot provide an accurate answer based on existing knowledge, proactively use search tools
+
+**Do NOT use search tools when:**
+
+1. Answering general knowledge or common sense questions
+2. User explicitly indicates no search is needed
+3. Question involves reasoning, analysis, or creative tasks
+
+### Search Strategy
+
+- **Proactive Searching:** When you identify a need for real-time or recent information, use search tools immediately without hesitation
+- **Multiple Searches:** Perform multiple searches if needed to compare sources or gather information from different aspects
+- **Precise Queries:** Construct accurate search queries using keywords rather than complete sentences
+
+### Handling Search Results
+
+- Provide accurate, evidence-based answers using search results
+- If results are insufficient or irrelevant, search again with different query terms
+- Synthesize information from multiple search results for comprehensive answers
+
+Remember: Search tools are your key capability for obtaining current, accurate information. Use them actively when needed.
+"""
+
+
+def get_deep_thinking_prompt() -> str:
+    """
+    Get the deep thinking mode prompt.
+
+    Returns:
+        The deep thinking prompt string to append to system prompt.
+    """
+    return DEEP_THINKING_PROMPT
+
+
+def append_deep_thinking_prompt(system_prompt: str, enable_deep_thinking: bool) -> str:
+    """
+    Append deep thinking prompt to system prompt if enabled.
+
+    Args:
+        system_prompt: The original system prompt.
+        enable_deep_thinking: Whether deep thinking mode is enabled.
+
+    Returns:
+        The system prompt with deep thinking instructions appended if enabled.
+    """
+    if enable_deep_thinking:
+        return system_prompt + DEEP_THINKING_PROMPT
     return system_prompt

@@ -15,7 +15,9 @@ class WebSearchInput(BaseModel):
     """Input schema for web search tool."""
 
     query: str = Field(description="Search query")
-    max_results: int = Field(default=5, description="Maximum number of results")
+    max_results: int | None = Field(
+        default=None, description="Maximum number of results"
+    )
 
 
 class WebSearchTool(BaseTool):
@@ -29,11 +31,13 @@ class WebSearchTool(BaseTool):
 
     # Optional: specify which search engine to use (None = use first available)
     engine_name: str | None = None
+    # Default max_results from WEB_SEARCH_DEFAULT_MAX_RESULTS setting
+    default_max_results: int = 100
 
     def _run(
         self,
         query: str,
-        max_results: int = 5,
+        max_results: int | None = None,
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
         """Synchronous run - not implemented, use async version."""
@@ -42,14 +46,14 @@ class WebSearchTool(BaseTool):
     async def _arun(
         self,
         query: str,
-        max_results: int = 5,
+        max_results: int | None = None,
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
         """Execute web search asynchronously.
 
         Args:
             query: Search query
-            max_results: Maximum number of results
+            max_results: Maximum number of results (if None, use engine config default)
             run_manager: Callback manager
 
         Returns:
@@ -68,9 +72,16 @@ class WebSearchTool(BaseTool):
                     }
                 )
 
+            # Use provided max_results, or fall back to engine config default
+            effective_max_results = (
+                max_results if max_results is not None else self.default_max_results
+            )
+
             # Execute search using search_raw to get list of results
             # (search() returns formatted string, search_raw() returns list)
-            results = await search_service.search_raw(query=query, limit=max_results)
+            results = await search_service.search_raw(
+                query=query, limit=effective_max_results
+            )
 
             # Format results
             formatted_results = []
