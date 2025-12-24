@@ -52,6 +52,8 @@ class WebSocketEmitter:
         task_id: int,
         subtask_id: int,
         bot_name: Optional[str] = None,
+        shell_type: str = "Chat",
+        message_id: Optional[int] = None,
     ) -> None:
         """
         Emit chat:start event to task room.
@@ -60,6 +62,8 @@ class WebSocketEmitter:
             task_id: Task ID
             subtask_id: Subtask ID
             bot_name: Optional bot name
+            shell_type: Shell type for frontend display logic (default: "Chat")
+            message_id: Optional message ID for ordering
         """
         await self.sio.emit(
             ServerEvents.CHAT_START,
@@ -67,11 +71,15 @@ class WebSocketEmitter:
                 "task_id": task_id,
                 "subtask_id": subtask_id,
                 "bot_name": bot_name,
+                "shell_type": shell_type,
+                "message_id": message_id,
             },
             room=f"task:{task_id}",
             namespace=self.namespace,
         )
-        logger.debug(f"[WS] emit chat:start task={task_id} subtask={subtask_id}")
+        logger.debug(
+            f"[WS] emit chat:start task={task_id} subtask={subtask_id} shell_type={shell_type}"
+        )
 
     async def emit_chat_chunk(
         self,

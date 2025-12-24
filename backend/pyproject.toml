@@ -30,7 +30,7 @@ dependencies = [
     "authlib>=1.3.0",
     "pyjwt>=2.8.0",
     # HTTP clients
-    "httpx>=0.26.0",
+    "httpx[socks]>=0.26.0",
     "requests>=2.31.0",
     "aiohttp>=3.8.0",
     # LangChain and LangGraph

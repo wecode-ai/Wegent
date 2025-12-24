@@ -555,7 +555,7 @@ class ChatService:
         task_room = config.task_room
 
         # Create WebSocket emitter
-        emitter = WebSocketEmitter(namespace, task_room)
+        emitter = WebSocketEmitter(namespace, task_room, task_id)
 
         # Create streaming state
         state = StreamingState(
