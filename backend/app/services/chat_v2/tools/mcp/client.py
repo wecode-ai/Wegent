@@ -15,7 +15,7 @@ Protection mechanisms:
 """
 
 import asyncio
-import functools
+import inspect
 import logging
 from typing import Any
 
@@ -56,35 +56,76 @@ def wrap_tool_with_protection(
     original_run = tool._run if hasattr(tool, "_run") else None
     original_arun = tool._arun if hasattr(tool, "_arun") else None
 
+    # Check tool signatures to see if they accept 'config'
+    run_accepts_config = False
+    if original_run:
+        try:
+            sig = inspect.signature(original_run)
+            run_accepts_config = "config" in sig.parameters or any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+            )
+        except ValueError:
+            # Cannot inspect signature (e.g. built-in function), assume conservative approach
+            run_accepts_config = False
+
+    arun_accepts_config = False
+    if original_arun:
+        try:
+            sig = inspect.signature(original_arun)
+            arun_accepts_config = "config" in sig.parameters or any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+            )
+        except ValueError:
+            # Cannot inspect signature (e.g. built-in function), assume conservative approach
+            arun_accepts_config = False
+
+    # Check response format to ensure we return the correct type on error
+    response_format = getattr(tool, "response_format", "content")
+
+    def _format_error(msg: str) -> Any:
+        """Format error message based on tool response format."""
+        if response_format == "content_and_artifact":
+            return msg, None
+        return msg
+
     def protected_run(*args, **kwargs):
         """Synchronous tool execution with protection."""
         try:
             if original_run:
+                # Only inject config if the tool implementation accepts it
+                if run_accepts_config and "config" not in kwargs:
+                    kwargs["config"] = None
                 return original_run(*args, **kwargs)
-            return f"Error: Tool {tool.name} has no synchronous implementation"
+            return _format_error(
+                f"Error: Tool {tool.name} has no synchronous implementation"
+            )
         except Exception as e:
             error_msg = f"MCP tool '{tool.name}' failed: {str(e)}"
             logger.error("[MCP] %s", error_msg)
-            return error_msg
+            return _format_error(error_msg)
 
     async def protected_arun(*args, **kwargs):
         """Asynchronous tool execution with timeout and exception protection."""
         try:
             if original_arun:
+                # Only inject config if the tool implementation accepts it
+                if arun_accepts_config and "config" not in kwargs:
+                    kwargs["config"] = None
+
                 # Apply timeout protection
                 result = await asyncio.wait_for(
                     original_arun(*args, **kwargs), timeout=timeout
                 )
                 return result
-            return f"Error: Tool {tool.name} has no async implementation"
+            return _format_error(f"Error: Tool {tool.name} has no async implementation")
         except asyncio.TimeoutError:
             error_msg = f"MCP tool '{tool.name}' timed out after {timeout}s"
             logger.error("[MCP] %s", error_msg)
-            return error_msg
+            return _format_error(error_msg)
         except Exception as e:
             error_msg = f"MCP tool '{tool.name}' failed: {str(e)}"
             logger.error("[MCP] %s", error_msg)
-            return error_msg
+            return _format_error(error_msg)
 
     # Replace tool's run methods with protected versions
     if original_run:
