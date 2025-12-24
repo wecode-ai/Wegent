@@ -117,7 +117,8 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
           pendingUserMessage: undefined,
           pendingAttachment: null,
           immediateTaskId: -Date.now(), // Temporary negative ID for immediate feedback
-          onTaskIdResolved: realTaskId => {
+          // Called when message is sent successfully with the real task ID
+          onMessageSent: (_localMessageId: string, realTaskId: number, _subtaskId: number) => {
             // Close dialog and reset form when task ID is resolved
             onOpenChange(false);
             setTitle('');
@@ -140,15 +141,12 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
 
             // Navigate to the new task to show streaming output
             router.push(`/chat?taskId=${realTaskId}`);
-          },
-          onAIComplete: () => {
+
             // Success toast
             toast({
               title: t('groupChat.create.success'),
               description: t('groupChat.create.successDesc'),
             });
-
-            setIsCreating(false);
           },
           onError: error => {
             toast({
