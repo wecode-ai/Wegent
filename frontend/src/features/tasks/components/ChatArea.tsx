@@ -778,11 +778,8 @@ export default function ChatArea({
     return selectedTeam.name.trim().length > SHOULD_HIDE_QUOTA_NAME_LIMIT;
   }, [selectedTeam, isMobile]);
 
-  // Determine if compact quota mode should be used (icon only)
   // Always use compact mode (icon only) to save space
-  const shouldUseCompactQuota = React.useMemo(() => {
-    return true;
-  }, []);
+  const shouldUseCompactQuota = true;
 
   // Check if model selection is required but not fulfilled
   // For legacy teams without predefined models, user MUST select a model before sending
