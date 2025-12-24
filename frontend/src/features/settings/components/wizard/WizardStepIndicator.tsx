@@ -14,14 +14,14 @@ interface WizardStepIndicatorProps {
 }
 
 const stepKeys = [
-  'wizard.step1_title',
-  'wizard.step2_title',
-  'wizard.step3_title',
-  'wizard.step4_title',
+  'wizard:step1_title',
+  'wizard:step2_title',
+  'wizard:step3_title',
+  'wizard:step4_title',
 ];
 
 export default function WizardStepIndicator({ currentStep, totalSteps }: WizardStepIndicatorProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation('wizard');
 
   return (
     <div className="w-full mb-6">

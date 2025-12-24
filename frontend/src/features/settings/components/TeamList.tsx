@@ -63,7 +63,7 @@ export default function TeamList({
   groupRoleMap,
   onEditResource,
 }: TeamListProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation(['common', 'wizard']);
   const { toast } = useToast();
   const [teams, setTeams] = useState<Team[]>([]);
   const [bots, setBots] = useState<Bot[]>([]);
@@ -197,7 +197,7 @@ export default function TeamList({
 
   const handleWizardSuccess = async (teamId: number, teamName: string) => {
     toast({
-      title: t('wizard.create_agent'),
+      title: t('wizard:create_agent'),
       description: `${teamName}`,
     });
     // Reload teams list
@@ -659,11 +659,11 @@ export default function TeamList({
                         <TooltipTrigger asChild>
                           <Button variant="primary" onClick={handleOpenWizard} className="gap-2">
                             <SparklesIcon className="w-4 h-4" />
-                            {t('wizard.wizard_button')}
+                            {t('wizard:wizard_button')}
                           </Button>
                         </TooltipTrigger>
                         <TooltipContent>
-                          <p>{t('wizard.wizard_button_tooltip')}</p>
+                          <p>{t('wizard:wizard_button_tooltip')}</p>
                         </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>

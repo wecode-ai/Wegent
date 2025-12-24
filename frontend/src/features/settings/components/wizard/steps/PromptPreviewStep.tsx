@@ -30,7 +30,7 @@ export default function PromptPreviewStep({
   onDescriptionChange,
   isLoading,
 }: PromptPreviewStepProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation('wizard');
 
   if (isLoading) {
     return <GeneratingLoader />;
@@ -43,8 +43,8 @@ export default function PromptPreviewStep({
         <div className="flex items-start gap-3">
           <FileText className="w-5 h-5 text-primary flex-shrink-0 mt-0.5" />
           <div>
-            <p className="font-medium text-sm">{t('wizard.prompt_preview_title')}</p>
-            <p className="text-sm text-text-secondary mt-1">{t('wizard.prompt_preview_hint')}</p>
+            <p className="font-medium text-sm">{t('prompt_preview_title')}</p>
+            <p className="text-sm text-text-secondary mt-1">{t('prompt_preview_hint')}</p>
           </div>
         </div>
       </div>
@@ -52,13 +52,13 @@ export default function PromptPreviewStep({
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Left: System Prompt */}
         <div className="space-y-2">
-          <Label className="text-base font-medium">{t('wizard.system_prompt')}</Label>
-          <p className="text-xs text-text-muted">{t('wizard.system_prompt_hint')}</p>
+          <Label className="text-base font-medium">{t('system_prompt')}</Label>
+          <p className="text-xs text-text-muted">{t('system_prompt_hint')}</p>
           <Textarea
             value={systemPrompt}
             onChange={e => onPromptChange(e.target.value)}
             className="min-h-[280px] font-mono text-sm"
-            placeholder={t('wizard.system_prompt_placeholder')}
+            placeholder={t('system_prompt_placeholder')}
           />
         </div>
 
@@ -67,22 +67,22 @@ export default function PromptPreviewStep({
           {/* Agent Name */}
           <div className="space-y-2">
             <Label className="text-base font-medium">
-              {t('wizard.agent_name')} <span className="text-error">*</span>
+              {t('agent_name')} <span className="text-error">*</span>
             </Label>
             <Input
               value={agentName}
               onChange={e => onNameChange(e.target.value)}
-              placeholder={t('wizard.agent_name_placeholder')}
+              placeholder={t('agent_name_placeholder')}
             />
           </div>
 
           {/* Description */}
           <div className="space-y-2">
-            <Label className="text-base font-medium">{t('wizard.agent_description')}</Label>
+            <Label className="text-base font-medium">{t('agent_description')}</Label>
             <Textarea
               value={agentDescription}
               onChange={e => onDescriptionChange(e.target.value)}
-              placeholder={t('wizard.agent_description_placeholder')}
+              placeholder={t('agent_description_placeholder')}
               className="min-h-[80px]"
             />
           </div>
@@ -91,10 +91,10 @@ export default function PromptPreviewStep({
           <div className="p-4 bg-muted/50 border border-border rounded-lg mt-4">
             <div className="flex items-center gap-2 mb-2">
               <Settings className="w-4 h-4 text-text-secondary" />
-              <h4 className="font-medium text-sm">{t('wizard.will_create')}</h4>
+              <h4 className="font-medium text-sm">{t('will_create')}</h4>
             </div>
             <p className="text-sm text-text-secondary">
-              {t('wizard.agent')}: <span className="font-medium">{agentName || '-'}</span>
+              {t('agent')}: <span className="font-medium">{agentName || '-'}</span>
             </p>
           </div>
         </div>
