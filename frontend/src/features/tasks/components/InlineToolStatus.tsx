@@ -57,7 +57,10 @@ const InlineToolStatus = memo(function InlineToolStatus({
 
       // Track tool_use starts
       if (details.type === 'tool_use' && details.status === 'started') {
-        const toolName = details.tool_name || details.name || 'unknown';
+        const toolName: string =
+          (typeof details.tool_name === 'string' ? details.tool_name : '') ||
+          (typeof details.name === 'string' ? details.name : '') ||
+          'unknown';
         const runId = (step as { run_id?: string }).run_id || `${index}`;
 
         let query: string = '';
@@ -68,7 +71,7 @@ const InlineToolStatus = memo(function InlineToolStatus({
         } else {
           // For other tools, show a generic description
           const titleStr = typeof step.title === 'string' ? step.title : '';
-          query = titleStr || toolName || '';
+          query = titleStr || toolName;
         }
 
         toolStartMap.set(runId, toolEntries.length);
@@ -81,7 +84,10 @@ const InlineToolStatus = memo(function InlineToolStatus({
       }
       // Match tool_result with tool_use
       else if (details.type === 'tool_result' && details.status === 'completed') {
-        const toolName = details.tool_name || details.name || 'unknown';
+        const toolName: string =
+          (typeof details.tool_name === 'string' ? details.tool_name : '') ||
+          (typeof details.name === 'string' ? details.name : '') ||
+          'unknown';
         const runId = (step as { run_id?: string }).run_id || '';
         const startIdx = toolStartMap.get(runId);
 
