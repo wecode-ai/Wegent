@@ -60,7 +60,7 @@ const InlineToolStatus = memo(function InlineToolStatus({
         const toolName = details.tool_name || details.name || 'unknown';
         const runId = (step as { run_id?: string }).run_id || `${index}`;
 
-        let query = '';
+        let query: string = '';
         if (toolName === 'web_search' && details.input) {
           query = (details.input as { query?: string }).query || '';
         } else if (toolName === 'wegentFetch' && details.input) {
@@ -68,7 +68,7 @@ const InlineToolStatus = memo(function InlineToolStatus({
         } else {
           // For other tools, show a generic description
           const titleStr = typeof step.title === 'string' ? step.title : '';
-          query = titleStr || toolName;
+          query = titleStr || toolName || '';
         }
 
         toolStartMap.set(runId, toolEntries.length);
