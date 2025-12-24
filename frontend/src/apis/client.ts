@@ -9,6 +9,17 @@ import { getApiBaseUrl, fetchRuntimeConfig } from '@/lib/runtime-config';
 // Token management
 import { getToken, removeToken } from './user';
 
+// Custom error class for API errors with status code
+export class ApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
 // HTTP Client with interceptors
 class APIClient {
   private baseURL: string;
@@ -93,7 +104,8 @@ class APIClient {
         } catch {
           // Not JSON, use original text directly
         }
-        throw new Error(errorMsg);
+        // Throw ApiError with status code for better error handling
+        throw new ApiError(errorMsg, response.status);
       }
 
       // Handle 204 No Content responses

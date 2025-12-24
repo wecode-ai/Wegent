@@ -5,11 +5,11 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { CircleStop, Upload } from 'lucide-react';
+import { CircleStop, Upload, ShieldX } from 'lucide-react';
 import MessagesArea from './MessagesArea';
 import ChatInput from './ChatInput';
 import SendButton from './SendButton';
-import SearchEngineSelector from './SearchEngineSelector';
+import DeepThinkingToggle from './DeepThinkingToggle';
 import ClarificationToggle from './ClarificationToggle';
 import ModelSelector, {
   Model,
@@ -39,7 +39,6 @@ import { saveLastTeamByMode, getLastTeamIdByMode, saveLastRepo } from '@/utils/u
 import { useToast } from '@/hooks/use-toast';
 import { taskApis } from '@/apis/tasks';
 import { useAttachment } from '@/hooks/useAttachment';
-import { chatApis, SearchEngine } from '@/apis/chat';
 import { GroupChatSyncManager } from './group-chat';
 import type { SubtaskWithSender } from '@/apis/group-chat';
 
@@ -121,56 +120,14 @@ export default function ChatArea({
     setStreamingTaskId(null);
   }, []);
 
-  // Web search toggle state
-  const [enableWebSearch, setEnableWebSearch] = useState(false);
-  const [selectedSearchEngine, setSelectedSearchEngine] = useState<string | null>(null);
-  const [isWebSearchFeatureEnabled, setIsWebSearchFeatureEnabled] = useState(false);
-  const [searchEngines, setSearchEngines] = useState<SearchEngine[]>([]);
+  // Deep thinking toggle state (session-level, not persisted)
+  const [enableDeepThinking, setEnableDeepThinking] = useState(true);
 
   // Clarification toggle state (session-level, not persisted)
   const [enableClarification, setEnableClarification] = useState(false);
 
   // Welcome config state for dynamic placeholder
   const [welcomeConfig, setWelcomeConfig] = useState<WelcomeConfigResponse | null>(null);
-  // Load search engine preference from localStorage and fetch available engines
-  useEffect(() => {
-    const fetchSearchEngines = async () => {
-      try {
-        const response = await chatApis.getSearchEngines();
-        setIsWebSearchFeatureEnabled(response.enabled);
-        setSearchEngines(response.engines);
-
-        // Validate and restore saved search engine preference inside the fetch callback
-        // to ensure we validate against the latest available engines
-        if (typeof window !== 'undefined') {
-          const savedEngine = localStorage.getItem('last_search_engine');
-          if (savedEngine && response.engines.some(e => e.name === savedEngine)) {
-            setSelectedSearchEngine(savedEngine);
-          } else {
-            // Saved engine no longer exists or is invalid, clear it
-            localStorage.removeItem('last_search_engine');
-            // Default to the first engine if available
-            if (response.engines.length > 0) {
-              setSelectedSearchEngine(response.engines[0].name);
-            } else {
-              setSelectedSearchEngine(null);
-            }
-          }
-        }
-      } catch (error) {
-        console.error('Failed to fetch search engines:', error);
-        setIsWebSearchFeatureEnabled(false);
-        setSearchEngines([]);
-        toast({
-          variant: 'destructive',
-          title: 'Failed to load search engines',
-          description: error instanceof Error ? error.message : 'Unknown error',
-        });
-      }
-    };
-
-    fetchSearchEngines();
-  }, [toast]);
 
   // Fetch welcome config for dynamic placeholder
   useEffect(() => {
@@ -240,11 +197,6 @@ export default function ChatArea({
     const index = tipRandomIndexRef.current % filteredTips.length;
     return filteredTips[index];
   }, [welcomeConfig?.tips, taskType]);
-
-  const handleSearchEngineChange = useCallback((engine: string) => {
-    setSelectedSearchEngine(engine);
-    localStorage.setItem('last_search_engine', engine);
-  }, []);
 
   // External API parameters state
   const [externalApiParams, setExternalApiParams] = useState<Record<string, string>>({});
@@ -317,7 +269,11 @@ export default function ChatArea({
     refreshSelectedTaskDetail,
     setSelectedTask,
     markTaskAsViewed,
+    accessDenied,
+    clearAccessDenied,
   } = useTaskContext();
+
+  const { t } = useTranslation();
 
   const detailTeamId = useMemo<number | null>(() => {
     if (!selectedTaskDetail?.team) {
@@ -1038,8 +994,7 @@ export default function ChatArea({
             model_id: modelId,
             force_override_bot_model: forceOverride,
             attachment_id: attachmentState.attachment?.id,
-            enable_web_search: enableWebSearch,
-            search_engine: selectedSearchEngine || undefined,
+            enable_deep_thinking: enableDeepThinking,
             enable_clarification: enableClarification,
             is_group_chat: selectedTaskDetail?.is_group_chat || false,
             // Pass repository info for code tasks
@@ -1161,8 +1116,7 @@ export default function ChatArea({
       selectedTaskDetail?.status,
       contextSendMessage,
       forceOverride,
-      enableWebSearch,
-      selectedSearchEngine,
+      enableDeepThinking,
       enableClarification,
       refreshTasks,
       searchParams,
@@ -1359,6 +1313,56 @@ export default function ChatArea({
   }, [hasMessages]);
 
   // Style reference: TaskParamWrapper.tsx
+  // Handle access denied state - show error UI when user doesn't have permission
+  if (accessDenied) {
+    const handleGoHome = () => {
+      clearAccessDenied();
+      setSelectedTask(null);
+      router.push('/chat');
+    };
+
+    return (
+      <div
+        ref={chatAreaRef}
+        className="flex-1 flex flex-col min-h-0 w-full relative"
+        style={{ height: '100%', boxSizing: 'border-box' }}
+      >
+        <div className="flex-1 flex items-center justify-center p-6">
+          <div className="max-w-lg w-full">
+            {/* Error Icon */}
+            <div className="flex justify-center mb-6">
+              <div className="w-20 h-20 rounded-full bg-destructive/10 flex items-center justify-center">
+                <ShieldX className="h-10 w-10 text-destructive" />
+              </div>
+            </div>
+
+            {/* Error Title */}
+            <h1 className="text-2xl font-semibold text-center mb-3 text-text-primary">
+              {t('tasks.access_denied_title')}
+            </h1>
+
+            {/* Error Description */}
+            <p className="text-center text-text-muted mb-8 leading-relaxed">
+              {t('tasks.access_denied_description')}
+            </p>
+
+            {/* Action Button */}
+            <div className="flex justify-center">
+              <Button
+                onClick={handleGoHome}
+                variant="default"
+                size="default"
+                className="min-w-[160px]"
+              >
+                {t('tasks.access_denied_go_home')}
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       ref={chatAreaRef}
@@ -1526,16 +1530,12 @@ export default function ChatArea({
                             onRemove={handleAttachmentRemove}
                           />
                         )}
-                      {/* Web Search Toggle Button - only show for chat shell and when enabled */}
-                      {isWebSearchFeatureEnabled && isChatShell(selectedTeam) && (
-                        <SearchEngineSelector
-                          enabled={enableWebSearch}
-                          onToggle={setEnableWebSearch}
-                          selectedEngine={selectedSearchEngine}
-                          onSelectEngine={handleSearchEngineChange}
+                      {/* Deep Thinking Toggle Button - only show for chat shell */}
+                      {isChatShell(selectedTeam) && (
+                        <DeepThinkingToggle
+                          enabled={enableDeepThinking}
+                          onToggle={setEnableDeepThinking}
                           disabled={isLoading || isStreaming}
-                          engines={searchEngines}
-                          compact={shouldCollapseSelectors}
                         />
                       )}
                       {/* Clarification Toggle Button - only show for chat shell */}
@@ -1766,16 +1766,12 @@ export default function ChatArea({
                           onRemove={handleAttachmentRemove}
                         />
                       )}
-                    {/* Web Search Toggle Button - only show for chat shell and when enabled */}
-                    {isWebSearchFeatureEnabled && isChatShell(selectedTeam) && (
-                      <SearchEngineSelector
-                        enabled={enableWebSearch}
-                        onToggle={setEnableWebSearch}
-                        selectedEngine={selectedSearchEngine}
-                        onSelectEngine={handleSearchEngineChange}
+                    {/* Deep Thinking Toggle Button - only show for chat shell */}
+                    {isChatShell(selectedTeam) && (
+                      <DeepThinkingToggle
+                        enabled={enableDeepThinking}
+                        onToggle={setEnableDeepThinking}
                         disabled={isLoading || isStreaming}
-                        engines={searchEngines}
-                        compact={shouldCollapseSelectors}
                       />
                     )}
                     {/* Clarification Toggle Button - only show for chat shell */}
