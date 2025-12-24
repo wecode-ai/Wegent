@@ -61,6 +61,67 @@ JS_REQUIRED_DOMAINS = {
     "zhihu.com",
 }
 
+# Domain-specific selectors to wait for content to load
+# These selectors indicate that the main content has been rendered
+DOMAIN_CONTENT_SELECTORS = {
+    "weibo.com": [
+        'article[class*="Feed"]',  # Feed article container
+        'div[class*="detail"]',  # Post detail container
+        'div[class*="card-wrap"]',  # Card wrapper
+        'div[class*="WB_text"]',  # 微博 text content (old version)
+        'div[class*="wbpro-feed"]',  # New 微博 feed
+    ],
+    "m.weibo.cn": [
+        'div[class*="weibo-text"]',
+        'div[class*="card"]',
+        "article",
+    ],
+    "weibo.cn": [
+        'div[class*="weibo-text"]',
+        'div[class*="card"]',
+        "article",
+    ],
+    "twitter.com": [
+        'article[data-testid="tweet"]',
+        'div[data-testid="tweetText"]',
+    ],
+    "x.com": [
+        'article[data-testid="tweet"]',
+        'div[data-testid="tweetText"]',
+    ],
+    "zhihu.com": [
+        'div[class*="RichContent"]',
+        'div[class*="Post-RichText"]',
+        'div[class*="AnswerItem"]',
+    ],
+    "bilibili.com": [
+        'div[class*="video-info"]',
+        'div[class*="desc-info"]',
+        'div[id="arc_toolbar_report"]',
+    ],
+    "xiaohongshu.com": [
+        'div[class*="note-content"]',
+        'div[id="detail-desc"]',
+    ],
+    "xhs.com": [
+        'div[class*="note-content"]',
+        'div[id="detail-desc"]',
+    ],
+}
+
+# Domain-specific wait times (in seconds) for content to fully load
+DOMAIN_WAIT_TIMES = {
+    "weibo.com": 5,
+    "m.weibo.cn": 5,
+    "weibo.cn": 5,
+    "twitter.com": 5,
+    "x.com": 5,
+    "zhihu.com": 4,
+    "bilibili.com": 4,
+    "xiaohongshu.com": 5,
+    "xhs.com": 5,
+}
+
 # Patterns that indicate a page requires JavaScript (visitor verification pages)
 JS_REQUIRED_PATTERNS = [
     "Visitor System",
@@ -116,6 +177,43 @@ class UrlParser:
             return domain in JS_REQUIRED_DOMAINS
         except Exception:
             return False
+
+    def _get_domain_from_url(self, url: str) -> str:
+        """Extract domain from URL, removing www. prefix."""
+        try:
+            parsed = urlparse(url)
+            domain = parsed.netloc.lower()
+            if domain.startswith("www."):
+                domain = domain[4:]
+            return domain
+        except Exception:
+            return ""
+
+    def _get_content_selectors(self, url: str) -> list[str]:
+        """Get domain-specific content selectors for waiting."""
+        domain = self._get_domain_from_url(url)
+        return DOMAIN_CONTENT_SELECTORS.get(domain, [])
+
+    def _get_wait_time(self, url: str) -> int:
+        """Get domain-specific wait time in seconds."""
+        domain = self._get_domain_from_url(url)
+        return DOMAIN_WAIT_TIMES.get(domain, 3)  # Default 3 seconds
+
+    def _is_social_media_domain(self, url: str) -> bool:
+        """Check if URL is from a social media platform that needs special extraction."""
+        domain = self._get_domain_from_url(url)
+        social_domains = {
+            "weibo.com",
+            "m.weibo.cn",
+            "weibo.cn",
+            "twitter.com",
+            "x.com",
+            "zhihu.com",
+            "bilibili.com",
+            "xiaohongshu.com",
+            "xhs.com",
+        }
+        return domain in social_domains
 
     def _content_requires_js(self, html_content: str) -> bool:
         """Check if HTML content indicates JavaScript is required (e.g., visitor verification page)."""
@@ -315,9 +413,43 @@ class UrlParser:
                         url, wait_until="commit", timeout=self.browser_timeout * 1000
                     )
 
-                # Wait for the page to stabilize - give JS time to render content
-                # Use a shorter initial wait, then check if content is ready
-                await asyncio.sleep(3)
+                # Get domain-specific selectors and wait time
+                content_selectors = self._get_content_selectors(url)
+                wait_time = self._get_wait_time(url)
+                domain = self._get_domain_from_url(url)
+
+                logger.info(
+                    f"Parsing {url} with Playwright, domain={domain}, "
+                    f"wait_time={wait_time}s, selectors={content_selectors}"
+                )
+
+                # Try to wait for domain-specific content selectors
+                content_found = False
+                if content_selectors:
+                    for selector in content_selectors:
+                        try:
+                            await page.wait_for_selector(
+                                selector, timeout=wait_time * 1000
+                            )
+                            logger.info(
+                                f"Found content selector '{selector}' for {url}"
+                            )
+                            content_found = True
+                            break
+                        except Exception:
+                            continue
+
+                # If no specific selector found, use general wait
+                if not content_found:
+                    logger.info(
+                        f"No specific content selector found for {url}, "
+                        f"using general wait of {wait_time}s"
+                    )
+                    await asyncio.sleep(wait_time)
+
+                # Additional wait for dynamic content to fully render
+                # Some sites load content in multiple stages
+                await asyncio.sleep(2)
 
                 # Try to wait for body to have meaningful content
                 try:
@@ -341,8 +473,35 @@ class UrlParser:
                     html_content = await page.content()
                     title = await page.title()
 
-                # Convert HTML to markdown
-                markdown_content = self._html_to_markdown(html_content)
+                # For social media sites, try to extract main content directly
+                extracted_content = None
+                if self._is_social_media_domain(url):
+                    extracted_content = await self._extract_social_media_content(
+                        page, url, domain
+                    )
+                    if extracted_content:
+                        logger.info(
+                            f"Successfully extracted social media content from {url}"
+                        )
+
+                # Use extracted content if available, otherwise convert HTML to markdown
+                if extracted_content:
+                    markdown_content = extracted_content
+                else:
+                    markdown_content = self._html_to_markdown(html_content)
+
+                # Log the parsed content for debugging
+                content_preview = (
+                    markdown_content[:500] + "..."
+                    if len(markdown_content) > 500
+                    else markdown_content
+                )
+                logger.info(
+                    f"Parsed content from {url}:\n"
+                    f"  Title: {title}\n"
+                    f"  Content length: {len(markdown_content)} chars\n"
+                    f"  Content preview: {content_preview}"
+                )
 
                 # Truncate if necessary
                 truncated = False
@@ -663,6 +822,308 @@ class UrlParser:
                 flags=re.DOTALL | re.IGNORECASE,
             )
             return html
+
+    async def _extract_social_media_content(
+        self, page, url: str, domain: str
+    ) -> Optional[str]:
+        """
+        Extract main content from social media pages using Playwright.
+        This method uses domain-specific selectors to extract the actual post content
+        rather than converting the entire HTML.
+
+        Args:
+            page: Playwright page object
+            url: The URL being parsed
+            domain: The domain of the URL
+
+        Returns:
+            Extracted content as markdown string, or None if extraction failed
+        """
+        try:
+            content_parts = []
+
+            # 微博-specific extraction
+            if domain in ("weibo.com", "m.weibo.cn", "weibo.cn"):
+                # Try to extract author info
+                author_selectors = [
+                    'a[class*="name"]',
+                    'div[class*="name"]',
+                    'span[class*="name"]',
+                    'a[class*="head-info"]',
+                ]
+                for selector in author_selectors:
+                    try:
+                        author_elem = await page.query_selector(selector)
+                        if author_elem:
+                            author_text = await author_elem.inner_text()
+                            if author_text and len(author_text.strip()) > 0:
+                                content_parts.append(f"**作者**: {author_text.strip()}")
+                                break
+                    except Exception:
+                        continue
+
+                # Try to extract post time
+                time_selectors = [
+                    'a[class*="time"]',
+                    'span[class*="time"]',
+                    'div[class*="time"]',
+                    'span[class*="date"]',
+                ]
+                for selector in time_selectors:
+                    try:
+                        time_elem = await page.query_selector(selector)
+                        if time_elem:
+                            time_text = await time_elem.inner_text()
+                            if time_text and len(time_text.strip()) > 0:
+                                content_parts.append(
+                                    f"**发布时间**: {time_text.strip()}"
+                                )
+                                break
+                    except Exception:
+                        continue
+
+                # Try to extract main post content - multiple possible selectors
+                post_selectors = [
+                    'div[class*="wbpro-feed"] div[class*="detail"] div[class*="text"]',
+                    'div[class*="Feed_body"] div[class*="detail"]',
+                    'article div[class*="text"]',
+                    'div[class*="WB_text"]',
+                    'div[class*="weibo-text"]',
+                    'div[class*="card-feed"] div[class*="content"]',
+                    'div[class*="detail_wbtext"]',
+                ]
+                post_content = None
+                post_elem_found = None
+                for selector in post_selectors:
+                    try:
+                        post_elem = await page.query_selector(selector)
+                        if post_elem:
+                            post_content = await post_elem.inner_text()
+                            if post_content and len(post_content.strip()) > 10:
+                                post_elem_found = post_elem
+                                content_parts.append(
+                                    f"\n**内容**:\n{post_content.strip()}"
+                                )
+                                break
+                    except Exception:
+                        continue
+
+                # If no specific content found, try to get all visible text from main area
+                if not post_content:
+                    main_selectors = [
+                        "article",
+                        'div[class*="Feed"]',
+                        'div[class*="card"]',
+                        "main",
+                    ]
+                    for selector in main_selectors:
+                        try:
+                            main_elem = await page.query_selector(selector)
+                            if main_elem:
+                                main_text = await main_elem.inner_text()
+                                if main_text and len(main_text.strip()) > 50:
+                                    post_elem_found = main_elem
+                                    content_parts.append(
+                                        f"\n**内容**:\n{main_text.strip()}"
+                                    )
+                                    break
+                        except Exception:
+                            continue
+
+                # Extract links from the post content
+                links = []
+                link_selectors = [
+                    'a[href*="http"]',
+                    'a[class*="link"]',
+                    'a[class*="url"]',
+                ]
+                # First try to get links from the post element
+                if post_elem_found:
+                    try:
+                        link_elems = await post_elem_found.query_selector_all("a[href]")
+                        for link_elem in link_elems[:10]:  # Limit to 10 links
+                            try:
+                                href = await link_elem.get_attribute("href")
+                                link_text = await link_elem.inner_text()
+                                if href and href.startswith("http"):
+                                    # Skip 微博 internal links like user profiles
+                                    if (
+                                        "weibo.com/u/" not in href
+                                        and "weibo.com/n/" not in href
+                                    ):
+                                        if link_text and link_text.strip():
+                                            links.append(
+                                                f"[{link_text.strip()}]({href})"
+                                            )
+                                        else:
+                                            links.append(href)
+                            except Exception:
+                                continue
+                    except Exception:
+                        pass
+
+                # Also try to find links in the whole page that might be in the post
+                if not links:
+                    for selector in link_selectors:
+                        try:
+                            link_elems = await page.query_selector_all(selector)
+                            for link_elem in link_elems[:10]:
+                                try:
+                                    href = await link_elem.get_attribute("href")
+                                    link_text = await link_elem.inner_text()
+                                    if href and href.startswith("http"):
+                                        # Skip common navigation links
+                                        if not any(
+                                            skip in href
+                                            for skip in [
+                                                "weibo.com/u/",
+                                                "weibo.com/n/",
+                                                "weibo.com/login",
+                                                "weibo.com/signup",
+                                                "javascript:",
+                                                "#",
+                                            ]
+                                        ):
+                                            if link_text and link_text.strip():
+                                                links.append(
+                                                    f"[{link_text.strip()}]({href})"
+                                                )
+                                            else:
+                                                links.append(href)
+                                except Exception:
+                                    continue
+                            if links:
+                                break
+                        except Exception:
+                            continue
+
+                # Add links to content if found
+                if links:
+                    # Remove duplicates while preserving order
+                    seen = set()
+                    unique_links = []
+                    for link in links:
+                        if link not in seen:
+                            seen.add(link)
+                            unique_links.append(link)
+                    content_parts.append(f"\n**链接**:\n" + "\n".join(unique_links))
+
+                # Try to extract interaction stats (likes, comments, reposts)
+                stats_selectors = [
+                    'div[class*="toolbar"] span',
+                    'div[class*="card-act"] span',
+                    'ul[class*="act"] li',
+                ]
+                stats = []
+                for selector in stats_selectors:
+                    try:
+                        stat_elems = await page.query_selector_all(selector)
+                        for elem in stat_elems[:5]:  # Limit to first 5 stats
+                            stat_text = await elem.inner_text()
+                            if stat_text and stat_text.strip():
+                                stats.append(stat_text.strip())
+                        if stats:
+                            break
+                    except Exception:
+                        continue
+                if stats:
+                    content_parts.append(f"\n**互动**: {' | '.join(stats)}")
+
+            # Twitter/X-specific extraction
+            elif domain in ("twitter.com", "x.com"):
+                tweet_selectors = [
+                    'article[data-testid="tweet"]',
+                    'div[data-testid="tweetText"]',
+                ]
+                for selector in tweet_selectors:
+                    try:
+                        tweet_elem = await page.query_selector(selector)
+                        if tweet_elem:
+                            tweet_text = await tweet_elem.inner_text()
+                            if tweet_text and len(tweet_text.strip()) > 0:
+                                content_parts.append(tweet_text.strip())
+                                break
+                    except Exception:
+                        continue
+
+            # Zhihu-specific extraction
+            elif domain == "zhihu.com":
+                content_selectors = [
+                    'div[class*="RichContent-inner"]',
+                    'div[class*="Post-RichText"]',
+                    'div[class*="AnswerItem-content"]',
+                ]
+                for selector in content_selectors:
+                    try:
+                        content_elem = await page.query_selector(selector)
+                        if content_elem:
+                            content_text = await content_elem.inner_text()
+                            if content_text and len(content_text.strip()) > 0:
+                                content_parts.append(content_text.strip())
+                                break
+                    except Exception:
+                        continue
+
+            # Bilibili-specific extraction
+            elif domain == "bilibili.com":
+                # Video title
+                try:
+                    title_elem = await page.query_selector('h1[class*="video-title"]')
+                    if title_elem:
+                        title_text = await title_elem.inner_text()
+                        if title_text:
+                            content_parts.append(f"**标题**: {title_text.strip()}")
+                except Exception:
+                    pass
+
+                # Video description
+                desc_selectors = [
+                    'div[class*="desc-info"]',
+                    'span[class*="desc-info-text"]',
+                ]
+                for selector in desc_selectors:
+                    try:
+                        desc_elem = await page.query_selector(selector)
+                        if desc_elem:
+                            desc_text = await desc_elem.inner_text()
+                            if desc_text and len(desc_text.strip()) > 0:
+                                content_parts.append(f"\n**简介**: {desc_text.strip()}")
+                                break
+                    except Exception:
+                        continue
+
+            # Xiaohongshu-specific extraction
+            elif domain in ("xiaohongshu.com", "xhs.com"):
+                content_selectors = [
+                    'div[class*="note-content"]',
+                    'div[id="detail-desc"]',
+                    'div[class*="desc"]',
+                ]
+                for selector in content_selectors:
+                    try:
+                        content_elem = await page.query_selector(selector)
+                        if content_elem:
+                            content_text = await content_elem.inner_text()
+                            if content_text and len(content_text.strip()) > 0:
+                                content_parts.append(content_text.strip())
+                                break
+                    except Exception:
+                        continue
+
+            # Return combined content if we extracted anything meaningful
+            if content_parts:
+                result = "\n\n".join(content_parts)
+                logger.info(
+                    f"Extracted social media content from {domain}: "
+                    f"{len(result)} chars"
+                )
+                return result
+
+            return None
+
+        except Exception as e:
+            logger.warning(f"Failed to extract social media content from {url}: {e}")
+            return None
 
     def _html_to_markdown(self, html: str) -> str:
         """Convert HTML to markdown."""
