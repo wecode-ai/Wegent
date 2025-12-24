@@ -119,19 +119,6 @@ async def _trigger_direct_chat(
     """
     from app.api.ws.events import ServerEvents
 
-    # Emit chat:start event
-    logger.info("[ai_trigger] Emitting chat:start event")
-    await namespace.emit(
-        ServerEvents.CHAT_START,
-        {
-            "task_id": task.id,
-            "subtask_id": assistant_subtask.id,
-            "message_id": assistant_subtask.message_id,
-        },
-        room=task_room,
-    )
-    logger.info("[ai_trigger] chat:start emitted")
-
     # Extract data from ORM objects before starting background task
     # This prevents DetachedInstanceError
     task_data = {
@@ -273,6 +260,7 @@ async def _stream_chat_response(
                 override_model_name=payload.force_override_bot_model,
                 force_override=payload.force_override_bot_model is not None,
                 enable_clarification=payload.enable_clarification,
+                enable_deep_thinking=payload.enable_deep_thinking,
                 task_id=task_data["id"],
             )
         except ValueError as e:
@@ -297,6 +285,23 @@ async def _stream_chat_response(
                 db, payload.attachment_id, user_data["id"], message
             )
 
+        # Emit chat:start event with shell_type
+        logger.info(
+            "[ai_trigger] Emitting chat:start event with shell_type=%s",
+            chat_config.shell_type,
+        )
+        await namespace.emit(
+            ServerEvents.CHAT_START,
+            {
+                "task_id": task_data["id"],
+                "subtask_id": subtask_id,
+                "message_id": message_id,
+                "shell_type": chat_config.shell_type,  # Include shell_type for frontend
+            },
+            room=task_room,
+        )
+        logger.info("[ai_trigger] chat:start emitted")
+
         # Create WebSocket stream config
         ws_config = WebSocketStreamConfig(
             task_id=task_data["id"],
@@ -308,6 +313,7 @@ async def _stream_chat_response(
             enable_web_search=payload.enable_web_search,
             search_engine=payload.search_engine,
             message_id=message_id,
+            shell_type=chat_config.shell_type,  # Pass shell_type from chat_config
         )
 
         # Use ChatService for streaming
