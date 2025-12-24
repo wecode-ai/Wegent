@@ -9,4 +9,8 @@ Search service module for web search integration.
 from .base import SearchServiceBase
 from .factory import get_available_engines, get_search_service
 
-__all__ = ["SearchServiceBase", "get_available_engines", "get_search_service"]
+__all__ = [
+    "SearchServiceBase",
+    "get_available_engines",
+    "get_search_service",
+]

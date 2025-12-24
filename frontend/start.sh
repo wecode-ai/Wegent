@@ -193,8 +193,11 @@ if [ ! -f ".env.local" ]; then
 
 # Frontend Environment Variables
 
-# API Configuration
-NEXT_PUBLIC_API_URL=http://localhost:8000
+# Runtime API Configuration (can be changed without rebuilding)
+# RUNTIME_INTERNAL_API_URL is set via environment variable by this script
+# RUNTIME_SOCKET_DIRECT_URL is set via environment variable by this script
+
+# Legacy: NEXT_PUBLIC_API_URL is deprecated, use RUNTIME_INTERNAL_API_URL instead
 NEXT_PUBLIC_USE_MOCK_API=false
 
 # Authentication Configuration
@@ -209,10 +212,11 @@ EOF
     echo -e "${GREEN}✓ Created .env.local template${NC}"
 fi
 
-# Export environment variables (will override .env.local values)
-export NEXT_PUBLIC_API_URL=$API_URL
-echo -e "${GREEN}✓ Using API URL: $API_URL (via environment variable)${NC}"
-echo -e "${YELLOW}Note: .env.local file is not modified, using runtime environment variables${NC}"
+# Export runtime environment variables (will be read by Next.js at startup)
+export RUNTIME_INTERNAL_API_URL=$API_URL
+export RUNTIME_SOCKET_DIRECT_URL=$API_URL
+echo -e "${GREEN}✓ Using API URL: $API_URL (via RUNTIME_INTERNAL_API_URL)${NC}"
+echo -e "${YELLOW}Note: Using runtime environment variables (no rebuild required)${NC}"
 echo ""
 
 # Step 4: Start the development server

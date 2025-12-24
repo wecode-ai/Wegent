@@ -308,15 +308,18 @@ export default function ModelSelector({
         userSelectedModelRef.current = null;
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     selectedTeam?.id,
     showDefaultOption,
     filteredModels,
-    selectedModel,
+    // NOTE: selectedModel is intentionally excluded to prevent infinite loops
+    // The effect only needs to run when team/models change, not when selectedModel changes
     setSelectedModel,
     setForceOverride,
     disabled,
   ]);
+
   // Save selected model to localStorage
   useEffect(() => {
     if (selectedModel) {

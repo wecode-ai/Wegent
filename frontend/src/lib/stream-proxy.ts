@@ -11,9 +11,7 @@
  */
 
 import { NextRequest } from 'next/server';
-
-// Get backend URL from environment
-const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { getInternalApiUrl } from './server-config';
 
 export interface StreamProxyOptions {
   /** Custom headers to forward to backend */
@@ -50,7 +48,7 @@ export async function createStreamProxy(
     };
 
     // Forward request to backend
-    const backendResponse = await fetch(`${BACKEND_URL}${backendPath}`, {
+    const backendResponse = await fetch(`${getInternalApiUrl()}${backendPath}`, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),

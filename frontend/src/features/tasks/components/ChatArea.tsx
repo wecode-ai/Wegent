@@ -5,11 +5,11 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { CircleStop, Upload } from 'lucide-react';
+import { CircleStop, Upload, ShieldX } from 'lucide-react';
 import MessagesArea from './MessagesArea';
 import ChatInput from './ChatInput';
 import SendButton from './SendButton';
-import SearchEngineSelector from './SearchEngineSelector';
+import DeepThinkingToggle from './DeepThinkingToggle';
 import ClarificationToggle from './ClarificationToggle';
 import ModelSelector, {
   Model,
@@ -41,7 +41,6 @@ import { saveLastTeamByMode, getLastTeamIdByMode, saveLastRepo } from '@/utils/u
 import { useToast } from '@/hooks/use-toast';
 import { taskApis } from '@/apis/tasks';
 import { useAttachment } from '@/hooks/useAttachment';
-import { chatApis, SearchEngine } from '@/apis/chat';
 import { GroupChatSyncManager } from './group-chat';
 import type { SubtaskWithSender } from '@/apis/group-chat';
 import useTraceAction from '@/hooks/useTraceAction';
@@ -49,9 +48,7 @@ import useTraceAction from '@/hooks/useTraceAction';
 const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18;
 
 // Responsive collapse thresholds based on container width
-// Level 1: Collapse quota to icon mode (priority)
-const COLLAPSE_QUOTA_THRESHOLD = 520;
-// Level 2: Collapse selectors with text to icon-only mode
+// Collapse selectors with text to icon-only mode
 const COLLAPSE_SELECTORS_THRESHOLD = 420;
 
 // Slogan Display Component - shows above input when no messages
@@ -129,56 +126,14 @@ export default function ChatArea({
     setStreamingTaskId(null);
   }, []);
 
-  // Web search toggle state
-  const [enableWebSearch, setEnableWebSearch] = useState(false);
-  const [selectedSearchEngine, setSelectedSearchEngine] = useState<string | null>(null);
-  const [isWebSearchFeatureEnabled, setIsWebSearchFeatureEnabled] = useState(false);
-  const [searchEngines, setSearchEngines] = useState<SearchEngine[]>([]);
+  // Deep thinking toggle state (session-level, not persisted)
+  const [enableDeepThinking, setEnableDeepThinking] = useState(true);
 
   // Clarification toggle state (session-level, not persisted)
   const [enableClarification, setEnableClarification] = useState(false);
 
   // Welcome config state for dynamic placeholder
   const [welcomeConfig, setWelcomeConfig] = useState<WelcomeConfigResponse | null>(null);
-  // Load search engine preference from localStorage and fetch available engines
-  useEffect(() => {
-    const fetchSearchEngines = async () => {
-      try {
-        const response = await chatApis.getSearchEngines();
-        setIsWebSearchFeatureEnabled(response.enabled);
-        setSearchEngines(response.engines);
-
-        // Validate and restore saved search engine preference inside the fetch callback
-        // to ensure we validate against the latest available engines
-        if (typeof window !== 'undefined') {
-          const savedEngine = localStorage.getItem('last_search_engine');
-          if (savedEngine && response.engines.some(e => e.name === savedEngine)) {
-            setSelectedSearchEngine(savedEngine);
-          } else {
-            // Saved engine no longer exists or is invalid, clear it
-            localStorage.removeItem('last_search_engine');
-            // Default to the first engine if available
-            if (response.engines.length > 0) {
-              setSelectedSearchEngine(response.engines[0].name);
-            } else {
-              setSelectedSearchEngine(null);
-            }
-          }
-        }
-      } catch (error) {
-        console.error('Failed to fetch search engines:', error);
-        setIsWebSearchFeatureEnabled(false);
-        setSearchEngines([]);
-        toast({
-          variant: 'destructive',
-          title: 'Failed to load search engines',
-          description: error instanceof Error ? error.message : 'Unknown error',
-        });
-      }
-    };
-
-    fetchSearchEngines();
-  }, [toast]);
 
   // Fetch welcome config for dynamic placeholder
   useEffect(() => {
@@ -249,11 +204,6 @@ export default function ChatArea({
     return filteredTips[index];
   }, [welcomeConfig?.tips, taskType]);
 
-  const handleSearchEngineChange = useCallback((engine: string) => {
-    setSelectedSearchEngine(engine);
-    localStorage.setItem('last_search_engine', engine);
-  }, []);
-
   // External API parameters state
   const [externalApiParams, setExternalApiParams] = useState<Record<string, string>>({});
   const [appMode, setAppMode] = useState<string | undefined>(undefined);
@@ -312,9 +262,7 @@ export default function ChatArea({
   }, []);
 
   // Determine collapse levels based on container width
-  // Priority: 1. Collapse quota first, 2. Then collapse selectors to icon-only mode
-  const shouldCollapseQuota =
-    controlsContainerWidth > 0 && controlsContainerWidth < COLLAPSE_QUOTA_THRESHOLD;
+  // Collapse selectors to icon-only mode when space is limited
   const shouldCollapseSelectors =
     controlsContainerWidth > 0 && controlsContainerWidth < COLLAPSE_SELECTORS_THRESHOLD;
 
@@ -325,6 +273,8 @@ export default function ChatArea({
     refreshSelectedTaskDetail,
     setSelectedTask,
     markTaskAsViewed,
+    accessDenied,
+    clearAccessDenied,
   } = useTaskContext();
 
   const detailTeamId = useMemo<number | null>(() => {
@@ -492,6 +442,10 @@ export default function ChatArea({
 
       // Also reset the previousTaskIdRef to prevent stale state issues
       previousTaskIdRef.current = undefined;
+
+      // Reset prevTaskIdForModelRef to prevent model sync when creating new task
+      // This ensures user's model selection is preserved after clicking "New Chat"
+      prevTaskIdForModelRef.current = undefined;
 
       // Reset hasRestoredPreferences to allow team preference restoration for new task
       // This ensures the team selector can re-initialize when starting a new conversation
@@ -757,26 +711,45 @@ export default function ChatArea({
   }, [detailTeamId, teams, selectedTeam?.id, setSelectedTeam, selectedTaskDetail?.team]);
 
   // Set model and override flag when viewing existing task
+  // Track previous task ID to only run when task actually changes
+  const prevTaskIdForModelRef = useRef<number | null | undefined>(undefined);
   useEffect(() => {
     if (!selectedTaskDetail?.id || !selectedTeam) {
+      return;
+    }
+
+    // Only sync model when task ID actually changes (not on every render)
+    // This prevents overwriting user's model selection when they manually change it
+    const taskIdChanged = prevTaskIdForModelRef.current !== selectedTaskDetail.id;
+    if (!taskIdChanged) {
+      // Task ID hasn't changed, don't override user's selection
+      return;
+    }
+
+    // IMPORTANT: Only sync model when switching FROM an existing task TO another task
+    // When prevTaskIdForModelRef.current is undefined, it means:
+    // 1. Initial page load, OR
+    // 2. User just sent a message and created a new task
+    // In both cases, we should NOT override the user's model selection
+    // We only sync model when user explicitly switches to a different existing task
+    const isUserSwitchingTasks =
+      prevTaskIdForModelRef.current !== undefined && prevTaskIdForModelRef.current !== null;
+
+    prevTaskIdForModelRef.current = selectedTaskDetail.id;
+
+    // Skip model sync if this is not a user-initiated task switch
+    if (!isUserSwitchingTasks) {
       return;
     }
 
     const taskModelId = selectedTaskDetail.model_id;
 
     const handleDefaultModel = () => {
-      if (selectedModel?.name !== DEFAULT_MODEL_NAME) {
-        setSelectedModel({ name: DEFAULT_MODEL_NAME, provider: '', modelId: '' });
-      }
-      if (forceOverride) {
-        setForceOverride(false);
-      }
+      setSelectedModel({ name: DEFAULT_MODEL_NAME, provider: '', modelId: '' });
+      setForceOverride(false);
     };
 
     const handleExplicitModel = (modelName: string) => {
-      if (selectedModel?.name === modelName) {
-        return;
-      }
       setSelectedModel({
         name: modelName,
         provider: '',
@@ -813,15 +786,13 @@ export default function ChatArea({
     }
 
     handleExplicitModel(taskModelId);
-    if (!forceOverride) {
-      setForceOverride(true);
-    }
+    setForceOverride(true);
   }, [
     selectedTaskDetail?.id,
     selectedTaskDetail?.model_id,
     selectedTeam,
-    selectedModel?.name,
-    forceOverride,
+    // NOTE: selectedModel and forceOverride are intentionally excluded
+    // to prevent overwriting user's manual selection
     setSelectedModel,
     setForceOverride,
   ]);
@@ -835,16 +806,8 @@ export default function ChatArea({
     return selectedTeam.name.trim().length > SHOULD_HIDE_QUOTA_NAME_LIMIT;
   }, [selectedTeam, isMobile]);
 
-  // Determine if compact quota mode should be used (icon only)
-  // Priority: 1. On mobile, always use compact mode to save space
-  // Priority: 2. Collapse quota first when container width is insufficient
-  const shouldUseCompactQuota = React.useMemo(() => {
-    // Priority 1: On mobile, always use compact mode
-    if (isMobile) return true;
-    // Priority 2: Container width-based collapse (responsive to actual space)
-    if (shouldCollapseQuota) return true;
-    return false;
-  }, [isMobile, shouldCollapseQuota]);
+  // Always use compact mode (icon only) to save space
+  const shouldUseCompactQuota = true;
 
   // Check if model selection is required but not fulfilled
   // For legacy teams without predefined models, user MUST select a model before sending
@@ -1096,8 +1059,7 @@ export default function ChatArea({
             model_id: modelId,
             force_override_bot_model: forceOverride,
             attachment_id: attachmentState.attachment?.id,
-            enable_web_search: enableWebSearch,
-            search_engine: selectedSearchEngine || undefined,
+            enable_deep_thinking: enableDeepThinking,
             enable_clarification: enableClarification,
             is_group_chat: selectedTaskDetail?.is_group_chat || false,
             // Pass repository info for code tasks
@@ -1115,22 +1077,20 @@ export default function ChatArea({
             // Pass current user info for group chat sender display
             currentUserId: user?.id,
             currentUserName: user?.user_name,
-            onTaskIdResolved: (realTaskId: number) => {
-              // Update streaming task ID when real task ID is resolved
-              setStreamingTaskId(realTaskId);
-
-              // Refresh task list immediately when task ID is resolved
-              // This ensures the new task appears in the sidebar while streaming
-              refreshTasks();
-
-              // Note: We don't update URL here to avoid triggering TaskParamSync
-              // which would call setSelectedTask and trigger refreshSelectedTaskDetail.
-              // URL will be updated when message is sent.
-            },
             // Called immediately after message is sent (before AI response)
             // NOTE: NO REFRESH - the UI displays pendingUserMessage from state
             // The message will remain visible until user sends another message or switches tasks
-            onMessageSent: (completedTaskId: number, _subtaskId: number) => {
+            // New signature: (localMessageId, taskId, subtaskId) for precise message update
+            onMessageSent: (
+              _localMessageId: string,
+              completedTaskId: number,
+              _subtaskId: number
+            ) => {
+              // Update streaming task ID when real task ID is resolved
+              if (completedTaskId > 0) {
+                setStreamingTaskId(completedTaskId);
+              }
+
               // If this was a new task (first message), update URL and task list
               if (completedTaskId && !selectedTaskDetail?.id) {
                 const params = new URLSearchParams(Array.from(searchParams.entries()));
@@ -1154,23 +1114,6 @@ export default function ChatArea({
               }
               // NO REFRESH of task detail - pendingUserMessage is displayed from state
               // This prevents the progress bar flash issue
-            },
-            // Called when AI response completes (chat:done event) - only for Chat Shell
-            // For non-Chat Shell (executor types), AI response is handled by executor_manager
-            // Note: isStreaming is already set to false by handleChatDone in chatStreamContext
-            // streamingContent is preserved, so MessagesArea will display it as a completed message
-            // NO REFRESH needed - the UI displays streamingContent from state
-            onAIComplete: (_completedTaskId: number, _subtaskId: number) => {
-              // Don't reset streamingTaskId immediately - wait for task detail refresh
-              // This prevents selectedTaskDetail from becoming undefined
-              setIsLoading(false);
-              // Refresh task detail to update subtask status after stream completion or cancellation
-              // After refresh completes, reset streamingTaskId
-              setTimeout(() => {
-                refreshSelectedTaskDetail(false);
-                // Now it's safe to clear streamingTaskId
-                setStreamingTaskId(null);
-              }, 300);
             },
             onError: (error: Error) => {
               handleSendError(error, message);
@@ -1210,8 +1153,7 @@ export default function ChatArea({
       selectedTaskDetail?.status,
       contextSendMessage,
       forceOverride,
-      enableWebSearch,
-      selectedSearchEngine,
+      enableDeepThinking,
       enableClarification,
       refreshTasks,
       searchParams,
@@ -1474,6 +1416,56 @@ export default function ChatArea({
   }, [hasMessages]);
 
   // Style reference: TaskParamWrapper.tsx
+  // Handle access denied state - show error UI when user doesn't have permission
+  if (accessDenied) {
+    const handleGoHome = () => {
+      clearAccessDenied();
+      setSelectedTask(null);
+      router.push('/chat');
+    };
+
+    return (
+      <div
+        ref={chatAreaRef}
+        className="flex-1 flex flex-col min-h-0 w-full relative"
+        style={{ height: '100%', boxSizing: 'border-box' }}
+      >
+        <div className="flex-1 flex items-center justify-center p-6">
+          <div className="max-w-lg w-full">
+            {/* Error Icon */}
+            <div className="flex justify-center mb-6">
+              <div className="w-20 h-20 rounded-full bg-destructive/10 flex items-center justify-center">
+                <ShieldX className="h-10 w-10 text-destructive" />
+              </div>
+            </div>
+
+            {/* Error Title */}
+            <h1 className="text-2xl font-semibold text-center mb-3 text-text-primary">
+              {t('tasks.access_denied_title')}
+            </h1>
+
+            {/* Error Description */}
+            <p className="text-center text-text-muted mb-8 leading-relaxed">
+              {t('tasks.access_denied_description')}
+            </p>
+
+            {/* Action Button */}
+            <div className="flex justify-center">
+              <Button
+                onClick={handleGoHome}
+                variant="default"
+                size="default"
+                className="min-w-[160px]"
+              >
+                {t('tasks.access_denied_go_home')}
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       ref={chatAreaRef}
@@ -1642,18 +1634,6 @@ export default function ChatArea({
                             onRemove={handleAttachmentRemove}
                           />
                         )}
-                      {/* Web Search Toggle Button - only show for chat shell and when enabled */}
-                      {isWebSearchFeatureEnabled && isChatShell(selectedTeam) && (
-                        <SearchEngineSelector
-                          enabled={enableWebSearch}
-                          onToggle={setEnableWebSearch}
-                          selectedEngine={selectedSearchEngine}
-                          onSelectEngine={handleSearchEngineChange}
-                          disabled={isLoading || isStreaming}
-                          engines={searchEngines}
-                          compact={shouldCollapseSelectors}
-                        />
-                      )}
                       {/* Clarification Toggle Button - only show for chat shell */}
                       {isChatShell(selectedTeam) && (
                         <ClarificationToggle
@@ -1669,7 +1649,9 @@ export default function ChatArea({
                           forceOverride={forceOverride}
                           setForceOverride={setForceOverride}
                           selectedTeam={selectedTeam}
-                          disabled={hasMessages || isLoading}
+                          disabled={
+                            isLoading || isStreaming || (hasMessages && !isChatShell(selectedTeam))
+                          }
                           compact={shouldCollapseSelectors}
                         />
                       )}
@@ -1699,6 +1681,14 @@ export default function ChatArea({
                     <div className="ml-auto flex items-center gap-2 flex-shrink-0">
                       {!shouldHideQuotaUsage && (
                         <QuotaUsage className="flex-shrink-0" compact={shouldUseCompactQuota} />
+                      )}
+                      {/* Deep Thinking Toggle Button - only show for chat shell */}
+                      {isChatShell(selectedTeam) && (
+                        <DeepThinkingToggle
+                          enabled={enableDeepThinking}
+                          onToggle={setEnableDeepThinking}
+                          disabled={isLoading || isStreaming}
+                        />
                       )}
                       {isStreaming || isStopping ? (
                         isStopping ? (
@@ -1882,18 +1872,6 @@ export default function ChatArea({
                           onRemove={handleAttachmentRemove}
                         />
                       )}
-                    {/* Web Search Toggle Button - only show for chat shell and when enabled */}
-                    {isWebSearchFeatureEnabled && isChatShell(selectedTeam) && (
-                      <SearchEngineSelector
-                        enabled={enableWebSearch}
-                        onToggle={setEnableWebSearch}
-                        selectedEngine={selectedSearchEngine}
-                        onSelectEngine={handleSearchEngineChange}
-                        disabled={isLoading || isStreaming}
-                        engines={searchEngines}
-                        compact={shouldCollapseSelectors}
-                      />
-                    )}
                     {/* Clarification Toggle Button - only show for chat shell */}
                     {isChatShell(selectedTeam) && (
                       <ClarificationToggle
@@ -1909,7 +1887,9 @@ export default function ChatArea({
                         forceOverride={forceOverride}
                         setForceOverride={setForceOverride}
                         selectedTeam={selectedTeam}
-                        disabled={hasMessages || isLoading}
+                        disabled={
+                          isLoading || isStreaming || (hasMessages && !isChatShell(selectedTeam))
+                        }
                         compact={shouldCollapseSelectors}
                       />
                     )}
@@ -1939,6 +1919,14 @@ export default function ChatArea({
                   <div className="ml-auto flex items-center gap-2 flex-shrink-0">
                     {!shouldHideQuotaUsage && (
                       <QuotaUsage className="flex-shrink-0" compact={shouldUseCompactQuota} />
+                    )}
+                    {/* Deep Thinking Toggle Button - only show for chat shell */}
+                    {isChatShell(selectedTeam) && (
+                      <DeepThinkingToggle
+                        enabled={enableDeepThinking}
+                        onToggle={setEnableDeepThinking}
+                        disabled={isLoading || isStreaming}
+                      />
                     )}
                     {isStreaming || isStopping ? (
                       isStopping ? (
