@@ -29,7 +29,7 @@ export default function WorkbenchToggle({
   return (
     <button
       onClick={isOpen ? onClose : onOpen}
-      className={`relative w-8 h-8 rounded-lg bg-surface border border-border shadow-sm hover:bg-muted focus:outline focus:outline-2 focus:outline-offset-2 focus:outline-primary transition-all duration-200 ${className}`}
+      className={`relative w-9 h-9 rounded-lg bg-surface border border-border shadow-sm hover:bg-muted focus:outline focus:outline-2 focus:outline-offset-2 focus:outline-primary transition-all duration-200 ${className}`}
       title={isOpen ? '关闭工作台' : '打开工作台'}
     >
       <svg
