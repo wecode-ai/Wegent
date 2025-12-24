@@ -71,6 +71,9 @@ class StreamingState:
     last_redis_save: float = 0.0
     last_db_save: float = 0.0
     thinking: list[dict[str, Any]] = field(default_factory=list)  # Tool call steps
+    sources: list[dict[str, Any]] = field(
+        default_factory=list
+    )  # Knowledge base sources for citation
 
     def append_content(self, token: str) -> None:
         """Append token to accumulated response."""
@@ -81,14 +84,38 @@ class StreamingState:
         """Add a thinking step (tool call)."""
         self.thinking.append(step)
 
+    def add_sources(self, sources: list[dict[str, Any]]) -> None:
+        """Add knowledge base sources for citation."""
+        # Merge sources, avoiding duplicates based on (kb_id, title)
+        # Skip sources with missing required fields to prevent incorrect deduplication
+        existing_keys = {(s.get("kb_id"), s.get("title")) for s in self.sources}
+        for source in sources:
+            kb_id = source.get("kb_id")
+            title = source.get("title")
+
+            # Skip sources with missing required fields
+            if kb_id is None or title is None:
+                logger.warning(
+                    "[STREAMING] Skipping source with missing kb_id or title: %s",
+                    source,
+                )
+                continue
+
+            key = (kb_id, title)
+            if key not in existing_keys:
+                self.sources.append(source)
+                existing_keys.add(key)
+
     def get_current_result(self) -> dict[str, Any]:
-        """Get current result with thinking steps for WebSocket emission."""
+        """Get current result with thinking steps and sources for WebSocket emission."""
         result: dict[str, Any] = {
             "value": self.full_response,
             "shell_type": self.shell_type,  # Include shell_type for frontend display
         }
         if self.thinking:
             result["thinking"] = self.thinking
+        if self.sources:
+            result["sources"] = self.sources  # Include sources for citation display
         return result
 
 

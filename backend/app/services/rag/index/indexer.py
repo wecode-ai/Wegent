@@ -8,7 +8,7 @@ Document indexing orchestration.
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Optional, Union, List, Optional
+from typing import Dict, List, Optional, Union
 
 from llama_index.core import Document, SimpleDirectoryReader
 

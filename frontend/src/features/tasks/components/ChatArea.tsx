@@ -11,6 +11,7 @@ import ChatInput from './ChatInput';
 import SendButton from './SendButton';
 import DeepThinkingToggle from './DeepThinkingToggle';
 import ClarificationToggle from './ClarificationToggle';
+import ChatContextInput from './chat/ChatContextInput';
 import ModelSelector, {
   Model,
   DEFAULT_MODEL_NAME,
@@ -25,6 +26,7 @@ import AttachmentUploadPreview from './AttachmentUploadPreview';
 import { QuickAccessCards } from './QuickAccessCards';
 import { SelectedTeamBadge } from './SelectedTeamBadge';
 import type { Team, GitRepoInfo, GitBranch, ChatTipItem, ChatSloganItem } from '@/types/api';
+import type { ContextItem } from '@/types/context';
 import type { WelcomeConfigResponse } from '@/types/api';
 import { userApis } from '@/apis/user';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -137,6 +139,9 @@ export default function ChatArea({
 
   // Clarification toggle state (session-level, not persisted)
   const [enableClarification, setEnableClarification] = useState(false);
+
+  // Context selection state (currently only knowledge bases)
+  const [selectedContexts, setSelectedContexts] = useState<ContextItem[]>([]);
 
   // Welcome config state for dynamic placeholder
   const [welcomeConfig, setWelcomeConfig] = useState<WelcomeConfigResponse | null>(null);
@@ -459,6 +464,10 @@ export default function ChatArea({
 
       // Reset isCancelling state to prevent UI from being stuck
       setIsCancelling(false);
+
+      // Clear selected contexts when starting a new conversation
+      // User needs to re-select knowledge bases for the new task
+      setSelectedContexts([]);
     }
   }, [clearVersion]);
 
@@ -1049,6 +1058,8 @@ export default function ChatArea({
       setTaskInputMessage('');
       // Reset attachment immediately after sending (clear from input area)
       resetAttachment();
+      // Keep selectedContexts - user wants to maintain context selection across messages
+      // Backend will persist contexts to Task CRD and use them for subsequent queries
 
       // When default model is selected, don't pass model_id (use bot's predefined model)
       const modelId = selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.name;
@@ -1067,6 +1078,32 @@ export default function ChatArea({
         // NOTE: We do NOT set streamingTaskId here - it will be set when chat:start event is received
         // This ensures AI response rendering is only triggered by server push events
         const immediateTaskId = selectedTaskDetail?.id || -Date.now();
+
+        // Convert selected contexts to backend format
+        // Each context item contains type and data fields
+        const contextItems = selectedContexts.map(ctx => {
+          if (ctx.type === 'knowledge_base') {
+            // Type assertion for knowledge base context with retriever info
+            const kbContext = ctx as ContextItem & {
+              retriever_name?: string;
+              retriever_namespace?: string;
+            };
+            return {
+              type: 'knowledge_base',
+              data: {
+                knowledge_id: ctx.id,
+                retriever_name: kbContext.retriever_name || '',
+                retriever_namespace: kbContext.retriever_namespace || 'default',
+              },
+            };
+          }
+          // Future: handle other context types here
+          return {
+            type: ctx.type,
+            data: { id: ctx.id, name: ctx.name },
+          };
+        });
+
         // Use the global context to send message with callbacks
         // Pass immediateTaskId to ensure ChatArea and context use the same temporary ID
         const tempTaskId = await contextSendMessage(
@@ -1090,6 +1127,7 @@ export default function ChatArea({
               ? selectedBranch?.name || selectedTaskDetail?.branch_name
               : undefined,
             task_type: taskType,
+            contexts: contextItems.length > 0 ? contextItems : undefined,
           },
           {
             pendingUserMessage: message,
@@ -1662,6 +1700,13 @@ export default function ChatArea({
                       className="flex-1 min-w-0 overflow-hidden flex items-center gap-3"
                       data-tour="input-controls"
                     >
+                      {/* Context Selection - only show for chat shell */}
+                      {isChatShell(selectedTeam) && (
+                        <ChatContextInput
+                          selectedContexts={selectedContexts}
+                          onContextsChange={setSelectedContexts}
+                        />
+                      )}
                       {/* File Upload Button - always show for chat shell */}
                       {isChatShell(selectedTeam) && (
                         <AttachmentButton
@@ -1889,6 +1934,13 @@ export default function ChatArea({
                   className={`flex items-center justify-between px-3 gap-2 ${shouldHideChatInput ? 'py-3' : 'pb-2 pt-1'}`}
                 >
                   <div className="flex-1 min-w-0 overflow-hidden flex items-center gap-3">
+                    {/* Context Selection - only show for chat shell */}
+                    {isChatShell(selectedTeam) && (
+                      <ChatContextInput
+                        selectedContexts={selectedContexts}
+                        onContextsChange={setSelectedContexts}
+                      />
+                    )}
                     {/* File Upload Button - always show for chat shell */}
                     {isChatShell(selectedTeam) && (
                       <AttachmentButton

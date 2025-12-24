@@ -96,9 +96,7 @@ class KnowledgeService:
         )
 
         if existing_by_name:
-            raise ValueError(
-                f"Knowledge base with name '{data.name}' already exists"
-            )
+            raise ValueError(f"Knowledge base with name '{data.name}' already exists")
 
         # Also check by display name in spec to prevent duplicates
         existing_by_display = (
@@ -350,13 +348,19 @@ class KnowledgeService:
             if current_retrieval_config:
                 # Only update allowed fields, keep retriever and embedding_config unchanged
                 if data.retrieval_config.retrieval_mode is not None:
-                    current_retrieval_config["retrieval_mode"] = data.retrieval_config.retrieval_mode
+                    current_retrieval_config["retrieval_mode"] = (
+                        data.retrieval_config.retrieval_mode
+                    )
                 if data.retrieval_config.top_k is not None:
                     current_retrieval_config["top_k"] = data.retrieval_config.top_k
                 if data.retrieval_config.score_threshold is not None:
-                    current_retrieval_config["score_threshold"] = data.retrieval_config.score_threshold
+                    current_retrieval_config["score_threshold"] = (
+                        data.retrieval_config.score_threshold
+                    )
                 if data.retrieval_config.hybrid_weights is not None:
-                    current_retrieval_config["hybrid_weights"] = data.retrieval_config.hybrid_weights.model_dump()
+                    current_retrieval_config["hybrid_weights"] = (
+                        data.retrieval_config.hybrid_weights.model_dump()
+                    )
                 spec["retrievalConfig"] = current_retrieval_config
 
         kb_json["spec"] = spec
@@ -477,7 +481,9 @@ class KnowledgeService:
             file_extension=data.file_extension,
             file_size=data.file_size,
             user_id=user_id,
-            splitter_config=data.splitter_config.model_dump() if data.splitter_config else None,  # Save splitter_config
+            splitter_config=(
+                data.splitter_config.model_dump() if data.splitter_config else None
+            ),  # Save splitter_config
         )
         db.add(document)
 
@@ -728,7 +734,9 @@ class KnowledgeService:
                                 id=kb.id,
                                 name=kb.json.get("spec", {}).get("name", ""),
                                 description=kb.json.get("spec", {}).get("description"),
-                                document_count=KnowledgeService.get_document_count(db, kb.id),
+                                document_count=KnowledgeService.get_document_count(
+                                    db, kb.id
+                                ),
                                 updated_at=kb.updated_at,
                             )
                             for kb in group_kbs

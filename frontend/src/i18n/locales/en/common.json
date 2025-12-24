@@ -79,7 +79,8 @@
   },
   "chat": {
     "placeholder_chat": "Use the Agent team to explore and discover",
-    "placeholder_code": "Let the Agent development team build features, fix bugs, and explore the codebase"
+    "placeholder_code": "Let the Agent development team build features, fix bugs, and explore the codebase",
+    "sourceReferences": "Source References"
   },
   "bot": {
     "name": "Name",
@@ -790,7 +791,11 @@
     "model_tooltip": "Select AI model for conversation"
   },
   "knowledge": {
-    "title": "Knowledge",
+    "title": "Knowledge Base",
+    "add_context": "Add Context",
+    "search_placeholder": "Search...",
+    "no_knowledge_bases": "No knowledge bases found",
+    "documents": "documents",
     "modules": {
       "title": "Knowledge Space",
       "code": "Code Knowledge",

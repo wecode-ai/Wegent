@@ -47,6 +47,9 @@ async def trigger_ai_response(
     task_room: str,
     supports_direct_chat: bool,
     namespace: Any,  # ChatNamespace instance for emitting events
+    knowledge_base_ids: Optional[
+        list[int]
+    ] = None,  # Knowledge base IDs for tool-based RAG
 ) -> None:
     """
     Trigger AI response for a chat message.
@@ -67,11 +70,12 @@ async def trigger_ai_response(
         assistant_subtask: Assistant subtask for AI response
         team: Team Kind object
         user: User object
-        message: User message
+        message: User message (original query)
         payload: Original chat send payload
         task_room: Task room name for WebSocket events
         supports_direct_chat: Whether team supports direct chat
         namespace: ChatNamespace instance for emitting events
+        knowledge_base_ids: Optional list of knowledge base IDs for tool-based RAG
     """
     logger.info(
         "[ai_trigger] Triggering AI response: task_id=%d, "
@@ -92,6 +96,7 @@ async def trigger_ai_response(
             payload=payload,
             task_room=task_room,
             namespace=namespace,
+            knowledge_base_ids=knowledge_base_ids,
         )
     else:
         # Executor-based (ClaudeCode, Agno, etc.)
@@ -111,11 +116,15 @@ async def _trigger_direct_chat(
     payload: Any,
     task_room: str,
     namespace: Any,
+    knowledge_base_ids: Optional[list[int]] = None,
 ) -> None:
     """
     Trigger direct chat (Chat Shell) AI response using ChatService.
 
     Emits chat:start event and starts streaming in background task.
+
+    Args:
+        knowledge_base_ids: Optional list of knowledge base IDs for tool-based RAG
     """
     from app.api.ws.events import ServerEvents
     from app.services.chat.ws_emitter import get_ws_emitter
@@ -165,6 +174,7 @@ async def _trigger_direct_chat(
             namespace=namespace,
             trace_context=trace_context,
             otel_context=otel_context,
+            knowledge_base_ids=knowledge_base_ids,
         )
     )
     namespace._active_streams[assistant_subtask.id] = stream_task
@@ -184,12 +194,17 @@ async def _stream_chat_response(
     namespace: Any,
     trace_context: Optional[Dict[str, Any]] = None,
     otel_context: Optional[Any] = None,
+    knowledge_base_ids: Optional[list[int]] = None,
 ) -> None:
     """
     Stream chat response using ChatService.
 
     Uses ChatConfigBuilder to prepare configuration and delegates
     streaming to ChatService.stream_to_websocket().
+
+    Args:
+        message: Original user message
+        knowledge_base_ids: Optional list of knowledge base IDs for tool-based RAG
     """
     # Restore trace context at the start of background task
     # This ensures logging uses the correct request_id and user context
@@ -317,6 +332,14 @@ async def _stream_chat_response(
         )
         logger.info("[ai_trigger] chat:start emitted")
 
+        # Prepare knowledge base tools and enhanced system prompt
+        extra_tools, enhanced_system_prompt = _prepare_knowledge_base_tools(
+            knowledge_base_ids=knowledge_base_ids,
+            user_id=user_data["id"],
+            db=db,
+            base_system_prompt=chat_config.system_prompt,
+        )
+
         # Create WebSocket stream config
         ws_config = WebSocketStreamConfig(
             task_id=task_data["id"],
@@ -331,13 +354,14 @@ async def _stream_chat_response(
             bot_name=chat_config.bot_name,
             bot_namespace=chat_config.bot_namespace,
             shell_type=chat_config.shell_type,  # Pass shell_type from chat_config
+            extra_tools=extra_tools,  # Pass extra tools including KnowledgeBaseTool
         )
 
         # Use ChatService for streaming
         await chat_service.stream_to_websocket(
             message=final_message,
             model_config=chat_config.model_config,
-            system_prompt=chat_config.system_prompt,
+            system_prompt=enhanced_system_prompt,  # Use enhanced system prompt
             config=ws_config,
             namespace=namespace,
         )
@@ -444,3 +468,81 @@ async def _process_attachments(
         return f"{combined_attachments}【用户问题】:\n{message}"
 
     return message
+
+
+def _prepare_knowledge_base_tools(
+    knowledge_base_ids: Optional[list[int]],
+    user_id: int,
+    db: Any,
+    base_system_prompt: str,
+) -> tuple[list, str]:
+    """
+    Prepare knowledge base tools and enhanced system prompt.
+
+    This function encapsulates the logic for creating KnowledgeBaseTool
+    and enhancing the system prompt with knowledge base instructions.
+
+    Args:
+        knowledge_base_ids: Optional list of knowledge base IDs
+        user_id: User ID for access control
+        db: Database session
+        base_system_prompt: Base system prompt to enhance
+
+    Returns:
+        Tuple of (extra_tools list, enhanced_system_prompt string)
+    """
+    extra_tools = []
+    enhanced_system_prompt = base_system_prompt
+
+    if not knowledge_base_ids:
+        return extra_tools, enhanced_system_prompt
+
+    logger.info(
+        "[ai_trigger] Creating KnowledgeBaseTool for %d knowledge bases: %s",
+        len(knowledge_base_ids),
+        knowledge_base_ids,
+    )
+
+    # Import KnowledgeBaseTool
+    from app.services.chat_v2.tools.builtin import KnowledgeBaseTool
+
+    # Create KnowledgeBaseTool with the specified knowledge bases
+    kb_tool = KnowledgeBaseTool(
+        knowledge_base_ids=knowledge_base_ids,
+        user_id=user_id,
+        db_session=db,
+    )
+    extra_tools.append(kb_tool)
+
+    # Enhance system prompt to REQUIRE AI to use the knowledge base tool
+    # This is critical: we explicitly tell AI that knowledge bases have been selected
+    # and it MUST use them to answer the question
+    kb_instruction = """
+
+# IMPORTANT: Knowledge Base Requirement
+
+The user has selected specific knowledge bases for this conversation. You MUST use the `knowledge_base_search` tool to retrieve information from these knowledge bases before answering any questions.
+
+## Required Workflow:
+1. **ALWAYS** call `knowledge_base_search` first with the user's query
+2. Wait for the search results
+3. Base your answer **ONLY** on the retrieved information
+4. If the search returns no results or irrelevant information, clearly state: "I cannot find relevant information in the selected knowledge base to answer this question."
+5. **DO NOT** use your general knowledge or make assumptions beyond what's in the knowledge base
+
+## Critical Rules:
+- You MUST search the knowledge base for EVERY user question
+- You MUST NOT answer without searching first
+- You MUST NOT make up information if the knowledge base doesn't contain it
+- If unsure, search again with different keywords
+
+The user expects answers based on the selected knowledge base content only."""
+
+    enhanced_system_prompt = f"{base_system_prompt}{kb_instruction}"
+
+    logger.info(
+        "[ai_trigger] ✅ Enhanced system prompt with REQUIRED knowledge base usage instructions:\n%s",
+        kb_instruction.strip(),
+    )
+
+    return extra_tools, enhanced_system_prompt

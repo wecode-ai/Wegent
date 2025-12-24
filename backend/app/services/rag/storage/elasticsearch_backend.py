@@ -14,7 +14,7 @@ Supported retrieval modes:
 from typing import Any, ClassVar, Dict, List, Optional
 
 from elasticsearch import Elasticsearch
-from elasticsearch.helpers.vectorstore._async.strategies import (
+from elasticsearch.helpers.vectorstore import (
     AsyncBM25Strategy,
     AsyncDenseVectorStrategy,
 )

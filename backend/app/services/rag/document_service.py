@@ -35,9 +35,7 @@ class DocumentService:
         """
         self.storage_backend = storage_backend
 
-    def _get_attachment_text(
-        self, db: Session, attachment_id: int
-    ) -> tuple[str, str]:
+    def _get_attachment_text(self, db: Session, attachment_id: int) -> tuple[str, str]:
         """
         Get extracted text content and filename from attachment.
 

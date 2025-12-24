@@ -66,6 +66,13 @@ class ServerEvents:
 # ============================================================
 
 
+class ContextItem(BaseModel):
+    """Generic context item that can be of different types."""
+
+    type: str = Field(..., description="Context type (e.g., 'knowledge_base')")
+    data: Dict[str, Any] = Field(..., description="Context-specific data")
+
+
 class ChatSendPayload(BaseModel):
     """Payload for chat:send event."""
 
@@ -95,6 +102,9 @@ class ChatSendPayload(BaseModel):
     )
     is_group_chat: bool = Field(
         False, description="Whether this is a group chat (for new tasks)"
+    )
+    contexts: Optional[List[ContextItem]] = Field(
+        None, description="Context items (knowledge bases, etc.)"
     )
     # Repository info for code tasks
     git_url: Optional[str] = Field(None, description="Git repository URL")
@@ -179,12 +189,23 @@ class ChatStartPayload(BaseModel):
     bot_name: Optional[str] = None
 
 
+class SourceReference(BaseModel):
+    """Reference to a knowledge base source document."""
+
+    index: int = Field(..., description="Source index number (e.g., 1, 2, 3)")
+    title: str = Field(..., description="Document title/filename")
+    kb_id: int = Field(..., description="Knowledge base ID")
+
+
 class ChatChunkPayload(BaseModel):
     """Payload for chat:chunk event."""
 
     subtask_id: int
     content: str
     offset: int
+    sources: Optional[List[SourceReference]] = Field(
+        None, description="Knowledge base source references (for RAG citations)"
+    )
 
 
 class ChatDonePayload(BaseModel):
@@ -195,6 +216,9 @@ class ChatDonePayload(BaseModel):
     result: Dict[str, Any] = Field(default_factory=dict)
     message_id: Optional[int] = None  # Add message_id for message ordering
     task_id: Optional[int] = None  # Add task_id for group chat members
+    sources: Optional[List[SourceReference]] = Field(
+        None, description="Knowledge base source references (for RAG citations)"
+    )
 
 
 class ChatErrorPayload(BaseModel):

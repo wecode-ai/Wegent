@@ -15,8 +15,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
-from app.db.session import SessionLocal
 from app.core import security
+from app.db.session import SessionLocal
 from app.models.user import User
 from app.schemas.knowledge import (
     AccessibleKnowledgeResponse,
@@ -33,10 +33,10 @@ from app.schemas.knowledge import (
     ResourceScope,
 )
 from app.schemas.rag import SplitterConfig
+from app.services.adapters.retriever_kinds import retriever_kinds_service
 from app.services.knowledge_service import KnowledgeService
 from app.services.rag.document_service import DocumentService
 from app.services.rag.storage.factory import create_storage_backend
-from app.services.adapters.retriever_kinds import retriever_kinds_service
 
 logger = logging.getLogger(__name__)
 
@@ -319,13 +319,17 @@ async def create_document(
             if retrieval_config:
                 # Extract configuration using snake_case format
                 retriever_name = retrieval_config.get("retriever_name")
-                retriever_namespace = retrieval_config.get("retriever_namespace", "default")
+                retriever_namespace = retrieval_config.get(
+                    "retriever_namespace", "default"
+                )
                 embedding_config = retrieval_config.get("embedding_config")
 
                 if retriever_name and embedding_config:
                     # Extract embedding model info
                     embedding_model_name = embedding_config.get("model_name")
-                    embedding_model_namespace = embedding_config.get("model_namespace", "default")
+                    embedding_model_namespace = embedding_config.get(
+                        "model_namespace", "default"
+                    )
 
                     # Schedule RAG indexing in background
                     # Note: We use a synchronous function that creates its own event loop

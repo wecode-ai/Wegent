@@ -50,16 +50,26 @@ class KnowledgeBaseCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     description: Optional[str] = Field(None, max_length=500)
     namespace: str = Field(default="default", max_length=255)
-    retrieval_config: Optional[RetrievalConfig] = Field(None, description="Retrieval configuration")
+    retrieval_config: Optional[RetrievalConfig] = Field(
+        None, description="Retrieval configuration"
+    )
 
 
 class RetrievalConfigUpdate(BaseModel):
     """Schema for updating retrieval configuration (excluding retriever and embedding model)."""
 
-    retrieval_mode: Optional[str] = Field(None, description="Retrieval mode: 'vector', 'keyword', or 'hybrid'")
-    top_k: Optional[int] = Field(None, ge=1, le=10, description="Number of results to return")
-    score_threshold: Optional[float] = Field(None, ge=0.0, le=1.0, description="Minimum score threshold")
-    hybrid_weights: Optional[HybridWeights] = Field(None, description="Hybrid search weights")
+    retrieval_mode: Optional[str] = Field(
+        None, description="Retrieval mode: 'vector', 'keyword', or 'hybrid'"
+    )
+    top_k: Optional[int] = Field(
+        None, ge=1, le=10, description="Number of results to return"
+    )
+    score_threshold: Optional[float] = Field(
+        None, ge=0.0, le=1.0, description="Minimum score threshold"
+    )
+    hybrid_weights: Optional[HybridWeights] = Field(
+        None, description="Hybrid search weights"
+    )
 
 
 class KnowledgeBaseUpdate(BaseModel):
@@ -67,7 +77,10 @@ class KnowledgeBaseUpdate(BaseModel):
 
     name: Optional[str] = Field(None, min_length=1, max_length=100)
     description: Optional[str] = Field(None, max_length=500)
-    retrieval_config: Optional[RetrievalConfigUpdate] = Field(None, description="Retrieval configuration update (excludes retriever and embedding model)")
+    retrieval_config: Optional[RetrievalConfigUpdate] = Field(
+        None,
+        description="Retrieval configuration update (excludes retriever and embedding model)",
+    )
 
 
 class KnowledgeBaseResponse(BaseModel):
@@ -80,7 +93,9 @@ class KnowledgeBaseResponse(BaseModel):
     namespace: str
     document_count: int
     is_active: bool
-    retrieval_config: Optional[RetrievalConfig] = Field(None, description="Retrieval configuration")
+    retrieval_config: Optional[RetrievalConfig] = Field(
+        None, description="Retrieval configuration"
+    )
     created_at: datetime
     updated_at: datetime
 
@@ -136,7 +151,9 @@ class KnowledgeDocumentUpdate(BaseModel):
 
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     status: Optional[DocumentStatus] = None
-    splitter_config: Optional[SplitterConfig] = Field(None, description="Splitter configuration for document chunking")
+    splitter_config: Optional[SplitterConfig] = Field(
+        None, description="Splitter configuration for document chunking"
+    )
 
 
 class KnowledgeDocumentResponse(BaseModel):
