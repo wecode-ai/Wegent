@@ -18,6 +18,8 @@ Wegent is an open-source AI-native operating system for defining, organizing, an
 - High cohesion, low coupling - extract common logic, avoid duplication
 - Choose simplest working solution - prioritize code simplicity and extensibility
 
+**📚 Detailed Documentation:** See `docs/en/` or `docs/zh/` for comprehensive guides on setup, testing, architecture, and user guides.
+
 ---
 
 ## 📖 Terminology: Team vs Bot
@@ -70,6 +72,13 @@ cd frontend && npm run test:e2e    # E2E tests (Playwright)
 
 **⚠️ All code comments MUST be written in English.**
 
+### General Principles
+
+- **High cohesion, low coupling**: Each module/class should have a single responsibility
+- **File size limit**: If a file exceeds **1000 lines**, split it into multiple sub-modules
+- **Function length**: Max 50 lines per function (preferred)
+- **Avoid duplication**: Extract common logic into shared utilities
+
 ### Python (Backend, Executor, Shared)
 
 **Standards:** PEP 8, Black formatter (line length: 88), isort, type hints required
@@ -81,7 +90,6 @@ black . && isort .
 **Guidelines:**
 - Descriptive names, docstrings for public functions/classes
 - Extract magic numbers to constants
-- Max 50 lines per function (preferred)
 
 ### TypeScript/React (Frontend)
 
