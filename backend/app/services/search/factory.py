@@ -118,11 +118,11 @@ def get_engine_max_results(engine_name: str | None = None) -> int:
     """
     Get the max_results configuration for a specific engine.
     If engine_name is None, returns the first configured engine's max_results.
-    Returns 10 as fallback if not found.
+    Returns 100 as fallback if not found.
     """
     config = _get_engines_config()
     if not config or "engines" not in config:
-        return 10
+        return 100
 
     engines = config["engines"]
 
@@ -134,7 +134,7 @@ def get_engine_max_results(engine_name: str | None = None) -> int:
     )
 
     if not selected_name:
-        return 10
+        return 100
 
     engine_config = engines[selected_name]
-    return engine_config.get("max_results", 10)
+    return engine_config.get("max_results", 100)

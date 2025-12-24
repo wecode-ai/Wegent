@@ -31,8 +31,8 @@ class WebSearchTool(BaseTool):
 
     # Optional: specify which search engine to use (None = use first available)
     engine_name: str | None = None
-    # Default max_results from engine config (fallback: 10)
-    default_max_results: int = 10
+    # Default max_results from engine config (fallback: 100)
+    default_max_results: int = 100
 
     def _run(
         self,
