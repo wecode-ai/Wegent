@@ -76,7 +76,7 @@ export function AdminTabNav({ activeTab, onTabChange }: AdminTabNavProps) {
   // Mobile: Dropdown select
   if (isMobile) {
     return (
-      <div className="px-4 py-2 border-t border-border bg-white">
+      <div className="px-4 py-2 border-t border-border bg-base">
         <Select value={activeTab} onValueChange={value => onTabChange(value as AdminTabId)}>
           <SelectTrigger className="w-full">
             <SelectValue placeholder={t('tabs.users')} />
@@ -102,7 +102,7 @@ export function AdminTabNav({ activeTab, onTabChange }: AdminTabNavProps) {
   return (
     <div
       ref={indicatorContainerRef}
-      className="relative flex items-center gap-1 px-4 py-2 border-t border-border bg-white overflow-x-auto"
+      className="relative flex items-center gap-1 px-4 py-2 border-t border-border bg-base overflow-x-auto"
     >
       {/* Sliding indicator */}
       <span
