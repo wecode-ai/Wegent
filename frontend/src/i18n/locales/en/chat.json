@@ -50,7 +50,17 @@
     "content_incomplete": "Response Incomplete",
     "content_incomplete_desc": "Connection was lost, this is the partial content generated",
     "like": "Like",
-    "dislike": "Dislike"
+    "dislike": "Dislike",
+    "searching": "Searching",
+    "searched_for": "Searched for",
+    "results": "results",
+    "using_tool": "Using tool",
+    "used_tool": "Used tool",
+    "times": "times",
+    "used_tools": "Used tools",
+    "query": "Query",
+    "search_completed": "Search completed",
+    "found": "Found"
   },
   "shared_task": {
     "share_task": "Share",

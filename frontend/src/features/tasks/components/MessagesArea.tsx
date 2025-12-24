@@ -81,6 +81,8 @@ function StreamingMessageBubble({
     subtaskId: message.subtaskId,
     // Pass thinking data for executor tasks (Claude Code, etc.)
     thinking: message.thinking as Message['thinking'],
+    // Pass result with shell_type for component selection
+    result: message.result,
   };
 
   return (
@@ -550,6 +552,7 @@ export default function MessagesArea({
       senderUserId: msg.senderUserId,
       shouldShowSender: msg.shouldShowSender,
       thinking: msg.thinking as Message['thinking'],
+      result: msg.result, // Include result with shell_type for component selection
       recoveredContent: msg.recoveredContent,
       isRecovered: msg.isRecovered,
       isIncomplete: msg.isIncomplete,
