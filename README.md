@@ -46,6 +46,30 @@ The possibilities are endless - build agents for:
 
 ---
 
+## 🚀 Quick Start
+
+### Prerequisites
+
+- Docker and Docker Compose
+- Git
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/wecode-ai/wegent.git
+   cd wegent
+   ```
+
+2. **Start the platform**
+   ```bash
+   docker-compose up -d
+   
+   # Optional: Enable RAG features with Elasticsearch
+   # docker compose --profile rag up -d
+   ```
+
+3. **Access the web interface**
+   - Open http://localhost:3000 in your browser
+
 ## 📖 What is Wegent?
 
 Wegent is an open-source AI native operating system that enables you to define, organize, and run intelligent agents at scale. Built on Kubernetes-style declarative API and CRD (Custom Resource Definition) design patterns, Wegent provides a standardized framework for creating and managing AI agent ecosystems.
@@ -122,30 +146,6 @@ graph LR
 
 > 💡 **Detailed YAML Configuration Documentation**:
 - [Complete YAML configuration examples and field descriptions](docs/en/reference/yaml-specification.md)
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-- Docker and Docker Compose
-- Git
-
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/wecode-ai/wegent.git
-   cd wegent
-   ```
-
-2. **Start the platform**
-   ```bash
-   docker-compose up -d
-   
-   # Optional: Enable RAG features with Elasticsearch
-   # docker compose --profile rag up -d
-   ```
-
-3. **Access the web interface**
-   - Open http://localhost:3000 in your browser
 
 ## 🏗️ Architecture
 
