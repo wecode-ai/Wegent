@@ -210,11 +210,11 @@ class ChatConfigBuilder:
             Model configuration dictionary
         """
         from app.services.chat_v2.models.resolver import (
-            build_default_headers_with_placeholders,
+            _process_model_config_placeholders,
             get_model_config_for_bot,
         )
 
-        # Get base model config
+        # Get base model config (extracts from DB and handles env placeholders + decryption)
         model_config = get_model_config_for_bot(
             self.db,
             bot,
@@ -223,7 +223,7 @@ class ChatConfigBuilder:
             force_override=force_override,
         )
 
-        # Build data sources for placeholder replacement
+        # Build agent_config and task_data for placeholder replacement
         bot_spec = bot.json.get("spec", {}) if bot.json else {}
         agent_config = bot_spec.get("agent_config", {})
         user_info = {"id": self.user_id, "name": self.user_name}
@@ -232,20 +232,15 @@ class ChatConfigBuilder:
             "team_id": self.team.id,
             "user": user_info,
         }
-        data_sources = {
-            "agent_config": agent_config,
-            "model_config": model_config,
-            "task_data": task_data,
-            "user": user_info,
-        }
 
-        # Process headers with placeholders
-        raw_default_headers = model_config.get("default_headers", {})
-        if raw_default_headers:
-            processed_headers = build_default_headers_with_placeholders(
-                raw_default_headers, data_sources
-            )
-            model_config["default_headers"] = processed_headers
+        # Process all placeholders in model_config (api_key + default_headers)
+        model_config = _process_model_config_placeholders(
+            model_config=model_config,
+            user_id=self.user_id,
+            user_name=self.user_name,
+            agent_config=agent_config,
+            task_data=task_data,
+        )
 
         return model_config
 
