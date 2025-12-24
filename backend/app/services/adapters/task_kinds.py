@@ -858,9 +858,9 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         Get Task by ID and user ID (only active tasks)
         Allows access if user is the owner OR a member of the group chat
         """
-        from app.models.task_member import MemberStatus, TaskMember
+        from app.services.task_member_service import task_member_service
 
-        # First, try to find task owned by user
+        # First, check if task exists
         task = (
             db.query(Kind)
             .filter(
@@ -872,33 +872,11 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             .first()
         )
 
-        # If not found as owner, check if user is a group chat member
         if not task:
-            # Check if user is a member of this task's group chat
-            member = (
-                db.query(TaskMember)
-                .filter(
-                    TaskMember.task_id == task_id,
-                    TaskMember.user_id == user_id,
-                    TaskMember.status == MemberStatus.ACTIVE,
-                )
-                .first()
-            )
+            raise HTTPException(status_code=404, detail="Task not found")
 
-            if member:
-                # User is a member, fetch the task without user_id filter
-                task = (
-                    db.query(Kind)
-                    .filter(
-                        Kind.id == task_id,
-                        Kind.kind == "Task",
-                        Kind.is_active == True,
-                        text("JSON_EXTRACT(json, '$.status.status') != 'DELETE'"),
-                    )
-                    .first()
-                )
-
-        if not task:
+        # Check if user has access (owner or active member)
+        if not task_member_service.is_member(db, task_id, user_id):
             raise HTTPException(status_code=404, detail="Task not found")
 
         # For group chat members, use the task owner's user_id to convert task dict
