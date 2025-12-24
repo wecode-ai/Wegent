@@ -121,7 +121,7 @@ export default function ChatArea({
   }, []);
 
   // Deep thinking toggle state (session-level, not persisted)
-  const [enableDeepThinking, setEnableDeepThinking] = useState(false);
+  const [enableDeepThinking, setEnableDeepThinking] = useState(true);
 
   // Clarification toggle state (session-level, not persisted)
   const [enableClarification, setEnableClarification] = useState(false);
@@ -1348,7 +1348,12 @@ export default function ChatArea({
 
             {/* Action Button */}
             <div className="flex justify-center">
-              <Button onClick={handleGoHome} variant="default" size="default" className="min-w-[160px]">
+              <Button
+                onClick={handleGoHome}
+                variant="default"
+                size="default"
+                className="min-w-[160px]"
+              >
                 {t('tasks.access_denied_go_home')}
               </Button>
             </div>
