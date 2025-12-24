@@ -25,14 +25,12 @@ export default function ChatKnowledgeBaseInput({
     onKnowledgeBasesChange([...selectedKnowledgeBases, knowledgeBase]);
   };
 
-  const handleDeselect = (knowledge_id: string) => {
-    onKnowledgeBasesChange(
-      selectedKnowledgeBases.filter(kb => kb.knowledge_id !== knowledge_id)
-    );
+  const handleDeselect = (id: number) => {
+    onKnowledgeBasesChange(selectedKnowledgeBases.filter(kb => kb.id !== id));
   };
 
-  const handleRemoveBadge = (knowledge_id: string) => {
-    handleDeselect(knowledge_id);
+  const handleRemoveBadge = (id: number) => {
+    handleDeselect(id);
   };
 
   return (
@@ -54,9 +52,9 @@ export default function ChatKnowledgeBaseInput({
 
       {selectedKnowledgeBases.map(kb => (
         <KnowledgeBaseBadge
-          key={kb.knowledge_id}
+          key={kb.id}
           knowledgeBase={kb}
-          onRemove={() => handleRemoveBadge(kb.knowledge_id)}
+          onRemove={() => handleRemoveBadge(kb.id)}
         />
       ))}
     </div>

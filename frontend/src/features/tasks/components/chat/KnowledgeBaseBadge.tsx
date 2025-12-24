@@ -16,11 +16,7 @@ interface KnowledgeBaseBadgeProps {
 
 export default function KnowledgeBaseBadge({ knowledgeBase, onRemove }: KnowledgeBaseBadgeProps) {
   return (
-    <Badge
-      variant="default"
-      size="default"
-      className="bg-primary text-white gap-1.5 max-w-[200px]"
-    >
+    <Badge variant="default" size="default" className="bg-primary text-white gap-1.5 max-w-[200px]">
       <span className="truncate">{knowledgeBase.name}</span>
       <button
         onClick={onRemove}

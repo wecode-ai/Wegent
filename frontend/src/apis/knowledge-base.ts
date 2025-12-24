@@ -9,7 +9,10 @@ export const knowledgeBaseApi = {
   /**
    * List all knowledge bases accessible to the user
    */
-  list: async (params?: { scope?: string; group_name?: string }): Promise<KnowledgeBasesResponse> => {
+  list: async (params?: {
+    scope?: string;
+    group_name?: string;
+  }): Promise<KnowledgeBasesResponse> => {
     const queryParams = new URLSearchParams();
     if (params?.scope) queryParams.append('scope', params.scope);
     if (params?.group_name) queryParams.append('group_name', params.group_name);

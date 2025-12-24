@@ -11,6 +11,7 @@ import ChatInput from './ChatInput';
 import SendButton from './SendButton';
 import SearchEngineSelector from './SearchEngineSelector';
 import ClarificationToggle from './ClarificationToggle';
+import ChatKnowledgeBaseInput from './chat/ChatKnowledgeBaseInput';
 import ModelSelector, {
   Model,
   DEFAULT_MODEL_NAME,
@@ -23,7 +24,14 @@ import ExternalApiParamsInput from './ExternalApiParamsInput';
 import FileUpload from './FileUpload';
 import { QuickAccessCards } from './QuickAccessCards';
 import { SelectedTeamBadge } from './SelectedTeamBadge';
-import type { Team, GitRepoInfo, GitBranch, ChatTipItem, ChatSloganItem } from '@/types/api';
+import type {
+  Team,
+  GitRepoInfo,
+  GitBranch,
+  ChatTipItem,
+  ChatSloganItem,
+  KnowledgeBase,
+} from '@/types/api';
 import type { WelcomeConfigResponse } from '@/types/api';
 import { userApis } from '@/apis/user';
 import { useTranslation } from 'react-i18next';
@@ -129,6 +137,9 @@ export default function ChatArea({
 
   // Clarification toggle state (session-level, not persisted)
   const [enableClarification, setEnableClarification] = useState(false);
+
+  // Knowledge base selection state
+  const [selectedKnowledgeBases, setSelectedKnowledgeBases] = useState<KnowledgeBase[]>([]);
 
   // Welcome config state for dynamic placeholder
   const [welcomeConfig, setWelcomeConfig] = useState<WelcomeConfigResponse | null>(null);
@@ -1010,6 +1021,8 @@ export default function ChatArea({
       setTaskInputMessage('');
       // Reset attachment immediately after sending (clear from input area)
       resetAttachment();
+      // Clear knowledge bases after sending (Notion UX pattern)
+      setSelectedKnowledgeBases([]);
 
       // When default model is selected, don't pass model_id (use bot's predefined model)
       const modelId = selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.name;
@@ -1028,6 +1041,14 @@ export default function ChatArea({
         // NOTE: We do NOT set streamingTaskId here - it will be set when chat:start event is received
         // This ensures AI response rendering is only triggered by server push events
         const immediateTaskId = selectedTaskDetail?.id || -Date.now();
+
+        // Convert selected knowledge bases to KnowledgeBaseRef format
+        const knowledgeBaseRefs = selectedKnowledgeBases.map(kb => ({
+          knowledge_id: kb.id,
+          retriever_name: kb.retrieval_config?.retriever_name || '',
+          retriever_namespace: kb.retrieval_config?.retriever_namespace || 'default',
+        }));
+
         // Use the global context to send message with callbacks
         // Pass immediateTaskId to ensure ChatArea and context use the same temporary ID
         const tempTaskId = await contextSendMessage(
@@ -1049,6 +1070,7 @@ export default function ChatArea({
             git_domain: showRepositorySelector ? selectedRepo?.git_domain : undefined,
             branch_name: showRepositorySelector ? selectedBranch?.name : undefined,
             task_type: taskType,
+            knowledge_bases: knowledgeBaseRefs.length > 0 ? knowledgeBaseRefs : undefined,
           },
           {
             pendingUserMessage: message,
@@ -1512,6 +1534,13 @@ export default function ChatArea({
                       className="flex-1 min-w-0 overflow-hidden flex items-center gap-3"
                       data-tour="input-controls"
                     >
+                      {/* Knowledge Base Selection - only show for chat shell */}
+                      {isChatShell(selectedTeam) && (
+                        <ChatKnowledgeBaseInput
+                          selectedKnowledgeBases={selectedKnowledgeBases}
+                          onKnowledgeBasesChange={setSelectedKnowledgeBases}
+                        />
+                      )}
                       {/* File Upload Button - only show when no file is selected */}
                       {!attachmentState.attachment &&
                         !attachmentState.isUploading &&
@@ -1752,6 +1781,13 @@ export default function ChatArea({
                   className={`flex items-center justify-between px-3 gap-2 ${shouldHideChatInput ? 'py-3' : 'pb-0.5'}`}
                 >
                   <div className="flex-1 min-w-0 overflow-hidden flex items-center gap-3">
+                    {/* Knowledge Base Selection - only show for chat shell */}
+                    {isChatShell(selectedTeam) && (
+                      <ChatKnowledgeBaseInput
+                        selectedKnowledgeBases={selectedKnowledgeBases}
+                        onKnowledgeBasesChange={setSelectedKnowledgeBases}
+                      />
+                    )}
                     {/* File Upload Button - only show when no file is selected */}
                     {!attachmentState.attachment &&
                       !attachmentState.isUploading &&
