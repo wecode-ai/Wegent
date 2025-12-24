@@ -193,6 +193,7 @@ export default function ChatPage() {
             taskDetail={selectedTaskDetail}
             onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
             onTaskDeleted={handleTaskDeleted}
+            isSidebarCollapsed={isCollapsed}
           >
             {/* Create Group Chat Button - only show when no task is open */}
             {!hasOpenTask && (

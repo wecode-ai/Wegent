@@ -97,7 +97,7 @@ export default function TaskTitleDropdown({
           <button
             type="button"
             className={cn(
-              'flex items-center gap-2 px-3 py-1.5 rounded-md',
+              'flex items-center gap-2 h-9 px-3 rounded-md',
               'text-text-primary font-medium text-base',
               'hover:bg-muted transition-colors',
               'focus:outline-none focus:ring-2 focus:ring-primary/40',
@@ -126,7 +126,7 @@ export default function TaskTitleDropdown({
           <button
             type="button"
             className={cn(
-              'flex items-center gap-2 px-3 py-1.5 rounded-md',
+              'flex items-center gap-2 h-9 px-3 rounded-md',
               'text-text-primary font-medium text-base',
               'hover:bg-muted transition-colors',
               'focus:outline-none focus:ring-2 focus:ring-primary/40',

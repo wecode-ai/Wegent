@@ -21,6 +21,7 @@ type TopNavigationProps = {
   children?: React.ReactNode;
   onMobileSidebarToggle?: () => void;
   onTaskDeleted?: () => void;
+  isSidebarCollapsed?: boolean;
 };
 
 export default function TopNavigation({
@@ -31,6 +32,7 @@ export default function TopNavigation({
   children,
   onMobileSidebarToggle,
   onTaskDeleted,
+  isSidebarCollapsed = false,
 }: TopNavigationProps) {
   const { t } = useTranslation('common');
   const isMobile = useIsMobile();
@@ -43,7 +45,11 @@ export default function TopNavigation({
   const shouldShowLogo = showLogo || (variant === 'standalone' && !isMobile);
 
   return (
-    <div className="relative flex items-center justify-between px-4 sm:px-6 py-2 sm:py-3 min-h-[44px] bg-base">
+    <div
+      className={`relative flex items-center justify-between py-2 sm:py-3 min-h-[44px] bg-base ${
+        isSidebarCollapsed && isDesktop ? 'pl-24 pr-4 sm:pr-6' : 'px-4 sm:px-6'
+      }`}
+    >
       {/* Left side - Mobile sidebar toggle, Logo, and Title */}
       <div className="flex items-center gap-3">
         {showHamburgerMenu && (

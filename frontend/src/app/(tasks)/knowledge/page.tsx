@@ -162,6 +162,7 @@ export default function KnowledgePage() {
           variant="with-sidebar"
           title={t('knowledge.title')}
           onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
+          isSidebarCollapsed={isCollapsed}
         >
           {isMobile ? <ThemeToggle /> : <GithubStarButton />}
         </TopNavigation>
