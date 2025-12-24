@@ -87,8 +87,8 @@ class LangChainModelFactory:
                 "max_tokens": kw.get("max_tokens"),
                 "streaming": kw.get("streaming", False),
                 "model_kwargs": (
-                    {"extra_headers": cfg.get("headers")}
-                    if cfg.get("headers")
+                    {"extra_headers": cfg.get("default_headers")}
+                    if cfg.get("default_headers")
                     else None
                 ),
             },
@@ -103,8 +103,8 @@ class LangChainModelFactory:
                 "max_tokens": kw.get("max_tokens", 4096),
                 "streaming": kw.get("streaming", False),
                 "model_kwargs": (
-                    {"extra_headers": cfg.get("headers")}
-                    if cfg.get("headers")
+                    {"extra_headers": cfg.get("default_headers")}
+                    if cfg.get("default_headers")
                     else None
                 ),
             },
@@ -118,7 +118,7 @@ class LangChainModelFactory:
                 "temperature": kw.get("temperature", 1.0),
                 "max_output_tokens": kw.get("max_tokens"),
                 "streaming": kw.get("streaming", False),
-                "additional_headers": cfg.get("headers") or None,
+                "additional_headers": cfg.get("default_headers") or None,
             },
         },
     }
@@ -146,7 +146,7 @@ class LangChainModelFactory:
             "model_id": model_config.get("model_id", "gpt-4"),
             "api_key": model_config.get("api_key", ""),
             "base_url": model_config.get("base_url", ""),
-            "headers": model_config.get("default_headers"),
+            "default_headers": model_config.get("default_headers"),
         }
         model_type = model_config.get("model", "openai")
 
