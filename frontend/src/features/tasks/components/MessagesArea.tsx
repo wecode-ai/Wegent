@@ -432,9 +432,9 @@ export default function MessagesArea({
             variant="outline"
             size="sm"
             onClick={() => setShowMembersPanel(true)}
-            className="flex items-center gap-2"
+            className="flex items-center gap-1 h-8 pl-2 pr-3 rounded-[7px] text-sm"
           >
-            <Users className="h-4 w-4" />
+            <Users className="h-3.5 w-3.5" />
             {t('groupChat.members.title') || 'Members'}
           </Button>
         )}
@@ -446,9 +446,9 @@ export default function MessagesArea({
             size="sm"
             onClick={handleShareTask}
             disabled={isSharing}
-            className="flex items-center gap-2"
+            className="flex items-center gap-1 h-8 pl-2 pr-3 rounded-[7px] text-sm"
           >
-            <Share2 className="h-4 w-4" />
+            <Share2 className="h-3.5 w-3.5" />
             {isSharing ? tCommon('shared_task.sharing') : tCommon('shared_task.share_link')}
           </Button>
         )}
@@ -459,9 +459,9 @@ export default function MessagesArea({
               variant="outline"
               size="sm"
               disabled={isExportingPdf || isExportingDocx}
-              className="flex items-center gap-2"
+              className="flex items-center gap-1 h-8 pl-2 pr-3 rounded-[7px] text-sm"
             >
-              <Download className="h-4 w-4" />
+              <Download className="h-3.5 w-3.5" />
               {t('export.export')}
               <ChevronDown className="h-3 w-3 ml-0.5" />
             </Button>
@@ -502,9 +502,9 @@ export default function MessagesArea({
                 'https://github.com/wecode-ai/wegent/issues/new';
               window.open(feedbackUrl, '_blank');
             }}
-            className="flex items-center gap-2"
+            className="flex items-center gap-1 h-8 pl-2 pr-3 rounded-[7px] text-sm"
           >
-            <MessageSquare className="h-4 w-4" />
+            <MessageSquare className="h-3.5 w-3.5" />
             {tCommon('navigation.feedback')}
           </Button>
         </DropdownMenu>
