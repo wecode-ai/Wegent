@@ -15,6 +15,7 @@ Protection mechanisms:
 """
 
 import asyncio
+import concurrent.futures
 import inspect
 import logging
 from typing import Any
@@ -95,14 +96,23 @@ def wrap_tool_with_protection(
                 # Only inject config if the tool implementation accepts it
                 if run_accepts_config and "config" not in kwargs:
                     kwargs["config"] = None
-                return original_run(*args, **kwargs)
+
+                # Execute with thread pool for timeout protection
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(original_run, *args, **kwargs)
+                    try:
+                        return future.result(timeout=timeout)
+                    except concurrent.futures.TimeoutError:
+                        error_msg = f"MCP tool '{tool.name}' timed out after {timeout}s"
+                        logger.error("[MCP] %s", error_msg)
+                        return _format_error(error_msg)
+
             return _format_error(
                 f"Error: Tool {tool.name} has no synchronous implementation"
             )
         except Exception as e:
-            error_msg = f"MCP tool '{tool.name}' failed: {str(e)}"
-            logger.error("[MCP] %s", error_msg)
-            return _format_error(error_msg)
+            logger.exception("[MCP] MCP tool '%s' failed: %s", tool.name, e)
+            return _format_error(f"MCP tool '{tool.name}' failed: {e!s}")
 
     async def protected_arun(*args, **kwargs):
         """Asynchronous tool execution with timeout and exception protection."""
@@ -123,9 +133,8 @@ def wrap_tool_with_protection(
             logger.error("[MCP] %s", error_msg)
             return _format_error(error_msg)
         except Exception as e:
-            error_msg = f"MCP tool '{tool.name}' failed: {str(e)}"
-            logger.error("[MCP] %s", error_msg)
-            return _format_error(error_msg)
+            logger.exception("[MCP] MCP tool '%s' failed: %s", tool.name, e)
+            return _format_error(f"MCP tool '{tool.name}' failed: {e!s}")
 
     # Replace tool's run methods with protected versions
     if original_run:
