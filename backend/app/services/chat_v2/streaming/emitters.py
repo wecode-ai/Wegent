@@ -37,13 +37,28 @@ class StreamEmitter(ABC):
     """
 
     @abstractmethod
-    async def emit_start(self, task_id: int, subtask_id: int) -> None:
-        """Emit stream start event."""
+    async def emit_start(
+        self, task_id: int, subtask_id: int, shell_type: str = "Chat"
+    ) -> None:
+        """Emit stream start event with shell_type for frontend display logic."""
         pass
 
     @abstractmethod
-    async def emit_chunk(self, content: str, offset: int, subtask_id: int) -> None:
-        """Emit a content chunk."""
+    async def emit_chunk(
+        self,
+        content: str,
+        offset: int,
+        subtask_id: int,
+        result: dict[str, Any] | None = None,
+    ) -> None:
+        """Emit a content chunk with optional result data (thinking, workbench).
+
+        Args:
+            content: Content chunk (for text streaming)
+            offset: Current offset in the full response
+            subtask_id: Subtask ID
+            result: Optional full result data (for thinking/workbench display, follows executor pattern)
+        """
         pass
 
     @abstractmethod
@@ -84,13 +99,24 @@ class SSEEmitter(StreamEmitter):
         """Format data as SSE event string."""
         return f"data: {json.dumps(data)}\n\n"
 
-    async def emit_start(self, task_id: int, subtask_id: int) -> None:
+    async def emit_start(
+        self, task_id: int, subtask_id: int, shell_type: str = "Chat"
+    ) -> None:
         """SSE doesn't need explicit start event."""
         pass
 
-    async def emit_chunk(self, content: str, offset: int, subtask_id: int) -> None:
-        """Emit chunk as SSE data."""
-        self._events.append(self.format_sse({"content": content, "done": False}))
+    async def emit_chunk(
+        self,
+        content: str,
+        offset: int,
+        subtask_id: int,
+        result: dict[str, Any] | None = None,
+    ) -> None:
+        """Emit chunk as SSE data with optional result."""
+        payload = {"content": content, "done": False}
+        if result is not None:
+            payload["result"] = result
+        self._events.append(self.format_sse(payload))
 
     async def emit_done(
         self,
@@ -145,26 +171,39 @@ class WebSocketEmitter(StreamEmitter):
         self.task_room = task_room
         self.task_id = task_id
 
-    async def emit_start(self, task_id: int, subtask_id: int) -> None:
-        """Emit chat:start event using global emitter."""
+    async def emit_start(
+        self, task_id: int, subtask_id: int, shell_type: str = "Chat"
+    ) -> None:
+        """Emit chat:start event using global emitter with shell_type."""
         from app.services.chat.ws_emitter import get_ws_emitter
 
         emitter = get_ws_emitter()
         await emitter.emit_chat_start(
             task_id=task_id,
             subtask_id=subtask_id,
+            shell_type=shell_type,
         )
-        logger.info("[WS_EMITTER] chat:start emitted")
+        logger.info("[WS_EMITTER] chat:start emitted with shell_type=%s", shell_type)
 
-    async def emit_chunk(self, content: str, offset: int, subtask_id: int) -> None:
-        """Emit chat:chunk event using global emitter."""
+    async def emit_chunk(
+        self,
+        content: str,
+        offset: int,
+        subtask_id: int,
+        result: dict[str, Any] | None = None,
+    ) -> None:
+        """Emit chat:chunk event using global emitter with optional result data.
+
+        This follows the same pattern as executor tasks to enable thinking/workbench display.
+        """
         from app.services.chat.ws_emitter import get_ws_emitter
 
         logger.debug(
-            "[WS_EMITTER] emit_chunk: subtask_id=%d, offset=%d, content_len=%d",
+            "[WS_EMITTER] emit_chunk: subtask_id=%d, offset=%d, content_len=%d, has_result=%s",
             subtask_id,
             offset,
             len(content),
+            result is not None,
         )
         emitter = get_ws_emitter()
         await emitter.emit_chat_chunk(
@@ -172,6 +211,7 @@ class WebSocketEmitter(StreamEmitter):
             subtask_id=subtask_id,
             content=content,
             offset=offset,
+            result=result,
         )
 
     async def emit_done(

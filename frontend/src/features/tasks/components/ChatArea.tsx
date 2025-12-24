@@ -5,7 +5,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { CircleStop, Upload } from 'lucide-react';
+import { CircleStop, Upload, ShieldX } from 'lucide-react';
 import MessagesArea from './MessagesArea';
 import ChatInput from './ChatInput';
 import SendButton from './SendButton';
@@ -121,7 +121,7 @@ export default function ChatArea({
   }, []);
 
   // Deep thinking toggle state (session-level, not persisted)
-  const [enableDeepThinking, setEnableDeepThinking] = useState(false);
+  const [enableDeepThinking, setEnableDeepThinking] = useState(true);
 
   // Clarification toggle state (session-level, not persisted)
   const [enableClarification, setEnableClarification] = useState(false);
@@ -269,7 +269,11 @@ export default function ChatArea({
     refreshSelectedTaskDetail,
     setSelectedTask,
     markTaskAsViewed,
+    accessDenied,
+    clearAccessDenied,
   } = useTaskContext();
+
+  const { t } = useTranslation();
 
   const detailTeamId = useMemo<number | null>(() => {
     if (!selectedTaskDetail?.team) {
@@ -1309,6 +1313,56 @@ export default function ChatArea({
   }, [hasMessages]);
 
   // Style reference: TaskParamWrapper.tsx
+  // Handle access denied state - show error UI when user doesn't have permission
+  if (accessDenied) {
+    const handleGoHome = () => {
+      clearAccessDenied();
+      setSelectedTask(null);
+      router.push('/chat');
+    };
+
+    return (
+      <div
+        ref={chatAreaRef}
+        className="flex-1 flex flex-col min-h-0 w-full relative"
+        style={{ height: '100%', boxSizing: 'border-box' }}
+      >
+        <div className="flex-1 flex items-center justify-center p-6">
+          <div className="max-w-lg w-full">
+            {/* Error Icon */}
+            <div className="flex justify-center mb-6">
+              <div className="w-20 h-20 rounded-full bg-destructive/10 flex items-center justify-center">
+                <ShieldX className="h-10 w-10 text-destructive" />
+              </div>
+            </div>
+
+            {/* Error Title */}
+            <h1 className="text-2xl font-semibold text-center mb-3 text-text-primary">
+              {t('tasks.access_denied_title')}
+            </h1>
+
+            {/* Error Description */}
+            <p className="text-center text-text-muted mb-8 leading-relaxed">
+              {t('tasks.access_denied_description')}
+            </p>
+
+            {/* Action Button */}
+            <div className="flex justify-center">
+              <Button
+                onClick={handleGoHome}
+                variant="default"
+                size="default"
+                className="min-w-[160px]"
+              >
+                {t('tasks.access_denied_go_home')}
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       ref={chatAreaRef}
@@ -1476,14 +1530,6 @@ export default function ChatArea({
                             onRemove={handleAttachmentRemove}
                           />
                         )}
-                      {/* Deep Thinking Toggle Button - only show for chat shell */}
-                      {isChatShell(selectedTeam) && (
-                        <DeepThinkingToggle
-                          enabled={enableDeepThinking}
-                          onToggle={setEnableDeepThinking}
-                          disabled={isLoading || isStreaming}
-                        />
-                      )}
                       {/* Clarification Toggle Button - only show for chat shell */}
                       {isChatShell(selectedTeam) && (
                         <ClarificationToggle
@@ -1529,6 +1575,14 @@ export default function ChatArea({
                     <div className="ml-auto flex items-center gap-2 flex-shrink-0">
                       {!shouldHideQuotaUsage && (
                         <QuotaUsage className="flex-shrink-0" compact={shouldUseCompactQuota} />
+                      )}
+                      {/* Deep Thinking Toggle Button - only show for chat shell */}
+                      {isChatShell(selectedTeam) && (
+                        <DeepThinkingToggle
+                          enabled={enableDeepThinking}
+                          onToggle={setEnableDeepThinking}
+                          disabled={isLoading || isStreaming}
+                        />
                       )}
                       {isStreaming || isStopping ? (
                         isStopping ? (
@@ -1712,14 +1766,6 @@ export default function ChatArea({
                           onRemove={handleAttachmentRemove}
                         />
                       )}
-                    {/* Deep Thinking Toggle Button - only show for chat shell */}
-                    {isChatShell(selectedTeam) && (
-                      <DeepThinkingToggle
-                        enabled={enableDeepThinking}
-                        onToggle={setEnableDeepThinking}
-                        disabled={isLoading || isStreaming}
-                      />
-                    )}
                     {/* Clarification Toggle Button - only show for chat shell */}
                     {isChatShell(selectedTeam) && (
                       <ClarificationToggle
@@ -1765,6 +1811,14 @@ export default function ChatArea({
                   <div className="ml-auto flex items-center gap-2 flex-shrink-0">
                     {!shouldHideQuotaUsage && (
                       <QuotaUsage className="flex-shrink-0" compact={shouldUseCompactQuota} />
+                    )}
+                    {/* Deep Thinking Toggle Button - only show for chat shell */}
+                    {isChatShell(selectedTeam) && (
+                      <DeepThinkingToggle
+                        enabled={enableDeepThinking}
+                        onToggle={setEnableDeepThinking}
+                        disabled={isLoading || isStreaming}
+                      />
                     )}
                     {isStreaming || isStopping ? (
                       isStopping ? (

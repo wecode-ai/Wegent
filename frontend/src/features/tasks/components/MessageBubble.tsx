@@ -22,6 +22,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import MarkdownEditor from '@uiw/react-markdown-editor';
 import ThinkingComponent from './ThinkingComponent';
+import InlineToolStatus from './InlineToolStatus';
 import ClarificationForm from './ClarificationForm';
 import FinalPromptMessage from './FinalPromptMessage';
 import ClarificationAnswerSummary from './ClarificationAnswerSummary';
@@ -48,6 +49,13 @@ export interface Message {
     confidence?: number;
     value?: unknown;
   }> | null;
+  /** Full result data from backend (for code executor with workbench, or chat with shell_type) */
+  result?: {
+    value?: string;
+    thinking?: unknown[];
+    workbench?: Record<string, unknown>;
+    shell_type?: string; // Shell type (Chat, ClaudeCode, Agno, etc.)
+  };
   attachments?: Attachment[];
   /** Recovered content from Redis/DB when user refreshes during streaming */
   recoveredContent?: string;
@@ -1211,12 +1219,27 @@ const MessageBubble = memo(
       }
     };
 
+    // DEBUG: Log shell_type check
+    if (msg.thinking) {
+      console.log('[MessageBubble] Checking shell_type:', {
+        subtaskId: msg.subtaskId,
+        hasResult: !!msg.result,
+        shell_type: msg.result?.shell_type,
+        isChat: msg.result?.shell_type === 'Chat',
+      });
+    }
+
     return (
       <div className={`flex ${shouldAlignRight ? 'justify-end' : 'justify-start'}`} translate="no">
         <div
           className={`flex ${shouldAlignRight ? 'max-w-[75%] w-auto' : isUserTypeMessage ? 'max-w-[75%] w-auto' : 'w-full'} flex-col gap-3 ${shouldAlignRight ? 'items-end' : 'items-start'}`}
         >
-          {msg.type === 'ai' && msg.thinking && (
+          {/* Show inline tool status for Chat shell type only */}
+          {!isUserTypeMessage && msg.thinking && msg.result?.shell_type === 'Chat' && (
+            <InlineToolStatus thinking={msg.thinking} taskStatus={msg.subtaskStatus} />
+          )}
+          {/* Show thinking component for all other cases (non-Chat shell types or legacy data without shell_type) */}
+          {msg.type === 'ai' && msg.thinking && msg.result?.shell_type !== 'Chat' && (
             <ThinkingComponent thinking={msg.thinking} taskStatus={msg.subtaskStatus} />
           )}
           <div
