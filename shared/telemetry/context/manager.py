@@ -16,8 +16,6 @@ from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 from shared.telemetry.core import is_telemetry_enabled
 
-from app.core.config import settings
-
 logger = logging.getLogger(__name__)
 
 
@@ -91,10 +89,10 @@ class SpanManager:
         Check if span should be created based on OTEL configuration.
 
         Returns:
-            True if OTEL is enabled and telemetry is available
+            True if telemetry is enabled and initialized
         """
         try:
-            return settings.OTEL_ENABLED and is_telemetry_enabled()
+            return is_telemetry_enabled()
         except Exception:
             return False
 
