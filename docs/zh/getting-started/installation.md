@@ -98,7 +98,11 @@ ATTACHMENT_STORAGE_BACKEND=mysql
 # ATTACHMENT_S3_USE_SSL=true
 
 # 前端配置
-NEXT_PUBLIC_API_URL=http://localhost:8000
+# 运行时变量（推荐，可在不重新构建的情况下更改）
+# 通过 docker-compose.yml 的 environment 部分设置
+# RUNTIME_INTERNAL_API_URL=http://backend:8000
+# RUNTIME_SOCKET_DIRECT_URL=http://backend:8000
+# 旧版（已弃用）: NEXT_PUBLIC_API_URL=http://localhost:8000
 
 # Executor Manager 配置
 EXECUTOR_IMAGE=ghcr.io/wecode-ai/wegent-executor:latest

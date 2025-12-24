@@ -205,12 +205,16 @@ npm install
 cp .env.local.example .env.local
 
 # 编辑 .env.local 文件
-# 主要配置项:
-# NEXT_PUBLIC_API_URL=http://localhost:8000
+# 主要配置项（运行时变量，可在不重新构建的情况下更改）:
+# RUNTIME_INTERNAL_API_URL=http://localhost:8000  # 服务端代理 URL
+# RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000 # WebSocket 连接 URL
+# 旧版（已弃用）: NEXT_PUBLIC_API_URL=http://localhost:8000
 # NEXT_PUBLIC_USE_MOCK_API=false
 # NEXT_PUBLIC_LOGIN_MODE=all
 # I18N_LNG=zh-CN
 ```
+
+> **注意**: 前端现在使用 `RUNTIME_INTERNAL_API_URL` 和 `RUNTIME_SOCKET_DIRECT_URL` 替代 `NEXT_PUBLIC_API_URL`。运行时变量可以在不重新构建应用的情况下更改。
 
 #### 运行开发服务器
 

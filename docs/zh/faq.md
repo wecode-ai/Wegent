@@ -433,9 +433,16 @@ docker-compose exec backend env | grep DATABASE_URL
 
 1. **检查 API URL 配置**：
 ```bash
-# frontend/.env.local
-NEXT_PUBLIC_API_URL=http://localhost:8000
+# frontend/.env.local 或环境变量
+# 运行时变量（推荐，可在不重新构建的情况下更改）：
+RUNTIME_INTERNAL_API_URL=http://localhost:8000
+RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000
+
+# 旧版（已弃用）：
+# NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
+
+> **注意**: 前端现在使用 `RUNTIME_INTERNAL_API_URL` 替代 `NEXT_PUBLIC_API_URL`。运行时变量可以在不重新构建应用的情况下更改。
 
 2. **检查 CORS 设置**：
    - 确保后端允许前端域名

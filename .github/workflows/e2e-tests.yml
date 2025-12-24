@@ -150,13 +150,16 @@ jobs:
       - name: Build frontend
         working-directory: ./frontend
         env:
+          # Build-time fallback (not used at runtime)
           NEXT_PUBLIC_API_URL: http://localhost:8000
         run: npm run build
 
       - name: Start frontend server
         working-directory: ./frontend
         env:
-          NEXT_PUBLIC_API_URL: http://localhost:8000
+          # Runtime variables (can be changed without rebuilding)
+          RUNTIME_INTERNAL_API_URL: http://localhost:8000
+          RUNTIME_SOCKET_DIRECT_URL: http://localhost:8000
         run: |
           npm start &
           sleep 5

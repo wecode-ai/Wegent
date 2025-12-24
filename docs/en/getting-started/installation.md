@@ -98,7 +98,11 @@ ATTACHMENT_STORAGE_BACKEND=mysql
 # ATTACHMENT_S3_USE_SSL=true
 
 # Frontend Configuration
-NEXT_PUBLIC_API_URL=http://localhost:8000
+# Runtime variables (recommended, can be changed without rebuilding)
+# Set via docker-compose.yml environment section
+# RUNTIME_INTERNAL_API_URL=http://backend:8000
+# RUNTIME_SOCKET_DIRECT_URL=http://backend:8000
+# Legacy (deprecated): NEXT_PUBLIC_API_URL=http://localhost:8000
 
 # Executor Manager Configuration
 EXECUTOR_IMAGE=ghcr.io/wecode-ai/wegent-executor:latest

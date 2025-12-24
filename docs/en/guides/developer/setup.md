@@ -205,12 +205,16 @@ npm install
 cp .env.local.example .env.local
 
 # Edit .env.local file
-# Main configuration items:
-# NEXT_PUBLIC_API_URL=http://localhost:8000
+# Main configuration items (runtime variables, can be changed without rebuilding):
+# RUNTIME_INTERNAL_API_URL=http://localhost:8000  # Server-side proxy URL
+# RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000 # WebSocket connection URL
+# Legacy (deprecated): NEXT_PUBLIC_API_URL=http://localhost:8000
 # NEXT_PUBLIC_USE_MOCK_API=false
 # NEXT_PUBLIC_LOGIN_MODE=all
 # I18N_LNG=en
 ```
+
+> **Note**: The frontend now uses `RUNTIME_INTERNAL_API_URL` and `RUNTIME_SOCKET_DIRECT_URL` instead of `NEXT_PUBLIC_API_URL`. Runtime variables can be changed without rebuilding the application.
 
 #### Run Development Server
 
