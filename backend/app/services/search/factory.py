@@ -17,9 +17,6 @@ from .http_search import HttpSearchService
 
 logger = logging.getLogger(__name__)
 
-# Default maximum number of search results when not specified in config
-DEFAULT_MAX_RESULTS = 100
-
 # Cache for search service instances and config
 _search_services: dict[str, SearchServiceBase] = {}
 _engines_config: dict[str, Any] | None = None
@@ -115,29 +112,3 @@ def get_available_engines() -> list[dict[str, str]]:
         {"name": k, "display_name": v.get("display_name", k)}
         for k, v in config["engines"].items()
     ]
-
-
-def get_engine_max_results(engine_name: str | None = None) -> int:
-    """
-    Get the max_results configuration for a specific engine.
-    If engine_name is None, returns the first configured engine's max_results.
-    Returns DEFAULT_MAX_RESULTS as fallback if not found.
-    """
-    config = _get_engines_config()
-    if not config or "engines" not in config:
-        return DEFAULT_MAX_RESULTS
-
-    engines = config["engines"]
-
-    # Select engine: requested one, or first available one
-    selected_name = (
-        engine_name
-        if engine_name and engine_name in engines
-        else next(iter(engines), None)
-    )
-
-    if not selected_name:
-        return DEFAULT_MAX_RESULTS
-
-    engine_config = engines[selected_name]
-    return engine_config.get("max_results", DEFAULT_MAX_RESULTS)

@@ -10,9 +10,6 @@ from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
-# Default maximum number of search results when not specified by LLM or config
-DEFAULT_MAX_RESULTS = 100
-
 
 class WebSearchInput(BaseModel):
     """Input schema for web search tool."""
@@ -34,8 +31,8 @@ class WebSearchTool(BaseTool):
 
     # Optional: specify which search engine to use (None = use first available)
     engine_name: str | None = None
-    # Default max_results from engine config (fallback: DEFAULT_MAX_RESULTS)
-    default_max_results: int = DEFAULT_MAX_RESULTS
+    # Default max_results from WEB_SEARCH_DEFAULT_MAX_RESULTS setting
+    default_max_results: int = 100
 
     def _run(
         self,
