@@ -396,7 +396,7 @@ export default function TaskSidebar({
       {/* New Conversation Button and Navigation Buttons - wrapped together for onboarding tour */}
       <div data-tour="mode-toggle">
         {/* New Conversation Button - always shows "New Conversation" and navigates to chat */}
-        <div className="px-1 mb-0">
+        <div className="px-1 mb-1">
           {isCollapsed ? (
             <TooltipProvider>
               <Tooltip delayDuration={300}>
@@ -430,7 +430,7 @@ export default function TaskSidebar({
 
         {/* Navigation Buttons - hide in collapsed mode */}
         {!isCollapsed && navigationButtons.length > 0 && (
-          <div className="px-1 mb-2">
+          <div className="px-1 mb-2 space-y-1">
             {navigationButtons.map(btn => (
               <div key={btn.path} className="relative group">
                 <Button

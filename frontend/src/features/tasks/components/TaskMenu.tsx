@@ -32,7 +32,7 @@ export default function TaskMenu({
     <Menu as="div" className="relative">
       <Menu.Button
         onClick={e => e.stopPropagation()}
-        className="text-text-muted hover:text-text-primary p-1"
+        className="flex items-center justify-center text-text-muted hover:text-text-primary px-1"
       >
         <HiOutlineEllipsisVertical className="h-4 w-4" />
       </Menu.Button>

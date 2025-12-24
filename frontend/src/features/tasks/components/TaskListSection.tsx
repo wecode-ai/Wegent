@@ -46,8 +46,14 @@ export default function TaskListSection({
   showTitle = true,
 }: TaskListSectionProps) {
   const router = useRouter();
-  const { selectedTaskDetail, setSelectedTask, refreshTasks, viewStatusVersion, markTaskAsViewed } =
-    useTaskContext();
+  const {
+    selectedTask,
+    selectedTaskDetail,
+    setSelectedTask,
+    refreshTasks,
+    viewStatusVersion,
+    markTaskAsViewed,
+  } = useTaskContext();
   const { clearAllStreams } = useChatStreamContext();
   const { t } = useTranslation('common');
   // Use viewStatusVersion to trigger re-render when task view status changes
@@ -85,6 +91,10 @@ export default function TaskListSection({
     // This is simpler and more reliable than using task timestamps which may vary
     // between list items and task details
     markTaskAsViewed(task.id, task.status);
+
+    // IMPORTANT: Set selected task immediately to prevent visual flicker
+    // This ensures the task is highlighted before navigation completes
+    setSelectedTask(task);
 
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams();
@@ -360,7 +370,7 @@ export default function TaskListSection({
               {unreadCount > 0 && <span className="text-primary ml-1">({unreadCount})</span>}
             </h3>
           )}
-      <div className="space-y-0">
+      <div className="space-y-1">
         {tasks.map(task => {
           const showMenu = hoveredTaskId === task.id || longPressTaskId === task.id;
 
@@ -386,11 +396,12 @@ export default function TaskListSection({
                 <Tooltip delayDuration={0}>
                   <TooltipTrigger asChild>
                     <div
-                      className={`flex items-center justify-center py-2 px-2 rounded hover:bg-hover cursor-pointer ${selectedTaskDetail?.id === task.id ? 'bg-hover' : ''}`}
+                      className={`flex items-center justify-center py-1.5 px-2 h-8 rounded-xl cursor-pointer ${
+                        selectedTask?.id === task.id || selectedTaskDetail?.id === task.id
+                          ? 'bg-primary/10'
+                          : 'hover:bg-hover'
+                      }`}
                       onClick={() => handleTaskClick(task)}
-                      style={{
-                        minHeight: '40px',
-                      }}
                     >
                       <div className="relative flex items-center justify-center">
                         <div className="w-4 h-4 flex items-center justify-center">
@@ -433,7 +444,11 @@ export default function TaskListSection({
               <Tooltip delayDuration={500}>
                 <TooltipTrigger asChild>
                   <div
-                    className={`flex items-center gap-2 py-2 px-2 rounded hover:bg-hover cursor-pointer ${selectedTaskDetail?.id === task.id ? 'bg-hover' : ''}`}
+                    className={`flex items-center gap-2 py-1.5 px-2 h-8 rounded-xl cursor-pointer ${
+                      selectedTask?.id === task.id || selectedTaskDetail?.id === task.id
+                        ? 'bg-primary/10'
+                        : 'hover:bg-hover'
+                    }`}
                     onClick={() => handleTaskClick(task)}
                     onTouchStart={handleTouchStart(task)}
                     onTouchMove={handleTouchMove}
@@ -443,7 +458,6 @@ export default function TaskListSection({
                     style={{
                       touchAction: 'pan-y',
                       WebkitTapHighlightColor: 'transparent',
-                      minHeight: '36px',
                       userSelect: 'none',
                     }}
                   >
@@ -469,8 +483,15 @@ export default function TaskListSection({
                       </div>
                     )}
 
-                    {showMenu && (
-                      <div className="flex-shrink-0">
+                    <div className="flex-shrink-0">
+                      <div
+                        className={`transition-opacity duration-150 [@media(hover:none)]:opacity-100 [@media(hover:none)]:pointer-events-auto ${
+                          showMenu ? 'opacity-100' : 'opacity-0 pointer-events-none'
+                        }`}
+                        onTouchStart={e => e.stopPropagation()}
+                        onTouchEnd={e => e.stopPropagation()}
+                        onClick={e => e.stopPropagation()}
+                      >
                         <TaskMenu
                           taskId={task.id}
                           handleCopyTaskId={handleCopyTaskId}
@@ -478,7 +499,7 @@ export default function TaskListSection({
                           isGroupChat={task.is_group_chat}
                         />
                       </div>
-                    )}
+                    </div>
                   </div>
                 </TooltipTrigger>
                 <TooltipContent side="left" className="max-w-xs">
