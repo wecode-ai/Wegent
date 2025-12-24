@@ -8,6 +8,7 @@ import React, { useState } from 'react';
 import { Copy, Check, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { useTranslation } from 'react-i18next';
 import type { FeedbackState } from '@/hooks/useMessageFeedback';
 
 // CopyButton component for copying markdown content
@@ -59,12 +60,12 @@ export const CopyButton = ({
       variant="ghost"
       size="icon"
       onClick={handleCopy}
-      className={className ?? 'h-8 w-8 hover:bg-muted'}
+      className={className ?? 'h-[30px] w-[30px] !rounded-full bg-fill-tert hover:!bg-fill-sec'}
     >
       {copied ? (
-        <Check className="h-4 w-4 text-green-500" />
+        <Check className="h-3.5 w-3.5 text-green-500" />
       ) : (
-        <Copy className="h-4 w-4 text-text-muted" />
+        <Copy className="h-3.5 w-3.5 text-text-muted" />
       )}
     </Button>
   );
@@ -114,45 +115,63 @@ const BubbleTools = ({
   onDislike,
   feedbackLabels,
 }: BubbleToolsProps) => {
+  const { t } = useTranslation();
+
   return (
     <div className="absolute bottom-2 left-2 flex items-center gap-1 z-10">
       {/* Copy button */}
-      <CopyButton content={contentToCopy} onCopySuccess={onCopySuccess} />
+      <CopyButton
+        content={contentToCopy}
+        onCopySuccess={onCopySuccess}
+        tooltip={t('chat:actions.copy') || 'Copy'}
+        className="h-[30px] w-[30px] !rounded-full bg-fill-tert hover:!bg-fill-sec"
+      />
       {/* Feedback buttons: like and dislike */}
-      <Button
-        variant="ghost"
-        size="icon"
-        onClick={onLike}
-        title={feedbackLabels?.like || 'Like'}
-        className={`h-8 w-8 hover:bg-muted ${feedback === 'like' ? 'text-green-500' : ''}`}
-      >
-        <ThumbsUp
-          className={`h-4 w-4 ${feedback === 'like' ? 'fill-current' : 'text-text-muted'}`}
-        />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        onClick={onDislike}
-        title={feedbackLabels?.dislike || 'Dislike'}
-        className={`h-8 w-8 hover:bg-muted ${feedback === 'dislike' ? 'text-red-500' : ''}`}
-      >
-        <ThumbsDown
-          className={`h-4 w-4 ${feedback === 'dislike' ? 'fill-current' : 'text-text-muted'}`}
-        />
-      </Button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onLike}
+            className={`h-[30px] w-[30px] !rounded-full bg-fill-tert hover:!bg-fill-sec ${feedback === 'like' ? 'text-green-500' : ''}`}
+          >
+            <ThumbsUp
+              className={`h-3.5 w-3.5 ${feedback === 'like' ? 'fill-current' : 'text-text-muted'}`}
+            />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{feedbackLabels?.like || 'Like'}</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onDislike}
+            className={`h-[30px] w-[30px] !rounded-full bg-fill-tert hover:!bg-fill-sec ${feedback === 'dislike' ? 'text-red-500' : ''}`}
+          >
+            <ThumbsDown
+              className={`h-3.5 w-3.5 ${feedback === 'dislike' ? 'fill-current' : 'text-text-muted'}`}
+            />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{feedbackLabels?.dislike || 'Dislike'}</TooltipContent>
+      </Tooltip>
       {/* Additional tool buttons (e.g., download) */}
       {tools.map(tool => (
-        <Button
-          key={tool.key}
-          variant="ghost"
-          size="icon"
-          onClick={tool.onClick}
-          title={tool.title}
-          className="h-8 w-8 hover:bg-muted"
-        >
-          {tool.icon}
-        </Button>
+        <Tooltip key={tool.key}>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={tool.onClick}
+              className="h-[30px] w-[30px] !rounded-full bg-fill-tert hover:!bg-fill-sec"
+            >
+              {tool.icon}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{tool.title}</TooltipContent>
+        </Tooltip>
       ))}
     </div>
   );
