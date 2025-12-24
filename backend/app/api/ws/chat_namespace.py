@@ -234,6 +234,7 @@ class ChatNamespace(socketio.AsyncNamespace):
         """Initialize the chat namespace."""
         super().__init__(namespace)
         self._active_streams: Dict[int, asyncio.Task] = {}  # subtask_id -> stream task
+        self._stream_versions: Dict[int, str] = {}  # subtask_id -> "v1" | "v2"
 
         # Map colon-separated event names to handler methods
         self._event_handlers: Dict[str, str] = {
@@ -919,22 +920,23 @@ class ChatNamespace(socketio.AsyncNamespace):
 
             if is_chat_shell:
                 # For Chat Shell tasks, determine which session_manager to use
-                # based on whether deep thinking mode is enabled
-                # Check if this subtask was created with enable_deep_thinking flag
-                # by checking if it's in chat_v2's active streams
-                use_chat_v2 = payload.subtask_id in getattr(self, "_active_streams", {})
+                # based on the version map created at stream registration
+                stream_version = self._stream_versions.get(payload.subtask_id, "v1")
 
-                if use_chat_v2:
+                if stream_version == "v2":
                     # Use chat_v2 session_manager
                     logger.info(
                         f"[WS] chat:cancel Using chat_v2 session_manager for subtask_id={payload.subtask_id}"
                     )
-                    from app.services.chat_v2.storage import session_manager as session_manager_v2
+                    from app.services.chat_v2.storage import (
+                        session_manager as session_manager_v2,
+                    )
+
                     await session_manager_v2.cancel_stream(payload.subtask_id)
                 else:
-                    # Use chat session_manager
+                    # Use chat session_manager (v1)
                     logger.info(
-                        f"[WS] chat:cancel Using chat session_manager for subtask_id={payload.subtask_id}"
+                        f"[WS] chat:cancel Using chat session_manager (v1) for subtask_id={payload.subtask_id}"
                     )
                     await session_manager.cancel_stream(payload.subtask_id)
             else:
