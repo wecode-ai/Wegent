@@ -230,10 +230,12 @@ async def lifespan(app: FastAPI):
     # Note: Chat namespace is already registered in create_socketio_asgi_app()
     logger.info("Initializing Socket.IO...")
     from app.core.socketio import get_sio
-    from app.services.chat.ws_emitter import init_ws_emitter
+    from app.services.chat.ws_emitter import init_ws_emitter as init_chat_emitter
+    from app.services.chat_v2.streaming import init_ws_emitter as init_chat_v2_emitter
 
     sio = get_sio()
-    init_ws_emitter(sio)
+    init_chat_emitter(sio)
+    init_chat_v2_emitter(sio)
     logger.info("✓ Socket.IO initialized")
 
     logger.info("=" * 60)
