@@ -350,7 +350,7 @@ export default function TaskSidebar({
   const sidebarContent = (
     <>
       {/* Logo and Mode Indicator */}
-      <div className="px-1 pt-2 pb-3">
+      <div className="px-1 py-2 sm:py-3">
         <div
           className={`flex items-center ${isCollapsed ? 'justify-center' : 'justify-between pl-2'} gap-2`}
         >
@@ -374,7 +374,7 @@ export default function TaskSidebar({
                     variant="ghost"
                     size="icon"
                     onClick={onToggleCollapsed}
-                    className="h-8 w-8 p-0 text-text-muted hover:text-text-primary hover:bg-hover rounded-xl"
+                    className="h-9 w-9 p-0 text-text-muted hover:text-text-primary hover:bg-hover rounded-xl"
                     aria-label={isCollapsed ? t('sidebar.expand') : t('sidebar.collapse')}
                   >
                     {isCollapsed ? (
