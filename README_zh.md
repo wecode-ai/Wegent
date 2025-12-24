@@ -148,39 +148,6 @@ graph LR
 3. **访问 Web 界面**
    - 在浏览器中打开 http://localhost:3000
 
-4. **配置 GitHub 访问令牌**
-   - 按照页面说明配置您的 GitHub 访问令牌
-
-5. **配置 Bot**
-
-   Wegent 内置了一个开发 Bot。对于 Claude Code 运行时，请设置以下环境变量：
-
-   ```json
-   {
-     "env": {
-       "ANTHROPIC_MODEL": "openrouter,anthropic/claude-sonnet-4",
-       "ANTHROPIC_AUTH_TOKEN": "sk-xxxxxx",
-       "ANTHROPIC_BASE_URL": "http://xxxxx",
-       "ANTHROPIC_DEFAULT_HAIKU_MODEL": "openrouter,anthropic/claude-haiku-4.5"
-     }
-   }
-   ```
-
-   **重要提示 - 环境变量命名:**
-
-   不同的 Shell 运行时使用不同的环境变量名称进行 API 认证:
-
-   - **Claude Code Shell**: 使用 `ANTHROPIC_AUTH_TOKEN`
-   - **Agno Shell**: 使用 `ANTHROPIC_API_KEY`
-   - **Dify Shell**: 使用 `DIFY_API_KEY` 和 `DIFY_BASE_URL`
-   - **Chat Shell**: 使用 `OPENAI_API_KEY` (OpenAI)、`ANTHROPIC_API_KEY` (Claude) 或 `GOOGLE_API_KEY` (Gemini)
-
-   请根据您的 Shell 配置设置正确的环境变量。具体要求请查看 Shell 文档或 `executor/agents/` 代码。
-
-6. **运行任务**
-
-   在任务页面，选择您的项目和分支，描述您的开发需求，例如使用 Python 实现冒泡排序算法
-
 ## 🏗️ 架构
 
 ```mermaid
