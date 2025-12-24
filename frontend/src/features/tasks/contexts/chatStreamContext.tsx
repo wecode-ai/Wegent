@@ -1366,6 +1366,8 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
 
         for (const subtask of subtasks) {
           // Track subtask to task mapping for WebSocket event handling
+          // IMPORTANT: This must be done for ALL subtasks, including RUNNING ones,
+          // so that chat:chunk events can find the correct taskId
           subtaskToTaskRef.current.set(subtask.id, taskId);
 
           const isUserMessage = subtask.role === 'USER' || subtask.role?.toUpperCase() === 'USER';
@@ -1389,8 +1391,33 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
             continue;
           }
 
-          // Skip RUNNING AI messages - they will be created by chat:start
+          // For RUNNING/PENDING AI messages:
+          // - If we already have a streaming message for this subtask (from chat:start), skip
+          // - Otherwise, create a streaming placeholder so the message is visible
+          // This handles the page refresh case where chat:start was missed
           if (!isUserMessage && (subtask.status === 'RUNNING' || subtask.status === 'PENDING')) {
+            // Check if we already have this AI message (created by chat:start)
+            const existingAiMessage = messages.get(messageId);
+            if (existingAiMessage) {
+              // Already have this message, skip
+              continue;
+            }
+            // Create a streaming placeholder for this RUNNING message
+            // This ensures the message is visible after page refresh
+            const content = typeof subtask.result?.value === 'string' ? subtask.result.value : '';
+            messages.set(messageId, {
+              id: messageId,
+              type: 'ai',
+              status: 'streaming',
+              content,
+              timestamp: new Date(subtask.created_at).getTime(),
+              subtaskId: subtask.id,
+              messageId: subtask.message_id,
+              attachments: subtask.attachments,
+              botName: subtask.bots?.[0]?.name || teamName,
+              subtaskStatus: subtask.status,
+              result: subtask.result as UnifiedMessage['result'],
+            });
             continue;
           }
 
