@@ -8,6 +8,7 @@ import { Suspense, useState, useEffect, useMemo } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { teamService } from '@/features/tasks/service/teamService';
 import TopNavigation from '@/features/layout/TopNavigation';
+import GreyTestButton from '@/features/layout/components/GreyTestButton';
 import TaskSidebar from '@/features/tasks/components/TaskSidebar';
 import ResizableSidebar from '@/features/tasks/components/ResizableSidebar';
 import CollapsedSidebarButtons from '@/features/tasks/components/CollapsedSidebarButtons';
@@ -260,6 +261,7 @@ export default function CodePage() {
             onTaskDeleted={handleTaskDeleted}
           >
             {shareButton}
+            <GreyTestButton />
             {isMobile ? <ThemeToggle /> : <GithubStarButton />}
             {hasTaskId && <OpenMenu openLinks={openLinks} />}
             {hasTaskId && (

@@ -1391,5 +1391,16 @@
     "optimizing": "正在优化...",
     "optimizing_prompt": "正在优化提示词，请稍候...",
     "click_to_test": "点击测试效果"
+  },
+  "grey": {
+    "joinButton": "加入内测",
+    "leaveButton": "退出内测",
+    "joinConfirmTitle": "加入内测",
+    "joinConfirmMessage": "确定要加入内测吗？加入后将体验最新功能。",
+    "leaveConfirmTitle": "退出内测",
+    "leaveConfirmMessage": "确定要退出内测吗？退出后将恢复使用正式版本。",
+    "joinSuccess": "已加入内测",
+    "leaveSuccess": "已退出内测",
+    "error": "操作失败，请稍后重试"
   }
 }

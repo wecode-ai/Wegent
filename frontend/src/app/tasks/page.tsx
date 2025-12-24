@@ -7,6 +7,7 @@
 import { Suspense, useState } from 'react';
 import { teamService } from '@/features/tasks/service/teamService';
 import TopNavigation from '@/features/layout/TopNavigation';
+import GreyTestButton from '@/features/layout/components/GreyTestButton';
 import TaskSidebar from '@/features/tasks/components/TaskSidebar';
 import ChatArea from '@/features/tasks/components/ChatArea';
 import TaskParamSync from '@/features/tasks/components/TaskParamSync';
@@ -69,6 +70,7 @@ function TasksPageContent() {
             showLogo={false}
             onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
           >
+            <GreyTestButton />
             {isMobile ? <ThemeToggle /> : <GithubStarButton />}
           </TopNavigation>
           {/* Chat area */}

@@ -7,6 +7,7 @@
 import { Suspense, useState, useEffect, useMemo, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import TopNavigation from '@/features/layout/TopNavigation';
+import GreyTestButton from '@/features/layout/components/GreyTestButton';
 import TaskSidebar from '@/features/tasks/components/TaskSidebar';
 import ResizableSidebar from '@/features/tasks/components/ResizableSidebar';
 import { SettingsTabNav, SettingsTabId } from '@/features/settings/components/SettingsTabNav';
@@ -193,6 +194,7 @@ function SettingsContent() {
           title={t('settings.title')}
           onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
         >
+          <GreyTestButton />
           {isMobile ? <ThemeToggle /> : <GithubStarButton />}
         </TopNavigation>
 

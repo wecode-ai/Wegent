@@ -9,6 +9,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { UserGroupIcon } from '@heroicons/react/24/outline';
 import { teamService } from '@/features/tasks/service/teamService';
 import TopNavigation from '@/features/layout/TopNavigation';
+import GreyTestButton from '@/features/layout/components/GreyTestButton';
 import TaskSidebar from '@/features/tasks/components/TaskSidebar';
 import ResizableSidebar from '@/features/tasks/components/ResizableSidebar';
 import CollapsedSidebarButtons from '@/features/tasks/components/CollapsedSidebarButtons';
@@ -208,6 +209,7 @@ export default function ChatPage() {
               </Button>
             )}
             {shareButton}
+            <GreyTestButton />
             {isMobile ? <ThemeToggle /> : <GithubStarButton />}
           </TopNavigation>
           {/* Chat area without repository selector */}
