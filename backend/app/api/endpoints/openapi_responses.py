@@ -9,9 +9,10 @@ Compatible with OpenAI Responses API format.
 
 import logging
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -21,12 +22,14 @@ from app.models.subtask import Subtask, SubtaskRole
 from app.models.user import User
 from app.schemas.kind import Bot, Task, Team
 from app.schemas.openapi_response import (
+    InputItem,
     OutputMessage,
     OutputTextContent,
     ResponseCreateInput,
     ResponseDeletedObject,
     ResponseError,
     ResponseObject,
+    WegentTool,
 )
 from app.schemas.task import TaskCreate
 from app.services.adapters.task_kinds import task_kinds_service
@@ -145,7 +148,277 @@ def _task_to_response_object(
     )
 
 
-@router.post("", response_model=ResponseObject, status_code=status.HTTP_201_CREATED)
+def _parse_wegent_tools(tools: Optional[List[WegentTool]]) -> Dict[str, Any]:
+    """
+    Parse Wegent custom tools from request.
+
+    Args:
+        tools: List of WegentTool objects
+
+    Returns:
+        Dict with parsed tool settings
+    """
+    result = {
+        "enable_deep_thinking": False,
+    }
+    if tools:
+        for tool in tools:
+            if tool.type == "wegent_deep_thinking":
+                result["enable_deep_thinking"] = True
+    return result
+
+
+def _extract_input_text(
+    input_data: Union[str, List[InputItem]]
+) -> str:
+    """
+    Extract the user input text from the input field.
+
+    Args:
+        input_data: Either a string or list of InputItem
+
+    Returns:
+        The user's input text
+    """
+    if isinstance(input_data, str):
+        return input_data
+
+    # For list input, get the last user message
+    for item in reversed(input_data):
+        if isinstance(item, InputItem) and item.role == "user":
+            return item.content
+        elif isinstance(item, dict) and item.get("role") == "user":
+            return item.get("content", "")
+
+    # If no user message found, return empty string
+    return ""
+
+
+def _check_team_supports_direct_chat(db: Session, team: Kind, user_id: int) -> bool:
+    """
+    Check if the team supports direct chat mode.
+
+    Returns True only if ALL bots in the team use Chat Shell type.
+    This is a simplified version of the check from chat.py.
+
+    Args:
+        db: Database session
+        team: Team Kind object
+        user_id: User ID for lookup
+
+    Returns:
+        True if team supports direct chat
+    """
+    from app.schemas.kind import Shell
+    from app.services.chat.base import ChatServiceBase
+
+    team_crd = Team.model_validate(team.json)
+
+    for member in team_crd.spec.members:
+        # Find bot
+        bot = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == team.user_id,
+                Kind.kind == "Bot",
+                Kind.name == member.botRef.name,
+                Kind.namespace == member.botRef.namespace,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
+        if not bot:
+            return False
+
+        # Get shell type
+        bot_crd = Bot.model_validate(bot.json)
+
+        # Check user's custom shells first
+        shell = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == team.user_id,
+                Kind.kind == "Shell",
+                Kind.name == bot_crd.spec.shellRef.name,
+                Kind.namespace == bot_crd.spec.shellRef.namespace,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
+        # If not found, check public shells
+        if not shell:
+            shell = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == 0,
+                    Kind.kind == "Shell",
+                    Kind.name == bot_crd.spec.shellRef.name,
+                    Kind.namespace == bot_crd.spec.shellRef.namespace,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+
+        if not shell or not shell.json:
+            return False
+
+        shell_crd = Shell.model_validate(shell.json)
+        shell_type = shell_crd.spec.shellType
+
+        if not ChatServiceBase.is_direct_chat_shell(shell_type):
+            return False
+
+    return True
+
+
+async def _create_streaming_response(
+    db: Session,
+    user: User,
+    team: Kind,
+    model_info: Dict[str, Any],
+    request_body: ResponseCreateInput,
+    input_text: str,
+    tool_settings: Dict[str, Any],
+) -> StreamingResponse:
+    """
+    Create a streaming response for Chat Shell type teams.
+
+    Args:
+        db: Database session
+        user: Current user
+        team: Team Kind object
+        model_info: Parsed model info
+        request_body: Original request body
+        input_text: Extracted input text
+        tool_settings: Parsed tool settings
+
+    Returns:
+        StreamingResponse with SSE events
+    """
+    import json
+
+    from app.services.chat.chat_service import chat_service
+    from app.services.chat.model_resolver import (
+        get_bot_system_prompt,
+        get_model_config_for_bot,
+    )
+    from app.services.openapi.streaming import streaming_service
+
+    # Get first bot for model config and system prompt
+    team_crd = Team.model_validate(team.json)
+    if not team_crd.spec.members:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Team has no members configured",
+        )
+
+    first_member = team_crd.spec.members[0]
+    bot = (
+        db.query(Kind)
+        .filter(
+            Kind.user_id == team.user_id,
+            Kind.kind == "Bot",
+            Kind.name == first_member.botRef.name,
+            Kind.namespace == first_member.botRef.namespace,
+            Kind.is_active == True,
+        )
+        .first()
+    )
+
+    if not bot:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Bot not found for team",
+        )
+
+    # Get model config
+    try:
+        model_config = get_model_config_for_bot(
+            db,
+            bot,
+            team.user_id,
+            override_model_name=model_info.get("model_id"),
+            force_override=model_info.get("model_id") is not None,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    # Get system prompt
+    system_prompt = get_bot_system_prompt(db, bot, team.user_id, first_member.prompt)
+
+    # Apply deep thinking settings to system prompt if enabled
+    if tool_settings.get("enable_deep_thinking"):
+        from app.services.chat_v2.utils.prompts import append_deep_thinking_prompt
+
+        system_prompt = append_deep_thinking_prompt(system_prompt, True)
+
+    # Generate response ID and timestamp
+    response_id = f"resp_{team.id}_{int(datetime.now().timestamp())}"
+    created_at = int(datetime.now().timestamp())
+
+    async def raw_chat_stream() -> AsyncGenerator[str, None]:
+        """Generate raw text chunks from the LLM."""
+        import asyncio
+
+        from app.services.chat.base import get_http_client
+        from app.services.chat.message_builder import message_builder
+        from app.services.chat.providers import get_provider
+        from app.services.chat.providers.base import ChunkType
+
+        cancel_event = asyncio.Event()
+
+        try:
+            # Build messages
+            messages = message_builder.build_messages(
+                history=[],
+                current_message=input_text,
+                system_prompt=system_prompt,
+            )
+
+            # Get provider
+            client = await get_http_client()
+            provider = get_provider(model_config, client)
+            if not provider:
+                logger.error("Failed to create provider from model config")
+                return
+
+            # Stream response
+            async for chunk in provider.stream_chat(messages, cancel_event):
+                if chunk.type == ChunkType.CONTENT and chunk.content:
+                    yield chunk.content
+                elif chunk.type == ChunkType.ERROR:
+                    logger.error(f"LLM error: {chunk.error}")
+                    return
+
+        except Exception as e:
+            logger.exception(f"Error in raw_chat_stream: {e}")
+            raise
+
+    # Use streaming service to convert to OpenAI format
+    async def generate():
+        async for event in streaming_service.create_streaming_response(
+            response_id=response_id,
+            model_string=request_body.model,
+            chat_stream=raw_chat_stream(),
+            created_at=created_at,
+            previous_response_id=request_body.previous_response_id,
+        ):
+            yield event
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.post("")
 async def create_response(
     request_body: ResponseCreateInput,
     db: Session = Depends(get_db),
@@ -155,20 +428,35 @@ async def create_response(
     Create a new response (execute a task).
 
     This endpoint is compatible with OpenAI's Responses API format.
-    The response is returned immediately with status 'queued'.
-    Use GET /api/v1/responses/{response_id} to poll for completion.
+
+    When stream=False (default):
+    - The response is returned immediately with status 'queued'.
+    - Use GET /api/v1/responses/{response_id} to poll for completion.
+
+    When stream=True (only for Chat Shell type teams):
+    - Returns SSE stream with OpenAI v1/responses compatible events.
+    - Only supported when all team bots use Chat Shell type.
 
     Args:
-        request_body: ResponseCreateInput containing model, input, and optional previous_response_id
+        request_body: ResponseCreateInput containing:
         - model: Format "namespace#team_name" or "namespace#team_name#model_id"
-        - input: The user prompt
+        - input: The user prompt (string or list of messages)
+        - stream: Whether to enable streaming output (default: False)
+        - tools: Optional Wegent tools (e.g., [{"type": "wegent_deep_thinking"}])
         - previous_response_id: Optional, for follow-up conversations
 
     Returns:
-        ResponseObject with status 'queued'
+        ResponseObject with status 'queued' (non-streaming)
+        or StreamingResponse with SSE events (streaming)
     """
     # Parse model string
     model_info = _parse_model_string(request_body.model)
+
+    # Parse tools for settings
+    tool_settings = _parse_wegent_tools(request_body.tools)
+
+    # Extract input text
+    input_text = _extract_input_text(request_body.input)
 
     # Determine task_id from previous_response_id if provided
     task_id = None
@@ -325,9 +613,34 @@ async def create_response(
                     detail=f"Bot '{bot_namespace}/{bot_name}' does not have a valid model configured. Please specify model_id in the request or configure modelRef for the bot.",
                 )
 
-    # Create task using TaskKindsService
+    # Handle streaming mode
+    if request_body.stream:
+        # Check if team supports direct chat (streaming requires Chat Shell)
+        supports_direct_chat = _check_team_supports_direct_chat(
+            db, team, current_user.id
+        )
+
+        if not supports_direct_chat:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Streaming is only supported for teams where all bots use Chat Shell type. "
+                "Please set stream=false to use the queued response mode.",
+            )
+
+        # Return streaming response
+        return await _create_streaming_response(
+            db=db,
+            user=current_user,
+            team=team,
+            model_info=model_info,
+            request_body=request_body,
+            input_text=input_text,
+            tool_settings=tool_settings,
+        )
+
+    # Non-streaming mode: create task and return queued response
     task_create = TaskCreate(
-        prompt=request_body.input,
+        prompt=input_text,
         team_name=model_info["team_name"],
         team_namespace=model_info["namespace"],
         task_type="chat",
