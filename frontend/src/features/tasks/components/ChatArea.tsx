@@ -122,7 +122,7 @@ export default function ChatArea({
   }, []);
 
   // Deep thinking toggle state (session-level, not persisted)
-  const [enableDeepThinking, setEnableDeepThinking] = useState(false);
+  const [enableDeepThinking, setEnableDeepThinking] = useState(true);
 
   // Clarification toggle state (session-level, not persisted)
   const [enableClarification, setEnableClarification] = useState(false);
