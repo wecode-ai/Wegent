@@ -17,7 +17,7 @@ interface CoreQuestionsStepProps {
 }
 
 export default function CoreQuestionsStep({ answers, onChange }: CoreQuestionsStepProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation('wizard');
   const [isIntroExpanded, setIsIntroExpanded] = useState(false);
 
   return (
@@ -30,7 +30,7 @@ export default function CoreQuestionsStep({ answers, onChange }: CoreQuestionsSt
           className="w-full p-3 bg-primary/5 flex items-center gap-3 hover:bg-primary/10 transition-colors text-left"
         >
           <Lightbulb className="w-5 h-5 text-primary flex-shrink-0" />
-          <span className="font-medium text-text-primary flex-1">{t('wizard.intro_title')}</span>
+          <span className="font-medium text-text-primary flex-1">{t('intro_title')}</span>
           {isIntroExpanded ? (
             <ChevronDown className="w-4 h-4 text-text-muted" />
           ) : (
@@ -40,13 +40,13 @@ export default function CoreQuestionsStep({ answers, onChange }: CoreQuestionsSt
         {isIntroExpanded && (
           <div className="p-4 bg-primary/5 border-t border-primary/10">
             <div className="space-y-2">
-              <p className="text-sm text-text-secondary">{t('wizard.intro_description')}</p>
+              <p className="text-sm text-text-secondary">{t('intro_description')}</p>
               <div className="text-sm text-text-muted">
-                <p className="font-medium mb-1">{t('wizard.intro_when_to_create')}</p>
+                <p className="font-medium mb-1">{t('intro_when_to_create')}</p>
                 <ul className="list-disc list-inside space-y-1 ml-1">
-                  <li>{t('wizard.intro_scenario_1')}</li>
-                  <li>{t('wizard.intro_scenario_2')}</li>
-                  <li>{t('wizard.intro_scenario_3')}</li>
+                  <li>{t('intro_scenario_1')}</li>
+                  <li>{t('intro_scenario_2')}</li>
+                  <li>{t('intro_scenario_3')}</li>
                 </ul>
               </div>
             </div>
@@ -57,25 +57,25 @@ export default function CoreQuestionsStep({ answers, onChange }: CoreQuestionsSt
       {/* Question 1: Purpose (Required) */}
       <div className="space-y-2">
         <Label className="text-base font-medium">
-          {t('wizard.q1_purpose')} <span className="text-error">*</span>
+          {t('q1_purpose')} <span className="text-error">*</span>
         </Label>
-        <p className="text-sm text-text-muted">{t('wizard.q1_hint')}</p>
+        <p className="text-sm text-text-muted">{t('q1_hint')}</p>
         <Textarea
           value={answers.purpose}
           onChange={e => onChange({ purpose: e.target.value })}
-          placeholder={t('wizard.q1_placeholder')}
+          placeholder={t('q1_placeholder')}
           className="min-h-[80px]"
         />
       </div>
 
       {/* Question 2: Special Requirements (Optional) */}
       <div className="space-y-2">
-        <Label className="text-base font-medium">{t('wizard.q2_requirements')}</Label>
-        <p className="text-sm text-text-muted">{t('wizard.q2_hint')}</p>
+        <Label className="text-base font-medium">{t('q2_requirements')}</Label>
+        <p className="text-sm text-text-muted">{t('q2_hint')}</p>
         <Textarea
           value={answers.special_requirements || ''}
           onChange={e => onChange({ special_requirements: e.target.value })}
-          placeholder={t('wizard.q2_placeholder')}
+          placeholder={t('q2_placeholder')}
           className="min-h-[60px]"
         />
       </div>
