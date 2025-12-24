@@ -9,20 +9,27 @@
  * without rebuilding the application. Environment variables are read at
  * server startup time, not build time.
  *
- * Usage:
- * - Set RUNTIME_API_URL environment variable for backend API URL
- * - Set RUNTIME_SOCKET_DIRECT_URL environment variable for Socket.IO direct URL
- * - The frontend will fetch this config on initialization
+ * Architecture:
+ * - RUNTIME_INTERNAL_API_URL: Used by Next.js server-side rewrites (next.config.js) to proxy to backend
+ * - NEXT_PUBLIC_API_URL: Used by browser for direct API calls (empty = use '/api' proxy mode)
+ *
+ * Recommended setup (browser uses proxy):
+ * - Set RUNTIME_INTERNAL_API_URL=http://backend:8000 (for Next.js server to reach backend)
+ * - Leave NEXT_PUBLIC_API_URL empty or unset (browser uses '/api' which is proxied)
+ *
+ * Direct mode setup (browser calls backend directly):
+ * - Set NEXT_PUBLIC_API_URL=http://backend:8000 (browser calls backend directly)
+ * - RUNTIME_INTERNAL_API_URL is not needed in this case
  */
 
 import { NextResponse } from 'next/server';
 
 export async function GET() {
   return NextResponse.json({
-    // Backend API URL - can be changed at runtime
-    // Priority: RUNTIME_API_URL > NEXT_PUBLIC_API_URL > '/api' (use proxy)
-    // Note: Empty string means use relative path '/api' through Next.js proxy
-    apiUrl: process.env.RUNTIME_API_URL || process.env.NEXT_PUBLIC_API_URL || '',
+    // Backend API URL for browser
+    // Empty string = use '/api' proxy mode (recommended)
+    // Full URL = browser calls backend directly (not recommended for same-network deployments)
+    apiUrl: process.env.NEXT_PUBLIC_API_URL || '',
 
     // Socket.IO direct URL - can be changed at runtime
     // Priority: RUNTIME_SOCKET_DIRECT_URL > NEXT_PUBLIC_SOCKET_DIRECT_URL > empty

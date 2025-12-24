@@ -57,9 +57,14 @@ const nextConfig = {
     optimizePackageImports: ['react-icons'],
   },
   async rewrites() {
-    // Priority: RUNTIME_API_URL > NEXT_PUBLIC_API_URL > default
+    // RUNTIME_INTERNAL_API_URL: Server-side only URL for Next.js to proxy requests to backend
+    // This should be the internal network address of the backend (e.g., http://backend:8000)
+    // Fallback priority: RUNTIME_INTERNAL_API_URL > NEXT_PUBLIC_API_URL > default
     const apiUrl =
-      process.env.RUNTIME_API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      process.env.RUNTIME_INTERNAL_API_URL ||
+      process.env.RUNTIME_API_URL ||
+      process.env.NEXT_PUBLIC_API_URL ||
+      'http://localhost:8000';
     return [
       {
         source: '/api/:path*',
