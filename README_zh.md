@@ -46,6 +46,30 @@ Wegent 让你通过智能体编排创建强大的 AI 应用：
 
 ---
 
+## 🚀 快速开始
+
+### 前置要求
+
+- Docker 和 Docker Compose
+- Git
+
+1. **克隆仓库**
+   ```bash
+   git clone https://github.com/wecode-ai/wegent.git
+   cd wegent
+   ```
+
+2. **启动平台**
+   ```bash
+   docker-compose up -d
+   
+   # 可选：启用 RAG 功能（需要 Elasticsearch）
+   # docker compose --profile rag up -d
+   ```
+
+3. **访问 Web 界面**
+   - 在浏览器中打开 http://localhost:3000
+
 ## 📖 什么是 Wegent？
 
 Wegent 是一个开源的 AI 原生操作系统，使您能够大规模定义、组织和运行智能代理。基于 Kubernetes 风格的声明式 API 和 CRD（自定义资源定义）设计模式，Wegent 为创建和管理 AI 智能体生态系统提供了标准化框架。
@@ -123,30 +147,6 @@ graph LR
 > 💡 **详细的 YAML 配置文档**:
 - [完整的 YAML 配置示例和字段说明](docs/zh/reference/yaml-specification.md)
 
-
-## 🚀 快速开始
-
-### 前置要求
-
-- Docker 和 Docker Compose
-- Git
-
-1. **克隆仓库**
-   ```bash
-   git clone https://github.com/wecode-ai/wegent.git
-   cd wegent
-   ```
-
-2. **启动平台**
-   ```bash
-   docker-compose up -d
-   
-   # 可选：启用 RAG 功能（需要 Elasticsearch）
-   # docker compose --profile rag up -d
-   ```
-
-3. **访问 Web 界面**
-   - 在浏览器中打开 http://localhost:3000
 
 ## 🏗️ 架构
 
