@@ -5,7 +5,7 @@
 import { useTranslation as useI18nextTranslation } from 'react-i18next'
 import { supportedLanguages } from '@/i18n/setup'
 
-export function useTranslation(namespace?: string) {
+export function useTranslation(namespace?: string | string[]) {
   const { t, i18n } = useI18nextTranslation(namespace)
   
   const changeLanguage = (language: string) => {
