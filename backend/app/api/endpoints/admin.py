@@ -189,7 +189,14 @@ async def update_user(
     """
     Update user information (admin only)
     """
-    user = user_service.get_user_by_id(db, user_id)
+    # Query user directly to avoid decrypt_user_git_info modifying the object
+    # which can cause SQLAlchemy session state issues
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User with id {user_id} not found",
+        )
 
     # Prevent admin from deactivating themselves
     if user.id == current_user.id and user_data.is_active is False:
@@ -255,7 +262,13 @@ async def delete_user(
     """
     Delete a user (soft delete by setting is_active=False)
     """
-    user = user_service.get_user_by_id(db, user_id)
+    # Query user directly to avoid decrypt_user_git_info modifying the object
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User with id {user_id} not found",
+        )
 
     # Prevent admin from deleting themselves
     if user.id == current_user.id:
@@ -281,7 +294,13 @@ async def reset_user_password(
     """
     Reset user password (admin only)
     """
-    user = user_service.get_user_by_id(db, user_id)
+    # Query user directly to avoid decrypt_user_git_info modifying the object
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User with id {user_id} not found",
+        )
 
     # Only allow password reset for password-authenticated users
     if user.auth_source not in ["password", "unknown"]:
@@ -317,7 +336,13 @@ async def toggle_user_status(
     """
     Toggle user active status (enable/disable)
     """
-    user = user_service.get_user_by_id(db, user_id)
+    # Query user directly to avoid decrypt_user_git_info modifying the object
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User with id {user_id} not found",
+        )
 
     # Prevent admin from disabling themselves
     if user.id == current_user.id:
@@ -352,7 +377,13 @@ async def update_user_role(
     """
     Update user role (admin only)
     """
-    user = user_service.get_user_by_id(db, user_id)
+    # Query user directly to avoid decrypt_user_git_info modifying the object
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User with id {user_id} not found",
+        )
 
     # Prevent admin from demoting themselves if they're the only admin
     if user.id == current_user.id and role_data.role == "user":
