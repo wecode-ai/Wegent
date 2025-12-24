@@ -148,12 +148,22 @@ export function isTaskUnread(task: Task): boolean {
 /**
  * Mark all tasks as viewed
  * Uses task's own timestamp (completed_at or updated_at) to avoid client/server time sync issues
+ * @param tasks - The tasks to mark as viewed. If not provided, all tasks in the statusMap will be updated.
  */
 export function markAllTasksAsViewed(tasks: Task[]): void {
   const statusMap = getTaskViewStatusMap();
 
   tasks.forEach(task => {
-    if (['COMPLETED', 'FAILED', 'CANCELLED'].includes(task.status)) {
+    // For group chats, mark as viewed regardless of status
+    if (task.is_group_chat) {
+      const viewedAt = task.updated_at;
+      statusMap[task.id] = {
+        viewedAt,
+        status: task.status,
+      };
+    }
+    // For regular tasks, only mark terminal states as viewed
+    else if (['COMPLETED', 'FAILED', 'CANCELLED'].includes(task.status)) {
       // Use task's timestamp to ensure viewedAt >= taskUpdatedAt
       const viewedAt = task.completed_at || task.updated_at;
       statusMap[task.id] = {

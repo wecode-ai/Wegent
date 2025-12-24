@@ -363,7 +363,7 @@
     "refresh_failed": "Failed to refresh, please try again"
   },
   "tasks": {
-    "history_title": "History",
+    "history_title": "My Chats",
     "group_chats": "Group Chats",
     "conversations": "Conversations",
     "search_placeholder": "Search task",

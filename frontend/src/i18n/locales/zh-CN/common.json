@@ -363,7 +363,7 @@
     "refresh_failed": "刷新失败，请重试"
   },
   "tasks": {
-    "history_title": "历史对话",
+    "history_title": "我的聊天",
     "group_chats": "群聊",
     "conversations": "对话",
     "search_placeholder": "搜索任务",
