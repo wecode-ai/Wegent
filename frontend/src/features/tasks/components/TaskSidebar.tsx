@@ -349,102 +349,115 @@ export default function TaskSidebar({
 
   const sidebarContent = (
     <>
-      {/* Logo and Mode Indicator */}
-      <div className="px-1 py-2 sm:py-3">
-        <div
-          className={`flex items-center ${isCollapsed ? 'justify-center' : 'justify-between pl-2'} gap-2`}
-        >
-          {!isCollapsed && (
+      {/* Logo and Mode Indicator - matches Figma: left-[20px] top-[12px] */}
+      <div className={`${isCollapsed ? 'px-2' : 'px-5'} pt-3 pb-4`}>
+        {isCollapsed ? (
+          /* Collapsed mode: Combined button with expand and add icons - matches Figma */
+          <TooltipProvider>
+            <Tooltip delayDuration={300}>
+              <TooltipTrigger asChild>
+                <div
+                  className="flex items-center gap-3 px-4 py-2.5 rounded-3xl border border-border bg-base shadow-sm cursor-pointer hover:bg-hover transition-colors"
+                  onClick={onToggleCollapsed}
+                >
+                  <PanelLeftOpen className="h-4 w-4 text-text-primary flex-shrink-0" />
+                  <button
+                    onClick={e => {
+                      e.stopPropagation();
+                      handleNewAgentClick();
+                    }}
+                    className="flex-shrink-0"
+                    aria-label={t('tasks.new_conversation')}
+                  >
+                    <Plus className="h-4 w-4 text-text-primary" />
+                  </button>
+                </div>
+              </TooltipTrigger>
+              <TooltipContent side="right">
+                <p>{t('sidebar.expand')}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        ) : (
+          /* Expanded mode: Logo and collapse button */
+          <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <Image
                 src="/weibo-logo.png"
                 alt="Weibo Logo"
-                width={20}
-                height={20}
+                width={24}
+                height={23}
                 className="object-container"
               />
-              <span className="text-sm text-text-primary">Wegent</span>
+              <span className="text-sm font-medium text-text-primary">Wegent</span>
             </div>
-          )}
-          {onToggleCollapsed && (
-            <TooltipProvider>
-              <Tooltip delayDuration={300}>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={onToggleCollapsed}
-                    className="h-9 w-9 p-0 text-text-muted hover:text-text-primary hover:bg-hover rounded-xl"
-                    aria-label={isCollapsed ? t('sidebar.expand') : t('sidebar.collapse')}
-                  >
-                    {isCollapsed ? (
-                      <PanelLeftOpen className="h-4 w-4" />
-                    ) : (
+            {onToggleCollapsed && (
+              <TooltipProvider>
+                <Tooltip delayDuration={300}>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={onToggleCollapsed}
+                      className="h-8 w-8 p-0 text-text-muted hover:text-text-primary hover:bg-hover rounded-lg"
+                      aria-label={t('sidebar.collapse')}
+                    >
                       <PanelLeftClose className="h-4 w-4" />
-                    )}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="right">
-                  <p>{isCollapsed ? t('sidebar.expand') : t('sidebar.collapse')}</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )}
-        </div>
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">
+                    <p>{t('sidebar.collapse')}</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+          </div>
+        )}
       </div>
 
       {/* New Conversation Button and Navigation Buttons - wrapped together for onboarding tour */}
-      <div data-tour="mode-toggle">
-        {/* New Conversation Button - always shows "New Conversation" and navigates to chat */}
-        <div className="px-1 mb-1">
-          {isCollapsed ? (
-            <TooltipProvider>
-              <Tooltip delayDuration={300}>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    onClick={handleNewAgentClick}
-                    className="w-full justify-center p-2 h-auto min-h-[44px] text-text-primary hover:bg-hover rounded-xl"
-                    aria-label={t('tasks.new_conversation')}
-                  >
-                    <Plus className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="right">
-                  <p>{t('tasks.new_conversation')}</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          ) : (
+      <div data-tour="mode-toggle" className="px-2.5">
+        {/* New Conversation Button - only show in expanded mode, collapsed mode has it in the top combined button */}
+        {!isCollapsed && (
+          <div className="mb-1">
             <Button
               variant="ghost"
               onClick={handleNewAgentClick}
-              className="w-full justify-start px-2 py-1.5 h-8 text-sm text-text-primary hover:bg-hover rounded-xl"
+              className="w-full justify-between px-3 h-9 text-sm text-text-primary hover:bg-hover rounded-md group"
               size="sm"
             >
-              <Plus className="h-4 w-4 mr-0.5" />
-              {t('tasks.new_conversation')}
+              <span className="flex items-center">
+                <Plus className="h-4 w-4 flex-shrink-0" />
+                <span className="ml-1.5">{t('tasks.new_conversation')}</span>
+              </span>
+              <span className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity">
+                ›
+              </span>
             </Button>
-          )}
-        </div>
+          </div>
+        )}
 
-        {/* Navigation Buttons - hide in collapsed mode */}
+        {/* Navigation Buttons - matches Figma: spacing and style */}
         {!isCollapsed && navigationButtons.length > 0 && (
-          <div className="px-1 mb-2 space-y-1">
+          <div className="space-y-0.5">
             {navigationButtons.map(btn => (
               <div key={btn.path} className="relative group">
                 <Button
                   variant="ghost"
                   onClick={() => handleNavigationClick(btn.path, btn.isActive)}
-                  className={`w-full justify-start px-2 py-1.5 h-8 text-sm rounded-xl transition-colors ${
+                  className={`w-full justify-start px-3 h-9 text-sm rounded-md transition-colors ${
                     btn.isActive
                       ? 'bg-primary/10 text-primary font-medium'
                       : 'text-text-primary hover:bg-hover'
                   }`}
                   size="sm"
                 >
-                  <btn.icon className={`h-4 w-4 mr-0.5 ${btn.isActive ? 'text-primary' : ''}`} />
-                  {btn.label}
+                  <span className="flex items-center">
+                    <btn.icon
+                      className={`h-4 w-4 flex-shrink-0 ${btn.isActive ? 'text-primary' : ''}`}
+                    />
+                    <span className="ml-1.5">{btn.label}</span>
+                  </span>
                 </Button>
                 {/* Show "New Task" button on hover when in code mode */}
                 {btn.isActive && btn.tooltip && (
@@ -588,9 +601,9 @@ export default function TaskSidebar({
         </DialogContent>
       </Dialog>
 
-      {/* Tasks Section */}
+      {/* Tasks Section - matches Figma: left-[20px] top-[198px] with border */}
       <div
-        className={`flex-1 ${isCollapsed ? 'px-0' : 'pl-2 pr-1'} pt-2 overflow-y-auto task-list-scrollbar border-t border-border`}
+        className={`flex-1 ${isCollapsed ? 'px-0' : 'px-2.5'} pt-4 overflow-y-auto task-list-scrollbar border-t border-border mt-3`}
         ref={scrollRef}
       >
         {/* Search Result Header */}
@@ -606,27 +619,7 @@ export default function TaskSidebar({
             </button>
           </div>
         )}
-        {/* Search Button for collapsed mode */}
-        {isCollapsed && !isSearchResult && (
-          <div className="px-1 pb-2 flex justify-center">
-            <TooltipProvider>
-              <Tooltip delayDuration={300}>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={handleOpenSearchDialog}
-                    className="p-1 text-text-muted hover:text-text-primary transition-colors rounded hover:bg-hover"
-                    aria-label={t('tasks.search_placeholder_chat')}
-                  >
-                    <Search className="h-4 w-4" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="right">
-                  <p>{t('tasks.search_placeholder_chat')}</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          </div>
-        )}
+        {/* Search Button for collapsed mode - removed, search is now in the combined top button */}
         {isSearching ? (
           <div className="text-center py-8 text-xs text-text-muted">{t('tasks.searching')}</div>
         ) : tasks.length === 0 ? (
@@ -724,8 +717,8 @@ export default function TaskSidebar({
         )}
       </div>
 
-      {/* User Menu */}
-      <div className="p-2 border-t border-border" data-tour="settings-link">
+      {/* User Menu - matches Figma: left-[20px] top-[852px] with border */}
+      <div className="px-2.5 py-3 border-t border-border" data-tour="settings-link">
         <UserFloatingMenu />
       </div>
     </>

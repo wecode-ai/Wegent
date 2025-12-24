@@ -58,9 +58,11 @@ function SloganDisplay({ slogan }: { slogan: ChatSloganItem | null }) {
   // Always render the container to maintain consistent layout height
   // This prevents the chat input from "jumping" when switching between /chat and /code tabs
   return (
-    <div className="text-center mb-10 min-h-[2.25rem] sm:min-h-[2.5rem]">
+    <div className="text-center mb-8 min-h-[2.5rem] sm:min-h-[3rem]">
       {sloganText && (
-        <h1 className="text-2xl sm:text-3xl font-semibold text-text-primary">{sloganText}</h1>
+        <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-text-primary tracking-tight">
+          {sloganText}
+        </h1>
       )}
     </div>
   );
@@ -1433,7 +1435,7 @@ export default function ChatArea({
 
                 {/* Chat Input Card */}
                 <div
-                  className={`relative w-full flex flex-col rounded-2xl border border-border bg-base shadow-md transition-colors ${isDragging ? 'border-primary ring-2 ring-primary/20' : ''}`}
+                  className={`relative w-full flex flex-col rounded-3xl border border-border bg-base shadow-lg transition-colors ${isDragging ? 'border-primary ring-2 ring-primary/20' : ''}`}
                   onDragEnter={handleDragEnter}
                   onDragLeave={handleDragLeave}
                   onDragOver={handleDragOver}
@@ -1441,7 +1443,7 @@ export default function ChatArea({
                 >
                   {/* Drag Overlay */}
                   {isDragging && (
-                    <div className="absolute inset-0 z-50 rounded-2xl bg-base/95 backdrop-blur-sm flex flex-col items-center justify-center border-2 border-dashed border-primary transition-all animate-in fade-in duration-200">
+                    <div className="absolute inset-0 z-50 rounded-3xl bg-base/95 backdrop-blur-sm flex flex-col items-center justify-center border-2 border-dashed border-primary transition-all animate-in fade-in duration-200">
                       <div className="p-4 rounded-full bg-primary/10 mb-4 animate-bounce">
                         <Upload className="h-8 w-8 text-primary" />
                       </div>
@@ -1470,7 +1472,7 @@ export default function ChatArea({
                   )}
                   {/* Chat Input with inline badge */}
                   {!shouldHideChatInput && (
-                    <div className="px-3 pt-2">
+                    <div className="px-4 pt-2">
                       <ChatInput
                         message={taskInputMessage}
                         setMessage={setTaskInputMessage}
@@ -1493,13 +1495,13 @@ export default function ChatArea({
                   )}
                   {/* Selected Team Badge only - show when chat input is hidden (workflow mode) */}
                   {shouldHideChatInput && selectedTeam && (
-                    <div className="px-3 pt-2">
+                    <div className="px-4 pt-3">
                       <SelectedTeamBadge team={selectedTeam} />
                     </div>
                   )}
                   {/* Team Selector and Send Button - always show */}
                   <div
-                    className={`flex items-center justify-between px-3 gap-2 ${shouldHideChatInput ? 'py-3' : 'pb-0.5'}`}
+                    className={`flex items-center justify-between px-3 gap-2 ${shouldHideChatInput ? 'py-3' : 'pb-2 pt-1'}`}
                     ref={inputControlsRef}
                   >
                     <div
@@ -1682,7 +1684,7 @@ export default function ChatArea({
 
               {/* Chat Input Card */}
               <div
-                className={`relative w-full flex flex-col rounded-2xl border border-border bg-base shadow-md transition-colors ${isDragging ? 'border-primary ring-2 ring-primary/20' : ''}`}
+                className={`relative w-full flex flex-col rounded-3xl border border-border bg-base shadow-lg transition-colors ${isDragging ? 'border-primary ring-2 ring-primary/20' : ''}`}
                 onDragEnter={handleDragEnter}
                 onDragLeave={handleDragLeave}
                 onDragOver={handleDragOver}
@@ -1690,7 +1692,7 @@ export default function ChatArea({
               >
                 {/* Drag Overlay */}
                 {isDragging && (
-                  <div className="absolute inset-0 z-50 rounded-2xl bg-base/95 backdrop-blur-sm flex flex-col items-center justify-center border-2 border-dashed border-primary transition-all animate-in fade-in duration-200">
+                  <div className="absolute inset-0 z-50 rounded-3xl bg-base/95 backdrop-blur-sm flex flex-col items-center justify-center border-2 border-dashed border-primary transition-all animate-in fade-in duration-200">
                     <div className="p-4 rounded-full bg-primary/10 mb-4 animate-bounce">
                       <Upload className="h-8 w-8 text-primary" />
                     </div>
@@ -1719,7 +1721,7 @@ export default function ChatArea({
                 )}
                 {/* Chat Input - hide for workflow mode */}
                 {!shouldHideChatInput && (
-                  <div className="px-3 pt-2">
+                  <div className="px-4 pt-2">
                     <ChatInput
                       message={taskInputMessage}
                       setMessage={setTaskInputMessage}
@@ -1741,7 +1743,7 @@ export default function ChatArea({
                 )}
                 {/* Team Selector and Send Button - always show */}
                 <div
-                  className={`flex items-center justify-between px-3 gap-2 ${shouldHideChatInput ? 'py-3' : 'pb-0.5'}`}
+                  className={`flex items-center justify-between px-3 gap-2 ${shouldHideChatInput ? 'py-3' : 'pb-2 pt-1'}`}
                 >
                   <div className="flex-1 min-w-0 overflow-hidden flex items-center gap-3">
                     {/* File Upload Button - only show when no file is selected */}

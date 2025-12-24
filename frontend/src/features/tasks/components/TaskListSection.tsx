@@ -348,13 +348,13 @@ export default function TaskListSection({
 
     // Show group chat icon for group chats
     if (task.is_group_chat) {
-      return <Users className="w-3.5 h-3.5 text-text-muted" />;
+      return <Users className="w-3.5 h-3.5 text-text-primary" />;
     }
 
     if (taskType === 'code') {
-      return <Code2 className="w-3.5 h-3.5 text-text-muted" />;
+      return <Code2 className="w-3.5 h-3.5 text-text-primary" />;
     } else {
-      return <MessageSquare className="w-3.5 h-3.5 text-text-muted" />;
+      return <MessageSquare className="w-3.5 h-3.5 text-text-primary" />;
     }
   };
 
@@ -370,7 +370,7 @@ export default function TaskListSection({
               {unreadCount > 0 && <span className="text-primary ml-1">({unreadCount})</span>}
             </h3>
           )}
-      <div className="space-y-1">
+      <div className="space-y-0.5">
         {tasks.map(task => {
           const showMenu = hoveredTaskId === task.id || longPressTaskId === task.id;
 
@@ -444,7 +444,7 @@ export default function TaskListSection({
               <Tooltip delayDuration={500}>
                 <TooltipTrigger asChild>
                   <div
-                    className={`flex items-center gap-2 py-1.5 px-2 h-8 rounded-xl cursor-pointer ${
+                    className={`flex items-center gap-2 py-1.5 px-3 h-8 rounded-xl cursor-pointer ${
                       selectedTask?.id === task.id || selectedTaskDetail?.id === task.id
                         ? 'bg-primary/10'
                         : 'hover:bg-hover'

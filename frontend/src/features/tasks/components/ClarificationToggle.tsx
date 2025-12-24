@@ -39,15 +39,15 @@ export default function ClarificationToggle({
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
-            variant="ghost"
+            variant="outline"
             size="icon"
             onClick={handleToggle}
             disabled={disabled}
             className={cn(
-              'h-8 w-8 rounded-lg flex-shrink-0 transition-colors',
+              'h-9 w-9 rounded-full flex-shrink-0 transition-colors',
               enabled
-                ? 'bg-primary/10 text-primary hover:bg-primary/20'
-                : 'text-text-muted hover:bg-surface hover:text-text-primary'
+                ? 'border-primary bg-primary/10 text-primary hover:bg-primary/20'
+                : 'border-border bg-base text-text-primary hover:bg-hover'
             )}
           >
             <MessageCircleQuestion className="h-4 w-4" />

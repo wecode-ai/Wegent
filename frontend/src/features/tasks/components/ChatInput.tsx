@@ -417,8 +417,10 @@ export default function ChatInput({
   }, []);
 
   // Calculate min height based on device
-  const minHeight = isMobile ? '3.5rem' : '1.75rem';
-  const maxHeight = isMobile ? '9rem' : '12rem';
+  // Figma design shows input card ~140px total, text area takes most of it
+  // Text area should be ~60-70px minimum (about 2-3 lines with 26px line-height)
+  const minHeight = isMobile ? '3.5rem' : '4rem';
+  const maxHeight = isMobile ? '9rem' : '10rem';
 
   // Get tooltip text based on send key preference and platform
   const tooltipText = useMemo(() => {
@@ -439,7 +441,7 @@ export default function ChatInput({
             {/* Placeholder - shown when empty */}
             {showPlaceholder && (
               <div
-                className="absolute pointer-events-none text-text-muted text-base"
+                className="absolute pointer-events-none text-text-muted text-base leading-[26px]"
                 style={{
                   top: '0.5rem',
                   left: badge ? `${badgeWidth}px` : '0',
@@ -478,7 +480,7 @@ export default function ChatInput({
                 {badge && (
                   <span
                     ref={badgeRef}
-                    className="absolute left-0 top-2 pointer-events-auto z-10"
+                    className="absolute left-0 top-1 pointer-events-auto z-10"
                     style={{ userSelect: 'none' }}
                   >
                     {badge}
@@ -496,7 +498,7 @@ export default function ChatInput({
                   onCompositionEnd={handleCompositionEnd}
                   onFocus={handleFocus}
                   data-testid="message-input"
-                  className={`w-full py-2 bg-transparent text-text-primary text-base focus:outline-none ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  className={`w-full py-2 bg-transparent text-text-primary text-base leading-[26px] focus:outline-none ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                   style={{
                     minHeight,
                     whiteSpace: 'pre-wrap',
