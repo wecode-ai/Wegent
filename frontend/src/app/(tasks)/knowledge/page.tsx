@@ -133,7 +133,7 @@ export default function KnowledgePage() {
     // This prevents the UI from being stuck showing the previous task's messages
     setSelectedTask(null);
     clearAllStreams();
-    router.replace(paths.wiki.getHref());
+    router.replace(paths.chat.getHref());
   };
 
   return (
