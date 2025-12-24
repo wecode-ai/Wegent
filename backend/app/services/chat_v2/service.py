@@ -632,6 +632,7 @@ class ChatService:
             Dictionary of MCP servers from ghost.spec.mcpServers, or empty dict
         """
         from app.db.session import SessionLocal
+        from app.models.kind import Kind
         from app.schemas.kind import Bot, Ghost
 
         db = SessionLocal()
