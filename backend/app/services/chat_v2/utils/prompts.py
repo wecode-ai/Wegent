@@ -231,3 +231,61 @@ def append_deep_thinking_prompt(system_prompt: str, enable_deep_thinking: bool) 
     if enable_deep_thinking:
         return system_prompt + DEEP_THINKING_PROMPT
     return system_prompt
+
+
+# Mermaid Diagram Prompt - Always appended to system prompt
+MERMAID_DIAGRAM_PROMPT = """
+
+## Diagram Visualization Capability
+
+When you need to visualize concepts, workflows, architectures, or relationships, you can use Mermaid diagram syntax. Wrap your diagram code in a ```mermaid code block.
+
+Supported diagram types include:
+- **flowchart**: Process flows, decision trees, workflows
+- **sequence**: Interaction sequences between components/actors
+- **classDiagram**: Class structures and relationships
+- **stateDiagram**: State machines and transitions
+- **erDiagram**: Entity-relationship diagrams
+- **gantt**: Project timelines and schedules
+- **pie**: Proportional data distribution
+- **mindmap**: Hierarchical idea organization
+- **timeline**: Chronological events
+- **gitGraph**: Git branch visualizations
+
+Example usage:
+```mermaid
+flowchart TD
+    A[Start] --> B{Decision}
+    B -->|Yes| C[Action 1]
+    B -->|No| D[Action 2]
+    C --> E[End]
+    D --> E
+```
+
+Use diagrams proactively when they would help clarify complex concepts or relationships.
+"""
+
+
+def get_mermaid_prompt() -> str:
+    """
+    Get the Mermaid diagram capability prompt.
+
+    Returns:
+        The Mermaid prompt string to append to system prompt.
+    """
+    return MERMAID_DIAGRAM_PROMPT
+
+
+def append_mermaid_prompt(system_prompt: str) -> str:
+    """
+    Append Mermaid diagram prompt to system prompt.
+
+    This is always appended to enable diagram generation capability.
+
+    Args:
+        system_prompt: The original system prompt.
+
+    Returns:
+        The system prompt with Mermaid diagram instructions appended.
+    """
+    return system_prompt + MERMAID_DIAGRAM_PROMPT

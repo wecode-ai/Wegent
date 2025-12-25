@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import MarkdownEditor from '@uiw/react-markdown-editor';
+import MarkdownWithMermaid from '@/components/common/MarkdownWithMermaid';
 import ThinkingComponent from './ThinkingComponent';
 import InlineToolStatus from './InlineToolStatus';
 import ClarificationForm from '../clarification/ClarificationForm';
@@ -425,10 +426,9 @@ const MessageBubble = memo(
 
       return (
         <>
-          <MarkdownEditor.Markdown
+          <MarkdownWithMermaid
             source={normalizedResult}
-            style={{ background: 'transparent' }}
-            wrapperElement={{ 'data-color-mode': theme }}
+            theme={theme}
             components={
               paragraphAction
                 ? {
@@ -474,13 +474,7 @@ const MessageBubble = memo(
                       return wrapWithAction(<blockquote>{children}</blockquote>, text);
                     },
                   }
-                : {
-                    a: ({ href, children, ...props }) => (
-                      <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                        {children}
-                      </a>
-                    ),
-                  }
+                : undefined
             }
           />
           <SourceReferences sources={msg.sources || msg.result?.sources || []} />
@@ -1176,17 +1170,9 @@ const MessageBubble = memo(
         <div className="space-y-2">
           {contentToRender ? (
             <>
-              <MarkdownEditor.Markdown
+              <MarkdownWithMermaid
                 source={contentToRender}
-                style={{ background: 'transparent' }}
-                wrapperElement={{ 'data-color-mode': theme }}
-                components={{
-                  a: ({ href, children, ...props }) => (
-                    <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                      {children}
-                    </a>
-                  ),
-                }}
+                theme={theme}
               />
               {/* Show copy and download buttons during streaming */}
               <SourceReferences sources={msg.sources || msg.result?.sources || []} />

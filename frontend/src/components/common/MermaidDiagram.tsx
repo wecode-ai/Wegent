@@ -1,0 +1,571 @@
+// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+'use client';
+
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import {
+  ZoomIn,
+  ZoomOut,
+  RotateCcw,
+  Download,
+  Copy,
+  Check,
+  AlertCircle,
+  Maximize2,
+  X,
+} from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { useTranslation } from '@/hooks/useTranslation';
+import { useTheme } from '@/features/theme/ThemeProvider';
+
+export interface MermaidDiagramProps {
+  code: string;
+  className?: string;
+}
+
+/**
+ * MermaidDiagram Component
+ *
+ * Renders Mermaid diagram code as interactive SVG with:
+ * - Theme adaptation (light/dark)
+ * - Zoom in/out controls
+ * - Export to PNG
+ * - Copy source code
+ * - Fullscreen modal view
+ * - Error handling with fallback to raw code
+ */
+export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
+  const { t } = useTranslation('chat');
+  const { theme } = useTheme();
+  const containerRef = useRef<HTMLDivElement>(null);
+  const diagramRef = useRef<HTMLDivElement>(null);
+
+  const [svgContent, setSvgContent] = useState<string>('');
+  const [error, setError] = useState<string>('');
+  const [isLoading, setIsLoading] = useState(true);
+  const [scale, setScale] = useState(1);
+  const [copied, setCopied] = useState(false);
+  const [exported, setExported] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // Generate unique ID for this diagram instance
+  const diagramId = useMemo(() => `mermaid-${Math.random().toString(36).substr(2, 9)}`, []);
+
+  // Mermaid theme configuration based on current theme
+  const getMermaidConfig = useCallback(() => {
+    const isDark = theme === 'dark';
+
+    return {
+      startOnLoad: false,
+      theme: 'base',
+      themeVariables: isDark
+        ? {
+            // Dark theme variables
+            primaryColor: '#1e293b',
+            primaryTextColor: '#e2e8f0',
+            primaryBorderColor: '#475569',
+            lineColor: '#64748b',
+            secondaryColor: '#334155',
+            tertiaryColor: '#1e293b',
+            background: '#0f172a',
+            mainBkg: '#1e293b',
+            secondBkg: '#334155',
+            mainContrastColor: '#e2e8f0',
+            darkTextColor: '#e2e8f0',
+            textColor: '#e2e8f0',
+            labelTextColor: '#e2e8f0',
+            signalTextColor: '#e2e8f0',
+            actorBkg: '#1e293b',
+            actorBorder: '#14b8a6',
+            actorTextColor: '#e2e8f0',
+            actorLineColor: '#475569',
+            noteBkgColor: '#854d0e',
+            noteBorderColor: '#fbbf24',
+            noteTextColor: '#fef3c7',
+            activationBkgColor: '#0c4a6e',
+            activationBorderColor: '#0ea5e9',
+            sequenceNumberColor: '#ffffff',
+          }
+        : {
+            // Light theme variables
+            primaryColor: '#f8fafc',
+            primaryTextColor: '#0f172a',
+            primaryBorderColor: '#94a3b8',
+            lineColor: '#64748b',
+            secondaryColor: '#f1f5f9',
+            tertiaryColor: '#e2e8f0',
+            background: '#ffffff',
+            mainBkg: '#f8fafc',
+            secondBkg: '#f1f5f9',
+            mainContrastColor: '#0f172a',
+            darkTextColor: '#0f172a',
+            textColor: '#0f172a',
+            labelTextColor: '#0f172a',
+            signalTextColor: '#0f172a',
+            actorBkg: '#f8fafc',
+            actorBorder: '#14b8a6',
+            actorTextColor: '#0f172a',
+            actorLineColor: '#cbd5e1',
+            noteBkgColor: '#fef9c3',
+            noteBorderColor: '#fbbf24',
+            noteTextColor: '#1e293b',
+            activationBkgColor: '#e0f2fe',
+            activationBorderColor: '#0ea5e9',
+            sequenceNumberColor: '#ffffff',
+          },
+      securityLevel: 'loose',
+      flowchart: {
+        useMaxWidth: true,
+        htmlLabels: true,
+        curve: 'basis',
+        padding: 15,
+      },
+      sequence: {
+        diagramMarginX: 50,
+        diagramMarginY: 20,
+        actorMargin: 80,
+        width: 180,
+        height: 65,
+        boxMargin: 10,
+        boxTextMargin: 5,
+        noteMargin: 15,
+        messageMargin: 45,
+        mirrorActors: true,
+        useMaxWidth: true,
+        actorFontSize: 14,
+        actorFontWeight: 600,
+        noteFontSize: 13,
+        messageFontSize: 13,
+      },
+      fontSize: 14,
+      fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+    };
+  }, [theme]);
+
+  // Render Mermaid diagram
+  useEffect(() => {
+    let isMounted = true;
+
+    const renderDiagram = async () => {
+      if (!code.trim()) {
+        setError('Empty diagram code');
+        setIsLoading(false);
+        return;
+      }
+
+      try {
+        setIsLoading(true);
+        setError('');
+
+        // Dynamically import mermaid to avoid SSR issues
+        const mermaid = (await import('mermaid')).default;
+
+        // Initialize with current theme config
+        mermaid.initialize(getMermaidConfig());
+
+        // Render the diagram
+        const { svg } = await mermaid.render(diagramId, code.trim());
+
+        if (isMounted) {
+          setSvgContent(svg);
+          setIsLoading(false);
+        }
+      } catch (err) {
+        if (isMounted) {
+          const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+          console.error('Mermaid render error:', errorMessage);
+          setError(errorMessage);
+          setIsLoading(false);
+        }
+      }
+    };
+
+    renderDiagram();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [code, theme, diagramId, getMermaidConfig]);
+
+  // Zoom controls
+  const zoomIn = useCallback(() => {
+    setScale((prev) => Math.min(prev + 0.25, 3));
+  }, []);
+
+  const zoomOut = useCallback(() => {
+    setScale((prev) => Math.max(prev - 0.25, 0.5));
+  }, []);
+
+  const resetZoom = useCallback(() => {
+    setScale(1);
+  }, []);
+
+  // Copy source code to clipboard
+  const copyCode = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  }, [code]);
+
+  // Export to PNG
+  const exportPng = useCallback(async () => {
+    if (!svgContent) return;
+
+    try {
+      // Create a temporary container to get the SVG element
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = svgContent;
+      const svgElement = tempDiv.querySelector('svg');
+
+      if (!svgElement) {
+        console.error('SVG element not found');
+        return;
+      }
+
+      // Get SVG dimensions
+      const bbox = svgElement.getBBox?.() || { width: 800, height: 600 };
+      const width = Math.max(bbox.width + 40, parseInt(svgElement.getAttribute('width') || '800'));
+      const height = Math.max(
+        bbox.height + 40,
+        parseInt(svgElement.getAttribute('height') || '600')
+      );
+
+      // Set explicit dimensions on SVG
+      svgElement.setAttribute('width', String(width));
+      svgElement.setAttribute('height', String(height));
+
+      // Create canvas
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      // Set canvas size with device pixel ratio for better quality
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = width * dpr;
+      canvas.height = height * dpr;
+      ctx.scale(dpr, dpr);
+
+      // Fill background
+      ctx.fillStyle = theme === 'dark' ? '#0f172a' : '#ffffff';
+      ctx.fillRect(0, 0, width, height);
+
+      // Convert SVG to data URL
+      const svgData = new XMLSerializer().serializeToString(svgElement);
+      const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+      const svgUrl = URL.createObjectURL(svgBlob);
+
+      // Load image and draw to canvas
+      const img = new Image();
+      img.onload = () => {
+        ctx.drawImage(img, 20, 20, width - 40, height - 40);
+        URL.revokeObjectURL(svgUrl);
+
+        // Download as PNG
+        canvas.toBlob((blob) => {
+          if (blob) {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `mermaid-diagram-${Date.now()}.png`;
+            a.click();
+            URL.revokeObjectURL(url);
+            setExported(true);
+            setTimeout(() => setExported(false), 2000);
+          }
+        }, 'image/png');
+      };
+      img.src = svgUrl;
+    } catch (err) {
+      console.error('Failed to export PNG:', err);
+    }
+  }, [svgContent, theme]);
+
+  // Toggle fullscreen modal
+  const toggleFullscreen = useCallback(() => {
+    setIsFullscreen((prev) => !prev);
+  }, []);
+
+  // Handle wheel zoom
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? -0.1 : 0.1;
+      setScale((prev) => Math.max(0.5, Math.min(3, prev + delta)));
+    }
+  }, []);
+
+  // Render error state with raw code
+  if (error) {
+    return (
+      <div className={`my-4 rounded-lg border border-red-300 dark:border-red-800 ${className}`}>
+        {/* Error banner */}
+        <div className="flex items-center gap-2 px-4 py-2 bg-red-50 dark:bg-red-950/30 border-b border-red-200 dark:border-red-800 rounded-t-lg">
+          <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400" />
+          <span className="text-sm font-medium text-red-700 dark:text-red-300">
+            {t('mermaid.renderError') || 'Mermaid render failed'}: {error}
+          </span>
+        </div>
+        {/* Raw code display */}
+        <div className="p-4 bg-surface overflow-auto">
+          <pre className="text-sm font-mono text-text-primary whitespace-pre-wrap">{code}</pre>
+        </div>
+        {/* Copy button for error state */}
+        <div className="flex justify-end px-4 py-2 border-t border-red-200 dark:border-red-800">
+          <Button variant="ghost" size="sm" onClick={copyCode} className="text-text-secondary">
+            {copied ? <Check className="w-4 h-4 mr-1" /> : <Copy className="w-4 h-4 mr-1" />}
+            {copied ? t('mermaid.copied') || 'Copied' : t('mermaid.copyCode') || 'Copy Code'}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // Render loading state
+  if (isLoading) {
+    return (
+      <div
+        className={`my-4 p-8 rounded-lg border border-border bg-surface flex items-center justify-center ${className}`}
+      >
+        <div className="flex items-center gap-3 text-text-secondary">
+          <div className="animate-spin rounded-full h-5 w-5 border-2 border-primary border-t-transparent" />
+          <span className="text-sm">Loading diagram...</span>
+        </div>
+      </div>
+    );
+  }
+
+  // Diagram toolbar
+  const Toolbar = ({ inModal = false }: { inModal?: boolean }) => (
+    <div
+      className={`flex items-center gap-1 ${inModal ? 'bg-white/10 rounded-lg px-2 py-1' : ''}`}
+    >
+      {/* Zoom controls */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={zoomOut}
+            className={`h-7 w-7 ${inModal ? 'text-white hover:bg-white/10' : 'text-text-secondary hover:text-text-primary'}`}
+          >
+            <ZoomOut className="w-4 h-4" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{t('mermaid.zoomOut') || 'Zoom Out'}</TooltipContent>
+      </Tooltip>
+
+      <span
+        className={`text-xs px-2 min-w-[48px] text-center ${inModal ? 'text-white/70' : 'text-text-muted'}`}
+      >
+        {Math.round(scale * 100)}%
+      </span>
+
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={zoomIn}
+            className={`h-7 w-7 ${inModal ? 'text-white hover:bg-white/10' : 'text-text-secondary hover:text-text-primary'}`}
+          >
+            <ZoomIn className="w-4 h-4" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{t('mermaid.zoomIn') || 'Zoom In'}</TooltipContent>
+      </Tooltip>
+
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={resetZoom}
+            className={`h-7 w-7 ${inModal ? 'text-white hover:bg-white/10' : 'text-text-secondary hover:text-text-primary'}`}
+          >
+            <RotateCcw className="w-4 h-4" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{t('mermaid.resetZoom') || 'Reset Zoom'}</TooltipContent>
+      </Tooltip>
+
+      <div className={`w-px h-4 mx-1 ${inModal ? 'bg-white/20' : 'bg-border'}`} />
+
+      {/* Export PNG */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={exportPng}
+            className={`h-7 w-7 ${inModal ? 'text-white hover:bg-white/10' : 'text-text-secondary hover:text-text-primary'}`}
+          >
+            {exported ? <Check className="w-4 h-4 text-green-500" /> : <Download className="w-4 h-4" />}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>
+          {exported ? t('mermaid.exportSuccess') || 'Exported' : t('mermaid.exportPng') || 'Export PNG'}
+        </TooltipContent>
+      </Tooltip>
+
+      {/* Copy code */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={copyCode}
+            className={`h-7 w-7 ${inModal ? 'text-white hover:bg-white/10' : 'text-text-secondary hover:text-text-primary'}`}
+          >
+            {copied ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>
+          {copied ? t('mermaid.copied') || 'Copied' : t('mermaid.copyCode') || 'Copy Code'}
+        </TooltipContent>
+      </Tooltip>
+
+      {/* Fullscreen toggle (only in non-modal view) */}
+      {!inModal && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={toggleFullscreen}
+              className="h-7 w-7 text-text-secondary hover:text-text-primary"
+            >
+              <Maximize2 className="w-4 h-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Fullscreen</TooltipContent>
+        </Tooltip>
+      )}
+    </div>
+  );
+
+  return (
+    <>
+      {/* Main diagram container */}
+      <div
+        ref={containerRef}
+        className={`my-4 rounded-lg border border-border bg-surface overflow-hidden ${className}`}
+      >
+        {/* Header with toolbar */}
+        <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-surface/50">
+          <div className="flex items-center gap-2">
+            <svg
+              className="w-4 h-4 text-primary"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+              />
+            </svg>
+            <span className="text-xs font-medium text-text-secondary">
+              {t('knowledge:diagram') || 'Diagram'}
+            </span>
+          </div>
+          <Toolbar />
+        </div>
+
+        {/* Diagram content */}
+        <div
+          ref={diagramRef}
+          className="p-4 overflow-auto min-h-[200px] max-h-[600px] flex items-center justify-center"
+          onWheel={handleWheel}
+        >
+          <div
+            style={{
+              transform: `scale(${scale})`,
+              transformOrigin: 'center center',
+              transition: 'transform 0.1s ease-out',
+            }}
+            dangerouslySetInnerHTML={{ __html: svgContent }}
+          />
+        </div>
+      </div>
+
+      {/* Fullscreen modal */}
+      {isFullscreen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          {/* Backdrop */}
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={toggleFullscreen} />
+
+          {/* Modal content */}
+          <div className="relative w-full h-full flex flex-col">
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 bg-gradient-to-b from-black/50 to-transparent">
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-white/10 rounded-full">
+                  <svg
+                    className="w-4 h-4 text-primary"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                    />
+                  </svg>
+                  <span className="text-sm font-medium text-white">
+                    {t('knowledge:diagram') || 'Diagram'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Controls */}
+              <div className="flex items-center gap-2">
+                <Toolbar inModal />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={toggleFullscreen}
+                  className="h-9 w-9 text-white hover:bg-white/10"
+                >
+                  <X className="w-5 h-5" />
+                </Button>
+              </div>
+            </div>
+
+            {/* Diagram container */}
+            <div className="flex-1 overflow-auto flex items-center justify-center" onWheel={handleWheel}>
+              <div
+                className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl p-8 max-w-[90vw] max-h-[80vh] overflow-auto"
+                style={{
+                  transform: `scale(${scale})`,
+                  transformOrigin: 'center center',
+                  transition: 'transform 0.1s ease-out',
+                }}
+                dangerouslySetInnerHTML={{ __html: svgContent }}
+              />
+            </div>
+
+            {/* Footer hint */}
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 bg-black/50 rounded-full">
+              <span className="text-xs text-white/70">
+                Ctrl/Cmd + Scroll to zoom • Click backdrop to close
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+export default MermaidDiagram;

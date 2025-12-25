@@ -319,5 +319,15 @@
   "common": {
     "cancel": "取消",
     "close": "关闭"
+  },
+  "mermaid": {
+    "exportPng": "导出 PNG",
+    "copyCode": "复制代码",
+    "zoomIn": "放大",
+    "zoomOut": "缩小",
+    "resetZoom": "重置缩放",
+    "renderError": "Mermaid 渲染失败",
+    "copied": "已复制到剪贴板",
+    "exportSuccess": "图片已导出"
   }
 }
