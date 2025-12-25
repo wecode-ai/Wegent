@@ -1730,3 +1730,158 @@ async def get_search_engines(
         "enabled": True,
         "engines": engines,
     }
+
+
+# AI Correction Feature
+class CorrectionRequest(BaseModel):
+    """Request body for AI correction."""
+
+    task_id: int
+    message_id: int
+    original_question: str
+    original_answer: str
+    correction_model_id: str
+
+
+@router.post("/correct")
+async def correct_response(
+    request: CorrectionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Evaluate and correct an AI response using a specified correction model.
+
+    This endpoint:
+    1. Validates the correction model exists and is accessible
+    2. Sends the original Q&A to the correction model for evaluation
+    3. Returns scores, corrections, summary, and improved answer
+
+    Returns:
+        {
+            "message_id": int,
+            "scores": {"accuracy": int, "logic": int, "completeness": int},
+            "corrections": [{"issue": str, "suggestion": str}],
+            "summary": str,
+            "improved_answer": str,
+            "is_correct": bool
+        }
+    """
+    from app.services.correction_service import correction_service
+
+    # Validate that the task belongs to the current user
+    task = (
+        db.query(Kind)
+        .filter(
+            Kind.id == request.task_id,
+            Kind.user_id == current_user.id,
+            Kind.kind == "Task",
+            Kind.is_active == True,
+        )
+        .first()
+    )
+
+    if not task:
+        # Check if user is a group chat member
+        from app.models.task_member import MemberStatus, TaskMember
+
+        member = (
+            db.query(TaskMember)
+            .filter(
+                TaskMember.task_id == request.task_id,
+                TaskMember.user_id == current_user.id,
+                TaskMember.status == MemberStatus.ACTIVE,
+            )
+            .first()
+        )
+
+        if not member:
+            raise HTTPException(status_code=404, detail="Task not found")
+    # Get the correction model config
+    # First check if it's a public model (user_id=0 in kinds table)
+    public_model = (
+        db.query(Kind)
+        .filter(
+            Kind.user_id == 0,
+            Kind.kind == "Model",
+            Kind.name == request.correction_model_id,
+            Kind.is_active == True,
+        )
+        .first()
+    )
+
+    model_config = None
+    if public_model and public_model.json:
+        # Public models store config in json.spec.modelConfig.env
+        spec = public_model.json.get("spec", {})
+        model_config_data = spec.get("modelConfig", {})
+        env = model_config_data.get("env", {})
+        model_config = {
+            "provider": env.get("model", "openai"),
+            "model_id": env.get("model_id", ""),
+            "api_key": env.get("api_key", ""),
+            "base_url": env.get("base_url"),
+            "default_headers": env.get("custom_headers", {}),
+        }
+    else:
+        # Try user-defined model
+        user_model = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == current_user.id,
+                Kind.kind == "Model",
+                Kind.name == request.correction_model_id,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
+        if user_model and user_model.json:
+            from app.schemas.kind import Model as ModelCRD
+
+            model_crd = ModelCRD.model_validate(user_model.json)
+            # modelConfig is a Dict[str, Any], so use dictionary access
+            model_config_data = model_crd.spec.modelConfig
+            env = model_config_data.get("env", {})
+            model_config = {
+                "provider": env.get("model", "openai"),
+                "model_id": env.get("model_id", ""),
+                "api_key": env.get("api_key", ""),
+                "base_url": env.get("base_url"),
+                "default_headers": env.get("custom_headers") or {},
+            }
+
+    if not model_config:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Correction model '{request.correction_model_id}' not found",
+        )
+
+    # Decrypt API key if encrypted
+    from shared.utils.crypto import decrypt_api_key
+
+    model_config["api_key"] = decrypt_api_key(model_config["api_key"])
+
+    try:
+        # Call correction service
+        result = await correction_service.evaluate_response(
+            original_question=request.original_question,
+            original_answer=request.original_answer,
+            model_config=model_config,
+        )
+
+        return {
+            "message_id": request.message_id,
+            "scores": result["scores"],
+            "corrections": result["corrections"],
+            "summary": result["summary"],
+            "improved_answer": result["improved_answer"],
+            "is_correct": result["is_correct"],
+        }
+
+    except Exception as e:
+        logger.error(f"Correction evaluation failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Correction evaluation failed: {str(e)}",
+        )

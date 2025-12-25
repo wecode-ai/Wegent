@@ -11,6 +11,7 @@ import ChatInput from './ChatInput';
 import SendButton from './SendButton';
 import DeepThinkingToggle from './DeepThinkingToggle';
 import ClarificationToggle from './ClarificationToggle';
+import CorrectionModeToggle from './CorrectionModeToggle';
 import ModelSelector, {
   Model,
   DEFAULT_MODEL_NAME,
@@ -125,6 +126,18 @@ export default function ChatArea({
 
   // Clarification toggle state (session-level, not persisted)
   const [enableClarification, setEnableClarification] = useState(false);
+
+  // Correction mode state (persisted in localStorage)
+  const [enableCorrectionMode, setEnableCorrectionMode] = useState(false);
+  const [correctionModelId, setCorrectionModelId] = useState<string | null>(null);
+  const [correctionModelName, setCorrectionModelName] = useState<string | null>(null);
+
+  // Handle correction mode toggle
+  const handleCorrectionModeToggle = useCallback((enabled: boolean, modelId?: string, modelName?: string) => {
+    setEnableCorrectionMode(enabled);
+    setCorrectionModelId(modelId || null);
+    setCorrectionModelName(modelName || null);
+  }, []);
 
   // Welcome config state for dynamic placeholder
   const [welcomeConfig, setWelcomeConfig] = useState<WelcomeConfigResponse | null>(null);
@@ -1404,6 +1417,8 @@ export default function ChatArea({
               onShareButtonRender={onShareButtonRender}
               onSendMessage={handleSendMessageFromChild}
               isGroupChat={selectedTaskDetail?.is_group_chat || false}
+              enableCorrectionMode={enableCorrectionMode}
+              correctionModelId={correctionModelId}
             />
           </div>
         </div>
@@ -1528,6 +1543,15 @@ export default function ChatArea({
                           enabled={enableClarification}
                           onToggle={setEnableClarification}
                           disabled={isLoading || isStreaming}
+                        />
+                      )}
+                      {/* Correction Mode Toggle Button - only show for chat shell */}
+                      {isChatShell(selectedTeam) && (
+                        <CorrectionModeToggle
+                          enabled={enableCorrectionMode}
+                          onToggle={handleCorrectionModeToggle}
+                          disabled={isLoading || isStreaming}
+                          correctionModelName={correctionModelName}
                         />
                       )}
                       {selectedTeam && (
@@ -1766,6 +1790,15 @@ export default function ChatArea({
                         enabled={enableClarification}
                         onToggle={setEnableClarification}
                         disabled={isLoading || isStreaming}
+                      />
+                    )}
+                    {/* Correction Mode Toggle Button - only show for chat shell */}
+                    {isChatShell(selectedTeam) && (
+                      <CorrectionModeToggle
+                        enabled={enableCorrectionMode}
+                        onToggle={handleCorrectionModeToggle}
+                        disabled={isLoading || isStreaming}
+                        correctionModelName={correctionModelName}
                       />
                     )}
                     {selectedTeam && (
