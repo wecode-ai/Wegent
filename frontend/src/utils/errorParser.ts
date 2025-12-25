@@ -144,7 +144,8 @@ export function getUserFriendlyErrorMessage(
 
   switch (parsed.type) {
     case 'forbidden':
-      return t('errors.model_unsupported');
+      // Use dedicated translation key for forbidden errors, fallback to generic if not available
+      return t('errors.forbidden') || t('errors.generic_error');
     case 'llm_unsupported':
       return t('errors.llm_unsupported');
     case 'llm_error':

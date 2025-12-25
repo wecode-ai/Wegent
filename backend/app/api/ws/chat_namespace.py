@@ -1116,14 +1116,23 @@ class ChatNamespace(socketio.AsyncNamespace):
         Args:
             db: Database session
             subtask: The subtask to reset
+
+        Raises:
+            Exception: If database commit fails
         """
         subtask.status = SubtaskStatus.PENDING
         subtask.progress = 0
         subtask.error_message = ""
         subtask.result = None
         subtask.updated_at = datetime.now()
-        db.commit()
-        db.refresh(subtask)
+
+        try:
+            db.commit()
+            db.refresh(subtask)
+        except Exception as e:
+            logger.error(f"[WS] chat:retry failed to reset subtask: {e}", exc_info=True)
+            db.rollback()
+            raise  # Re-raise to prevent downstream processing
 
         logger.info(
             f"[WS] chat:retry reset subtask to PENDING: id={subtask.id}, message_id={subtask.message_id}"
@@ -1196,6 +1205,13 @@ class ChatNamespace(socketio.AsyncNamespace):
         if not user_id:
             logger.error("[WS] chat:retry error: Not authenticated")
             return {"error": "Not authenticated"}
+
+        # Check permission: verify user has access to the task
+        if not await can_access_task(user_id, payload.task_id):
+            logger.error(
+                f"[WS] chat:retry error: Access denied for user={user_id} task={payload.task_id}"
+            )
+            return {"error": "Access denied"}
 
         db = SessionLocal()
         try:
@@ -1314,10 +1330,12 @@ class ChatNamespace(socketio.AsyncNamespace):
         except ValueError as e:
             # Validation errors, data parsing errors
             logger.error(f"[WS] chat:retry validation error: {e}", exc_info=True)
+            db.rollback()
             return {"error": f"Invalid data: {str(e)}"}
         except PermissionError as e:
             # Permission/access errors
             logger.error(f"[WS] chat:retry permission error: {e}", exc_info=True)
+            db.rollback()
             return {"error": f"Access denied: {str(e)}"}
         except Exception as e:
             # Catch SQLAlchemy errors and other unexpected exceptions

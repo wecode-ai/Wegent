@@ -295,19 +295,21 @@ export function useUnifiedMessages({
       return a.timestamp - b.timestamp;
     });
 
-    // Log messages with their messageId and status for debugging
-    console.log('[useUnifiedMessages] Message sorting:', {
-      taskId,
-      totalMessages: sortedMessages.length,
-      messages: sortedMessages.map(msg => ({
-        type: msg.type,
-        status: msg.status,
-        messageId: msg.messageId,
-        subtaskId: msg.subtaskId,
-        hasError: !!msg.error,
-        contentPreview: msg.content?.substring(0, 30),
-      })),
-    });
+    // Log messages with their messageId and status for debugging (development only)
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[useUnifiedMessages] Message sorting:', {
+        taskId,
+        totalMessages: sortedMessages.length,
+        messages: sortedMessages.map(msg => ({
+          type: msg.type,
+          status: msg.status,
+          messageId: msg.messageId,
+          subtaskId: msg.subtaskId,
+          hasError: !!msg.error,
+          contentPreview: msg.content?.substring(0, 30),
+        })),
+      });
+    }
 
     return {
       messages: sortedMessages,

@@ -680,8 +680,8 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           status: 'error' as const,
           subtaskStatus: 'FAILED', // Update subtaskStatus for ThinkingComponent
           error: error,
-          // Set messageId from backend for proper sorting
-          messageId: message_id,
+          // Set messageId from backend for proper sorting, preserve existing if undefined
+          messageId: message_id ?? existingMessage.messageId,
         };
 
         console.log('[ChatStreamContext][chat:error] Updating AI message:', {

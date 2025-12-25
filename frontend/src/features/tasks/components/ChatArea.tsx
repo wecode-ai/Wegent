@@ -43,7 +43,7 @@ import { taskApis } from '@/apis/tasks';
 import { useAttachment } from '@/hooks/useAttachment';
 import { GroupChatSyncManager } from './group-chat';
 import type { SubtaskWithSender } from '@/apis/group-chat';
-import useTraceAction from '@/hooks/useTraceAction';
+import { useTraceAction } from '@/hooks/useTraceAction';
 
 const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18;
 
@@ -117,6 +117,9 @@ export default function ChatArea({
 
   // Store last failed message for retry
   const lastFailedMessageRef = useRef<string | null>(null);
+
+  // Store handleSendMessage reference to avoid circular dependency in handleSendError
+  const handleSendMessageRef = useRef<((message?: string) => Promise<void>) | null>(null);
 
   // Local pending state for immediate UI feedback (before context state is updated)
   const [localPendingMessage, setLocalPendingMessage] = useState<string | null>(null);
@@ -979,14 +982,13 @@ export default function ChatArea({
         action: parsedError.retryable
           ? createRetryButton(() => {
               // Retry by calling handleSendMessage with the last failed message
-              if (lastFailedMessageRef.current) {
-                handleSendMessage(lastFailedMessageRef.current);
+              if (lastFailedMessageRef.current && handleSendMessageRef.current) {
+                handleSendMessageRef.current(lastFailedMessageRef.current);
               }
             })
           : undefined,
       });
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [resetStreamingState, toast, t, createRetryButton]
   );
 
@@ -1176,6 +1178,11 @@ export default function ChatArea({
       createRetryButton,
     ]
   );
+
+  // Update ref when handleSendMessage changes
+  useEffect(() => {
+    handleSendMessageRef.current = handleSendMessage;
+  }, [handleSendMessage]);
 
   /**
    * Handle retry for failed messages
