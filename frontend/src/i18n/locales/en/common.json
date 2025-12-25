@@ -1289,5 +1289,16 @@
       "button": "Delete Group",
       "confirmMessage": "Are you sure you want to delete this group chat? This action cannot be undone."
     }
+  },
+  "grey": {
+    "joinButton": "Join Beta",
+    "leaveButton": "Leave Beta",
+    "joinConfirmTitle": "Join Beta",
+    "joinConfirmMessage": "Are you sure you want to join the beta program? You will experience the latest features.",
+    "leaveConfirmTitle": "Leave Beta",
+    "leaveConfirmMessage": "Are you sure you want to leave the beta program? You will return to the stable version.",
+    "joinSuccess": "Joined beta program",
+    "leaveSuccess": "Left beta program",
+    "error": "Operation failed, please try again later"
   }
 }

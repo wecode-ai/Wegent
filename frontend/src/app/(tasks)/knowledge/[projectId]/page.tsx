@@ -7,6 +7,7 @@
 import { useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import TopNavigation from '@/features/layout/TopNavigation';
+import GreyTestButton from '@/features/layout/components/GreyTestButton';
 import UserMenu from '@/features/layout/UserMenu';
 import '@/app/tasks/tasks.css';
 import '@/features/common/scrollbar.css';
@@ -52,6 +53,7 @@ export default function WikiDetailPage() {
       <div className="flex smart-h-screen bg-base text-text-primary box-border">
         <div className="flex-1 flex flex-col min-w-0">
           <TopNavigation activePage="wiki" variant="standalone">
+            <GreyTestButton />
             <GithubStarButton />
             <UserMenu />
           </TopNavigation>

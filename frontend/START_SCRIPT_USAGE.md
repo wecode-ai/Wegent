@@ -119,6 +119,7 @@ RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000 # WebSocket connection URL
 ```
 
 The script sets these environment variables at runtime, which means:
+
 - No need to modify `.env.local` manually
 - Configuration can be changed without rebuilding the app
 - Uses Next.js proxy mode for API requests
