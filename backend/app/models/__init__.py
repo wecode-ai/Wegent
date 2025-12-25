@@ -15,6 +15,8 @@ from app.models.skill_binary import SkillBinary
 from app.models.subtask import Subtask
 from app.models.system_config import SystemConfig
 from app.models.task_member import TaskMember
+from app.models.tool import Tool
+from app.models.tool_secret import ToolSecret
 
 # Do NOT import Base here to avoid conflicts with app.db.base.Base
 # All models should import Base directly from app.db.base
@@ -32,4 +34,6 @@ __all__ = [
     "APIKey",
     "TaskMember",
     "KnowledgeDocument",
+    "Tool",
+    "ToolSecret",
 ]

@@ -93,13 +93,22 @@ class Status(BaseModel):
     # conditions: Optional[List[Dict[str, Any]]] = None
 
 
+# Ghost Tool reference
+class GhostToolRef(BaseModel):
+    """Reference to a Tool in Ghost"""
+
+    toolRef: str  # Tool name reference
+    status: str = "pending_config"  # available | pending_config | disabled
+
+
 # Ghost CRD schemas
 class GhostSpec(BaseModel):
     """Ghost specification"""
 
     systemPrompt: str
-    mcpServers: Optional[Dict[str, Any]] = None
+    mcpServers: Optional[Dict[str, Any]] = None  # Deprecated: use tools instead
     skills: Optional[List[str]] = None  # Skill names list
+    tools: Optional[List[GhostToolRef]] = None  # Tool references (new)
 
 
 class GhostStatus(Status):
