@@ -443,7 +443,7 @@ export default function ChatInput({
               <div
                 className="absolute pointer-events-none text-text-muted text-base leading-[26px]"
                 style={{
-                  top: '0.5rem',
+                  top: '0.25rem',
                   left: badge ? `${badgeWidth}px` : '0',
                 }}
               >
@@ -480,7 +480,7 @@ export default function ChatInput({
                 {badge && (
                   <span
                     ref={badgeRef}
-                    className="absolute left-0 top-1 pointer-events-auto z-10"
+                    className="absolute left-0 top-0.5 pointer-events-auto z-10"
                     style={{ userSelect: 'none' }}
                   >
                     {badge}
@@ -498,7 +498,7 @@ export default function ChatInput({
                   onCompositionEnd={handleCompositionEnd}
                   onFocus={handleFocus}
                   data-testid="message-input"
-                  className={`w-full py-2 bg-transparent text-text-primary text-base leading-[26px] focus:outline-none ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  className={`w-full pt-1 pb-2 bg-transparent text-text-primary text-base leading-[26px] focus:outline-none ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                   style={{
                     minHeight,
                     whiteSpace: 'pre-wrap',
