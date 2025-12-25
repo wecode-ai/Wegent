@@ -66,6 +66,53 @@ cd frontend && npm run test:e2e    # E2E tests (Playwright)
 - ⚠️ NO frontend mocking of backend APIs - send real HTTP requests
 - If a test fails, FIX the issue - never skip to make CI pass
 
+### Testing Requirements for PRs
+
+**⚠️ ALL PRs adding new functionality MUST include tests:**
+
+**Backend testing requirements:**
+- Test new API endpoints (happy path + error cases)
+- Test service layer business logic
+- Test database operations with fixtures
+- Test multi-item processing (e.g., multiple attachments, batch operations)
+- Mock external API calls (LLM APIs, external services)
+
+**Frontend testing requirements:**
+- Test new custom hooks with React Testing Library
+- Test new components (render, interaction, state changes)
+- Test error states and loading states
+- Test file upload workflows (single and multiple files)
+- Test WebSocket/real-time features
+
+**Example test structure:**
+```python
+# backend/tests/services/chat/test_ai_trigger.py
+async def test_process_multiple_attachments():
+    """Test processing multiple text and image attachments together"""
+    # Arrange: Create attachments
+    # Act: Call _process_attachments()
+    # Assert: Check combined message format
+
+async def test_process_attachments_handles_failures():
+    """Test partial attachment processing failures"""
+    # Assert: Verify error handling and user feedback
+```
+
+```typescript
+// frontend/src/hooks/__tests__/useMultiAttachment.test.ts
+test('handles multiple file uploads in parallel', async () => {
+  // Test concurrent upload tracking
+})
+
+test('tracks per-file progress correctly', async () => {
+  // Test progress state updates
+})
+
+test('handles per-file errors independently', async () => {
+  // Test error isolation
+})
+```
+
 ---
 
 ## 💻 Code Style
@@ -79,6 +126,45 @@ cd frontend && npm run test:e2e    # E2E tests (Playwright)
 - **Function length**: Max 50 lines per function (preferred)
 - **Avoid duplication**: Extract common logic into shared utilities
 
+**⚠️ Code Duplication Prevention:**
+- If the same function exists in multiple services (e.g., `chat/` and `chat_v2/`), extract it to a shared module
+- Example: Extract `_process_attachments()` to `app/services/attachment/multi_processor.py`
+- Before copying code, check if a utility function exists or should be created
+- Use imports instead of copy-paste
+
+**Error Handling Best Practices:**
+- Don't silently skip errors - log AND notify users when operations fail
+- For partial failures (e.g., processing multiple items), track which items failed
+- Return structured error information to the frontend for user feedback
+- Example:
+  ```python
+  # ❌ Bad: Silent failure
+  except Exception as e:
+      logger.error(f"Failed: {e}")
+      continue  # User doesn't know what failed
+
+  # ✅ Good: Track and report failures
+  except Exception as e:
+      logger.error(f"Failed to process item {id}: {e}")
+      failed_items.append({"id": id, "error": str(e)})
+
+  return {"success": processed_items, "failed": failed_items}
+  ```
+
+**Type Safety:**
+- Use proper type annotations (avoid `Any` when possible)
+- Return type annotations must match actual return values
+- Example:
+  ```python
+  # ❌ Bad: Annotation doesn't match return
+  def process_data() -> str:
+      return {"data": "value"}  # Actually returns dict
+
+  # ✅ Good: Accurate annotation
+  def process_data() -> Union[str, dict[str, Any]]:
+      return {"data": "value"}
+  ```
+
 ### Python (Backend, Executor, Shared)
 
 **Standards:** PEP 8, Black formatter (line length: 88), isort, type hints required
@@ -90,6 +176,51 @@ black . && isort .
 **Guidelines:**
 - Descriptive names, docstrings for public functions/classes
 - Extract magic numbers to constants
+
+**Docstring Requirements:**
+- All public functions/classes MUST have docstrings
+- Target docstring coverage: 80%+ (minimum 50%)
+- Include:
+  - Brief description of purpose
+  - Args: Parameter descriptions with types
+  - Returns: Return value description with type
+  - Raises: Exceptions that may be raised
+  - Example usage (for complex functions)
+
+```python
+# ✅ Good: Complete docstring
+async def process_multiple_attachments(
+    db: Session,
+    attachment_ids: list[int],
+    user_id: int,
+    message: str,
+) -> Union[str, dict[str, Any]]:
+    """
+    Process multiple attachments and build message with all attachment contents.
+
+    Separates image attachments from text documents and formats them appropriately
+    for vision model input or text concatenation.
+
+    Args:
+        db: Database session (SQLAlchemy Session)
+        attachment_ids: List of attachment IDs to process
+        user_id: User ID for authorization
+        message: Original message text from user
+
+    Returns:
+        - str: Message with text attachments prepended (if only text)
+        - dict: Multi-vision structure with images (if any images present)
+          Format: {"type": "multi_vision", "text": str, "images": list}
+
+    Raises:
+        AttachmentNotFoundError: If attachment doesn't exist
+        AuthorizationError: If user doesn't own attachment
+
+    Example:
+        >>> result = await process_multiple_attachments(db, [1, 2], 123, "Analyze these")
+        >>> # Returns: {"type": "multi_vision", "text": "...", "images": [...]}
+    """
+```
 
 ### TypeScript/React (Frontend)
 
@@ -124,6 +255,15 @@ frontend/src/features/
 ├── settings/        # Settings page components
 └── [other]/         # Feature-specific components
 ```
+
+**Component Separation Principles:**
+- Separate button/input components from preview/display components
+- Use single responsibility principle - one component, one job
+- Avoid `showXOnly` props - create separate components instead
+- Example (File upload):
+  - `AttachmentButton` - only handles file selection
+  - `AttachmentUploadPreview` - only displays upload progress and previews
+  - Better than `MultiFileUpload` with `showButtonOnly`/`showPreviewOnly` props
 
 ---
 
@@ -196,6 +336,35 @@ const isDesktop = useIsDesktop(); // min-width: 1024px
 
 **⚠️ AI Agents MUST comply with Git hook output - FIX issues, DO NOT use `--no-verify`**
 
+### PR Documentation Requirements
+
+**⚠️ PRs with new/changed functionality MUST update documentation:**
+
+**API Changes:**
+- Update OpenAPI/Swagger docs if adding/modifying endpoints
+- Document new request/response schemas
+- Update API version if breaking changes
+
+**User-Facing Changes:**
+- Update user guide in `docs/zh/` (Chinese) and `docs/en/` (English)
+- Add screenshots for UI changes
+- Document new features with examples
+
+**Configuration Changes:**
+- Update `.env.example` with new environment variables
+- Document default values and valid options
+- Add comments explaining purpose
+
+**Architecture Changes:**
+- Update `AGENTS.md` or `docs/architecture.md`
+- Document new CRD types or spec changes
+- Update system diagrams if relationships change
+
+**Deprecations:**
+- Mark deprecated fields/endpoints in code and docs
+- Add migration guide for breaking changes
+- Document timeline for removal
+
 ---
 
 ## 🏗️ Project Structure
@@ -252,6 +421,37 @@ Task (Team + Workspace) → Subtasks
 | **Team** | User-facing agent | `members[]`, `collaborationModel` |
 | **Task** | Execution unit | `teamRef`, `workspaceRef` |
 | **Workspace** | Git repository | `repository{}` |
+
+### Backward Compatibility Guidelines
+
+**⚠️ When adding new fields or parameters:**
+
+**Maintain old fields during transition:**
+```python
+# ✅ Good: Support both old and new fields
+class ChatPayload(BaseModel):
+    attachment_id: Optional[int] = None  # Deprecated but supported
+    attachment_ids: Optional[list[int]] = None  # New field
+
+# Handle both in code
+attachment_ids_to_process = []
+if payload.attachment_ids:
+    attachment_ids_to_process = payload.attachment_ids
+elif payload.attachment_id:
+    attachment_ids_to_process = [payload.attachment_id]  # Convert old format
+```
+
+**Deprecation process:**
+1. Add new field/parameter
+2. Keep old field with deprecation marker in code comments
+3. Support both for at least 2 major versions
+4. Log warnings when old field is used
+5. Remove old field in documented breaking release
+
+**API versioning:**
+- Mark deprecated fields in API docs
+- Include migration examples
+- Consider API version routes for major breaking changes
 
 ### Shell Types
 
@@ -327,6 +527,44 @@ alembic downgrade -1                               # Rollback
 - Backend encrypts Git tokens and API keys (AES-256-CBC)
 - OIDC support for enterprise SSO
 - Role-based access control for admin operations
+
+---
+
+## ⚡ Performance Considerations
+
+### Database Operations
+
+**Batch operations when possible:**
+```python
+# ❌ Bad: N individual queries
+for attachment_id in attachment_ids:
+    link_attachment_to_subtask(db, attachment_id, subtask_id)
+
+# ✅ Good: Single batch operation
+link_multiple_attachments_to_subtask(db, attachment_ids, subtask_id)
+```
+
+**Use database indexes:**
+- Index foreign keys and frequently queried columns
+- Add indexes in migration files
+- Monitor query performance with `EXPLAIN`
+
+### Frontend Performance
+
+**Image optimization:**
+- Use authenticated blob URLs for image previews
+- Clean up blob URLs with `URL.revokeObjectURL()` in cleanup functions
+- Lazy load images for large lists
+
+**WebSocket/Real-time:**
+- Debounce frequent socket events
+- Use pagination for large message histories
+- Clean up socket listeners in component unmount
+
+**State management:**
+- Avoid unnecessary re-renders with `useCallback`, `useMemo`
+- Use context sparingly for deeply nested prop drilling only
+- Consider component splitting for large forms
 
 ---
 
