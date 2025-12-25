@@ -23,7 +23,7 @@ interface EditGroupDialogProps {
 }
 
 export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroupDialogProps) {
-  const { t } = useTranslation()
+  const { t } = useTranslation(['common', 'groups'])
   const [formData, setFormData] = useState<GroupUpdate>({
     display_name: '',
     visibility: 'private',

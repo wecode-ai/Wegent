@@ -19,7 +19,7 @@ import { GroupMembersDialog } from './GroupMembersDialog'
 import { useUser } from '@/features/common/UserContext'
 
 export function GroupManager() {
-  const { t } = useTranslation()
+  const { t } = useTranslation(['common', 'groups'])
   const { user } = useUser()
   const [groups, setGroups] = useState<Group[]>([])
   const [loading, setLoading] = useState(true)

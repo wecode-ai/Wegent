@@ -33,7 +33,7 @@ export function DeleteGroupConfirmDialog({
   onSuccess,
   group,
 }: DeleteGroupConfirmDialogProps) {
-  const { t } = useTranslation()
+  const { t } = useTranslation(['common', 'groups'])
   const [isDeleting, setIsDeleting] = useState(false)
 
   const handleConfirm = async () => {
