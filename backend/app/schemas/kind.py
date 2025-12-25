@@ -93,11 +93,11 @@ class Status(BaseModel):
     # conditions: Optional[List[Dict[str, Any]]] = None
 
 
-# Ghost Tool reference
-class GhostToolRef(BaseModel):
-    """Reference to a Tool in Ghost"""
+# Ghost Skill reference
+class GhostSkillRef(BaseModel):
+    """Reference to a Skill in Ghost"""
 
-    toolRef: str  # Tool name reference
+    skillRef: str  # Skill name reference
     status: str = "pending_config"  # available | pending_config | disabled
 
 
@@ -106,9 +106,9 @@ class GhostSpec(BaseModel):
     """Ghost specification"""
 
     systemPrompt: str
-    mcpServers: Optional[Dict[str, Any]] = None  # Deprecated: use tools instead
-    skills: Optional[List[str]] = None  # Skill names list
-    tools: Optional[List[GhostToolRef]] = None  # Tool references (new)
+    mcpServers: Optional[Dict[str, Any]] = None  # Deprecated: use skillRefs instead
+    skills: Optional[List[str]] = None  # Legacy: Skill names list (for backward compatibility)
+    skillRefs: Optional[List[GhostSkillRef]] = None  # Skill references with status (new)
 
 
 class GhostStatus(Status):
@@ -440,13 +440,55 @@ class BatchResponse(BaseModel):
 
 
 # Skill CRD schemas
-class SkillSpec(BaseModel):
-    """Skill specification"""
+class EnvSchemaItem(BaseModel):
+    """Environment variable schema definition for MCP skills"""
 
-    description: str  # Extracted from SKILL.md YAML frontmatter
+    name: str
+    displayName: Optional[str] = None
+    description: Optional[str] = None
+    required: bool = False
+    secret: bool = False  # Whether the value is sensitive and should be encrypted
+    default: Optional[str] = None
+
+
+class MCPConfig(BaseModel):
+    """MCP server configuration for mcp type skills"""
+
+    serverType: str  # stdio | sse | streamable-http
+    args: Optional[List[str]] = None  # Command arguments for stdio type
+    url: Optional[str] = None  # Server URL for sse/streamable-http types
+    envSchema: Optional[List[EnvSchemaItem]] = None  # Environment variable schema
+
+
+class BuiltinConfig(BaseModel):
+    """Builtin tool configuration for builtin type skills"""
+
+    toolId: str  # System builtin tool identifier
+
+
+class SkillSpec(BaseModel):
+    """Skill specification - supports multiple skill types"""
+
+    # Common fields
+    description: str  # Skill description
     version: Optional[str] = None  # Skill version
     author: Optional[str] = None  # Author
     tags: Optional[List[str]] = None  # Tags
+
+    # Skill type: skill (Claude Code ZIP), mcp (MCP Server), builtin (builtin tool)
+    skillType: str = "skill"  # skill | mcp | builtin
+
+    # Visibility: personal | team | public
+    visibility: str = "personal"
+
+    # Category for filtering
+    category: Optional[str] = None
+
+    # MCP configuration (required for skillType=mcp)
+    mcpConfig: Optional[MCPConfig] = None
+
+    # Builtin configuration (required for skillType=builtin)
+    builtinConfig: Optional[BuiltinConfig] = None
 
 
 class SkillStatus(Status):

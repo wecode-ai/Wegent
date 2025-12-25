@@ -3,14 +3,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Tool Secret model for storing sensitive tool configurations per Ghost
+Skill Secret model for storing sensitive skill configurations per Ghost
 """
 from datetime import datetime
 
 from sqlalchemy import (
     Column,
     DateTime,
-    ForeignKey,
     Index,
     Integer,
     String,
@@ -21,18 +20,22 @@ from sqlalchemy import (
 from app.db.base import Base
 
 
-class ToolSecret(Base):
-    """Store user-configured sensitive information for Tools (like API keys)"""
+class SkillSecret(Base):
+    """Store user-configured sensitive information for Skills (like API keys)
 
-    __tablename__ = "tool_secrets"
+    This is used for MCP type skills that require environment variables
+    containing sensitive data (API keys, tokens, etc.)
+    """
+
+    __tablename__ = "skill_secrets"
 
     id = Column(Integer, primary_key=True, index=True)
 
     # Associated Ghost (Kind table id for Ghost resources)
     ghost_id = Column(Integer, nullable=False, index=True)
 
-    # Associated Tool
-    tool_id = Column(Integer, ForeignKey("tools.id", ondelete="CASCADE"), nullable=False, index=True)
+    # Associated Skill (Kind table id for Skill resources)
+    skill_id = Column(Integer, nullable=False, index=True)
 
     # Encrypted environment variable values (AES-256-CBC encrypted JSON)
     # {"GITHUB_PERSONAL_ACCESS_TOKEN": "encrypted_value", ...}
@@ -43,14 +46,14 @@ class ToolSecret(Base):
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
     __table_args__ = (
-        UniqueConstraint("ghost_id", "tool_id", name="uq_ghost_tool_secret"),
-        Index("idx_tool_secret_ghost", "ghost_id"),
-        Index("idx_tool_secret_tool", "tool_id"),
+        UniqueConstraint("ghost_id", "skill_id", name="uq_ghost_skill_secret"),
+        Index("idx_skill_secret_ghost", "ghost_id"),
+        Index("idx_skill_secret_skill", "skill_id"),
         {
             "sqlite_autoincrement": True,
             "mysql_engine": "InnoDB",
             "mysql_charset": "utf8mb4",
             "mysql_collate": "utf8mb4_unicode_ci",
-            "comment": "Sensitive tool configurations per Ghost",
+            "comment": "Sensitive skill configurations per Ghost",
         },
     )
