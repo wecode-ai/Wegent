@@ -46,6 +46,30 @@ The possibilities are endless - build agents for:
 
 ---
 
+## 🚀 Quick Start
+
+### Prerequisites
+
+- Docker and Docker Compose
+- Git
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/wecode-ai/wegent.git
+   cd wegent
+   ```
+
+2. **Start the platform**
+   ```bash
+   docker-compose up -d
+   
+   # Optional: Enable RAG features with Elasticsearch
+   # docker compose --profile rag up -d
+   ```
+
+3. **Access the web interface**
+   - Open http://localhost:3000 in your browser
+
 ## 📖 What is Wegent?
 
 Wegent is an open-source AI native operating system that enables you to define, organize, and run intelligent agents at scale. Built on Kubernetes-style declarative API and CRD (Custom Resource Definition) design patterns, Wegent provides a standardized framework for creating and managing AI agent ecosystems.
@@ -122,62 +146,6 @@ graph LR
 
 > 💡 **Detailed YAML Configuration Documentation**:
 - [Complete YAML configuration examples and field descriptions](docs/en/reference/yaml-specification.md)
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-- Docker and Docker Compose
-- Git
-
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/wecode-ai/wegent.git
-   cd wegent
-   ```
-
-2. **Start the platform**
-   ```bash
-   docker-compose up -d
-   
-   # Optional: Enable RAG features with Elasticsearch
-   # docker compose --profile rag up -d
-   ```
-
-3. **Access the web interface**
-   - Open http://localhost:3000 in your browser
-
-4. **Configure GitHub Access Tokens**
-   - Follow the page instructions to configure your GitHub access token
-5. **Configure Bot**
-
-   Wegent ships with a built-in development bot. For the Claude Code runtime, set the following environment variables:
-
-   ```json
-   {
-     "env": {
-       "ANTHROPIC_MODEL": "openrouter,anthropic/claude-sonnet-4",
-       "ANTHROPIC_AUTH_TOKEN": "sk-xxxxxx",
-       "ANTHROPIC_BASE_URL": "http://xxxxx",
-       "ANTHROPIC_DEFAULT_HAIKU_MODEL": "openrouter,anthropic/claude-haiku-4.5"
-     }
-   }
-   ```
-
-   **Important - Environment Variable Names:**
-
-   Different Shell runtimes use different environment variable names for API authentication:
-
-   - **Claude Code Shell**: Uses `ANTHROPIC_AUTH_TOKEN`
-   - **Agno Shell**: Uses `ANTHROPIC_API_KEY`
-   - **Dify Shell**: Uses `DIFY_API_KEY` and `DIFY_BASE_URL`
-   - **Chat Shell**: Uses `OPENAI_API_KEY` (OpenAI), `ANTHROPIC_API_KEY` (Claude), or `GOOGLE_API_KEY` (Gemini)
-
-   Please set the correct variable based on your Shell configuration. Check the Shell's documentation or the `executor/agents/` code for specific requirements.
-
-6. **Run task**
-
-   On the task page, select your project and branch, describe your development requirements, such as implementing a bubble sort algorithm using Python
 
 ## 🏗️ Architecture
 
