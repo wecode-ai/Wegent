@@ -287,6 +287,9 @@ async def _create_streaming_response(
     This function creates task and subtask records similar to chat_namespace.py,
     then streams the LLM response while updating subtask status.
 
+    Uses chat_v2 services (ChatConfigBuilder, session_manager, db_handler) instead
+    of deprecated chat services.
+
     Args:
         db: Database session
         user: Current user
@@ -301,13 +304,36 @@ async def _create_streaming_response(
         StreamingResponse with SSE events
     """
     from app.models.subtask import SenderType, SubtaskStatus
-    from app.services.chat.model_resolver import (
-        get_bot_system_prompt,
-        get_model_config_for_bot,
-    )
+    from app.services.chat_v2.config import ChatConfigBuilder
     from app.services.openapi.streaming import streaming_service
 
-    # Get first bot for model config and system prompt
+    # Use ChatConfigBuilder to prepare configuration (chat_v2)
+    config_builder = ChatConfigBuilder(
+        db=db,
+        team=team,
+        user_id=user.id,
+        user_name=user.user_name,
+    )
+
+    # Build chat configuration with tool settings
+    # enable_deep_thinking is extracted from tools parameter
+    enable_deep_thinking = tool_settings.get("enable_deep_thinking", False)
+    try:
+        chat_config = config_builder.build(
+            override_model_name=model_info.get("model_id"),
+            force_override=model_info.get("model_id") is not None,
+            enable_clarification=False,  # Not supported in OpenAPI yet
+            enable_deep_thinking=enable_deep_thinking,
+            task_id=task_id or 0,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    # Extract configuration from ChatConfig
+    model_config = chat_config.model_config
+    system_prompt = chat_config.system_prompt
+
+    # Get bot IDs from team members
     team_crd = Team.model_validate(team.json)
     if not team_crd.spec.members:
         raise HTTPException(
@@ -315,26 +341,6 @@ async def _create_streaming_response(
             detail="Team has no members configured",
         )
 
-    first_member = team_crd.spec.members[0]
-    bot = (
-        db.query(Kind)
-        .filter(
-            Kind.user_id == team.user_id,
-            Kind.kind == "Bot",
-            Kind.name == first_member.botRef.name,
-            Kind.namespace == first_member.botRef.namespace,
-            Kind.is_active == True,
-        )
-        .first()
-    )
-
-    if not bot:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Bot not found for team",
-        )
-
-    # Get bot IDs from team members
     bot_ids = []
     for member in team_crd.spec.members:
         member_bot = (
@@ -356,27 +362,6 @@ async def _create_streaming_response(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No valid bots found in team",
         )
-
-    # Get model config
-    try:
-        model_config = get_model_config_for_bot(
-            db,
-            bot,
-            team.user_id,
-            override_model_name=model_info.get("model_id"),
-            force_override=model_info.get("model_id") is not None,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-
-    # Get system prompt
-    system_prompt = get_bot_system_prompt(db, bot, team.user_id, first_member.prompt)
-
-    # Apply deep thinking settings to system prompt if enabled
-    if tool_settings.get("enable_deep_thinking"):
-        from app.services.chat_v2.utils.prompts import append_deep_thinking_prompt
-
-        system_prompt = append_deep_thinking_prompt(system_prompt, True)
 
     # Create or get task
     task = None
@@ -562,14 +547,13 @@ async def _create_streaming_response(
         """Generate raw text chunks from the LLM and update subtask."""
         import asyncio
 
+        from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+
         from app.api.dependencies import get_db as get_db_session
         from app.core.config import settings
-        from app.services.chat.base import get_http_client
-        from app.services.chat.db_handler import db_handler
-        from app.services.chat.message_builder import message_builder
-        from app.services.chat.providers import get_provider
-        from app.services.chat.providers.base import ChunkType
-        from app.services.chat.session_manager import session_manager
+        from app.services.chat_v2.messages import MessageConverter
+        from app.services.chat_v2.models import LangChainModelFactory
+        from app.services.chat_v2.storage import db_handler, session_manager
 
         accumulated_content = ""
 
@@ -600,23 +584,25 @@ async def _create_streaming_response(
                                         {"role": "assistant", "content": content}
                                     )
 
-            messages = message_builder.build_messages(
+            messages = MessageConverter.build_messages(
                 history=history,
                 current_message=input_text,
                 system_prompt=system_prompt,
             )
 
-            # Get provider
-            client = await get_http_client()
-            provider = get_provider(model_config, client)
-            if not provider:
-                logger.error("Failed to create provider from model config")
+            # Create LangChain model from config
+            try:
+                llm = LangChainModelFactory.create_from_config(
+                    model_config, streaming=True
+                )
+            except Exception as e:
+                logger.error(f"Failed to create LLM from model config: {e}")
                 await db_handler.update_subtask_status(
-                    assistant_subtask_id, "FAILED", error="Failed to create provider"
+                    assistant_subtask_id, "FAILED", error=f"Failed to create LLM: {e}"
                 )
                 return
 
-            # Stream response with periodic saves
+            # Stream response with periodic saves using LangChain
             last_redis_save = asyncio.get_event_loop().time()
             last_db_save = asyncio.get_event_loop().time()
             redis_save_interval = getattr(
@@ -624,7 +610,20 @@ async def _create_streaming_response(
             )
             db_save_interval = getattr(settings, "STREAMING_DB_SAVE_INTERVAL", 3.0)
 
-            async for chunk in provider.stream_chat(messages, cancel_event):
+            # Convert messages to LangChain format
+            langchain_messages = []
+            for msg in messages:
+                role = msg.get("role", "")
+                content = msg.get("content", "")
+                if role == "system":
+                    langchain_messages.append(SystemMessage(content=content))
+                elif role == "user":
+                    langchain_messages.append(HumanMessage(content=content))
+                elif role == "assistant":
+                    langchain_messages.append(AIMessage(content=content))
+
+            # Use LangChain streaming
+            async for chunk in llm.astream(langchain_messages):
                 # Check for cancellation
                 if cancel_event.is_set() or await session_manager.is_cancelled(
                     assistant_subtask_id
@@ -640,7 +639,8 @@ async def _create_streaming_response(
                         )
                     break
 
-                if chunk.type == ChunkType.CONTENT and chunk.content:
+                # Extract content from LangChain chunk
+                if hasattr(chunk, "content") and chunk.content:
                     accumulated_content += chunk.content
                     yield chunk.content
 
@@ -658,15 +658,6 @@ async def _create_streaming_response(
                             assistant_subtask_id, accumulated_content
                         )
                         last_db_save = current_time
-
-                elif chunk.type == ChunkType.ERROR:
-                    logger.error(f"LLM error: {chunk.error}")
-                    await db_handler.update_subtask_status(
-                        assistant_subtask_id,
-                        "FAILED",
-                        error=chunk.error or "Unknown LLM error",
-                    )
-                    return
 
             # Stream completed (not cancelled)
             if not cancel_event.is_set() and not await session_manager.is_cancelled(
@@ -1113,8 +1104,7 @@ async def cancel_response(
     """
     from sqlalchemy.orm.attributes import flag_modified
 
-    from app.services.chat.db_handler import db_handler
-    from app.services.chat.session_manager import session_manager
+    from app.services.chat_v2.storage import db_handler, session_manager
 
     # Extract task_id from response_id
     if not response_id.startswith("resp_"):
