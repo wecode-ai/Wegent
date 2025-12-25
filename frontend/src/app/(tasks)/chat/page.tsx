@@ -34,7 +34,7 @@ import { paths } from '@/config/paths';
 import { Button } from '@/components/ui/button';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut';
-import ChatArea from '@/features/tasks/components/ChatArea';
+import { ChatArea } from '@/features/tasks/components/chat';
 
 export default function ChatPage() {
   const { t } = useTranslation();

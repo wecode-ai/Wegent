@@ -34,7 +34,7 @@ import { useUser } from '@/features/common/UserContext';
 import { paths } from '@/config/paths';
 import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut';
 import { Workbench } from '@/features/tasks/components';
-import ChatArea from '@/features/tasks/components/ChatArea';
+import { ChatArea } from '@/features/tasks/components/chat';
 
 export default function CodePage() {
   // Get search params to check for taskId

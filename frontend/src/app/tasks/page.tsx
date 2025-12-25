@@ -21,7 +21,7 @@ import { UserProvider } from '@/features/common/UserContext';
 import { TaskContextProvider } from '@/features/tasks/contexts/taskContext';
 import { ChatStreamProvider } from '@/features/tasks/contexts/chatStreamContext';
 import { SocketProvider } from '@/contexts/SocketContext';
-import ChatArea from '@/features/tasks/components/ChatArea';
+import { ChatArea } from '@/features/tasks/components/chat';
 
 function TasksPageContent() {
   // Team state from service

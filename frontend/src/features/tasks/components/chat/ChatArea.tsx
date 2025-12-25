@@ -6,21 +6,21 @@
 
 import React, { useEffect, useCallback, useMemo } from 'react';
 import { ShieldX } from 'lucide-react';
-import MessagesArea from './message/MessagesArea';
-import { QuickAccessCards } from './workbench/QuickAccessCards';
-import { SloganDisplay } from './workbench/SloganDisplay';
-import { ChatInputCard } from './input/ChatInputCard';
-import { useChatAreaState } from './workbench/useChatAreaState';
-import { useChatStreamHandlers } from './workbench/useChatStreamHandlers';
-import { allBotsHavePredefinedModel } from './selector/ModelSelector';
+import MessagesArea from '../message/MessagesArea';
+import { QuickAccessCards } from './QuickAccessCards';
+import { SloganDisplay } from './SloganDisplay';
+import { ChatInputCard } from '../input/ChatInputCard';
+import { useChatAreaState } from './useChatAreaState';
+import { useChatStreamHandlers } from './useChatStreamHandlers';
+import { allBotsHavePredefinedModel } from '../selector/ModelSelector';
 import type { Team } from '@/types/api';
 import { useTranslation } from '@/hooks/useTranslation';
-import { isChatShell } from '../service/messageService';
+import { isChatShell } from '../../service/messageService';
 import { useRouter } from 'next/navigation';
-import { useTaskContext } from '../contexts/taskContext';
-import { useChatStreamContext } from '../contexts/chatStreamContext';
+import { useTaskContext } from '../../contexts/taskContext';
+import { useChatStreamContext } from '../../contexts/chatStreamContext';
 import { Button } from '@/components/ui/button';
-import { useScrollManagement, useFloatingInput, useTeamPreferences } from './hooks';
+import { useScrollManagement, useFloatingInput, useTeamPreferences } from '../hooks';
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
