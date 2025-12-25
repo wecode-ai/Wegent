@@ -46,6 +46,30 @@ Wegent 让你通过智能体编排创建强大的 AI 应用：
 
 ---
 
+## 🚀 快速开始
+
+### 前置要求
+
+- Docker 和 Docker Compose
+- Git
+
+1. **克隆仓库**
+   ```bash
+   git clone https://github.com/wecode-ai/wegent.git
+   cd wegent
+   ```
+
+2. **启动平台**
+   ```bash
+   docker-compose up -d
+   
+   # 可选：启用 RAG 功能（需要 Elasticsearch）
+   # docker compose --profile rag up -d
+   ```
+
+3. **访问 Web 界面**
+   - 在浏览器中打开 http://localhost:3000
+
 ## 📖 什么是 Wegent？
 
 Wegent 是一个开源的 AI 原生操作系统，使您能够大规模定义、组织和运行智能代理。基于 Kubernetes 风格的声明式 API 和 CRD（自定义资源定义）设计模式，Wegent 为创建和管理 AI 智能体生态系统提供了标准化框架。
@@ -123,63 +147,6 @@ graph LR
 > 💡 **详细的 YAML 配置文档**:
 - [完整的 YAML 配置示例和字段说明](docs/zh/reference/yaml-specification.md)
 
-
-## 🚀 快速开始
-
-### 前置要求
-
-- Docker 和 Docker Compose
-- Git
-
-1. **克隆仓库**
-   ```bash
-   git clone https://github.com/wecode-ai/wegent.git
-   cd wegent
-   ```
-
-2. **启动平台**
-   ```bash
-   docker-compose up -d
-   
-   # 可选：启用 RAG 功能（需要 Elasticsearch）
-   # docker compose --profile rag up -d
-   ```
-
-3. **访问 Web 界面**
-   - 在浏览器中打开 http://localhost:3000
-
-4. **配置 GitHub 访问令牌**
-   - 按照页面说明配置您的 GitHub 访问令牌
-
-5. **配置 Bot**
-
-   Wegent 内置了一个开发 Bot。对于 Claude Code 运行时，请设置以下环境变量：
-
-   ```json
-   {
-     "env": {
-       "ANTHROPIC_MODEL": "openrouter,anthropic/claude-sonnet-4",
-       "ANTHROPIC_AUTH_TOKEN": "sk-xxxxxx",
-       "ANTHROPIC_BASE_URL": "http://xxxxx",
-       "ANTHROPIC_DEFAULT_HAIKU_MODEL": "openrouter,anthropic/claude-haiku-4.5"
-     }
-   }
-   ```
-
-   **重要提示 - 环境变量命名:**
-
-   不同的 Shell 运行时使用不同的环境变量名称进行 API 认证:
-
-   - **Claude Code Shell**: 使用 `ANTHROPIC_AUTH_TOKEN`
-   - **Agno Shell**: 使用 `ANTHROPIC_API_KEY`
-   - **Dify Shell**: 使用 `DIFY_API_KEY` 和 `DIFY_BASE_URL`
-   - **Chat Shell**: 使用 `OPENAI_API_KEY` (OpenAI)、`ANTHROPIC_API_KEY` (Claude) 或 `GOOGLE_API_KEY` (Gemini)
-
-   请根据您的 Shell 配置设置正确的环境变量。具体要求请查看 Shell 文档或 `executor/agents/` 代码。
-
-6. **运行任务**
-
-   在任务页面，选择您的项目和分支，描述您的开发需求，例如使用 Python 实现冒泡排序算法
 
 ## 🏗️ 架构
 

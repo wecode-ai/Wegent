@@ -13,6 +13,7 @@ import { ThemeScript } from '@/features/theme/ThemeScript';
 import ErrorBoundary from '@/features/common/ErrorBoundary';
 import ServiceWorkerRegistration from '@/components/ServiceWorkerRegistration';
 import TelemetryInit from '@/components/TelemetryInit';
+import RuntimeConfigInit from '@/components/RuntimeConfigInit';
 import { Toaster } from '@/components/ui/toaster';
 import { Toaster as SonnerToaster } from 'sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -46,11 +47,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ErrorBoundary>
           <ThemeProvider>
             <TooltipProvider>
-              <MockInit>
-                <I18nProvider>
-                  <AuthGuard>{children}</AuthGuard>
-                </I18nProvider>
-              </MockInit>
+              <RuntimeConfigInit>
+                <MockInit>
+                  <I18nProvider>
+                    <AuthGuard>{children}</AuthGuard>
+                  </I18nProvider>
+                </MockInit>
+              </RuntimeConfigInit>
             </TooltipProvider>
           </ThemeProvider>
         </ErrorBoundary>

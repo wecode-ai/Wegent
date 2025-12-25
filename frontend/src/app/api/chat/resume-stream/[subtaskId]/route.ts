@@ -15,8 +15,7 @@
  */
 
 import { NextRequest } from 'next/server';
-
-const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
+import { getInternalApiUrl } from '@/lib/server-config';
 
 export async function GET(
   request: NextRequest,
@@ -26,7 +25,7 @@ export async function GET(
   const token = request.headers.get('authorization');
 
   try {
-    const backendUrl = `${BACKEND_URL}/chat/resume-stream/${subtaskId}`;
+    const backendUrl = `${getInternalApiUrl()}/api/chat/resume-stream/${subtaskId}`;
 
     const response = await fetch(backendUrl, {
       method: 'GET',

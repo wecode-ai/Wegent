@@ -134,7 +134,7 @@ export default function KnowledgePage() {
     // This prevents the UI from being stuck showing the previous task's messages
     setSelectedTask(null);
     clearAllStreams();
-    router.replace(paths.wiki.getHref());
+    router.replace(paths.chat.getHref());
   };
 
   return (
@@ -163,6 +163,7 @@ export default function KnowledgePage() {
           variant="with-sidebar"
           title={t('knowledge.title')}
           onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
+          isSidebarCollapsed={isCollapsed}
         >
           <GreyTestButton />
           {isMobile ? <ThemeToggle /> : <GithubStarButton />}

@@ -15,6 +15,7 @@ import React, {
 } from 'react';
 import { Task, TaskDetail, TaskStatus } from '@/types/api';
 import { taskApis } from '@/apis/tasks';
+import { ApiError } from '@/apis/client';
 import { notifyTaskCompletion } from '@/utils/notification';
 import {
   markTaskAsViewed,
@@ -46,6 +47,9 @@ type TaskContextType = {
   getUnreadCount: (tasks: Task[]) => number;
   markAllTasksAsViewed: () => void;
   viewStatusVersion: number;
+  // Access denied state for 403 errors when accessing shared tasks
+  accessDenied: boolean;
+  clearAccessDenied: () => void;
 };
 
 const TaskContext = createContext<TaskContextType | undefined>(undefined);
@@ -62,6 +66,8 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   const [isSearching, setIsSearching] = useState<boolean>(false);
   const [isSearchResult, setIsSearchResult] = useState<boolean>(false);
   const [viewStatusVersion, setViewStatusVersion] = useState<number>(0);
+  // Access denied state for 403 errors when accessing shared tasks
+  const [accessDenied, setAccessDenied] = useState<boolean>(false);
 
   // Track task status for notification
   const taskStatusMapRef = useRef<Map<number, TaskStatus>>(new Map());
@@ -408,6 +414,8 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     }
 
     try {
+      // Clear access denied state before fetching
+      setAccessDenied(false);
       const updatedTaskDetail = await taskApis.getTaskDetail(selectedTask.id);
 
       // Extract workbench data from subtasks
@@ -442,6 +450,18 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
 
       setSelectedTaskDetail(taskDetailWithWorkbench);
     } catch (error) {
+      // Check if it's a 403 Forbidden or 404 Not Found error (access denied or task not found)
+      // Both cases should show the access denied UI to prevent information leakage
+      if (error instanceof ApiError && (error.status === 403 || error.status === 404)) {
+        console.warn(
+          '[TaskContext] Access denied or task not found:',
+          selectedTask.id,
+          error.status
+        );
+        setAccessDenied(true);
+        setSelectedTaskDetail(null);
+        return;
+      }
       console.error('Failed to refresh selected task detail:', error);
     }
   };
@@ -473,6 +493,17 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTask, leaveTask, joinTask]);
+
+  // Re-join task room when WebSocket reconnects
+  // This handles the case where page is refreshed and selectedTask is set from URL
+  // before WebSocket connection is established
+  useEffect(() => {
+    if (isConnected && selectedTask) {
+      console.log(`[TaskContext] WebSocket connected, re-joining room for task ${selectedTask.id}`);
+      joinTask(selectedTask.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConnected]);
 
   // Mark task as viewed when selectedTaskDetail is loaded
   // This ensures we have the correct status and timestamps from the backend
@@ -537,6 +568,11 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     []
   );
 
+  // Clear access denied state (called when navigating away or starting new task)
+  const clearAccessDenied = useCallback(() => {
+    setAccessDenied(false);
+  }, []);
+
   return (
     <TaskContext.Provider
       value={{
@@ -559,6 +595,8 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
         getUnreadCount,
         markAllTasksAsViewed: handleMarkAllTasksAsViewed,
         viewStatusVersion,
+        accessDenied,
+        clearAccessDenied,
       }}
     >
       {children}

@@ -245,11 +245,16 @@ app.add_middleware(
 
 **2. Check frontend API URL**
 ```bash
-# frontend/.env.local
-NEXT_PUBLIC_API_URL=http://localhost:8000
+# frontend/.env.local or environment variables
+# Runtime variables (recommended, can be changed without rebuilding):
+RUNTIME_INTERNAL_API_URL=http://localhost:8000
+RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000
 
-# Ensure it matches backend address
+# Legacy (deprecated):
+# NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
+
+> **Note**: The frontend now uses `RUNTIME_INTERNAL_API_URL` instead of `NEXT_PUBLIC_API_URL`. Runtime variables can be changed without rebuilding the application.
 
 **3. Use browser dev tools for debugging**
 - Open F12 developer tools

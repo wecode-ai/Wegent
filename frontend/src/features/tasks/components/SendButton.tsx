@@ -139,8 +139,8 @@ export default function SendButton({
 
   return (
     <div className={`relative inline-flex ${className}`}>
-      {/* Main button container with pill shape */}
-      <div className="inline-flex items-center rounded-full bg-muted border border-border overflow-hidden h-7">
+      {/* Main button container with pill shape - 36px height to match Figma */}
+      <div className="inline-flex items-center rounded-full bg-base border border-border overflow-hidden h-9">
         {/* Send button - icon only */}
         <button
           ref={buttonRef}
@@ -171,7 +171,7 @@ export default function SendButton({
           onClick={handleDropdownToggle}
           disabled={isSaving}
           className={`
-            flex items-center justify-center px-1 h-full
+            flex items-center justify-center px-1.5 h-full
             transition-colors duration-150
             ${
               isSaving

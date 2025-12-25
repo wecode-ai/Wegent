@@ -360,6 +360,8 @@ const UserList: React.FC = () => {
                         {getStatusTag(user.is_active)}
                       </div>
                       <div className="flex items-center gap-2 mt-1 text-xs text-text-muted">
+                        <span>ID: {user.id}</span>
+                        <span>•</span>
                         <span>{user.email || t('users.no_email')}</span>
                         <span>•</span>
                         <span>{t(`users.auth_sources.${user.auth_source}`)}</span>
