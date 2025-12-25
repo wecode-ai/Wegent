@@ -30,6 +30,8 @@ import { TaskMembersPanel } from './group-chat';
 import { useUser } from '@/features/common/UserContext';
 import { useUnifiedMessages, type DisplayMessage } from '../hooks/useUnifiedMessages';
 import { useTraceAction } from '@/hooks/useTraceAction';
+import { correctionApis, CorrectionResponse } from '@/apis/correction';
+import CorrectionResultPanel from './CorrectionResultPanel';
 
 /**
  * Component to render a streaming message with typewriter effect.
@@ -110,6 +112,9 @@ interface MessagesAreaProps {
   onContentChange?: () => void;
   onSendMessage?: (content: string) => void;
   isGroupChat?: boolean;
+  // Correction mode props
+  enableCorrectionMode?: boolean;
+  correctionModelId?: string | null;
 }
 
 export default function MessagesArea({
@@ -120,6 +125,8 @@ export default function MessagesArea({
   onShareButtonRender,
   onSendMessage,
   isGroupChat = false,
+  enableCorrectionMode = false,
+  correctionModelId = null,
 }: MessagesAreaProps) {
   const { t } = useTranslation('chat');
   const { t: tCommon } = useTranslation('common');
@@ -145,6 +152,54 @@ export default function MessagesArea({
 
   // Group chat members panel state
   const [showMembersPanel, setShowMembersPanel] = useState(false);
+
+  // Correction mode state
+  const [correctionResults, setCorrectionResults] = useState<Map<number, CorrectionResponse>>(new Map());
+  const [correctionLoading, setCorrectionLoading] = useState<Set<number>>(new Set());
+
+  // Trigger correction when AI message completes
+  useEffect(() => {
+    if (!enableCorrectionMode || !correctionModelId || !selectedTaskDetail?.id) return;
+
+    // Find completed AI messages that haven't been corrected yet
+    messages.forEach((msg, index) => {
+      // Skip if not AI message, still streaming, or already corrected/loading
+      if (msg.type !== 'ai' || msg.status === 'streaming') return;
+      if (!msg.subtaskId) return;
+      if (correctionResults.has(msg.subtaskId) || correctionLoading.has(msg.subtaskId)) return;
+
+      // Find the corresponding user message (previous message)
+      const userMsg = index > 0 ? messages[index - 1] : null;
+      if (!userMsg || userMsg.type !== 'user' || !userMsg.content) return;
+
+      // Start correction
+      const subtaskId = msg.subtaskId;
+      setCorrectionLoading(prev => new Set(prev).add(subtaskId));
+
+      correctionApis.correctResponse({
+        task_id: selectedTaskDetail.id,
+        message_id: subtaskId,
+        original_question: userMsg.content,
+        original_answer: msg.content || '',
+        correction_model_id: correctionModelId,
+      }).then(result => {
+        setCorrectionResults(prev => new Map(prev).set(subtaskId, result));
+      }).catch(error => {
+        console.error('Correction failed:', error);
+        toast({
+          variant: 'destructive',
+          title: 'Correction failed',
+          description: error?.message || 'Unknown error',
+        });
+      }).finally(() => {
+        setCorrectionLoading(prev => {
+          const next = new Set(prev);
+          next.delete(subtaskId);
+          return next;
+        });
+      });
+    });
+  }, [enableCorrectionMode, correctionModelId, messages, selectedTaskDetail?.id, correctionResults, correctionLoading, toast]);
 
   // Handle task share
   const handleShareTask = useCallback(async () => {
@@ -577,6 +632,11 @@ export default function MessagesArea({
             const isCurrentUserMessage =
               msg.type === 'user' ? (isGroupChat ? msg.senderUserId === user?.id : true) : false;
 
+            // Check if this AI message has a correction result
+            const hasCorrectionResult = msg.type === 'ai' && msg.subtaskId && correctionResults.has(msg.subtaskId);
+            const isCorrecting = msg.type === 'ai' && msg.subtaskId && correctionLoading.has(msg.subtaskId);
+            const correctionResult = msg.subtaskId ? correctionResults.get(msg.subtaskId) : undefined;
+
             // Use StreamingMessageBubble for streaming AI messages
             if (msg.type === 'ai' && msg.status === 'streaming') {
               return (
@@ -592,6 +652,30 @@ export default function MessagesArea({
                   onSendMessage={onSendMessage}
                   index={index}
                 />
+              );
+            }
+
+            // For AI messages with correction mode enabled, render side by side
+            if (msg.type === 'ai' && enableCorrectionMode && (hasCorrectionResult || isCorrecting)) {
+              return (
+                <div key={messageKey} className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <MessageBubble
+                    msg={convertToMessage(msg)}
+                    index={index}
+                    selectedTaskDetail={selectedTaskDetail}
+                    selectedTeam={selectedTeam}
+                    selectedRepo={selectedRepo}
+                    selectedBranch={selectedBranch}
+                    theme={theme as 'light' | 'dark'}
+                    t={t}
+                    onSendMessage={onSendMessage}
+                    isCurrentUserMessage={isCurrentUserMessage}
+                  />
+                  <CorrectionResultPanel
+                    result={correctionResult || { message_id: 0, scores: { accuracy: 0, logic: 0, completeness: 0 }, corrections: [], summary: '', improved_answer: '', is_correct: false }}
+                    isLoading={isCorrecting}
+                  />
+                </div>
               );
             }
 
