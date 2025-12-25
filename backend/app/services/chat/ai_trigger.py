@@ -222,6 +222,15 @@ async def _stream_chat_response(
     full_response = ""
     mcp_session = None  # Initialize for cleanup in finally block
 
+    # Get subtask message_id for error events
+    subtask_message_id = None
+    try:
+        subtask = db.query(Subtask).filter(Subtask.id == subtask_id).first()
+        if subtask:
+            subtask_message_id = subtask.message_id
+    except Exception as e:
+        logger.warning(f"Failed to get subtask message_id: {e}")
+
     try:
         # Set base attributes (user and task info)
         span_manager.set_base_attributes(
@@ -261,6 +270,21 @@ async def _stream_chat_response(
                 task_id=task_id,
                 subtask_id=subtask_id,
                 error=error_msg,
+                message_id=subtask_message_id,
+            )
+
+            # IMPORTANT: Also emit chat:done to signal stream completion
+            # This ensures frontend knows the stream has ended, even though it failed
+            await emitter.emit_chat_done(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                offset=0,
+                result={"value": "", "error": error_msg},
+                message_id=subtask_message_id,
+            )
+            logger.info(
+                f"[ai_trigger] Emitted chat:error and chat:done for bot not found: "
+                f"task={task_id} subtask={subtask_id}"
             )
             return
 
@@ -410,6 +434,21 @@ async def _stream_chat_response(
                 task_id=task_id,
                 subtask_id=subtask_id,
                 error=error_msg,
+                message_id=subtask_message_id,
+            )
+
+            # IMPORTANT: Also emit chat:done to signal stream completion
+            # This ensures frontend knows the stream has ended, even though it failed
+            await emitter.emit_chat_done(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                offset=0,
+                result={"value": "", "error": error_msg},
+                message_id=subtask_message_id,
+            )
+            logger.info(
+                f"[ai_trigger] Emitted chat:error and chat:done for provider creation failed: "
+                f"task={task_id} subtask={subtask_id}"
             )
             return
 
@@ -481,9 +520,25 @@ async def _stream_chat_response(
                     task_id=task_id,
                     subtask_id=subtask_id,
                     error=error_msg,
+                    message_id=subtask_message_id,
                 )
                 await db_handler.update_subtask_status(
                     subtask_id, "FAILED", error=chunk.error
+                )
+
+                # IMPORTANT: Also emit chat:done to signal stream completion
+                # This ensures frontend knows the stream has ended, even though it failed
+                # Without this, frontend may wait indefinitely or have ordering issues
+                await emitter.emit_chat_done(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    offset=offset,
+                    result={"value": full_response, "error": error_msg},
+                    message_id=subtask_message_id,
+                )
+                logger.info(
+                    f"[ai_trigger] Emitted chat:error and chat:done for failed stream: "
+                    f"task={task_id} subtask={subtask_id} message_id={subtask_message_id}"
                 )
                 return
 
@@ -506,8 +561,6 @@ async def _stream_chat_response(
             )
 
             # Get message_id from database for proper message ordering
-            from app.models.subtask import Subtask
-
             subtask = db.query(Subtask).filter(Subtask.id == subtask_id).first()
             message_id = subtask.message_id if subtask else None
 
@@ -551,6 +604,22 @@ async def _stream_chat_response(
             task_id=task_id,
             subtask_id=subtask_id,
             error=str(e),
+            message_id=subtask_message_id,
+        )
+
+        # IMPORTANT: Also emit chat:done to signal stream completion
+        # This ensures frontend knows the stream has ended, even though it failed
+        # Without this, frontend may wait indefinitely or have ordering issues
+        await error_emitter.emit_chat_done(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            offset=0,  # No content was streamed
+            result={"value": "", "error": str(e)},
+            message_id=subtask_message_id,
+        )
+        logger.info(
+            f"[ai_trigger] Emitted chat:error and chat:done for exception: "
+            f"task={task_id} subtask={subtask_id} message_id={subtask_message_id}"
         )
     finally:
         # Detach OTEL context first (before exiting span)

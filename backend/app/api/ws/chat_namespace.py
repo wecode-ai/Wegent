@@ -21,12 +21,14 @@ from shared.telemetry.context import (
     set_request_context,
     set_user_context,
 )
+from sqlalchemy import and_
 
 from app.api.ws.context_decorators import auto_task_context
 from app.api.ws.decorators import trace_websocket_event
 from app.api.ws.events import (
     ChatCancelPayload,
     ChatResumePayload,
+    ChatRetryPayload,
     ChatSendAck,
     ChatSendPayload,
     ClientEvents,
@@ -241,6 +243,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             "chat:send": "on_chat_send",
             "chat:cancel": "on_chat_cancel",
             "chat:resume": "on_chat_resume",
+            "chat:retry": "on_chat_retry",
             "task:join": "on_task_join",
             "task:leave": "on_task_leave",
             "history:sync": "on_history_sync",
@@ -735,6 +738,10 @@ class ChatNamespace(socketio.AsyncNamespace):
                 )
                 logger.info(f"[WS] chat:send broadcasted user message to room")
 
+            # Note: Model override metadata is already set during task creation
+            # by _create_task_and_subtasks() or task_kinds_service.create_task_or_append()
+            # No need to update it again here
+
             # Trigger AI response if needed (decoupled logic in ai_trigger.py)
             if should_trigger_ai and assistant_subtask:
                 # Choose AI trigger based on enable_deep_thinking flag
@@ -1027,6 +1034,410 @@ class ChatNamespace(socketio.AsyncNamespace):
         except Exception as e:
             logger.error(f"[WS] chat:cancel exception: {e}", exc_info=True)
             db.rollback()
+            return {"error": f"Internal server error: {str(e)}"}
+        finally:
+            db.close()
+
+    def _fetch_retry_context(
+        self, db, payload: "ChatRetryPayload"
+    ) -> tuple[
+        Optional["Subtask"], Optional["Kind"], Optional["Kind"], Optional["Subtask"]
+    ]:
+        """
+        Fetch all required database entities for retry operation in a single optimized query.
+
+        Args:
+            db: Database session
+            payload: Retry payload with task_id and subtask_id
+
+        Returns:
+            Tuple of (failed_ai_subtask, task, team, user_subtask)
+        """
+        from sqlalchemy.orm import aliased, joinedload
+
+        TaskKind = aliased(Kind)
+        TeamKind = aliased(Kind)
+
+        # Optimized query: fetch failed_ai_subtask, task, and team in one go
+        query_result = (
+            db.query(
+                Subtask,  # failed_ai_subtask
+                TaskKind,  # task
+                TeamKind,  # team
+            )
+            .select_from(Subtask)  # Explicitly specify the main table
+            .outerjoin(
+                TaskKind,
+                and_(
+                    TaskKind.id == payload.task_id,
+                    TaskKind.kind == "Task",
+                    TaskKind.is_active,
+                ),
+            )
+            .outerjoin(
+                TeamKind,
+                and_(
+                    TeamKind.id == Subtask.team_id,
+                    TeamKind.kind == "Team",
+                    TeamKind.is_active,
+                ),
+            )
+            .filter(
+                Subtask.id == payload.subtask_id,
+                Subtask.task_id == payload.task_id,
+                Subtask.role == SubtaskRole.ASSISTANT,
+            )
+            .first()
+        )
+
+        if not query_result:
+            return None, None, None, None
+
+        failed_ai_subtask, task, team = query_result
+
+        # Fetch user subtask separately
+        # Key insight: parent_id stores message_id (not subtask.id) throughout the system
+        # Both in chat.py and task_kinds.py, parent_id is always set to message_id
+        user_subtask = None
+        if failed_ai_subtask and failed_ai_subtask.parent_id:
+            # Use parent_id as message_id to find the triggering USER subtask
+            # This works for both single chat and group chat
+            user_subtask = (
+                db.query(Subtask)
+                .options(joinedload(Subtask.attachments))  # Preload attachments
+                .filter(
+                    Subtask.task_id == failed_ai_subtask.task_id,
+                    Subtask.message_id == failed_ai_subtask.parent_id,
+                    Subtask.role == SubtaskRole.USER,
+                )
+                .first()
+            )
+            if user_subtask:
+                logger.info(
+                    f"[WS] chat:retry found user_subtask via parent_id as message_id: "
+                    f"id={user_subtask.id}, message_id={user_subtask.message_id}, "
+                    f"prompt={user_subtask.prompt[:50] if user_subtask.prompt else ''}..."
+                )
+            else:
+                logger.warning(
+                    f"[WS] chat:retry could not find USER subtask with message_id={failed_ai_subtask.parent_id}"
+                )
+
+        return failed_ai_subtask, task, team, user_subtask
+
+    def _reset_subtask_for_retry(self, db, subtask: "Subtask") -> None:
+        """
+        Reset a failed subtask to PENDING status for retry.
+
+        Args:
+            db: Database session
+            subtask: The subtask to reset
+
+        Raises:
+            Exception: If database commit fails
+        """
+        subtask.status = SubtaskStatus.PENDING
+        subtask.progress = 0
+        subtask.error_message = ""
+        subtask.result = None
+        subtask.updated_at = datetime.now()
+
+        try:
+            db.commit()
+            db.refresh(subtask)
+        except Exception as e:
+            logger.error(f"[WS] chat:retry failed to reset subtask: {e}", exc_info=True)
+            db.rollback()
+            raise  # Re-raise to prevent downstream processing
+
+        logger.info(
+            f"[WS] chat:retry reset subtask to PENDING: id={subtask.id}, message_id={subtask.message_id}"
+        )
+
+    def _extract_model_override_info(self, task: "Kind") -> tuple[Optional[str], bool]:
+        """
+        Extract model override information from task metadata.
+
+        Reading Model Override Metadata:
+        - Primary source: task.json.metadata.labels (set by on_chat_send when user overrides model)
+        - Fallback source: task.json.spec (for compatibility with other shells)
+
+        Args:
+            task: The task containing metadata
+
+        Returns:
+            Tuple of (model_id, force_override)
+        """
+        task_spec_dict = task.json.get("spec", {})
+        task_metadata = task.json.get("metadata", {})
+        task_labels = task_metadata.get("labels", {})
+
+        # Try to get model info from metadata.labels first (for direct chat)
+        model_id = task_labels.get("modelId") or task_spec_dict.get("modelId")
+        force_override = (
+            task_labels.get("forceOverrideBotModel") == "true"
+            or task_spec_dict.get("forceOverrideBotModel") == "true"
+        )
+
+        logger.info(
+            f"[WS] chat:retry extracted model info: model_id={model_id}, force_override={force_override}"
+        )
+
+        return model_id, force_override
+
+    @auto_task_context(
+        ChatRetryPayload, task_id_field="task_id", subtask_id_field="subtask_id"
+    )
+    async def on_chat_retry(self, sid: str, data: dict) -> dict:
+        """
+        Handle chat:retry event to retry a failed chat message.
+
+        This implements the Same-ID retry mechanism: instead of creating a new subtask,
+        it resets the existing failed AI subtask to PENDING status and triggers a new
+        AI response. This maintains message order and preserves the conversation flow.
+
+        Key features:
+        - Reuses the same subtask_id and message_id for consistency
+        - Preserves model override information from task metadata
+        - Supports both direct chat (streaming) and executor-based execution
+        - Performs optimized database queries using JOIN to reduce round trips
+
+        Args:
+            sid: Socket.IO session ID
+            data: Validated payload containing task_id and subtask_id
+
+        Returns:
+            dict: Success/error response
+
+        Raises:
+            No exceptions - all errors are caught and returned as error dict
+        """
+        payload = data  # Already validated by decorator
+        logger.info(
+            f"[WS] chat:retry received sid={sid}, "
+            f"raw_data_type={type(data)}, "
+            f"payload={payload}, "
+            f"force_override_bot_model={payload.force_override_bot_model} (type={type(payload.force_override_bot_model)}), "
+            f"force_override_bot_model_type={payload.force_override_bot_model_type} (type={type(payload.force_override_bot_model_type)})"
+        )
+
+        session = await self.get_session(sid)
+        user_id = session.get("user_id")
+
+        if not user_id:
+            logger.error("[WS] chat:retry error: Not authenticated")
+            return {"error": "Not authenticated"}
+
+        # Check permission: verify user has access to the task
+        if not await can_access_task(user_id, payload.task_id):
+            logger.error(
+                f"[WS] chat:retry error: Access denied for user={user_id} task={payload.task_id}"
+            )
+            return {"error": "Access denied"}
+
+        db = SessionLocal()
+        try:
+            # Fetch all required entities using optimized query
+            failed_ai_subtask, task, team, user_subtask = self._fetch_retry_context(
+                db, payload
+            )
+
+            # Validate entities exist
+            if not failed_ai_subtask:
+                logger.error(
+                    f"[WS] chat:retry error: AI subtask not found id={payload.subtask_id}"
+                )
+                return {"error": "AI subtask not found"}
+
+            if not task:
+                logger.error(
+                    f"[WS] chat:retry error: Task not found id={payload.task_id}"
+                )
+                return {"error": "Task not found"}
+
+            if not team:
+                logger.error(
+                    f"[WS] chat:retry error: Team not found id={failed_ai_subtask.team_id}"
+                )
+                return {"error": "Team not found"}
+
+            if not user_subtask:
+                logger.error(
+                    f"[WS] chat:retry error: User subtask not found parent_id={failed_ai_subtask.parent_id}"
+                )
+                return {"error": "User message not found"}
+
+            logger.info(
+                f"[WS] chat:retry found failed_ai_subtask: id={failed_ai_subtask.id}, "
+                f"message_id={failed_ai_subtask.message_id}, "
+                f"parent_id={failed_ai_subtask.parent_id}, "
+                f"status={failed_ai_subtask.status.value}"
+            )
+            logger.info(
+                f"[WS] chat:retry found user_subtask: id={user_subtask.id}, prompt={user_subtask.prompt[:50] if user_subtask.prompt else ''}..."
+            )
+
+            # Reset the failed AI subtask to PENDING status
+            self._reset_subtask_for_retry(db, failed_ai_subtask)
+
+            # Trigger AI response
+            from app.api.endpoints.adapter.chat import _should_use_direct_chat
+            from app.models.user import User
+            from app.services.chat.ai_trigger import trigger_ai_response
+
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user:
+                logger.error(f"[WS] chat:retry error: User not found id={user_id}")
+                return {"error": "User not found"}
+
+            supports_direct_chat = _should_use_direct_chat(db, team, user_id)
+            logger.info(f"[WS] chat:retry supports_direct_chat={supports_direct_chat}")
+
+            # Determine model to use for retry:
+            # Use the SAME logic as normal message sending (ChatSendPayload handling):
+            # 1. If use_model_override is True:
+            #    - If force_override_bot_model is provided: use that specific model
+            #    - If force_override_bot_model is None/empty: use bot's default model
+            # 2. If use_model_override is False: fall back to task metadata model
+            #
+            # This matches the normal chat flow where:
+            # - model_id = undefined (None) means "use bot's default"
+            # - force_override_bot_model = True means "apply user's selection"
+            # - force_override_bot_model = False means "use task metadata"
+            model_id = None
+            model_type = None
+
+            if payload.use_model_override:
+                # User explicitly selected a model (including "Default Model")
+                # Use the model from payload if provided, otherwise use bot's default (None)
+                model_id = payload.force_override_bot_model
+                model_type = payload.force_override_bot_model_type
+                logger.info(
+                    f"[WS] chat:retry use_model_override=True, using model from payload: "
+                    f"model_id={model_id}, model_type={model_type}"
+                )
+            else:
+                # User did not override model selection, fall back to task metadata
+                # This preserves the original model used when the task was created
+                task_model_id, force_override = self._extract_model_override_info(task)
+                if force_override and task_model_id:
+                    model_id = task_model_id
+                    logger.info(
+                        f"[WS] chat:retry use_model_override=False, using model from task metadata: "
+                        f"model_id={model_id}"
+                    )
+                else:
+                    logger.info(
+                        f"[WS] chat:retry use_model_override=False, no task metadata model, "
+                        f"will use bot's default model"
+                    )
+
+            # Build payload for AI trigger (reuse user message content and model override)
+            # If model_id exists, use it; otherwise, use None to let the bot use its default model
+            from app.api.ws.events import ChatSendPayload
+
+            # Get attachment from user_subtask if exists
+            attachment_id = None
+            if user_subtask.attachments:
+                # Use the first attachment (chat messages typically have one attachment)
+                attachment_id = user_subtask.attachments[0].id
+                logger.info(
+                    f"[WS] chat:retry found attachment: id={attachment_id}, "
+                    f"filename={user_subtask.attachments[0].original_filename}"
+                )
+
+            retry_payload = ChatSendPayload(
+                task_id=payload.task_id,
+                team_id=team.id,
+                message=user_subtask.prompt or "",
+                attachment_id=attachment_id,
+                force_override_bot_model=model_id,
+                force_override_bot_model_type=model_type,
+                is_group_chat=False,
+            )
+
+            # Trigger AI response
+            task_room = f"task:{payload.task_id}"
+            await trigger_ai_response(
+                task=task,
+                assistant_subtask=failed_ai_subtask,  # Reuse the same subtask
+                team=team,
+                user=user,
+                message=user_subtask.prompt or "",
+                payload=retry_payload,
+                task_room=task_room,
+                supports_direct_chat=supports_direct_chat,
+                namespace=self,
+            )
+
+            logger.info(
+                f"[WS] chat:retry AI response triggered for subtask_id={failed_ai_subtask.id}"
+            )
+
+            return {"success": True}
+
+        except ValueError as e:
+            # Validation errors, data parsing errors
+            logger.error(f"[WS] chat:retry validation error: {e}", exc_info=True)
+            db.rollback()
+
+            # Broadcast error to all clients in task room
+            from app.services.chat.ws_emitter import get_ws_emitter
+
+            ws_emitter = get_ws_emitter()
+            if ws_emitter and payload.subtask_id:
+                await ws_emitter.emit_chat_error(
+                    task_id=payload.task_id,
+                    subtask_id=payload.subtask_id,
+                    error=f"Invalid data: {str(e)}",
+                    message_id=None,  # Will use subtask's message_id
+                )
+
+            return {"error": f"Invalid data: {str(e)}"}
+        except PermissionError as e:
+            # Permission/access errors
+            logger.error(f"[WS] chat:retry permission error: {e}", exc_info=True)
+            db.rollback()
+
+            # Broadcast error to all clients in task room
+            from app.services.chat.ws_emitter import get_ws_emitter
+
+            ws_emitter = get_ws_emitter()
+            if ws_emitter and payload.subtask_id:
+                await ws_emitter.emit_chat_error(
+                    task_id=payload.task_id,
+                    subtask_id=payload.subtask_id,
+                    error=f"Access denied: {str(e)}",
+                    message_id=None,
+                )
+
+            return {"error": f"Access denied: {str(e)}"}
+        except Exception as e:
+            # Catch SQLAlchemy errors and other unexpected exceptions
+            from sqlalchemy.exc import SQLAlchemyError
+
+            logger.error(f"[WS] chat:retry exception: {e}", exc_info=True)
+            db.rollback()
+
+            # Broadcast error to all clients in task room
+            from app.services.chat.ws_emitter import get_ws_emitter
+
+            ws_emitter = get_ws_emitter()
+            error_msg = (
+                "Database error occurred"
+                if isinstance(e, SQLAlchemyError)
+                else f"Internal server error: {str(e)}"
+            )
+            if ws_emitter and payload.subtask_id:
+                await ws_emitter.emit_chat_error(
+                    task_id=payload.task_id,
+                    subtask_id=payload.subtask_id,
+                    error=error_msg,
+                    message_id=None,
+                )
+
+            if isinstance(e, SQLAlchemyError):
+                return {"error": "Database error occurred"}
             return {"error": f"Internal server error: {str(e)}"}
         finally:
             db.close()

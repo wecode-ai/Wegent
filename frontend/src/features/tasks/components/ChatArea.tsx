@@ -26,12 +26,14 @@ import { SelectedTeamBadge } from './SelectedTeamBadge';
 import type { Team, GitRepoInfo, GitBranch, ChatTipItem, ChatSloganItem } from '@/types/api';
 import type { WelcomeConfigResponse } from '@/types/api';
 import { userApis } from '@/apis/user';
-import { useTranslation } from 'react-i18next';
+import { useTranslation } from '@/hooks/useTranslation';
+import { parseError } from '@/utils/errorParser';
 import { isChatShell } from '../service/messageService';
 import { useUser } from '@/features/common/UserContext';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTaskContext } from '../contexts/taskContext';
 import { useChatStreamContext, computeIsStreaming } from '../contexts/chatStreamContext';
+import { useSocket } from '@/contexts/SocketContext';
 import { Button } from '@/components/ui/button';
 import QuotaUsage from './QuotaUsage';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
@@ -41,6 +43,7 @@ import { taskApis } from '@/apis/tasks';
 import { useAttachment } from '@/hooks/useAttachment';
 import { GroupChatSyncManager } from './group-chat';
 import type { SubtaskWithSender } from '@/apis/group-chat';
+import { useTraceAction } from '@/hooks/useTraceAction';
 
 const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18;
 
@@ -89,6 +92,8 @@ export default function ChatArea({
 }: ChatAreaProps) {
   const { toast } = useToast();
   const { user } = useUser();
+  const { t } = useTranslation('chat');
+  const { traceAction } = useTraceAction();
 
   // Pre-load team preference from localStorage to use as initial value
   const initialTeamIdRef = useRef<number | null>(null);
@@ -109,6 +114,12 @@ export default function ChatArea({
   const [isLoading, setIsLoading] = useState(false);
   // Unified error prompt using antd message.error, no local error state needed
   const [_error, setError] = useState('');
+
+  // Store last failed message for retry
+  const lastFailedMessageRef = useRef<string | null>(null);
+
+  // Store handleSendMessage reference to avoid circular dependency in handleSendError
+  const handleSendMessageRef = useRef<((message?: string) => Promise<void>) | null>(null);
 
   // Local pending state for immediate UI feedback (before context state is updated)
   const [localPendingMessage, setLocalPendingMessage] = useState<string | null>(null);
@@ -271,8 +282,6 @@ export default function ChatArea({
     clearAccessDenied,
   } = useTaskContext();
 
-  const { t } = useTranslation();
-
   const detailTeamId = useMemo<number | null>(() => {
     if (!selectedTaskDetail?.team) {
       return null;
@@ -308,6 +317,8 @@ export default function ChatArea({
     resumeStream: contextResumeStream,
     clearVersion,
   } = useChatStreamContext();
+
+  const { retryMessage } = useSocket();
 
   // Track the task ID that is currently being streamed (for new tasks before they have a real ID)
   // This is separate from selectedTaskDetail?.id to allow switching tasks while streaming continues
@@ -934,6 +945,53 @@ export default function ChatArea({
     }
   }, []);
 
+  /**
+   * Helper function to create retry button for toast notifications
+   * Reduces code duplication for error handling
+   */
+  const createRetryButton = useCallback(
+    (onRetryClick: () => void) => (
+      <Button variant="outline" size="sm" onClick={onRetryClick}>
+        {t('actions.retry') || '重试'}
+      </Button>
+    ),
+    [t]
+  );
+
+  /**
+   * Helper function to handle send errors with retry logic
+   * Extracts duplicate error handling from onError callback and catch block
+   */
+  const handleSendError = useCallback(
+    (error: Error, message: string) => {
+      // Reset all streaming state on error
+      resetStreamingState();
+
+      // Parse error to provide better user feedback
+      const parsedError = parseError(error);
+
+      // Store message for retry
+      lastFailedMessageRef.current = message;
+
+      // Show error toast with retry button if error is retryable
+      toast({
+        variant: 'destructive',
+        title: parsedError.retryable
+          ? t('errors.request_failed_retry')
+          : t('errors.model_unsupported'),
+        action: parsedError.retryable
+          ? createRetryButton(() => {
+              // Retry by calling handleSendMessage with the last failed message
+              if (lastFailedMessageRef.current && handleSendMessageRef.current) {
+                handleSendMessageRef.current(lastFailedMessageRef.current);
+              }
+            })
+          : undefined,
+      });
+    },
+    [resetStreamingState, toast, t, createRetryButton]
+  );
+
   // Core message sending logic - can be called directly with a message or use taskInputMessage
   // All team types now use WebSocket for unified message sending
   const handleSendMessage = useCallback(
@@ -1062,13 +1120,7 @@ export default function ChatArea({
               // This prevents the progress bar flash issue
             },
             onError: (error: Error) => {
-              // Reset all streaming state on error
-              resetStreamingState();
-
-              toast({
-                variant: 'destructive',
-                title: error.message,
-              });
+              handleSendError(error, message);
             },
           }
         );
@@ -1085,10 +1137,7 @@ export default function ChatArea({
         // Manually trigger scroll to bottom after sending message
         setTimeout(() => scrollToBottom(true), 0);
       } catch (err) {
-        toast({
-          variant: 'destructive',
-          title: (err as Error)?.message || 'Failed to send message',
-        });
+        handleSendError(err as Error, message);
       }
 
       setIsLoading(false);
@@ -1126,6 +1175,92 @@ export default function ChatArea({
       markTaskAsViewed,
       user?.id,
       user?.user_name,
+      createRetryButton,
+    ]
+  );
+
+  // Update ref when handleSendMessage changes
+  useEffect(() => {
+    handleSendMessageRef.current = handleSendMessage;
+  }, [handleSendMessage]);
+
+  /**
+   * Handle retry for failed messages
+   * Uses Same-ID retry: reuses the original user message and creates a new AI subtask
+   * with the same message_id
+   */
+  const handleRetry = useCallback(
+    async (message: { content: string; type: string; error?: string; subtaskId?: number }) => {
+      // Same-ID retry: retry on the same message by reusing the existing user message
+      // and creating a new AI subtask with the same message_id
+      if (!message.subtaskId) {
+        toast({
+          variant: 'destructive',
+          title: t('errors.request_failed_retry'),
+          description: 'Subtask ID not found',
+        });
+        return;
+      }
+
+      if (!selectedTaskDetail?.id) {
+        toast({
+          variant: 'destructive',
+          title: t('errors.request_failed_retry'),
+          description: 'Task ID not found',
+        });
+        return;
+      }
+
+      await traceAction(
+        'chat-retry-message',
+        {
+          'action.type': 'retry',
+          'task.id': selectedTaskDetail.id.toString(),
+          'subtask.id': message.subtaskId.toString(),
+          ...(selectedModel && { 'model.id': selectedModel.name }),
+        },
+        async () => {
+          try {
+            // Use the SAME model logic as sending new messages
+            // When default model is selected, don't pass model_id (use bot's predefined model)
+            const modelId =
+              selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.name;
+            const modelType = modelId ? selectedModel?.type : undefined;
+
+            const result = await retryMessage(
+              selectedTaskDetail.id,
+              message.subtaskId!,
+              modelId,
+              modelType,
+              forceOverride
+            );
+
+            if (result.error) {
+              toast({
+                variant: 'destructive',
+                title: t('errors.request_failed_retry'),
+              });
+            }
+          } catch (error) {
+            console.error('[ChatArea] Retry failed:', error);
+            toast({
+              variant: 'destructive',
+              title: t('errors.request_failed_retry'),
+            });
+            throw error; // Re-throw to mark the trace as failed
+          }
+        }
+      );
+    },
+    [
+      retryMessage,
+      selectedTaskDetail?.id,
+      selectedModel?.name,
+      selectedModel?.type,
+      forceOverride,
+      t,
+      toast,
+      traceAction,
     ]
   );
 
@@ -1404,6 +1539,7 @@ export default function ChatArea({
               onShareButtonRender={onShareButtonRender}
               onSendMessage={handleSendMessageFromChild}
               isGroupChat={selectedTaskDetail?.is_group_chat || false}
+              onRetry={handleRetry}
             />
           </div>
         </div>

@@ -237,9 +237,7 @@ export default function GeneratingLoader({ className }: GeneratingLoaderProps) {
       </div>
 
       {/* Main text */}
-      <p className="mt-6 text-base font-medium text-text-primary">
-        {t('generating_prompt')}
-      </p>
+      <p className="mt-6 text-base font-medium text-text-primary">{t('generating_prompt')}</p>
 
       {/* Dynamic tip with animated dots */}
       <p className="mt-2 text-sm text-text-muted h-5 transition-opacity duration-300">

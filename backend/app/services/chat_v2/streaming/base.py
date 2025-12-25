@@ -356,14 +356,51 @@ class StreamingCore:
             "[STREAMING] subtask=%s error",
             self.state.subtask_id,
         )
+
+        error_msg = str(error)
+
+        # Emit chat:error first
         await self.emitter.emit_error(
             self.state.subtask_id,
-            str(error),
+            error_msg,
         )
+
+        # Update subtask status to FAILED with error
         await storage_handler.update_subtask_status(
             self.state.subtask_id,
             "FAILED",
-            error=str(error),
+            error=error_msg,
+        )
+
+        # Get message_id for proper ordering
+        message_id = self.state.message_id
+        if message_id is None:
+            message_id = await storage_handler.get_subtask_message_id(
+                self.state.subtask_id
+            )
+
+        # CRITICAL: Also emit chat:done to signal stream completion
+        # This ensures frontend knows the stream has ended and can properly order messages
+        # The result.error field tells frontend to preserve error status
+        result = {
+            "value": self.state.full_response,  # Partial response if any
+            "error": error_msg,  # Include error in result
+            "shell_type": self.state.shell_type,
+        }
+        if self.state.thinking:
+            result["thinking"] = self.state.thinking
+
+        await self.emitter.emit_done(
+            self.state.task_id,
+            self.state.subtask_id,
+            self.state.offset,
+            result,
+            message_id=message_id,
+        )
+
+        logger.info(
+            f"[STREAMING] Emitted chat:error and chat:done for failed stream: "
+            f"task={self.state.task_id} subtask={self.state.subtask_id} message_id={message_id}"
         )
 
     def set_mcp_client(self, client: Any) -> None:

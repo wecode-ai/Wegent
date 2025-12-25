@@ -193,9 +193,7 @@ export default function AiFollowUpStep({
                     placeholder={t('additional_thoughts_placeholder')}
                     className="min-h-[80px] text-sm"
                   />
-                  <p className="mt-1 text-xs text-text-muted">
-                    {t('additional_thoughts_hint')}
-                  </p>
+                  <p className="mt-1 text-xs text-text-muted">{t('additional_thoughts_hint')}</p>
                 </div>
               </div>
             </div>

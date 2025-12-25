@@ -13,7 +13,16 @@ async function loadTranslations() {
   const resources: Record<string, Record<string, unknown>> = {};
 
   // Namespace list
-  const namespaces = ['common', 'chat', 'settings', 'history', 'prompts', 'tasks', 'admin', 'wizard'];
+  const namespaces = [
+    'common',
+    'chat',
+    'settings',
+    'history',
+    'prompts',
+    'tasks',
+    'admin',
+    'wizard',
+  ];
 
   for (const lng of supportedLanguages) {
     resources[lng] = {};
