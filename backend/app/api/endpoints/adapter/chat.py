@@ -1797,23 +1797,25 @@ async def correct_response(
 
         if not member:
             raise HTTPException(status_code=404, detail="Task not found")
-
     # Get the correction model config
-    # First check if it's a public model
-    from app.models.public_model import PublicModel
-
+    # First check if it's a public model (user_id=0 in kinds table)
     public_model = (
-        db.query(PublicModel)
+        db.query(Kind)
         .filter(
-            PublicModel.name == request.correction_model_id,
-            PublicModel.is_active == True,
+            Kind.user_id == 0,
+            Kind.kind == "Model",
+            Kind.name == request.correction_model_id,
+            Kind.is_active == True,
         )
         .first()
     )
 
     model_config = None
-    if public_model and public_model.config:
-        env = public_model.config.get("env", {})
+    if public_model and public_model.json:
+        # Public models store config in json.spec.modelConfig.env
+        spec = public_model.json.get("spec", {})
+        model_config_data = spec.get("modelConfig", {})
+        env = model_config_data.get("env", {})
         model_config = {
             "provider": env.get("model", "openai"),
             "model_id": env.get("model_id", ""),
@@ -1838,13 +1840,15 @@ async def correct_response(
             from app.schemas.kind import Model as ModelCRD
 
             model_crd = ModelCRD.model_validate(user_model.json)
-            env = model_crd.spec.modelConfig.env
+            # modelConfig is a Dict[str, Any], so use dictionary access
+            model_config_data = model_crd.spec.modelConfig
+            env = model_config_data.get("env", {})
             model_config = {
-                "provider": env.model,
-                "model_id": env.model_id,
-                "api_key": env.api_key,
-                "base_url": env.base_url,
-                "default_headers": env.custom_headers or {},
+                "provider": env.get("model", "openai"),
+                "model_id": env.get("model_id", ""),
+                "api_key": env.get("api_key", ""),
+                "base_url": env.get("base_url"),
+                "default_headers": env.get("custom_headers") or {},
             }
 
     if not model_config:
@@ -1854,9 +1858,9 @@ async def correct_response(
         )
 
     # Decrypt API key if encrypted
-    from app.services.encryption import decrypt_if_encrypted
+    from shared.utils.crypto import decrypt_api_key
 
-    model_config["api_key"] = decrypt_if_encrypted(model_config["api_key"])
+    model_config["api_key"] = decrypt_api_key(model_config["api_key"])
 
     try:
         # Call correction service

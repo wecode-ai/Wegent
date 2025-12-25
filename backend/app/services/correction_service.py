@@ -20,22 +20,27 @@ from app.services.chat.providers.base import ChunkType
 logger = logging.getLogger(__name__)
 
 
-CORRECTION_PROMPT_TEMPLATE = """You are a professional AI response reviewer. Please evaluate the following AI response.
+CORRECTION_PROMPT_TEMPLATE = """The user is not satisfied with the following AI response. Please analyze the reasons.
 
 ## User Question
 {original_question}
 
-## AI Response
+## AI Response (User Not Satisfied)
 {original_answer}
 
-## Evaluation Requirements
-Please evaluate from the following dimensions (1-10 score for each):
-1. **Accuracy**: Are the facts in the response correct?
-2. **Logic**: Is the reasoning process reasonable and consistent?
-3. **Completeness**: Does it fully answer the user's question?
+## Analysis Requirements
+Please analyze from the following perspectives:
+
+1. **Why is the user dissatisfied?** Find the problems and reasons in this response.
+
+2. **Fact verification**: Verify all factual claims - are there any errors, outdated information, or unverified statements?
+
+3. **Logic errors**: Are there any logical fallacies, contradictions, or flawed reasoning?
+
+4. **Missing considerations**: What important aspects or perspectives did the AI fail to consider? What blind spots exist?
 
 ## Output Format (JSON)
-You MUST respond with ONLY a valid JSON object, no markdown code blocks, no explanations before or after. The JSON must follow this exact structure:
+You MUST respond with ONLY a valid JSON object, no markdown code blocks, no explanations before or after:
 {{
   "scores": {{
     "accuracy": <1-10>,
@@ -43,17 +48,19 @@ You MUST respond with ONLY a valid JSON object, no markdown code blocks, no expl
     "completeness": <1-10>
   }},
   "corrections": [
-    {{"issue": "description of the issue", "suggestion": "correction suggestion"}}
+    {{"issue": "description of the problem", "category": "dissatisfaction|fact_error|logic_error|missing_point", "suggestion": "how to fix it"}}
   ],
-  "summary": "overall evaluation (2-3 sentences)",
-  "improved_answer": "if there are issues, provide the improved complete answer; if no issues, return empty string",
+  "summary": "summary of why user is dissatisfied (2-3 sentences)",
+  "improved_answer": "provide the corrected complete answer",
   "is_correct": <true/false>
 }}
 
 Important:
-- If the response is correct and complete, set is_correct to true and leave improved_answer as empty string
-- If there are issues, set is_correct to false and provide improved_answer
-- The corrections array should be empty if is_correct is true
+- Assume the user is dissatisfied - focus on finding problems
+- Verify all facts - flag anything that cannot be confirmed
+- Identify all logical errors
+- List all points the AI failed to consider
+- Provide improved_answer with all issues fixed
 - Respond in the same language as the original question"""
 
 
@@ -144,7 +151,9 @@ class CorrectionService:
                 "is_correct": result.get("is_correct", False),
             }
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse correction response: {e}, response: {response[:500]}")
+            logger.error(
+                f"Failed to parse correction response: {e}, response: {response[:500]}"
+            )
             # Return default response on parse error
             return {
                 "scores": {"accuracy": 5, "logic": 5, "completeness": 5},

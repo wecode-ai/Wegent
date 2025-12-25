@@ -2,28 +2,28 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import React from 'react'
-import { CheckCircle, AlertCircle, BarChart3, Lightbulb, FileText, Sparkles } from 'lucide-react'
-import { useTranslation } from '@/hooks/useTranslation'
-import { cn } from '@/lib/utils'
-import { CorrectionResponse } from '@/apis/correction'
-import Markdown from '@/components/common/Markdown'
+import React from 'react';
+import { CheckCircle, AlertCircle, BarChart3, FileText, Sparkles } from 'lucide-react';
+import { useTranslation } from '@/hooks/useTranslation';
+import { cn } from '@/lib/utils';
+import { CorrectionResponse } from '@/apis/correction';
+import MarkdownEditor from '@uiw/react-markdown-editor';
 
 interface CorrectionResultPanelProps {
-  result: CorrectionResponse
-  isLoading?: boolean
-  className?: string
+  result: CorrectionResponse;
+  isLoading?: boolean;
+  className?: string;
 }
 
 function ScoreBar({ score, label }: { score: number; label: string }) {
   const getScoreColor = (score: number) => {
-    if (score >= 8) return 'bg-green-500'
-    if (score >= 6) return 'bg-yellow-500'
-    if (score >= 4) return 'bg-orange-500'
-    return 'bg-red-500'
-  }
+    if (score >= 8) return 'bg-green-500';
+    if (score >= 6) return 'bg-yellow-500';
+    if (score >= 4) return 'bg-orange-500';
+    return 'bg-red-500';
+  };
 
   return (
     <div className="flex items-center gap-3">
@@ -36,7 +36,7 @@ function ScoreBar({ score, label }: { score: number; label: string }) {
       </div>
       <span className="text-sm font-medium w-10 text-right">{score}/10</span>
     </div>
-  )
+  );
 }
 
 export default function CorrectionResultPanel({
@@ -44,7 +44,7 @@ export default function CorrectionResultPanel({
   isLoading = false,
   className,
 }: CorrectionResultPanelProps) {
-  const { t } = useTranslation('chat')
+  const { t } = useTranslation('chat');
 
   if (isLoading) {
     return (
@@ -59,7 +59,7 @@ export default function CorrectionResultPanel({
           ))}
         </div>
       </div>
-    )
+    );
   }
 
   return (
@@ -93,7 +93,10 @@ export default function CorrectionResultPanel({
             </div>
             <div className="space-y-2 pl-6">
               {result.corrections.map((correction, index) => (
-                <div key={index} className="bg-orange-50 dark:bg-orange-950/20 rounded-lg p-3 text-sm">
+                <div
+                  key={index}
+                  className="bg-orange-50 dark:bg-orange-950/20 rounded-lg p-3 text-sm"
+                >
                   <div className="flex items-start gap-2">
                     <span className="text-orange-600 dark:text-orange-400 font-medium flex-shrink-0">
                       {index + 1}.
@@ -139,11 +142,11 @@ export default function CorrectionResultPanel({
               <span>{t('correction.improved_answer')}</span>
             </div>
             <div className="pl-6 bg-primary/5 rounded-lg p-3 border border-primary/20">
-              <Markdown content={result.improved_answer} />
+              <MarkdownEditor.Markdown source={result.improved_answer} />
             </div>
           </div>
         )}
       </div>
     </div>
-  )
+  );
 }

@@ -48,9 +48,7 @@ class CorrectionResponse(BaseModel):
     improved_answer: str = Field(
         default="", description="Improved answer if corrections needed"
     )
-    is_correct: bool = Field(
-        default=False, description="True if no corrections needed"
-    )
+    is_correct: bool = Field(default=False, description="True if no corrections needed")
 
 
 class CorrectionStreamChunk(BaseModel):

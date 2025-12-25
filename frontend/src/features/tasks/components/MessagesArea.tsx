@@ -154,7 +154,9 @@ export default function MessagesArea({
   const [showMembersPanel, setShowMembersPanel] = useState(false);
 
   // Correction mode state
-  const [correctionResults, setCorrectionResults] = useState<Map<number, CorrectionResponse>>(new Map());
+  const [correctionResults, setCorrectionResults] = useState<Map<number, CorrectionResponse>>(
+    new Map()
+  );
   const [correctionLoading, setCorrectionLoading] = useState<Set<number>>(new Set());
 
   // Trigger correction when AI message completes
@@ -176,30 +178,42 @@ export default function MessagesArea({
       const subtaskId = msg.subtaskId;
       setCorrectionLoading(prev => new Set(prev).add(subtaskId));
 
-      correctionApis.correctResponse({
-        task_id: selectedTaskDetail.id,
-        message_id: subtaskId,
-        original_question: userMsg.content,
-        original_answer: msg.content || '',
-        correction_model_id: correctionModelId,
-      }).then(result => {
-        setCorrectionResults(prev => new Map(prev).set(subtaskId, result));
-      }).catch(error => {
-        console.error('Correction failed:', error);
-        toast({
-          variant: 'destructive',
-          title: 'Correction failed',
-          description: error?.message || 'Unknown error',
+      correctionApis
+        .correctResponse({
+          task_id: selectedTaskDetail.id,
+          message_id: subtaskId,
+          original_question: userMsg.content,
+          original_answer: msg.content || '',
+          correction_model_id: correctionModelId,
+        })
+        .then(result => {
+          setCorrectionResults(prev => new Map(prev).set(subtaskId, result));
+        })
+        .catch(error => {
+          console.error('Correction failed:', error);
+          toast({
+            variant: 'destructive',
+            title: 'Correction failed',
+            description: error?.message || 'Unknown error',
+          });
+        })
+        .finally(() => {
+          setCorrectionLoading(prev => {
+            const next = new Set(prev);
+            next.delete(subtaskId);
+            return next;
+          });
         });
-      }).finally(() => {
-        setCorrectionLoading(prev => {
-          const next = new Set(prev);
-          next.delete(subtaskId);
-          return next;
-        });
-      });
     });
-  }, [enableCorrectionMode, correctionModelId, messages, selectedTaskDetail?.id, correctionResults, correctionLoading, toast]);
+  }, [
+    enableCorrectionMode,
+    correctionModelId,
+    messages,
+    selectedTaskDetail?.id,
+    correctionResults,
+    correctionLoading,
+    toast,
+  ]);
 
   // Handle task share
   const handleShareTask = useCallback(async () => {
@@ -633,9 +647,17 @@ export default function MessagesArea({
               msg.type === 'user' ? (isGroupChat ? msg.senderUserId === user?.id : true) : false;
 
             // Check if this AI message has a correction result
-            const hasCorrectionResult = msg.type === 'ai' && msg.subtaskId && correctionResults.has(msg.subtaskId);
-            const isCorrecting = msg.type === 'ai' && msg.subtaskId && correctionLoading.has(msg.subtaskId);
-            const correctionResult = msg.subtaskId ? correctionResults.get(msg.subtaskId) : undefined;
+            const hasCorrectionResult =
+              msg.type === 'ai' &&
+              msg.subtaskId !== undefined &&
+              correctionResults.has(msg.subtaskId);
+            const isCorrecting =
+              msg.type === 'ai' &&
+              msg.subtaskId !== undefined &&
+              correctionLoading.has(msg.subtaskId);
+            const correctionResult = msg.subtaskId
+              ? correctionResults.get(msg.subtaskId)
+              : undefined;
 
             // Use StreamingMessageBubble for streaming AI messages
             if (msg.type === 'ai' && msg.status === 'streaming') {
@@ -656,7 +678,11 @@ export default function MessagesArea({
             }
 
             // For AI messages with correction mode enabled, render side by side
-            if (msg.type === 'ai' && enableCorrectionMode && (hasCorrectionResult || isCorrecting)) {
+            if (
+              msg.type === 'ai' &&
+              enableCorrectionMode &&
+              (hasCorrectionResult || isCorrecting)
+            ) {
               return (
                 <div key={messageKey} className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   <MessageBubble
@@ -672,7 +698,16 @@ export default function MessagesArea({
                     isCurrentUserMessage={isCurrentUserMessage}
                   />
                   <CorrectionResultPanel
-                    result={correctionResult || { message_id: 0, scores: { accuracy: 0, logic: 0, completeness: 0 }, corrections: [], summary: '', improved_answer: '', is_correct: false }}
+                    result={
+                      correctionResult || {
+                        message_id: 0,
+                        scores: { accuracy: 0, logic: 0, completeness: 0 },
+                        corrections: [],
+                        summary: '',
+                        improved_answer: '',
+                        is_correct: false,
+                      }
+                    }
                     isLoading={isCorrecting}
                   />
                 </div>
