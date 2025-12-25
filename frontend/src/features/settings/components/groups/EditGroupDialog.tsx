@@ -2,35 +2,35 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import { useState, useEffect } from 'react'
-import { useTranslation } from 'react-i18next'
-import Modal from '@/features/common/Modal'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
-import { updateGroup } from '@/apis/groups'
-import { toast } from 'sonner'
-import type { Group, GroupUpdate } from '@/types/group'
+import { useState, useEffect } from 'react';
+import { useTranslation } from '@/hooks/useTranslation';
+import Modal from '@/features/common/Modal';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { updateGroup } from '@/apis/groups';
+import { toast } from 'sonner';
+import type { Group, GroupUpdate } from '@/types/group';
 
 interface EditGroupDialogProps {
-  isOpen: boolean
-  onClose: () => void
-  onSuccess: () => void
-  group: Group | null
+  isOpen: boolean;
+  onClose: () => void;
+  onSuccess: () => void;
+  group: Group | null;
 }
 
 export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroupDialogProps) {
-  const { t } = useTranslation(['common', 'groups'])
+  const { t } = useTranslation('groups');
   const [formData, setFormData] = useState<GroupUpdate>({
     display_name: '',
     visibility: 'private',
     description: '',
-  })
-  const [errors, setErrors] = useState<Record<string, string>>({})
-  const [isSubmitting, setIsSubmitting] = useState(false)
+  });
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     if (group) {
@@ -38,65 +38,69 @@ export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroup
         display_name: group.display_name || '',
         visibility: group.visibility,
         description: group.description || '',
-      })
+      });
     }
-  }, [group])
+  }, [group]);
 
   const validateForm = (): boolean => {
-    const newErrors: Record<string, string> = {}
+    const newErrors: Record<string, string> = {};
 
     if (formData.display_name && formData.display_name.length > 100) {
-      newErrors.display_name = t('validation.max_length', { max: 100 })
+      newErrors.display_name = t('common:validation.max_length', { max: 100 });
     }
 
-    setErrors(newErrors)
-    return Object.keys(newErrors).length === 0
-  }
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
+    e.preventDefault();
 
     if (!group || !validateForm()) {
-      return
+      return;
     }
 
-    setIsSubmitting(true)
+    setIsSubmitting(true);
     try {
       const payload: GroupUpdate = {
         display_name: formData.display_name?.trim() || undefined,
         visibility: formData.visibility,
         description: formData.description?.trim() || undefined,
-      }
+      };
 
-      await updateGroup(group.name, payload)
-      toast.success(t('groups.messages.updateSuccess'))
+      await updateGroup(group.name, payload);
+      toast.success(t('groups.messages.updateSuccess'));
 
-      onSuccess()
-      onClose()
+      onSuccess();
+      onClose();
     } catch (error: unknown) {
-      console.error('Failed to update group:', error)
-      const err = error as { response?: { data?: { detail?: string } }; message?: string }
-      const errorMessage =
-        err?.response?.data?.detail || err?.message || 'Failed to update group'
-      toast.error(errorMessage)
+      console.error('Failed to update group:', error);
+      const err = error as { response?: { data?: { detail?: string } }; message?: string };
+      const errorMessage = err?.response?.data?.detail || err?.message || 'Failed to update group';
+      toast.error(errorMessage);
     } finally {
-      setIsSubmitting(false)
+      setIsSubmitting(false);
     }
-  }
+  };
 
   const handleClose = () => {
     if (!isSubmitting) {
-      setErrors({})
-      onClose()
+      setErrors({});
+      onClose();
     }
-  }
+  };
 
   if (!group) {
-    return null
+    return null;
   }
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} title={t('actions.edit_group')} maxWidth="md">
+    <Modal
+      isOpen={isOpen}
+      onClose={handleClose}
+      title={t('common:actions.edit_group')}
+      maxWidth="md"
+    >
       <form onSubmit={handleSubmit} className="space-y-4">
         {/* Name (read-only) */}
         <div>
@@ -111,19 +115,17 @@ export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroup
           <Input
             id="display_name"
             value={formData.display_name}
-            onChange={(e) => {
-              setFormData({ ...formData, display_name: e.target.value })
+            onChange={e => {
+              setFormData({ ...formData, display_name: e.target.value });
               if (errors.display_name) {
-                setErrors({ ...errors, display_name: '' })
+                setErrors({ ...errors, display_name: '' });
               }
             }}
             placeholder="My Group"
             disabled={isSubmitting}
             className={errors.display_name ? 'border-error' : ''}
           />
-          {errors.display_name && (
-            <p className="text-sm text-error mt-1">{errors.display_name}</p>
-          )}
+          {errors.display_name && <p className="text-sm text-error mt-1">{errors.display_name}</p>}
         </div>
 
         {/* Description */}
@@ -132,7 +134,7 @@ export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroup
           <Textarea
             id="description"
             value={formData.description}
-            onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+            onChange={e => setFormData({ ...formData, description: e.target.value })}
             placeholder={t('groupCreate.descriptionPlaceholder')}
             rows={3}
             disabled={isSubmitting}
@@ -142,7 +144,7 @@ export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroup
         {/* Actions */}
         <div className="flex justify-end gap-3 pt-4">
           <Button type="button" variant="outline" onClick={handleClose} disabled={isSubmitting}>
-            {t('actions.cancel')}
+            {t('common:actions.cancel')}
           </Button>
           <Button type="submit" disabled={isSubmitting}>
             {isSubmitting ? (
@@ -167,14 +169,14 @@ export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroup
                     d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                   />
                 </svg>
-                {t('actions.saving')}
+                {t('common:actions.saving')}
               </div>
             ) : (
-              t('actions.save')
+              t('common:actions.save')
             )}
           </Button>
         </div>
       </form>
     </Modal>
-  )
+  );
 }

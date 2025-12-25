@@ -2,82 +2,81 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import { useEffect, useState } from 'react'
-import { useTranslation } from 'react-i18next'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { listGroups } from '@/apis/groups'
-import type { Group } from '@/types/group'
-import { PlusIcon, PencilIcon, TrashIcon, UsersIcon } from 'lucide-react'
-import { toast } from 'sonner'
-import { CreateGroupDialog } from './CreateGroupDialog'
-import { EditGroupDialog } from './EditGroupDialog'
-import { DeleteGroupConfirmDialog } from './DeleteGroupConfirmDialog'
-import { GroupMembersDialog } from './GroupMembersDialog'
-import { useUser } from '@/features/common/UserContext'
+import { useEffect, useState } from 'react';
+import { useTranslation } from '@/hooks/useTranslation';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { listGroups } from '@/apis/groups';
+import type { Group } from '@/types/group';
+import { PlusIcon, PencilIcon, TrashIcon, UsersIcon } from 'lucide-react';
+import { toast } from 'sonner';
+import { CreateGroupDialog } from './CreateGroupDialog';
+import { EditGroupDialog } from './EditGroupDialog';
+import { DeleteGroupConfirmDialog } from './DeleteGroupConfirmDialog';
+import { GroupMembersDialog } from './GroupMembersDialog';
+import { useUser } from '@/features/common/UserContext';
 
 export function GroupManager() {
-  const { t } = useTranslation(['common', 'groups'])
-  const { user } = useUser()
-  const [groups, setGroups] = useState<Group[]>([])
-  const [loading, setLoading] = useState(true)
+  const { t } = useTranslation('groups');
+  const { user } = useUser();
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [loading, setLoading] = useState(true);
 
   // Dialog states
-  const [showCreateDialog, setShowCreateDialog] = useState(false)
-  const [showEditDialog, setShowEditDialog] = useState(false)
-  const [showDeleteDialog, setShowDeleteDialog] = useState(false)
-  const [showMembersDialog, setShowMembersDialog] = useState(false)
-  const [selectedGroup, setSelectedGroup] = useState<Group | null>(null)
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [showEditDialog, setShowEditDialog] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showMembersDialog, setShowMembersDialog] = useState(false);
+  const [selectedGroup, setSelectedGroup] = useState<Group | null>(null);
 
   useEffect(() => {
-    loadGroups()
-  }, [])
+    loadGroups();
+  }, []);
 
   const loadGroups = async () => {
     try {
-      setLoading(true)
-      const response = await listGroups({ page: 1, limit: 100 })
-      setGroups(response.items || [])
+      setLoading(true);
+      const response = await listGroups({ page: 1, limit: 100 });
+      setGroups(response.items || []);
     } catch (error) {
-      console.error('Failed to load groups:', error)
-      toast.error('Failed to load groups')
+      console.error('Failed to load groups:', error);
+      toast.error('Failed to load groups');
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   const handleCreateClick = () => {
-    setShowCreateDialog(true)
-  }
+    setShowCreateDialog(true);
+  };
 
   const handleEditClick = (group: Group) => {
-    setSelectedGroup(group)
-    setShowEditDialog(true)
-  }
+    setSelectedGroup(group);
+    setShowEditDialog(true);
+  };
 
   const handleDeleteClick = (group: Group) => {
-    setSelectedGroup(group)
-    setShowDeleteDialog(true)
-  }
+    setSelectedGroup(group);
+    setShowDeleteDialog(true);
+  };
 
   const handleMembersClick = (group: Group) => {
-    setSelectedGroup(group)
-    setShowMembersDialog(true)
-  }
+    setSelectedGroup(group);
+    setShowMembersDialog(true);
+  };
 
   const handleSuccess = () => {
-    loadGroups()
-  }
-
+    loadGroups();
+  };
 
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-text-secondary">{t('actions.loading')}</div>
+        <div className="text-text-secondary">{t('common:actions.loading')}</div>
       </div>
-    )
+    );
   }
 
   return (
@@ -85,9 +84,7 @@ export function GroupManager() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-semibold text-text-primary">{t('groups.title')}</h2>
-          <p className="text-sm text-text-secondary mt-1">
-            {t('groupManager.subtitle')}
-          </p>
+          <p className="text-sm text-text-secondary mt-1">{t('groupManager.subtitle')}</p>
         </div>
         <Button onClick={handleCreateClick}>
           <PlusIcon className="w-4 h-4 mr-2" />
@@ -123,12 +120,12 @@ export function GroupManager() {
                     {t('groups.members')}
                   </th>
                   <th className="px-4 py-3 text-right text-sm font-medium text-text-primary">
-                    {t('actions.edit')}
+                    {t('common:actions.edit')}
                   </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {groups.map((group) => (
+                {groups.map(group => (
                   <tr key={group.id} className="hover:bg-surface">
                     <td className="px-4 py-3 text-sm font-medium text-text-primary">
                       {group.name}
@@ -198,8 +195,8 @@ export function GroupManager() {
       <EditGroupDialog
         isOpen={showEditDialog}
         onClose={() => {
-          setShowEditDialog(false)
-          setSelectedGroup(null)
+          setShowEditDialog(false);
+          setSelectedGroup(null);
         }}
         onSuccess={handleSuccess}
         group={selectedGroup}
@@ -208,8 +205,8 @@ export function GroupManager() {
       <DeleteGroupConfirmDialog
         isOpen={showDeleteDialog}
         onClose={() => {
-          setShowDeleteDialog(false)
-          setSelectedGroup(null)
+          setShowDeleteDialog(false);
+          setSelectedGroup(null);
         }}
         onSuccess={handleSuccess}
         group={selectedGroup}
@@ -218,13 +215,13 @@ export function GroupManager() {
       <GroupMembersDialog
         isOpen={showMembersDialog}
         onClose={() => {
-          setShowMembersDialog(false)
-          setSelectedGroup(null)
+          setShowMembersDialog(false);
+          setSelectedGroup(null);
         }}
         onSuccess={handleSuccess}
         group={selectedGroup}
         currentUserId={user?.id}
       />
     </div>
-  )
+  );
 }
