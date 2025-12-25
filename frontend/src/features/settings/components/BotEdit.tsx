@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/select';
 import McpConfigImportModal from './McpConfigImportModal';
 import SkillManagementModal from './skills/SkillManagementModal';
+import { GhostSkillList } from './skills';
 import DifyBotConfig from './DifyBotConfig';
 
 import { Bot } from '@/types/api';
@@ -1355,6 +1356,16 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
             </>
           )}
         </div>
+
+        {/* Ghost Skills - Only show for existing bots with ghost_id */}
+        {editingBot?.ghost_id && !isDifyAgent && (
+          <div className="w-full mt-4">
+            <GhostSkillList
+              ghostId={editingBot.ghost_id}
+              ghostName={editingBot.name}
+            />
+          </div>
+        )}
 
         {/* Prompt area - below the config section */}
         {!isDifyAgent && (

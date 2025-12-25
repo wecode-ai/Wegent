@@ -1584,15 +1584,18 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
 
         # Extract skills from ghost
         skills = []
+        ghost_id = None
         if ghost:
             ghost_crd = Ghost.model_validate(ghost.json)
             skills = ghost_crd.spec.skills or []
+            ghost_id = ghost.id
 
         return {
             "id": bot.id,
             "user_id": bot.user_id,
             "name": bot.name,
             "namespace": bot.namespace,  # Namespace for group bots (default: 'default')
+            "ghost_id": ghost_id,  # Ghost ID for skill management
             "shell_name": shell_name,  # The shell name user selected (e.g., 'ClaudeCode', 'my-custom-shell')
             "shell_type": shell_type,  # The actual agent type (e.g., 'ClaudeCode', 'Agno', 'Dify')
             "agent_config": agent_config,
