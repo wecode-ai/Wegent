@@ -15,6 +15,7 @@ import {
   AlertCircle,
   Maximize2,
   X,
+  FileImage,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -48,7 +49,8 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [scale, setScale] = useState(1);
   const [copied, setCopied] = useState(false);
-  const [exported, setExported] = useState(false);
+  const [exportedPng, setExportedPng] = useState(false);
+  const [exportedSvg, setExportedSvg] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   // Generate unique ID for this diagram instance
@@ -276,8 +278,8 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
             a.download = `mermaid-diagram-${Date.now()}.png`;
             a.click();
             URL.revokeObjectURL(url);
-            setExported(true);
-            setTimeout(() => setExported(false), 2000);
+            setExportedPng(true);
+            setTimeout(() => setExportedPng(false), 2000);
           }
         }, 'image/png');
       };
@@ -286,6 +288,45 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
       console.error('Failed to export PNG:', err);
     }
   }, [svgContent, theme]);
+
+  // Export to SVG
+  const exportSvg = useCallback(() => {
+    if (!svgContent) return;
+
+    try {
+      // Create a temporary container to get the SVG element
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = svgContent;
+      const svgElement = tempDiv.querySelector('svg');
+
+      if (!svgElement) {
+        console.error('SVG element not found');
+        return;
+      }
+
+      // Add XML declaration and namespace if not present
+      if (!svgElement.getAttribute('xmlns')) {
+        svgElement.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+      }
+
+      // Serialize SVG to string
+      const svgData = new XMLSerializer().serializeToString(svgElement);
+      const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(svgBlob);
+
+      // Download as SVG
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `mermaid-diagram-${Date.now()}.svg`;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      setExportedSvg(true);
+      setTimeout(() => setExportedSvg(false), 2000);
+    } catch (err) {
+      console.error('Failed to export SVG:', err);
+    }
+  }, [svgContent]);
 
   // Toggle fullscreen modal
   const toggleFullscreen = useCallback(() => {
@@ -406,11 +447,28 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
             onClick={exportPng}
             className={`h-7 w-7 ${inModal ? 'text-white hover:bg-white/10' : 'text-text-secondary hover:text-text-primary'}`}
           >
-            {exported ? <Check className="w-4 h-4 text-green-500" /> : <Download className="w-4 h-4" />}
+            {exportedPng ? <Check className="w-4 h-4 text-green-500" /> : <Download className="w-4 h-4" />}
           </Button>
         </TooltipTrigger>
         <TooltipContent>
-          {exported ? t('mermaid.exportSuccess') || 'Exported' : t('mermaid.exportPng') || 'Export PNG'}
+          {exportedPng ? t('mermaid.exportSuccess') || 'Exported' : t('mermaid.exportPng') || 'Export PNG'}
+        </TooltipContent>
+      </Tooltip>
+
+      {/* Export SVG */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={exportSvg}
+            className={`h-7 w-7 ${inModal ? 'text-white hover:bg-white/10' : 'text-text-secondary hover:text-text-primary'}`}
+          >
+            {exportedSvg ? <Check className="w-4 h-4 text-green-500" /> : <FileImage className="w-4 h-4" />}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>
+          {exportedSvg ? t('mermaid.exportSuccess') || 'Exported' : t('mermaid.exportSvg') || 'Export SVG'}
         </TooltipContent>
       </Tooltip>
 
