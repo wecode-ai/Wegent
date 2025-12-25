@@ -1208,15 +1208,31 @@ export default function ChatArea({
           'action.type': 'retry',
           'task.id': selectedTaskDetail.id.toString(),
           'subtask.id': message.subtaskId.toString(),
+          ...(selectedModel && { 'model.id': selectedModel.name }),
         },
         async () => {
           try {
+            // Use the SAME model logic as sending new messages
+            // When default model is selected, don't pass model_id (use bot's predefined model)
+            const modelId =
+              selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.name;
+            const modelType = modelId ? selectedModel?.type : undefined;
+
             console.log('[ChatArea] Retrying message:', {
               taskId: selectedTaskDetail.id,
               subtaskId: message.subtaskId,
+              selectedModelName: selectedModel?.name,
+              modelId,
+              modelType,
+              forceOverride,
             });
 
-            const result = await retryMessage(selectedTaskDetail.id, message.subtaskId!);
+            const result = await retryMessage(
+              selectedTaskDetail.id,
+              message.subtaskId!,
+              modelId,
+              modelType
+            );
 
             if (result.error) {
               toast({
@@ -1237,7 +1253,16 @@ export default function ChatArea({
         }
       );
     },
-    [retryMessage, selectedTaskDetail?.id, t, toast, traceAction]
+    [
+      retryMessage,
+      selectedTaskDetail?.id,
+      selectedModel?.name,
+      selectedModel?.type,
+      forceOverride,
+      t,
+      toast,
+      traceAction,
+    ]
   );
 
   const [isCancelling, setIsCancelling] = useState(false);

@@ -127,6 +127,13 @@ class ChatRetryPayload(BaseModel):
 
     task_id: int = Field(..., description="Task ID")
     subtask_id: int = Field(..., description="Failed AI subtask ID to retry")
+    # Optional: Model to use for retry (overrides task metadata model if provided)
+    force_override_bot_model: Optional[str] = Field(
+        None, description="Model ID to override bot model for this retry"
+    )
+    force_override_bot_model_type: Optional[str] = Field(
+        None, description="Model type (public/user) for the override model"
+    )
 
 
 class TaskJoinPayload(BaseModel):

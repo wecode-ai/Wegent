@@ -1255,8 +1255,28 @@ class ChatNamespace(socketio.AsyncNamespace):
             supports_direct_chat = _should_use_direct_chat(db, team, user_id)
             logger.info(f"[WS] chat:retry supports_direct_chat={supports_direct_chat}")
 
-            # Extract model override information from task metadata
-            model_id, force_override = self._extract_model_override_info(task)
+            # Determine model to use for retry:
+            # Priority 1: Model from retry payload (current user selection in frontend)
+            # Priority 2: Model from task metadata (original model when task was created)
+            # Priority 3: None (use bot's default model)
+            model_id = None
+            model_type = None
+
+            if payload.force_override_bot_model:
+                # Use model from retry payload (user may have switched model in frontend)
+                model_id = payload.force_override_bot_model
+                model_type = payload.force_override_bot_model_type
+                logger.info(
+                    f"[WS] chat:retry using model from payload: model_id={model_id}, model_type={model_type}"
+                )
+            else:
+                # Fall back to task metadata model (original model)
+                task_model_id, force_override = self._extract_model_override_info(task)
+                if force_override and task_model_id:
+                    model_id = task_model_id
+                    logger.info(
+                        f"[WS] chat:retry using model from task metadata: model_id={model_id}"
+                    )
 
             # Build payload for AI trigger (reuse user message content and model override)
             # If model_id exists, use it; otherwise, use None to let the bot use its default model
@@ -1266,10 +1286,8 @@ class ChatNamespace(socketio.AsyncNamespace):
                 task_id=payload.task_id,
                 team_id=team.id,
                 message=user_subtask.prompt or "",
-                force_override_bot_model=(
-                    model_id if force_override else None
-                ),  # Only override if it was explicitly set
-                force_override_bot_model_type=None,
+                force_override_bot_model=model_id,
+                force_override_bot_model_type=model_type,
                 is_group_chat=False,
             )
 
