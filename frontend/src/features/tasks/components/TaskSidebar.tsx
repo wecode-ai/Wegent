@@ -5,7 +5,7 @@
 'use client';
 
 import './task-list-scrollbar.css';
-import React, { useRef, useEffect, useState, useCallback } from 'react';
+import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
@@ -40,6 +40,7 @@ import { UserFloatingMenu } from '@/features/layout/components/UserFloatingMenu'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Task, TaskType } from '@/types/api';
 import { taskApis } from '@/apis/tasks';
+import { useUser } from '@/features/common/UserContext';
 
 interface TaskSidebarProps {
   isMobileSidebarOpen: boolean;
@@ -59,6 +60,7 @@ export default function TaskSidebar({
   const { t } = useTranslation('common');
   const router = useRouter();
   const { clearAllStreams } = useChatStreamContext();
+  const { user } = useUser();
   const {
     tasks,
     loadMore,
@@ -85,6 +87,58 @@ export default function TaskSidebar({
   // Group chats collapse/expand state
   const [isGroupChatsExpanded, setIsGroupChatsExpanded] = useState(false);
   const maxVisibleGroupChats = 5;
+
+  // Get user's search key preference (default to 'cmd_k')
+  const searchKey = user?.preferences?.search_key || 'cmd_k';
+
+  // Detect if Mac or Windows
+  const isMac = useMemo(() => {
+    if (typeof navigator === 'undefined') return false;
+    return /Mac|iPod|iPhone|iPad/.test(navigator.platform);
+  }, []);
+
+  // Get shortcut display text based on platform and preference
+  const shortcutDisplayText = useMemo(() => {
+    if (searchKey === 'disabled') return '';
+    const key = searchKey === 'cmd_k' ? 'K' : 'F';
+    return isMac ? `⌘${key}` : `Ctrl+${key}`;
+  }, [searchKey, isMac]);
+
+  // Toggle search dialog
+  const toggleSearchDialog = useCallback(() => {
+    setIsSearchDialogOpen(prev => {
+      if (!prev) {
+        // Opening: reset dialog search state
+        setDialogSearchTerm('');
+        setDialogSearchResults([]);
+      } else {
+        // Closing: clear dialog search state
+        setDialogSearchTerm('');
+        setDialogSearchResults([]);
+      }
+      return !prev;
+    });
+  }, []);
+
+  // Global keyboard shortcut listener
+  useEffect(() => {
+    if (searchKey === 'disabled') return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const targetKey = searchKey === 'cmd_k' ? 'k' : 'f';
+      const isModifierPressed = isMac ? e.metaKey : e.ctrlKey;
+
+      if (isModifierPressed && e.key.toLowerCase() === targetKey) {
+        e.preventDefault();
+        toggleSearchDialog();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [searchKey, isMac, toggleSearchDialog]);
 
   // Custom debounce hook
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -518,7 +572,11 @@ export default function TaskSidebar({
               type="text"
               value={dialogSearchTerm}
               onChange={handleDialogSearchChange}
-              placeholder={t('tasks.search_placeholder_chat')}
+              placeholder={
+                shortcutDisplayText
+                  ? t('tasks.search_placeholder_with_shortcut', { shortcut: shortcutDisplayText })
+                  : t('tasks.search_placeholder_chat')
+              }
               className="w-full pl-10 pr-10 py-2 bg-surface border border-border rounded-lg text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent"
             />
             {dialogSearchTerm && (
@@ -763,7 +821,13 @@ export default function TaskSidebar({
                                 </button>
                               </TooltipTrigger>
                               <TooltipContent side="right">
-                                <p>{t('tasks.search_placeholder_chat')}</p>
+                                <p>
+                                  {shortcutDisplayText
+                                    ? t('tasks.search_hint_with_shortcut', {
+                                        shortcut: shortcutDisplayText,
+                                      })
+                                    : t('tasks.search_placeholder_chat')}
+                                </p>
                               </TooltipContent>
                             </Tooltip>
                           </TooltipProvider>

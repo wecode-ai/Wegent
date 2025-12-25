@@ -30,6 +30,7 @@ export default function NotificationSettings() {
   const [enabled, setEnabled] = useState(false);
   const [supported, setSupported] = useState(true);
   const [sendKey, setSendKey] = useState<'enter' | 'cmd_enter'>('enter');
+  const [searchKey, setSearchKey] = useState<'cmd_k' | 'cmd_f' | 'disabled'>('cmd_k');
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
@@ -38,11 +39,14 @@ export default function NotificationSettings() {
   }, []);
 
   useEffect(() => {
-    // Only update sendKey when user data is loaded and has preferences
+    // Only update sendKey and searchKey when user data is loaded and has preferences
     // Use 'enter' as default if send_key is not set
+    // Use 'cmd_k' as default if search_key is not set
     if (user) {
       const userSendKey = user.preferences?.send_key || 'enter';
+      const userSearchKey = user.preferences?.search_key || 'cmd_k';
       setSendKey(userSendKey);
+      setSearchKey(userSearchKey);
     }
   }, [user]);
 
@@ -94,6 +98,32 @@ export default function NotificationSettings() {
       });
       // Revert to previous value
       setSendKey(user?.preferences?.send_key || 'enter');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleSearchKeyChange = async (value: 'cmd_k' | 'cmd_f' | 'disabled') => {
+    setSearchKey(value);
+    setIsSaving(true);
+    try {
+      const preferences: UserPreferences = {
+        send_key: user?.preferences?.send_key || 'enter',
+        search_key: value,
+      };
+      await userApis.updateUser({ preferences });
+      await refresh();
+      toast({
+        title: t('search_key.save_success'),
+      });
+    } catch (error) {
+      console.error('Failed to save search key preference:', error);
+      toast({
+        variant: 'destructive',
+        title: t('search_key.save_failed'),
+      });
+      // Revert to previous value
+      setSearchKey(user?.preferences?.search_key || 'cmd_k');
     } finally {
       setIsSaving(false);
     }
@@ -153,6 +183,39 @@ export default function NotificationSettings() {
             <RadioGroupItem value="cmd_enter" id="send-key-cmd-enter" />
             <Label htmlFor="send-key-cmd-enter" className="text-sm cursor-pointer">
               {t('send_key.option_cmd_enter')}
+            </Label>
+          </div>
+        </RadioGroup>
+      </div>
+
+      {/* Search Key Shortcut Setting */}
+      <div className="p-4 bg-base border border-border rounded-lg">
+        <div className="mb-3">
+          <h3 className="text-sm font-medium text-text-primary">{t('search_key.title')}</h3>
+          <p className="text-xs text-text-muted mt-1">{t('search_key.description')}</p>
+        </div>
+        <RadioGroup
+          value={searchKey}
+          onValueChange={value => handleSearchKeyChange(value as 'cmd_k' | 'cmd_f' | 'disabled')}
+          disabled={isSaving}
+          className="space-y-2"
+        >
+          <div className="flex items-center space-x-2">
+            <RadioGroupItem value="cmd_k" id="search-key-cmd-k" />
+            <Label htmlFor="search-key-cmd-k" className="text-sm cursor-pointer">
+              {t('search_key.option_cmd_k')}
+            </Label>
+          </div>
+          <div className="flex items-center space-x-2">
+            <RadioGroupItem value="cmd_f" id="search-key-cmd-f" />
+            <Label htmlFor="search-key-cmd-f" className="text-sm cursor-pointer">
+              {t('search_key.option_cmd_f')}
+            </Label>
+          </div>
+          <div className="flex items-center space-x-2">
+            <RadioGroupItem value="disabled" id="search-key-disabled" />
+            <Label htmlFor="search-key-disabled" className="text-sm cursor-pointer">
+              {t('search_key.option_disabled')}
             </Label>
           </div>
         </RadioGroup>
