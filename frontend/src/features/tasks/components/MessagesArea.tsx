@@ -30,7 +30,12 @@ import { TaskMembersPanel } from './group-chat';
 import { useUser } from '@/features/common/UserContext';
 import { useUnifiedMessages, type DisplayMessage } from '../hooks/useUnifiedMessages';
 import { useTraceAction } from '@/hooks/useTraceAction';
-import { correctionApis, CorrectionResponse } from '@/apis/correction';
+import {
+  correctionApis,
+  CorrectionResponse,
+  extractCorrectionFromResult,
+  correctionDataToResponse,
+} from '@/apis/correction';
 import CorrectionResultPanel from './CorrectionResultPanel';
 
 /**
@@ -160,6 +165,36 @@ export default function MessagesArea({
     new Map()
   );
   const [correctionLoading, setCorrectionLoading] = useState<Set<number>>(new Set());
+
+  // Load persisted correction data from subtask.result when task detail changes
+  useEffect(() => {
+    if (!selectedTaskDetail?.subtasks) return;
+
+    const savedResults = new Map<number, CorrectionResponse>();
+
+    selectedTaskDetail.subtasks.forEach(subtask => {
+      // Only check assistant (AI) messages
+      if (subtask.role !== 'ASSISTANT') return;
+
+      // Extract correction data from subtask.result.correction
+      const correction = extractCorrectionFromResult(subtask.result);
+      if (correction) {
+        savedResults.set(subtask.id, correctionDataToResponse(correction, subtask.id));
+      }
+    });
+
+    // Only update if we found saved corrections
+    if (savedResults.size > 0) {
+      setCorrectionResults(prev => {
+        // Merge with existing results (API results take precedence)
+        const merged = new Map(savedResults);
+        prev.forEach((value, key) => {
+          merged.set(key, value);
+        });
+        return merged;
+      });
+    }
+  }, [selectedTaskDetail?.subtasks]);
 
   // Trigger correction when AI message completes
   useEffect(() => {

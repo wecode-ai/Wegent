@@ -1754,8 +1754,10 @@ async def correct_response(
 
     This endpoint:
     1. Validates the correction model exists and is accessible
-    2. Sends the original Q&A to the correction model for evaluation
-    3. Returns scores, corrections, summary, and improved answer
+    2. Checks if correction already exists in subtask.result (returns cached)
+    3. If not cached, sends the original Q&A to the correction model for evaluation
+    4. Saves correction result to subtask.result.correction for persistence
+    5. Returns scores, corrections, summary, and improved answer
 
     Returns:
         {
@@ -1767,6 +1769,9 @@ async def correct_response(
             "is_correct": bool
         }
     """
+    from datetime import datetime
+
+    from app.models.subtask import Subtask, SubtaskRole
     from app.services.correction_service import correction_service
 
     # Validate that the task belongs to the current user
@@ -1797,6 +1802,35 @@ async def correct_response(
 
         if not member:
             raise HTTPException(status_code=404, detail="Task not found")
+
+    # Get the subtask (AI message) to check for existing correction
+    subtask = (
+        db.query(Subtask)
+        .filter(
+            Subtask.id == request.message_id,
+            Subtask.task_id == request.task_id,
+            Subtask.role == SubtaskRole.ASSISTANT,
+        )
+        .first()
+    )
+
+    if not subtask:
+        raise HTTPException(status_code=404, detail="AI message not found")
+
+    # Check for existing correction in result
+    result = subtask.result or {}
+    existing_correction = result.get("correction") if isinstance(result, dict) else None
+
+    if existing_correction:
+        # Return cached result
+        return {
+            "message_id": subtask.id,
+            "scores": existing_correction.get("scores", {}),
+            "corrections": existing_correction.get("corrections", []),
+            "summary": existing_correction.get("summary", ""),
+            "improved_answer": existing_correction.get("improved_answer", ""),
+            "is_correct": existing_correction.get("is_correct", False),
+        }
     # Get the correction model config
     # First check if it's a public model (user_id=0 in kinds table)
     public_model = (
@@ -1864,19 +1898,60 @@ async def correct_response(
 
     try:
         # Call correction service
-        result = await correction_service.evaluate_response(
+        llm_result = await correction_service.evaluate_response(
             original_question=request.original_question,
             original_answer=request.original_answer,
             model_config=model_config,
         )
 
+        # Get model display name for persistence
+        model_display_name = request.correction_model_id
+        if public_model and public_model.json:
+            model_display_name = (
+                public_model.json.get("spec", {})
+                .get("modelConfig", {})
+                .get("env", {})
+                .get("model_id", request.correction_model_id)
+            )
+        elif user_model and user_model.json:
+            model_display_name = (
+                user_model.json.get("spec", {})
+                .get("modelConfig", {})
+                .get("env", {})
+                .get("model_id", request.correction_model_id)
+            )
+
+        # Save correction to subtask.result for persistence
+        from sqlalchemy.orm.attributes import flag_modified
+
+        subtask_result = subtask.result or {}
+        if not isinstance(subtask_result, dict):
+            subtask_result = {}
+
+        subtask_result["correction"] = {
+            "model_id": request.correction_model_id,
+            "model_name": model_display_name,
+            "scores": llm_result["scores"],
+            "corrections": llm_result["corrections"],
+            "summary": llm_result["summary"],
+            "improved_answer": llm_result["improved_answer"],
+            "is_correct": llm_result["is_correct"],
+            "corrected_at": datetime.utcnow().isoformat() + "Z",
+        }
+
+        subtask.result = subtask_result
+        flag_modified(subtask, "result")
+        db.commit()
+
+        logger.info(f"Saved correction result for subtask {subtask.id} to database")
+
         return {
             "message_id": request.message_id,
-            "scores": result["scores"],
-            "corrections": result["corrections"],
-            "summary": result["summary"],
-            "improved_answer": result["improved_answer"],
-            "is_correct": result["is_correct"],
+            "scores": llm_result["scores"],
+            "corrections": llm_result["corrections"],
+            "summary": llm_result["summary"],
+            "improved_answer": llm_result["improved_answer"],
+            "is_correct": llm_result["is_correct"],
         }
 
     except Exception as e:
@@ -1885,3 +1960,71 @@ async def correct_response(
             status_code=500,
             detail=f"Correction evaluation failed: {str(e)}",
         )
+
+
+@router.delete("/subtasks/{subtask_id}/correction")
+async def delete_correction(
+    subtask_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Delete correction data from a subtask.
+
+    This allows users to re-run correction with a different model.
+    The correction data is stored in subtask.result.correction.
+    """
+    from sqlalchemy.orm.attributes import flag_modified
+
+    # Get the subtask
+    subtask = (
+        db.query(Subtask)
+        .filter(
+            Subtask.id == subtask_id,
+            Subtask.role == SubtaskRole.ASSISTANT,
+        )
+        .first()
+    )
+
+    if not subtask:
+        raise HTTPException(status_code=404, detail="Subtask not found")
+
+    # Verify user has access to the task
+    task = (
+        db.query(Kind)
+        .filter(
+            Kind.id == subtask.task_id,
+            Kind.user_id == current_user.id,
+            Kind.kind == "Task",
+            Kind.is_active == True,
+        )
+        .first()
+    )
+
+    if not task:
+        # Check if user is a group chat member
+        from app.models.task_member import MemberStatus, TaskMember
+
+        member = (
+            db.query(TaskMember)
+            .filter(
+                TaskMember.task_id == subtask.task_id,
+                TaskMember.user_id == current_user.id,
+                TaskMember.status == MemberStatus.ACTIVE,
+            )
+            .first()
+        )
+
+        if not member:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+    # Remove correction from result
+    result = subtask.result or {}
+    if isinstance(result, dict) and "correction" in result:
+        del result["correction"]
+        subtask.result = result
+        flag_modified(subtask, "result")
+        db.commit()
+        logger.info(f"Deleted correction for subtask {subtask_id}")
+
+    return {"message": "Correction deleted"}

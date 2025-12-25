@@ -251,11 +251,32 @@ export interface TaskDetail {
   member_count?: number; // Number of active members in the group
 }
 
+/** Correction data stored in subtask.result.correction */
+export interface CorrectionData {
+  model_id: string;
+  model_name?: string;
+  scores: {
+    accuracy: number;
+    logic: number;
+    completeness: number;
+  };
+  corrections: Array<{
+    issue: string;
+    suggestion: string;
+  }>;
+  summary: string;
+  improved_answer: string;
+  is_correct: boolean;
+  corrected_at?: string;
+}
+
 /** Subtask result structure */
 export interface SubtaskResult {
   thinking?: unknown[];
   value?: string | { workbench?: WorkbenchData };
   workbench?: WorkbenchData;
+  /** Persisted correction data from AI correction mode */
+  correction?: CorrectionData;
   [key: string]: unknown;
 }
 

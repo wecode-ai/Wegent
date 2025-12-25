@@ -2,31 +2,31 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import React, { useState, useEffect } from 'react'
-import { CheckCircle } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { useTranslation } from '@/hooks/useTranslation'
-import { cn } from '@/lib/utils'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import React, { useState, useEffect } from 'react';
+import { CheckCircle } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { useTranslation } from '@/hooks/useTranslation';
+import { cn } from '@/lib/utils';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogDescription,
-} from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { modelApis, UnifiedModel } from '@/apis/models'
-import { correctionApis, CorrectionModeState } from '@/apis/correction'
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { modelApis, UnifiedModel } from '@/apis/models';
+import { correctionApis, CorrectionModeState } from '@/apis/correction';
 
 interface CorrectionModeToggleProps {
-  enabled: boolean
-  onToggle: (enabled: boolean, modelId?: string, modelName?: string) => void
-  disabled?: boolean
-  correctionModelName?: string | null
+  enabled: boolean;
+  onToggle: (enabled: boolean, modelId?: string, modelName?: string) => void;
+  disabled?: boolean;
+  correctionModelName?: string | null;
 }
 
 export default function CorrectionModeToggle({
@@ -35,80 +35,80 @@ export default function CorrectionModeToggle({
   disabled = false,
   correctionModelName,
 }: CorrectionModeToggleProps) {
-  const { t } = useTranslation('chat')
-  const [showModelSelector, setShowModelSelector] = useState(false)
-  const [models, setModels] = useState<UnifiedModel[]>([])
-  const [isLoading, setIsLoading] = useState(false)
-  const [searchQuery, setSearchQuery] = useState('')
+  const { t } = useTranslation('chat');
+  const [showModelSelector, setShowModelSelector] = useState(false);
+  const [models, setModels] = useState<UnifiedModel[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Load models when dialog opens
   useEffect(() => {
     if (showModelSelector) {
-      loadModels()
+      loadModels();
     }
-  }, [showModelSelector])
+  }, [showModelSelector]);
 
   // Restore state from localStorage on mount
   useEffect(() => {
-    const savedState = correctionApis.getCorrectionModeState()
+    const savedState = correctionApis.getCorrectionModeState();
     if (savedState.enabled && savedState.correctionModelId) {
-      onToggle(true, savedState.correctionModelId, savedState.correctionModelName || undefined)
+      onToggle(true, savedState.correctionModelId, savedState.correctionModelName || undefined);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, []);
 
   const loadModels = async () => {
-    setIsLoading(true)
+    setIsLoading(true);
     try {
       // Get all unified models (both public and user-defined) for LLM type
-      const response = await modelApis.getUnifiedModels(undefined, false, 'all', undefined, 'llm')
-      setModels(response.data || [])
+      const response = await modelApis.getUnifiedModels(undefined, false, 'all', undefined, 'llm');
+      setModels(response.data || []);
     } catch (error) {
-      console.error('Failed to load models:', error)
+      console.error('Failed to load models:', error);
     } finally {
-      setIsLoading(false)
+      setIsLoading(false);
     }
-  }
+  };
 
   const handleToggle = () => {
     if (!enabled) {
       // Opening: show model selector
-      setShowModelSelector(true)
+      setShowModelSelector(true);
     } else {
       // Closing: disable correction mode
-      onToggle(false)
-      correctionApis.clearCorrectionModeState()
+      onToggle(false);
+      correctionApis.clearCorrectionModeState();
     }
-  }
+  };
 
   const handleModelSelect = (model: UnifiedModel) => {
-    const displayName = model.displayName || model.name
-    onToggle(true, model.name, displayName)
+    const displayName = model.displayName || model.name;
+    onToggle(true, model.name, displayName);
 
     // Save to localStorage
     const state: CorrectionModeState = {
       enabled: true,
       correctionModelId: model.name,
       correctionModelName: displayName,
-    }
-    correctionApis.saveCorrectionModeState(state)
+    };
+    correctionApis.saveCorrectionModeState(state);
 
-    setShowModelSelector(false)
-    setSearchQuery('')
-  }
+    setShowModelSelector(false);
+    setSearchQuery('');
+  };
 
   const handleDialogClose = () => {
-    setShowModelSelector(false)
-    setSearchQuery('')
-  }
+    setShowModelSelector(false);
+    setSearchQuery('');
+  };
 
   // Filter models by search query
   const filteredModels = models.filter(model => {
-    const searchLower = searchQuery.toLowerCase()
-    const nameMatch = model.name.toLowerCase().includes(searchLower)
-    const displayNameMatch = model.displayName?.toLowerCase().includes(searchLower)
-    return nameMatch || displayNameMatch
-  })
+    const searchLower = searchQuery.toLowerCase();
+    const nameMatch = model.name.toLowerCase().includes(searchLower);
+    const displayNameMatch = model.displayName?.toLowerCase().includes(searchLower);
+    return nameMatch || displayNameMatch;
+  });
 
   return (
     <>
@@ -182,7 +182,9 @@ export default function CorrectionModeToggle({
                           <span className="text-xs text-text-muted">{model.name}</span>
                         )}
                         <span className="text-xs text-text-muted capitalize">
-                          {model.type === 'public' ? t('correction.public_model') : t('correction.user_model')}
+                          {model.type === 'public'
+                            ? t('correction.public_model')
+                            : t('correction.user_model')}
                         </span>
                       </div>
                     </Button>
@@ -194,5 +196,5 @@ export default function CorrectionModeToggle({
         </DialogContent>
       </Dialog>
     </>
-  )
+  );
 }
