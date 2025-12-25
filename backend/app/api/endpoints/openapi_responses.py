@@ -9,7 +9,7 @@ Compatible with OpenAI Responses API format.
 
 import logging
 from datetime import datetime
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+from typing import Any, AsyncGenerator, Dict, List, NamedTuple, Optional, Union
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core import security
 from app.models.kind import Kind
-from app.models.subtask import Subtask, SubtaskRole
+from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
 from app.models.user import User
 from app.schemas.kind import Bot, Task, Team
 from app.schemas.openapi_response import (
@@ -291,43 +291,44 @@ def _check_team_supports_direct_chat(db: Session, team: Kind, user_id: int) -> b
     return True
 
 
-async def _create_streaming_response(
+class ChatSessionSetup(NamedTuple):
+    """Result of chat session setup."""
+
+    task: Kind
+    task_id: int
+    assistant_subtask: Subtask
+    existing_subtasks: List[Subtask]
+    model_config: Any
+    system_prompt: str
+
+
+def _setup_chat_session(
     db: Session,
     user: User,
     team: Kind,
     model_info: Dict[str, Any],
-    request_body: ResponseCreateInput,
     input_text: str,
     tool_settings: Dict[str, Any],
     task_id: Optional[int] = None,
-) -> StreamingResponse:
+) -> ChatSessionSetup:
     """
-    Create a streaming response for Chat Shell type teams.
-
-    This function creates task and subtask records similar to chat_namespace.py,
-    then streams the LLM response while updating subtask status.
-
-    Uses chat_v2 services (ChatConfigBuilder, session_manager, db_handler) instead
-    of deprecated chat services.
+    Set up chat session: build config, create task and subtasks.
 
     Args:
         db: Database session
         user: Current user
         team: Team Kind object
         model_info: Parsed model info
-        request_body: Original request body
-        input_text: Extracted input text
-        tool_settings: Parsed tool settings
-        task_id: Optional existing task ID for follow-up conversations
+        input_text: User input text
+        tool_settings: Tool settings
+        task_id: Optional existing task ID
 
     Returns:
-        StreamingResponse with SSE events
+        ChatSessionSetup with task, subtasks, and config
     """
-    from app.models.subtask import SenderType, SubtaskStatus
     from app.services.chat_v2.config import ChatConfigBuilder
-    from app.services.openapi.streaming import streaming_service
 
-    # Use ChatConfigBuilder to prepare configuration (chat_v2)
+    # Build chat configuration
     config_builder = ChatConfigBuilder(
         db=db,
         team=team,
@@ -335,474 +336,6 @@ async def _create_streaming_response(
         user_name=user.user_name,
     )
 
-    # Build chat configuration with tool settings
-    # enable_deep_thinking is extracted from tools parameter
-    enable_deep_thinking = tool_settings.get("enable_deep_thinking", False)
-    try:
-        chat_config = config_builder.build(
-            override_model_name=model_info.get("model_id"),
-            force_override=model_info.get("model_id") is not None,
-            enable_clarification=False,  # Not supported in OpenAPI yet
-            enable_deep_thinking=enable_deep_thinking,
-            task_id=task_id or 0,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-
-    # Extract configuration from ChatConfig
-    model_config = chat_config.model_config
-    system_prompt = chat_config.system_prompt
-
-    # Get bot IDs from team members
-    team_crd = Team.model_validate(team.json)
-    if not team_crd.spec.members:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Team has no members configured",
-        )
-
-    bot_ids = []
-    for member in team_crd.spec.members:
-        member_bot = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == team.user_id,
-                Kind.kind == "Bot",
-                Kind.name == member.botRef.name,
-                Kind.namespace == member.botRef.namespace,
-                Kind.is_active == True,
-            )
-            .first()
-        )
-        if member_bot:
-            bot_ids.append(member_bot.id)
-
-    if not bot_ids:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No valid bots found in team",
-        )
-
-    # Create or get task
-    task = None
-    if task_id:
-        task = (
-            db.query(Kind)
-            .filter(
-                Kind.id == task_id,
-                Kind.user_id == user.id,
-                Kind.kind == "Task",
-                Kind.is_active == True,
-            )
-            .first()
-        )
-        if not task:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Task {task_id} not found",
-            )
-
-    if not task:
-        # Create new task
-        from app.services.adapters.task_kinds import task_kinds_service
-
-        new_task_id = task_kinds_service.create_task_id(db, user.id)
-
-        if not task_kinds_service.validate_task_id(db, new_task_id):
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to create task ID",
-            )
-
-        # Create workspace
-        workspace_name = f"workspace-{new_task_id}"
-        workspace_json = {
-            "kind": "Workspace",
-            "spec": {"repository": {}},
-            "status": {"state": "Available"},
-            "metadata": {"name": workspace_name, "namespace": "default"},
-            "apiVersion": "agent.wecode.io/v1",
-        }
-
-        workspace = Kind(
-            user_id=user.id,
-            kind="Workspace",
-            name=workspace_name,
-            namespace="default",
-            json=workspace_json,
-            is_active=True,
-        )
-        db.add(workspace)
-
-        # Create task
-        title = input_text[:50] + "..." if len(input_text) > 50 else input_text
-        task_json = {
-            "kind": "Task",
-            "spec": {
-                "title": title,
-                "prompt": input_text,
-                "teamRef": {"name": team.name, "namespace": team.namespace},
-                "workspaceRef": {"name": workspace_name, "namespace": "default"},
-                "is_group_chat": False,
-            },
-            "status": {
-                "state": "Available",
-                "status": "PENDING",
-                "progress": 0,
-                "result": None,
-                "errorMessage": "",
-                "createdAt": datetime.now().isoformat(),
-                "updatedAt": datetime.now().isoformat(),
-                "completedAt": None,
-            },
-            "metadata": {
-                "name": f"task-{new_task_id}",
-                "namespace": "default",
-                "labels": {
-                    "type": "online",
-                    "taskType": "chat",
-                    "autoDeleteExecutor": "false",
-                    "source": "chat_shell",  # Use chat_shell to enable session_manager cancel
-                    **(
-                        {"modelId": model_info.get("model_id")}
-                        if model_info.get("model_id")
-                        else {}
-                    ),
-                    **(
-                        {"forceOverrideBotModel": "true"}
-                        if model_info.get("model_id")
-                        else {}
-                    ),
-                },
-            },
-            "apiVersion": "agent.wecode.io/v1",
-        }
-
-        task = Kind(
-            id=new_task_id,
-            user_id=user.id,
-            kind="Task",
-            name=f"task-{new_task_id}",
-            namespace="default",
-            json=task_json,
-            is_active=True,
-        )
-        db.add(task)
-        task_id = new_task_id
-
-    # Get existing subtasks to determine message_id
-    existing_subtasks = (
-        db.query(Subtask)
-        .filter(Subtask.task_id == task_id, Subtask.user_id == user.id)
-        .order_by(Subtask.message_id.desc())
-        .all()
-    )
-
-    next_message_id = 1
-    parent_id = 0
-    if existing_subtasks:
-        next_message_id = existing_subtasks[0].message_id + 1
-        parent_id = existing_subtasks[0].message_id
-
-    # Create USER subtask
-    user_subtask = Subtask(
-        user_id=user.id,
-        task_id=task_id,
-        team_id=team.id,
-        title="User message",
-        bot_ids=bot_ids,
-        role=SubtaskRole.USER,
-        executor_namespace="",
-        executor_name="",
-        prompt=input_text,
-        status=SubtaskStatus.COMPLETED,
-        progress=100,
-        message_id=next_message_id,
-        parent_id=parent_id,
-        error_message="",
-        completed_at=datetime.now(),
-        result=None,
-        sender_type=SenderType.USER,
-        sender_user_id=user.id,
-    )
-    db.add(user_subtask)
-
-    # Create ASSISTANT subtask (will be updated during streaming)
-    assistant_subtask = Subtask(
-        user_id=user.id,
-        task_id=task_id,
-        team_id=team.id,
-        title="Assistant response",
-        bot_ids=bot_ids,
-        role=SubtaskRole.ASSISTANT,
-        executor_namespace="",
-        executor_name="",
-        prompt="",
-        status=SubtaskStatus.PENDING,
-        progress=0,
-        message_id=next_message_id + 1,
-        parent_id=next_message_id,
-        error_message="",
-        result=None,
-        completed_at=datetime.now(),  # Placeholder
-        sender_type=SenderType.TEAM,
-        sender_user_id=0,
-    )
-    db.add(assistant_subtask)
-
-    db.commit()
-    db.refresh(task)
-    db.refresh(user_subtask)
-    db.refresh(assistant_subtask)
-
-    # Generate response ID
-    response_id = f"resp_{task_id}"
-    created_at = int(datetime.now().timestamp())
-
-    # Store IDs for use in the generator
-    assistant_subtask_id = assistant_subtask.id
-    task_kind_id = task_id
-
-    async def raw_chat_stream() -> AsyncGenerator[str, None]:
-        """Generate raw text chunks from the LLM and update subtask."""
-        import asyncio
-
-        from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-
-        from app.api.dependencies import get_db as get_db_session
-        from app.core.config import settings
-        from app.services.chat_v2.messages import MessageConverter
-        from app.services.chat_v2.models import LangChainModelFactory
-        from app.services.chat_v2.storage import db_handler, session_manager
-
-        accumulated_content = ""
-
-        # Get a new db session for the generator
-        db_gen = next(get_db_session())
-
-        try:
-            # Register stream for cancellation support
-            cancel_event = await session_manager.register_stream(assistant_subtask_id)
-
-            # Update assistant subtask status to RUNNING
-            await db_handler.update_subtask_status(assistant_subtask_id, "RUNNING")
-
-            # Build messages (include chat history if task has previous messages)
-            history = []
-            if existing_subtasks:
-                # Build history from existing subtasks
-                sorted_subtasks = sorted(existing_subtasks, key=lambda s: s.message_id)
-                for st in sorted_subtasks:
-                    if st.status == SubtaskStatus.COMPLETED:
-                        if st.role == SubtaskRole.USER and st.prompt:
-                            history.append({"role": "user", "content": st.prompt})
-                        elif st.role == SubtaskRole.ASSISTANT and st.result:
-                            if isinstance(st.result, dict):
-                                content = st.result.get("value", "")
-                                if content:
-                                    history.append(
-                                        {"role": "assistant", "content": content}
-                                    )
-
-            messages = MessageConverter.build_messages(
-                history=history,
-                current_message=input_text,
-                system_prompt=system_prompt,
-            )
-
-            # Create LangChain model from config
-            try:
-                llm = LangChainModelFactory.create_from_config(
-                    model_config, streaming=True
-                )
-            except Exception as e:
-                logger.error(f"Failed to create LLM from model config: {e}")
-                await db_handler.update_subtask_status(
-                    assistant_subtask_id, "FAILED", error=f"Failed to create LLM: {e}"
-                )
-                return
-
-            # Stream response with periodic saves using LangChain
-            last_redis_save = asyncio.get_event_loop().time()
-            last_db_save = asyncio.get_event_loop().time()
-            redis_save_interval = getattr(
-                settings, "STREAMING_REDIS_SAVE_INTERVAL", 1.0
-            )
-            db_save_interval = getattr(settings, "STREAMING_DB_SAVE_INTERVAL", 3.0)
-
-            # Convert messages to LangChain format
-            langchain_messages = []
-            for msg in messages:
-                role = msg.get("role", "")
-                content = msg.get("content", "")
-                if role == "system":
-                    langchain_messages.append(SystemMessage(content=content))
-                elif role == "user":
-                    langchain_messages.append(HumanMessage(content=content))
-                elif role == "assistant":
-                    langchain_messages.append(AIMessage(content=content))
-
-            # Use LangChain streaming
-            async for chunk in llm.astream(langchain_messages):
-                # Check for cancellation
-                if cancel_event.is_set() or await session_manager.is_cancelled(
-                    assistant_subtask_id
-                ):
-                    logger.info(f"Stream cancelled for subtask {assistant_subtask_id}")
-                    # Save partial content before breaking
-                    if accumulated_content:
-                        await session_manager.save_streaming_content(
-                            assistant_subtask_id, accumulated_content
-                        )
-                        await db_handler.save_partial_response(
-                            assistant_subtask_id, accumulated_content
-                        )
-                    break
-
-                # Extract content from LangChain chunk
-                if hasattr(chunk, "content") and chunk.content:
-                    accumulated_content += chunk.content
-                    yield chunk.content
-
-                    # Save to Redis periodically
-                    current_time = asyncio.get_event_loop().time()
-                    if current_time - last_redis_save >= redis_save_interval:
-                        await session_manager.save_streaming_content(
-                            assistant_subtask_id, accumulated_content
-                        )
-                        last_redis_save = current_time
-
-                    # Save to DB periodically
-                    if current_time - last_db_save >= db_save_interval:
-                        await db_handler.save_partial_response(
-                            assistant_subtask_id, accumulated_content
-                        )
-                        last_db_save = current_time
-
-            # Stream completed (not cancelled)
-            if not cancel_event.is_set() and not await session_manager.is_cancelled(
-                assistant_subtask_id
-            ):
-                result = {"value": accumulated_content}
-
-                # Save final content
-                await session_manager.save_streaming_content(
-                    assistant_subtask_id, accumulated_content
-                )
-
-                # Save chat history
-                await session_manager.append_user_and_assistant_messages(
-                    task_kind_id, input_text, accumulated_content
-                )
-
-                # Update subtask to completed
-                await db_handler.update_subtask_status(
-                    assistant_subtask_id, "COMPLETED", result=result
-                )
-
-                # Update task status
-                task_kind = db_gen.query(Kind).filter(Kind.id == task_kind_id).first()
-                if task_kind:
-                    task_crd = Task.model_validate(task_kind.json)
-                    if task_crd.status:
-                        task_crd.status.status = "COMPLETED"
-                        task_crd.status.updatedAt = datetime.now()
-                        task_crd.status.completedAt = datetime.now()
-                        task_kind.json = task_crd.model_dump(mode="json")
-                        from sqlalchemy.orm.attributes import flag_modified
-
-                        flag_modified(task_kind, "json")
-                        db_gen.commit()
-
-        except Exception as e:
-            logger.exception(f"Error in raw_chat_stream: {e}")
-            # Update subtask as failed
-            try:
-                await db_handler.update_subtask_status(
-                    assistant_subtask_id, "FAILED", error=str(e)
-                )
-            except Exception:
-                pass
-            raise
-        finally:
-            # Cleanup stream registration
-            await session_manager.unregister_stream(assistant_subtask_id)
-            await session_manager.delete_streaming_content(assistant_subtask_id)
-            db_gen.close()
-
-    # Use streaming service to convert to OpenAI format
-    async def generate():
-        async for event in streaming_service.create_streaming_response(
-            response_id=response_id,
-            model_string=request_body.model,
-            chat_stream=raw_chat_stream(),
-            created_at=created_at,
-            previous_response_id=request_body.previous_response_id,
-        ):
-            yield event
-
-    return StreamingResponse(
-        generate(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
-
-async def _create_sync_response(
-    db: Session,
-    user: User,
-    team: Kind,
-    model_info: Dict[str, Any],
-    request_body: ResponseCreateInput,
-    input_text: str,
-    tool_settings: Dict[str, Any],
-    task_id: Optional[int] = None,
-) -> ResponseObject:
-    """
-    Create a synchronous (blocking) response for Chat Shell type teams.
-
-    This function creates task and subtask records, waits for the LLM to complete,
-    and returns the full response. This is the non-streaming version that blocks
-    until the model finishes generating.
-
-    Uses chat_v2 services (ChatConfigBuilder, session_manager, db_handler).
-
-    Args:
-        db: Database session
-        user: Current user
-        team: Team Kind object
-        model_info: Parsed model info
-        request_body: Original request body
-        input_text: Extracted input text
-        tool_settings: Parsed tool settings
-        task_id: Optional existing task ID for follow-up conversations
-
-    Returns:
-        ResponseObject with completed status and output
-    """
-    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-    from sqlalchemy.orm.attributes import flag_modified
-
-    from app.models.subtask import SenderType, SubtaskStatus
-    from app.schemas.openapi_response import OutputMessage, OutputTextContent
-    from app.services.chat_v2.config import ChatConfigBuilder
-    from app.services.chat_v2.messages import MessageConverter
-    from app.services.chat_v2.models import LangChainModelFactory
-    from app.services.chat_v2.storage import db_handler, session_manager
-
-    # Use ChatConfigBuilder to prepare configuration (chat_v2)
-    config_builder = ChatConfigBuilder(
-        db=db,
-        team=team,
-        user_id=user.id,
-        user_name=user.user_name,
-    )
-
-    # Build chat configuration with tool settings
     enable_deep_thinking = tool_settings.get("enable_deep_thinking", False)
     try:
         chat_config = config_builder.build(
@@ -815,7 +348,6 @@ async def _create_sync_response(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
-    # Extract configuration from ChatConfig
     model_config = chat_config.model_config
     system_prompt = chat_config.system_prompt
 
@@ -869,9 +401,6 @@ async def _create_sync_response(
             )
 
     if not task:
-        # Create new task
-        from app.services.adapters.task_kinds import task_kinds_service
-
         new_task_id = task_kinds_service.create_task_id(db, user.id)
 
         if not task_kinds_service.validate_task_id(db, new_task_id):
@@ -956,7 +485,7 @@ async def _create_sync_response(
         db.add(task)
         task_id = new_task_id
 
-    # Get existing subtasks to determine message_id
+    # Get existing subtasks
     existing_subtasks = (
         db.query(Subtask)
         .filter(Subtask.task_id == task_id, Subtask.user_id == user.id)
@@ -1021,44 +550,285 @@ async def _create_sync_response(
     db.refresh(user_subtask)
     db.refresh(assistant_subtask)
 
-    # Store IDs
-    response_id = f"resp_{task_id}"
+    return ChatSessionSetup(
+        task=task,
+        task_id=task_id,
+        assistant_subtask=assistant_subtask,
+        existing_subtasks=existing_subtasks,
+        model_config=model_config,
+        system_prompt=system_prompt,
+    )
+
+
+def _build_chat_history(existing_subtasks: List[Subtask]) -> List[Dict[str, str]]:
+    """Build chat history from existing subtasks."""
+    history = []
+    sorted_subtasks = sorted(existing_subtasks, key=lambda s: s.message_id)
+    for st in sorted_subtasks:
+        if st.status == SubtaskStatus.COMPLETED:
+            if st.role == SubtaskRole.USER and st.prompt:
+                history.append({"role": "user", "content": st.prompt})
+            elif st.role == SubtaskRole.ASSISTANT and st.result:
+                if isinstance(st.result, dict):
+                    content = st.result.get("value", "")
+                    if content:
+                        history.append({"role": "assistant", "content": content})
+    return history
+
+
+async def _create_streaming_response(
+    db: Session,
+    user: User,
+    team: Kind,
+    model_info: Dict[str, Any],
+    request_body: ResponseCreateInput,
+    input_text: str,
+    tool_settings: Dict[str, Any],
+    task_id: Optional[int] = None,
+) -> StreamingResponse:
+    """
+    Create a streaming response for Chat Shell type teams.
+
+    Args:
+        db: Database session
+        user: Current user
+        team: Team Kind object
+        model_info: Parsed model info
+        request_body: Original request body
+        input_text: Extracted input text
+        tool_settings: Parsed tool settings
+        task_id: Optional existing task ID for follow-up conversations
+
+    Returns:
+        StreamingResponse with SSE events
+    """
+    from app.services.openapi.streaming import streaming_service
+
+    # Set up chat session (config, task, subtasks)
+    setup = _setup_chat_session(
+        db, user, team, model_info, input_text, tool_settings, task_id
+    )
+
+    response_id = f"resp_{setup.task_id}"
     created_at = int(datetime.now().timestamp())
-    assistant_subtask_id = assistant_subtask.id
+    assistant_subtask_id = setup.assistant_subtask.id
+    task_kind_id = setup.task_id
+
+    async def raw_chat_stream() -> AsyncGenerator[str, None]:
+        """Generate raw text chunks from the LLM and update subtask."""
+        import asyncio
+
+        from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+
+        from app.api.dependencies import get_db as get_db_session
+        from app.core.config import settings
+        from app.services.chat_v2.messages import MessageConverter
+        from app.services.chat_v2.models import LangChainModelFactory
+        from app.services.chat_v2.storage import db_handler, session_manager
+
+        accumulated_content = ""
+        db_gen = next(get_db_session())
+
+        try:
+            cancel_event = await session_manager.register_stream(assistant_subtask_id)
+            await db_handler.update_subtask_status(assistant_subtask_id, "RUNNING")
+
+            # Build messages with history
+            history = _build_chat_history(setup.existing_subtasks)
+            messages = MessageConverter.build_messages(
+                history=history,
+                current_message=input_text,
+                system_prompt=setup.system_prompt,
+            )
+
+            # Create LangChain model
+            try:
+                llm = LangChainModelFactory.create_from_config(
+                    setup.model_config, streaming=True
+                )
+            except Exception as e:
+                logger.error(f"Failed to create LLM from model config: {e}")
+                await db_handler.update_subtask_status(
+                    assistant_subtask_id, "FAILED", error=f"Failed to create LLM: {e}"
+                )
+                return
+
+            # Convert to LangChain messages
+            langchain_messages = []
+            for msg in messages:
+                role = msg.get("role", "")
+                content = msg.get("content", "")
+                if role == "system":
+                    langchain_messages.append(SystemMessage(content=content))
+                elif role == "user":
+                    langchain_messages.append(HumanMessage(content=content))
+                elif role == "assistant":
+                    langchain_messages.append(AIMessage(content=content))
+
+            # Stream response with periodic saves
+            last_redis_save = asyncio.get_event_loop().time()
+            last_db_save = asyncio.get_event_loop().time()
+            redis_save_interval = getattr(
+                settings, "STREAMING_REDIS_SAVE_INTERVAL", 1.0
+            )
+            db_save_interval = getattr(settings, "STREAMING_DB_SAVE_INTERVAL", 3.0)
+
+            async for chunk in llm.astream(langchain_messages):
+                if cancel_event.is_set() or await session_manager.is_cancelled(
+                    assistant_subtask_id
+                ):
+                    logger.info(f"Stream cancelled for subtask {assistant_subtask_id}")
+                    if accumulated_content:
+                        await session_manager.save_streaming_content(
+                            assistant_subtask_id, accumulated_content
+                        )
+                        await db_handler.save_partial_response(
+                            assistant_subtask_id, accumulated_content
+                        )
+                    break
+
+                if hasattr(chunk, "content") and chunk.content:
+                    accumulated_content += chunk.content
+                    yield chunk.content
+
+                    current_time = asyncio.get_event_loop().time()
+                    if current_time - last_redis_save >= redis_save_interval:
+                        await session_manager.save_streaming_content(
+                            assistant_subtask_id, accumulated_content
+                        )
+                        last_redis_save = current_time
+
+                    if current_time - last_db_save >= db_save_interval:
+                        await db_handler.save_partial_response(
+                            assistant_subtask_id, accumulated_content
+                        )
+                        last_db_save = current_time
+
+            # Stream completed (not cancelled)
+            if not cancel_event.is_set() and not await session_manager.is_cancelled(
+                assistant_subtask_id
+            ):
+                result = {"value": accumulated_content}
+
+                await session_manager.save_streaming_content(
+                    assistant_subtask_id, accumulated_content
+                )
+                await session_manager.append_user_and_assistant_messages(
+                    task_kind_id, input_text, accumulated_content
+                )
+                await db_handler.update_subtask_status(
+                    assistant_subtask_id, "COMPLETED", result=result
+                )
+
+                # Update task status
+                task_kind = db_gen.query(Kind).filter(Kind.id == task_kind_id).first()
+                if task_kind:
+                    task_crd = Task.model_validate(task_kind.json)
+                    if task_crd.status:
+                        task_crd.status.status = "COMPLETED"
+                        task_crd.status.updatedAt = datetime.now()
+                        task_crd.status.completedAt = datetime.now()
+                        task_kind.json = task_crd.model_dump(mode="json")
+                        from sqlalchemy.orm.attributes import flag_modified
+
+                        flag_modified(task_kind, "json")
+                        db_gen.commit()
+
+        except Exception as e:
+            logger.exception(f"Error in raw_chat_stream: {e}")
+            try:
+                await db_handler.update_subtask_status(
+                    assistant_subtask_id, "FAILED", error=str(e)
+                )
+            except Exception:
+                pass
+            raise
+        finally:
+            await session_manager.unregister_stream(assistant_subtask_id)
+            await session_manager.delete_streaming_content(assistant_subtask_id)
+            db_gen.close()
+
+    async def generate():
+        async for event in streaming_service.create_streaming_response(
+            response_id=response_id,
+            model_string=request_body.model,
+            chat_stream=raw_chat_stream(),
+            created_at=created_at,
+            previous_response_id=request_body.previous_response_id,
+        ):
+            yield event
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+async def _create_sync_response(
+    db: Session,
+    user: User,
+    team: Kind,
+    model_info: Dict[str, Any],
+    request_body: ResponseCreateInput,
+    input_text: str,
+    tool_settings: Dict[str, Any],
+    task_id: Optional[int] = None,
+) -> ResponseObject:
+    """
+    Create a synchronous (blocking) response for Chat Shell type teams.
+
+    Args:
+        db: Database session
+        user: Current user
+        team: Team Kind object
+        model_info: Parsed model info
+        request_body: Original request body
+        input_text: Extracted input text
+        tool_settings: Parsed tool settings
+        task_id: Optional existing task ID for follow-up conversations
+
+    Returns:
+        ResponseObject with completed status and output
+    """
+    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.services.chat_v2.messages import MessageConverter
+    from app.services.chat_v2.models import LangChainModelFactory
+    from app.services.chat_v2.storage import db_handler, session_manager
+
+    # Set up chat session (config, task, subtasks)
+    setup = _setup_chat_session(
+        db, user, team, model_info, input_text, tool_settings, task_id
+    )
+
+    response_id = f"resp_{setup.task_id}"
+    created_at = int(datetime.now().timestamp())
+    assistant_subtask_id = setup.assistant_subtask.id
 
     # Update subtask status to RUNNING
     await db_handler.update_subtask_status(assistant_subtask_id, "RUNNING")
 
     accumulated_content = ""
-    error_message = None
 
     try:
-        # Build messages (include chat history if task has previous messages)
-        history = []
-        if existing_subtasks:
-            sorted_subtasks = sorted(existing_subtasks, key=lambda s: s.message_id)
-            for st in sorted_subtasks:
-                if st.status == SubtaskStatus.COMPLETED:
-                    if st.role == SubtaskRole.USER and st.prompt:
-                        history.append({"role": "user", "content": st.prompt})
-                    elif st.role == SubtaskRole.ASSISTANT and st.result:
-                        if isinstance(st.result, dict):
-                            content = st.result.get("value", "")
-                            if content:
-                                history.append(
-                                    {"role": "assistant", "content": content}
-                                )
-
+        # Build messages with history
+        history = _build_chat_history(setup.existing_subtasks)
         messages = MessageConverter.build_messages(
             history=history,
             current_message=input_text,
-            system_prompt=system_prompt,
+            system_prompt=setup.system_prompt,
         )
 
-        # Create LangChain model from config
-        llm = LangChainModelFactory.create_from_config(model_config, streaming=True)
+        # Create LangChain model
+        llm = LangChainModelFactory.create_from_config(setup.model_config, streaming=True)
 
-        # Convert messages to LangChain format
+        # Convert to LangChain messages
         langchain_messages = []
         for msg in messages:
             role = msg.get("role", "")
@@ -1083,19 +853,19 @@ async def _create_sync_response(
 
         # Save chat history
         await session_manager.append_user_and_assistant_messages(
-            task_id, input_text, accumulated_content
+            setup.task_id, input_text, accumulated_content
         )
 
         # Update task status
-        task_crd = Task.model_validate(task.json)
+        task_crd = Task.model_validate(setup.task.json)
         if task_crd.status:
             task_crd.status.status = "COMPLETED"
             task_crd.status.updatedAt = datetime.now()
             task_crd.status.completedAt = datetime.now()
             task_crd.status.result = result
-            task.json = task_crd.model_dump(mode="json")
-            task.updated_at = datetime.now()
-            flag_modified(task, "json")
+            setup.task.json = task_crd.model_dump(mode="json")
+            setup.task.updated_at = datetime.now()
+            flag_modified(setup.task, "json")
             db.commit()
 
     except Exception as e:
@@ -1106,14 +876,14 @@ async def _create_sync_response(
         )
 
         # Update task status to FAILED
-        task_crd = Task.model_validate(task.json)
+        task_crd = Task.model_validate(setup.task.json)
         if task_crd.status:
             task_crd.status.status = "FAILED"
             task_crd.status.errorMessage = error_message
             task_crd.status.updatedAt = datetime.now()
-            task.json = task_crd.model_dump(mode="json")
-            task.updated_at = datetime.now()
-            flag_modified(task, "json")
+            setup.task.json = task_crd.model_dump(mode="json")
+            setup.task.updated_at = datetime.now()
+            flag_modified(setup.task, "json")
             db.commit()
 
         raise HTTPException(
@@ -1337,47 +1107,40 @@ async def create_response(
                     detail=f"Bot '{bot_namespace}/{bot_name}' does not have a valid model configured. Please specify model_id in the request or configure modelRef for the bot.",
                 )
 
-    # Handle streaming mode
-    if request_body.stream:
-        # Check if team supports direct chat (streaming requires Chat Shell)
-        supports_direct_chat = _check_team_supports_direct_chat(
-            db, team, current_user.id
-        )
-
-        if not supports_direct_chat:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Streaming is only supported for teams where all bots use Chat Shell type. "
-                "Please set stream=false to use the queued response mode.",
-            )
-
-        # Return streaming response
-        return await _create_streaming_response(
-            db=db,
-            user=current_user,
-            team=team,
-            model_info=model_info,
-            request_body=request_body,
-            input_text=input_text,
-            tool_settings=tool_settings,
-            task_id=task_id,
-        )
-
-    # Non-streaming mode
     # Check if team supports direct chat (Chat Shell type)
     supports_direct_chat = _check_team_supports_direct_chat(db, team, current_user.id)
 
     if supports_direct_chat:
-        # Chat Shell type: block until LLM completes and return completed response
-        return await _create_sync_response(
-            db=db,
-            user=current_user,
-            team=team,
-            model_info=model_info,
-            request_body=request_body,
-            input_text=input_text,
-            tool_settings=tool_settings,
-            task_id=task_id,
+        # Chat Shell type: use direct LLM call (streaming or sync)
+        if request_body.stream:
+            return await _create_streaming_response(
+                db=db,
+                user=current_user,
+                team=team,
+                model_info=model_info,
+                request_body=request_body,
+                input_text=input_text,
+                tool_settings=tool_settings,
+                task_id=task_id,
+            )
+        else:
+            return await _create_sync_response(
+                db=db,
+                user=current_user,
+                team=team,
+                model_info=model_info,
+                request_body=request_body,
+                input_text=input_text,
+                tool_settings=tool_settings,
+                task_id=task_id,
+            )
+
+    # Non-Chat Shell type (Executor-based): streaming not supported
+    if request_body.stream:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Streaming is only supported for teams where all bots use Chat Shell type. "
+            "Please set stream=false to use the queued response mode.",
         )
 
     # Non-Chat Shell type (Executor-based): create task and return queued response
