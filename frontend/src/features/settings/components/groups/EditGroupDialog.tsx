@@ -2,97 +2,103 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import { useState, useEffect } from 'react'
-import { useTranslation } from 'react-i18next'
-import Modal from '@/features/common/Modal'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
-import { updateGroup } from '@/apis/groups'
-import { toast } from 'sonner'
-import type { Group, GroupUpdate } from '@/types/group'
+import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
+import Modal from '@/features/common/Modal';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { updateGroup } from '@/apis/groups';
+import { toast } from 'sonner';
+import type { Group, GroupUpdate, GroupVisibility } from '@/types/group';
 
 interface EditGroupDialogProps {
-  isOpen: boolean
-  onClose: () => void
-  onSuccess: () => void
-  group: Group | null
+  isOpen: boolean;
+  onClose: () => void;
+  onSuccess: () => void;
+  group: Group | null;
 }
 
 export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroupDialogProps) {
-  const { t } = useTranslation()
+  const { t } = useTranslation();
   const [formData, setFormData] = useState<GroupUpdate>({
     display_name: '',
     visibility: 'private',
     description: '',
-  })
-  const [errors, setErrors] = useState<Record<string, string>>({})
-  const [isSubmitting, setIsSubmitting] = useState(false)
+  });
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    if (group) {
+    if (isOpen && group) {
       setFormData({
         display_name: group.display_name || '',
         visibility: group.visibility,
         description: group.description || '',
-      })
+      });
     }
-  }, [group])
+  }, [isOpen, group]);
 
   const validateForm = (): boolean => {
-    const newErrors: Record<string, string> = {}
+    const newErrors: Record<string, string> = {};
 
     if (formData.display_name && formData.display_name.length > 100) {
-      newErrors.display_name = t('validation.max_length', { max: 100 })
+      newErrors.display_name = t('validation.max_length', { max: 100 });
     }
 
-    setErrors(newErrors)
-    return Object.keys(newErrors).length === 0
-  }
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
+    e.preventDefault();
 
     if (!group || !validateForm()) {
-      return
+      return;
     }
 
-    setIsSubmitting(true)
+    setIsSubmitting(true);
     try {
       const payload: GroupUpdate = {
         display_name: formData.display_name?.trim() || undefined,
         visibility: formData.visibility,
         description: formData.description?.trim() || undefined,
-      }
+      };
 
-      await updateGroup(group.name, payload)
-      toast.success(t('groups.messages.updateSuccess'))
+      await updateGroup(group.name, payload);
+      toast.success(t('groups.messages.updateSuccess'));
 
-      onSuccess()
-      onClose()
+      onSuccess();
+      onClose();
     } catch (error: unknown) {
-      console.error('Failed to update group:', error)
-      const err = error as { response?: { data?: { detail?: string } }; message?: string }
-      const errorMessage =
-        err?.response?.data?.detail || err?.message || 'Failed to update group'
-      toast.error(errorMessage)
+      console.error('Failed to update group:', error);
+      const err = error as { response?: { data?: { detail?: string } }; message?: string };
+      const errorMessage = err?.response?.data?.detail || err?.message || 'Failed to update group';
+      toast.error(errorMessage);
     } finally {
-      setIsSubmitting(false)
+      setIsSubmitting(false);
     }
-  }
+  };
 
   const handleClose = () => {
     if (!isSubmitting) {
-      setErrors({})
-      onClose()
+      setErrors({});
+      onClose();
     }
-  }
+  };
 
   if (!group) {
-    return null
+    return null;
   }
 
   return (
@@ -111,19 +117,53 @@ export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroup
           <Input
             id="display_name"
             value={formData.display_name}
-            onChange={(e) => {
-              setFormData({ ...formData, display_name: e.target.value })
+            onChange={e => {
+              const value = e.target.value;
+              setFormData(prev => ({ ...prev, display_name: value }));
               if (errors.display_name) {
-                setErrors({ ...errors, display_name: '' })
+                setErrors(prev => ({ ...prev, display_name: '' }));
               }
             }}
             placeholder="My Group"
             disabled={isSubmitting}
             className={errors.display_name ? 'border-error' : ''}
           />
-          {errors.display_name && (
-            <p className="text-sm text-error mt-1">{errors.display_name}</p>
-          )}
+          {errors.display_name && <p className="text-sm text-error mt-1">{errors.display_name}</p>}
+        </div>
+
+        {/* Visibility */}
+        <div>
+          <Label htmlFor="visibility">{t('groups.visibility')}</Label>
+          <Select
+            value={formData.visibility}
+            onValueChange={(value: GroupVisibility) => {
+              // Prevent setting empty value (Radix Select may trigger this unexpectedly)
+              if (value) {
+                setFormData(prev => ({ ...prev, visibility: value }));
+              }
+            }}
+            disabled={isSubmitting}
+          >
+            <SelectTrigger id="visibility" data-testid="visibility-select">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="internal">
+                <div className="flex flex-col">
+                  <span>{t('groups.internal')}</span>
+                </div>
+              </SelectItem>
+              <SelectItem value="public">
+                <div className="flex flex-col">
+                  <span>{t('groups.public')}</span>
+                </div>
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-text-muted mt-1">
+            {formData.visibility === 'public' && t('groupCreate.visibilityPublicHint')}
+            {formData.visibility === 'internal' && t('groupCreate.visibilityInternalHint')}
+          </p>
         </div>
 
         {/* Description */}
@@ -132,7 +172,7 @@ export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroup
           <Textarea
             id="description"
             value={formData.description}
-            onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+            onChange={e => setFormData(prev => ({ ...prev, description: e.target.value }))}
             placeholder={t('groupCreate.descriptionPlaceholder')}
             rows={3}
             disabled={isSubmitting}
@@ -176,5 +216,5 @@ export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroup
         </div>
       </form>
     </Modal>
-  )
+  );
 }
