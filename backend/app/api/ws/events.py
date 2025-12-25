@@ -73,7 +73,12 @@ class ChatSendPayload(BaseModel):
     team_id: int = Field(..., description="Team ID")
     message: str = Field(..., description="User message content")
     title: Optional[str] = Field(None, description="Custom title for new tasks")
-    attachment_id: Optional[int] = Field(None, description="Optional attachment ID")
+    attachment_id: Optional[int] = Field(
+        None, description="Optional attachment ID (deprecated, use attachment_ids)"
+    )
+    attachment_ids: Optional[List[int]] = Field(
+        None, description="Optional list of attachment IDs"
+    )
     enable_deep_thinking: bool = Field(
         False, description="Enable deep thinking mode (uses chat_v2)"
     )

@@ -330,7 +330,11 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       }
 
       return new Promise(resolve => {
-        console.log('[Socket.IO] Emitting chat:send event');
+        console.log('[Socket.IO] Emitting chat:send event, payload:', {
+          ...payload,
+          attachment_ids: payload.attachment_ids,
+          attachment_ids_length: payload.attachment_ids?.length || 0,
+        });
         currentSocket.emit('chat:send', payload, (response: ChatSendAck) => {
           console.log('[Socket.IO] chat:send response received', response);
           resolve(response);

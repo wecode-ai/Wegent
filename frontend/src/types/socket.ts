@@ -56,7 +56,8 @@ export interface ChatSendPayload {
   team_id: number;
   message: string;
   title?: string;
-  attachment_id?: number;
+  attachment_id?: number; // Single attachment (deprecated, use attachment_ids)
+  attachment_ids?: number[]; // Multiple attachments support
   enable_deep_thinking?: boolean;
   enable_web_search?: boolean;
   search_engine?: string;

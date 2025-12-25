@@ -309,22 +309,20 @@ async def _stream_chat_response(
             system_prompt, payload.enable_clarification
         )
 
-        # Handle attachment
+        # Handle attachments (supports both single and multiple)
+        # Convert single attachment_id to list for unified processing
+        attachment_ids_to_process = []
+        if payload.attachment_ids:
+            attachment_ids_to_process = payload.attachment_ids
+        elif payload.attachment_id:
+            # Backward compatibility: convert single attachment_id to list
+            attachment_ids_to_process = [payload.attachment_id]
+
         final_message = message
-        if payload.attachment_id:
-            from app.models.subtask_attachment import AttachmentStatus
-            from app.services.attachment import attachment_service
-
-            attachment = attachment_service.get_attachment(
-                db=db,
-                attachment_id=payload.attachment_id,
-                user_id=user_data["id"],
+        if attachment_ids_to_process:
+            final_message = await _process_attachments(
+                db, attachment_ids_to_process, user_data["id"], message
             )
-
-            if attachment and attachment.status == AttachmentStatus.READY:
-                final_message = attachment_service.build_message_with_attachment(
-                    message, attachment
-                )
 
         # Prepare tools
         all_tools = []
@@ -641,3 +639,79 @@ async def _stream_chat_response(
 
             await cleanup_mcp_session(task_id)
         db.close()
+
+
+async def _process_attachments(
+    db: Any,
+    attachment_ids: list[int],
+    user_id: int,
+    message: str,
+) -> str:
+    """
+    Process multiple attachments and build message with all attachment contents.
+
+    Args:
+        db: Database session (SQLAlchemy Session)
+        attachment_ids: List of attachment IDs
+        user_id: User ID
+        message: Original message
+
+    Returns:
+        Message with all attachment contents prepended, or vision structure for images
+    """
+    from app.models.subtask_attachment import AttachmentStatus
+    from app.services.attachment import attachment_service
+
+    if not attachment_ids:
+        return message
+
+    # Collect all attachments
+    text_attachments = []
+    image_attachments = []
+
+    for idx, attachment_id in enumerate(attachment_ids, start=1):
+        attachment = attachment_service.get_attachment(
+            db=db,
+            attachment_id=attachment_id,
+            user_id=user_id,
+        )
+
+        if attachment and attachment.status == AttachmentStatus.READY:
+            # Separate images and text documents
+            if (
+                attachment_service.is_image_attachment(attachment)
+                and attachment.image_base64
+            ):
+                image_attachments.append(
+                    {
+                        "image_base64": attachment.image_base64,
+                        "mime_type": attachment.mime_type,
+                        "filename": attachment.original_filename,
+                    }
+                )
+            else:
+                # For text documents, get the formatted content
+                doc_prefix = attachment_service.build_document_text_prefix(attachment)
+                if doc_prefix:
+                    text_attachments.append(f"【附件 {idx}】\n{doc_prefix}")
+
+    # If we have images, return a multi-vision structure
+    if image_attachments:
+        # Build text content from text attachments
+        combined_text = ""
+        if text_attachments:
+            combined_text = "\n".join(text_attachments) + "\n\n"
+        combined_text += f"【用户问题】:\n{message}"
+
+        return {
+            "type": "multi_vision",
+            "text": combined_text,
+            "images": image_attachments,
+        }
+
+    # If only text attachments, combine them
+    if text_attachments:
+        combined_attachments = "\n".join(text_attachments)
+        return f"{combined_attachments}【用户问题】:\n{message}"
+
+    return message
