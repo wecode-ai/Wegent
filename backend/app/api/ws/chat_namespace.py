@@ -561,7 +561,11 @@ class ChatNamespace(socketio.AsyncNamespace):
                 team_id=payload.team_id,
                 task_id=payload.task_id,
                 title=payload.title,
-                attachment_id=payload.attachment_ids[0] if payload.attachment_ids else payload.attachment_id,
+                attachment_id=(
+                    payload.attachment_ids[0]
+                    if payload.attachment_ids
+                    else payload.attachment_id
+                ),
                 enable_web_search=payload.enable_web_search,
                 search_engine=payload.search_engine,
                 enable_clarification=payload.enable_clarification,
@@ -741,7 +745,11 @@ class ChatNamespace(socketio.AsyncNamespace):
                     message=payload.message,
                     user_id=user_id,
                     user_name=user_name,
-                    attachment_id=payload.attachment_ids[0] if payload.attachment_ids else payload.attachment_id,
+                    attachment_id=(
+                        payload.attachment_ids[0]
+                        if payload.attachment_ids
+                        else payload.attachment_id
+                    ),
                     task_room=task_room,
                     skip_sid=sid,
                 )
