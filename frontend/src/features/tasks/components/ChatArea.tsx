@@ -1009,7 +1009,16 @@ export default function ChatArea({
       }
 
       // For code type tasks, repository is required
-      if (taskType === 'code' && showRepositorySelector && !selectedRepo) {
+      // Use git info from selectedTaskDetail if available (for existing tasks opened via URL)
+      // This fixes the issue where clarification form can't submit when repo selector hasn't synced yet
+      const effectiveRepo = selectedRepo || (selectedTaskDetail ? {
+        git_url: selectedTaskDetail.git_url,
+        git_repo: selectedTaskDetail.git_repo,
+        git_repo_id: selectedTaskDetail.git_repo_id,
+        git_domain: selectedTaskDetail.git_domain,
+      } : null);
+
+      if (taskType === 'code' && showRepositorySelector && !effectiveRepo?.git_repo) {
         toast({
           variant: 'destructive',
           title: 'Please select a repository for code tasks',
@@ -1067,11 +1076,12 @@ export default function ChatArea({
             enable_clarification: enableClarification,
             is_group_chat: selectedTaskDetail?.is_group_chat || false,
             // Pass repository info for code tasks
-            git_url: showRepositorySelector ? selectedRepo?.git_url : undefined,
-            git_repo: showRepositorySelector ? selectedRepo?.git_repo : undefined,
-            git_repo_id: showRepositorySelector ? selectedRepo?.git_repo_id : undefined,
-            git_domain: showRepositorySelector ? selectedRepo?.git_domain : undefined,
-            branch_name: showRepositorySelector ? selectedBranch?.name : undefined,
+            // Use effectiveRepo to handle cases where repo selector hasn't synced yet
+            git_url: showRepositorySelector ? effectiveRepo?.git_url : undefined,
+            git_repo: showRepositorySelector ? effectiveRepo?.git_repo : undefined,
+            git_repo_id: showRepositorySelector ? effectiveRepo?.git_repo_id : undefined,
+            git_domain: showRepositorySelector ? effectiveRepo?.git_domain : undefined,
+            branch_name: showRepositorySelector ? (selectedBranch?.name || selectedTaskDetail?.branch_name) : undefined,
             task_type: taskType,
           },
           {
@@ -1155,6 +1165,11 @@ export default function ChatArea({
       selectedTaskDetail?.id,
       selectedTaskDetail?.is_group_chat,
       selectedTaskDetail?.status,
+      selectedTaskDetail?.git_url,
+      selectedTaskDetail?.git_repo,
+      selectedTaskDetail?.git_repo_id,
+      selectedTaskDetail?.git_domain,
+      selectedTaskDetail?.branch_name,
       contextSendMessage,
       forceOverride,
       enableDeepThinking,
