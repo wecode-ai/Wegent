@@ -1,7 +1,3 @@
-// SPDX-FileCopyrightText: 2025 Weibo, Inc.
-//
-// SPDX-License-Identifier: Apache-2.0
-
 'use client';
 
 import React, { useState, useEffect, useMemo, useContext } from 'react';
@@ -15,6 +11,84 @@ import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
 import { TaskContext } from '../../contexts/taskContext';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
+
+/**
+ * BranchSelectorCompact - Internal component for compact mode
+ * Uses controlled open state to properly trigger the popover from an external icon button
+ */
+interface BranchSelectorCompactProps {
+  selectedBranch: GitBranch | null;
+  disabled: boolean;
+  showError: boolean;
+  showNoBranch: boolean;
+  showLoading: boolean;
+  tooltipContent: string;
+  handleChange: (value: string) => void;
+  selectItems: SearchableSelectItem[];
+  error: string | null;
+  t: (key: string) => string;
+}
+
+function BranchSelectorCompact({
+  selectedBranch,
+  disabled,
+  showError,
+  showNoBranch,
+  showLoading,
+  tooltipContent,
+  handleChange,
+  selectItems,
+  error,
+  t,
+}: BranchSelectorCompactProps) {
+  const [popoverOpen, setPopoverOpen] = useState(false);
+
+  return (
+    <div className="flex items-center min-w-0">
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              disabled={disabled || showError || showNoBranch || showLoading}
+              className={cn(
+                'flex items-center gap-1 min-w-0 rounded-md px-2 py-1',
+                'transition-colors',
+                'text-text-muted hover:text-text-primary hover:bg-muted',
+                showLoading ? 'animate-pulse' : '',
+                'focus:outline-none focus:ring-0',
+                'disabled:cursor-not-allowed disabled:opacity-50'
+              )}
+              onClick={() => setPopoverOpen(true)}
+            >
+              <FiGitBranch className="w-4 h-4 flex-shrink-0" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="top">
+            <p>{tooltipContent}</p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+      {/* SearchableSelect with hidden trigger, controlled via open/onOpenChange */}
+      <SearchableSelect
+        value={selectedBranch?.name}
+        onValueChange={handleChange}
+        disabled={disabled || showError || showNoBranch || showLoading}
+        placeholder={t('branches.select_branch')}
+        searchPlaceholder={t('branches.search_branch')}
+        items={selectItems}
+        loading={showLoading}
+        error={showError ? error : null}
+        emptyText={showNoBranch ? t('branches.no_branch') : t('branches.select_branch')}
+        noMatchText={t('branches.no_match')}
+        contentClassName="max-w-[260px]"
+        open={popoverOpen}
+        onOpenChange={setPopoverOpen}
+        hideTrigger
+      />
+    </div>
+  );
+}
 
 /**
  * BranchSelector component
@@ -168,53 +242,18 @@ export default function BranchSelector({
   // In compact mode, only show the icon button
   if (compact) {
     return (
-      <div className="flex items-center min-w-0">
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                disabled={disabled || showError || showNoBranch || showLoading}
-                className={cn(
-                  'flex items-center gap-1 min-w-0 rounded-md px-2 py-1',
-                  'transition-colors',
-                  'text-text-muted hover:text-text-primary hover:bg-muted',
-                  showLoading ? 'animate-pulse' : '',
-                  'focus:outline-none focus:ring-0',
-                  'disabled:cursor-not-allowed disabled:opacity-50'
-                )}
-                onClick={() => {
-                  const trigger = document.querySelector(
-                    '[data-branch-trigger]'
-                  ) as HTMLButtonElement;
-                  trigger?.click();
-                }}
-              >
-                <FiGitBranch className="w-4 h-4 flex-shrink-0" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="top">
-              <p>{tooltipContent}</p>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-        {/* Hidden SearchableSelect for popover functionality */}
-        <div className="hidden">
-          <SearchableSelect
-            value={selectedBranch?.name}
-            onValueChange={handleChange}
-            disabled={disabled || showError || showNoBranch || showLoading}
-            placeholder={t('branches.select_branch')}
-            searchPlaceholder={t('branches.search_branch')}
-            items={selectItems}
-            loading={showLoading}
-            error={showError ? error : null}
-            emptyText={showNoBranch ? t('branches.no_branch') : t('branches.select_branch')}
-            noMatchText={t('branches.no_match')}
-            contentClassName="max-w-[260px]"
-          />
-        </div>
-      </div>
+      <BranchSelectorCompact
+        selectedBranch={selectedBranch}
+        disabled={disabled}
+        showError={showError}
+        showNoBranch={showNoBranch}
+        showLoading={showLoading}
+        tooltipContent={tooltipContent}
+        handleChange={handleChange}
+        selectItems={selectItems}
+        error={error}
+        t={t}
+      />
     );
   }
 
@@ -223,27 +262,16 @@ export default function BranchSelector({
       <TooltipProvider>
         <Tooltip>
           <TooltipTrigger asChild>
-            <button
-              type="button"
-              disabled={disabled || showError || showNoBranch || showLoading}
+            <span
               className={cn(
                 'flex items-center gap-1 min-w-0 rounded-md px-2 py-1',
-                'transition-colors',
-                'text-text-muted hover:text-text-primary hover:bg-muted',
+                'text-text-muted',
                 showLoading ? 'animate-pulse' : '',
-                'focus:outline-none focus:ring-0',
-                'disabled:cursor-not-allowed disabled:opacity-50'
+                (disabled || showError || showNoBranch || showLoading) && 'opacity-50'
               )}
-              onClick={() => {
-                // Trigger the SearchableSelect to open
-                const trigger = document.querySelector(
-                  '[data-branch-trigger]'
-                ) as HTMLButtonElement;
-                trigger?.click();
-              }}
             >
               <FiGitBranch className="w-4 h-4 flex-shrink-0" />
-            </button>
+            </span>
           </TooltipTrigger>
           <TooltipContent side="top">
             <p>{tooltipContent}</p>
