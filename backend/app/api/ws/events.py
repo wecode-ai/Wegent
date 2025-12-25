@@ -26,6 +26,7 @@ class ClientEvents:
     CHAT_SEND = "chat:send"
     CHAT_CANCEL = "chat:cancel"
     CHAT_RESUME = "chat:resume"
+    CHAT_RETRY = "chat:retry"
 
     # Task room events
     TASK_JOIN = "task:join"
@@ -119,6 +120,26 @@ class ChatResumePayload(BaseModel):
     task_id: int = Field(..., description="Task ID")
     subtask_id: int = Field(..., description="Subtask ID to resume")
     offset: int = Field(0, description="Current content offset")
+
+
+class ChatRetryPayload(BaseModel):
+    """Payload for chat:retry event."""
+
+    task_id: int = Field(..., description="Task ID")
+    subtask_id: int = Field(..., description="Failed AI subtask ID to retry")
+    # Optional: Model to use for retry (overrides task metadata model if provided)
+    force_override_bot_model: Optional[str] = Field(
+        None, description="Model ID to override bot model for this retry"
+    )
+    force_override_bot_model_type: Optional[str] = Field(
+        None, description="Model type (public/user) for the override model"
+    )
+    # Flag indicating whether to use model override
+    # When false and force_override_bot_model is None, use bot's default model
+    use_model_override: bool = Field(
+        False,
+        description="If true, use force_override_bot_model; if false, use bot's default model",
+    )
 
 
 class TaskJoinPayload(BaseModel):

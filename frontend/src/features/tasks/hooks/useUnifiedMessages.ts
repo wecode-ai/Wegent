@@ -241,18 +241,6 @@ export function useUnifiedMessages({
         showSender: isGroupChat && msg.type === 'user',
       };
 
-      // DEBUG: Log message conversion with result
-      if (msg.type === 'ai' && msg.result) {
-        console.log('[useUnifiedMessages] Converting message with result:', {
-          msgId: msg.id,
-          subtaskId: msg.subtaskId,
-          hasResult: !!msg.result,
-          result: msg.result,
-          displayHasResult: !!displayMsg.result,
-          displayResult: displayMsg.result,
-        });
-      }
-
       messages.push(displayMsg);
 
       // Track pending user messages

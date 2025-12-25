@@ -155,6 +155,7 @@ class WebSocketEmitter:
         subtask_id: int,
         error: str,
         error_type: Optional[str] = None,
+        message_id: Optional[int] = None,
     ) -> None:
         """
         Emit chat:error event to task room.
@@ -164,19 +165,25 @@ class WebSocketEmitter:
             subtask_id: Subtask ID
             error: Error message
             error_type: Optional error type
+            message_id: Message ID for ordering (primary sort key)
         """
+        payload = {
+            "subtask_id": subtask_id,
+            "error": error,
+        }
+        if error_type is not None:
+            payload["type"] = error_type
+        if message_id is not None:
+            payload["message_id"] = message_id
+
         await self.sio.emit(
             ServerEvents.CHAT_ERROR,
-            {
-                "subtask_id": subtask_id,
-                "error": error,
-                "type": error_type,
-            },
+            payload,
             room=f"task:{task_id}",
             namespace=self.namespace,
         )
         logger.warning(
-            f"[WS] emit chat:error task={task_id} subtask={subtask_id} error={error}"
+            f"[WS] emit chat:error task={task_id} subtask={subtask_id} message_id={message_id} error={error}"
         )
 
     async def emit_chat_cancelled(
