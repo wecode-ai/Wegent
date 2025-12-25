@@ -12,6 +12,7 @@ export interface QuickAccessConfig {
 
 export interface UserPreferences {
   send_key: 'enter' | 'cmd_enter';
+  search_key?: 'cmd_k' | 'cmd_f' | 'disabled';
   quick_access?: QuickAccessConfig;
 }
 
