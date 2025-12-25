@@ -1285,19 +1285,47 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         user_id: int,
     ) -> Optional[Kind]:
         """
-        Get team by id or by name and namespace, checking both user's own teams and shared teams
+        Get team by id or by name and namespace, checking both user's own teams and shared teams.
+        Falls back to public group resources if namespace is public.
 
         If team_id is provided, search by id
         If team_id is None, search by team_name and team_namespace
+        If not found and namespace is not 'default', check for public group access
         """
+        team = None
+
         # If team_id is provided, search by id
         if team_id is not None:
-            return self.get_team_by_id(db, team_id=team_id, user_id=user_id)
+            team = self.get_team_by_id(db, team_id=team_id, user_id=user_id)
         # If team_id is None, search by name and namespace
         elif team_name is not None and team_namespace is not None:
-            return self.get_team_by_name_and_namespace(
+            team = self.get_team_by_name_and_namespace(
                 db, team_name, team_namespace, user_id
             )
+
+        if team:
+            return team
+
+        # If not found and namespace is not 'default', check for public group
+        if team_namespace and team_namespace != "default" and team_name:
+            from app.models.namespace import Namespace
+
+            # Check if the namespace corresponds to a public group
+            group = (
+                db.query(Namespace)
+                .filter(
+                    Namespace.name == team_namespace,
+                    Namespace.visibility == "public",
+                    Namespace.is_active == True,
+                )
+                .first()
+            )
+
+            if group:
+                # Group is public, query team without user restriction
+                return self.get_team_by_name_and_namespace_without_user_check(
+                    db, team_name, team_namespace
+                )
 
         return None
 
