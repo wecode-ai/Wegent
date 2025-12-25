@@ -1073,6 +1073,7 @@
     "truncation": {
       "notice": "⚠️ Content too long, auto-truncated ({{original}} chars → {{truncated}} chars)"
     },
-    "supported_types": "PDF, Word, Excel, TXT, Markdown, Images"
+    "supported_types": "PDF, Word, Excel, TXT, Markdown, Images",
+    "characters": "chars"
   }
 }

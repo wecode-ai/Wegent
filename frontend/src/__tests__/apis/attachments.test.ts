@@ -2,12 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, vi } from 'vitest'
 import { getErrorMessageFromCode } from '@/apis/attachments'
 
 describe('getErrorMessageFromCode', () => {
   // Mock translation function
-  const mockT = vi.fn((key: string, params?: Record<string, unknown>) => {
+  const mockT = jest.fn((key: string, params?: Record<string, unknown>) => {
     const translations: Record<string, string> = {
       'attachment.errors.unsupported_type': 'Unsupported file format',
       'attachment.errors.unsupported_type_hint': `Please upload files in these formats: ${params?.types || ''}`,

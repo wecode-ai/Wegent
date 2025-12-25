@@ -67,7 +67,7 @@ async def upload_attachment(
         binary_data = await file.read()
     except Exception as e:
         logger.error(f"Error reading uploaded file: {e}")
-        raise HTTPException(status_code=400, detail="Failed to read uploaded file")
+        raise HTTPException(status_code=400, detail="Failed to read uploaded file") from e
 
     # Validate file size before processing
     if not DocumentParser.validate_file_size(len(binary_data)):
@@ -107,7 +107,7 @@ async def upload_attachment(
         )
 
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except DocumentParseError as e:
         # Return error with error_code for i18n mapping
         error_code = getattr(e, "error_code", None)
@@ -117,10 +117,10 @@ async def upload_attachment(
                 "message": str(e),
                 "error_code": error_code,
             },
-        )
+        ) from e
     except Exception as e:
         logger.error(f"Error uploading attachment: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to upload attachment")
+        raise HTTPException(status_code=500, detail="Failed to upload attachment") from e
 
 
 @router.get("/{attachment_id}", response_model=AttachmentDetailResponse)

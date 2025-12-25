@@ -202,7 +202,7 @@ class DocumentParser:
             raise DocumentParseError(
                 f"Failed to parse document: {str(e)}",
                 DocumentParseError.PARSE_FAILED,
-            )
+            ) from e
 
     def _parse_pdf(self, binary_data: bytes) -> str:
         """Parse PDF file and extract text."""
@@ -234,7 +234,7 @@ class DocumentParser:
             raise DocumentParseError(
                 f"Failed to parse PDF: {str(e)}",
                 DocumentParseError.PARSE_FAILED,
-            )
+            ) from e
 
     def _parse_word(self, binary_data: bytes, extension: str) -> str:
         """Parse Word document and extract text."""
@@ -276,7 +276,7 @@ class DocumentParser:
             raise DocumentParseError(
                 f"Failed to parse Word document: {str(e)}",
                 DocumentParseError.PARSE_FAILED,
-            )
+            ) from e
 
     def _parse_powerpoint(self, binary_data: bytes, extension: str) -> str:
         """Parse PowerPoint file and extract text (text only, no images)."""
@@ -322,7 +322,7 @@ class DocumentParser:
             raise DocumentParseError(
                 f"Failed to parse PowerPoint: {str(e)}",
                 DocumentParseError.PARSE_FAILED,
-            )
+            ) from e
 
     def _parse_excel(self, binary_data: bytes, extension: str) -> str:
         """Parse Excel file and extract text."""
@@ -364,7 +364,7 @@ class DocumentParser:
             raise DocumentParseError(
                 f"Failed to parse Excel: {str(e)}",
                 DocumentParseError.PARSE_FAILED,
-            )
+            ) from e
 
     def _parse_csv(self, binary_data: bytes) -> str:
         """Parse CSV file and extract text."""
@@ -389,7 +389,7 @@ class DocumentParser:
             raise DocumentParseError(
                 f"Failed to parse CSV: {str(e)}",
                 DocumentParseError.PARSE_FAILED,
-            )
+            ) from e
 
     def _parse_text(self, binary_data: bytes) -> str:
         """Parse plain text or markdown file."""
@@ -426,7 +426,7 @@ class DocumentParser:
             raise DocumentParseError(
                 f"Failed to parse text file: {str(last_error or e)}",
                 DocumentParseError.PARSE_FAILED,
-            )
+            ) from e
 
     def _parse_image(self, binary_data: bytes, extension: str) -> Tuple[str, str]:
         """
@@ -471,7 +471,7 @@ class DocumentParser:
             raise DocumentParseError(
                 f"Failed to parse image: {str(e)}",
                 DocumentParseError.PARSE_FAILED,
-            )
+            ) from e
 
 
 # Global parser instance

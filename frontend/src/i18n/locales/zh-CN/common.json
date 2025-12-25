@@ -1067,6 +1067,7 @@
     "truncation": {
       "notice": "⚠️ 文件内容过长，已自动截断（原始 {{original}} 字符 → 截断至 {{truncated}} 字符）"
     },
-    "supported_types": "PDF、Word、Excel、TXT、Markdown、图片"
+    "supported_types": "PDF、Word、Excel、TXT、Markdown、图片",
+    "characters": "字符"
   }
 }
