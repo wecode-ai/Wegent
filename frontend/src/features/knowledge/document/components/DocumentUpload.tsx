@@ -30,7 +30,7 @@ interface DocumentUploadProps {
 }
 
 export function DocumentUpload({ open, onOpenChange, onUploadComplete }: DocumentUploadProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation('knowledge');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { state, handleFileSelect, handleRemove, reset } = useAttachment();
   const [splitterConfig, setSplitterConfig] = useState<Partial<SplitterConfig>>({
@@ -105,7 +105,7 @@ export function DocumentUpload({ open, onOpenChange, onUploadComplete }: Documen
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{t('knowledge.document.document.upload')}</DialogTitle>
+          <DialogTitle>{t('document.document.upload')}</DialogTitle>
         </DialogHeader>
 
         <div className="py-4 max-h-[60vh] overflow-y-auto">
@@ -118,10 +118,10 @@ export function DocumentUpload({ open, onOpenChange, onUploadComplete }: Documen
             >
               <Upload className="w-10 h-10 mx-auto mb-4 text-text-muted" />
               <p className="text-text-primary font-medium">
-                {t('knowledge.document.document.dropzone')}
+                {t('document.document.dropzone')}
               </p>
               <p className="text-sm text-text-muted mt-2">
-                {t('knowledge.document.document.supportedTypes')}
+                {t('document.document.supportedTypes')}
               </p>
               <input
                 ref={fileInputRef}
@@ -150,7 +150,7 @@ export function DocumentUpload({ open, onOpenChange, onUploadComplete }: Documen
                 <div className="space-y-2">
                   <Progress value={state.uploadProgress} />
                   <p className="text-sm text-text-muted text-center">
-                    {t('knowledge.document.document.uploading')} {state.uploadProgress}%
+                    {t('document.document.uploading')} {state.uploadProgress}%
                   </p>
                 </div>
               )}
@@ -164,7 +164,7 @@ export function DocumentUpload({ open, onOpenChange, onUploadComplete }: Documen
 
               {state.attachment && !state.error && (
                 <p className="text-sm text-success text-center">
-                  {t('knowledge.document.document.uploadSuccess')}
+                  {t('document.document.uploadSuccess')}
                 </p>
               )}
 
@@ -172,7 +172,7 @@ export function DocumentUpload({ open, onOpenChange, onUploadComplete }: Documen
               <Accordion type="single" collapsible className="border-none">
                 <AccordionItem value="advanced" className="border-none">
                   <AccordionTrigger className="text-sm font-medium hover:no-underline">
-                    {t('knowledge.document.advancedSettings.title')}
+                    {t('document.advancedSettings.title')}
                   </AccordionTrigger>
                   <AccordionContent>
                     <div className="space-y-4 pt-2">
@@ -190,14 +190,14 @@ export function DocumentUpload({ open, onOpenChange, onUploadComplete }: Documen
 
         <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={handleClose}>
-            {t('common.cancel')}
+            {t('common:cancel')}
           </Button>
           <Button
             variant="primary"
             onClick={handleConfirm}
             disabled={!state.attachment || state.isUploading || !!state.error}
           >
-            {t('common.confirm')}
+            {t('common:confirm')}
           </Button>
         </div>
       </DialogContent>
