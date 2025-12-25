@@ -20,7 +20,7 @@ import RepositorySelector from './RepositorySelector';
 import BranchSelector from './BranchSelector';
 import LoadingDots from './LoadingDots';
 import ExternalApiParamsInput from './ExternalApiParamsInput';
-import FileUpload from './FileUpload';
+import MultiFileUpload from './MultiFileUpload';
 import { QuickAccessCards } from './QuickAccessCards';
 import { SelectedTeamBadge } from './SelectedTeamBadge';
 import type { Team, GitRepoInfo, GitBranch, ChatTipItem, ChatSloganItem } from '@/types/api';
@@ -38,7 +38,7 @@ import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { saveLastTeamByMode, getLastTeamIdByMode, saveLastRepo } from '@/utils/userPreferences';
 import { useToast } from '@/hooks/use-toast';
 import { taskApis } from '@/apis/tasks';
-import { useAttachment } from '@/hooks/useAttachment';
+import { useMultiAttachment } from '@/hooks/useMultiAttachment';
 import { GroupChatSyncManager } from './group-chat';
 import type { SubtaskWithSender } from '@/apis/group-chat';
 
@@ -202,14 +202,14 @@ export default function ChatArea({
   const [externalApiParams, setExternalApiParams] = useState<Record<string, string>>({});
   const [appMode, setAppMode] = useState<string | undefined>(undefined);
 
-  // File attachment state
+  // File attachment state - using multi-attachment hook
   const {
     state: attachmentState,
     handleFileSelect,
     handleRemove: handleAttachmentRemove,
     reset: resetAttachment,
     isReadyToSend: isAttachmentReadyToSend,
-  } = useAttachment();
+  } = useMultiAttachment();
 
   // Memoize the params change handler to prevent infinite re-renders
   const handleExternalApiParamsChange = useCallback((params: Record<string, string>) => {
@@ -878,10 +878,10 @@ export default function ChatArea({
       // Only allow if Chat Shell
       if (!selectedTeam || !isChatShell(selectedTeam)) return;
 
-      if (isLoading || isStreaming || attachmentState.attachment) return;
+      if (isLoading || isStreaming || attachmentState.attachments.length > 0) return;
       setIsDragging(true);
     },
-    [isLoading, isStreaming, attachmentState.attachment, selectedTeam]
+    [isLoading, isStreaming, attachmentState.attachments.length, selectedTeam]
   );
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
@@ -906,14 +906,14 @@ export default function ChatArea({
       // Only allow if Chat Shell
       if (!selectedTeam || !isChatShell(selectedTeam)) return;
 
-      if (isLoading || isStreaming || attachmentState.attachment) return;
+      if (isLoading || isStreaming || attachmentState.attachments.length > 0) return;
 
       const file = e.dataTransfer.files?.[0];
       if (file) {
         handleFileSelect(file);
       }
     },
-    [isLoading, isStreaming, attachmentState.attachment, handleFileSelect, selectedTeam]
+    [isLoading, isStreaming, attachmentState.attachments.length, handleFileSelect, selectedTeam]
   );
 
   const scrollToBottom = useCallback((force = false) => {
@@ -967,7 +967,7 @@ export default function ChatArea({
         selectedTeamId: selectedTeam?.id,
         agentType: selectedTeam?.agent_type,
         taskType: taskType,
-        attachmentId: attachmentState.attachment?.id,
+        attachmentIds: attachmentState.attachments.map(a => a.id),
       });
 
       // OPTIMIZATION: Set local pending state IMMEDIATELY for instant UI feedback
@@ -1004,7 +1004,7 @@ export default function ChatArea({
             task_id: selectedTaskDetail?.id,
             model_id: modelId,
             force_override_bot_model: forceOverride,
-            attachment_id: attachmentState.attachment?.id,
+            attachment_ids: attachmentState.attachments.map(a => a.id),
             enable_deep_thinking: enableDeepThinking,
             enable_clarification: enableClarification,
             is_group_chat: selectedTaskDetail?.is_group_chat || false,
@@ -1018,7 +1018,7 @@ export default function ChatArea({
           },
           {
             pendingUserMessage: message,
-            pendingAttachment: attachmentState.attachment,
+            pendingAttachments: attachmentState.attachments,
             immediateTaskId: immediateTaskId,
             // Pass current user info for group chat sender display
             currentUserId: user?.id,
@@ -1100,7 +1100,7 @@ export default function ChatArea({
       isAttachmentReadyToSend,
       toast,
       selectedTeam,
-      attachmentState.attachment,
+      attachmentState.attachments,
       resetAttachment,
       selectedModel?.name,
       selectedTaskDetail?.id,
@@ -1455,15 +1455,12 @@ export default function ChatArea({
                   )}
 
                   {/* File Upload Preview - show above input on its own row */}
-                  {(attachmentState.attachment ||
-                    attachmentState.isUploading ||
-                    attachmentState.error) && (
+                  {(attachmentState.attachments.length > 0 ||
+                    attachmentState.uploadingFiles.size > 0 ||
+                    attachmentState.errors.size > 0) && (
                     <div className="px-3 pt-2">
-                      <FileUpload
-                        attachment={attachmentState.attachment}
-                        isUploading={attachmentState.isUploading}
-                        uploadProgress={attachmentState.uploadProgress}
-                        error={attachmentState.error}
+                      <MultiFileUpload
+                        state={attachmentState}
                         disabled={hasMessages || isLoading || isStreaming}
                         onFileSelect={handleFileSelect}
                         onRemove={handleAttachmentRemove}
@@ -1508,15 +1505,12 @@ export default function ChatArea({
                       className="flex-1 min-w-0 overflow-hidden flex items-center gap-3"
                       data-tour="input-controls"
                     >
-                      {/* File Upload Button - only show when no file is selected */}
-                      {!attachmentState.attachment &&
-                        !attachmentState.isUploading &&
+                      {/* File Upload Button - only show when no files are selected */}
+                      {attachmentState.attachments.length === 0 &&
+                        attachmentState.uploadingFiles.size === 0 &&
                         isChatShell(selectedTeam) && (
-                          <FileUpload
-                            attachment={null}
-                            isUploading={false}
-                            uploadProgress={0}
-                            error={attachmentState.error}
+                          <MultiFileUpload
+                            state={attachmentState}
                             disabled={hasMessages || isLoading || isStreaming}
                             onFileSelect={handleFileSelect}
                             onRemove={handleAttachmentRemove}
@@ -1704,15 +1698,12 @@ export default function ChatArea({
                 )}
 
                 {/* File Upload Preview - show above input when file is selected */}
-                {(attachmentState.attachment ||
-                  attachmentState.isUploading ||
-                  attachmentState.error) && (
+                {(attachmentState.attachments.length > 0 ||
+                  attachmentState.uploadingFiles.size > 0 ||
+                  attachmentState.errors.size > 0) && (
                   <div className="px-3 pt-2">
-                    <FileUpload
-                      attachment={attachmentState.attachment}
-                      isUploading={attachmentState.isUploading}
-                      uploadProgress={attachmentState.uploadProgress}
-                      error={attachmentState.error}
+                    <MultiFileUpload
+                      state={attachmentState}
                       disabled={isLoading || isStreaming}
                       onFileSelect={handleFileSelect}
                       onRemove={handleAttachmentRemove}
@@ -1734,7 +1725,7 @@ export default function ChatArea({
                       isGroupChat={selectedTaskDetail?.is_group_chat || false}
                       team={selectedTeam}
                       onPasteFile={
-                        isChatShell(selectedTeam) && !attachmentState.attachment
+                        isChatShell(selectedTeam) && attachmentState.attachments.length === 0
                           ? handleFileSelect
                           : undefined
                       }
@@ -1746,15 +1737,12 @@ export default function ChatArea({
                   className={`flex items-center justify-between px-3 gap-2 ${shouldHideChatInput ? 'py-3' : 'pb-2 pt-1'}`}
                 >
                   <div className="flex-1 min-w-0 overflow-hidden flex items-center gap-3">
-                    {/* File Upload Button - only show when no file is selected */}
-                    {!attachmentState.attachment &&
-                      !attachmentState.isUploading &&
+                    {/* File Upload Button - only show when no files are selected */}
+                    {attachmentState.attachments.length === 0 &&
+                      attachmentState.uploadingFiles.size === 0 &&
                       isChatShell(selectedTeam) && (
-                        <FileUpload
-                          attachment={null}
-                          isUploading={false}
-                          uploadProgress={0}
-                          error={attachmentState.error}
+                        <MultiFileUpload
+                          state={attachmentState}
                           disabled={isLoading || isStreaming}
                           onFileSelect={handleFileSelect}
                           onRemove={handleAttachmentRemove}
