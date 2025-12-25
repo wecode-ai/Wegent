@@ -43,7 +43,7 @@ export function GroupMembersDialog({
   group,
   currentUserId,
 }: GroupMembersDialogProps) {
-  const { t } = useTranslation()
+  const { t } = useTranslation(['common', 'groups'])
   const [members, setMembers] = useState<GroupMember[]>([])
   const [loading, setLoading] = useState(false)
   const [showAddMember, setShowAddMember] = useState(false)

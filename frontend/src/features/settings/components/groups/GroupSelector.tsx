@@ -30,7 +30,7 @@ interface GroupSelectorProps {
 const ALL_GROUPS_VALUE = '__all__'
 
 export function GroupSelector({ value, onChange, scope = 'all' }: GroupSelectorProps) {
-  const { t } = useTranslation()
+  const { t } = useTranslation(['common', 'groups'])
   const [groups, setGroups] = useState<Group[]>([])
   const [loading, setLoading] = useState(false)
 

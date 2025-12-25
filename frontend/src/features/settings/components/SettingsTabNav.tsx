@@ -71,7 +71,7 @@ export function SettingsTabNav({
   selectedGroup,
   onGroupChange,
 }: SettingsTabNavProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation(['common', 'groups']);
   const isMobile = useIsMobile();
   const indicatorContainerRef = useRef<HTMLDivElement | null>(null);
   const itemRefs = useRef<Record<string, HTMLButtonElement | null>>({});

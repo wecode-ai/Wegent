@@ -29,7 +29,7 @@ interface CreateGroupDialogProps {
 }
 
 export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDialogProps) {
-  const { t } = useTranslation()
+  const { t } = useTranslation(['common', 'groups'])
   const [formData, setFormData] = useState<GroupCreate>({
     name: '',
     display_name: '',
