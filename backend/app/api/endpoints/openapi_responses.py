@@ -397,7 +397,6 @@ def _setup_chat_session(
             db.query(Kind)
             .filter(
                 Kind.id == task_id,
-                Kind.user_id == user.id,
                 Kind.kind == "Task",
                 Kind.is_active == True,
             )
@@ -864,7 +863,14 @@ async def _create_streaming_response(
                     max_iterations=settings.CHAT_TOOL_MAX_REQUESTS,
                 )
 
-                # Stream tokens from agent
+                # Stream tokens from agent with periodic saves
+                last_redis_save = asyncio.get_event_loop().time()
+                last_db_save = asyncio.get_event_loop().time()
+                redis_save_interval = getattr(
+                    settings, "STREAMING_REDIS_SAVE_INTERVAL", 1.0
+                )
+                db_save_interval = getattr(settings, "STREAMING_DB_SAVE_INTERVAL", 3.0)
+
                 async for token in agent.stream_tokens(
                     messages, cancel_event=cancel_event
                 ):
@@ -885,6 +891,20 @@ async def _create_streaming_response(
 
                     accumulated_content += token
                     yield token
+
+                    # Periodic saves (same as simple LLM mode)
+                    current_time = asyncio.get_event_loop().time()
+                    if current_time - last_redis_save >= redis_save_interval:
+                        await session_manager.save_streaming_content(
+                            assistant_subtask_id, accumulated_content
+                        )
+                        last_redis_save = current_time
+
+                    if current_time - last_db_save >= db_save_interval:
+                        await db_handler.save_partial_response(
+                            assistant_subtask_id, accumulated_content
+                        )
+                        last_db_save = current_time
             else:
                 # Simple LLM streaming without tools
                 try:
@@ -1304,7 +1324,6 @@ async def create_response(
                 .filter(
                     Kind.id == previous_task_id,
                     Kind.kind == "Task",
-                    Kind.user_id == current_user.id,
                     Kind.is_active == True,
                 )
                 .first()
@@ -1647,7 +1666,6 @@ async def cancel_response(
         db.query(Kind)
         .filter(
             Kind.id == task_id,
-            Kind.user_id == current_user.id,
             Kind.kind == "Task",
             Kind.is_active == True,
         )
@@ -1723,6 +1741,7 @@ async def cancel_response(
                 task_crd.status.errorMessage = ""
                 task_crd.status.updatedAt = datetime.now()
                 task_crd.status.completedAt = datetime.now()
+                task_crd.status.result =  {"value": partial_content or ""}
 
             task_kind.json = task_crd.model_dump(mode="json")
             task_kind.updated_at = datetime.now()
@@ -1805,12 +1824,17 @@ async def delete_response(
     """
     Delete a response.
 
+    For Chat Shell type tasks with running streams, this will stop the model request
+    before deleting.
+
     Args:
         response_id: Response ID in format "resp_{task_id}"
 
     Returns:
         ResponseDeletedObject confirming deletion
     """
+    from app.services.chat_v2.storage import session_manager
+
     # Extract task_id from response_id
     if not response_id.startswith("resp_"):
         raise HTTPException(
@@ -1825,6 +1849,57 @@ async def delete_response(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid response_id format: '{response_id}'",
         )
+
+    # Get task to check if it's a Chat Shell type with running stream
+    task_kind = (
+        db.query(Kind)
+        .filter(
+            Kind.id == task_id,
+            Kind.kind == "Task",
+            Kind.is_active == True,
+        )
+        .first()
+    )
+
+    if task_kind:
+        # Check if this is a Chat Shell task (source="chat_shell")
+        task_crd = Task.model_validate(task_kind.json)
+        source_label = (
+            task_crd.metadata.labels.get("source") if task_crd.metadata.labels else None
+        )
+        is_chat_shell = source_label == "chat_shell"
+
+        if is_chat_shell:
+            # For Chat Shell tasks, stop any running stream before deleting
+            running_subtask = (
+                db.query(Subtask)
+                .filter(
+                    Subtask.task_id == task_id,
+                    Subtask.user_id == current_user.id,
+                    Subtask.role == SubtaskRole.ASSISTANT,
+                    Subtask.status.in_(
+                        [
+                            SubtaskStatus.PENDING,
+                            SubtaskStatus.RUNNING,
+                        ]
+                    ),
+                )
+                .order_by(Subtask.id.desc())
+                .first()
+            )
+
+            if running_subtask:
+                logger.info(
+                    f"[DELETE] Stopping running stream before delete: task_id={task_id}, subtask_id={running_subtask.id}"
+                )
+                # Cancel the stream (this sets the cancel event)
+                await session_manager.cancel_stream(running_subtask.id)
+                # Clean up streaming content from Redis
+                await session_manager.delete_streaming_content(running_subtask.id)
+                await session_manager.unregister_stream(running_subtask.id)
+                logger.info(
+                    f"[DELETE] Stream stopped for subtask {running_subtask.id}"
+                )
 
     try:
         task_kinds_service.delete_task(db, task_id=task_id, user_id=current_user.id)
