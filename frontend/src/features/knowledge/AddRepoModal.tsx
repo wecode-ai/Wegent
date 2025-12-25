@@ -11,7 +11,7 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { paths } from '@/config/paths';
 import { useTranslation } from 'react-i18next';
-import RepositorySelector from '@/features/tasks/components/RepositorySelector';
+import { RepositorySelector } from '@/features/tasks/components/selector';
 import { WikiConfigResponse } from '@/apis/wiki';
 
 interface AddRepoModalProps {

@@ -24,10 +24,10 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import MarkdownEditor from '@uiw/react-markdown-editor';
 import ThinkingComponent from './ThinkingComponent';
 import InlineToolStatus from './InlineToolStatus';
-import ClarificationForm from './ClarificationForm';
+import ClarificationForm from '../clarification/ClarificationForm';
 import FinalPromptMessage from './FinalPromptMessage';
-import ClarificationAnswerSummary from './ClarificationAnswerSummary';
-import AttachmentPreview from './AttachmentPreview';
+import ClarificationAnswerSummary from '../clarification/ClarificationAnswerSummary';
+import AttachmentPreview from '../input/AttachmentPreview';
 import StreamingWaitIndicator from './StreamingWaitIndicator';
 import BubbleTools, { CopyButton } from './BubbleTools';
 import type { ClarificationData, FinalPromptData, ClarificationAnswer } from '@/types/api';

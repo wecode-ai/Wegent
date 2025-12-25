@@ -4,8 +4,8 @@
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useTaskContext } from '../contexts/taskContext';
-import { useChatStreamContext, computeIsStreaming } from '../contexts/chatStreamContext';
+import { useTaskContext } from '../../contexts/taskContext';
+import { useChatStreamContext, computeIsStreaming } from '../../contexts/chatStreamContext';
 import { useSocket } from '@/contexts/SocketContext';
 import { useToast } from '@/hooks/use-toast';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -13,10 +13,10 @@ import { useUser } from '@/features/common/UserContext';
 import { useTraceAction } from '@/hooks/useTraceAction';
 import { parseError } from '@/utils/errorParser';
 import { taskApis } from '@/apis/tasks';
-import { isChatShell } from '../service/messageService';
+import { isChatShell } from '../../service/messageService';
 import { Button } from '@/components/ui/button';
-import { DEFAULT_MODEL_NAME } from './ModelSelector';
-import type { Model } from './ModelSelector';
+import { DEFAULT_MODEL_NAME } from '../selector/ModelSelector';
+import type { Model } from '../selector/ModelSelector';
 import type { Team, GitRepoInfo, GitBranch, Attachment } from '@/types/api';
 
 export interface UseChatStreamHandlersOptions {

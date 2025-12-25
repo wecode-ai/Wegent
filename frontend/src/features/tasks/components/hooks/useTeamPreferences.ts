@@ -4,8 +4,8 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import type { Team, TaskDetail } from '@/types/api';
-import type { Model } from '../ModelSelector';
-import { DEFAULT_MODEL_NAME } from '../ModelSelector';
+import type { Model } from '../selector/ModelSelector';
+import { DEFAULT_MODEL_NAME } from '../selector/ModelSelector';
 
 export interface UseTeamPreferencesOptions {
   /**

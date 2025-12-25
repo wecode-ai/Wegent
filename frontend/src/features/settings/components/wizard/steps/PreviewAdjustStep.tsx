@@ -33,10 +33,11 @@ import { modelApis, type UnifiedModel } from '@/apis/models';
 import type { TestConversation } from '../types';
 import type { ModelRecommendation } from '@/apis/wizard';
 import GeneratingLoader from './GeneratingLoader';
-import MessageBubble, {
+import {
+  MessageBubble,
   type Message,
   type ParagraphAction,
-} from '@/features/tasks/components/MessageBubble';
+} from '@/features/tasks/components/message';
 import { useTheme } from '@/features/theme/ThemeProvider';
 import '../wizard-animations.css';
 

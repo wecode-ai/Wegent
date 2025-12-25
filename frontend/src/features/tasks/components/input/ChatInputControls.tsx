@@ -6,18 +6,18 @@
 
 import React from 'react';
 import { CircleStop } from 'lucide-react';
-import ModelSelector, { Model } from './ModelSelector';
-import RepositorySelector from './RepositorySelector';
-import BranchSelector from './BranchSelector';
+import ModelSelector, { Model } from '../selector/ModelSelector';
+import RepositorySelector from '../selector/RepositorySelector';
+import BranchSelector from '../selector/BranchSelector';
 import DeepThinkingToggle from './DeepThinkingToggle';
-import ClarificationToggle from './ClarificationToggle';
+import ClarificationToggle from '../clarification/ClarificationToggle';
 import FileUpload from './FileUpload';
 import SendButton from './SendButton';
-import LoadingDots from './LoadingDots';
-import QuotaUsage from './QuotaUsage';
+import LoadingDots from '../message/LoadingDots';
+import QuotaUsage from '../params/QuotaUsage';
 import { Button } from '@/components/ui/button';
 import type { Team, GitRepoInfo, GitBranch, TaskDetail, Attachment } from '@/types/api';
-import { isChatShell } from '../service/messageService';
+import { isChatShell } from '../../service/messageService';
 
 export interface ChatInputControlsProps {
   // Team and Model

@@ -11,11 +11,11 @@ import type {
   ChatSloganItem,
   ChatTipItem,
 } from '@/types/api';
-import type { Model } from './ModelSelector';
+import type { Model } from '../selector/ModelSelector';
 import { useAttachment } from '@/hooks/useAttachment';
 import { userApis } from '@/apis/user';
 import { getLastTeamIdByMode, saveLastTeamByMode, saveLastRepo } from '@/utils/userPreferences';
-import { useTaskContext } from '../contexts/taskContext';
+import { useTaskContext } from '../../contexts/taskContext';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 
 const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18;

@@ -8,11 +8,11 @@ import React from 'react';
 import { Upload } from 'lucide-react';
 import ChatInput from './ChatInput';
 import FileUpload from './FileUpload';
-import ExternalApiParamsInput from './ExternalApiParamsInput';
-import { SelectedTeamBadge } from './SelectedTeamBadge';
+import ExternalApiParamsInput from '../params/ExternalApiParamsInput';
+import { SelectedTeamBadge } from '../selector/SelectedTeamBadge';
 import ChatInputControls, { ChatInputControlsProps } from './ChatInputControls';
 import type { Team, ChatTipItem } from '@/types/api';
-import { isChatShell } from '../service/messageService';
+import { isChatShell } from '../../service/messageService';
 
 export interface ChatInputCardProps extends Omit<ChatInputControlsProps, 'taskInputMessage'> {
   // Input message

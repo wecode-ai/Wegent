@@ -7,10 +7,10 @@
 import { Suspense, useState } from 'react';
 import { teamService } from '@/features/tasks/service/teamService';
 import TopNavigation from '@/features/layout/TopNavigation';
-import TaskSidebar from '@/features/tasks/components/TaskSidebar';
-import ChatArea from '@/features/tasks/components/ChatArea';
-import TaskParamSync from '@/features/tasks/components/TaskParamSync';
-import TeamShareHandler from '@/features/tasks/components/TeamShareHandler';
+import { TaskSidebar } from '@/features/tasks/components/sidebar';
+import { ChatArea } from '@/features/tasks/components/workbench';
+import { TaskParamSync } from '@/features/tasks/components/params';
+import { TeamShareHandler } from '@/features/tasks/components/share';
 import OidcTokenHandler from '@/features/login/components/OidcTokenHandler';
 import '@/app/tasks/tasks.css';
 import '@/features/common/scrollbar.css';
