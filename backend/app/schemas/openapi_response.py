@@ -18,12 +18,19 @@ class WegentTool(BaseModel):
     type: str = Field(..., description="Tool type, e.g., 'wegent_deep_thinking'")
 
 
+class InputTextContent(BaseModel):
+    """Text content in input message."""
+
+    type: Literal["input_text"] = "input_text"
+    text: str
+
+
 class InputItem(BaseModel):
     """Input item for conversation history."""
 
     type: Literal["message"] = "message"
     role: Literal["user", "assistant"]
-    content: str
+    content: Union[str, List[InputTextContent]]
 
 
 class ResponseCreateInput(BaseModel):

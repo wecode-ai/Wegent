@@ -184,9 +184,29 @@ def _extract_input_text(input_data: Union[str, List[InputItem]]) -> str:
     # For list input, get the last user message
     for item in reversed(input_data):
         if isinstance(item, InputItem) and item.role == "user":
-            return item.content
+            # content can be str or List[InputTextContent]
+            if isinstance(item.content, str):
+                return item.content
+            elif isinstance(item.content, list):
+                # Extract text from InputTextContent list
+                texts = []
+                for content_item in item.content:
+                    if hasattr(content_item, "text"):
+                        texts.append(content_item.text)
+                    elif isinstance(content_item, dict) and "text" in content_item:
+                        texts.append(content_item["text"])
+                return " ".join(texts)
         elif isinstance(item, dict) and item.get("role") == "user":
-            return item.get("content", "")
+            content = item.get("content", "")
+            if isinstance(content, str):
+                return content
+            elif isinstance(content, list):
+                # Extract text from content list
+                texts = []
+                for content_item in content:
+                    if isinstance(content_item, dict) and "text" in content_item:
+                        texts.append(content_item["text"])
+                return " ".join(texts)
 
     # If no user message found, return empty string
     return ""
