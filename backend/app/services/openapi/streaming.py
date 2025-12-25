@@ -46,7 +46,7 @@ def _format_sse_event(event_type: str, data: Dict[str, Any]) -> str:
     Returns:
         Formatted SSE string
     """
-    return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+    return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 class OpenAPIStreamingService:
