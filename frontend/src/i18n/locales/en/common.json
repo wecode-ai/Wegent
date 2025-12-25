@@ -34,6 +34,9 @@
     "upload": "Upload",
     "view": "View"
   },
+  "errors": {
+    "request_failed": "LLM API request failed, please click retry"
+  },
   "validation": {
     "required": "This field is required",
     "max_length": "Maximum length is {{max}} characters"
@@ -370,6 +373,8 @@
     "conversations": "Conversations",
     "search_placeholder": "Search task",
     "search_placeholder_chat": "Search conversation",
+    "search_hint_with_shortcut": "Search ({{shortcut}})",
+    "search_placeholder_with_shortcut": "Search conversations... ({{shortcut}} to toggle)",
     "new_task": "New Task",
     "new_conversation": "New Conversation",
     "no_tasks": "No tasks",
@@ -514,6 +519,15 @@
     "option_cmd_enter": "Cmd/Ctrl+Enter to send (Enter for new line)",
     "save_success": "Send key preference saved",
     "save_failed": "Failed to save send key preference"
+  },
+  "search_key": {
+    "title": "Search Shortcut Key",
+    "description": "Choose keyboard shortcut to open search dialog",
+    "option_cmd_k": "Cmd/Ctrl+K (Recommended)",
+    "option_cmd_f": "Cmd/Ctrl+F",
+    "option_disabled": "Disable shortcut",
+    "save_success": "Search shortcut key saved",
+    "save_failed": "Failed to save search shortcut key"
   },
   "guide": {
     "title": "Welcome",
@@ -767,6 +781,7 @@
     "select_model": "Select Model",
     "search_model": "Search model...",
     "force_override_model": "Force override Bot's bound model",
+    "override_default_model": "Override default model",
     "override_short": "Override",
     "mixed_team_warning": "This team contains multiple executor types, cannot specify a unified model",
     "default_model": "Default",

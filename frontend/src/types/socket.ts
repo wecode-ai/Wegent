@@ -14,6 +14,7 @@ export const ClientEvents = {
   CHAT_SEND: 'chat:send',
   CHAT_CANCEL: 'chat:cancel',
   CHAT_RESUME: 'chat:resume',
+  CHAT_RETRY: 'chat:retry',
   TASK_JOIN: 'task:join',
   TASK_LEAVE: 'task:leave',
   HISTORY_SYNC: 'history:sync',
@@ -83,6 +84,11 @@ export interface ChatResumePayload {
   offset: number;
 }
 
+export interface ChatRetryPayload {
+  task_id: number;
+  subtask_id: number;
+}
+
 export interface TaskJoinPayload {
   task_id: number;
 }
@@ -132,6 +138,8 @@ export interface ChatErrorPayload {
   subtask_id: number;
   error: string;
   type?: string;
+  /** Message ID for ordering (primary sort key) */
+  message_id?: number;
 }
 
 export interface ChatCancelledPayload {

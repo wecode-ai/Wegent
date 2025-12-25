@@ -30,7 +30,7 @@ type TaskTitleDropdownProps = {
 };
 
 export default function TaskTitleDropdown({
-  title = 'Wegent',
+  title,
   taskDetail,
   className,
   onTaskDeleted,
@@ -38,7 +38,7 @@ export default function TaskTitleDropdown({
   const { t } = useTranslation();
   const router = useRouter();
   const { user } = useUser();
-  const displayTitle = title || 'Wegent';
+  const displayTitle = title;
   const isGroupChat = taskDetail?.is_group_chat || false;
 
   const [showMembersDialog, setShowMembersDialog] = useState(false);
@@ -88,6 +88,11 @@ export default function TaskTitleDropdown({
 
   // Only show group chat options if it's a true group chat
   const showGroupChatOptions = isGroupChat;
+
+  // If no title, don't render anything
+  if (!displayTitle) {
+    return null;
+  }
 
   // If not a group chat, show simple dropdown
   if (!showGroupChatOptions) {

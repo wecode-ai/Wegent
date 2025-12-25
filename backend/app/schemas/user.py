@@ -13,6 +13,7 @@ class UserPreferences(BaseModel):
     """User preferences model"""
 
     send_key: Literal["enter", "cmd_enter"] = "enter"
+    search_key: Literal["cmd_k", "cmd_f", "disabled"] = "cmd_k"
 
 
 class Token(BaseModel):

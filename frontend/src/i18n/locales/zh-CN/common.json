@@ -34,6 +34,9 @@
     "upload": "上传",
     "view": "查看"
   },
+  "errors": {
+    "request_failed": "请求大模型接口失败，请点击重试"
+  },
   "validation": {
     "required": "此字段为必填项",
     "max_length": "最大长度为 {{max}} 个字符"
@@ -370,6 +373,8 @@
     "conversations": "对话",
     "search_placeholder": "搜索任务",
     "search_placeholder_chat": "搜索对话",
+    "search_hint_with_shortcut": "搜索对话 ({{shortcut}})",
+    "search_placeholder_with_shortcut": "搜索对话... ({{shortcut}} 打开/关闭)",
     "new_task": "新任务",
     "new_conversation": "新对话",
     "no_tasks": "没有任务",
@@ -514,6 +519,15 @@
     "option_cmd_enter": "Cmd/Ctrl+Enter 发送（Enter 换行）",
     "save_success": "发送快捷键已保存",
     "save_failed": "保存发送快捷键失败"
+  },
+  "search_key": {
+    "title": "搜索快捷键",
+    "description": "选择打开搜索对话框的键盘快捷键",
+    "option_cmd_k": "⌘K / Ctrl+K（推荐）",
+    "option_cmd_f": "⌘F / Ctrl+F",
+    "option_disabled": "禁用快捷键",
+    "save_success": "搜索快捷键已保存",
+    "save_failed": "保存搜索快捷键失败"
   },
   "guide": {
     "title": "欢迎",
@@ -767,6 +781,7 @@
     "select_model": "选择模型",
     "search_model": "搜索模型...",
     "force_override_model": "覆盖默认模型",
+    "override_default_model": "覆盖默认模型",
     "override_short": "覆盖",
     "mixed_team_warning": "当前智能体包含多种执行器类型，无法统一指定模型",
     "default_model": "默认模型",
