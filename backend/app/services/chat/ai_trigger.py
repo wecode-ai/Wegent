@@ -14,7 +14,7 @@ It decouples the AI response logic from message saving, allowing for:
 
 import asyncio
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 from shared.telemetry.context import (
     SpanManager,
@@ -33,6 +33,7 @@ from app.models.kind import Kind
 from app.models.subtask import Subtask
 from app.models.user import User
 from app.schemas.kind import Bot, Shell, Task, Team
+from app.services.attachment import attachment_service
 from app.services.chat.chat_service import chat_service
 from app.services.chat.model_resolver import (
     build_default_headers_with_placeholders,
@@ -648,7 +649,7 @@ async def _process_attachments(
     attachment_ids: list[int],
     user_id: int,
     message: str,
-) -> str:
+) -> Union[str, dict[str, Any]]:
     """
     Process multiple attachments and build message with all attachment contents.
 
@@ -662,7 +663,6 @@ async def _process_attachments(
         Message with all attachment contents prepended, or vision structure for images
     """
     from app.models.subtask_attachment import AttachmentStatus
-    from app.services.attachment import attachment_service
 
     if not attachment_ids:
         return message
