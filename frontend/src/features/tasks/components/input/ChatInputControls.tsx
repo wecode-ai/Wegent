@@ -217,10 +217,7 @@ export function ChatInputControls({
 
         {/* File Upload Button - always show for chat shell */}
         {isChatShell(selectedTeam) && (
-          <AttachmentButton
-            onFileSelect={onFileSelect}
-            disabled={hasMessages || isLoading || isStreaming}
-          />
+          <AttachmentButton onFileSelect={onFileSelect} disabled={isLoading || isStreaming} />
         )}
 
         {/* Clarification Toggle Button - only show for chat shell */}

@@ -227,12 +227,7 @@ export default function ChatArea({
       e.preventDefault();
       e.stopPropagation();
       if (!chatState.selectedTeam || !isChatShell(chatState.selectedTeam)) return;
-      if (
-        chatState.isLoading ||
-        streamHandlers.isStreaming ||
-        chatState.attachmentState.attachments.length > 0
-      )
-        return;
+      if (chatState.isLoading || streamHandlers.isStreaming) return;
       chatState.setIsDragging(true);
     },
     [chatState, streamHandlers.isStreaming]
@@ -259,16 +254,11 @@ export default function ChatArea({
       e.stopPropagation();
       chatState.setIsDragging(false);
       if (!chatState.selectedTeam || !isChatShell(chatState.selectedTeam)) return;
-      if (
-        chatState.isLoading ||
-        streamHandlers.isStreaming ||
-        chatState.attachmentState.attachments.length > 0
-      )
-        return;
+      if (chatState.isLoading || streamHandlers.isStreaming) return;
 
-      const file = e.dataTransfer.files?.[0];
-      if (file) {
-        chatState.handleFileSelect(file);
+      const files = e.dataTransfer.files;
+      if (files && files.length > 0) {
+        chatState.handleFileSelect(Array.from(files));
       }
     },
     [chatState, streamHandlers.isStreaming]
