@@ -8,6 +8,7 @@ import { Suspense, useState, useCallback, useEffect, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import TopNavigation from '@/features/layout/TopNavigation';
+import GreyTestButton from '@/features/layout/components/GreyTestButton';
 import TaskSidebar from '@/features/tasks/components/TaskSidebar';
 import ResizableSidebar from '@/features/tasks/components/ResizableSidebar';
 import { AdminTabNav, AdminTabId } from '@/features/admin/components/AdminTabNav';
@@ -140,6 +141,7 @@ function AdminContent() {
             title={t('title')}
             onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
           >
+            <GreyTestButton />
             {isMobile ? <ThemeToggle /> : <GithubStarButton />}
           </TopNavigation>
           <AccessDenied />
@@ -170,6 +172,7 @@ function AdminContent() {
           title={t('title')}
           onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
         >
+          <GreyTestButton />
           {isMobile ? <ThemeToggle /> : <GithubStarButton />}
         </TopNavigation>
 
