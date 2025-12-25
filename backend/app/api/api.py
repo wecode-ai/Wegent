@@ -6,6 +6,7 @@ from app.api.endpoints import (
     admin,
     api_keys,
     auth,
+    code_tool,
     groups,
     health,
     knowledge,
@@ -76,4 +77,5 @@ api_router.include_router(
     knowledge.document_router, prefix="/knowledge-documents", tags=["knowledge"]
 )
 api_router.include_router(rag.router, prefix="/rag", tags=["rag"])
+api_router.include_router(code_tool.router, tags=["code-tool"])
 api_router.include_router(k_router)

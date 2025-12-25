@@ -29,6 +29,9 @@ from shared.telemetry.core import is_telemetry_enabled
 # Use the shared logger setup function
 logger = setup_logger("task_executor")
 
+# Check running mode
+MODE = os.getenv("MODE", "task")  # "task" or "code-tool"
+
 
 # Define lifespan context manager for startup and shutdown events
 @asynccontextmanager
@@ -72,7 +75,8 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"Failed to initialize OpenTelemetry: {e}")
     try:
-        if os.getenv("TASK_INFO"):
+        # Only run TASK_INFO in task mode, not in code-tool mode
+        if MODE == "task" and os.getenv("TASK_INFO"):
             # Generate a request_id for startup task execution
             # This ensures logs have a request_id even without HTTP request
             startup_request_id = str(uuid.uuid4())[:8]
@@ -83,6 +87,8 @@ async def lifespan(app: FastAPI):
             logger.info("TASK_INFO environment variable found, attempting to run task")
             status = run_task()
             logger.info(f"Task execution status: {status}")
+        elif MODE == "code-tool":
+            logger.info("Running in code-tool mode, waiting for API requests")
         else:
             logger.info(
                 "No TASK_INFO environment variable found, skipping task execution"
@@ -106,6 +112,13 @@ app = FastAPI(
     description="API for executing tasks with agents",
     lifespan=lifespan,
 )
+
+# Include Code Tool router if in code-tool mode
+if MODE == "code-tool":
+    from executor.routers.code_tool import router as code_tool_router
+
+    app.include_router(code_tool_router)
+    logger.info("Code Tool router registered")
 
 
 # Add middleware for request/response logging and OTEL capture
@@ -426,8 +439,11 @@ def main():
     """
     Main function for running the FastAPI server
     """
-    # Get port from environment variable, default to 10001
-    port = int(os.getenv("PORT", 10001))
+    # Get port from environment variable, default to 10001 for task mode, 8080 for code-tool
+    if MODE == "code-tool":
+        port = int(os.getenv("PORT", 8080))
+    else:
+        port = int(os.getenv("PORT", 10001))
     uvicorn.run(app, host="0.0.0.0", port=port)
 
 
