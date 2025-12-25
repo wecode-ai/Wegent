@@ -22,7 +22,7 @@ from app.models.user import User
 from app.schemas.kind import Bot, Ghost, Model, Shell, Task, Team, Workspace
 from app.schemas.subtask import SubtaskExecutorUpdate
 from app.services.base import BaseService
-from app.services.tool_service import tool_service
+from app.services.skill_service import SkillService
 from app.services.webhook_notification import Notification, webhook_notification_service
 
 logger = logging.getLogger(__name__)
@@ -866,24 +866,30 @@ class ExecutorKindsService(
                     system_prompt = ghost_crd.spec.systemPrompt
                     # First check legacy mcpServers field
                     mcp_servers = ghost_crd.spec.mcpServers or {}
-                    # Then merge with tools field if present
-                    if ghost_crd.spec.tools:
+                    # Then merge with skillRefs field if present
+                    if ghost_crd.spec.skillRefs:
                         try:
-                            # Get tool configs from tool_service
-                            tools_mcp_servers = tool_service.get_tool_config_for_executor(
-                                db, bot.user_id, ghost.id
+                            # Get MCP configs from skill_service
+                            skill_service = SkillService(db)
+                            skill_mcp_config = skill_service.get_mcp_config_for_executor(
+                                ghost.id
                             )
-                            # Merge tools into mcp_servers (tools take precedence)
+                            tools_mcp_servers = skill_mcp_config.get("mcpServers", {})
+                            # Merge skills into mcp_servers (skills take precedence)
                             if tools_mcp_servers:
                                 mcp_servers = {**mcp_servers, **tools_mcp_servers}
                                 logger.info(
-                                    f"Bot {bot.name} (ID: {bot.id}) - Merged {len(tools_mcp_servers)} tools from Ghost"
+                                    f"Bot {bot.name} (ID: {bot.id}) - Merged {len(tools_mcp_servers)} MCP skills from Ghost"
                                 )
+                            # Get Claude Code skills
+                            skills = skill_service.get_skills_for_executor(ghost.id)
                         except Exception as e:
                             logger.warning(
-                                f"Failed to get tool config for Ghost {ghost.id}: {e}"
+                                f"Failed to get skill config for Ghost {ghost.id}: {e}"
                             )
-                    skills = ghost_crd.spec.skills or []
+                            skills = ghost_crd.spec.skills or []
+                    else:
+                        skills = ghost_crd.spec.skills or []
                     logger.info(
                         f"Bot {bot.name} (ID: {bot.id}) - Ghost {ghost.name} skills: {skills}"
                     )
