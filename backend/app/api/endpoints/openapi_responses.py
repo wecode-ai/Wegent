@@ -459,7 +459,7 @@ async def _create_streaming_response(
                     "type": "online",
                     "taskType": "chat",
                     "autoDeleteExecutor": "false",
-                    "source": "api",
+                    "source": "chat_shell",  # Use chat_shell to enable session_manager cancel
                     **({"modelId": model_info.get("model_id")} if model_info.get("model_id") else {}),
                     **({"forceOverrideBotModel": "true"} if model_info.get("model_id") else {}),
                 },
@@ -557,23 +557,25 @@ async def _create_streaming_response(
         import asyncio
 
         from app.api.dependencies import get_db as get_db_session
+        from app.core.config import settings
         from app.services.chat.base import get_http_client
+        from app.services.chat.db_handler import db_handler
         from app.services.chat.message_builder import message_builder
         from app.services.chat.providers import get_provider
         from app.services.chat.providers.base import ChunkType
+        from app.services.chat.session_manager import session_manager
 
-        cancel_event = asyncio.Event()
         accumulated_content = ""
 
         # Get a new db session for the generator
         db_gen = next(get_db_session())
 
         try:
+            # Register stream for cancellation support
+            cancel_event = await session_manager.register_stream(assistant_subtask_id)
+
             # Update assistant subtask status to RUNNING
-            subtask = db_gen.query(Subtask).filter(Subtask.id == assistant_subtask_id).first()
-            if subtask:
-                subtask.status = SubtaskStatus.RUNNING
-                db_gen.commit()
+            await db_handler.update_subtask_status(assistant_subtask_id, "RUNNING")
 
             # Build messages (include chat history if task has previous messages)
             history = []
@@ -601,64 +603,93 @@ async def _create_streaming_response(
             provider = get_provider(model_config, client)
             if not provider:
                 logger.error("Failed to create provider from model config")
-                # Update subtask as failed
-                subtask = db_gen.query(Subtask).filter(Subtask.id == assistant_subtask_id).first()
-                if subtask:
-                    subtask.status = SubtaskStatus.FAILED
-                    subtask.error_message = "Failed to create provider"
-                    db_gen.commit()
+                await db_handler.update_subtask_status(
+                    assistant_subtask_id, "FAILED", error="Failed to create provider"
+                )
                 return
 
-            # Stream response
+            # Stream response with periodic saves
+            last_redis_save = asyncio.get_event_loop().time()
+            last_db_save = asyncio.get_event_loop().time()
+            redis_save_interval = getattr(settings, "STREAMING_REDIS_SAVE_INTERVAL", 1.0)
+            db_save_interval = getattr(settings, "STREAMING_DB_SAVE_INTERVAL", 3.0)
+
             async for chunk in provider.stream_chat(messages, cancel_event):
+                # Check for cancellation
+                if cancel_event.is_set() or await session_manager.is_cancelled(assistant_subtask_id):
+                    logger.info(f"Stream cancelled for subtask {assistant_subtask_id}")
+                    # Save partial content before breaking
+                    if accumulated_content:
+                        await session_manager.save_streaming_content(assistant_subtask_id, accumulated_content)
+                        await db_handler.save_partial_response(assistant_subtask_id, accumulated_content)
+                    break
+
                 if chunk.type == ChunkType.CONTENT and chunk.content:
                     accumulated_content += chunk.content
                     yield chunk.content
+
+                    # Save to Redis periodically
+                    current_time = asyncio.get_event_loop().time()
+                    if current_time - last_redis_save >= redis_save_interval:
+                        await session_manager.save_streaming_content(assistant_subtask_id, accumulated_content)
+                        last_redis_save = current_time
+
+                    # Save to DB periodically
+                    if current_time - last_db_save >= db_save_interval:
+                        await db_handler.save_partial_response(assistant_subtask_id, accumulated_content)
+                        last_db_save = current_time
+
                 elif chunk.type == ChunkType.ERROR:
                     logger.error(f"LLM error: {chunk.error}")
-                    # Update subtask as failed
-                    subtask = db_gen.query(Subtask).filter(Subtask.id == assistant_subtask_id).first()
-                    if subtask:
-                        subtask.status = SubtaskStatus.FAILED
-                        subtask.error_message = chunk.error or "Unknown LLM error"
-                        db_gen.commit()
+                    await db_handler.update_subtask_status(
+                        assistant_subtask_id, "FAILED", error=chunk.error or "Unknown LLM error"
+                    )
                     return
 
-            # Update assistant subtask with completed status and result
-            subtask = db_gen.query(Subtask).filter(Subtask.id == assistant_subtask_id).first()
-            if subtask:
-                subtask.status = SubtaskStatus.COMPLETED
-                subtask.progress = 100
-                subtask.result = {"value": accumulated_content}
-                subtask.completed_at = datetime.now()
-                db_gen.commit()
+            # Stream completed (not cancelled)
+            if not cancel_event.is_set() and not await session_manager.is_cancelled(assistant_subtask_id):
+                result = {"value": accumulated_content}
 
-            # Update task status
-            task_kind = db_gen.query(Kind).filter(Kind.id == task_kind_id).first()
-            if task_kind:
-                task_crd = Task.model_validate(task_kind.json)
-                if task_crd.status:
-                    task_crd.status.status = "COMPLETED"
-                    task_crd.status.updatedAt = datetime.now()
-                    task_crd.status.completedAt = datetime.now()
-                    task_kind.json = task_crd.model_dump(mode="json")
-                    from sqlalchemy.orm.attributes import flag_modified
-                    flag_modified(task_kind, "json")
-                    db_gen.commit()
+                # Save final content
+                await session_manager.save_streaming_content(assistant_subtask_id, accumulated_content)
+
+                # Save chat history
+                await session_manager.append_user_and_assistant_messages(
+                    task_kind_id, input_text, accumulated_content
+                )
+
+                # Update subtask to completed
+                await db_handler.update_subtask_status(
+                    assistant_subtask_id, "COMPLETED", result=result
+                )
+
+                # Update task status
+                task_kind = db_gen.query(Kind).filter(Kind.id == task_kind_id).first()
+                if task_kind:
+                    task_crd = Task.model_validate(task_kind.json)
+                    if task_crd.status:
+                        task_crd.status.status = "COMPLETED"
+                        task_crd.status.updatedAt = datetime.now()
+                        task_crd.status.completedAt = datetime.now()
+                        task_kind.json = task_crd.model_dump(mode="json")
+                        from sqlalchemy.orm.attributes import flag_modified
+                        flag_modified(task_kind, "json")
+                        db_gen.commit()
 
         except Exception as e:
             logger.exception(f"Error in raw_chat_stream: {e}")
             # Update subtask as failed
             try:
-                subtask = db_gen.query(Subtask).filter(Subtask.id == assistant_subtask_id).first()
-                if subtask:
-                    subtask.status = SubtaskStatus.FAILED
-                    subtask.error_message = str(e)
-                    db_gen.commit()
+                await db_handler.update_subtask_status(
+                    assistant_subtask_id, "FAILED", error=str(e)
+                )
             except Exception:
                 pass
             raise
         finally:
+            # Cleanup stream registration
+            await session_manager.unregister_stream(assistant_subtask_id)
+            await session_manager.delete_streaming_content(assistant_subtask_id)
             db_gen.close()
 
     # Use streaming service to convert to OpenAI format
