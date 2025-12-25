@@ -1053,7 +1053,7 @@ class ChatNamespace(socketio.AsyncNamespace):
         Returns:
             Tuple of (failed_ai_subtask, task, team, user_subtask)
         """
-        from sqlalchemy.orm import aliased
+        from sqlalchemy.orm import aliased, joinedload
 
         TaskKind = aliased(Kind)
         TeamKind = aliased(Kind)
@@ -1096,37 +1096,31 @@ class ChatNamespace(socketio.AsyncNamespace):
         failed_ai_subtask, task, team = query_result
 
         # Fetch user subtask separately
-        # For group chat: parent_id might point to another ASSISTANT subtask or be None
-        # For regular chat: parent_id should point to a USER subtask
+        # Key insight: parent_id stores message_id (not subtask.id) throughout the system
+        # Both in chat.py and task_kinds.py, parent_id is always set to message_id
         user_subtask = None
         if failed_ai_subtask and failed_ai_subtask.parent_id:
+            # Use parent_id as message_id to find the triggering USER subtask
+            # This works for both single chat and group chat
             user_subtask = (
                 db.query(Subtask)
+                .options(joinedload(Subtask.attachments))  # Preload attachments
                 .filter(
-                    Subtask.id == failed_ai_subtask.parent_id,
-                    # Don't filter by role - accept any role
-                    # In group chat, parent might be ASSISTANT (previous message in thread)
+                    Subtask.task_id == failed_ai_subtask.task_id,
+                    Subtask.message_id == failed_ai_subtask.parent_id,
+                    Subtask.role == SubtaskRole.USER,
                 )
                 .first()
             )
-
-            # If parent is not a USER subtask, try to find the original user message
-            # by looking for USER subtasks in the same task with earlier message_id
-            if user_subtask and user_subtask.role != SubtaskRole.USER:
+            if user_subtask:
                 logger.info(
-                    f"[WS] chat:retry parent is not USER (role={user_subtask.role}), "
-                    f"searching for original USER subtask"
+                    f"[WS] chat:retry found user_subtask via parent_id as message_id: "
+                    f"id={user_subtask.id}, message_id={user_subtask.message_id}, "
+                    f"prompt={user_subtask.prompt[:50] if user_subtask.prompt else ''}..."
                 )
-                # Find the most recent USER subtask before this AI subtask
-                user_subtask = (
-                    db.query(Subtask)
-                    .filter(
-                        Subtask.task_id == failed_ai_subtask.task_id,
-                        Subtask.role == SubtaskRole.USER,
-                        Subtask.message_id < failed_ai_subtask.message_id,
-                    )
-                    .order_by(Subtask.message_id.desc())
-                    .first()
+            else:
+                logger.warning(
+                    f"[WS] chat:retry could not find USER subtask with message_id={failed_ai_subtask.parent_id}"
                 )
 
         return failed_ai_subtask, task, team, user_subtask
@@ -1320,10 +1314,21 @@ class ChatNamespace(socketio.AsyncNamespace):
             # If model_id exists, use it; otherwise, use None to let the bot use its default model
             from app.api.ws.events import ChatSendPayload
 
+            # Get attachment from user_subtask if exists
+            attachment_id = None
+            if user_subtask.attachments:
+                # Use the first attachment (chat messages typically have one attachment)
+                attachment_id = user_subtask.attachments[0].id
+                logger.info(
+                    f"[WS] chat:retry found attachment: id={attachment_id}, "
+                    f"filename={user_subtask.attachments[0].original_filename}"
+                )
+
             retry_payload = ChatSendPayload(
                 task_id=payload.task_id,
                 team_id=team.id,
                 message=user_subtask.prompt or "",
+                attachment_id=attachment_id,
                 force_override_bot_model=model_id,
                 force_override_bot_model_type=model_type,
                 is_group_chat=False,
