@@ -287,7 +287,7 @@ function CodeBlock({
  * Encapsulates complex ReactMarkdown config and custom components
  */
 export function WikiContent({ content, loading, error }: WikiContentProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation('knowledge');
 
   if (loading) {
     return (

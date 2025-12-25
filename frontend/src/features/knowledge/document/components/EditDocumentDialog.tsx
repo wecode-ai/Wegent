@@ -30,7 +30,7 @@ export function EditDocumentDialog({
   document,
   onSuccess,
 }: EditDocumentDialogProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation(['common', 'knowledge']);
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -50,7 +50,7 @@ export function EditDocumentDialog({
 
     const trimmedName = name.trim();
     if (!trimmedName) {
-      setError(t('knowledge.document.document.nameRequired'));
+      setError(t('knowledge:document.document.nameRequired'));
       return;
     }
 
@@ -61,7 +61,7 @@ export function EditDocumentDialog({
       await updateDocument(document.id, { name: trimmedName });
       onSuccess();
     } catch (err) {
-      setError(t('knowledge.document.document.updateFailed'));
+      setError(t('knowledge:document.document.updateFailed'));
       console.error('Failed to update document:', err);
     } finally {
       setLoading(false);
@@ -72,20 +72,20 @@ export function EditDocumentDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{t('knowledge.document.document.edit')}</DialogTitle>
+          <DialogTitle>{t('knowledge:document.document.edit')}</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit}>
           <div className="py-4 space-y-4">
             <div>
               <label className="block text-sm font-medium text-text-primary mb-1.5">
-                {t('knowledge.document.document.columns.name')}
+                {t('knowledge:document.document.columns.name')}
               </label>
               <input
                 type="text"
                 value={name}
                 onChange={e => setName(e.target.value)}
                 className="w-full h-9 px-3 text-sm bg-surface border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
-                placeholder={t('knowledge.document.document.namePlaceholder')}
+                placeholder={t('knowledge:document.document.namePlaceholder')}
                 autoFocus
               />
               {error && <p className="mt-1.5 text-xs text-error">{error}</p>}

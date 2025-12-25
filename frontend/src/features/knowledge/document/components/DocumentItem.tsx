@@ -31,7 +31,7 @@ export function DocumentItem({
   selected = false,
   onSelect,
 }: DocumentItemProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation(['common', 'knowledge']);
 
   const formatFileSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`;
@@ -127,8 +127,8 @@ export function DocumentItem({
       <div className="w-16 flex-shrink-0 text-center">
         <Badge variant={document.status === 'enabled' ? 'success' : 'secondary'} size="sm">
           {document.status === 'enabled'
-            ? t('knowledge.document.document.status.enabled')
-            : t('knowledge.document.document.status.disabled')}
+            ? t('knowledge:document.document.status.enabled')
+            : t('knowledge:document.document.status.disabled')}
         </Badge>
       </div>
 
@@ -140,8 +140,8 @@ export function DocumentItem({
             onClick={handleToggleStatus}
             title={
               document.status === 'enabled'
-                ? t('knowledge.document.document.disable')
-                : t('knowledge.document.document.enable')
+                ? t('knowledge:document.document.disable')
+                : t('knowledge:document.document.enable')
             }
           >
             {document.status === 'enabled' ? (

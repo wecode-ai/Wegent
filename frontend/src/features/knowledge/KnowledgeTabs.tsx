@@ -25,12 +25,12 @@ interface KnowledgeTabsProps {
 const tabs: KnowledgeTabItem[] = [
   {
     id: 'code',
-    labelKey: 'knowledge.tabs.code',
+    labelKey: 'knowledge:tabs.code',
     icon: CodeBracketIcon,
   },
   {
     id: 'document',
-    labelKey: 'knowledge.tabs.document',
+    labelKey: 'knowledge:tabs.document',
     icon: DocumentTextIcon,
     disabled: true,
     comingSoon: true,
@@ -42,7 +42,7 @@ const tabs: KnowledgeTabItem[] = [
  * Displays tabs for different knowledge types (Code Knowledge, Document Knowledge, etc.)
  */
 export function KnowledgeTabs({ activeTab, onTabChange }: KnowledgeTabsProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation(['common', 'knowledge']);
 
   return (
     <div className="flex items-center gap-1 px-4 py-2 border-t border-border bg-base">

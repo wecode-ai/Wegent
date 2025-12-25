@@ -31,7 +31,7 @@ export function DeleteKnowledgeBaseDialog({
   onConfirm,
   loading,
 }: DeleteKnowledgeBaseDialogProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation(['common', 'knowledge']);
 
   const handleConfirm = async () => {
     try {
@@ -45,9 +45,9 @@ export function DeleteKnowledgeBaseDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{t('knowledge.document.knowledgeBase.delete')}</DialogTitle>
+          <DialogTitle>{t('knowledge:document.knowledgeBase.delete')}</DialogTitle>
           <DialogDescription>
-            {t('knowledge.document.knowledgeBase.confirmDelete')}
+            {t('knowledge:document.knowledgeBase.confirmDelete')}
           </DialogDescription>
         </DialogHeader>
         {knowledgeBase && (
@@ -55,7 +55,7 @@ export function DeleteKnowledgeBaseDialog({
             <p className="text-text-primary font-medium">{knowledgeBase.name}</p>
             {knowledgeBase.document_count > 0 && (
               <p className="text-sm text-text-secondary mt-2">
-                {t('knowledge.document.knowledgeBase.deleteWarning', {
+                {t('knowledge:document.knowledgeBase.deleteWarning', {
                   count: knowledgeBase.document_count,
                 })}
               </p>

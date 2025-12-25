@@ -26,7 +26,7 @@ export function WikiDetailSidebar({
   onBackToList,
   onSelectContent,
 }: WikiDetailSidebarProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation('knowledge');
 
   return (
     <div className="w-64 border-r border-border overflow-y-auto bg-surface/10">

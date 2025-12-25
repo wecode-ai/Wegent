@@ -19,7 +19,7 @@ interface DocumentUploadProps {
 }
 
 export function DocumentUpload({ open, onOpenChange, onUploadComplete }: DocumentUploadProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation(['common', 'knowledge']);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { state, handleFileSelect, handleRemove, reset } = useAttachment();
 
@@ -74,7 +74,7 @@ export function DocumentUpload({ open, onOpenChange, onUploadComplete }: Documen
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{t('knowledge.document.document.upload')}</DialogTitle>
+          <DialogTitle>{t('knowledge:document.document.upload')}</DialogTitle>
         </DialogHeader>
 
         <div className="py-4">
@@ -87,10 +87,10 @@ export function DocumentUpload({ open, onOpenChange, onUploadComplete }: Documen
             >
               <Upload className="w-10 h-10 mx-auto mb-4 text-text-muted" />
               <p className="text-text-primary font-medium">
-                {t('knowledge.document.document.dropzone')}
+                {t('knowledge:document.document.dropzone')}
               </p>
               <p className="text-sm text-text-muted mt-2">
-                {t('knowledge.document.document.supportedTypes')}
+                {t('knowledge:document.document.supportedTypes')}
               </p>
               <input
                 ref={fileInputRef}
@@ -119,7 +119,7 @@ export function DocumentUpload({ open, onOpenChange, onUploadComplete }: Documen
                 <div className="space-y-2">
                   <Progress value={state.uploadProgress} />
                   <p className="text-sm text-text-muted text-center">
-                    {t('knowledge.document.document.uploading')} {state.uploadProgress}%
+                    {t('knowledge:document.document.uploading')} {state.uploadProgress}%
                   </p>
                 </div>
               )}
@@ -133,7 +133,7 @@ export function DocumentUpload({ open, onOpenChange, onUploadComplete }: Documen
 
               {state.attachment && !state.error && (
                 <p className="text-sm text-success text-center">
-                  {t('knowledge.document.document.uploadSuccess')}
+                  {t('knowledge:document.document.uploadSuccess')}
                 </p>
               )}
             </div>
