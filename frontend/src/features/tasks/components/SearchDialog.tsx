@@ -10,7 +10,6 @@ import {
   Search,
   Plus,
   X,
-  Code,
   CheckCircle2,
   XCircle,
   StopCircle,
@@ -24,7 +23,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { useTranslation } from '@/hooks/useTranslation';
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext';
-import { Task, TaskType } from '@/types/api';
+import { Task } from '@/types/api';
 import { taskApis } from '@/apis/tasks';
 import { paths } from '@/config/paths';
 
@@ -44,7 +43,7 @@ export default function SearchDialog({
   const { t } = useTranslation('common');
   const router = useRouter();
   const { clearAllStreams } = useChatStreamContext();
-  const { tasks, setSelectedTask, refreshTasks } = useTaskContext();
+  const { tasks, setSelectedTask } = useTaskContext();
 
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [dialogSearchTerm, setDialogSearchTerm] = useState('');

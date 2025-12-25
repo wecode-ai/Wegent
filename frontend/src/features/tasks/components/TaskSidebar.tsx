@@ -5,7 +5,7 @@
 'use client';
 
 import './task-list-scrollbar.css';
-import React, { useRef, useEffect, useState, useMemo } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
@@ -48,7 +48,7 @@ export default function TaskSidebar({
   pageType = 'chat',
   isCollapsed = false,
   onToggleCollapsed,
-  isSearchDialogOpen: externalIsSearchDialogOpen,
+  isSearchDialogOpen: _externalIsSearchDialogOpen,
   onSearchDialogOpenChange,
   shortcutDisplayText: externalShortcutDisplayText,
 }: TaskSidebarProps) {
