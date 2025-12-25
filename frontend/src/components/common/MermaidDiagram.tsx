@@ -5,6 +5,7 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import DOMPurify from 'dompurify';
 import {
   ZoomIn,
   ZoomOut,
@@ -62,7 +63,7 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
 
     return {
       startOnLoad: false,
-      theme: 'base',
+      theme: 'base' as const,
       themeVariables: isDark
         ? {
             // Dark theme variables
@@ -118,7 +119,7 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
             activationBorderColor: '#0ea5e9',
             sequenceNumberColor: '#ffffff',
           },
-      securityLevel: 'loose',
+      securityLevel: 'strict' as const,
       flowchart: {
         useMaxWidth: true,
         htmlLabels: true,
@@ -147,6 +148,16 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
     };
   }, [theme]);
 
+  // Sanitize SVG content to prevent XSS attacks
+  const sanitizeSvg = useCallback((svg: string): string => {
+    // Configure DOMPurify to allow SVG elements and attributes
+    return DOMPurify.sanitize(svg, {
+      USE_PROFILES: { svg: true, svgFilters: true },
+      ADD_TAGS: ['foreignObject'],
+      ADD_ATTR: ['target', 'xlink:href', 'marker-end', 'marker-start'],
+    });
+  }, []);
+
   // Render Mermaid diagram
   useEffect(() => {
     let isMounted = true;
@@ -172,7 +183,8 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
         const { svg } = await mermaid.render(diagramId, code.trim());
 
         if (isMounted) {
-          setSvgContent(svg);
+          // Sanitize SVG content before setting to prevent XSS
+          setSvgContent(sanitizeSvg(svg));
           setIsLoading(false);
         }
       } catch (err) {
@@ -190,7 +202,7 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
     return () => {
       isMounted = false;
     };
-  }, [code, theme, diagramId, getMermaidConfig]);
+  }, [code, theme, diagramId, getMermaidConfig, sanitizeSvg]);
 
   // Zoom controls
   const zoomIn = useCallback(() => {
