@@ -48,6 +48,10 @@ interface TaskSidebarProps {
   pageType?: 'chat' | 'code' | 'knowledge';
   isCollapsed?: boolean;
   onToggleCollapsed?: () => void;
+  // Search dialog control from parent (for global shortcut support)
+  isSearchDialogOpen?: boolean;
+  onSearchDialogOpenChange?: (open: boolean) => void;
+  shortcutDisplayText?: string;
 }
 
 export default function TaskSidebar({
@@ -56,6 +60,9 @@ export default function TaskSidebar({
   pageType = 'chat',
   isCollapsed = false,
   onToggleCollapsed,
+  isSearchDialogOpen: externalIsSearchDialogOpen,
+  onSearchDialogOpenChange,
+  shortcutDisplayText: externalShortcutDisplayText,
 }: TaskSidebarProps) {
   const { t } = useTranslation('common');
   const router = useRouter();
@@ -76,8 +83,13 @@ export default function TaskSidebar({
     setSelectedTask,
   } = useTaskContext();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false);
+  // Internal search dialog state (used when not controlled by parent)
+  const [internalIsSearchDialogOpen, setInternalIsSearchDialogOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Use external state if provided, otherwise use internal state
+  const isSearchDialogOpen = externalIsSearchDialogOpen ?? internalIsSearchDialogOpen;
+  const setIsSearchDialogOpen = onSearchDialogOpenChange ?? setInternalIsSearchDialogOpen;
 
   // Search dialog specific state
   const [dialogSearchTerm, setDialogSearchTerm] = useState('');
@@ -98,31 +110,34 @@ export default function TaskSidebar({
   }, []);
 
   // Get shortcut display text based on platform and preference
+  // Use external value if provided (from parent hook), otherwise compute locally
   const shortcutDisplayText = useMemo(() => {
+    if (externalShortcutDisplayText !== undefined) return externalShortcutDisplayText;
     if (searchKey === 'disabled') return '';
     const key = searchKey === 'cmd_k' ? 'K' : 'F';
     return isMac ? `⌘${key}` : `Ctrl+${key}`;
-  }, [searchKey, isMac]);
+  }, [externalShortcutDisplayText, searchKey, isMac]);
 
-  // Toggle search dialog
+  // Toggle search dialog - only used internally when not controlled by parent
   const toggleSearchDialog = useCallback(() => {
-    setIsSearchDialogOpen(prev => {
-      if (!prev) {
-        // Opening: reset dialog search state
-        setDialogSearchTerm('');
-        setDialogSearchResults([]);
-      } else {
-        // Closing: clear dialog search state
-        setDialogSearchTerm('');
-        setDialogSearchResults([]);
-      }
-      return !prev;
-    });
-  }, []);
+    const newValue = !isSearchDialogOpen;
+    if (newValue) {
+      // Opening: reset dialog search state
+      setDialogSearchTerm('');
+      setDialogSearchResults([]);
+    } else {
+      // Closing: clear dialog search state
+      setDialogSearchTerm('');
+      setDialogSearchResults([]);
+    }
+    setIsSearchDialogOpen(newValue);
+  }, [isSearchDialogOpen, setIsSearchDialogOpen]);
 
-  // Global keyboard shortcut listener
+  // Global keyboard shortcut listener - only register if not controlled by parent
+  // (parent will handle the shortcut via useSearchShortcut hook)
   useEffect(() => {
-    if (searchKey === 'disabled') return;
+    // Skip if controlled by parent or if shortcut is disabled
+    if (externalIsSearchDialogOpen !== undefined || searchKey === 'disabled') return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
       const targetKey = searchKey === 'cmd_k' ? 'k' : 'f';
@@ -138,7 +153,7 @@ export default function TaskSidebar({
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [searchKey, isMac, toggleSearchDialog]);
+  }, [externalIsSearchDialogOpen, searchKey, isMac, toggleSearchDialog]);
 
   // Custom debounce hook
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

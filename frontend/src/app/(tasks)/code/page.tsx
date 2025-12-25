@@ -4,7 +4,7 @@
 
 'use client';
 
-import { Suspense, useState, useEffect, useMemo } from 'react';
+import { Suspense, useState, useEffect, useMemo, useCallback } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { teamService } from '@/features/tasks/service/teamService';
 import TopNavigation from '@/features/layout/TopNavigation';
@@ -31,6 +31,7 @@ import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
 import { calculateOpenLinks } from '@/utils/openLinks';
 import { useUser } from '@/features/common/UserContext';
 import { paths } from '@/config/paths';
+import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut';
 
 export default function CodePage() {
   // Get search params to check for taskId
@@ -81,6 +82,19 @@ export default function CodePage() {
 
   // Workbench state - default to true when taskId exists
   const [isWorkbenchOpen, setIsWorkbenchOpen] = useState(true);
+
+  // Search dialog state (controlled from page level for global shortcut support)
+  const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false);
+
+  // Toggle search dialog callback
+  const toggleSearchDialog = useCallback(() => {
+    setIsSearchDialogOpen(prev => !prev);
+  }, []);
+
+  // Global search shortcut hook
+  const { shortcutDisplayText } = useSearchShortcut({
+    onToggle: toggleSearchDialog,
+  });
 
   // Mobile detection
   const isMobile = useIsMobile();
@@ -246,6 +260,9 @@ export default function CodePage() {
             pageType="code"
             isCollapsed={isCollapsed}
             onToggleCollapsed={handleToggleCollapsed}
+            isSearchDialogOpen={isSearchDialogOpen}
+            onSearchDialogOpenChange={setIsSearchDialogOpen}
+            shortcutDisplayText={shortcutDisplayText}
           />
         </ResizableSidebar>
         {/* Main content area with right panel*/}

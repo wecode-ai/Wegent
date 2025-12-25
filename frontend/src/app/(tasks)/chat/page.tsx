@@ -4,7 +4,7 @@
 
 'use client';
 
-import { Suspense, useState, useEffect } from 'react';
+import { Suspense, useState, useEffect, useCallback } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { UserGroupIcon } from '@heroicons/react/24/outline';
 import { teamService } from '@/features/tasks/service/teamService';
@@ -32,6 +32,7 @@ import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContex
 import { paths } from '@/config/paths';
 import { Button } from '@/components/ui/button';
 import { useTranslation } from '@/hooks/useTranslation';
+import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut';
 
 export default function ChatPage() {
   const { t } = useTranslation();
@@ -97,6 +98,19 @@ export default function ChatPage() {
 
   // Create group chat dialog state
   const [isCreateGroupChatOpen, setIsCreateGroupChatOpen] = useState(false);
+
+  // Search dialog state (controlled from page level for global shortcut support)
+  const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false);
+
+  // Toggle search dialog callback
+  const toggleSearchDialog = useCallback(() => {
+    setIsSearchDialogOpen(prev => !prev);
+  }, []);
+
+  // Global search shortcut hook
+  const { shortcutDisplayText } = useSearchShortcut({
+    onToggle: toggleSearchDialog,
+  });
 
   const handleShareButtonRender = (button: React.ReactNode) => {
     setShareButton(button);
@@ -181,6 +195,9 @@ export default function ChatPage() {
             pageType="chat"
             isCollapsed={isCollapsed}
             onToggleCollapsed={handleToggleCollapsed}
+            isSearchDialogOpen={isSearchDialogOpen}
+            onSearchDialogOpenChange={setIsSearchDialogOpen}
+            shortcutDisplayText={shortcutDisplayText}
           />
         </ResizableSidebar>
         {/* Main content area */}
