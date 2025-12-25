@@ -2,10 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import { useState, useEffect, useCallback } from 'react'
-import { Button } from '@/components/ui/button'
+import { useState, useEffect, useCallback } from 'react';
+import { Button } from '@/components/ui/button';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -15,91 +15,92 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
-import { useToast } from '@/hooks/use-toast'
-import { useTranslation } from '@/hooks/useTranslation'
-import { greyApis } from '@/apis/grey'
-import { Loader2 } from 'lucide-react'
+} from '@/components/ui/alert-dialog';
+import { useToast } from '@/hooks/use-toast';
+import { useTranslation } from '@/hooks/useTranslation';
+import { greyApis } from '@/apis/grey';
+import { Loader2, FlaskConical } from 'lucide-react';
 
 export default function GreyTestButton() {
-  const { t } = useTranslation('common')
-  const { toast } = useToast()
-  const [isGreyUser, setIsGreyUser] = useState<boolean | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
-  const [showConfirmDialog, setShowConfirmDialog] = useState(false)
-  const [isProcessing, setIsProcessing] = useState(false)
+  const { t } = useTranslation('common');
+  const { toast } = useToast();
+  const [isGreyUser, setIsGreyUser] = useState<boolean | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   // Fetch grey status on mount
   const fetchGreyStatus = useCallback(async () => {
-    setIsLoading(true)
+    setIsLoading(true);
     try {
-      const response = await greyApis.getStatus()
-      setIsGreyUser(response.is_grey_user)
+      const response = await greyApis.getStatus();
+      setIsGreyUser(response.is_grey_user);
     } catch (error) {
-      console.error('Failed to fetch grey status:', error)
+      console.error('Failed to fetch grey status:', error);
       // Set to false on error, allow user to try joining
-      setIsGreyUser(false)
+      setIsGreyUser(false);
     } finally {
-      setIsLoading(false)
+      setIsLoading(false);
     }
-  }, [])
+  }, []);
 
   useEffect(() => {
-    fetchGreyStatus()
-  }, [fetchGreyStatus])
+    fetchGreyStatus();
+  }, [fetchGreyStatus]);
 
   const handleConfirm = async () => {
-    setIsProcessing(true)
+    setIsProcessing(true);
     try {
       if (isGreyUser) {
         // Leave grey test
-        const response = await greyApis.leave()
+        const response = await greyApis.leave();
         if (response.success) {
-          setIsGreyUser(response.is_grey_user)
+          setIsGreyUser(response.is_grey_user);
           toast({
             title: t('grey.leaveSuccess'),
-          })
+          });
         }
       } else {
         // Join grey test
-        const response = await greyApis.join()
+        const response = await greyApis.join();
         if (response.success) {
-          setIsGreyUser(response.is_grey_user)
+          setIsGreyUser(response.is_grey_user);
           toast({
             title: t('grey.joinSuccess'),
-          })
+          });
         }
       }
     } catch (error) {
-      console.error('Grey action failed:', error)
+      console.error('Grey action failed:', error);
       toast({
         variant: 'destructive',
         title: t('grey.error'),
-      })
+      });
     } finally {
-      setIsProcessing(false)
-      setShowConfirmDialog(false)
+      setIsProcessing(false);
+      setShowConfirmDialog(false);
     }
-  }
+  };
 
   // Don't render while loading initial status
   if (isLoading || isGreyUser === null) {
-    return null
+    return null;
   }
 
-  const buttonText = isGreyUser ? t('grey.leaveButton') : t('grey.joinButton')
-  const confirmTitle = isGreyUser ? t('grey.leaveConfirmTitle') : t('grey.joinConfirmTitle')
-  const confirmMessage = isGreyUser ? t('grey.leaveConfirmMessage') : t('grey.joinConfirmMessage')
+  const buttonText = isGreyUser ? t('grey.leaveButton') : t('grey.joinButton');
+  const confirmTitle = isGreyUser ? t('grey.leaveConfirmTitle') : t('grey.joinConfirmTitle');
+  const confirmMessage = isGreyUser ? t('grey.leaveConfirmMessage') : t('grey.joinConfirmMessage');
 
   return (
     <>
       <Button
-        variant="ghost"
+        variant="outline"
         size="sm"
         onClick={() => setShowConfirmDialog(true)}
-        className="text-text-secondary hover:text-text-primary"
+        className="gap-1 h-8 pl-2 pr-3 rounded-[7px] text-sm"
       >
-        {buttonText}
+        <FlaskConical className="h-3.5 w-3.5" />
+        <span className="hidden sm:inline">{buttonText}</span>
       </Button>
 
       <AlertDialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
@@ -110,7 +111,11 @@ export default function GreyTestButton() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={isProcessing}>{t('actions.cancel')}</AlertDialogCancel>
-            <AlertDialogAction onClick={handleConfirm} disabled={isProcessing}>
+            <AlertDialogAction
+              onClick={handleConfirm}
+              disabled={isProcessing}
+              className="bg-primary text-white hover:bg-primary/90"
+            >
               {isProcessing ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -124,5 +129,5 @@ export default function GreyTestButton() {
         </AlertDialogContent>
       </AlertDialog>
     </>
-  )
+  );
 }

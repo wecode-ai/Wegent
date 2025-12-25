@@ -210,7 +210,8 @@ export default function ChatPage() {
               </Button>
             )}
             {shareButton}
-            <GreyTestButton />
+            {/* Grey Test Button - only show when no task is open */}
+            {!hasOpenTask && <GreyTestButton />}
             {isMobile ? <ThemeToggle /> : <GithubStarButton />}
           </TopNavigation>
           {/* Chat area without repository selector */}

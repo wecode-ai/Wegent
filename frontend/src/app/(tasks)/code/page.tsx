@@ -262,7 +262,8 @@ export default function CodePage() {
             isSidebarCollapsed={isCollapsed}
           >
             {shareButton}
-            <GreyTestButton />
+            {/* Grey Test Button - only show when no task is open */}
+            {!hasTaskId && <GreyTestButton />}
             {isMobile ? <ThemeToggle /> : <GithubStarButton />}
             {hasTaskId && <OpenMenu openLinks={openLinks} />}
             {hasTaskId && (
