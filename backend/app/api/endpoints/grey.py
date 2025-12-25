@@ -10,7 +10,7 @@ Allows users to self-manage their beta testing status.
 import logging
 from typing import AsyncGenerator, List
 
-import httpx
+import aiohttp
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from redis.asyncio import Redis
@@ -25,8 +25,8 @@ router = APIRouter()
 
 # Grey test configuration (hardcoded as per requirements)
 GREY_CONFIG_NAME = "wegent-grey-uids"
-GREY_TOKEN = "xxx"
-GREY_API_URL = "https://nginx.com/admin/biz/grey-uids"
+GREY_TOKEN = "X1b3Yz6gk3f2jTt3"
+GREY_API_URL = "https://shanhai-dashboard.intra.weibo.cn/shanhai/admin/biz/grey-uids"
 
 
 class GreyStatusResponse(BaseModel):
@@ -73,31 +73,35 @@ async def call_grey_api(uids: List[int]) -> bool:
         True if successful, raises exception otherwise
     """
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                f"{GREY_API_URL}?config_name={GREY_CONFIG_NAME}&token={GREY_TOKEN}",
+        timeout = aiohttp.ClientTimeout(total=30, connect=10)
+
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            url = f"{GREY_API_URL}?config_name={GREY_CONFIG_NAME}&token={GREY_TOKEN}"
+            async with session.post(
+                url,
                 json={"uids": uids},
                 headers={"Content-Type": "application/json"},
-            )
+            ) as response:
+                if response.status != 200:
+                    body = await response.text()
+                    logger.error(
+                        f"Grey API returned non-200 status: {response.status}, body: {body}"
+                    )
+                    raise HTTPException(
+                        status_code=500,
+                        detail="Failed to call grey API: non-200 status",
+                    )
 
-            if response.status_code != 200:
-                logger.error(
-                    f"Grey API returned non-200 status: {response.status_code}, body: {response.text}"
-                )
-                raise HTTPException(
-                    status_code=500, detail="Failed to call grey API: non-200 status"
-                )
+                result = await response.json()
+                if result.get("code") != 0:
+                    logger.error(f"Grey API returned error code: {result}")
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Grey API error: {result.get('message', 'Unknown error')}",
+                    )
 
-            result = response.json()
-            if result.get("code") != 0:
-                logger.error(f"Grey API returned error code: {result}")
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Grey API error: {result.get('message', 'Unknown error')}",
-                )
-
-            return True
-    except httpx.RequestError as e:
+                return True
+    except aiohttp.ClientError as e:
         logger.error(f"Grey API request failed: {e}")
         raise HTTPException(
             status_code=500, detail="Failed to connect to grey API"
@@ -130,24 +134,28 @@ async def join_grey(
     Join the grey (beta) test program.
 
     This will:
-    1. Add the user to the Redis set
-    2. Get all UIDs from the set
-    3. Call external API to replace the entire list
+    1. Get current UIDs from Redis and add the new user
+    2. Call external API to update the list
+    3. If API succeeds, persist the change to Redis
 
     Returns:
         GreyActionResponse indicating success and new status
     """
     redis_key = get_grey_redis_key()
 
-    # Add user to Redis set
-    await redis.sadd(redis_key, str(current_user.id))
-
-    # Get all UIDs from the set
+    # Get current UIDs from Redis
     uid_strings = await redis.smembers(redis_key)
     uids = [int(uid) for uid in uid_strings]
 
-    # Call external API to update the list
+    # Add current user to the list (if not already present)
+    if current_user.id not in uids:
+        uids.append(current_user.id)
+
+    # Call external API first - if it fails, don't modify Redis
     await call_grey_api(uids)
+
+    # API succeeded, now persist to Redis
+    await redis.sadd(redis_key, str(current_user.id))
 
     logger.info(f"User {current_user.id} ({current_user.user_name}) joined grey test")
 
@@ -163,24 +171,28 @@ async def leave_grey(
     Leave the grey (beta) test program.
 
     This will:
-    1. Remove the user from the Redis set
-    2. Get all remaining UIDs from the set
-    3. Call external API to replace the entire list
+    1. Get current UIDs from Redis and remove the user
+    2. Call external API to update the list
+    3. If API succeeds, persist the change to Redis
 
     Returns:
         GreyActionResponse indicating success and new status
     """
     redis_key = get_grey_redis_key()
 
-    # Remove user from Redis set
-    await redis.srem(redis_key, str(current_user.id))
-
-    # Get all remaining UIDs from the set
+    # Get current UIDs from Redis
     uid_strings = await redis.smembers(redis_key)
     uids = [int(uid) for uid in uid_strings]
 
-    # Call external API to update the list
+    # Remove current user from the list
+    if current_user.id in uids:
+        uids.remove(current_user.id)
+
+    # Call external API first - if it fails, don't modify Redis
     await call_grey_api(uids)
+
+    # API succeeded, now persist to Redis
+    await redis.srem(redis_key, str(current_user.id))
 
     logger.info(f"User {current_user.id} ({current_user.user_name}) left grey test")
 
