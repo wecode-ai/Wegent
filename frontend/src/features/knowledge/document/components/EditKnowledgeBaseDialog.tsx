@@ -36,7 +36,7 @@ export function EditKnowledgeBaseDialog({
   onSubmit,
   loading,
 }: EditKnowledgeBaseDialogProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation('knowledge');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [error, setError] = useState('');
@@ -64,12 +64,12 @@ export function EditKnowledgeBaseDialog({
     setError('');
 
     if (!name.trim()) {
-      setError(t('knowledge.document.knowledgeBase.nameRequired'));
+      setError(t('document.knowledgeBase.nameRequired'));
       return;
     }
 
     if (name.length > 100) {
-      setError(t('knowledge.document.knowledgeBase.nameTooLong'));
+      setError(t('document.knowledgeBase.nameTooLong'));
       return;
     }
 
@@ -106,7 +106,7 @@ export function EditKnowledgeBaseDialog({
 
       await onSubmit(updateData);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('common.error'));
+      setError(err instanceof Error ? err.message : t('common:error'));
     }
   };
 
@@ -121,29 +121,29 @@ export function EditKnowledgeBaseDialog({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{t('knowledge.document.knowledgeBase.edit')}</DialogTitle>
+          <DialogTitle>{t('document.knowledgeBase.edit')}</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit}>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="edit-name">{t('knowledge.document.knowledgeBase.name')}</Label>
+              <Label htmlFor="edit-name">{t('document.knowledgeBase.name')}</Label>
               <Input
                 id="edit-name"
                 value={name}
                 onChange={e => setName(e.target.value)}
-                placeholder={t('knowledge.document.knowledgeBase.namePlaceholder')}
+                placeholder={t('document.knowledgeBase.namePlaceholder')}
                 maxLength={100}
               />
             </div>
             <div className="space-y-2">
               <Label htmlFor="edit-description">
-                {t('knowledge.document.knowledgeBase.description')}
+                {t('document.knowledgeBase.description')}
               </Label>
               <Textarea
                 id="edit-description"
                 value={description}
                 onChange={e => setDescription(e.target.value)}
-                placeholder={t('knowledge.document.knowledgeBase.descriptionPlaceholder')}
+                placeholder={t('document.knowledgeBase.descriptionPlaceholder')}
                 maxLength={500}
                 rows={3}
               />
@@ -162,7 +162,7 @@ export function EditKnowledgeBaseDialog({
                   ) : (
                     <ChevronRight className="w-4 h-4" />
                   )}
-                  {t('knowledge.document.advancedSettings.title')}
+                  {t('document.advancedSettings.title')}
                 </button>
 
                 {showAdvanced && (
@@ -187,10 +187,10 @@ export function EditKnowledgeBaseDialog({
               onClick={() => handleOpenChange(false)}
               disabled={loading}
             >
-              {t('actions.cancel')}
+              {t('common:actions.cancel')}
             </Button>
             <Button type="submit" variant="primary" disabled={loading}>
-              {loading ? t('actions.saving') : t('actions.save')}
+              {loading ? t('common:actions.saving') : t('common:actions.save')}
             </Button>
           </DialogFooter>
         </form>

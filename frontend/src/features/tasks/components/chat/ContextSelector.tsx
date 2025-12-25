@@ -67,7 +67,7 @@ function KnowledgeBaseItem({ kb, isSelected, onSelect, t }: KnowledgeBaseItemPro
             </span>
           )}
           <span className="text-xs text-text-muted mt-0.5">
-            {kb.document_count || 0} {t('knowledge.documents')}
+            {kb.document_count || 0} {t('documents')}
           </span>
         </div>
       </div>
@@ -94,7 +94,7 @@ export default function ContextSelector({
   onDeselect,
   children,
 }: ContextSelectorProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation('knowledge');
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -108,7 +108,7 @@ export default function ContextSelector({
       setKnowledgeBases(response.items);
     } catch (error) {
       console.error('Failed to fetch knowledge bases:', error);
-      setError(t('knowledge.fetch_error'));
+      setError(t('fetch_error'));
     } finally {
       setLoading(false);
     }
@@ -171,7 +171,7 @@ export default function ContextSelector({
       >
         <Command className="border-0 flex flex-col flex-1 min-h-0 overflow-hidden">
           <CommandInput
-            placeholder={t('knowledge.search_placeholder')}
+            placeholder={t('search_placeholder')}
             value={searchValue}
             onValueChange={setSearchValue}
             className={cn(
@@ -182,7 +182,7 @@ export default function ContextSelector({
           <CommandList className="min-h-[36px] max-h-[300px] overflow-y-auto flex-1">
             {loading ? (
               <div className="py-4 px-3 text-center text-sm text-text-muted">
-                {t('actions.loading')}
+                {t('common:actions.loading')}
               </div>
             ) : error ? (
               <div className="py-4 px-3 text-center">
@@ -191,17 +191,17 @@ export default function ContextSelector({
                   onClick={fetchKnowledgeBases}
                   className="text-xs text-primary hover:underline"
                 >
-                  {t('common.retry')}
+                  {t('common:actions.retry')}
                 </button>
               </div>
             ) : sortedKnowledgeBases.length === 0 ? (
               <CommandEmpty className="py-4 text-center text-sm text-text-muted">
-                {t('knowledge.no_knowledge_bases')}
+                {t('no_knowledge_bases')}
               </CommandEmpty>
             ) : (
               <>
                 <CommandEmpty className="py-4 text-center text-sm text-text-muted">
-                  {t('branches.no_match')}
+                  {t('common:branches.no_match')}
                 </CommandEmpty>
                 <CommandGroup>
                   {sortedKnowledgeBases.map(kb => (

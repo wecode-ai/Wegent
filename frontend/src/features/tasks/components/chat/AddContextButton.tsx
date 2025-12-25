@@ -19,7 +19,7 @@ interface AddContextButtonProps {
  * Shows "@ Add Context" when no selection, shows "@" only when has selection
  */
 export default function AddContextButton({ hasSelection, onClick }: AddContextButtonProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation('knowledge');
 
   return (
     <button
@@ -35,7 +35,7 @@ export default function AddContextButton({ hasSelection, onClick }: AddContextBu
       <span className="text-base font-medium text-text-primary flex-shrink-0">@</span>
       {!hasSelection && (
         <span className="truncate text-xs text-text-primary min-w-0">
-          {t('knowledge.add_context')}
+          {t('add_context')}
         </span>
       )}
       <ChevronDown className="h-2.5 w-2.5 text-text-primary flex-shrink-0 opacity-60" />

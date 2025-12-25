@@ -25,7 +25,7 @@ export function SplitterSettingsSection({
   onChange,
   readOnly = false,
 }: SplitterSettingsSectionProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation('knowledge');
   const [overlapError, setOverlapError] = useState('');
 
   const chunkSize = config.chunk_size ?? 1024;
@@ -33,7 +33,7 @@ export function SplitterSettingsSection({
 
   useEffect(() => {
     if (chunkOverlap >= chunkSize) {
-      setOverlapError(t('knowledge.document.splitter.overlapError'));
+      setOverlapError(t('document.splitter.overlapError'));
     } else {
       setOverlapError('');
     }
@@ -53,18 +53,18 @@ export function SplitterSettingsSection({
     <div className="space-y-4">
       {/* Chunking Type */}
       <div className="space-y-2">
-        <Label htmlFor="splitter-type">{t('knowledge.document.splitter.type')}</Label>
+        <Label htmlFor="splitter-type">{t('document.splitter.type')}</Label>
         <SearchableSelect
           value={config.type || 'sentence'}
           onValueChange={value => onChange({ ...config, type: value as 'sentence' })}
           disabled={readOnly}
-          items={[{ value: 'sentence', label: t('knowledge.document.splitter.general') }]}
+          items={[{ value: 'sentence', label: t('document.splitter.general') }]}
         />
       </div>
 
       {/* Separator */}
       <div className="space-y-2">
-        <Label htmlFor="separator">{t('knowledge.document.splitter.separator')}</Label>
+        <Label htmlFor="separator">{t('document.splitter.separator')}</Label>
         <Input
           id="separator"
           type="text"
@@ -73,12 +73,12 @@ export function SplitterSettingsSection({
           disabled={readOnly}
           placeholder="\n\n"
         />
-        <p className="text-xs text-text-muted">{t('knowledge.document.splitter.separatorHint')}</p>
+        <p className="text-xs text-text-muted">{t('document.splitter.separatorHint')}</p>
       </div>
 
       {/* Chunk Size */}
       <div className="space-y-2">
-        <Label htmlFor="chunk-size">{t('knowledge.document.splitter.chunkSize')}</Label>
+        <Label htmlFor="chunk-size">{t('document.splitter.chunkSize')}</Label>
         <div className="flex items-center gap-2">
           <Input
             id="chunk-size"
@@ -91,15 +91,15 @@ export function SplitterSettingsSection({
             className="flex-1"
           />
           <span className="text-sm text-text-secondary whitespace-nowrap">
-            {t('knowledge.document.splitter.characters')}
+            {t('document.splitter.characters')}
           </span>
         </div>
-        <p className="text-xs text-text-muted">{t('knowledge.document.splitter.chunkSizeHint')}</p>
+        <p className="text-xs text-text-muted">{t('document.splitter.chunkSizeHint')}</p>
       </div>
 
       {/* Chunk Overlap */}
       <div className="space-y-2">
-        <Label htmlFor="chunk-overlap">{t('knowledge.document.splitter.chunkOverlap')}</Label>
+        <Label htmlFor="chunk-overlap">{t('document.splitter.chunkOverlap')}</Label>
         <div className="flex items-center gap-2">
           <Input
             id="chunk-overlap"
@@ -112,11 +112,11 @@ export function SplitterSettingsSection({
             className="flex-1"
           />
           <span className="text-sm text-text-secondary whitespace-nowrap">
-            {t('knowledge.document.splitter.characters')}
+            {t('document.splitter.characters')}
           </span>
         </div>
         <p className="text-xs text-text-muted">
-          {t('knowledge.document.splitter.chunkOverlapHint')}
+          {t('document.splitter.chunkOverlapHint')}
         </p>
         {overlapError && <p className="text-sm text-error">{overlapError}</p>}
       </div>

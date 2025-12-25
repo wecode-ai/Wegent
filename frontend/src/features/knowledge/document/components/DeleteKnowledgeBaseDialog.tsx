@@ -31,7 +31,7 @@ export function DeleteKnowledgeBaseDialog({
   onConfirm,
   loading,
 }: DeleteKnowledgeBaseDialogProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation('knowledge');
 
   // Check if knowledge base has documents
   const hasDocuments = !!(knowledgeBase && knowledgeBase.document_count > 0);
@@ -52,11 +52,11 @@ export function DeleteKnowledgeBaseDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{t('knowledge.document.knowledgeBase.delete')}</DialogTitle>
+          <DialogTitle>{t('document.knowledgeBase.delete')}</DialogTitle>
           <DialogDescription>
             {hasDocuments
-              ? t('knowledge.document.knowledgeBase.cannotDeleteWithDocuments')
-              : t('knowledge.document.knowledgeBase.confirmDelete')}
+              ? t('document.knowledgeBase.cannotDeleteWithDocuments')
+              : t('document.knowledgeBase.confirmDelete')}
           </DialogDescription>
         </DialogHeader>
         {knowledgeBase && (
@@ -64,7 +64,7 @@ export function DeleteKnowledgeBaseDialog({
             <p className="text-text-primary font-medium">{knowledgeBase.name}</p>
             {hasDocuments && (
               <p className="text-sm text-error mt-2">
-                {t('knowledge.document.knowledgeBase.deleteWarning', {
+                {t('document.knowledgeBase.deleteWarning', {
                   count: knowledgeBase.document_count,
                 })}
               </p>
@@ -73,10 +73,10 @@ export function DeleteKnowledgeBaseDialog({
         )}
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
-            {t('actions.cancel')}
+            {t('common:actions.cancel')}
           </Button>
           <Button variant="destructive" onClick={handleConfirm} disabled={loading || hasDocuments}>
-            {loading ? t('actions.deleting') : t('actions.delete')}
+            {loading ? t('common:actions.deleting') : t('common:actions.delete')}
           </Button>
         </DialogFooter>
       </DialogContent>

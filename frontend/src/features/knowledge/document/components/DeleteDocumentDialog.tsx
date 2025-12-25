@@ -31,7 +31,7 @@ export function DeleteDocumentDialog({
   onConfirm,
   loading,
 }: DeleteDocumentDialogProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation('knowledge');
 
   const handleConfirm = async () => {
     try {
@@ -45,8 +45,8 @@ export function DeleteDocumentDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{t('knowledge.document.document.delete')}</DialogTitle>
-          <DialogDescription>{t('knowledge.document.document.confirmDelete')}</DialogDescription>
+          <DialogTitle>{t('document.document.delete')}</DialogTitle>
+          <DialogDescription>{t('document.document.confirmDelete')}</DialogDescription>
         </DialogHeader>
         {document && (
           <div className="py-4">
@@ -55,10 +55,10 @@ export function DeleteDocumentDialog({
         )}
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
-            {t('actions.cancel')}
+            {t('common:actions.cancel')}
           </Button>
           <Button variant="destructive" onClick={handleConfirm} disabled={loading}>
-            {loading ? t('actions.deleting') : t('actions.delete')}
+            {loading ? t('common:actions.deleting') : t('common:actions.delete')}
           </Button>
         </DialogFooter>
       </DialogContent>
