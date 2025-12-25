@@ -14,7 +14,7 @@ It decouples the AI response logic from message saving, allowing for:
 
 import asyncio
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 from shared.telemetry.context import (
     SpanManager,
@@ -646,7 +646,7 @@ async def _process_attachments(
     attachment_ids: list[int],
     user_id: int,
     message: str,
-) -> str:
+) -> Union[str, dict[str, Any]]:
     """
     Process multiple attachments and build message with all attachment contents.
 
