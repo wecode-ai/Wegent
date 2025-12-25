@@ -12,6 +12,7 @@ from datetime import datetime
 from enum import Enum as PyEnum
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
     Column,
@@ -67,6 +68,9 @@ class KnowledgeDocument(Base):
     )
     user_id = Column(Integer, nullable=False, index=True)
     is_active = Column(Boolean, nullable=False, default=True)
+    splitter_config = Column(
+        JSON, nullable=True
+    )  # Splitter configuration for document chunking
     created_at = Column(DateTime, nullable=False, default=func.now())
     updated_at = Column(
         DateTime, nullable=False, default=func.now(), onupdate=func.now()

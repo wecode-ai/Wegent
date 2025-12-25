@@ -58,6 +58,10 @@ class MessageConverter:
                 messages.append(
                     MessageConverter._build_vision_from_dict(current_message)
                 )
+            elif current_message.get("type") == "multi_vision":
+                messages.append(
+                    MessageConverter._build_multi_vision_from_dict(current_message)
+                )
             else:
                 messages.append(current_message)
         else:
@@ -73,6 +77,43 @@ class MessageConverter:
             image_base64=vision_data.get("image_base64", ""),
             mime_type=vision_data.get("mime_type", "image/png"),
         )
+
+    @staticmethod
+    def _build_multi_vision_from_dict(
+        multi_vision_data: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Build multi-vision message from a multi-vision data dict with multiple images."""
+        text = multi_vision_data.get("text", "")
+        images = multi_vision_data.get("images", [])
+
+        # Build content array with text and all images
+        content = [{"type": "text", "text": text}]
+
+        for image_data in images:
+            image_base64 = image_data.get("image_base64", "")
+            mime_type = image_data.get("mime_type", "image/png")
+
+            # Compress image if needed
+            try:
+                image_bytes = base64.b64decode(image_base64)
+                compressed_bytes = MessageConverter._compress_image(
+                    image_bytes, mime_type
+                )
+                compressed_base64 = base64.b64encode(compressed_bytes).decode("utf-8")
+
+                content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{mime_type};base64,{compressed_base64}"
+                        },
+                    }
+                )
+            except Exception as e:
+                logger.error(f"Failed to process image: {e}")
+                continue
+
+        return {"role": "user", "content": content}
 
     @staticmethod
     def _compress_image(image_data: bytes, mime_type: str = "image/png") -> bytes:

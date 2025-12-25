@@ -10,7 +10,7 @@ import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
 import { useUser } from '@/features/common/UserContext';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import type { ChatTipItem, Team } from '@/types/api';
-import MentionAutocomplete from './chat/MentionAutocomplete';
+import MentionAutocomplete from '../chat/MentionAutocomplete';
 
 interface ChatInputProps {
   message: string;

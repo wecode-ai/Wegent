@@ -5,7 +5,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useTranslation } from 'react-i18next';
+import { useTranslation } from '@/hooks/useTranslation';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { listGroups } from '@/apis/groups';
@@ -19,7 +19,7 @@ import { GroupMembersDialog } from './GroupMembersDialog';
 import { useUser } from '@/features/common/UserContext';
 
 export function GroupManager() {
-  const { t } = useTranslation();
+  const { t } = useTranslation('groups');
   const { user } = useUser();
   const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(true);
@@ -74,7 +74,7 @@ export function GroupManager() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-text-secondary">{t('actions.loading')}</div>
+        <div className="text-text-secondary">{t('common:actions.loading')}</div>
       </div>
     );
   }
@@ -123,7 +123,7 @@ export function GroupManager() {
                     {t('groups.members')}
                   </th>
                   <th className="px-4 py-3 text-right text-sm font-medium text-text-primary">
-                    {t('actions.edit')}
+                    {t('common:actions.edit')}
                   </th>
                 </tr>
               </thead>

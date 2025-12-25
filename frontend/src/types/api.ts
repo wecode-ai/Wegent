@@ -450,6 +450,12 @@ export interface AttachmentUploadState {
   error: string | null;
 }
 
+export interface MultiAttachmentUploadState {
+  attachments: Attachment[];
+  uploadingFiles: Map<string, { file: File; progress: number }>;
+  errors: Map<string, string>;
+}
+
 // Quick Access Types
 export interface QuickAccessTeam {
   id: number;
@@ -495,3 +501,16 @@ export interface SystemConfigResponse {
 export interface SystemConfigUpdate {
   teams: number[];
 }
+
+// Knowledge Base / RAG Types
+export interface KnowledgeBaseRef {
+  knowledge_id: number; // Knowledge base ID (database ID)
+  retriever_name: string;
+  retriever_namespace: string;
+}
+
+// Import KnowledgeBase types from knowledge.ts to avoid duplication
+export type {
+  KnowledgeBase,
+  KnowledgeBaseListResponse as KnowledgeBasesResponse,
+} from './knowledge';

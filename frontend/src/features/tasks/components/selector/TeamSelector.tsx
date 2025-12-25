@@ -10,7 +10,7 @@ import { Tag } from '@/components/ui/tag';
 import { Cog6ToothIcon } from '@heroicons/react/24/outline';
 import { useRouter } from 'next/navigation';
 import { Team, TaskDetail } from '@/types/api';
-import { TaskContext } from '../contexts/taskContext';
+import { TaskContext } from '../../contexts/taskContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { paths } from '@/config/paths';
@@ -121,7 +121,11 @@ export default function TeamSelector({
         searchText: team.name,
         content: (
           <div className="flex items-center gap-2 min-w-0">
-            <TeamIconDisplay iconId={team.icon} size="sm" className="flex-shrink-0 text-text-muted" />
+            <TeamIconDisplay
+              iconId={team.icon}
+              size="sm"
+              className="flex-shrink-0 text-text-muted"
+            />
             <span
               className="font-medium text-xs text-text-secondary truncate flex-1 min-w-0"
               title={team.name}

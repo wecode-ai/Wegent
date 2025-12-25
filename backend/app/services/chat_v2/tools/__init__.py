@@ -8,6 +8,7 @@ from .base import ToolRegistry, global_registry
 from .builtin import (
     FileListSkill,
     FileReaderSkill,
+    KnowledgeBaseTool,
     WebSearchTool,
 )
 
@@ -15,6 +16,7 @@ __all__ = [
     "ToolRegistry",
     "global_registry",
     "WebSearchTool",
+    "KnowledgeBaseTool",
     "FileReaderSkill",
     "FileListSkill",
 ]

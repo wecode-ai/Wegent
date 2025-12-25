@@ -5,7 +5,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
-import { useTaskContext } from '../contexts/taskContext';
+import { useTaskContext } from '../../contexts/taskContext';
 import type { TaskDetail, TaskDetailSubtask, Team, GitRepoInfo, GitBranch } from '@/types/api';
 import { Share2, FileText, ChevronDown, Download, MessageSquare, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -20,15 +20,15 @@ import { useToast } from '@/hooks/use-toast';
 import { useTheme } from '@/features/theme/ThemeProvider';
 import { useTypewriter } from '@/hooks/useTypewriter';
 import MessageBubble, { type Message } from './MessageBubble';
-import TaskShareModal from './TaskShareModal';
+import TaskShareModal from '../share/TaskShareModal';
 import { taskApis } from '@/apis/tasks';
-import { type SelectableMessage } from './ExportPdfButton';
+import { type SelectableMessage } from '../share/ExportPdfButton';
 import { generateChatPdf } from '@/utils/pdf';
 import { getAttachmentPreviewUrl, isImageExtension } from '@/apis/attachments';
 import { getToken } from '@/apis/user';
-import { TaskMembersPanel } from './group-chat';
+import { TaskMembersPanel } from '../group-chat';
 import { useUser } from '@/features/common/UserContext';
-import { useUnifiedMessages, type DisplayMessage } from '../hooks/useUnifiedMessages';
+import { useUnifiedMessages, type DisplayMessage } from '../../hooks/useUnifiedMessages';
 import { useTraceAction } from '@/hooks/useTraceAction';
 
 /**

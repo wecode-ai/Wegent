@@ -5,7 +5,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useTranslation } from 'react-i18next';
+import { useTranslation } from '@/hooks/useTranslation';
 import Modal from '@/features/common/Modal';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -30,7 +30,7 @@ interface EditGroupDialogProps {
 }
 
 export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroupDialogProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation('groups');
   const [formData, setFormData] = useState<GroupUpdate>({
     display_name: '',
     visibility: 'private',
@@ -53,7 +53,7 @@ export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroup
     const newErrors: Record<string, string> = {};
 
     if (formData.display_name && formData.display_name.length > 100) {
-      newErrors.display_name = t('validation.max_length', { max: 100 });
+      newErrors.display_name = t('common:validation.max_length', { max: 100 });
     }
 
     setErrors(newErrors);
@@ -102,7 +102,12 @@ export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroup
   }
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} title={t('actions.edit_group')} maxWidth="md">
+    <Modal
+      isOpen={isOpen}
+      onClose={handleClose}
+      title={t('common:actions.edit_group')}
+      maxWidth="md"
+    >
       <form onSubmit={handleSubmit} className="space-y-4">
         {/* Name (read-only) */}
         <div>
@@ -182,7 +187,7 @@ export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroup
         {/* Actions */}
         <div className="flex justify-end gap-3 pt-4">
           <Button type="button" variant="outline" onClick={handleClose} disabled={isSubmitting}>
-            {t('actions.cancel')}
+            {t('common:actions.cancel')}
           </Button>
           <Button type="submit" disabled={isSubmitting}>
             {isSubmitting ? (
@@ -207,10 +212,10 @@ export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroup
                     d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                   />
                 </svg>
-                {t('actions.saving')}
+                {t('common:actions.saving')}
               </div>
             ) : (
-              t('actions.save')
+              t('common:actions.save')
             )}
           </Button>
         </div>
