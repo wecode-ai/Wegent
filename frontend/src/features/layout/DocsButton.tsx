@@ -5,6 +5,7 @@
 'use client';
 
 import { FileText } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { paths } from '@/config/paths';
 import { useTranslation } from '@/hooks/useTranslation';
 
@@ -25,21 +26,33 @@ export function DocsButton({
     onClick?.();
   };
 
-  const baseClassName = showLabel
-    ? 'flex items-center gap-3 text-sm text-text-primary hover:bg-muted transition-colors duration-150'
-    : 'h-9 px-3 bg-muted border border-border rounded-full flex items-center gap-1 text-sm font-medium text-text-primary hover:bg-border/40 transition-colors duration-200';
-
-  const mergedClassName = `${baseClassName} ${className}`.trim();
+  if (showLabel) {
+    return (
+      <Button
+        type="button"
+        onClick={navigateToDocs}
+        variant="ghost"
+        size="sm"
+        className={`justify-start gap-3 text-sm ${className}`}
+        aria-label={t('navigation.docs')}
+      >
+        <FileText className="h-4 w-4 text-text-muted" />
+        <span>{t('navigation.docs')}</span>
+      </Button>
+    );
+  }
 
   return (
-    <button
+    <Button
       type="button"
       onClick={navigateToDocs}
-      className={mergedClassName}
+      variant="ghost"
+      size="sm"
+      shape="pill"
+      className={`bg-muted border border-border font-medium hover:bg-border/40 gap-1 ${className}`}
       aria-label={t('navigation.docs')}
     >
       <FileText className="h-4 w-4 text-text-muted" />
-      {showLabel && <span>{t('navigation.docs')}</span>}
-    </button>
+    </Button>
   );
 }

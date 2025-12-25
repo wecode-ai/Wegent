@@ -5,6 +5,7 @@
 'use client';
 
 import { Moon, Sun } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { useTheme } from './ThemeProvider';
 import { useTranslation } from '@/hooks/useTranslation';
 
@@ -21,12 +22,6 @@ export function ThemeToggle({
   const { t } = useTranslation('common');
   const isDark = theme === 'dark';
 
-  const baseClassName = showLabel
-    ? 'flex items-center gap-3 text-sm text-text-primary hover:bg-muted transition-colors duration-150'
-    : 'h-8 w-8 bg-base border border-border rounded-[7px] flex items-center justify-center text-text-primary hover:bg-hover transition-colors duration-200';
-
-  const mergedClassName = `${baseClassName} ${className}`.trim();
-
   const Icon = isDark ? Sun : Moon;
   const label = isDark ? t('theme.light', 'Light Mode') : t('theme.dark', 'Dark Mode');
 
@@ -36,15 +31,32 @@ export function ThemeToggle({
     toggleTheme();
   };
 
+  if (showLabel) {
+    return (
+      <Button
+        type="button"
+        onClick={handleClick}
+        variant="ghost"
+        size="sm"
+        className={`justify-start gap-3 text-sm ${className}`}
+        aria-label={t('actions.toggle_theme')}
+      >
+        <Icon className="h-3.5 w-3.5" />
+        <span>{label}</span>
+      </Button>
+    );
+  }
+
   return (
-    <button
+    <Button
       type="button"
       onClick={handleClick}
-      className={mergedClassName}
+      variant="ghost"
+      size="icon"
+      className={`h-8 w-8 bg-base border border-border hover:bg-hover ${className}`}
       aria-label={t('actions.toggle_theme')}
     >
       <Icon className="h-3.5 w-3.5" />
-      {showLabel && <span>{label}</span>}
-    </button>
+    </Button>
   );
 }
