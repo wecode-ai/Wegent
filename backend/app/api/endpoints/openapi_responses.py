@@ -1335,7 +1335,7 @@ async def create_response(
                 )
 
     # Verify team exists and user has access
-    team = team_kinds_service.get_team_by_name_and_namespace(
+    team = team_kinds_service.get_team_by_name_and_namespace_with_public_group(
         db, model_info["team_name"], model_info["namespace"], current_user.id
     )
     if not team:
