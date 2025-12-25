@@ -1213,7 +1213,13 @@ class ChatNamespace(socketio.AsyncNamespace):
             No exceptions - all errors are caught and returned as error dict
         """
         payload = data  # Already validated by decorator
-        logger.info(f"[WS] chat:retry received sid={sid} data={payload}")
+        logger.info(
+            f"[WS] chat:retry received sid={sid}, "
+            f"raw_data_type={type(data)}, "
+            f"payload={payload}, "
+            f"force_override_bot_model={payload.force_override_bot_model} (type={type(payload.force_override_bot_model)}), "
+            f"force_override_bot_model_type={payload.force_override_bot_model_type} (type={type(payload.force_override_bot_model_type)})"
+        )
 
         session = await self.get_session(sid)
         user_id = session.get("user_id")
@@ -1288,26 +1294,42 @@ class ChatNamespace(socketio.AsyncNamespace):
             logger.info(f"[WS] chat:retry supports_direct_chat={supports_direct_chat}")
 
             # Determine model to use for retry:
-            # Priority 1: Model from retry payload (current user selection in frontend)
-            # Priority 2: Model from task metadata (original model when task was created)
-            # Priority 3: None (use bot's default model)
+            # Use the SAME logic as normal message sending (ChatSendPayload handling):
+            # 1. If use_model_override is True:
+            #    - If force_override_bot_model is provided: use that specific model
+            #    - If force_override_bot_model is None/empty: use bot's default model
+            # 2. If use_model_override is False: fall back to task metadata model
+            #
+            # This matches the normal chat flow where:
+            # - model_id = undefined (None) means "use bot's default"
+            # - force_override_bot_model = True means "apply user's selection"
+            # - force_override_bot_model = False means "use task metadata"
             model_id = None
             model_type = None
 
-            if payload.force_override_bot_model:
-                # Use model from retry payload (user may have switched model in frontend)
+            if payload.use_model_override:
+                # User explicitly selected a model (including "Default Model")
+                # Use the model from payload if provided, otherwise use bot's default (None)
                 model_id = payload.force_override_bot_model
                 model_type = payload.force_override_bot_model_type
                 logger.info(
-                    f"[WS] chat:retry using model from payload: model_id={model_id}, model_type={model_type}"
+                    f"[WS] chat:retry use_model_override=True, using model from payload: "
+                    f"model_id={model_id}, model_type={model_type}"
                 )
             else:
-                # Fall back to task metadata model (original model)
+                # User did not override model selection, fall back to task metadata
+                # This preserves the original model used when the task was created
                 task_model_id, force_override = self._extract_model_override_info(task)
                 if force_override and task_model_id:
                     model_id = task_model_id
                     logger.info(
-                        f"[WS] chat:retry using model from task metadata: model_id={model_id}"
+                        f"[WS] chat:retry use_model_override=False, using model from task metadata: "
+                        f"model_id={model_id}"
+                    )
+                else:
+                    logger.info(
+                        f"[WS] chat:retry use_model_override=False, no task metadata model, "
+                        f"will use bot's default model"
                     )
 
             # Build payload for AI trigger (reuse user message content and model override)
@@ -1358,11 +1380,37 @@ class ChatNamespace(socketio.AsyncNamespace):
             # Validation errors, data parsing errors
             logger.error(f"[WS] chat:retry validation error: {e}", exc_info=True)
             db.rollback()
+
+            # Broadcast error to all clients in task room
+            from app.services.chat.ws_emitter import get_ws_emitter
+
+            ws_emitter = get_ws_emitter()
+            if ws_emitter and payload.subtask_id:
+                await ws_emitter.emit_chat_error(
+                    task_id=payload.task_id,
+                    subtask_id=payload.subtask_id,
+                    error=f"Invalid data: {str(e)}",
+                    message_id=None,  # Will use subtask's message_id
+                )
+
             return {"error": f"Invalid data: {str(e)}"}
         except PermissionError as e:
             # Permission/access errors
             logger.error(f"[WS] chat:retry permission error: {e}", exc_info=True)
             db.rollback()
+
+            # Broadcast error to all clients in task room
+            from app.services.chat.ws_emitter import get_ws_emitter
+
+            ws_emitter = get_ws_emitter()
+            if ws_emitter and payload.subtask_id:
+                await ws_emitter.emit_chat_error(
+                    task_id=payload.task_id,
+                    subtask_id=payload.subtask_id,
+                    error=f"Access denied: {str(e)}",
+                    message_id=None,
+                )
+
             return {"error": f"Access denied: {str(e)}"}
         except Exception as e:
             # Catch SQLAlchemy errors and other unexpected exceptions
@@ -1370,6 +1418,23 @@ class ChatNamespace(socketio.AsyncNamespace):
 
             logger.error(f"[WS] chat:retry exception: {e}", exc_info=True)
             db.rollback()
+
+            # Broadcast error to all clients in task room
+            from app.services.chat.ws_emitter import get_ws_emitter
+
+            ws_emitter = get_ws_emitter()
+            error_msg = (
+                "Database error occurred"
+                if isinstance(e, SQLAlchemyError)
+                else f"Internal server error: {str(e)}"
+            )
+            if ws_emitter and payload.subtask_id:
+                await ws_emitter.emit_chat_error(
+                    task_id=payload.task_id,
+                    subtask_id=payload.subtask_id,
+                    error=error_msg,
+                    message_id=None,
+                )
 
             if isinstance(e, SQLAlchemyError):
                 return {"error": "Database error occurred"}

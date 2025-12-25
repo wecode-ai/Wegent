@@ -472,15 +472,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
   const handleChatChunk = useCallback((data: ChatChunkPayload) => {
     const { subtask_id, content, result } = data;
 
-    // DEBUG: Log result to check shell_type
-    if (result) {
-      console.log('[ChatStreamContext] Received chunk with result:', {
-        subtask_id,
-        result,
-        shell_type: (result as { shell_type?: string })?.shell_type,
-      });
-    }
-
     // Find task ID from subtask
     let taskId = subtaskToTaskRef.current.get(subtask_id);
 
@@ -512,14 +503,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       const newMessages = new Map(currentState.messages);
       const existingMessage = newMessages.get(aiMessageId);
       if (existingMessage) {
-        // DEBUG: Log existing message result
-        console.log('[ChatStreamContext][chunk] Existing message:', {
-          msgId: aiMessageId,
-          hasExistingResult: !!existingMessage.result,
-          existingResult: existingMessage.result,
-          newResult: result,
-        });
-
         // For executor tasks, result contains full data (thinking, workbench)
         // Content is accumulated, but result is replaced with latest
         const updatedMessage: UnifiedMessage = {
@@ -530,13 +513,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         if (result) {
           updatedMessage.result = result as UnifiedMessage['result'];
         }
-
-        // DEBUG: Log updated message result
-        console.log('[ChatStreamContext][chunk] Updated message result:', {
-          msgId: aiMessageId,
-          hasResult: !!updatedMessage.result,
-          result: updatedMessage.result,
-        });
 
         newMessages.set(aiMessageId, updatedMessage);
       }
@@ -567,11 +543,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         taskId = realId;
         // Update the mapping to use the real ID
         subtaskToTaskRef.current.set(subtask_id, realId);
-      } else {
-        console.warn('[ChatStreamContext][chat:done] Temporary ID found but no real ID mapping', {
-          tempId: taskId,
-          subtask_id,
-        });
       }
     }
 
@@ -605,11 +576,27 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       const existingMessage = newMessages.get(aiMessageId);
 
       if (existingMessage) {
+        // Check if this chat:done represents an error completion
+        // Backend sends result.error when the message failed
+        const hasError = result?.error !== undefined;
+        const finalStatus = hasError ? 'error' : 'completed';
+        const finalSubtaskStatus = hasError ? 'FAILED' : 'COMPLETED';
+
+        // Only log when error status is being preserved (for debugging error flow)
+        if (hasError) {
+          console.log('[ChatStreamContext][chat:done] Preserving error status:', {
+            subtaskId: subtask_id,
+            errorMessage: result?.error,
+          });
+        }
+
         newMessages.set(aiMessageId, {
           ...existingMessage,
-          status: 'completed',
-          subtaskStatus: 'COMPLETED', // Update subtaskStatus for ThinkingComponent
+          status: finalStatus,
+          subtaskStatus: finalSubtaskStatus, // Update subtaskStatus for ThinkingComponent
           content: finalContent || existingMessage.content,
+          // Preserve error from chat:error if this is an error completion
+          error: hasError ? (result.error as string) : existingMessage.error,
           // Set messageId from backend for proper sorting
           messageId: message_id,
         });
@@ -620,6 +607,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         isStopping: false,
         messages: newMessages,
       });
+
       return newMap;
     });
     // Note: AI completion is handled by the streaming state change, no callback needed

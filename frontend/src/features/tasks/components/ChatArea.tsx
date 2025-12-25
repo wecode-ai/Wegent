@@ -1227,20 +1227,12 @@ export default function ChatArea({
               selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.name;
             const modelType = modelId ? selectedModel?.type : undefined;
 
-            console.log('[ChatArea] Retrying message:', {
-              taskId: selectedTaskDetail.id,
-              subtaskId: message.subtaskId,
-              selectedModelName: selectedModel?.name,
-              modelId,
-              modelType,
-              forceOverride,
-            });
-
             const result = await retryMessage(
               selectedTaskDetail.id,
               message.subtaskId!,
               modelId,
-              modelType
+              modelType,
+              forceOverride
             );
 
             if (result.error) {
@@ -1248,8 +1240,6 @@ export default function ChatArea({
                 variant: 'destructive',
                 title: t('errors.request_failed_retry'),
               });
-            } else {
-              console.log('[ChatArea] Retry successful');
             }
           } catch (error) {
             console.error('[ChatArea] Retry failed:', error);

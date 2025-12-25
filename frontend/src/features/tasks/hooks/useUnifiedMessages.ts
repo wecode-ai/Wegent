@@ -241,18 +241,6 @@ export function useUnifiedMessages({
         showSender: isGroupChat && msg.type === 'user',
       };
 
-      // DEBUG: Log message conversion with result
-      if (msg.type === 'ai' && msg.result) {
-        console.log('[useUnifiedMessages] Converting message with result:', {
-          msgId: msg.id,
-          subtaskId: msg.subtaskId,
-          hasResult: !!msg.result,
-          result: msg.result,
-          displayHasResult: !!displayMsg.result,
-          displayResult: displayMsg.result,
-        });
-      }
-
       messages.push(displayMsg);
 
       // Track pending user messages
@@ -294,22 +282,6 @@ export function useUnifiedMessages({
       // Neither has messageId (both pending), sort by timestamp
       return a.timestamp - b.timestamp;
     });
-
-    // Log messages with their messageId and status for debugging (development only)
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[useUnifiedMessages] Message sorting:', {
-        taskId,
-        totalMessages: sortedMessages.length,
-        messages: sortedMessages.map(msg => ({
-          type: msg.type,
-          status: msg.status,
-          messageId: msg.messageId,
-          subtaskId: msg.subtaskId,
-          hasError: !!msg.error,
-          contentPreview: msg.content?.substring(0, 30),
-        })),
-      });
-    }
 
     return {
       messages: sortedMessages,

@@ -79,7 +79,8 @@ interface SocketContextType {
     taskId: number,
     subtaskId: number,
     modelId?: string,
-    modelType?: string
+    modelType?: string,
+    forceOverride?: boolean
   ) => Promise<{ success: boolean; error?: string }>;
   /** Register chat event handlers */
   registerChatHandlers: (handlers: ChatEventHandlers) => () => void;
@@ -378,31 +379,36 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       taskId: number,
       subtaskId: number,
       modelId?: string,
-      modelType?: string
+      modelType?: string,
+      forceOverride: boolean = false
     ): Promise<{ success: boolean; error?: string }> => {
       if (!socket?.connected) {
         console.error('[Socket.IO] retryMessage failed - not connected');
         return { success: false, error: 'Not connected to server' };
       }
 
+      const payload = {
+        task_id: taskId,
+        subtask_id: subtaskId,
+        force_override_bot_model: modelId,
+        force_override_bot_model_type: modelType,
+        use_model_override: forceOverride,
+      };
+
       console.log('[Socket.IO] Emitting chat:retry event', {
         taskId,
         subtaskId,
         modelId,
         modelType,
+        forceOverride,
       });
 
       return new Promise(resolve => {
         socket.emit(
           'chat:retry',
-          {
-            task_id: taskId,
-            subtask_id: subtaskId,
-            force_override_bot_model: modelId,
-            force_override_bot_model_type: modelType,
-          },
+          payload,
           (response: { success?: boolean; error?: string } | undefined) => {
-            console.log('[Socket.IO] chat:retry response received', response);
+            console.log('[Socket.IO] chat:retry response:', response);
 
             // Handle undefined response (backend error or no acknowledgment)
             if (!response) {

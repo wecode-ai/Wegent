@@ -134,6 +134,12 @@ class ChatRetryPayload(BaseModel):
     force_override_bot_model_type: Optional[str] = Field(
         None, description="Model type (public/user) for the override model"
     )
+    # Flag indicating whether to use model override
+    # When false and force_override_bot_model is None, use bot's default model
+    use_model_override: bool = Field(
+        False,
+        description="If true, use force_override_bot_model; if false, use bot's default model",
+    )
 
 
 class TaskJoinPayload(BaseModel):
