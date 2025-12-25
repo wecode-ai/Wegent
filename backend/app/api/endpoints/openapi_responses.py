@@ -281,9 +281,13 @@ async def _create_streaming_response(
     request_body: ResponseCreateInput,
     input_text: str,
     tool_settings: Dict[str, Any],
+    task_id: Optional[int] = None,
 ) -> StreamingResponse:
     """
     Create a streaming response for Chat Shell type teams.
+
+    This function creates task and subtask records similar to chat_namespace.py,
+    then streams the LLM response while updating subtask status.
 
     Args:
         db: Database session
@@ -293,13 +297,12 @@ async def _create_streaming_response(
         request_body: Original request body
         input_text: Extracted input text
         tool_settings: Parsed tool settings
+        task_id: Optional existing task ID for follow-up conversations
 
     Returns:
         StreamingResponse with SSE events
     """
-    import json
-
-    from app.services.chat.chat_service import chat_service
+    from app.models.subtask import SenderType, SubtaskStatus
     from app.services.chat.model_resolver import (
         get_bot_system_prompt,
         get_model_config_for_bot,
@@ -333,6 +336,29 @@ async def _create_streaming_response(
             detail="Bot not found for team",
         )
 
+    # Get bot IDs from team members
+    bot_ids = []
+    for member in team_crd.spec.members:
+        member_bot = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == team.user_id,
+                Kind.kind == "Bot",
+                Kind.name == member.botRef.name,
+                Kind.namespace == member.botRef.namespace,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if member_bot:
+            bot_ids.append(member_bot.id)
+
+    if not bot_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No valid bots found in team",
+        )
+
     # Get model config
     try:
         model_config = get_model_config_for_bot(
@@ -354,25 +380,218 @@ async def _create_streaming_response(
 
         system_prompt = append_deep_thinking_prompt(system_prompt, True)
 
-    # Generate response ID and timestamp
-    response_id = f"resp_{team.id}_{int(datetime.now().timestamp())}"
+    # Create or get task
+    task = None
+    if task_id:
+        task = (
+            db.query(Kind)
+            .filter(
+                Kind.id == task_id,
+                Kind.user_id == user.id,
+                Kind.kind == "Task",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if not task:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Task {task_id} not found",
+            )
+
+    if not task:
+        # Create new task
+        from app.services.adapters.task_kinds import task_kinds_service
+
+        new_task_id = task_kinds_service.create_task_id(db, user.id)
+
+        if not task_kinds_service.validate_task_id(db, new_task_id):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to create task ID",
+            )
+
+        # Create workspace
+        workspace_name = f"workspace-{new_task_id}"
+        workspace_json = {
+            "kind": "Workspace",
+            "spec": {"repository": {}},
+            "status": {"state": "Available"},
+            "metadata": {"name": workspace_name, "namespace": "default"},
+            "apiVersion": "agent.wecode.io/v1",
+        }
+
+        workspace = Kind(
+            user_id=user.id,
+            kind="Workspace",
+            name=workspace_name,
+            namespace="default",
+            json=workspace_json,
+            is_active=True,
+        )
+        db.add(workspace)
+
+        # Create task
+        title = input_text[:50] + "..." if len(input_text) > 50 else input_text
+        task_json = {
+            "kind": "Task",
+            "spec": {
+                "title": title,
+                "prompt": input_text,
+                "teamRef": {"name": team.name, "namespace": team.namespace},
+                "workspaceRef": {"name": workspace_name, "namespace": "default"},
+                "is_group_chat": False,
+            },
+            "status": {
+                "state": "Available",
+                "status": "PENDING",
+                "progress": 0,
+                "result": None,
+                "errorMessage": "",
+                "createdAt": datetime.now().isoformat(),
+                "updatedAt": datetime.now().isoformat(),
+                "completedAt": None,
+            },
+            "metadata": {
+                "name": f"task-{new_task_id}",
+                "namespace": "default",
+                "labels": {
+                    "type": "online",
+                    "taskType": "chat",
+                    "autoDeleteExecutor": "false",
+                    "source": "api",
+                    **({"modelId": model_info.get("model_id")} if model_info.get("model_id") else {}),
+                    **({"forceOverrideBotModel": "true"} if model_info.get("model_id") else {}),
+                },
+            },
+            "apiVersion": "agent.wecode.io/v1",
+        }
+
+        task = Kind(
+            id=new_task_id,
+            user_id=user.id,
+            kind="Task",
+            name=f"task-{new_task_id}",
+            namespace="default",
+            json=task_json,
+            is_active=True,
+        )
+        db.add(task)
+        task_id = new_task_id
+
+    # Get existing subtasks to determine message_id
+    existing_subtasks = (
+        db.query(Subtask)
+        .filter(Subtask.task_id == task_id, Subtask.user_id == user.id)
+        .order_by(Subtask.message_id.desc())
+        .all()
+    )
+
+    next_message_id = 1
+    parent_id = 0
+    if existing_subtasks:
+        next_message_id = existing_subtasks[0].message_id + 1
+        parent_id = existing_subtasks[0].message_id
+
+    # Create USER subtask
+    user_subtask = Subtask(
+        user_id=user.id,
+        task_id=task_id,
+        team_id=team.id,
+        title="User message",
+        bot_ids=bot_ids,
+        role=SubtaskRole.USER,
+        executor_namespace="",
+        executor_name="",
+        prompt=input_text,
+        status=SubtaskStatus.COMPLETED,
+        progress=100,
+        message_id=next_message_id,
+        parent_id=parent_id,
+        error_message="",
+        completed_at=datetime.now(),
+        result=None,
+        sender_type=SenderType.USER,
+        sender_user_id=user.id,
+    )
+    db.add(user_subtask)
+
+    # Create ASSISTANT subtask (will be updated during streaming)
+    assistant_subtask = Subtask(
+        user_id=user.id,
+        task_id=task_id,
+        team_id=team.id,
+        title="Assistant response",
+        bot_ids=bot_ids,
+        role=SubtaskRole.ASSISTANT,
+        executor_namespace="",
+        executor_name="",
+        prompt="",
+        status=SubtaskStatus.PENDING,
+        progress=0,
+        message_id=next_message_id + 1,
+        parent_id=next_message_id,
+        error_message="",
+        result=None,
+        completed_at=datetime.now(),  # Placeholder
+        sender_type=SenderType.TEAM,
+        sender_user_id=0,
+    )
+    db.add(assistant_subtask)
+
+    db.commit()
+    db.refresh(task)
+    db.refresh(user_subtask)
+    db.refresh(assistant_subtask)
+
+    # Generate response ID
+    response_id = f"resp_{task_id}"
     created_at = int(datetime.now().timestamp())
 
+    # Store IDs for use in the generator
+    assistant_subtask_id = assistant_subtask.id
+    task_kind_id = task_id
+
     async def raw_chat_stream() -> AsyncGenerator[str, None]:
-        """Generate raw text chunks from the LLM."""
+        """Generate raw text chunks from the LLM and update subtask."""
         import asyncio
 
+        from app.api.dependencies import get_db as get_db_session
         from app.services.chat.base import get_http_client
         from app.services.chat.message_builder import message_builder
         from app.services.chat.providers import get_provider
         from app.services.chat.providers.base import ChunkType
 
         cancel_event = asyncio.Event()
+        accumulated_content = ""
+
+        # Get a new db session for the generator
+        db_gen = next(get_db_session())
 
         try:
-            # Build messages
+            # Update assistant subtask status to RUNNING
+            subtask = db_gen.query(Subtask).filter(Subtask.id == assistant_subtask_id).first()
+            if subtask:
+                subtask.status = SubtaskStatus.RUNNING
+                db_gen.commit()
+
+            # Build messages (include chat history if task has previous messages)
+            history = []
+            if existing_subtasks:
+                # Build history from existing subtasks
+                sorted_subtasks = sorted(existing_subtasks, key=lambda s: s.message_id)
+                for st in sorted_subtasks:
+                    if st.status == SubtaskStatus.COMPLETED:
+                        if st.role == SubtaskRole.USER and st.prompt:
+                            history.append({"role": "user", "content": st.prompt})
+                        elif st.role == SubtaskRole.ASSISTANT and st.result:
+                            if isinstance(st.result, dict):
+                                content = st.result.get("value", "")
+                                if content:
+                                    history.append({"role": "assistant", "content": content})
+
             messages = message_builder.build_messages(
-                history=[],
+                history=history,
                 current_message=input_text,
                 system_prompt=system_prompt,
             )
@@ -382,19 +601,65 @@ async def _create_streaming_response(
             provider = get_provider(model_config, client)
             if not provider:
                 logger.error("Failed to create provider from model config")
+                # Update subtask as failed
+                subtask = db_gen.query(Subtask).filter(Subtask.id == assistant_subtask_id).first()
+                if subtask:
+                    subtask.status = SubtaskStatus.FAILED
+                    subtask.error_message = "Failed to create provider"
+                    db_gen.commit()
                 return
 
             # Stream response
             async for chunk in provider.stream_chat(messages, cancel_event):
                 if chunk.type == ChunkType.CONTENT and chunk.content:
+                    accumulated_content += chunk.content
                     yield chunk.content
                 elif chunk.type == ChunkType.ERROR:
                     logger.error(f"LLM error: {chunk.error}")
+                    # Update subtask as failed
+                    subtask = db_gen.query(Subtask).filter(Subtask.id == assistant_subtask_id).first()
+                    if subtask:
+                        subtask.status = SubtaskStatus.FAILED
+                        subtask.error_message = chunk.error or "Unknown LLM error"
+                        db_gen.commit()
                     return
+
+            # Update assistant subtask with completed status and result
+            subtask = db_gen.query(Subtask).filter(Subtask.id == assistant_subtask_id).first()
+            if subtask:
+                subtask.status = SubtaskStatus.COMPLETED
+                subtask.progress = 100
+                subtask.result = {"value": accumulated_content}
+                subtask.completed_at = datetime.now()
+                db_gen.commit()
+
+            # Update task status
+            task_kind = db_gen.query(Kind).filter(Kind.id == task_kind_id).first()
+            if task_kind:
+                task_crd = Task.model_validate(task_kind.json)
+                if task_crd.status:
+                    task_crd.status.status = "COMPLETED"
+                    task_crd.status.updatedAt = datetime.now()
+                    task_crd.status.completedAt = datetime.now()
+                    task_kind.json = task_crd.model_dump(mode="json")
+                    from sqlalchemy.orm.attributes import flag_modified
+                    flag_modified(task_kind, "json")
+                    db_gen.commit()
 
         except Exception as e:
             logger.exception(f"Error in raw_chat_stream: {e}")
+            # Update subtask as failed
+            try:
+                subtask = db_gen.query(Subtask).filter(Subtask.id == assistant_subtask_id).first()
+                if subtask:
+                    subtask.status = SubtaskStatus.FAILED
+                    subtask.error_message = str(e)
+                    db_gen.commit()
+            except Exception:
+                pass
             raise
+        finally:
+            db_gen.close()
 
     # Use streaming service to convert to OpenAI format
     async def generate():
@@ -636,6 +901,7 @@ async def create_response(
             request_body=request_body,
             input_text=input_text,
             tool_settings=tool_settings,
+            task_id=task_id,
         )
 
     # Non-streaming mode: create task and return queued response
