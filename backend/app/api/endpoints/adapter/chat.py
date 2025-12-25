@@ -185,6 +185,7 @@ async def _create_task_and_subtasks(
     request: StreamChatRequest,
     task_id: Optional[int] = None,
     should_trigger_ai: bool = True,
+    rag_prompt: Optional[str] = None,
 ) -> dict:
     """
     Create or get task and create subtasks for chat.
@@ -193,8 +194,12 @@ async def _create_task_and_subtasks(
     to ensure proper message history and visibility across all members.
 
     Args:
+        message: Original user message (for storage in subtask.prompt)
+        request: Stream chat request
+        task_id: Optional existing task ID
         should_trigger_ai: If True, create both USER and ASSISTANT subtasks.
                           If False, only create USER subtask (for group chat without @mention)
+        rag_prompt: Optional RAG-enhanced prompt (for AI inference, not stored in subtask)
 
     Returns:
         Dict with keys:
@@ -202,6 +207,7 @@ async def _create_task_and_subtasks(
         - user_subtask: User subtask (always created)
         - assistant_subtask: Assistant subtask (only if should_trigger_ai=True)
         - ai_triggered: Whether AI was triggered
+        - rag_prompt: RAG prompt to use for AI (if provided)
     """
     team_crd = Team.model_validate(team.json)
 
@@ -528,6 +534,7 @@ async def _create_task_and_subtasks(
         "user_subtask": user_subtask,
         "assistant_subtask": assistant_subtask,
         "ai_triggered": should_trigger_ai,
+        "rag_prompt": rag_prompt,  # Return RAG prompt for AI inference
     }
 
 

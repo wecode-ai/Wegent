@@ -192,6 +192,16 @@ A: Edit `.env.local` and set:
 NEXT_PUBLIC_USE_MOCK_API=true
 ```
 
+### Q: How to disable chat context feature?
+
+A: The chat context feature (knowledge base background) is enabled by default. To disable it, edit `.env.local` and set:
+
+```env
+NEXT_PUBLIC_ENABLE_CHAT_CONTEXT=false
+```
+
+This will hide the context selector in the chat interface.
+
 ## Technical Details
 
 - **Package Manager**: npm (Node Package Manager)

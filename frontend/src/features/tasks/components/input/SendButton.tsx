@@ -11,7 +11,7 @@ import { useUser } from '@/features/common/UserContext';
 import { userApis } from '@/apis/user';
 import { useToast } from '@/hooks/use-toast';
 import type { UserPreferences } from '@/types/api';
-import LoadingDots from './LoadingDots';
+import LoadingDots from '../message/LoadingDots';
 
 interface SendButtonProps {
   onClick: () => void;

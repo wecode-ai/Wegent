@@ -25,7 +25,7 @@ import MarkdownEditor from '@uiw/react-markdown-editor';
 import { useTheme } from '@/features/theme/ThemeProvider';
 import { useTranslation } from '@/hooks/useTranslation';
 import { taskApis, BranchDiffResponse } from '@/apis/tasks';
-import DiffViewer from './DiffViewer';
+import DiffViewer from '../message/DiffViewer';
 
 // Tool icon mapping
 const TOOL_ICONS: Record<string, string> = {

@@ -10,7 +10,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useTranslation } from 'react-i18next';
+import { useTranslation } from '@/hooks/useTranslation';
 import {
   Select,
   SelectContent,
@@ -30,7 +30,7 @@ interface GroupSelectorProps {
 const ALL_GROUPS_VALUE = '__all__';
 
 export function GroupSelector({ value, onChange, scope = 'all' }: GroupSelectorProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation('groups');
   const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -75,7 +75,7 @@ export function GroupSelector({ value, onChange, scope = 'all' }: GroupSelectorP
       <Select value={selectValue} onValueChange={handleChange}>
         <SelectTrigger className="w-full">
           <SelectValue
-            placeholder={loading ? t('actions.loading') : t('resourceScope.selectGroup')}
+            placeholder={loading ? t('common:actions.loading') : t('resourceScope.selectGroup')}
           />
         </SelectTrigger>
         <SelectContent>
