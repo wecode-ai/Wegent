@@ -9,14 +9,12 @@ import AddContextButton from './AddContextButton';
 import ContextSelector from './ContextSelector';
 import ContextBadge from './ContextBadge';
 import type { ContextItem } from '@/types/context';
+import { isChatContextEnabled } from '@/lib/runtime-config';
 
 interface ChatContextInputProps {
   selectedContexts: ContextItem[];
   onContextsChange: (contexts: ContextItem[]) => void;
 }
-
-// Check if chat context feature is enabled via environment variable
-const isChatContextEnabled = process.env.NEXT_PUBLIC_ENABLE_CHAT_CONTEXT !== 'false';
 
 /**
  * Generic context input component for chat
@@ -42,7 +40,7 @@ export default function ChatContextInput({
   };
 
   // If chat context feature is disabled, don't render anything
-  if (!isChatContextEnabled) {
+  if (!isChatContextEnabled()) {
     return null;
   }
 
