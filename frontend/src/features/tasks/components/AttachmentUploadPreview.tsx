@@ -4,14 +4,11 @@
 
 'use client';
 
-import React, { useRef, useCallback } from 'react';
-import { Paperclip, X, Loader2 } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import {
-  SUPPORTED_EXTENSIONS,
-  MAX_FILE_SIZE,
   formatFileSize,
   getFileIcon,
   isImageExtension,
@@ -19,21 +16,14 @@ import {
 } from '@/apis/attachments';
 import { getToken } from '@/apis/user';
 import type { Attachment, MultiAttachmentUploadState } from '@/types/api';
-import { useState, useEffect } from 'react';
 
-interface MultiFileUploadProps {
+interface AttachmentUploadPreviewProps {
   /** Current attachments state */
   state: MultiAttachmentUploadState;
-  /** Whether the component is disabled */
-  disabled?: boolean;
-  /** Callback when files are selected */
-  onFileSelect: (files: File | File[]) => void;
   /** Callback to remove an attachment */
   onRemove: (attachmentId: number) => void;
-  /** Show only button without previews */
-  showButtonOnly?: boolean;
-  /** Show only previews without button */
-  showPreviewOnly?: boolean;
+  /** Whether the component is disabled */
+  disabled?: boolean;
 }
 
 /**
@@ -230,109 +220,28 @@ function AttachmentPreviewInline({
   );
 }
 
-export default function MultiFileUpload({
+/**
+ * Attachment upload preview component
+ * Only responsible for displaying attachment previews and upload progress
+ */
+export default function AttachmentUploadPreview({
   state,
-  disabled = false,
-  onFileSelect,
   onRemove,
-  showButtonOnly = false,
-  showPreviewOnly = false,
-}: MultiFileUploadProps) {
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const handleClick = useCallback(() => {
-    if (!disabled) {
-      fileInputRef.current?.click();
-    }
-  }, [disabled]);
-
-  const handleFileChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const files = e.target.files;
-      if (files && files.length > 0) {
-        onFileSelect(Array.from(files));
-      }
-      // Reset input so same file can be selected again
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
-    },
-    [onFileSelect]
-  );
-
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-  }, []);
-
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-
-      if (disabled) return;
-
-      const files = e.dataTransfer.files;
-      if (files && files.length > 0) {
-        onFileSelect(Array.from(files));
-      }
-    },
-    [disabled, onFileSelect]
-  );
-
-  // Build accept string for file input
-  const acceptString = SUPPORTED_EXTENSIONS.join(',');
-
-  // Tooltip content
-  const tooltipContent = `支持的文件类型: PDF, Word, PPT, Excel, TXT, Markdown, 图片(JPG, PNG, GIF, BMP, WebP)\n最大文件大小: ${MAX_FILE_SIZE / (1024 * 1024)} MB\n支持多文件同时上传`;
-
+  disabled = false,
+}: AttachmentUploadPreviewProps) {
   const hasAttachments = state.attachments.length > 0;
   const isUploading = state.uploadingFiles.size > 0;
+  const hasErrors = state.errors.size > 0;
 
-  // Control what to show based on props
-  const shouldShowButton = !showPreviewOnly && !isUploading;
-  const shouldShowPreview = !showButtonOnly && hasAttachments;
-  const shouldShowUploading = !showButtonOnly && isUploading;
-  const shouldShowErrors = !showButtonOnly && state.errors.size > 0;
+  // Don't render anything if no content to show
+  if (!hasAttachments && !isUploading && !hasErrors) {
+    return null;
+  }
 
   return (
-    <div className="flex flex-col gap-2" onDragOver={handleDragOver} onDrop={handleDrop}>
-      {/* Hidden file input with multiple support */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept={acceptString}
-        multiple
-        onChange={handleFileChange}
-        className="hidden"
-        disabled={disabled}
-      />
-
-      {/* Upload button - always show when not uploading */}
-      {shouldShowButton && (
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                onClick={handleClick}
-                disabled={disabled}
-                className="h-9 w-9 rounded-full border-border bg-base text-text-primary hover:bg-hover"
-              >
-                <Paperclip className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="top" className="max-w-xs whitespace-pre-line">
-              <p>{tooltipContent}</p>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-      )}
-
+    <div className="flex flex-col gap-2">
       {/* Uploading files */}
-      {shouldShowUploading &&
+      {isUploading &&
         Array.from(state.uploadingFiles.entries()).map(([fileId, { file, progress }]) => (
           <div key={fileId} className="flex items-center gap-2 px-3 py-1.5 bg-muted rounded-lg">
             <Loader2 className="h-4 w-4 animate-spin text-primary flex-shrink-0" />
@@ -344,7 +253,7 @@ export default function MultiFileUpload({
         ))}
 
       {/* Attachment previews in a horizontal scrollable container */}
-      {shouldShowPreview && (
+      {hasAttachments && (
         <div className="flex items-center gap-2 overflow-x-auto max-w-full">
           {state.attachments.map(attachment => (
             <div key={attachment.id} className="flex-shrink-0">
@@ -359,7 +268,7 @@ export default function MultiFileUpload({
       )}
 
       {/* Error messages */}
-      {shouldShowErrors && (
+      {hasErrors && (
         <div className="flex flex-col gap-1">
           {Array.from(state.errors.entries()).map(([fileId, error]) => (
             <span key={fileId} className="text-xs text-red-500 truncate" title={error}>

@@ -160,8 +160,10 @@ export interface ChatMessageRequest {
   model_id?: string;
   /** Force override bot's default model */
   force_override_bot_model?: boolean;
-  /** Attachment ID for file upload (optional) */
+  /** Attachment ID for file upload (optional, deprecated - use attachment_ids) */
   attachment_id?: number;
+  /** Attachment IDs for multiple file uploads (optional) */
+  attachment_ids?: number[];
   /** Enable web search for this message */
   enable_web_search?: boolean;
   /** Search engine to use (when web search is enabled) */
@@ -216,6 +218,7 @@ interface ChatStreamContextType {
       localMessageId?: string;
       pendingUserMessage?: string;
       pendingAttachment?: unknown;
+      pendingAttachments?: unknown[];
       onError?: (error: Error) => void;
       /** Callback when message is sent, passes back localMessageId for precise update */
       onMessageSent?: (localMessageId: string, taskId: number, subtaskId: number) => void;
@@ -851,6 +854,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         localMessageId?: string;
         pendingUserMessage?: string;
         pendingAttachment?: unknown;
+        pendingAttachments?: unknown[];
         onError?: (error: Error) => void;
         /** Callback when message is sent, passes back localMessageId for precise update */
         onMessageSent?: (localMessageId: string, taskId: number, subtaskId: number) => void;
@@ -888,6 +892,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         status: 'pending',
         content: options?.pendingUserMessage || request.message,
         attachment: options?.pendingAttachment,
+        attachments: options?.pendingAttachments,
         timestamp: Date.now(),
         // Add sender info for group chat
         senderUserName: options?.currentUserName,
@@ -921,6 +926,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         message: request.message,
         title: request.title,
         attachment_id: request.attachment_id,
+        attachment_ids: request.attachment_ids,
         enable_web_search: request.enable_web_search,
         search_engine: request.search_engine,
         enable_clarification: request.enable_clarification,
