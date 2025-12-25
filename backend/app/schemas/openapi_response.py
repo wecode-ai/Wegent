@@ -13,9 +13,20 @@ from pydantic import BaseModel, Field
 
 
 class WegentTool(BaseModel):
-    """Custom Wegent tool configuration."""
+    """Custom Wegent tool configuration.
 
-    type: str = Field(..., description="Tool type, e.g., 'wegent_deep_thinking'")
+    Supported tool types:
+    - wegent_deep_thinking: Enable deep thinking mode with web search
+      (web search requires WEB_SEARCH_ENABLED=true in system config)
+
+    Note:
+    - MCP tools are controlled by CHAT_MCP_ENABLED system config (no user tool needed)
+    """
+
+    type: str = Field(
+        ...,
+        description="Tool type: 'wegent_deep_thinking'",
+    )
 
 
 class InputTextContent(BaseModel):

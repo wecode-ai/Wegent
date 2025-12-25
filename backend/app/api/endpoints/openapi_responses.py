@@ -156,7 +156,8 @@ def _parse_wegent_tools(tools: Optional[List[WegentTool]]) -> Dict[str, Any]:
         tools: List of WegentTool objects
 
     Returns:
-        Dict with parsed tool settings
+        Dict with parsed tool settings:
+        - enable_deep_thinking: bool (also enables web search if WEB_SEARCH_ENABLED)
     """
     result = {
         "enable_deep_thinking": False,
@@ -300,6 +301,8 @@ class ChatSessionSetup(NamedTuple):
     existing_subtasks: List[Subtask]
     model_config: Any
     system_prompt: str
+    bot_name: str  # First bot's name for MCP loading
+    bot_namespace: str  # First bot's namespace for MCP loading
 
 
 def _setup_chat_session(
@@ -360,6 +363,8 @@ def _setup_chat_session(
         )
 
     bot_ids = []
+    first_bot_name = ""
+    first_bot_namespace = "default"
     for member in team_crd.spec.members:
         member_bot = (
             db.query(Kind)
@@ -374,6 +379,10 @@ def _setup_chat_session(
         )
         if member_bot:
             bot_ids.append(member_bot.id)
+            # Capture first bot info for MCP loading
+            if not first_bot_name:
+                first_bot_name = member.botRef.name
+                first_bot_namespace = member.botRef.namespace
 
     if not bot_ids:
         raise HTTPException(
@@ -557,6 +566,8 @@ def _setup_chat_session(
         existing_subtasks=existing_subtasks,
         model_config=model_config,
         system_prompt=system_prompt,
+        bot_name=first_bot_name,
+        bot_namespace=first_bot_namespace,
     )
 
 
@@ -576,6 +587,159 @@ def _build_chat_history(existing_subtasks: List[Subtask]) -> List[Dict[str, str]
     return history
 
 
+async def _load_mcp_tools(
+    task_id: int, bot_name: str = "", bot_namespace: str = "default"
+) -> Any:
+    """
+    Load MCP tools for a task, merging backend and bot configurations.
+
+    This function is adapted from ChatService._load_mcp_tools for use in OpenAPI responses.
+
+    Args:
+        task_id: Task ID for session management
+        bot_name: Bot name to query Ghost MCP configuration
+        bot_namespace: Bot namespace for Ghost query
+
+    Returns:
+        MCPClient instance or None
+    """
+    import asyncio
+    import json
+
+    from app.core.config import settings
+
+    try:
+        from app.services.chat_v2.tools.mcp import MCPClient
+
+        # Step 1: Load backend MCP configuration
+        backend_servers = {}
+        mcp_servers_config = getattr(settings, "CHAT_MCP_SERVERS", "")
+        if mcp_servers_config:
+            try:
+                config_data = json.loads(mcp_servers_config)
+                backend_servers = config_data.get("mcpServers", config_data)
+            except json.JSONDecodeError as e:
+                logger.warning(f"[OPENAPI_MCP] Failed to parse CHAT_MCP_SERVERS: {e}")
+
+        # Step 2: Load bot's MCP configuration from Ghost CRD
+        bot_servers = {}
+        if bot_name and bot_namespace:
+            try:
+                bot_servers = await asyncio.wait_for(
+                    _get_bot_mcp_servers(bot_name, bot_namespace), timeout=5.0
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    f"[OPENAPI_MCP] Timeout querying bot MCP servers for {bot_namespace}/{bot_name}"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[OPENAPI_MCP] Failed to load bot MCP servers for {bot_namespace}/{bot_name}: {e}"
+                )
+
+        # Step 3: Merge configurations (bot config takes precedence)
+        merged_servers = {**backend_servers, **bot_servers}
+
+        if not merged_servers:
+            logger.info(
+                f"[OPENAPI_MCP] No MCP servers configured for task {task_id} (bot={bot_namespace}/{bot_name})"
+            )
+            return None
+
+        # Step 4: Create MCP client with merged configuration
+        client = MCPClient(merged_servers)
+        try:
+            await asyncio.wait_for(client.connect(), timeout=30.0)
+            logger.info(
+                f"[OPENAPI_MCP] Loaded {len(client.get_tools())} tools from {len(merged_servers)} MCP servers for task {task_id}"
+            )
+            return client
+        except asyncio.TimeoutError:
+            logger.error(
+                f"[OPENAPI_MCP] Timeout connecting to MCP servers for task {task_id}"
+            )
+            return None
+        except Exception as e:
+            logger.error(
+                f"[OPENAPI_MCP] Failed to connect to MCP servers for task {task_id}: {e}"
+            )
+            return None
+
+    except Exception:
+        logger.exception(
+            f"[OPENAPI_MCP] Unexpected error loading MCP tools for task {task_id}"
+        )
+        return None
+
+
+async def _get_bot_mcp_servers(bot_name: str, bot_namespace: str) -> Dict[str, Any]:
+    """Query bot's Ghost CRD to get MCP server configuration."""
+    import asyncio
+
+    return await asyncio.to_thread(_get_bot_mcp_servers_sync, bot_name, bot_namespace)
+
+
+def _get_bot_mcp_servers_sync(bot_name: str, bot_namespace: str) -> Dict[str, Any]:
+    """Synchronous implementation of bot MCP servers query."""
+    from app.db.session import SessionLocal
+    from app.schemas.kind import Ghost
+
+    db = SessionLocal()
+    try:
+        # Query bot Kind
+        bot_kind = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Bot",
+                Kind.name == bot_name,
+                Kind.namespace == bot_namespace,
+                Kind.is_active,
+            )
+            .first()
+        )
+
+        if not bot_kind or not bot_kind.json:
+            return {}
+
+        # Parse Bot CRD to get ghostRef
+        bot_crd = Bot.model_validate(bot_kind.json)
+        if not bot_crd.spec or not bot_crd.spec.ghostRef:
+            return {}
+
+        ghost_name = bot_crd.spec.ghostRef.name
+        ghost_namespace = bot_crd.spec.ghostRef.namespace
+
+        # Query Ghost Kind
+        ghost_kind = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Ghost",
+                Kind.name == ghost_name,
+                Kind.namespace == ghost_namespace,
+                Kind.is_active,
+            )
+            .first()
+        )
+
+        if not ghost_kind or not ghost_kind.json:
+            return {}
+
+        # Parse Ghost CRD to get mcpServers
+        ghost_crd = Ghost.model_validate(ghost_kind.json)
+        if not ghost_crd.spec or not ghost_crd.spec.mcpServers:
+            return {}
+
+        return ghost_crd.spec.mcpServers
+
+    except Exception:
+        logger.exception(
+            f"[OPENAPI_MCP] Failed to query bot MCP servers for {bot_namespace}/{bot_name}"
+        )
+        return {}
+    finally:
+        db.close()
+
+
 async def _create_streaming_response(
     db: Session,
     user: User,
@@ -589,6 +753,8 @@ async def _create_streaming_response(
     """
     Create a streaming response for Chat Shell type teams.
 
+    Supports MCP tools and web search when enabled.
+
     Args:
         db: Database session
         user: Current user
@@ -596,7 +762,7 @@ async def _create_streaming_response(
         model_info: Parsed model info
         request_body: Original request body
         input_text: Extracted input text
-        tool_settings: Parsed tool settings
+        tool_settings: Parsed tool settings (enable_mcp, enable_web_search, search_engine)
         task_id: Optional existing task ID for follow-up conversations
 
     Returns:
@@ -614,8 +780,13 @@ async def _create_streaming_response(
     assistant_subtask_id = setup.assistant_subtask.id
     task_kind_id = setup.task_id
 
+    # Capture tool settings for use in generator
+    enable_deep_thinking = tool_settings.get("enable_deep_thinking", False)
+    bot_name = setup.bot_name
+    bot_namespace = setup.bot_namespace
+
     async def raw_chat_stream() -> AsyncGenerator[str, None]:
-        """Generate raw text chunks from the LLM and update subtask."""
+        """Generate raw text chunks from the LLM/Agent and update subtask."""
         import asyncio
 
         from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -628,6 +799,7 @@ async def _create_streaming_response(
 
         accumulated_content = ""
         db_gen = next(get_db_session())
+        mcp_client = None
 
         try:
             cancel_event = await session_manager.register_stream(assistant_subtask_id)
@@ -641,68 +813,143 @@ async def _create_streaming_response(
                 system_prompt=setup.system_prompt,
             )
 
-            # Create LangChain model
-            try:
+            # Prepare extra tools (MCP and web search)
+            extra_tools = []
+
+            # Load MCP tools if system config enabled
+            if settings.CHAT_MCP_ENABLED:
+                try:
+                    mcp_client = await _load_mcp_tools(
+                        task_kind_id, bot_name, bot_namespace
+                    )
+                    if mcp_client:
+                        extra_tools.extend(mcp_client.get_tools())
+                        logger.info(
+                            f"[OPENAPI] Loaded {len(mcp_client.get_tools())} MCP tools for task {task_kind_id}"
+                        )
+                except Exception as e:
+                    logger.warning(f"[OPENAPI] Failed to load MCP tools: {e}")
+
+            # Add web search tool if deep thinking enabled and system config allows
+            if enable_deep_thinking and settings.WEB_SEARCH_ENABLED:
+                try:
+                    from app.services.chat_v2.tools import WebSearchTool
+
+                    extra_tools.append(WebSearchTool())
+                    logger.info(
+                        f"[OPENAPI] Added web search tool for task {task_kind_id}"
+                    )
+                except Exception as e:
+                    logger.warning(f"[OPENAPI] Failed to add web search tool: {e}")
+
+            # Decide whether to use agent (with tools) or simple LLM
+            use_agent = len(extra_tools) > 0
+
+            if use_agent:
+                # Use LangGraph agent for tool support
+                from app.services.chat_v2.agents import LangGraphAgentBuilder
+                from app.services.chat_v2.tools import ToolRegistry
+
                 llm = LangChainModelFactory.create_from_config(
                     setup.model_config, streaming=True
                 )
-            except Exception as e:
-                logger.error(f"Failed to create LLM from model config: {e}")
-                await db_handler.update_subtask_status(
-                    assistant_subtask_id, "FAILED", error=f"Failed to create LLM: {e}"
+
+                tool_registry = ToolRegistry()
+                for tool in extra_tools:
+                    tool_registry.register(tool)
+
+                agent = LangGraphAgentBuilder(
+                    llm=llm,
+                    tool_registry=tool_registry,
+                    max_iterations=settings.CHAT_TOOL_MAX_REQUESTS,
                 )
-                return
 
-            # Convert to LangChain messages
-            langchain_messages = []
-            for msg in messages:
-                role = msg.get("role", "")
-                content = msg.get("content", "")
-                if role == "system":
-                    langchain_messages.append(SystemMessage(content=content))
-                elif role == "user":
-                    langchain_messages.append(HumanMessage(content=content))
-                elif role == "assistant":
-                    langchain_messages.append(AIMessage(content=content))
-
-            # Stream response with periodic saves
-            last_redis_save = asyncio.get_event_loop().time()
-            last_db_save = asyncio.get_event_loop().time()
-            redis_save_interval = getattr(
-                settings, "STREAMING_REDIS_SAVE_INTERVAL", 1.0
-            )
-            db_save_interval = getattr(settings, "STREAMING_DB_SAVE_INTERVAL", 3.0)
-
-            async for chunk in llm.astream(langchain_messages):
-                if cancel_event.is_set() or await session_manager.is_cancelled(
-                    assistant_subtask_id
+                # Stream tokens from agent
+                async for token in agent.stream_tokens(
+                    messages, cancel_event=cancel_event
                 ):
-                    logger.info(f"Stream cancelled for subtask {assistant_subtask_id}")
-                    if accumulated_content:
-                        await session_manager.save_streaming_content(
-                            assistant_subtask_id, accumulated_content
+                    if cancel_event.is_set() or await session_manager.is_cancelled(
+                        assistant_subtask_id
+                    ):
+                        logger.info(
+                            f"Stream cancelled for subtask {assistant_subtask_id}"
                         )
-                        await db_handler.save_partial_response(
-                            assistant_subtask_id, accumulated_content
-                        )
-                    break
+                        if accumulated_content:
+                            await session_manager.save_streaming_content(
+                                assistant_subtask_id, accumulated_content
+                            )
+                            await db_handler.save_partial_response(
+                                assistant_subtask_id, accumulated_content
+                            )
+                        break
 
-                if hasattr(chunk, "content") and chunk.content:
-                    accumulated_content += chunk.content
-                    yield chunk.content
+                    accumulated_content += token
+                    yield token
+            else:
+                # Simple LLM streaming without tools
+                try:
+                    llm = LangChainModelFactory.create_from_config(
+                        setup.model_config, streaming=True
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to create LLM from model config: {e}")
+                    await db_handler.update_subtask_status(
+                        assistant_subtask_id, "FAILED", error=f"Failed to create LLM: {e}"
+                    )
+                    return
 
-                    current_time = asyncio.get_event_loop().time()
-                    if current_time - last_redis_save >= redis_save_interval:
-                        await session_manager.save_streaming_content(
-                            assistant_subtask_id, accumulated_content
-                        )
-                        last_redis_save = current_time
+                # Convert to LangChain messages
+                langchain_messages = []
+                for msg in messages:
+                    role = msg.get("role", "")
+                    content = msg.get("content", "")
+                    if role == "system":
+                        langchain_messages.append(SystemMessage(content=content))
+                    elif role == "user":
+                        langchain_messages.append(HumanMessage(content=content))
+                    elif role == "assistant":
+                        langchain_messages.append(AIMessage(content=content))
 
-                    if current_time - last_db_save >= db_save_interval:
-                        await db_handler.save_partial_response(
-                            assistant_subtask_id, accumulated_content
+                # Stream response with periodic saves
+                last_redis_save = asyncio.get_event_loop().time()
+                last_db_save = asyncio.get_event_loop().time()
+                redis_save_interval = getattr(
+                    settings, "STREAMING_REDIS_SAVE_INTERVAL", 1.0
+                )
+                db_save_interval = getattr(settings, "STREAMING_DB_SAVE_INTERVAL", 3.0)
+
+                async for chunk in llm.astream(langchain_messages):
+                    if cancel_event.is_set() or await session_manager.is_cancelled(
+                        assistant_subtask_id
+                    ):
+                        logger.info(
+                            f"Stream cancelled for subtask {assistant_subtask_id}"
                         )
-                        last_db_save = current_time
+                        if accumulated_content:
+                            await session_manager.save_streaming_content(
+                                assistant_subtask_id, accumulated_content
+                            )
+                            await db_handler.save_partial_response(
+                                assistant_subtask_id, accumulated_content
+                            )
+                        break
+
+                    if hasattr(chunk, "content") and chunk.content:
+                        accumulated_content += chunk.content
+                        yield chunk.content
+
+                        current_time = asyncio.get_event_loop().time()
+                        if current_time - last_redis_save >= redis_save_interval:
+                            await session_manager.save_streaming_content(
+                                assistant_subtask_id, accumulated_content
+                            )
+                            last_redis_save = current_time
+
+                        if current_time - last_db_save >= db_save_interval:
+                            await db_handler.save_partial_response(
+                                assistant_subtask_id, accumulated_content
+                            )
+                            last_db_save = current_time
 
             # Stream completed (not cancelled)
             if not cancel_event.is_set() and not await session_manager.is_cancelled(
@@ -744,6 +991,13 @@ async def _create_streaming_response(
                 pass
             raise
         finally:
+            # Cleanup MCP client if used
+            if mcp_client:
+                try:
+                    await mcp_client.close()
+                except Exception as e:
+                    logger.warning(f"[OPENAPI] Failed to close MCP client: {e}")
+
             await session_manager.unregister_stream(assistant_subtask_id)
             await session_manager.delete_streaming_content(assistant_subtask_id)
             db_gen.close()
@@ -782,6 +1036,8 @@ async def _create_sync_response(
     """
     Create a synchronous (blocking) response for Chat Shell type teams.
 
+    Supports MCP tools and web search when enabled.
+
     Args:
         db: Database session
         user: Current user
@@ -789,7 +1045,7 @@ async def _create_sync_response(
         model_info: Parsed model info
         request_body: Original request body
         input_text: Extracted input text
-        tool_settings: Parsed tool settings
+        tool_settings: Parsed tool settings (enable_mcp, enable_web_search, search_engine)
         task_id: Optional existing task ID for follow-up conversations
 
     Returns:
@@ -798,6 +1054,7 @@ async def _create_sync_response(
     from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
     from sqlalchemy.orm.attributes import flag_modified
 
+    from app.core.config import settings
     from app.services.chat_v2.messages import MessageConverter
     from app.services.chat_v2.models import LangChainModelFactory
     from app.services.chat_v2.storage import db_handler, session_manager
@@ -811,10 +1068,14 @@ async def _create_sync_response(
     created_at = int(datetime.now().timestamp())
     assistant_subtask_id = setup.assistant_subtask.id
 
+    # Extract tool settings
+    enable_deep_thinking = tool_settings.get("enable_deep_thinking", False)
+
     # Update subtask status to RUNNING
     await db_handler.update_subtask_status(assistant_subtask_id, "RUNNING")
 
     accumulated_content = ""
+    mcp_client = None
 
     try:
         # Build messages with history
@@ -825,25 +1086,82 @@ async def _create_sync_response(
             system_prompt=setup.system_prompt,
         )
 
-        # Create LangChain model
-        llm = LangChainModelFactory.create_from_config(setup.model_config, streaming=True)
+        # Prepare extra tools (MCP and web search)
+        extra_tools = []
 
-        # Convert to LangChain messages
-        langchain_messages = []
-        for msg in messages:
-            role = msg.get("role", "")
-            content = msg.get("content", "")
-            if role == "system":
-                langchain_messages.append(SystemMessage(content=content))
-            elif role == "user":
-                langchain_messages.append(HumanMessage(content=content))
-            elif role == "assistant":
-                langchain_messages.append(AIMessage(content=content))
+        # Load MCP tools if system config enabled
+        if settings.CHAT_MCP_ENABLED:
+            try:
+                mcp_client = await _load_mcp_tools(
+                    setup.task_id, setup.bot_name, setup.bot_namespace
+                )
+                if mcp_client:
+                    extra_tools.extend(mcp_client.get_tools())
+                    logger.info(
+                        f"[OPENAPI_SYNC] Loaded {len(mcp_client.get_tools())} MCP tools for task {setup.task_id}"
+                    )
+            except Exception as e:
+                logger.warning(f"[OPENAPI_SYNC] Failed to load MCP tools: {e}")
 
-        # Stream and accumulate content (blocking until complete)
-        async for chunk in llm.astream(langchain_messages):
-            if hasattr(chunk, "content") and chunk.content:
-                accumulated_content += chunk.content
+        # Add web search tool if deep thinking enabled and system config allows
+        if enable_deep_thinking and settings.WEB_SEARCH_ENABLED:
+            try:
+                from app.services.chat_v2.tools import WebSearchTool
+
+                extra_tools.append(WebSearchTool())
+                logger.info(
+                    f"[OPENAPI_SYNC] Added web search tool for task {setup.task_id}"
+                )
+            except Exception as e:
+                logger.warning(f"[OPENAPI_SYNC] Failed to add web search tool: {e}")
+
+        # Decide whether to use agent (with tools) or simple LLM
+        use_agent = len(extra_tools) > 0
+
+        if use_agent:
+            # Use LangGraph agent for tool support
+            from app.services.chat_v2.agents import LangGraphAgentBuilder
+            from app.services.chat_v2.tools import ToolRegistry
+
+            llm = LangChainModelFactory.create_from_config(
+                setup.model_config, streaming=True
+            )
+
+            tool_registry = ToolRegistry()
+            for tool in extra_tools:
+                tool_registry.register(tool)
+
+            agent = LangGraphAgentBuilder(
+                llm=llm,
+                tool_registry=tool_registry,
+                max_iterations=settings.CHAT_TOOL_MAX_REQUESTS,
+            )
+
+            # Stream and accumulate tokens from agent (blocking until complete)
+            async for token in agent.stream_tokens(messages):
+                accumulated_content += token
+        else:
+            # Simple LLM streaming without tools
+            llm = LangChainModelFactory.create_from_config(
+                setup.model_config, streaming=True
+            )
+
+            # Convert to LangChain messages
+            langchain_messages = []
+            for msg in messages:
+                role = msg.get("role", "")
+                content = msg.get("content", "")
+                if role == "system":
+                    langchain_messages.append(SystemMessage(content=content))
+                elif role == "user":
+                    langchain_messages.append(HumanMessage(content=content))
+                elif role == "assistant":
+                    langchain_messages.append(AIMessage(content=content))
+
+            # Stream and accumulate content (blocking until complete)
+            async for chunk in llm.astream(langchain_messages):
+                if hasattr(chunk, "content") and chunk.content:
+                    accumulated_content += chunk.content
 
         # Update subtask to completed
         result = {"value": accumulated_content}
@@ -890,6 +1208,13 @@ async def _create_sync_response(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"LLM request failed: {error_message}",
         )
+    finally:
+        # Cleanup MCP client if used
+        if mcp_client:
+            try:
+                await mcp_client.close()
+            except Exception as e:
+                logger.warning(f"[OPENAPI_SYNC] Failed to close MCP client: {e}")
 
     # Build response
     message_id = f"msg_{assistant_subtask_id}"
@@ -935,8 +1260,14 @@ async def create_response(
         - model: Format "namespace#team_name" or "namespace#team_name#model_id"
         - input: The user prompt (string or list of messages)
         - stream: Whether to enable streaming output (default: False)
-        - tools: Optional Wegent tools (e.g., [{"type": "wegent_deep_thinking"}])
+        - tools: Optional Wegent tools:
+          - {"type": "wegent_deep_thinking"}: Enable deep thinking mode with web search
+            (web search requires WEB_SEARCH_ENABLED=true in system config)
         - previous_response_id: Optional, for follow-up conversations
+
+    Note:
+        - MCP tools are automatically loaded when CHAT_MCP_ENABLED=true (no user tool needed)
+        - Web search is enabled when wegent_deep_thinking is used AND WEB_SEARCH_ENABLED=true
 
     Returns:
         ResponseObject with status 'completed' (Chat Shell)
