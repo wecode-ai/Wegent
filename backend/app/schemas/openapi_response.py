@@ -21,7 +21,7 @@ class WegentTool(BaseModel):
 class InputTextContent(BaseModel):
     """Text content in input message."""
 
-    type: Literal["input_text"] = "input_text"
+    type: Literal["input_text", "output_text"] = "input_text"
     text: str
 
 
