@@ -12,6 +12,7 @@ import type {
   ChatTipItem,
   MultiAttachmentUploadState,
 } from '@/types/api';
+import type { ContextItem } from '@/types/context';
 import type { Model } from '../selector/ModelSelector';
 import { useMultiAttachment } from '@/hooks/useMultiAttachment';
 import { userApis } from '@/apis/user';
@@ -93,6 +94,10 @@ export interface ChatAreaState {
   isDragging: boolean;
   setIsDragging: (value: boolean) => void;
 
+  // Context selection state (knowledge bases)
+  selectedContexts: ContextItem[];
+  setSelectedContexts: (contexts: ContextItem[]) => void;
+
   // Refs
   initialTeamIdRef: React.MutableRefObject<number | null>;
 
@@ -156,6 +161,9 @@ export function useChatAreaState({
 
   // Drag and drop
   const [isDragging, setIsDragging] = useState(false);
+
+  // Context selection state (knowledge bases)
+  const [selectedContexts, setSelectedContexts] = useState<ContextItem[]>([]);
 
   // Media query
   const isMobile = useMediaQuery('(max-width: 640px)');
@@ -361,6 +369,10 @@ export function useChatAreaState({
     // Drag and drop state
     isDragging,
     setIsDragging,
+
+    // Context selection state (knowledge bases)
+    selectedContexts,
+    setSelectedContexts,
 
     // Refs
     initialTeamIdRef,

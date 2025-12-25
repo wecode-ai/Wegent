@@ -122,6 +122,7 @@ export default function ChatArea({
     taskType,
     shouldHideChatInput: chatState.shouldHideChatInput,
     scrollToBottom,
+    selectedContexts: chatState.selectedContexts,
   });
 
   // Determine if there are messages to display (full computation)
@@ -368,6 +369,8 @@ export default function ChatArea({
     setEnableDeepThinking: chatState.setEnableDeepThinking,
     enableClarification: chatState.enableClarification,
     setEnableClarification: chatState.setEnableClarification,
+    selectedContexts: chatState.selectedContexts,
+    setSelectedContexts: chatState.setSelectedContexts,
     attachmentState: chatState.attachmentState,
     onFileSelect: chatState.handleFileSelect,
     onAttachmentRemove: chatState.handleAttachmentRemove,

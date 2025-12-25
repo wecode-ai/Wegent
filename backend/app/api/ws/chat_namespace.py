@@ -22,6 +22,7 @@ from shared.telemetry.context import (
     set_user_context,
 )
 from sqlalchemy import and_
+from sqlalchemy.orm import Session
 
 from app.api.ws.context_decorators import auto_task_context
 from app.api.ws.decorators import trace_websocket_event
@@ -45,6 +46,7 @@ from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.user import User
 from app.schemas.kind import Bot, Shell, Task, Team
+from app.services.chat.rag_integration import retrieve_and_assemble_rag_prompt
 from app.services.chat.session_manager import session_manager
 
 logger = logging.getLogger(__name__)
@@ -452,6 +454,200 @@ class ChatNamespace(socketio.AsyncNamespace):
     # Chat Events
     # ============================================================
 
+    async def _process_rag_if_needed(
+        self,
+        payload: ChatSendPayload,
+        request: Any,
+        should_trigger_ai: bool,
+        user_id: int,
+        db: Session,
+    ) -> Optional[tuple[Optional[Dict], Optional[str]]]:
+        """
+        Process RAG retrieval if contexts with knowledge bases are provided.
+
+        This method:
+        1. Extracts knowledge base contexts from payload.contexts
+        2. Calls RAG integration service to retrieve and assemble prompt
+        3. Returns metadata and RAG prompt separately (does NOT modify payload.message)
+        4. The RAG prompt should be used for AI inference, but original message for storage
+
+        Args:
+            payload: Chat send payload
+            request: Stream chat request
+            should_trigger_ai: Whether AI should be triggered
+            user_id: User ID
+            db: Database session
+
+        Returns:
+            Tuple of (context_metadata dict for subtask storage, rag_prompt for AI), or (None, None)
+        """
+        if not payload.contexts or not should_trigger_ai:
+            return None, None
+
+        # Filter knowledge_base type contexts
+        kb_contexts = [ctx for ctx in payload.contexts if ctx.type == "knowledge_base"]
+
+        if not kb_contexts:
+            return None, None
+
+        logger.info(
+            f"[WS] chat:send processing RAG with {len(kb_contexts)} knowledge base contexts"
+        )
+
+        # Build metadata for subtask storage
+        context_metadata = {
+            "contexts": [
+                {
+                    "type": ctx.type,
+                    "data": ctx.data,
+                }
+                for ctx in payload.contexts
+            ],
+            "original_query": payload.message,  # Store original query in metadata
+        }
+
+        try:
+            # Extract knowledge base IDs from context data
+            kb_ids = []
+            for ctx in kb_contexts:
+                try:
+                    kb_data = ctx.data
+                    knowledge_id = kb_data.get("knowledge_id")
+
+                    # knowledge_id may be string like "kb_001" or int
+                    if isinstance(knowledge_id, int):
+                        kb_ids.append(knowledge_id)
+                    elif isinstance(knowledge_id, str) and knowledge_id.isdigit():
+                        kb_ids.append(int(knowledge_id))
+                    else:
+                        logger.warning(
+                            f"[WS] chat:send skipping non-numeric knowledge_id: {knowledge_id}"
+                        )
+                except (ValueError, AttributeError, KeyError) as e:
+                    logger.warning(
+                        f"[WS] chat:send failed to parse knowledge_id from context: {e}"
+                    )
+                    continue
+
+            if not kb_ids:
+                logger.warning("[WS] chat:send no valid knowledge base IDs found")
+                return context_metadata, None
+
+            # Retrieve and assemble RAG prompt
+            rag_prompt = await retrieve_and_assemble_rag_prompt(
+                query=payload.message,
+                knowledge_base_ids=kb_ids,
+                user_id=user_id,
+                db=db,
+            )
+
+            if rag_prompt:
+                logger.info(
+                    f"[WS] chat:send RAG prompt assembled, length={len(rag_prompt)}"
+                )
+                # Return RAG prompt separately, do NOT modify payload.message
+                return context_metadata, rag_prompt
+            else:
+                logger.info("[WS] chat:send RAG retrieved no chunks")
+                return context_metadata, None
+
+        except Exception as e:
+            logger.error(f"[WS] chat:send RAG processing failed: {e}", exc_info=True)
+            # Continue with original message if RAG fails
+            return context_metadata, None
+
+    def _extract_knowledge_base_ids(
+        self, context_metadata: Optional[Dict]
+    ) -> list[int]:
+        """
+        Extract knowledge base IDs from context metadata.
+
+        Args:
+            context_metadata: Context metadata dict containing contexts
+
+        Returns:
+            List of knowledge base IDs
+        """
+        kb_ids = []
+        if not context_metadata:
+            return kb_ids
+
+        for ctx in context_metadata.get("contexts", []):
+            if ctx.get("type") == "knowledge_base":
+                try:
+                    kb_data = ctx.get("data", {})
+                    kb_id = kb_data.get("knowledge_id")
+
+                    if isinstance(kb_id, int):
+                        kb_ids.append(kb_id)
+                    elif isinstance(kb_id, str) and kb_id.isdigit():
+                        kb_ids.append(int(kb_id))
+                    else:
+                        logger.warning(
+                            f"[WS] chat:send skipping non-numeric knowledge_id: {kb_id}"
+                        )
+                except (ValueError, AttributeError, KeyError) as e:
+                    logger.warning(
+                        f"[WS] chat:send failed to parse knowledge_id from context: {e}"
+                    )
+                    continue
+
+        return kb_ids
+
+    async def _process_context_and_rag(
+        self,
+        payload: ChatSendPayload,
+        request: Any,
+        should_trigger_ai: bool,
+        user_id: int,
+        db: Session,
+    ) -> tuple[Optional[Dict], Optional[str]]:
+        """
+        Process context metadata and RAG based on chat version.
+
+        This method handles RAG processing differently for chat v1 and chat_v2:
+        - chat_v2 (enable_deep_thinking=True): Only extracts context metadata for tool-based RAG
+        - chat v1 (enable_deep_thinking=False): Performs full RAG retrieval and prompt assembly
+
+        Args:
+            payload: Chat send payload
+            request: Stream chat request
+            should_trigger_ai: Whether AI should be triggered
+            user_id: User ID
+            db: Database session
+
+        Returns:
+            Tuple of (context_metadata dict, rag_prompt string or None)
+        """
+        if payload.enable_deep_thinking:
+            # For chat_v2: only extract context metadata, no RAG retrieval
+            # KnowledgeBaseTool will handle retrieval dynamically
+            if payload.contexts and should_trigger_ai:
+                context_metadata = {
+                    "contexts": [
+                        {
+                            "type": ctx.type,
+                            "data": ctx.data,
+                        }
+                        for ctx in payload.contexts
+                    ],
+                    "original_query": payload.message,
+                }
+                logger.info(
+                    f"[WS] chat:send chat_v2 mode: extracted context metadata with {len(payload.contexts)} contexts"
+                )
+                return context_metadata, None
+            return None, None
+        else:
+            # For chat v1: process RAG with retrieval and prompt assembly
+            return await self._process_rag_if_needed(
+                payload=payload,
+                request=request,
+                should_trigger_ai=should_trigger_ai,
+                user_id=user_id,
+                db=db,
+            )
+
     @auto_task_context(ChatSendPayload, task_id_field="task_id")
     async def on_chat_send(self, sid: str, data: dict) -> dict:
         """
@@ -581,6 +777,15 @@ class ChatNamespace(socketio.AsyncNamespace):
             )
             logger.info(f"[WS] chat:send StreamChatRequest created")
 
+            # Process context metadata and RAG based on chat version
+            context_metadata, rag_prompt = await self._process_context_and_rag(
+                payload=payload,
+                request=request,
+                should_trigger_ai=should_trigger_ai,
+                user_id=user_id,
+                db=db,
+            )
+
             # Create task and subtasks
             # Use different methods based on supports_direct_chat:
             # - If supports_direct_chat is True: use _create_task_and_subtasks (async, for Chat Shell)
@@ -594,10 +799,11 @@ class ChatNamespace(socketio.AsyncNamespace):
                     db,
                     user,
                     team,
-                    payload.message,
+                    payload.message,  # Original message for storage
                     request,
                     payload.task_id,
                     should_trigger_ai=should_trigger_ai,
+                    rag_prompt=rag_prompt,  # RAG prompt for AI inference
                 )
                 logger.info(
                     f"[WS] chat:send _create_task_and_subtasks returned: ai_triggered={result.get('ai_triggered')}, task_id={result.get('task').id if result.get('task') else None}"
@@ -685,7 +891,21 @@ class ChatNamespace(socketio.AsyncNamespace):
 
                 user_subtask_for_attachment = user_subtask
 
-            # Link attachments to user subtask if provided
+            # Update user subtask with context metadata
+            if context_metadata and user_subtask_for_attachment:
+                try:
+                    user_subtask_for_attachment.metadata = context_metadata
+                    db.commit()
+                    logger.info(
+                        f"[WS] chat:send stored context metadata in subtask {user_subtask_for_attachment.id}"
+                    )
+                except Exception as e:
+                    logger.exception(
+                        f"[WS] chat:send failed to store context metadata: {e}"
+                    )
+                    db.rollback()
+
+            # Link attachment to user subtask if provided
             # This is important for group chat history to include attachment content
             # Support both legacy attachment_id and new attachment_ids
             attachment_ids_to_link = []
@@ -765,21 +985,44 @@ class ChatNamespace(socketio.AsyncNamespace):
                 if payload.enable_deep_thinking:
                     logger.info("enable_deep_thinking is true, using chat_v2")
                     from app.services.chat_v2.ai_trigger import trigger_ai_response
+
+                    # For chat_v2: extract knowledge base IDs for tool-based RAG
+                    kb_ids = self._extract_knowledge_base_ids(context_metadata)
+                    if kb_ids:
+                        logger.info(
+                            f"[WS] chat:send chat_v2 will use KnowledgeBaseTool with {len(kb_ids)} knowledge bases: {kb_ids}"
+                        )
+
+                    await trigger_ai_response(
+                        task=task,
+                        assistant_subtask=assistant_subtask,
+                        team=team,
+                        user=user,
+                        message=payload.message,  # Original message
+                        payload=payload,
+                        task_room=task_room,
+                        supports_direct_chat=supports_direct_chat,
+                        namespace=self,
+                        knowledge_base_ids=kb_ids,  # Pass KB IDs for tool-based RAG
+                    )
                 else:
                     logger.info("enable_deep_thinking is false, using chat")
                     from app.services.chat.ai_trigger import trigger_ai_response
 
-                await trigger_ai_response(
-                    task=task,
-                    assistant_subtask=assistant_subtask,
-                    team=team,
-                    user=user,
-                    message=payload.message,
-                    payload=payload,
-                    task_room=task_room,
-                    supports_direct_chat=supports_direct_chat,
-                    namespace=self,
-                )
+                    # For chat v1: use RAG prompt if available
+                    ai_message = rag_prompt or payload.message
+
+                    await trigger_ai_response(
+                        task=task,
+                        assistant_subtask=assistant_subtask,
+                        team=team,
+                        user=user,
+                        message=ai_message,  # Use RAG prompt for v1
+                        payload=payload,
+                        task_room=task_room,
+                        supports_direct_chat=supports_direct_chat,
+                        namespace=self,
+                    )
 
             # Return unified response - same structure for all modes
             return {

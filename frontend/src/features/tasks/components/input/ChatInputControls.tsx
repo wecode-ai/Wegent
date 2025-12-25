@@ -11,6 +11,7 @@ import RepositorySelector from '../selector/RepositorySelector';
 import BranchSelector from '../selector/BranchSelector';
 import DeepThinkingToggle from './DeepThinkingToggle';
 import ClarificationToggle from '../clarification/ClarificationToggle';
+import ChatContextInput from '../chat/ChatContextInput';
 import AttachmentButton from '../AttachmentButton';
 import SendButton from './SendButton';
 import LoadingDots from '../message/LoadingDots';
@@ -23,6 +24,7 @@ import type {
   TaskDetail,
   MultiAttachmentUploadState,
 } from '@/types/api';
+import type { ContextItem } from '@/types/context';
 import { isChatShell } from '../../service/messageService';
 
 export interface ChatInputControlsProps {
@@ -46,6 +48,10 @@ export interface ChatInputControlsProps {
   setEnableDeepThinking: (value: boolean) => void;
   enableClarification: boolean;
   setEnableClarification: (value: boolean) => void;
+
+  // Context selection (knowledge bases)
+  selectedContexts: ContextItem[];
+  setSelectedContexts: (contexts: ContextItem[]) => void;
 
   // Attachment (multi-attachment)
   attachmentState: MultiAttachmentUploadState;
@@ -102,6 +108,8 @@ export function ChatInputControls({
   setEnableDeepThinking,
   enableClarification,
   setEnableClarification,
+  selectedContexts,
+  setSelectedContexts,
   attachmentState: _attachmentState,
   onFileSelect,
   onAttachmentRemove: _onAttachmentRemove,
@@ -199,6 +207,14 @@ export function ChatInputControls({
         className="flex-1 min-w-0 overflow-hidden flex items-center gap-3"
         data-tour="input-controls"
       >
+        {/* Context Selection - only show for chat shell */}
+        {isChatShell(selectedTeam) && (
+          <ChatContextInput
+            selectedContexts={selectedContexts}
+            onContextsChange={setSelectedContexts}
+          />
+        )}
+
         {/* File Upload Button - always show for chat shell */}
         {isChatShell(selectedTeam) && (
           <AttachmentButton

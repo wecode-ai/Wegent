@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button';
 import { DEFAULT_MODEL_NAME } from '../selector/ModelSelector';
 import type { Model } from '../selector/ModelSelector';
 import type { Team, GitRepoInfo, GitBranch, Attachment } from '@/types/api';
+import type { ContextItem } from '@/types/context';
 
 export interface UseChatStreamHandlersOptions {
   // Team and model
@@ -57,6 +58,9 @@ export interface UseChatStreamHandlersOptions {
 
   // Scroll helper
   scrollToBottom: (force?: boolean) => void;
+
+  // Context selection (knowledge bases)
+  selectedContexts?: ContextItem[];
 }
 
 export interface ChatStreamHandlers {
@@ -126,6 +130,7 @@ export function useChatStreamHandlers({
   taskType,
   shouldHideChatInput,
   scrollToBottom,
+  selectedContexts = [],
 }: UseChatStreamHandlersOptions): ChatStreamHandlers {
   const { toast } = useToast();
   const { t } = useTranslation('chat');
@@ -420,6 +425,31 @@ export function useChatStreamHandlers({
       try {
         const immediateTaskId = selectedTaskDetail?.id || -Date.now();
 
+        // Convert selected contexts to backend format
+        // Each context item contains type and data fields
+        const contextItems = selectedContexts.map(ctx => {
+          if (ctx.type === 'knowledge_base') {
+            // Type assertion for knowledge base context with retriever info
+            const kbContext = ctx as ContextItem & {
+              retriever_name?: string;
+              retriever_namespace?: string;
+            };
+            return {
+              type: 'knowledge_base',
+              data: {
+                knowledge_id: ctx.id,
+                retriever_name: kbContext.retriever_name || '',
+                retriever_namespace: kbContext.retriever_namespace || 'default',
+              },
+            };
+          }
+          // Future: handle other context types here
+          return {
+            type: ctx.type,
+            data: { id: ctx.id, name: ctx.name },
+          };
+        });
+
         const tempTaskId = await contextSendMessage(
           {
             message: finalMessage,
@@ -439,6 +469,7 @@ export function useChatStreamHandlers({
               ? selectedBranch?.name || selectedTaskDetail?.branch_name
               : undefined,
             task_type: taskType,
+            contexts: contextItems.length > 0 ? contextItems : undefined,
           },
           {
             pendingUserMessage: message,

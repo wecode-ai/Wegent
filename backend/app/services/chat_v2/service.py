@@ -177,6 +177,76 @@ class ChatService:
             enable_checkpointing=self.enable_checkpointing,
         )
 
+    def _process_tool_output(
+        self, tool_name: str, serializable_output: Any, state: StreamingState
+    ) -> str:
+        """Process tool output and extract metadata like sources.
+
+        This method handles tool-specific output processing in a unified way:
+        - Parses JSON output if needed
+        - Extracts metadata (sources, count, etc.)
+        - Updates streaming state with metadata
+        - Returns a friendly title for display
+
+        Args:
+            tool_name: Name of the tool
+            serializable_output: Tool output (string or dict)
+            state: Streaming state to update with metadata
+
+        Returns:
+            Friendly title for the tool completion
+        """
+        # Default title
+        title = f"Tool completed: {tool_name}"
+
+        if not serializable_output:
+            return title
+
+        try:
+            # Parse output to dict if it's a JSON string
+            output_data = (
+                json.loads(serializable_output)
+                if isinstance(serializable_output, str)
+                else serializable_output
+            )
+
+            if not isinstance(output_data, dict):
+                return title
+
+            # Extract common fields
+            count = output_data.get("count", 0)
+            sources = output_data.get("sources", [])
+
+            # Add sources to state if present (for knowledge base and similar tools)
+            if sources:
+                state.add_sources(sources)
+                logger.info(
+                    "[TOOL_OUTPUT] Added %d sources from %s", len(sources), tool_name
+                )
+
+            # Build tool-specific friendly titles
+            if tool_name == "web_search":
+                if count > 0:
+                    title = f"Found {count} search results"
+                else:
+                    title = "No search results found"
+            elif tool_name == "knowledge_base_search":
+                if count > 0:
+                    title = f"Retrieved {count} items from knowledge base"
+                else:
+                    title = "No relevant information found in knowledge base"
+            else:
+                # Generic title for other tools with count
+                if count > 0:
+                    title = f"{tool_name}: {count} results"
+
+        except Exception as e:
+            logger.warning(
+                "[TOOL_OUTPUT] Failed to process output for %s: %s", tool_name, str(e)
+            )
+
+        return title
+
     # ==================== SSE Streaming API ====================
 
     async def chat_stream(
@@ -384,25 +454,10 @@ class ChatService:
                             # Try to convert to string for other non-serializable types
                             serializable_output = str(tool_output)
 
-                        # Try to parse output and build friendly title
-                        title = f"工具完成: {tool_name}"
-                        if tool_name == "web_search" and serializable_output:
-                            try:
-                                import json
-
-                                output_data = (
-                                    json.loads(serializable_output)
-                                    if isinstance(serializable_output, str)
-                                    else serializable_output
-                                )
-                                count = output_data.get("count", 0)
-                                query = output_data.get("query", "")
-                                if count > 0:
-                                    title = f"为你搜索到了 {count} 条相关数据"
-                                else:
-                                    title = "未搜索到相关数据"
-                            except Exception:
-                                pass
+                        # Process tool output and extract metadata (sources, etc.)
+                        title = self._process_tool_output(
+                            tool_name, serializable_output, state
+                        )
 
                         # Find the matching tool_start step by run_id and update it
                         # This ensures start and end are displayed together in order
@@ -713,25 +768,10 @@ class ChatService:
                         # Try to convert to string for other non-serializable types
                         serializable_output = str(tool_output)
 
-                    # Try to parse output and build friendly title
-                    title = f"工具完成: {tool_name}"
-                    if tool_name == "web_search" and serializable_output:
-                        try:
-                            import json
-
-                            output_data = (
-                                json.loads(serializable_output)
-                                if isinstance(serializable_output, str)
-                                else serializable_output
-                            )
-                            count = output_data.get("count", 0)
-                            query = output_data.get("query", "")
-                            if count > 0:
-                                title = f"为你搜索到了 {count} 条相关数据"
-                            else:
-                                title = "未搜索到相关数据"
-                        except Exception:
-                            pass
+                    # Process tool output and extract metadata (sources, etc.)
+                    title = self._process_tool_output(
+                        tool_name, serializable_output, state
+                    )
 
                     # Find the matching tool_start step by run_id and update it
                     # This ensures start and end are displayed together in order

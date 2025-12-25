@@ -102,6 +102,8 @@ export function ChatInputCard({
   setEnableDeepThinking,
   enableClarification,
   setEnableClarification,
+  selectedContexts,
+  setSelectedContexts,
   attachmentState,
   onFileSelect,
   onAttachmentRemove,
@@ -211,6 +213,8 @@ export function ChatInputCard({
             setEnableDeepThinking={setEnableDeepThinking}
             enableClarification={enableClarification}
             setEnableClarification={setEnableClarification}
+            selectedContexts={selectedContexts}
+            setSelectedContexts={setSelectedContexts}
             attachmentState={attachmentState}
             onFileSelect={onFileSelect}
             onAttachmentRemove={onAttachmentRemove}
