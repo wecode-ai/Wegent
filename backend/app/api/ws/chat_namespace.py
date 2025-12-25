@@ -1096,16 +1096,38 @@ class ChatNamespace(socketio.AsyncNamespace):
         failed_ai_subtask, task, team = query_result
 
         # Fetch user subtask separately
+        # For group chat: parent_id might point to another ASSISTANT subtask or be None
+        # For regular chat: parent_id should point to a USER subtask
         user_subtask = None
         if failed_ai_subtask and failed_ai_subtask.parent_id:
             user_subtask = (
                 db.query(Subtask)
                 .filter(
                     Subtask.id == failed_ai_subtask.parent_id,
-                    Subtask.role == SubtaskRole.USER,
+                    # Don't filter by role - accept any role
+                    # In group chat, parent might be ASSISTANT (previous message in thread)
                 )
                 .first()
             )
+
+            # If parent is not a USER subtask, try to find the original user message
+            # by looking for USER subtasks in the same task with earlier message_id
+            if user_subtask and user_subtask.role != SubtaskRole.USER:
+                logger.info(
+                    f"[WS] chat:retry parent is not USER (role={user_subtask.role}), "
+                    f"searching for original USER subtask"
+                )
+                # Find the most recent USER subtask before this AI subtask
+                user_subtask = (
+                    db.query(Subtask)
+                    .filter(
+                        Subtask.task_id == failed_ai_subtask.task_id,
+                        Subtask.role == SubtaskRole.USER,
+                        Subtask.message_id < failed_ai_subtask.message_id,
+                    )
+                    .order_by(Subtask.message_id.desc())
+                    .first()
+                )
 
         return failed_ai_subtask, task, team, user_subtask
 
