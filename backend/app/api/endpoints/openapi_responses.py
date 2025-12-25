@@ -466,6 +466,7 @@ def _setup_chat_session(
                     "taskType": "chat",
                     "autoDeleteExecutor": "false",
                     "source": "chat_shell",
+                    "ext_source": "api",
                     **(
                         {"modelId": model_info.get("model_id")}
                         if model_info.get("model_id")
