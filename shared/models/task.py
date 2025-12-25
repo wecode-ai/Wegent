@@ -14,6 +14,18 @@ class User(BaseModel):
     git_token: Optional[str] = None
 
 
+class Attachment(BaseModel):
+    """Attachment model for executor"""
+
+    id: int
+    original_filename: str
+    file_extension: str
+    file_size: int
+    mime_type: str
+    download_url: str
+    image_base64: Optional[str] = None  # Base64 data for image attachments
+
+
 class Bot(BaseModel):
     id: int
     name: str
@@ -40,6 +52,8 @@ class Task(BaseModel):
     prompt: str
     status: str
     progress: int
+    attachments: List[Attachment] = []  # Attachments for this subtask
+    auth_token: Optional[str] = None  # JWT token for authenticated API calls
 
 
 class ThinkingStep(BaseModel):
