@@ -30,7 +30,9 @@ import ClarificationAnswerSummary from './ClarificationAnswerSummary';
 import AttachmentPreview from './AttachmentPreview';
 import StreamingWaitIndicator from './StreamingWaitIndicator';
 import BubbleTools, { CopyButton } from './BubbleTools';
+import { SourceReferences } from './chat/SourceReferences';
 import type { ClarificationData, FinalPromptData, ClarificationAnswer } from '@/types/api';
+import type { SourceReference } from '@/types/socket';
 import { useTraceAction } from '@/hooks/useTraceAction';
 import { useMessageFeedback } from '@/hooks/useMessageFeedback';
 export interface Message {
@@ -56,6 +58,7 @@ export interface Message {
     thinking?: unknown[];
     workbench?: Record<string, unknown>;
     shell_type?: string; // Shell type (Chat, ClaudeCode, Agno, etc.)
+    sources?: SourceReference[]; // RAG knowledge base sources
   };
   attachments?: Attachment[];
   /** Recovered content from Redis/DB when user refreshes during streaming */
@@ -76,6 +79,8 @@ export interface Message {
   status?: 'pending' | 'streaming' | 'completed' | 'error';
   /** Error message if status is 'error' */
   error?: string;
+  /** RAG knowledge base sources (top-level for backward compatibility) */
+  sources?: SourceReference[];
 }
 
 /** Configuration for paragraph-level action button */
@@ -478,6 +483,7 @@ const MessageBubble = memo(
                   }
             }
           />
+          <SourceReferences sources={msg.sources || msg.result?.sources || []} />
           <BubbleTools
             contentToCopy={`${promptPart ? promptPart + '\n\n' : ''}${normalizedResult}`}
             onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
@@ -1117,6 +1123,7 @@ const MessageBubble = memo(
               </div>
             )}
             {/* Show copy and download buttons */}
+            <SourceReferences sources={msg.sources || msg.result?.sources || []} />
             <BubbleTools
               contentToCopy={contentToRender}
               onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
@@ -1182,6 +1189,7 @@ const MessageBubble = memo(
                 }}
               />
               {/* Show copy and download buttons during streaming */}
+              <SourceReferences sources={msg.sources || msg.result?.sources || []} />
               <BubbleTools
                 contentToCopy={contentToRender}
                 onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
@@ -1358,6 +1366,11 @@ const MessageBubble = memo(
       ? nextProps.msg.thinking.length
       : 0;
 
+    const prevSourcesLen =
+      prevProps.msg.sources?.length || prevProps.msg.result?.sources?.length || 0;
+    const nextSourcesLen =
+      nextProps.msg.sources?.length || nextProps.msg.result?.sources?.length || 0;
+
     const shouldSkipRender =
       prevProps.msg.content === nextProps.msg.content &&
       prevProps.msg.subtaskStatus === nextProps.msg.subtaskStatus &&
@@ -1373,7 +1386,8 @@ const MessageBubble = memo(
       prevProps.paragraphAction === nextProps.paragraphAction &&
       prevProps.isCurrentUserMessage === nextProps.isCurrentUserMessage &&
       prevProps.onRetry === nextProps.onRetry &&
-      prevThinkingLen === nextThinkingLen;
+      prevThinkingLen === nextThinkingLen &&
+      prevSourcesLen === nextSourcesLen;
 
     return shouldSkipRender;
   }

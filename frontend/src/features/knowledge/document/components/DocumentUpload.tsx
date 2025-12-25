@@ -4,24 +4,41 @@
 
 'use client';
 
-import { useRef, useCallback } from 'react';
+import { useRef, useCallback, useState } from 'react';
 import { Upload, X, FileText, AlertCircle } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from '@/components/ui/accordion';
 import { useAttachment } from '@/hooks/useAttachment';
 import { useTranslation } from '@/hooks/useTranslation';
+import { SplitterSettingsSection, type SplitterConfig } from './SplitterSettingsSection';
 
 interface DocumentUploadProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onUploadComplete: (attachmentId: number, file: File) => Promise<void>;
+  onUploadComplete: (
+    attachmentId: number,
+    file: File,
+    splitterConfig?: Partial<SplitterConfig>
+  ) => Promise<void>;
 }
 
 export function DocumentUpload({ open, onOpenChange, onUploadComplete }: DocumentUploadProps) {
   const { t } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { state, handleFileSelect, handleRemove, reset } = useAttachment();
+  const [splitterConfig, setSplitterConfig] = useState<Partial<SplitterConfig>>({
+    type: 'sentence',
+    separator: '\n\n',
+    chunk_size: 1024,
+    chunk_overlap: 50,
+  });
 
   const handleFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -51,8 +68,15 @@ export function DocumentUpload({ open, onOpenChange, onUploadComplete }: Documen
   const handleConfirm = async () => {
     if (state.attachment?.id && state.file) {
       try {
-        await onUploadComplete(state.attachment.id, state.file);
+        await onUploadComplete(state.attachment.id, state.file, splitterConfig);
         reset();
+        // Reset splitter config to defaults
+        setSplitterConfig({
+          type: 'sentence',
+          separator: '\n\n',
+          chunk_size: 1024,
+          chunk_overlap: 50,
+        });
       } catch {
         // Error handled by parent
       }
@@ -61,6 +85,13 @@ export function DocumentUpload({ open, onOpenChange, onUploadComplete }: Documen
 
   const handleClose = () => {
     reset();
+    // Reset splitter config to defaults
+    setSplitterConfig({
+      type: 'sentence',
+      separator: '\n\n',
+      chunk_size: 1024,
+      chunk_overlap: 50,
+    });
     onOpenChange(false);
   };
 
@@ -77,7 +108,7 @@ export function DocumentUpload({ open, onOpenChange, onUploadComplete }: Documen
           <DialogTitle>{t('knowledge.document.document.upload')}</DialogTitle>
         </DialogHeader>
 
-        <div className="py-4">
+        <div className="py-4 max-h-[60vh] overflow-y-auto">
           {!state.file ? (
             <div
               className="border-2 border-dashed border-border rounded-lg p-8 text-center cursor-pointer hover:border-primary/50 transition-colors"
@@ -136,6 +167,23 @@ export function DocumentUpload({ open, onOpenChange, onUploadComplete }: Documen
                   {t('knowledge.document.document.uploadSuccess')}
                 </p>
               )}
+
+              {/* Advanced Settings - Splitter Configuration */}
+              <Accordion type="single" collapsible className="border-none">
+                <AccordionItem value="advanced" className="border-none">
+                  <AccordionTrigger className="text-sm font-medium hover:no-underline">
+                    {t('knowledge.document.advancedSettings.title')}
+                  </AccordionTrigger>
+                  <AccordionContent>
+                    <div className="space-y-4 pt-2">
+                      <SplitterSettingsSection
+                        config={splitterConfig}
+                        onChange={setSplitterConfig}
+                      />
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
+              </Accordion>
             </div>
           )}
         </div>

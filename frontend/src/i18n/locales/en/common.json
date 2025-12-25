@@ -79,7 +79,8 @@
   },
   "chat": {
     "placeholder_chat": "Use the Agent team to explore and discover",
-    "placeholder_code": "Let the Agent development team build features, fix bugs, and explore the codebase"
+    "placeholder_code": "Let the Agent development team build features, fix bugs, and explore the codebase",
+    "sourceReferences": "Source References"
   },
   "bot": {
     "name": "Name",
@@ -790,7 +791,11 @@
     "model_tooltip": "Select AI model for conversation"
   },
   "knowledge": {
-    "title": "Knowledge",
+    "title": "Knowledge Base",
+    "add_context": "Add Context",
+    "search_placeholder": "Search...",
+    "no_knowledge_bases": "No knowledge bases found",
+    "documents": "documents",
     "modules": {
       "title": "Knowledge Space",
       "code": "Code Knowledge",
@@ -829,7 +834,8 @@
         "documentCount": "Documents",
         "empty": "No knowledge bases yet",
         "confirmDelete": "Are you sure you want to delete this knowledge base? This action cannot be undone.",
-        "deleteWarning": "This will also delete {{count}} document(s) in this knowledge base.",
+        "cannotDeleteWithDocuments": "This knowledge base contains documents and cannot be deleted. Please delete all documents first.",
+        "deleteWarning": "This knowledge base contains {{count}} document(s). Please delete all documents before deleting the knowledge base.",
         "search": "Search knowledge bases...",
         "noResults": "No matching knowledge bases"
       },
@@ -877,10 +883,69 @@
       },
       "permission": {
         "noAccess": "You do not have permission to perform this action"
+      },
+      "advancedSettings": {
+        "title": "Advanced Settings",
+        "collapsed": "Click to expand advanced settings",
+        "expanded": "Click to collapse",
+        "readOnly": "Read-only"
+      },
+      "retrieval": {
+        "retriever": "Retriever",
+        "retrieverSelect": "Select a retriever",
+        "retrieverHint": "Storage engine for document indexing",
+        "noRetriever": "No retriever available. Please configure one in Settings.",
+        "embeddingModel": "Embedding Model",
+        "embeddingModelSelect": "Select an embedding model",
+        "embeddingModelHint": "Model for generating vector embeddings",
+        "noEmbeddingModel": "No embedding model available. Please configure one in Settings.",
+        "retrievalMode": "Retrieval Mode",
+        "vector": "Vector Search",
+        "keyword": "Full-Text Search",
+        "hybrid": "Hybrid Search",
+        "topK": "Top K",
+        "topKHint": "Number of results to return (1-10)",
+        "scoreThreshold": "Score Threshold",
+        "scoreThresholdHint": "Minimum similarity score (0-1)",
+        "threshold": "Threshold",
+        "hybridWeights": "Hybrid Weights",
+        "semanticWeight": "Semantic Weight",
+        "keywordWeight": "Keyword Weight",
+        "weightSum": "Weights must sum to 1.0"
+      },
+      "splitter": {
+        "splitter": {
+          "title": "Chunking Settings",
+          "type": "Chunking Type",
+          "general": "General",
+          "separator": "Separator",
+          "separatorHint": "Character(s) used to split document",
+          "chunkSize": "Max Chunk Size",
+          "chunkSizeHint": "Maximum characters per chunk (128-8192)",
+          "chunkOverlap": "Chunk Overlap",
+          "chunkOverlapHint": "Overlap characters between chunks",
+          "characters": "characters",
+          "overlapError": "Overlap must be less than chunk size"
+        },
+        "retrievalTest": {
+          "button": "Retrieval Test",
+          "title": "Retrieval Test",
+          "description": "Test knowledge retrieval effectiveness with a given query text.",
+          "sourceText": "Source Text",
+          "placeholder": "Enter query text to test...",
+          "search": "Test",
+          "results": "Results",
+          "emptyHint": "Retrieval test results will be displayed here",
+          "noResults": "No matching results found",
+          "noConfig": "This knowledge base has no retriever or embedding model configured. Cannot perform retrieval test.",
+          "error": "Retrieval test failed, please try again",
+          "configTitle": "Retrieval Parameters",
+          "configHint": "These settings are for testing only and will not be saved to the database.",
+          "modified": "Modified"
+        },
+        "goToSettings": "Go to Settings"
       }
-    }
-  },
-  "wiki": {
+    },
     "add_repository": "Add Repository",
     "add_repository_desc": "Click to add a new repository",
     "no_projects": "No projects found",

@@ -65,6 +65,10 @@ export interface ChatSendPayload {
   force_override_bot_model?: string;
   force_override_bot_model_type?: string;
   is_group_chat?: boolean;
+  contexts?: Array<{
+    type: string;
+    data: Record<string, unknown>;
+  }>;
   // Repository info for code tasks
   git_url?: string;
   git_repo?: string;
@@ -107,6 +111,15 @@ export interface HistorySyncPayload {
 // Server -> Client Payloads
 // ============================================================
 
+export interface SourceReference {
+  /** Source index number (e.g., 1, 2, 3) */
+  index: number;
+  /** Document title/filename */
+  title: string;
+  /** Knowledge base ID */
+  kb_id: number;
+}
+
 export interface ChatStartPayload {
   task_id: number;
   subtask_id: number;
@@ -123,7 +136,10 @@ export interface ChatChunkPayload {
     value?: string;
     thinking?: unknown[];
     workbench?: Record<string, unknown>;
+    sources?: SourceReference[];
   };
+  /** Knowledge base source references (for RAG citations) */
+  sources?: SourceReference[];
 }
 
 export interface ChatDonePayload {
@@ -133,6 +149,8 @@ export interface ChatDonePayload {
   result: Record<string, unknown>;
   /** Message ID for ordering (primary sort key) */
   message_id?: number;
+  /** Knowledge base source references (for RAG citations) */
+  sources?: SourceReference[];
 }
 
 export interface ChatErrorPayload {

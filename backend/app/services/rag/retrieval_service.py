@@ -8,13 +8,19 @@ Refactored to use modular architecture with pluggable storage backends.
 """
 
 import asyncio
-from typing import Any, Dict, Optional
+import logging
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
+from app.services.adapters.retriever_kinds import retriever_kinds_service
+from app.services.knowledge_service import KnowledgeService
 from app.services.rag.embedding.factory import create_embedding_model_from_crd
-from app.services.rag.retrieval import DocumentRetriever
+from app.services.rag.retrieval.retriever import DocumentRetriever
 from app.services.rag.storage.base import BaseStorageBackend
+from app.services.rag.storage.factory import create_storage_backend
+
+logger = logging.getLogger(__name__)
 
 
 class RetrievalService:
@@ -23,12 +29,13 @@ class RetrievalService:
     Uses modular architecture with pluggable storage backends.
     """
 
-    def __init__(self, storage_backend: BaseStorageBackend):
+    def __init__(self, storage_backend: Optional[BaseStorageBackend] = None):
         """
         Initialize retrieval service.
 
         Args:
-            storage_backend: Storage backend instance (Elasticsearch, Qdrant, etc.)
+            storage_backend: Optional storage backend instance (Elasticsearch, Qdrant, etc.)
+                           If not provided, must be created from retriever configuration
         """
         self.storage_backend = storage_backend
 
@@ -157,3 +164,167 @@ class RetrievalService:
             retrieval_setting,
             metadata_condition,
         )
+
+    async def retrieve_from_knowledge_base(
+        self,
+        query: str,
+        knowledge_base_id: int,
+        user_id: int,
+        db: Session,
+        metadata_condition: Optional[Dict[str, Any]] = None,
+    ) -> Dict:
+        """
+        Retrieve relevant chunks from a knowledge base using its configuration.
+
+        This method encapsulates the logic of:
+        1. Fetching knowledge base configuration
+        2. Getting retriever CRD
+        3. Creating storage backend
+        4. Performing retrieval with configured parameters
+
+        Args:
+            query: Search query
+            knowledge_base_id: Knowledge base ID
+            user_id: User ID
+            db: Database session
+            metadata_condition: Optional metadata filtering conditions
+
+        Returns:
+            Dict with retrieval results in Dify-compatible format:
+                {
+                    "records": [
+                        {
+                            "content": str,
+                            "score": float,
+                            "title": str,
+                            "metadata": dict
+                        }
+                    ]
+                }
+
+        Raises:
+            ValueError: If knowledge base not found, access denied, or configuration invalid
+        """
+        # Get knowledge base configuration
+        kb = KnowledgeService.get_knowledge_base(
+            db=db,
+            knowledge_base_id=knowledge_base_id,
+            user_id=user_id,
+        )
+
+        if not kb:
+            raise ValueError(
+                f"Knowledge base {knowledge_base_id} not found or access denied for user {user_id}"
+            )
+
+        # Extract retrieval configuration from knowledge base spec
+        kb_json = kb.json or {}
+        spec = kb_json.get("spec", {})
+        retrieval_config = spec.get("retrievalConfig")
+
+        if not retrieval_config:
+            raise ValueError(
+                f"Knowledge base {knowledge_base_id} has no retrieval configuration"
+            )
+
+        # Extract retriever reference
+        retriever_name = retrieval_config.get("retriever_name")
+        retriever_namespace = retrieval_config.get("retriever_namespace", "default")
+
+        if not retriever_name:
+            raise ValueError(
+                f"Knowledge base {knowledge_base_id} has incomplete retrieval config (missing retriever_name)"
+            )
+
+        logger.info(
+            f"[RAG] Using retriever: {retriever_name} (namespace: {retriever_namespace})"
+        )
+
+        # Get retriever CRD
+        retriever = retriever_kinds_service.get_retriever(
+            db=db,
+            user_id=user_id,
+            name=retriever_name,
+            namespace=retriever_namespace,
+        )
+
+        if not retriever:
+            raise ValueError(
+                f"Retriever {retriever_name} (namespace: {retriever_namespace}) not found"
+            )
+
+        # Create storage backend from retriever
+        storage_backend = create_storage_backend(retriever)
+        logger.info(
+            f"[RAG] Storage backend created: {storage_backend.__class__.__name__}"
+        )
+
+        # Extract embedding model configuration
+        embedding_config = retrieval_config.get("embedding_config", {})
+        embedding_model_name = embedding_config.get("model_name")
+        embedding_model_namespace = embedding_config.get("model_namespace", "default")
+
+        if not embedding_model_name:
+            raise ValueError(
+                f"Knowledge base {knowledge_base_id} has incomplete embedding config"
+            )
+
+        # Extract retrieval parameters
+        top_k = retrieval_config.get("top_k", 5)
+        score_threshold = retrieval_config.get("score_threshold", 0.7)
+        retrieval_mode = retrieval_config.get("retrieval_mode", "vector")
+
+        # Extract hybrid weights if in hybrid mode
+        vector_weight = None
+        keyword_weight = None
+        if retrieval_mode == "hybrid":
+            hybrid_weights = retrieval_config.get("hybrid_weights", {})
+            vector_weight = hybrid_weights.get("vector_weight", 0.7)
+            keyword_weight = hybrid_weights.get("keyword_weight", 0.3)
+
+        # Use knowledge base ID as knowledge_id for retrieval
+        knowledge_id = str(knowledge_base_id)
+
+        logger.info(
+            f"[RAG] Retrieving chunks: knowledge_id={knowledge_id}, "
+            f"embedding_model={embedding_model_name}, "
+            f"top_k={top_k}, score_threshold={score_threshold}, "
+            f"retrieval_mode={retrieval_mode}"
+        )
+
+        # Build retrieval_setting dict
+        retrieval_setting = {
+            "top_k": top_k,
+            "score_threshold": score_threshold,
+            "retrieval_mode": retrieval_mode,
+        }
+
+        # Add hybrid search weights if provided
+        if retrieval_mode == "hybrid":
+            retrieval_setting["vector_weight"] = vector_weight
+            retrieval_setting["keyword_weight"] = keyword_weight
+
+        # Create embedding model from CRD
+        embed_model = create_embedding_model_from_crd(
+            db=db,
+            user_id=user_id,
+            model_name=embedding_model_name,
+            model_namespace=embedding_model_namespace,
+        )
+
+        # Create retriever with storage backend
+        retriever_instance = DocumentRetriever(
+            storage_backend=storage_backend, embed_model=embed_model
+        )
+
+        # Retrieve documents (run in thread pool to avoid event loop conflicts)
+        result = await asyncio.to_thread(
+            retriever_instance.retrieve,
+            knowledge_id=knowledge_id,
+            query=query,
+            retrieval_setting=retrieval_setting,
+            metadata_condition=metadata_condition,
+            user_id=user_id,
+        )
+
+        return result

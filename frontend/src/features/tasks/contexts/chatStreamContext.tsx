@@ -100,7 +100,18 @@ export interface UnifiedMessage {
     thinking?: unknown[];
     workbench?: Record<string, unknown>;
     shell_type?: string; // Shell type for frontend display (Chat, ClaudeCode, Agno, etc.)
+    sources?: Array<{
+      index: number;
+      title: string;
+      kb_id: number;
+    }>;
   };
+  /** Knowledge base source references (for RAG citations) */
+  sources?: Array<{
+    index: number;
+    title: string;
+    kb_id: number;
+  }>;
 }
 
 /**
@@ -174,6 +185,11 @@ export interface ChatMessageRequest {
   enable_deep_thinking?: boolean;
   /** Mark this as a group chat task */
   is_group_chat?: boolean;
+  /** Context items (knowledge bases, etc.) */
+  contexts?: Array<{
+    type: string;
+    data: Record<string, unknown>;
+  }>;
   // Repository info for code tasks
   git_url?: string;
   git_repo?: string;
@@ -473,7 +489,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
    * For executor tasks, also update the result field (contains thinking, workbench)
    */
   const handleChatChunk = useCallback((data: ChatChunkPayload) => {
-    const { subtask_id, content, result } = data;
+    const { subtask_id, content, result, sources } = data;
 
     // Find task ID from subtask
     let taskId = subtaskToTaskRef.current.get(subtask_id);
@@ -506,7 +522,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       const newMessages = new Map(currentState.messages);
       const existingMessage = newMessages.get(aiMessageId);
       if (existingMessage) {
-        // For executor tasks, result contains full data (thinking, workbench)
+        // For executor tasks, result contains full data (thinking, workbench, sources)
         // Content is accumulated, but result is replaced with latest
         const updatedMessage: UnifiedMessage = {
           ...existingMessage,
@@ -515,6 +531,10 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         // If result is provided (executor tasks), update it
         if (result) {
           updatedMessage.result = result as UnifiedMessage['result'];
+        }
+        // If sources are provided directly (chat v2), update them
+        if (sources) {
+          updatedMessage.sources = sources;
         }
 
         newMessages.set(aiMessageId, updatedMessage);
@@ -534,7 +554,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
    * NO REFRESH needed - the UI will display the content from messages Map
    */
   const handleChatDone = useCallback((data: ChatDonePayload) => {
-    const { task_id: eventTaskId, subtask_id, result, message_id } = data;
+    const { task_id: eventTaskId, subtask_id, result, message_id, sources } = data;
 
     // Find task ID from subtask mapping, or use task_id from event (for group chat members)
     let taskId = subtaskToTaskRef.current.get(subtask_id);
@@ -602,6 +622,8 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           error: hasError ? (result.error as string) : existingMessage.error,
           // Set messageId from backend for proper sorting
           messageId: message_id,
+          // Set sources if provided
+          sources: sources || existingMessage.sources,
         });
       }
 
@@ -934,6 +956,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         force_override_bot_model: request.model_id,
         force_override_bot_model_type: request.force_override_bot_model ? 'user' : undefined,
         is_group_chat: request.is_group_chat,
+        contexts: request.contexts,
         // Repository info for code tasks
         git_url: request.git_url,
         git_repo: request.git_repo,

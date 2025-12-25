@@ -13,3 +13,4 @@ export { DocumentList } from './DocumentList';
 export { DocumentUpload } from './DocumentUpload';
 export { DeleteDocumentDialog } from './DeleteDocumentDialog';
 export { EditDocumentDialog } from './EditDocumentDialog';
+export { RetrievalTestDialog } from './RetrievalTestDialog';

@@ -7,7 +7,7 @@ from typing import Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.schemas.kind import RetrieverRef
+from app.schemas.kind import EmbeddingModelRef, RetrieverRef
 
 
 class RetrievalMode(str, Enum):
@@ -71,13 +71,6 @@ class SentenceSplitterConfig(BaseModel):
 
 # Union type for splitter configuration
 SplitterConfig = Union[SemanticSplitterConfig, SentenceSplitterConfig]
-
-
-class EmbeddingModelRef(BaseModel):
-    """Reference to an embedding Model CRD."""
-
-    name: str = Field(..., description="Model name")
-    namespace: str = Field("default", description="Model namespace")
 
 
 class HybridWeights(BaseModel):

@@ -32,8 +32,6 @@ const tabs: KnowledgeTabItem[] = [
     id: 'document',
     labelKey: 'knowledge.tabs.document',
     icon: DocumentTextIcon,
-    disabled: true,
-    comingSoon: true,
   },
 ];
 

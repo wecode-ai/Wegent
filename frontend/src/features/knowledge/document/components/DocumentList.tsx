@@ -4,7 +4,7 @@
 
 'use client';
 
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import {
   ArrowLeft,
   Upload,
@@ -16,15 +16,19 @@ import {
   Trash2,
   ToggleLeft,
   ToggleRight,
+  Target,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
+import { Progress } from '@/components/ui/progress';
 import { Checkbox } from '@/components/ui/checkbox';
 import { DocumentItem } from './DocumentItem';
 import { DocumentUpload } from './DocumentUpload';
 import { DeleteDocumentDialog } from './DeleteDocumentDialog';
 import { EditDocumentDialog } from './EditDocumentDialog';
+import { RetrievalTestDialog } from './RetrievalTestDialog';
 import { useDocuments } from '../hooks/useDocuments';
+import { useAttachment } from '@/hooks/useAttachment';
 import type { KnowledgeBase, KnowledgeDocument } from '@/types/knowledge';
 import { useTranslation } from '@/hooks/useTranslation';
 
@@ -58,6 +62,7 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
   const showLoadError = error && documents.length === 0;
 
   const [showUpload, setShowUpload] = useState(false);
+  const [showRetrievalTest, setShowRetrievalTest] = useState(false);
   const [editingDoc, setEditingDoc] = useState<KnowledgeDocument | null>(null);
   const [deletingDoc, setDeletingDoc] = useState<KnowledgeDocument | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -66,6 +71,14 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [batchLoading, setBatchLoading] = useState(false);
+
+  // Inline dropzone file upload
+  const inlineFileInputRef = useRef<HTMLInputElement>(null);
+  const {
+    state: inlineUploadState,
+    handleFileSelect: handleInlineFileSelect,
+    reset: resetInlineUpload,
+  } = useAttachment();
 
   const filteredAndSortedDocuments = useMemo(() => {
     let result = [...documents];
@@ -119,7 +132,16 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
     );
   };
 
-  const handleUploadComplete = async (attachmentId: number, file: File) => {
+  const handleUploadComplete = async (
+    attachmentId: number,
+    file: File,
+    splitterConfig?: {
+      type?: 'sentence';
+      separator?: string;
+      chunk_size?: number;
+      chunk_overlap?: number;
+    }
+  ) => {
     const extension = file.name.split('.').pop() || '';
     try {
       await create({
@@ -127,6 +149,7 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
         name: file.name,
         file_extension: extension,
         file_size: file.size,
+        splitter_config: splitterConfig,
       });
       setShowUpload(false);
     } catch {
@@ -143,21 +166,73 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
       // Error handled by hook
     }
   };
-
-  // Handle inline dropzone - open upload dialog
+  // Handle inline dropzone - directly trigger file picker or handle dropped files
   const handleDropzoneClick = useCallback(() => {
-    setShowUpload(true);
+    inlineFileInputRef.current?.click();
   }, []);
 
-  const handleInlineDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    // Open upload dialog when file is dropped
-    setShowUpload(true);
-  }, []);
+  const handleInlineFileChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (file) {
+        handleInlineFileSelect(file);
+      }
+      // Reset input value to allow selecting the same file again
+      if (inlineFileInputRef.current) {
+        inlineFileInputRef.current.value = '';
+      }
+    },
+    [handleInlineFileSelect]
+  );
+
+  const handleInlineDrop = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      const file = e.dataTransfer.files?.[0];
+      if (file) {
+        handleInlineFileSelect(file);
+      }
+    },
+    [handleInlineFileSelect]
+  );
 
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
   };
+
+  // Auto-create document when inline upload completes
+  useEffect(() => {
+    const autoCreateDocument = async () => {
+      if (
+        inlineUploadState.attachment?.id &&
+        inlineUploadState.file &&
+        !inlineUploadState.isUploading &&
+        !inlineUploadState.error
+      ) {
+        const file = inlineUploadState.file;
+        const extension = file.name.split('.').pop() || '';
+        try {
+          await create({
+            attachment_id: inlineUploadState.attachment.id,
+            name: file.name,
+            file_extension: extension,
+            file_size: file.size,
+          });
+          resetInlineUpload();
+        } catch {
+          // Error handled by hook
+        }
+      }
+    };
+    autoCreateDocument();
+  }, [
+    inlineUploadState.attachment,
+    inlineUploadState.file,
+    inlineUploadState.isUploading,
+    inlineUploadState.error,
+    create,
+    resetInlineUpload,
+  ]);
 
   // Batch selection handlers
   const handleSelectDoc = (doc: KnowledgeDocument, selected: boolean) => {
@@ -271,9 +346,14 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
             onChange={e => setSearchQuery(e.target.value)}
           />
         </div>
-
-        {/* Spacer to push upload button to the right */}
+        {/* Spacer to push buttons to the right */}
         <div className="flex-1" />
+
+        {/* Retrieval test button */}
+        <Button variant="outline" size="sm" onClick={() => setShowRetrievalTest(true)}>
+          <Target className="w-4 h-4 mr-1" />
+          {t('knowledge.document.retrievalTest.button')}
+        </Button>
 
         {/* Upload button - right aligned */}
         {canManage && (
@@ -410,17 +490,37 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
         <div className="flex justify-center py-8">
           <div
             className="border-2 border-dashed border-border rounded-lg p-8 text-center cursor-pointer hover:border-primary/50 transition-colors max-w-md w-full"
-            onClick={handleDropzoneClick}
+            onClick={!inlineUploadState.isUploading ? handleDropzoneClick : undefined}
             onDrop={handleInlineDrop}
             onDragOver={handleDragOver}
           >
-            <Upload className="w-10 h-10 mx-auto mb-4 text-text-muted" />
-            <p className="text-text-primary font-medium">
-              {t('knowledge.document.document.dropzone')}
-            </p>
-            <p className="text-sm text-text-muted mt-2">
-              {t('knowledge.document.document.supportedTypes')}
-            </p>
+            {inlineUploadState.isUploading ? (
+              <>
+                <Spinner className="w-10 h-10 mx-auto mb-4" />
+                <p className="text-text-primary font-medium mb-2">
+                  {t('knowledge.document.document.uploading')}
+                </p>
+                <Progress value={inlineUploadState.uploadProgress} className="max-w-xs mx-auto" />
+                <p className="text-sm text-text-muted mt-2">{inlineUploadState.uploadProgress}%</p>
+              </>
+            ) : (
+              <>
+                <Upload className="w-10 h-10 mx-auto mb-4 text-text-muted" />
+                <p className="text-text-primary font-medium">
+                  {t('knowledge.document.document.dropzone')}
+                </p>
+                <p className="text-sm text-text-muted mt-2">
+                  {t('knowledge.document.document.supportedTypes')}
+                </p>
+              </>
+            )}
+            <input
+              ref={inlineFileInputRef}
+              type="file"
+              className="hidden"
+              accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,.txt,.md,.jpg,.jpeg,.png,.gif,.bmp,.webp"
+              onChange={handleInlineFileChange}
+            />
           </div>
         </div>
       ) : (
@@ -453,6 +553,12 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
         document={deletingDoc}
         onConfirm={handleDelete}
         loading={loading}
+      />
+
+      <RetrievalTestDialog
+        open={showRetrievalTest}
+        onOpenChange={setShowRetrievalTest}
+        knowledgeBase={knowledgeBase}
       />
     </div>
   );

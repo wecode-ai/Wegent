@@ -549,6 +549,8 @@ async def _stream_chat_response(
             await session_manager.publish_streaming_done(subtask_id, result)
 
             # Save chat history
+            # Note: The message parameter might be RAG prompt, but the original message
+            # is already saved in user_subtask.prompt, so this is fine for Redis history
             await session_manager.append_user_and_assistant_messages(
                 task_id, message, full_response
             )
