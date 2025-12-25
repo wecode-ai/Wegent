@@ -208,7 +208,7 @@ def _check_team_supports_direct_chat(db: Session, team: Kind, user_id: int) -> b
         True if team supports direct chat
     """
     from app.schemas.kind import Shell
-    from app.services.chat.base import ChatServiceBase
+    from app.services.chat_v2.utils.http import ChatServiceBase
 
     team_crd = Team.model_validate(team.json)
 
