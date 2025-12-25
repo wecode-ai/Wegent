@@ -561,7 +561,11 @@ class ChatNamespace(socketio.AsyncNamespace):
                 team_id=payload.team_id,
                 task_id=payload.task_id,
                 title=payload.title,
-                attachment_id=payload.attachment_id,
+                attachment_id=(
+                    payload.attachment_ids[0]
+                    if payload.attachment_ids
+                    else payload.attachment_id
+                ),
                 enable_web_search=payload.enable_web_search,
                 search_engine=payload.search_engine,
                 enable_clarification=payload.enable_clarification,
@@ -681,20 +685,29 @@ class ChatNamespace(socketio.AsyncNamespace):
 
                 user_subtask_for_attachment = user_subtask
 
-            # Link attachment to user subtask if provided
+            # Link attachments to user subtask if provided
             # This is important for group chat history to include attachment content
-            if payload.attachment_id and user_subtask_for_attachment:
+            # Support both legacy attachment_id and new attachment_ids
+            attachment_ids_to_link = []
+            if payload.attachment_ids:
+                attachment_ids_to_link = payload.attachment_ids
+            elif payload.attachment_id:
+                # Backward compatibility: convert single attachment_id to list
+                attachment_ids_to_link = [payload.attachment_id]
+
+            if attachment_ids_to_link and user_subtask_for_attachment:
                 from app.services.attachment import attachment_service
 
-                attachment_service.link_attachment_to_subtask(
-                    db=db,
-                    attachment_id=payload.attachment_id,
-                    subtask_id=user_subtask_for_attachment.id,
-                    user_id=user_id,
-                )
-                logger.info(
-                    f"[WS] chat:send linked attachment {payload.attachment_id} to subtask {user_subtask_for_attachment.id}"
-                )
+                for attachment_id in attachment_ids_to_link:
+                    attachment_service.link_attachment_to_subtask(
+                        db=db,
+                        attachment_id=attachment_id,
+                        subtask_id=user_subtask_for_attachment.id,
+                        user_id=user_id,
+                    )
+                    logger.info(
+                        f"[WS] chat:send linked attachment {attachment_id} to subtask {user_subtask_for_attachment.id}"
+                    )
 
             # Join task room
             task_room = f"task:{task.id}"
@@ -732,7 +745,11 @@ class ChatNamespace(socketio.AsyncNamespace):
                     message=payload.message,
                     user_id=user_id,
                     user_name=user_name,
-                    attachment_id=payload.attachment_id,
+                    attachment_id=(
+                        payload.attachment_ids[0]
+                        if payload.attachment_ids
+                        else payload.attachment_id
+                    ),
                     task_room=task_room,
                     skip_sid=sid,
                 )

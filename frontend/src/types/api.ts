@@ -450,6 +450,12 @@ export interface AttachmentUploadState {
   error: string | null;
 }
 
+export interface MultiAttachmentUploadState {
+  attachments: Attachment[];
+  uploadingFiles: Map<string, { file: File; progress: number }>;
+  errors: Map<string, string>;
+}
+
 // Quick Access Types
 export interface QuickAccessTeam {
   id: number;

@@ -10,9 +10,10 @@ import type {
   WelcomeConfigResponse,
   ChatSloganItem,
   ChatTipItem,
+  MultiAttachmentUploadState,
 } from '@/types/api';
 import type { Model } from '../selector/ModelSelector';
-import { useAttachment } from '@/hooks/useAttachment';
+import { useMultiAttachment } from '@/hooks/useMultiAttachment';
 import { userApis } from '@/apis/user';
 import { getLastTeamIdByMode, saveLastTeamByMode, saveLastRepo } from '@/utils/userPreferences';
 import { useTaskContext } from '../../contexts/taskContext';
@@ -68,12 +69,13 @@ export interface ChatAreaState {
   appMode: string | undefined;
   handleAppModeChange: (mode: string | undefined) => void;
 
-  // Attachment state
-  attachmentState: ReturnType<typeof useAttachment>['state'];
-  handleFileSelect: (file: File) => void;
-  handleAttachmentRemove: () => void;
+  // Attachment state (multi-attachment)
+  attachmentState: MultiAttachmentUploadState;
+  handleFileSelect: (files: File | File[]) => Promise<void>;
+  handleAttachmentRemove: (attachmentId: number) => Promise<void>;
   resetAttachment: () => void;
   isAttachmentReadyToSend: boolean;
+  isUploading: boolean;
 
   // Welcome config
   welcomeConfig: WelcomeConfigResponse | null;
@@ -158,14 +160,15 @@ export function useChatAreaState({
   // Media query
   const isMobile = useMediaQuery('(max-width: 640px)');
 
-  // Attachment state
+  // Attachment state (multi-attachment)
   const {
     state: attachmentState,
     handleFileSelect,
     handleRemove: handleAttachmentRemove,
     reset: resetAttachment,
     isReadyToSend: isAttachmentReadyToSend,
-  } = useAttachment();
+    isUploading,
+  } = useMultiAttachment();
 
   // Refs for random indices (stable across taskType changes)
   const sloganRandomIndexRef = useRef<number | null>(null);
@@ -335,12 +338,13 @@ export function useChatAreaState({
     appMode,
     handleAppModeChange,
 
-    // Attachment state
+    // Attachment state (multi-attachment)
     attachmentState,
     handleFileSelect,
     handleAttachmentRemove,
     resetAttachment,
     isAttachmentReadyToSend,
+    isUploading,
 
     // Welcome config
     welcomeConfig,

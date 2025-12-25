@@ -116,7 +116,7 @@ export default function ChatArea({
     enableDeepThinking: chatState.enableDeepThinking,
     enableClarification: chatState.enableClarification,
     externalApiParams: chatState.externalApiParams,
-    attachment: chatState.attachmentState.attachment,
+    attachments: chatState.attachmentState.attachments,
     resetAttachment: chatState.resetAttachment,
     isAttachmentReadyToSend: chatState.isAttachmentReadyToSend,
     taskType,
@@ -226,7 +226,11 @@ export default function ChatArea({
       e.preventDefault();
       e.stopPropagation();
       if (!chatState.selectedTeam || !isChatShell(chatState.selectedTeam)) return;
-      if (chatState.isLoading || streamHandlers.isStreaming || chatState.attachmentState.attachment)
+      if (
+        chatState.isLoading ||
+        streamHandlers.isStreaming ||
+        chatState.attachmentState.attachments.length > 0
+      )
         return;
       chatState.setIsDragging(true);
     },
@@ -254,7 +258,11 @@ export default function ChatArea({
       e.stopPropagation();
       chatState.setIsDragging(false);
       if (!chatState.selectedTeam || !isChatShell(chatState.selectedTeam)) return;
-      if (chatState.isLoading || streamHandlers.isStreaming || chatState.attachmentState.attachment)
+      if (
+        chatState.isLoading ||
+        streamHandlers.isStreaming ||
+        chatState.attachmentState.attachments.length > 0
+      )
         return;
 
       const file = e.dataTransfer.files?.[0];
@@ -360,10 +368,7 @@ export default function ChatArea({
     setEnableDeepThinking: chatState.setEnableDeepThinking,
     enableClarification: chatState.enableClarification,
     setEnableClarification: chatState.setEnableClarification,
-    attachment: chatState.attachmentState.attachment,
-    isUploading: chatState.attachmentState.isUploading,
-    uploadProgress: chatState.attachmentState.uploadProgress,
-    attachmentError: chatState.attachmentState.error,
+    attachmentState: chatState.attachmentState,
     onFileSelect: chatState.handleFileSelect,
     onAttachmentRemove: chatState.handleAttachmentRemove,
     isLoading: chatState.isLoading,

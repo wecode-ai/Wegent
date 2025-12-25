@@ -7,7 +7,7 @@
 import React from 'react';
 import { Upload } from 'lucide-react';
 import ChatInput from './ChatInput';
-import FileUpload from './FileUpload';
+import AttachmentUploadPreview from '../AttachmentUploadPreview';
 import ExternalApiParamsInput from '../params/ExternalApiParamsInput';
 import { SelectedTeamBadge } from '../selector/SelectedTeamBadge';
 import ChatInputControls, { ChatInputControlsProps } from './ChatInputControls';
@@ -102,10 +102,7 @@ export function ChatInputCard({
   setEnableDeepThinking,
   enableClarification,
   setEnableClarification,
-  attachment,
-  isUploading,
-  uploadProgress,
-  attachmentError,
+  attachmentState,
   onFileSelect,
   onAttachmentRemove,
   isLoading,
@@ -152,17 +149,15 @@ export function ChatInputCard({
           </div>
         )}
 
-        {/* File Upload Preview - show above input on its own row */}
-        {(attachment || isUploading || attachmentError) && (
+        {/* File Upload Preview - show above input on its own row (multi-attachment) */}
+        {(attachmentState.attachments.length > 0 ||
+          attachmentState.uploadingFiles.size > 0 ||
+          attachmentState.errors.size > 0) && (
           <div className="px-3 pt-2">
-            <FileUpload
-              attachment={attachment}
-              isUploading={isUploading}
-              uploadProgress={uploadProgress}
-              error={attachmentError}
-              disabled={hasMessages || isLoading || isStreaming}
-              onFileSelect={onFileSelect}
+            <AttachmentUploadPreview
+              state={attachmentState}
               onRemove={onAttachmentRemove}
+              disabled={hasMessages || isLoading || isStreaming}
             />
           </div>
         )}
@@ -182,7 +177,11 @@ export function ChatInputCard({
               badge={selectedTeam ? <SelectedTeamBadge team={selectedTeam} /> : undefined}
               isGroupChat={isGroupChat}
               team={selectedTeam}
-              onPasteFile={isChatShell(selectedTeam) && !attachment ? onPasteFile : undefined}
+              onPasteFile={
+                isChatShell(selectedTeam) && attachmentState.attachments.length === 0
+                  ? onPasteFile
+                  : undefined
+              }
             />
           </div>
         )}
@@ -212,10 +211,7 @@ export function ChatInputCard({
             setEnableDeepThinking={setEnableDeepThinking}
             enableClarification={enableClarification}
             setEnableClarification={setEnableClarification}
-            attachment={attachment}
-            isUploading={isUploading}
-            uploadProgress={uploadProgress}
-            attachmentError={attachmentError}
+            attachmentState={attachmentState}
             onFileSelect={onFileSelect}
             onAttachmentRemove={onAttachmentRemove}
             isLoading={isLoading}

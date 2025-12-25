@@ -11,12 +11,18 @@ import RepositorySelector from '../selector/RepositorySelector';
 import BranchSelector from '../selector/BranchSelector';
 import DeepThinkingToggle from './DeepThinkingToggle';
 import ClarificationToggle from '../clarification/ClarificationToggle';
-import FileUpload from './FileUpload';
+import AttachmentButton from '../AttachmentButton';
 import SendButton from './SendButton';
 import LoadingDots from '../message/LoadingDots';
 import QuotaUsage from '../params/QuotaUsage';
 import { Button } from '@/components/ui/button';
-import type { Team, GitRepoInfo, GitBranch, TaskDetail, Attachment } from '@/types/api';
+import type {
+  Team,
+  GitRepoInfo,
+  GitBranch,
+  TaskDetail,
+  MultiAttachmentUploadState,
+} from '@/types/api';
 import { isChatShell } from '../../service/messageService';
 
 export interface ChatInputControlsProps {
@@ -41,13 +47,10 @@ export interface ChatInputControlsProps {
   enableClarification: boolean;
   setEnableClarification: (value: boolean) => void;
 
-  // Attachment
-  attachment: Attachment | null;
-  isUploading: boolean;
-  uploadProgress: number;
-  attachmentError: string | null;
-  onFileSelect: (file: File) => void;
-  onAttachmentRemove: () => void;
+  // Attachment (multi-attachment)
+  attachmentState: MultiAttachmentUploadState;
+  onFileSelect: (files: File | File[]) => void;
+  onAttachmentRemove: (attachmentId: number) => void;
 
   // State flags
   isLoading: boolean;
@@ -99,12 +102,9 @@ export function ChatInputControls({
   setEnableDeepThinking,
   enableClarification,
   setEnableClarification,
-  attachment,
-  isUploading,
-  uploadProgress: _uploadProgress,
-  attachmentError,
+  attachmentState: _attachmentState,
   onFileSelect,
-  onAttachmentRemove,
+  onAttachmentRemove: _onAttachmentRemove,
   isLoading,
   isStreaming,
   isStopping,
@@ -199,16 +199,11 @@ export function ChatInputControls({
         className="flex-1 min-w-0 overflow-hidden flex items-center gap-3"
         data-tour="input-controls"
       >
-        {/* File Upload Button - only show when no file is selected */}
-        {!attachment && !isUploading && isChatShell(selectedTeam) && (
-          <FileUpload
-            attachment={null}
-            isUploading={false}
-            uploadProgress={0}
-            error={attachmentError}
-            disabled={hasMessages || isLoading || isStreaming}
+        {/* File Upload Button - always show for chat shell */}
+        {isChatShell(selectedTeam) && (
+          <AttachmentButton
             onFileSelect={onFileSelect}
-            onRemove={onAttachmentRemove}
+            disabled={hasMessages || isLoading || isStreaming}
           />
         )}
 

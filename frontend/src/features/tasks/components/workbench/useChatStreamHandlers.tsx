@@ -44,8 +44,8 @@ export interface UseChatStreamHandlersOptions {
   // External API
   externalApiParams: Record<string, string>;
 
-  // Attachment
-  attachment: Attachment | null;
+  // Attachment (multi-attachment)
+  attachments: Attachment[];
   resetAttachment: () => void;
   isAttachmentReadyToSend: boolean;
 
@@ -120,7 +120,7 @@ export function useChatStreamHandlers({
   enableDeepThinking,
   enableClarification,
   externalApiParams,
-  attachment,
+  attachments,
   resetAttachment,
   isAttachmentReadyToSend,
   taskType,
@@ -399,7 +399,7 @@ export function useChatStreamHandlers({
         selectedTeamId: selectedTeam?.id,
         agentType: selectedTeam?.agent_type,
         taskType: taskType,
-        attachmentId: attachment?.id,
+        attachmentIds: attachments.map(a => a.id),
       });
 
       // Set local pending state immediately
@@ -427,7 +427,7 @@ export function useChatStreamHandlers({
             task_id: selectedTaskDetail?.id,
             model_id: modelId,
             force_override_bot_model: forceOverride,
-            attachment_id: attachment?.id,
+            attachment_ids: attachments.map(a => a.id),
             enable_deep_thinking: enableDeepThinking,
             enable_clarification: enableClarification,
             is_group_chat: selectedTaskDetail?.is_group_chat || false,
@@ -442,7 +442,7 @@ export function useChatStreamHandlers({
           },
           {
             pendingUserMessage: message,
-            pendingAttachment: attachment,
+            pendingAttachments: attachments,
             immediateTaskId: immediateTaskId,
             currentUserId: user?.id,
             currentUserName: user?.user_name,
@@ -493,7 +493,7 @@ export function useChatStreamHandlers({
       isAttachmentReadyToSend,
       toast,
       selectedTeam,
-      attachment,
+      attachments,
       resetAttachment,
       selectedModel?.name,
       selectedTaskDetail,
