@@ -19,9 +19,9 @@ import ModelSelector, {
   Model,
   DEFAULT_MODEL_NAME,
   allBotsHavePredefinedModel,
-} from './ModelSelector';
-import RepositorySelector from './RepositorySelector';
-import BranchSelector from './BranchSelector';
+} from '../selector/ModelSelector';
+import RepositorySelector from '../selector/RepositorySelector';
+import BranchSelector from '../selector/BranchSelector';
 import { Check } from 'lucide-react';
 import { UsersIcon } from '@heroicons/react/24/outline';
 import { cn } from '@/lib/utils';

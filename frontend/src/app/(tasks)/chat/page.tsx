@@ -9,14 +9,15 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { UserGroupIcon } from '@heroicons/react/24/outline';
 import { teamService } from '@/features/tasks/service/teamService';
 import TopNavigation from '@/features/layout/TopNavigation';
-import TaskSidebar from '@/features/tasks/components/TaskSidebar';
-import ResizableSidebar from '@/features/tasks/components/ResizableSidebar';
-import CollapsedSidebarButtons from '@/features/tasks/components/CollapsedSidebarButtons';
-import SearchDialog from '@/features/tasks/components/SearchDialog';
+import {
+  TaskSidebar,
+  ResizableSidebar,
+  CollapsedSidebarButtons,
+  SearchDialog,
+} from '@/features/tasks/components/sidebar';
 import OnboardingTour from '@/features/onboarding/OnboardingTour';
-import TaskParamSync from '@/features/tasks/components/TaskParamSync';
-import TeamShareHandler from '@/features/tasks/components/TeamShareHandler';
-import TaskShareHandler from '@/features/tasks/components/TaskShareHandler';
+import { TaskParamSync } from '@/features/tasks/components/params';
+import { TeamShareHandler, TaskShareHandler } from '@/features/tasks/components/share';
 import { InviteJoinHandler, CreateGroupChatDialog } from '@/features/tasks/components/group-chat';
 import OidcTokenHandler from '@/features/login/components/OidcTokenHandler';
 import '@/app/tasks/tasks.css';
@@ -25,7 +26,6 @@ import { GithubStarButton } from '@/features/layout/GithubStarButton';
 import { ThemeToggle } from '@/features/theme/ThemeToggle';
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
 import { Team } from '@/types/api';
-import ChatArea from '@/features/tasks/components/ChatArea';
 import { saveLastTab } from '@/utils/userPreferences';
 import { useUser } from '@/features/common/UserContext';
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
@@ -34,6 +34,7 @@ import { paths } from '@/config/paths';
 import { Button } from '@/components/ui/button';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut';
+import { ChatArea } from '@/features/tasks/components/chat';
 
 export default function ChatPage() {
   const { t } = useTranslation();

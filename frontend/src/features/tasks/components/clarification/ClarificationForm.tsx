@@ -11,8 +11,8 @@ import { Textarea } from '@/components/ui/textarea';
 import type { ClarificationData, ClarificationAnswer } from '@/types/api';
 import ClarificationQuestion from './ClarificationQuestion';
 import { useTranslation } from '@/hooks/useTranslation';
-import { TaskContext } from '../contexts/taskContext';
-import { ChatStreamContext } from '../contexts/chatStreamContext';
+import { TaskContext } from '../../contexts/taskContext';
+import { ChatStreamContext } from '../../contexts/chatStreamContext';
 import { useToast } from '@/hooks/use-toast';
 
 interface ClarificationFormProps {

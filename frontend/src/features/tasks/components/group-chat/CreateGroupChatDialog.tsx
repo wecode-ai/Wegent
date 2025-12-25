@@ -29,7 +29,7 @@ import {
 import { teamService } from '@/features/tasks/service/teamService';
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext';
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
-import ModelSelector, { Model } from '@/features/tasks/components/ModelSelector';
+import { ModelSelector, type Model } from '@/features/tasks/components/selector';
 
 interface CreateGroupChatDialogProps {
   open: boolean;

@@ -7,9 +7,11 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import TopNavigation from '@/features/layout/TopNavigation';
-import TaskSidebar from '@/features/tasks/components/TaskSidebar';
-import ResizableSidebar from '@/features/tasks/components/ResizableSidebar';
-import CollapsedSidebarButtons from '@/features/tasks/components/CollapsedSidebarButtons';
+import {
+  TaskSidebar,
+  ResizableSidebar,
+  CollapsedSidebarButtons,
+} from '@/features/tasks/components/sidebar';
 import '@/app/tasks/tasks.css';
 import '@/features/common/scrollbar.css';
 import { GithubStarButton } from '@/features/layout/GithubStarButton';

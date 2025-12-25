@@ -12,7 +12,7 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { githubApis } from '@/apis/github';
 import { useToast } from '@/hooks/use-toast';
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
-import { TaskContext } from '../contexts/taskContext';
+import { TaskContext } from '../../contexts/taskContext';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 

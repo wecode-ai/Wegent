@@ -7,9 +7,11 @@
 import { Suspense, useState, useEffect, useMemo, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import TopNavigation from '@/features/layout/TopNavigation';
-import TaskSidebar from '@/features/tasks/components/TaskSidebar';
-import ResizableSidebar from '@/features/tasks/components/ResizableSidebar';
-import CollapsedSidebarButtons from '@/features/tasks/components/CollapsedSidebarButtons';
+import {
+  TaskSidebar,
+  ResizableSidebar,
+  CollapsedSidebarButtons,
+} from '@/features/tasks/components/sidebar';
 import { SettingsTabNav, SettingsTabId } from '@/features/settings/components/SettingsTabNav';
 import GitHubIntegration from '@/features/settings/components/GitHubIntegration';
 import NotificationSettings from '@/features/settings/components/NotificationSettings';
