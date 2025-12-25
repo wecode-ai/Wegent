@@ -369,12 +369,17 @@ export default function TaskSidebar({
             }
 
             // Calculate how many read chats are collapsed (for display text)
-            const collapsedReadCount = readGroupChats.length - (visibleGroupChats.length - unreadGroupChats.length);
+            const collapsedReadCount =
+              readGroupChats.length - (visibleGroupChats.length - unreadGroupChats.length);
 
             // Determine if expand/collapse button should be shown
             // Button should show when there are more read chats than can fit after showing all unread chats
-            const maxReadSlotsWhenCollapsed = Math.max(0, maxVisibleGroupChats - unreadGroupChats.length);
-            const shouldShowExpandCollapseButton = readGroupChats.length > maxReadSlotsWhenCollapsed;
+            const maxReadSlotsWhenCollapsed = Math.max(
+              0,
+              maxVisibleGroupChats - unreadGroupChats.length
+            );
+            const shouldShowExpandCollapseButton =
+              readGroupChats.length > maxReadSlotsWhenCollapsed;
 
             return (
               <>
@@ -409,7 +414,9 @@ export default function TaskSidebar({
                         ) : (
                           <>
                             <ChevronDown className="h-3.5 w-3.5" />
-                            <span>{t('tasks.group_chats_expand', { count: collapsedReadCount })}</span>
+                            <span>
+                              {t('tasks.group_chats_expand', { count: collapsedReadCount })}
+                            </span>
                           </>
                         )}
                       </button>

@@ -77,6 +77,7 @@ class BaseStorageBackend(ABC):
                 f"knowledge_id is required for '{mode}' index strategy mode"
             )
 
+    def get_index_name(self, knowledge_id: str, **kwargs) -> str:
         """
         Get index/collection name based on strategy.
 

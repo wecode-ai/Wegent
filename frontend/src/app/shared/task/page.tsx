@@ -14,7 +14,7 @@ import { LogIn } from 'lucide-react';
 import { useTheme } from '@/features/theme/ThemeProvider';
 import TopNavigation from '@/features/layout/TopNavigation';
 import { GithubStarButton } from '@/features/layout/GithubStarButton';
-import MessageBubble, { type Message } from '@/features/tasks/components/MessageBubble';
+import { MessageBubble, type Message } from '@/features/tasks/components/message';
 import { useTranslation } from '@/hooks/useTranslation';
 import type { User } from '@/types/api';
 import { InAppBrowserGuard } from '@/components/InAppBrowserGuard';

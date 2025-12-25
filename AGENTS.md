@@ -300,6 +300,14 @@ alembic downgrade -1                               # Rollback
 - `SocketContext` - Socket.IO connection
 - `ThemeContext` - Theme (light/dark)
 
+**i18n Rules:**
+
+1. **Always import from `@/hooks/useTranslation`**, not from `react-i18next`
+2. **Use single namespace** matching your feature (e.g., `useTranslation('groups')` for groups feature)
+3. **Always add namespace prefix** when accessing keys from other namespaces (e.g., `t('common:actions.save')`)
+4. **Never use array with `common` first** - `useTranslation(['common', 'groups'])` will break feature-specific keys
+5. **Add new translation keys** to the appropriate namespace file in `src/i18n/locales/{lang}/`
+
 ### Executor
 
 **Agent types:**
