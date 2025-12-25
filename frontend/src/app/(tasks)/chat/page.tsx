@@ -12,6 +12,7 @@ import TopNavigation from '@/features/layout/TopNavigation';
 import TaskSidebar from '@/features/tasks/components/TaskSidebar';
 import ResizableSidebar from '@/features/tasks/components/ResizableSidebar';
 import CollapsedSidebarButtons from '@/features/tasks/components/CollapsedSidebarButtons';
+import SearchDialog from '@/features/tasks/components/SearchDialog';
 import OnboardingTour from '@/features/onboarding/OnboardingTour';
 import TaskParamSync from '@/features/tasks/components/TaskParamSync';
 import TeamShareHandler from '@/features/tasks/components/TeamShareHandler';
@@ -241,6 +242,13 @@ export default function ChatPage() {
       </div>
       {/* Create Group Chat Dialog */}
       <CreateGroupChatDialog open={isCreateGroupChatOpen} onOpenChange={setIsCreateGroupChatOpen} />
+      {/* Search Dialog - rendered at page level for global shortcut support */}
+      <SearchDialog
+        open={isSearchDialogOpen}
+        onOpenChange={setIsSearchDialogOpen}
+        shortcutDisplayText={shortcutDisplayText}
+        pageType="chat"
+      />
     </>
   );
 }

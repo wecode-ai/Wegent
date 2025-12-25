@@ -11,6 +11,7 @@ import TopNavigation from '@/features/layout/TopNavigation';
 import TaskSidebar from '@/features/tasks/components/TaskSidebar';
 import ResizableSidebar from '@/features/tasks/components/ResizableSidebar';
 import CollapsedSidebarButtons from '@/features/tasks/components/CollapsedSidebarButtons';
+import SearchDialog from '@/features/tasks/components/SearchDialog';
 import OnboardingTour from '@/features/onboarding/OnboardingTour';
 import ChatArea from '@/features/tasks/components/ChatArea';
 import TaskParamSync from '@/features/tasks/components/TaskParamSync';
@@ -329,6 +330,13 @@ export default function CodePage() {
           </div>
         </div>
       </div>
+      {/* Search Dialog - rendered at page level for global shortcut support */}
+      <SearchDialog
+        open={isSearchDialogOpen}
+        onOpenChange={setIsSearchDialogOpen}
+        shortcutDisplayText={shortcutDisplayText}
+        pageType="code"
+      />
     </>
   );
 }
