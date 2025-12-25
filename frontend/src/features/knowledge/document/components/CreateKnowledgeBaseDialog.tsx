@@ -48,7 +48,7 @@ export function CreateKnowledgeBaseDialog({
   scope,
   groupName,
 }: CreateKnowledgeBaseDialogProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation('knowledge');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [retrievalConfig, setRetrievalConfig] = useState<Partial<RetrievalConfig>>({
@@ -79,24 +79,24 @@ export function CreateKnowledgeBaseDialog({
     setError('');
 
     if (!name.trim()) {
-      setError(t('knowledge.document.knowledgeBase.nameRequired'));
+      setError(t('document.knowledgeBase.nameRequired'));
       return;
     }
 
     if (name.length > 100) {
-      setError(t('knowledge.document.knowledgeBase.nameTooLong'));
+      setError(t('document.knowledgeBase.nameTooLong'));
       return;
     }
 
     // Validate retrieval config - retriever and embedding model are required
     if (!retrievalConfig.retriever_name) {
-      setError(t('knowledge.document.retrieval.noRetriever'));
+      setError(t('document.retrieval.noRetriever'));
       setAccordionValue('advanced');
       return;
     }
 
     if (!retrievalConfig.embedding_config?.model_name) {
-      setError(t('knowledge.document.retrieval.noEmbeddingModel'));
+      setError(t('document.retrieval.noEmbeddingModel'));
       setAccordionValue('advanced');
       return;
     }
@@ -119,7 +119,7 @@ export function CreateKnowledgeBaseDialog({
         },
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('common.error'));
+      setError(err instanceof Error ? err.message : t('common:error'));
     }
   };
 
@@ -146,29 +146,29 @@ export function CreateKnowledgeBaseDialog({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{t('knowledge.document.knowledgeBase.create')}</DialogTitle>
+          <DialogTitle>{t('document.knowledgeBase.create')}</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="max-h-[80vh] overflow-y-auto">
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="name">{t('knowledge.document.knowledgeBase.name')}</Label>
+              <Label htmlFor="name">{t('document.knowledgeBase.name')}</Label>
               <Input
                 id="name"
                 value={name}
                 onChange={e => setName(e.target.value)}
-                placeholder={t('knowledge.document.knowledgeBase.namePlaceholder')}
+                placeholder={t('document.knowledgeBase.namePlaceholder')}
                 maxLength={100}
               />
             </div>
             <div className="space-y-2">
               <Label htmlFor="description">
-                {t('knowledge.document.knowledgeBase.description')}
+                {t('document.knowledgeBase.description')}
               </Label>
               <Textarea
                 id="description"
                 value={description}
                 onChange={e => setDescription(e.target.value)}
-                placeholder={t('knowledge.document.knowledgeBase.descriptionPlaceholder')}
+                placeholder={t('document.knowledgeBase.descriptionPlaceholder')}
                 maxLength={500}
                 rows={3}
               />
@@ -184,12 +184,12 @@ export function CreateKnowledgeBaseDialog({
             >
               <AccordionItem value="advanced" className="border-none">
                 <AccordionTrigger className="text-sm font-medium hover:no-underline">
-                  {t('knowledge.document.advancedSettings.title')}
+                  {t('document.advancedSettings.title')}
                 </AccordionTrigger>
                 <AccordionContent>
                   <div className="space-y-4 pt-2">
                     <p className="text-xs text-text-muted">
-                      {t('knowledge.document.advancedSettings.collapsed')}
+                      {t('document.advancedSettings.collapsed')}
                     </p>
                     <RetrievalSettingsSection
                       config={retrievalConfig}
@@ -211,10 +211,10 @@ export function CreateKnowledgeBaseDialog({
               onClick={() => handleOpenChange(false)}
               disabled={loading}
             >
-              {t('actions.cancel')}
+              {t('common:actions.cancel')}
             </Button>
             <Button type="submit" variant="primary" disabled={loading}>
-              {loading ? t('actions.creating') : t('actions.create')}
+              {loading ? t('common:actions.creating') : t('common:actions.create')}
             </Button>
           </DialogFooter>
         </form>
