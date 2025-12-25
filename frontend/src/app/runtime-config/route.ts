@@ -25,6 +25,12 @@
 import { NextResponse } from 'next/server';
 
 export async function GET() {
+  // Helper to parse boolean env vars
+  const parseBoolean = (value: string | undefined, defaultValue: boolean): boolean => {
+    if (value === undefined || value === '') return defaultValue;
+    return value.toLowerCase() === 'true';
+  };
+
   return NextResponse.json({
     // Backend API URL for browser
     // Empty string = use '/api' proxy mode (recommended)
@@ -36,5 +42,9 @@ export async function GET() {
     // Note: Empty string means use relative path through Next.js proxy
     socketDirectUrl:
       process.env.RUNTIME_SOCKET_DIRECT_URL || process.env.NEXT_PUBLIC_SOCKET_DIRECT_URL || '',
+
+    // Enable chat context feature (knowledge base background)
+    // Priority: RUNTIME_ENABLE_CHAT_CONTEXT > NEXT_PUBLIC_ENABLE_CHAT_CONTEXT > false
+    enableChatContext: parseBoolean(process.env.RUNTIME_ENABLE_CHAT_CONTEXT, false),
   });
 }
