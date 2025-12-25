@@ -8,7 +8,10 @@ from unittest.mock import patch
 
 from PIL import Image
 
-from app.services.chat_v2.messages.converter import MessageConverter, MAX_IMAGE_SIZE_BYTES
+from app.services.chat_v2.messages.converter import (
+    MAX_IMAGE_SIZE_BYTES,
+    MessageConverter,
+)
 
 
 def create_test_image(width, height, color="red"):

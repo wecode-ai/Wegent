@@ -10,9 +10,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-
-// Get backend URL from environment
-const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { getInternalApiUrl } from '@/lib/server-config';
 
 // Extended timeout for LLM calls (60 seconds)
 const TIMEOUT_MS = 60000;
@@ -31,7 +29,7 @@ export async function POST(request: NextRequest) {
 
     try {
       // Forward request to backend
-      const backendResponse = await fetch(`${BACKEND_URL}/api/wizard/generate-prompt`, {
+      const backendResponse = await fetch(`${getInternalApiUrl()}/api/wizard/generate-prompt`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

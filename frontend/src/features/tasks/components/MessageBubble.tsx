@@ -16,6 +16,7 @@ import {
   XCircle,
   Ban,
   User,
+  RefreshCw,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -71,6 +72,10 @@ export interface Message {
   senderUserId?: number;
   /** Whether this is a group chat or chat agent type (to show sender names) */
   shouldShowSender?: boolean;
+  /** Message status: pending, streaming, completed, error */
+  status?: 'pending' | 'streaming' | 'completed' | 'error';
+  /** Error message if status is 'error' */
+  error?: string;
 }
 
 /** Configuration for paragraph-level action button */
@@ -109,6 +114,8 @@ export interface MessageBubbleProps {
    * If not provided, defaults to true for user messages (backward compatible).
    */
   isCurrentUserMessage?: boolean;
+  /** Callback when user clicks retry button for failed messages */
+  onRetry?: (message: Message) => void;
 }
 
 // Component for rendering a paragraph with hover action button
@@ -218,6 +225,7 @@ const MessageBubble = memo(
     onTextSelect,
     paragraphAction,
     isCurrentUserMessage,
+    onRetry,
   }: MessageBubbleProps) {
     // Use trace hook for telemetry (auto-includes user and task context)
     const { trace } = useTraceAction();
@@ -372,7 +380,12 @@ const MessageBubble = memo(
     const renderMarkdownResult = (rawResult: string, promptPart?: string) => {
       const trimmed = (rawResult ?? '').trim();
       const fencedMatch = trimmed.match(/^```(?:\s*(?:markdown|md))?\s*\n([\s\S]*?)\n```$/);
-      const normalizedResult = fencedMatch ? fencedMatch[1] : trimmed;
+      let normalizedResult = fencedMatch ? fencedMatch[1] : trimmed;
+
+      // Pre-process markdown to handle edge cases where ** is followed by punctuation
+      // Markdown parsers don't recognize **'text'** or **text**。 as bold
+      // Convert these patterns to HTML <strong> tags for proper rendering
+      normalizedResult = normalizedResult.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
 
       const progressMatch = normalizedResult.match(/^__PROGRESS_BAR__:(.*?):(\d+)$/);
       if (progressMatch) {
@@ -1052,7 +1065,9 @@ const MessageBubble = memo(
     const renderRecoveredContent = () => {
       if (!msg.recoveredContent || msg.subtaskStatus !== 'RUNNING') return null;
 
-      const contentToRender = msg.recoveredContent;
+      // Pre-process markdown to handle edge cases where ** is followed by punctuation
+      // Same fix as in renderMarkdownResult - convert all ** to <strong> tags
+      const contentToRender = msg.recoveredContent.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
 
       // Try to parse clarification format from recovered/streaming content
       // This ensures clarification forms are rendered correctly during streaming
@@ -1281,13 +1296,48 @@ const MessageBubble = memo(
             )}
             {/* Show incomplete notice for completed but incomplete messages */}
             {msg.isIncomplete && msg.subtaskStatus !== 'RUNNING' && renderRecoveryNotice()}
+
+            {/* Show error message and retry button for failed messages */}
+            {!isUserTypeMessage && msg.status === 'error' && msg.error && (
+              <div className="mt-4 space-y-3">
+                {/* Error message */}
+                <div className="flex items-start gap-2 p-3 rounded-lg bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800">
+                  <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="text-sm text-red-800 dark:text-red-200">
+                      {onRetry ? t('errors.request_failed_retry') : t('errors.model_unsupported')}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Retry button - positioned like BubbleTools for consistency */}
+                {onRetry && (
+                  <div className="absolute bottom-2 left-2 flex items-center gap-1 z-10">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => onRetry(msg)}
+                          className="h-8 w-8 hover:bg-muted"
+                        >
+                          <RefreshCw className="h-4 w-4 text-text-muted" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>{t('actions.retry') || '重试'}</TooltipContent>
+                    </Tooltip>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Show copy button for user messages - visible on hover */}
             {isUserTypeMessage && (
               <div className="absolute -bottom-8 left-2 flex items-center gap-1 z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                 <CopyButton
                   content={msg.content}
-                  className="h-6 w-6 hover:bg-muted"
-                  tooltip={t('actions.copy') || 'Copy'}
+                  className="h-[30px] w-[30px] !rounded-full bg-fill-tert hover:!bg-fill-sec"
+                  tooltip={t('chat:actions.copy') || 'Copy'}
                   onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
                 />
               </div>
@@ -1322,6 +1372,7 @@ const MessageBubble = memo(
       prevProps.onTextSelect === nextProps.onTextSelect &&
       prevProps.paragraphAction === nextProps.paragraphAction &&
       prevProps.isCurrentUserMessage === nextProps.isCurrentUserMessage &&
+      prevProps.onRetry === nextProps.onRetry &&
       prevThinkingLen === nextThinkingLen;
 
     return shouldSkipRender;

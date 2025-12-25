@@ -52,6 +52,8 @@ class WebSocketEmitter:
         task_id: int,
         subtask_id: int,
         bot_name: Optional[str] = None,
+        shell_type: str = "Chat",
+        message_id: Optional[int] = None,
     ) -> None:
         """
         Emit chat:start event to task room.
@@ -60,6 +62,8 @@ class WebSocketEmitter:
             task_id: Task ID
             subtask_id: Subtask ID
             bot_name: Optional bot name
+            shell_type: Shell type for frontend display logic (default: "Chat")
+            message_id: Optional message ID for ordering
         """
         await self.sio.emit(
             ServerEvents.CHAT_START,
@@ -67,11 +71,15 @@ class WebSocketEmitter:
                 "task_id": task_id,
                 "subtask_id": subtask_id,
                 "bot_name": bot_name,
+                "shell_type": shell_type,
+                "message_id": message_id,
             },
             room=f"task:{task_id}",
             namespace=self.namespace,
         )
-        logger.debug(f"[WS] emit chat:start task={task_id} subtask={subtask_id}")
+        logger.debug(
+            f"[WS] emit chat:start task={task_id} subtask={subtask_id} shell_type={shell_type}"
+        )
 
     async def emit_chat_chunk(
         self,
@@ -147,6 +155,7 @@ class WebSocketEmitter:
         subtask_id: int,
         error: str,
         error_type: Optional[str] = None,
+        message_id: Optional[int] = None,
     ) -> None:
         """
         Emit chat:error event to task room.
@@ -156,19 +165,25 @@ class WebSocketEmitter:
             subtask_id: Subtask ID
             error: Error message
             error_type: Optional error type
+            message_id: Message ID for ordering (primary sort key)
         """
+        payload = {
+            "subtask_id": subtask_id,
+            "error": error,
+        }
+        if error_type is not None:
+            payload["type"] = error_type
+        if message_id is not None:
+            payload["message_id"] = message_id
+
         await self.sio.emit(
             ServerEvents.CHAT_ERROR,
-            {
-                "subtask_id": subtask_id,
-                "error": error,
-                "type": error_type,
-            },
+            payload,
             room=f"task:{task_id}",
             namespace=self.namespace,
         )
         logger.warning(
-            f"[WS] emit chat:error task={task_id} subtask={subtask_id} error={error}"
+            f"[WS] emit chat:error task={task_id} subtask={subtask_id} message_id={message_id} error={error}"
         )
 
     async def emit_chat_cancelled(

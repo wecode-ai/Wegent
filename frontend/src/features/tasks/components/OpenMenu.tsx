@@ -38,9 +38,9 @@ export default function OpenMenu({ openLinks }: OpenMenuProps) {
 
   return (
     <Menu as="div" className="relative hidden sm:block">
-      <Menu.Button className="inline-flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-text-primary bg-surface hover:bg-muted border border-border rounded-md transition-colors">
+      <Menu.Button className="inline-flex items-center gap-1 h-8 pl-2 pr-3 text-sm font-medium text-text-primary bg-base hover:bg-hover border border-border rounded-[7px] transition-colors">
         <span>{t('tasks.open_from')}</span>
-        <ChevronDownIcon className="h-4 w-4" />
+        <ChevronDownIcon className="h-3.5 w-3.5" />
       </Menu.Button>
       <Menu.Items
         className="absolute right-0 top-full mt-1 bg-surface border border-border rounded-lg z-30 w-max py-1"
@@ -60,7 +60,7 @@ export default function OpenMenu({ openLinks }: OpenMenuProps) {
               }`}
             >
               <svg
-                className="h-4 w-4 mr-2"
+                className="h-3.5 w-3.5 mr-2"
                 fill="currentColor"
                 viewBox="0 0 24 24"
                 xmlns="http://www.w3.org/2000/svg"
@@ -85,7 +85,7 @@ export default function OpenMenu({ openLinks }: OpenMenuProps) {
               }`}
             >
               <svg
-                className="h-4 w-4 mr-2"
+                className="h-3.5 w-3.5 mr-2"
                 fill="currentColor"
                 viewBox="0 0 24 24"
                 xmlns="http://www.w3.org/2000/svg"

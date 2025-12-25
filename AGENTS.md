@@ -282,6 +282,13 @@ alembic upgrade head                               # Apply
 alembic downgrade -1                               # Rollback
 ```
 
+**Web Search Configuration:**
+- `WEB_SEARCH_ENABLED`: Enable/disable web search feature (default: `false`)
+- `WEB_SEARCH_ENGINES`: JSON config for search engines (see `.env.example` for format)
+- `WEB_SEARCH_DEFAULT_MAX_RESULTS`: Default max results when LLM doesn't specify (default: `100`)
+  - Can be overridden by per-engine `max_results` in `WEB_SEARCH_ENGINES` config
+  - LLM can override by passing `max_results` parameter to the tool
+
 ### Frontend
 
 **Tech:** Next.js 15, React 19, TypeScript, Tailwind CSS, shadcn/ui, i18next
