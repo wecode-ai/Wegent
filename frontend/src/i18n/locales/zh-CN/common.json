@@ -1313,7 +1313,7 @@
     "loading": "加载工具中...",
     "no_tools_found": "未找到工具",
     "no_tools_added": "尚未添加工具",
-    "no_tools_hint": "点击"添加工具"浏览可用工具",
+    "no_tools_hint": "点击「添加工具」浏览可用工具",
     "add": "添加",
     "added": "已添加",
     "tool_added": "工具 '{{toolName}}' 添加成功",
