@@ -27,7 +27,13 @@ export default function UserMenu({ className = '' }: UserMenuProps) {
   return (
     <div className={className}>
       <Menu as="div" className="relative">
-        <Menu.Button className="px-4 py-1.5 bg-muted border border-border rounded-full flex items-center justify-center text-sm font-normal text-text-primary hover:bg-border/40 transition-colors duration-200">
+        <Menu.Button
+          as={Button}
+          variant="ghost"
+          size="sm"
+          shape="pill"
+          className="bg-muted border border-border font-normal hover:bg-border/40"
+        >
           {userDisplayName}
         </Menu.Button>
         <Menu.Items
@@ -50,8 +56,9 @@ export default function UserMenu({ className = '' }: UserMenuProps) {
                   <Link href="/admin">
                     <Button
                       variant="ghost"
-                      className={`!w-full !text-left !px-2 !py-1.5 !text-xs !text-text-primary flex items-center gap-2 ${
-                        active ? '!bg-muted' : '!bg-transparent'
+                      size="sm"
+                      className={`w-full justify-start px-2 py-1.5 text-xs text-text-primary h-auto flex items-center gap-2 ${
+                        active ? 'bg-muted' : 'bg-transparent'
                       }`}
                     >
                       <Cog8ToothIcon className="w-3.5 h-3.5" />
@@ -67,9 +74,10 @@ export default function UserMenu({ className = '' }: UserMenuProps) {
             {({ active }) => (
               <Button
                 variant="ghost"
+                size="sm"
                 onClick={logout}
-                className={`!w-full !text-left !px-2 !py-1.5 !text-xs !text-text-primary ${
-                  active ? '!bg-muted' : '!bg-transparent'
+                className={`w-full justify-start px-2 py-1.5 text-xs text-text-primary h-auto ${
+                  active ? 'bg-muted' : 'bg-transparent'
                 }`}
               >
                 {t('user.logout')}
