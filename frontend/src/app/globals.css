@@ -12,23 +12,23 @@
   color-scheme: light;
   /* ChatGPT Light Theme */
   --color-bg-base: 255 255 255;
-  --color-bg-surface: 247 247 248;
-  --color-bg-muted: 242 242 242;
-  --color-bg-hover: 224 224 224;
+  --color-bg-surface: 249 249 249;
+  --color-bg-muted: 243 244 246;
+  --color-bg-hover: 229 231 235;
   --color-border: 224 224 224;
   --color-border-strong: 192 192 192;
   --color-text-primary: 26 26 26;
   --color-text-secondary: 102 102 102;
   --color-text-muted: 160 160 160;
   --color-text-inverted: 255 255 255;
-  --color-primary: 20 184 166;
+  --color-primary: 93 94 201;
   --color-primary-contrast: 255 255 255;
-  --color-focus-ring: 20 184 166;
+  --color-focus-ring: 93 94 201;
   --color-scrollbar-track: 224 224 224;
   --color-scrollbar-thumb: 192 192 192;
-  --color-success: 20 184 166;
+  --color-success: 34 197 94;
   --color-error: 239 68 68;
-  --color-link: 85 185 247;
+  --color-link: 93 94 201;
   --color-code-bg: 246 248 250;
   --color-popover: 255 255 255;
   --color-popover-foreground: 26 26 26;
@@ -51,14 +51,14 @@
   --color-text-secondary: 212 212 212;
   --color-text-muted: 160 160 160;
   --color-text-inverted: 14 15 15;
-  --color-primary: 20 184 166;
+  --color-primary: 118 119 218;
   --color-primary-contrast: 255 255 255;
-  --color-focus-ring: 20 184 166;
+  --color-focus-ring: 118 119 218;
   --color-scrollbar-track: 42 45 45;
   --color-scrollbar-thumb: 52 53 53;
-  --color-success: 20 184 166;
+  --color-success: 34 197 94;
   --color-error: 248 81 73;
-  --color-link: 85 185 247;
+  --color-link: 118 119 218;
   --color-code-bg: 13 17 23;
   --color-popover: 26 28 28;
   --color-popover-foreground: 236 236 236;
@@ -75,8 +75,19 @@ body {
   background-attachment: fixed;
   overflow-x: hidden;
   font-family:
-    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans',
-    sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+    'PingFang SC',
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Roboto,
+    'Helvetica Neue',
+    Arial,
+    'Noto Sans',
+    sans-serif,
+    'Apple Color Emoji',
+    'Segoe UI Emoji',
+    'Segoe UI Symbol',
+    'Noto Color Emoji';
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;

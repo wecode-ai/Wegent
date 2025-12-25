@@ -204,7 +204,7 @@ function SettingsContent() {
           variant="with-sidebar"
           title={t('settings.title')}
           onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
-          className={isCollapsed && !isMobile ? '!pl-24' : ''}
+          isSidebarCollapsed={isCollapsed}
         >
           {isMobile ? <ThemeToggle /> : <GithubStarButton />}
         </TopNavigation>

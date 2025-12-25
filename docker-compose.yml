@@ -68,7 +68,7 @@ services:
   backend:
     # build:
       # dockerfile: docker/backend/Dockerfile
-    image: ghcr.io/wecode-ai/wegent-backend:1.0.26
+    image: ghcr.io/wecode-ai/wegent-backend:1.0.27
     container_name: wegent-backend
     restart: always
     ports:
@@ -110,14 +110,15 @@ services:
   frontend:
     # build:
     #   dockerfile: docker/frontend/Dockerfile
-    image: ghcr.io/wecode-ai/wegent-web:1.0.26
+    image: ghcr.io/wecode-ai/wegent-web:1.0.28
     container_name: wegent-frontend
     restart: always
     ports:
       - "${WEGENT_FRONTEND_PORT:-3000}:3000"
     environment:
       - NODE_ENV=production
-      - NEXT_PUBLIC_API_URL=http://backend:8000
+      - RUNTIME_INTERNAL_API_URL=http://backend:8000
+      - RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000
     working_dir: /app
     depends_on:
       - backend

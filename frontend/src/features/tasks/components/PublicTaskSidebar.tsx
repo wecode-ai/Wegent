@@ -32,7 +32,7 @@ export default function PublicTaskSidebar({
   return (
     <div className="flex flex-col bg-surface w-full h-full">
       {/* Logo */}
-      <div className="px-1 pt-2 pb-3">
+      <div className="px-1 py-2 sm:py-3">
         <div className="flex items-center justify-between pl-2 gap-2">
           <div className="flex items-center gap-2">
             <Image

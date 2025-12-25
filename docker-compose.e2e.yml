@@ -56,7 +56,11 @@ services:
       context: ./frontend
       dockerfile: ../docker/frontend/Dockerfile
     environment:
-      NEXT_PUBLIC_API_URL: http://backend-test:8000
+      # Runtime variables (can be changed without rebuilding)
+      RUNTIME_INTERNAL_API_URL: http://backend-test:8000
+      RUNTIME_SOCKET_DIRECT_URL: http://backend-test:8000
+      # Legacy: NEXT_PUBLIC_API_URL is deprecated
+      # NEXT_PUBLIC_API_URL: http://backend-test:8000
     ports:
       - "3001:3000"
     depends_on:

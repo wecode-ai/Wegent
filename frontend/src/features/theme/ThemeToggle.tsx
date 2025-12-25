@@ -23,7 +23,7 @@ export function ThemeToggle({
 
   const baseClassName = showLabel
     ? 'flex items-center gap-3 text-sm text-text-primary hover:bg-muted transition-colors duration-150'
-    : 'px-3 py-1 bg-muted border border-border rounded-full flex items-center gap-1 text-sm font-medium text-text-primary hover:bg-border/40 transition-colors duration-200';
+    : 'h-8 w-8 bg-base border border-border rounded-[7px] flex items-center justify-center text-text-primary hover:bg-hover transition-colors duration-200';
 
   const mergedClassName = `${baseClassName} ${className}`.trim();
 
@@ -43,7 +43,7 @@ export function ThemeToggle({
       className={mergedClassName}
       aria-label={t('actions.toggle_theme')}
     >
-      <Icon className="h-4 w-4 text-text-muted" />
+      <Icon className="h-3.5 w-3.5" />
       {showLabel && <span>{label}</span>}
     </button>
   );

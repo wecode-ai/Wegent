@@ -10,9 +10,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-
-// Get backend URL from environment
-const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { getInternalApiUrl } from '@/lib/server-config';
 
 export async function GET(
   request: NextRequest,
@@ -25,13 +23,16 @@ export async function GET(
     const authHeader = request.headers.get('Authorization');
 
     // Forward request to backend
-    const backendResponse = await fetch(`${BACKEND_URL}/api/chat/streaming-content/${subtaskId}`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(authHeader && { Authorization: authHeader }),
-      },
-    });
+    const backendResponse = await fetch(
+      `${getInternalApiUrl()}/api/chat/streaming-content/${subtaskId}`,
+      {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authHeader && { Authorization: authHeader }),
+        },
+      }
+    );
 
     if (!backendResponse.ok) {
       const errorText = await backendResponse.text();

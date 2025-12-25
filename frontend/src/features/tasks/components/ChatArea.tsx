@@ -26,12 +26,14 @@ import { SelectedTeamBadge } from './SelectedTeamBadge';
 import type { Team, GitRepoInfo, GitBranch, ChatTipItem, ChatSloganItem } from '@/types/api';
 import type { WelcomeConfigResponse } from '@/types/api';
 import { userApis } from '@/apis/user';
-import { useTranslation } from 'react-i18next';
+import { useTranslation } from '@/hooks/useTranslation';
+import { parseError } from '@/utils/errorParser';
 import { isChatShell } from '../service/messageService';
 import { useUser } from '@/features/common/UserContext';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTaskContext } from '../contexts/taskContext';
 import { useChatStreamContext, computeIsStreaming } from '../contexts/chatStreamContext';
+import { useSocket } from '@/contexts/SocketContext';
 import { Button } from '@/components/ui/button';
 import QuotaUsage from './QuotaUsage';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
@@ -41,6 +43,7 @@ import { taskApis } from '@/apis/tasks';
 import { useAttachment } from '@/hooks/useAttachment';
 import { GroupChatSyncManager } from './group-chat';
 import type { SubtaskWithSender } from '@/apis/group-chat';
+import { useTraceAction } from '@/hooks/useTraceAction';
 
 const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18;
 
@@ -58,9 +61,11 @@ function SloganDisplay({ slogan }: { slogan: ChatSloganItem | null }) {
   // Always render the container to maintain consistent layout height
   // This prevents the chat input from "jumping" when switching between /chat and /code tabs
   return (
-    <div className="text-center mb-10 min-h-[2.25rem] sm:min-h-[2.5rem]">
+    <div className="text-center mb-8 min-h-[2.5rem] sm:min-h-[3rem]">
       {sloganText && (
-        <h1 className="text-2xl sm:text-3xl font-semibold text-text-primary">{sloganText}</h1>
+        <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-text-primary tracking-tight">
+          {sloganText}
+        </h1>
       )}
     </div>
   );
@@ -87,6 +92,8 @@ export default function ChatArea({
 }: ChatAreaProps) {
   const { toast } = useToast();
   const { user } = useUser();
+  const { t } = useTranslation('chat');
+  const { traceAction } = useTraceAction();
 
   // Pre-load team preference from localStorage to use as initial value
   const initialTeamIdRef = useRef<number | null>(null);
@@ -107,6 +114,12 @@ export default function ChatArea({
   const [isLoading, setIsLoading] = useState(false);
   // Unified error prompt using antd message.error, no local error state needed
   const [_error, setError] = useState('');
+
+  // Store last failed message for retry
+  const lastFailedMessageRef = useRef<string | null>(null);
+
+  // Store handleSendMessage reference to avoid circular dependency in handleSendError
+  const handleSendMessageRef = useRef<((message?: string) => Promise<void>) | null>(null);
 
   // Local pending state for immediate UI feedback (before context state is updated)
   const [localPendingMessage, setLocalPendingMessage] = useState<string | null>(null);
@@ -269,8 +282,6 @@ export default function ChatArea({
     clearAccessDenied,
   } = useTaskContext();
 
-  const { t } = useTranslation();
-
   const detailTeamId = useMemo<number | null>(() => {
     if (!selectedTaskDetail?.team) {
       return null;
@@ -306,6 +317,8 @@ export default function ChatArea({
     resumeStream: contextResumeStream,
     clearVersion,
   } = useChatStreamContext();
+
+  const { retryMessage } = useSocket();
 
   // Track the task ID that is currently being streamed (for new tasks before they have a real ID)
   // This is separate from selectedTaskDetail?.id to allow switching tasks while streaming continues
@@ -434,6 +447,10 @@ export default function ChatArea({
 
       // Also reset the previousTaskIdRef to prevent stale state issues
       previousTaskIdRef.current = undefined;
+
+      // Reset prevTaskIdForModelRef to prevent model sync when creating new task
+      // This ensures user's model selection is preserved after clicking "New Chat"
+      prevTaskIdForModelRef.current = undefined;
 
       // Reset hasRestoredPreferences to allow team preference restoration for new task
       // This ensures the team selector can re-initialize when starting a new conversation
@@ -699,26 +716,45 @@ export default function ChatArea({
   }, [detailTeamId, teams, selectedTeam?.id, setSelectedTeam, selectedTaskDetail?.team]);
 
   // Set model and override flag when viewing existing task
+  // Track previous task ID to only run when task actually changes
+  const prevTaskIdForModelRef = useRef<number | null | undefined>(undefined);
   useEffect(() => {
     if (!selectedTaskDetail?.id || !selectedTeam) {
+      return;
+    }
+
+    // Only sync model when task ID actually changes (not on every render)
+    // This prevents overwriting user's model selection when they manually change it
+    const taskIdChanged = prevTaskIdForModelRef.current !== selectedTaskDetail.id;
+    if (!taskIdChanged) {
+      // Task ID hasn't changed, don't override user's selection
+      return;
+    }
+
+    // IMPORTANT: Only sync model when switching FROM an existing task TO another task
+    // When prevTaskIdForModelRef.current is undefined, it means:
+    // 1. Initial page load, OR
+    // 2. User just sent a message and created a new task
+    // In both cases, we should NOT override the user's model selection
+    // We only sync model when user explicitly switches to a different existing task
+    const isUserSwitchingTasks =
+      prevTaskIdForModelRef.current !== undefined && prevTaskIdForModelRef.current !== null;
+
+    prevTaskIdForModelRef.current = selectedTaskDetail.id;
+
+    // Skip model sync if this is not a user-initiated task switch
+    if (!isUserSwitchingTasks) {
       return;
     }
 
     const taskModelId = selectedTaskDetail.model_id;
 
     const handleDefaultModel = () => {
-      if (selectedModel?.name !== DEFAULT_MODEL_NAME) {
-        setSelectedModel({ name: DEFAULT_MODEL_NAME, provider: '', modelId: '' });
-      }
-      if (forceOverride) {
-        setForceOverride(false);
-      }
+      setSelectedModel({ name: DEFAULT_MODEL_NAME, provider: '', modelId: '' });
+      setForceOverride(false);
     };
 
     const handleExplicitModel = (modelName: string) => {
-      if (selectedModel?.name === modelName) {
-        return;
-      }
       setSelectedModel({
         name: modelName,
         provider: '',
@@ -755,15 +791,13 @@ export default function ChatArea({
     }
 
     handleExplicitModel(taskModelId);
-    if (!forceOverride) {
-      setForceOverride(true);
-    }
+    setForceOverride(true);
   }, [
     selectedTaskDetail?.id,
     selectedTaskDetail?.model_id,
     selectedTeam,
-    selectedModel?.name,
-    forceOverride,
+    // NOTE: selectedModel and forceOverride are intentionally excluded
+    // to prevent overwriting user's manual selection
     setSelectedModel,
     setForceOverride,
   ]);
@@ -911,6 +945,53 @@ export default function ChatArea({
     }
   }, []);
 
+  /**
+   * Helper function to create retry button for toast notifications
+   * Reduces code duplication for error handling
+   */
+  const createRetryButton = useCallback(
+    (onRetryClick: () => void) => (
+      <Button variant="outline" size="sm" onClick={onRetryClick}>
+        {t('actions.retry') || '重试'}
+      </Button>
+    ),
+    [t]
+  );
+
+  /**
+   * Helper function to handle send errors with retry logic
+   * Extracts duplicate error handling from onError callback and catch block
+   */
+  const handleSendError = useCallback(
+    (error: Error, message: string) => {
+      // Reset all streaming state on error
+      resetStreamingState();
+
+      // Parse error to provide better user feedback
+      const parsedError = parseError(error);
+
+      // Store message for retry
+      lastFailedMessageRef.current = message;
+
+      // Show error toast with retry button if error is retryable
+      toast({
+        variant: 'destructive',
+        title: parsedError.retryable
+          ? t('errors.request_failed_retry')
+          : t('errors.model_unsupported'),
+        action: parsedError.retryable
+          ? createRetryButton(() => {
+              // Retry by calling handleSendMessage with the last failed message
+              if (lastFailedMessageRef.current && handleSendMessageRef.current) {
+                handleSendMessageRef.current(lastFailedMessageRef.current);
+              }
+            })
+          : undefined,
+      });
+    },
+    [resetStreamingState, toast, t, createRetryButton]
+  );
+
   // Core message sending logic - can be called directly with a message or use taskInputMessage
   // All team types now use WebSocket for unified message sending
   const handleSendMessage = useCallback(
@@ -928,7 +1009,16 @@ export default function ChatArea({
       }
 
       // For code type tasks, repository is required
-      if (taskType === 'code' && showRepositorySelector && !selectedRepo) {
+      // Use git info from selectedTaskDetail if available (for existing tasks opened via URL)
+      // This fixes the issue where clarification form can't submit when repo selector hasn't synced yet
+      const effectiveRepo = selectedRepo || (selectedTaskDetail ? {
+        git_url: selectedTaskDetail.git_url,
+        git_repo: selectedTaskDetail.git_repo,
+        git_repo_id: selectedTaskDetail.git_repo_id,
+        git_domain: selectedTaskDetail.git_domain,
+      } : null);
+
+      if (taskType === 'code' && showRepositorySelector && !effectiveRepo?.git_repo) {
         toast({
           variant: 'destructive',
           title: 'Please select a repository for code tasks',
@@ -986,11 +1076,12 @@ export default function ChatArea({
             enable_clarification: enableClarification,
             is_group_chat: selectedTaskDetail?.is_group_chat || false,
             // Pass repository info for code tasks
-            git_url: showRepositorySelector ? selectedRepo?.git_url : undefined,
-            git_repo: showRepositorySelector ? selectedRepo?.git_repo : undefined,
-            git_repo_id: showRepositorySelector ? selectedRepo?.git_repo_id : undefined,
-            git_domain: showRepositorySelector ? selectedRepo?.git_domain : undefined,
-            branch_name: showRepositorySelector ? selectedBranch?.name : undefined,
+            // Use effectiveRepo to handle cases where repo selector hasn't synced yet
+            git_url: showRepositorySelector ? effectiveRepo?.git_url : undefined,
+            git_repo: showRepositorySelector ? effectiveRepo?.git_repo : undefined,
+            git_repo_id: showRepositorySelector ? effectiveRepo?.git_repo_id : undefined,
+            git_domain: showRepositorySelector ? effectiveRepo?.git_domain : undefined,
+            branch_name: showRepositorySelector ? (selectedBranch?.name || selectedTaskDetail?.branch_name) : undefined,
             task_type: taskType,
           },
           {
@@ -1000,22 +1091,20 @@ export default function ChatArea({
             // Pass current user info for group chat sender display
             currentUserId: user?.id,
             currentUserName: user?.user_name,
-            onTaskIdResolved: (realTaskId: number) => {
-              // Update streaming task ID when real task ID is resolved
-              setStreamingTaskId(realTaskId);
-
-              // Refresh task list immediately when task ID is resolved
-              // This ensures the new task appears in the sidebar while streaming
-              refreshTasks();
-
-              // Note: We don't update URL here to avoid triggering TaskParamSync
-              // which would call setSelectedTask and trigger refreshSelectedTaskDetail.
-              // URL will be updated when message is sent.
-            },
             // Called immediately after message is sent (before AI response)
             // NOTE: NO REFRESH - the UI displays pendingUserMessage from state
             // The message will remain visible until user sends another message or switches tasks
-            onMessageSent: (completedTaskId: number, _subtaskId: number) => {
+            // New signature: (localMessageId, taskId, subtaskId) for precise message update
+            onMessageSent: (
+              _localMessageId: string,
+              completedTaskId: number,
+              _subtaskId: number
+            ) => {
+              // Update streaming task ID when real task ID is resolved
+              if (completedTaskId > 0) {
+                setStreamingTaskId(completedTaskId);
+              }
+
               // If this was a new task (first message), update URL and task list
               if (completedTaskId && !selectedTaskDetail?.id) {
                 const params = new URLSearchParams(Array.from(searchParams.entries()));
@@ -1040,31 +1129,8 @@ export default function ChatArea({
               // NO REFRESH of task detail - pendingUserMessage is displayed from state
               // This prevents the progress bar flash issue
             },
-            // Called when AI response completes (chat:done event) - only for Chat Shell
-            // For non-Chat Shell (executor types), AI response is handled by executor_manager
-            // Note: isStreaming is already set to false by handleChatDone in chatStreamContext
-            // streamingContent is preserved, so MessagesArea will display it as a completed message
-            // NO REFRESH needed - the UI displays streamingContent from state
-            onAIComplete: (_completedTaskId: number, _subtaskId: number) => {
-              // Don't reset streamingTaskId immediately - wait for task detail refresh
-              // This prevents selectedTaskDetail from becoming undefined
-              setIsLoading(false);
-              // Refresh task detail to update subtask status after stream completion or cancellation
-              // After refresh completes, reset streamingTaskId
-              setTimeout(() => {
-                refreshSelectedTaskDetail(false);
-                // Now it's safe to clear streamingTaskId
-                setStreamingTaskId(null);
-              }, 300);
-            },
             onError: (error: Error) => {
-              // Reset all streaming state on error
-              resetStreamingState();
-
-              toast({
-                variant: 'destructive',
-                title: error.message,
-              });
+              handleSendError(error, message);
             },
           }
         );
@@ -1081,10 +1147,7 @@ export default function ChatArea({
         // Manually trigger scroll to bottom after sending message
         setTimeout(() => scrollToBottom(true), 0);
       } catch (err) {
-        toast({
-          variant: 'destructive',
-          title: (err as Error)?.message || 'Failed to send message',
-        });
+        handleSendError(err as Error, message);
       }
 
       setIsLoading(false);
@@ -1102,6 +1165,11 @@ export default function ChatArea({
       selectedTaskDetail?.id,
       selectedTaskDetail?.is_group_chat,
       selectedTaskDetail?.status,
+      selectedTaskDetail?.git_url,
+      selectedTaskDetail?.git_repo,
+      selectedTaskDetail?.git_repo_id,
+      selectedTaskDetail?.git_domain,
+      selectedTaskDetail?.branch_name,
       contextSendMessage,
       forceOverride,
       enableDeepThinking,
@@ -1122,6 +1190,92 @@ export default function ChatArea({
       markTaskAsViewed,
       user?.id,
       user?.user_name,
+      createRetryButton,
+    ]
+  );
+
+  // Update ref when handleSendMessage changes
+  useEffect(() => {
+    handleSendMessageRef.current = handleSendMessage;
+  }, [handleSendMessage]);
+
+  /**
+   * Handle retry for failed messages
+   * Uses Same-ID retry: reuses the original user message and creates a new AI subtask
+   * with the same message_id
+   */
+  const handleRetry = useCallback(
+    async (message: { content: string; type: string; error?: string; subtaskId?: number }) => {
+      // Same-ID retry: retry on the same message by reusing the existing user message
+      // and creating a new AI subtask with the same message_id
+      if (!message.subtaskId) {
+        toast({
+          variant: 'destructive',
+          title: t('errors.request_failed_retry'),
+          description: 'Subtask ID not found',
+        });
+        return;
+      }
+
+      if (!selectedTaskDetail?.id) {
+        toast({
+          variant: 'destructive',
+          title: t('errors.request_failed_retry'),
+          description: 'Task ID not found',
+        });
+        return;
+      }
+
+      await traceAction(
+        'chat-retry-message',
+        {
+          'action.type': 'retry',
+          'task.id': selectedTaskDetail.id.toString(),
+          'subtask.id': message.subtaskId.toString(),
+          ...(selectedModel && { 'model.id': selectedModel.name }),
+        },
+        async () => {
+          try {
+            // Use the SAME model logic as sending new messages
+            // When default model is selected, don't pass model_id (use bot's predefined model)
+            const modelId =
+              selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.name;
+            const modelType = modelId ? selectedModel?.type : undefined;
+
+            const result = await retryMessage(
+              selectedTaskDetail.id,
+              message.subtaskId!,
+              modelId,
+              modelType,
+              forceOverride
+            );
+
+            if (result.error) {
+              toast({
+                variant: 'destructive',
+                title: t('errors.request_failed_retry'),
+              });
+            }
+          } catch (error) {
+            console.error('[ChatArea] Retry failed:', error);
+            toast({
+              variant: 'destructive',
+              title: t('errors.request_failed_retry'),
+            });
+            throw error; // Re-throw to mark the trace as failed
+          }
+        }
+      );
+    },
+    [
+      retryMessage,
+      selectedTaskDetail?.id,
+      selectedModel?.name,
+      selectedModel?.type,
+      forceOverride,
+      t,
+      toast,
+      traceAction,
     ]
   );
 
@@ -1400,6 +1554,7 @@ export default function ChatArea({
               onShareButtonRender={onShareButtonRender}
               onSendMessage={handleSendMessageFromChild}
               isGroupChat={selectedTaskDetail?.is_group_chat || false}
+              onRetry={handleRetry}
             />
           </div>
         </div>
@@ -1431,7 +1586,7 @@ export default function ChatArea({
 
                 {/* Chat Input Card */}
                 <div
-                  className={`relative w-full flex flex-col rounded-2xl border border-border bg-base shadow-md transition-colors ${isDragging ? 'border-primary ring-2 ring-primary/20' : ''}`}
+                  className={`relative w-full flex flex-col rounded-3xl border border-border bg-base shadow-[0px_4px_24px_0px_rgba(111,79,191,0.06)] transition-colors ${isDragging ? 'border-primary ring-2 ring-primary/20' : ''}`}
                   onDragEnter={handleDragEnter}
                   onDragLeave={handleDragLeave}
                   onDragOver={handleDragOver}
@@ -1439,7 +1594,7 @@ export default function ChatArea({
                 >
                   {/* Drag Overlay */}
                   {isDragging && (
-                    <div className="absolute inset-0 z-50 rounded-2xl bg-base/95 backdrop-blur-sm flex flex-col items-center justify-center border-2 border-dashed border-primary transition-all animate-in fade-in duration-200">
+                    <div className="absolute inset-0 z-50 rounded-3xl bg-base/95 backdrop-blur-sm flex flex-col items-center justify-center border-2 border-dashed border-primary transition-all animate-in fade-in duration-200">
                       <div className="p-4 rounded-full bg-primary/10 mb-4 animate-bounce">
                         <Upload className="h-8 w-8 text-primary" />
                       </div>
@@ -1468,7 +1623,7 @@ export default function ChatArea({
                   )}
                   {/* Chat Input with inline badge */}
                   {!shouldHideChatInput && (
-                    <div className="px-3 pt-2">
+                    <div className="px-4 pt-2">
                       <ChatInput
                         message={taskInputMessage}
                         setMessage={setTaskInputMessage}
@@ -1491,13 +1646,13 @@ export default function ChatArea({
                   )}
                   {/* Selected Team Badge only - show when chat input is hidden (workflow mode) */}
                   {shouldHideChatInput && selectedTeam && (
-                    <div className="px-3 pt-2">
+                    <div className="px-4 pt-3">
                       <SelectedTeamBadge team={selectedTeam} />
                     </div>
                   )}
                   {/* Team Selector and Send Button - always show */}
                   <div
-                    className={`flex items-center justify-between px-3 gap-2 ${shouldHideChatInput ? 'py-3' : 'pb-0.5'}`}
+                    className={`flex items-center justify-between px-3 gap-2 ${shouldHideChatInput ? 'py-3' : 'pb-2 pt-1'}`}
                     ref={inputControlsRef}
                   >
                     <div
@@ -1533,7 +1688,9 @@ export default function ChatArea({
                           forceOverride={forceOverride}
                           setForceOverride={setForceOverride}
                           selectedTeam={selectedTeam}
-                          disabled={hasMessages || isLoading}
+                          disabled={
+                            isLoading || isStreaming || (hasMessages && !isChatShell(selectedTeam))
+                          }
                           compact={shouldCollapseSelectors}
                         />
                       )}
@@ -1678,7 +1835,7 @@ export default function ChatArea({
 
               {/* Chat Input Card */}
               <div
-                className={`relative w-full flex flex-col rounded-2xl border border-border bg-base shadow-md transition-colors ${isDragging ? 'border-primary ring-2 ring-primary/20' : ''}`}
+                className={`relative w-full flex flex-col rounded-3xl border border-border bg-base shadow-[0px_4px_24px_0px_rgba(111,79,191,0.06)] transition-colors ${isDragging ? 'border-primary ring-2 ring-primary/20' : ''}`}
                 onDragEnter={handleDragEnter}
                 onDragLeave={handleDragLeave}
                 onDragOver={handleDragOver}
@@ -1686,7 +1843,7 @@ export default function ChatArea({
               >
                 {/* Drag Overlay */}
                 {isDragging && (
-                  <div className="absolute inset-0 z-50 rounded-2xl bg-base/95 backdrop-blur-sm flex flex-col items-center justify-center border-2 border-dashed border-primary transition-all animate-in fade-in duration-200">
+                  <div className="absolute inset-0 z-50 rounded-3xl bg-base/95 backdrop-blur-sm flex flex-col items-center justify-center border-2 border-dashed border-primary transition-all animate-in fade-in duration-200">
                     <div className="p-4 rounded-full bg-primary/10 mb-4 animate-bounce">
                       <Upload className="h-8 w-8 text-primary" />
                     </div>
@@ -1715,7 +1872,7 @@ export default function ChatArea({
                 )}
                 {/* Chat Input - hide for workflow mode */}
                 {!shouldHideChatInput && (
-                  <div className="px-3 pt-2">
+                  <div className="px-4 pt-2">
                     <ChatInput
                       message={taskInputMessage}
                       setMessage={setTaskInputMessage}
@@ -1737,7 +1894,7 @@ export default function ChatArea({
                 )}
                 {/* Team Selector and Send Button - always show */}
                 <div
-                  className={`flex items-center justify-between px-3 gap-2 ${shouldHideChatInput ? 'py-3' : 'pb-0.5'}`}
+                  className={`flex items-center justify-between px-3 gap-2 ${shouldHideChatInput ? 'py-3' : 'pb-2 pt-1'}`}
                 >
                   <div className="flex-1 min-w-0 overflow-hidden flex items-center gap-3">
                     {/* File Upload Button - only show when no file is selected */}
@@ -1769,7 +1926,9 @@ export default function ChatArea({
                         forceOverride={forceOverride}
                         setForceOverride={setForceOverride}
                         selectedTeam={selectedTeam}
-                        disabled={hasMessages || isLoading}
+                        disabled={
+                          isLoading || isStreaming || (hasMessages && !isChatShell(selectedTeam))
+                        }
                         compact={shouldCollapseSelectors}
                       />
                     )}
