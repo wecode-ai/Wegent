@@ -35,7 +35,8 @@ export default function TaskTitleDropdown({
   className,
   onTaskDeleted,
 }: TaskTitleDropdownProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation('common');
+  const { t: tGroupChat } = useTranslation('group-chat');
   const router = useRouter();
   const { user } = useUser();
   const displayTitle = title;
@@ -58,8 +59,8 @@ export default function TaskTitleDropdown({
 
     const confirmed = confirm(
       isGroupChat
-        ? t('groupChat.delete.confirmMessage', '确定要删除这个群聊吗？此操作无法撤销。')
-        : t('task.delete.confirmMessage', '确定要删除这个任务吗？此操作无法撤销。')
+        ? tGroupChat('delete.confirmMessage')
+        : t('task.delete.confirmMessage')
     );
 
     if (!confirmed) return;
@@ -80,7 +81,7 @@ export default function TaskTitleDropdown({
       }
     } catch (error) {
       console.error('Failed to delete task:', error);
-      alert(t('task.delete.error', '删除失败，请重试'));
+      alert(t('task.delete.error'));
     } finally {
       setIsDeleting(false);
     }
@@ -148,13 +149,13 @@ export default function TaskTitleDropdown({
           {/* Members option */}
           <DropdownMenuItem onClick={handleViewMembers} className="gap-2">
             <UserGroupIcon className="h-4 w-4" />
-            <span>{t('groupChat.members.title', '人员')}</span>
+            <span>{tGroupChat('members.title')}</span>
           </DropdownMenuItem>
 
           {/* Invite link option */}
           <DropdownMenuItem onClick={handleManageInviteLink} className="gap-2">
             <LinkIcon className="h-4 w-4" />
-            <span>{t('groupChat.inviteLink.manage', '管理群组链接')}</span>
+            <span>{tGroupChat('inviteLink.manage')}</span>
           </DropdownMenuItem>
 
           <DropdownMenuSeparator />
@@ -169,8 +170,8 @@ export default function TaskTitleDropdown({
             <TrashIcon className="h-4 w-4" />
             <span>
               {isDeleting
-                ? t('common.deleting', '删除中...')
-                : t('groupChat.delete.button', '删除群组')}
+                ? t('deleting')
+                : tGroupChat('delete.button')}
             </span>
           </DropdownMenuItem>
         </DropdownMenuContent>

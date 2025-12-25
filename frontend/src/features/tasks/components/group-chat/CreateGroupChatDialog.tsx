@@ -37,7 +37,8 @@ interface CreateGroupChatDialogProps {
 }
 
 export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDialogProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation('group-chat');
+  const { t: tCommon } = useTranslation('common');
   const { toast } = useToast();
   const router = useRouter();
   const [title, setTitle] = useState('');
@@ -69,7 +70,7 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
   const handleCreate = async () => {
     if (!title.trim()) {
       toast({
-        title: t('groupChat.create.titleRequired'),
+        title: t('create.titleRequired'),
         variant: 'destructive',
       });
       return;
@@ -77,7 +78,7 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
 
     if (!selectedTeamId) {
       toast({
-        title: t('groupChat.create.teamRequired'),
+        title: t('create.teamRequired'),
         variant: 'destructive',
       });
       return;
@@ -102,7 +103,7 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
       // This ensures the stream is registered globally and the task page can display it
       void sendMessage(
         {
-          message: t('groupChat.create.initialMessage'),
+          message: t('create.initialMessage'),
           team_id: selectedTeam.id,
           task_id: undefined, // Let streaming API create the task
           title: title, // Pass custom title for the group chat
@@ -144,14 +145,14 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
 
             // Success toast
             toast({
-              title: t('groupChat.create.success'),
-              description: t('groupChat.create.successDesc'),
+              title: t('create.success'),
+              description: t('create.successDesc'),
             });
           },
           onError: error => {
             toast({
-              title: t('groupChat.create.failed'),
-              description: error.message || t('groupChat.create.failedDesc'),
+              title: t('create.failed'),
+              description: error.message || t('create.failedDesc'),
               variant: 'destructive',
             });
             setIsCreating(false);
@@ -161,8 +162,8 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
     } catch (error) {
       console.error('[CreateGroupChatDialog] Failed to create group chat:', error);
       toast({
-        title: t('groupChat.create.failed'),
-        description: error instanceof Error ? error.message : t('groupChat.create.failedDesc'),
+        title: t('create.failed'),
+        description: error instanceof Error ? error.message : t('create.failedDesc'),
         variant: 'destructive',
       });
       setIsCreating(false);
@@ -173,16 +174,16 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{t('groupChat.create.title')}</DialogTitle>
-          <DialogDescription>{t('groupChat.create.description')}</DialogDescription>
+          <DialogTitle>{t('create.title')}</DialogTitle>
+          <DialogDescription>{t('create.description')}</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-4">
           <div className="space-y-2">
-            <Label htmlFor="title">{t('groupChat.create.titleLabel')}</Label>
+            <Label htmlFor="title">{t('create.titleLabel')}</Label>
             <Input
               id="title"
-              placeholder={t('groupChat.create.titlePlaceholder')}
+              placeholder={t('create.titlePlaceholder')}
               value={title}
               onChange={e => setTitle(e.target.value)}
               maxLength={100}
@@ -190,19 +191,19 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="team">{t('groupChat.create.teamLabel')}</Label>
+            <Label htmlFor="team">{t('create.teamLabel')}</Label>
             <Select value={selectedTeamId} onValueChange={setSelectedTeamId}>
               <SelectTrigger>
-                <SelectValue placeholder={t('groupChat.create.teamPlaceholder')} />
+                <SelectValue placeholder={t('create.teamPlaceholder')} />
               </SelectTrigger>
               <SelectContent>
                 {isTeamsLoading ? (
                   <SelectItem value="loading" disabled>
-                    {t('actions.loading')}
+                    {tCommon('actions.loading')}
                   </SelectItem>
                 ) : chatTeams.length === 0 ? (
                   <SelectItem value="no-teams" disabled>
-                    {t('groupChat.create.noChatTeams')}
+                    {t('create.noChatTeams')}
                   </SelectItem>
                 ) : (
                   chatTeams.map((team: Team) => (
@@ -218,7 +219,7 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
           {/* Model Selector - only show when a team is selected */}
           {selectedTeam && (
             <div className="space-y-2">
-              <Label>{t('models.label')}</Label>
+              <Label>{tCommon('models.label')}</Label>
               <ModelSelector
                 selectedModel={selectedModel}
                 setSelectedModel={setSelectedModel}
@@ -234,10 +235,10 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
 
         <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isCreating}>
-            {t('actions.cancel')}
+            {tCommon('actions.cancel')}
           </Button>
           <Button onClick={handleCreate} disabled={isCreating || !isFormValid}>
-            {isCreating ? t('actions.creating') : t('actions.create')}
+            {isCreating ? tCommon('actions.creating') : tCommon('actions.create')}
           </Button>
         </div>
       </DialogContent>

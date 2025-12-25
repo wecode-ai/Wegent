@@ -27,6 +27,7 @@ export default function TaskMenu({
   isGroupChat = false,
 }: TaskMenuProps) {
   const { t } = useTranslation('common');
+  const { t: tGroupChat } = useTranslation('group-chat');
 
   return (
     <Menu as="div" className="relative">
@@ -66,7 +67,7 @@ export default function TaskMenu({
               {isGroupChat ? (
                 <>
                   <ArrowRightOnRectangleIcon className="h-3.5 w-3.5 mr-2" />
-                  {t('groupChat.leave')}
+                  {tGroupChat('leave')}
                 </>
               ) : (
                 <>

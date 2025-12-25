@@ -47,6 +47,7 @@ export default function ChatInput({
   onPasteFile,
 }: ChatInputProps) {
   const { t, i18n } = useTranslation('chat');
+  const { t: tGroupChat } = useTranslation('group-chat');
 
   // Get current language for tip text
   const currentLang = i18n.language?.startsWith('zh') ? 'zh' : 'en';
@@ -58,7 +59,7 @@ export default function ChatInput({
     }
     // For group chat, show mention instruction
     if (isGroupChat && team?.name) {
-      return t('groupChat.mentionToTrigger', { teamName: team.name });
+      return tGroupChat('mentionToTrigger', { teamName: team.name });
     }
     return t('placeholder.input');
   }, [tipText, currentLang, t, isGroupChat, team?.name]);

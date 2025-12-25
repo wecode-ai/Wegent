@@ -36,7 +36,7 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut';
 
 export default function ChatPage() {
-  const { t } = useTranslation();
+  const { t: tGroupChat } = useTranslation('group-chat');
 
   // Team state from service
   const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams();
@@ -222,7 +222,7 @@ export default function ChatPage() {
                 className="gap-1 h-8 pl-2 pr-3 rounded-[7px] text-sm"
               >
                 <UserGroupIcon className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">{t('groupChat.create.button')}</span>
+                <span className="hidden sm:inline">{tGroupChat('create.button')}</span>
               </Button>
             )}
             {shareButton}

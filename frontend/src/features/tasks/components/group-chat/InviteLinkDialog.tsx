@@ -34,7 +34,7 @@ interface InviteLinkDialogProps {
 }
 
 export function InviteLinkDialog({ open, onClose, taskId, taskTitle }: InviteLinkDialogProps) {
-  const { t } = useTranslation('chat');
+  const { t } = useTranslation('group-chat');
   const { toast } = useToast();
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
   const [expiresHours, setExpiresHours] = useState('0'); // 0 = permanent (no expiration)
@@ -65,7 +65,7 @@ export function InviteLinkDialog({ open, onClose, taskId, taskTitle }: InviteLin
       setInviteUrl(response.invite_url);
     } catch (error: unknown) {
       toast({
-        title: t('groupChat.inviteLink.generateFailed'),
+        title: t('inviteLink.generateFailed'),
         description: error instanceof Error ? error.message : undefined,
         variant: 'destructive',
       });
@@ -83,7 +83,7 @@ export function InviteLinkDialog({ open, onClose, taskId, taskTitle }: InviteLin
         await navigator.clipboard.writeText(inviteUrl);
         setCopied(true);
         toast({
-          title: t('groupChat.inviteLink.copied'),
+          title: t('inviteLink.copied'),
         });
         // Close the dialog after copying
         setTimeout(() => {
@@ -106,7 +106,7 @@ export function InviteLinkDialog({ open, onClose, taskId, taskTitle }: InviteLin
       document.body.removeChild(textarea);
       setCopied(true);
       toast({
-        title: t('groupChat.inviteLink.copied'),
+        title: t('inviteLink.copied'),
       });
       // Close the dialog after copying
       setTimeout(() => {
@@ -115,7 +115,7 @@ export function InviteLinkDialog({ open, onClose, taskId, taskTitle }: InviteLin
     } catch (err) {
       console.error('Fallback copy failed: ', err);
       toast({
-        title: t('groupChat.inviteLink.copyFailed'),
+        title: t('inviteLink.copyFailed'),
         variant: 'destructive',
       });
     }
@@ -131,9 +131,9 @@ export function InviteLinkDialog({ open, onClose, taskId, taskTitle }: InviteLin
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{t('groupChat.inviteLink.title')}</DialogTitle>
+          <DialogTitle>{t('inviteLink.title')}</DialogTitle>
           <DialogDescription>
-            {t('groupChat.inviteLink.description', { taskTitle })}
+            {t('inviteLink.description', { taskTitle })}
           </DialogDescription>
         </DialogHeader>
 
@@ -157,24 +157,24 @@ export function InviteLinkDialog({ open, onClose, taskId, taskTitle }: InviteLin
 
               <p className="text-xs text-text-muted">
                 {expiresHours === '0'
-                  ? t('groupChat.inviteLink.permanentNote')
-                  : t('groupChat.inviteLink.expiresNote', { hours: expiresHours })}
+                  ? t('inviteLink.permanentNote')
+                  : t('inviteLink.expiresNote', { hours: expiresHours })}
               </p>
 
               <div className="flex items-center gap-2 pt-2">
                 <span className="text-sm text-text-secondary">
-                  {t('groupChat.inviteLink.expiresIn')}
+                  {t('inviteLink.expiresIn')}
                 </span>
                 <Select value={expiresHours} onValueChange={setExpiresHours}>
                   <SelectTrigger className="w-32">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="0">{t('groupChat.inviteLink.permanent')}</SelectItem>
-                    <SelectItem value="24">{t('groupChat.inviteLink.hours24')}</SelectItem>
-                    <SelectItem value="72">{t('groupChat.inviteLink.days3')}</SelectItem>
-                    <SelectItem value="168">{t('groupChat.inviteLink.days7')}</SelectItem>
-                    <SelectItem value="720">{t('groupChat.inviteLink.days30')}</SelectItem>
+                    <SelectItem value="0">{t('inviteLink.permanent')}</SelectItem>
+                    <SelectItem value="24">{t('inviteLink.hours24')}</SelectItem>
+                    <SelectItem value="72">{t('inviteLink.days3')}</SelectItem>
+                    <SelectItem value="168">{t('inviteLink.days7')}</SelectItem>
+                    <SelectItem value="720">{t('inviteLink.days30')}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -187,7 +187,7 @@ export function InviteLinkDialog({ open, onClose, taskId, taskTitle }: InviteLin
                 }}
                 className="w-full"
               >
-                {t('groupChat.inviteLink.regenerate')}
+                {t('inviteLink.regenerate')}
               </Button>
             </>
           ) : null}

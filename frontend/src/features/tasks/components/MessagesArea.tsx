@@ -125,6 +125,7 @@ export default function MessagesArea({
 }: MessagesAreaProps) {
   const { t } = useTranslation('chat');
   const { t: tCommon } = useTranslation('common');
+  const { t: tGroupChat } = useTranslation('group-chat');
   const { toast } = useToast();
   const { selectedTaskDetail, refreshSelectedTaskDetail, refreshTasks, setSelectedTask } =
     useTaskContext();
@@ -437,7 +438,7 @@ export default function MessagesArea({
             className="flex items-center gap-1 h-8 pl-2 pr-3 rounded-[7px] text-sm"
           >
             <Users className="h-3.5 w-3.5" />
-            {t('groupChat.members.title') || 'Members'}
+            {tGroupChat('members.title') || 'Members'}
           </Button>
         )}
 
