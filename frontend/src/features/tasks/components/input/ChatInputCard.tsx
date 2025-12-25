@@ -43,7 +43,7 @@ export interface ChatInputCardProps extends Omit<ChatInputControlsProps, 'taskIn
   onDrop: (e: React.DragEvent) => void;
 
   // Attachment handlers
-  onPasteFile?: (file: File) => void;
+  onPasteFile?: (files: File | File[]) => void;
 
   // Submit
   canSubmit: boolean;
@@ -159,7 +159,7 @@ export function ChatInputCard({
             <AttachmentUploadPreview
               state={attachmentState}
               onRemove={onAttachmentRemove}
-              disabled={hasMessages || isLoading || isStreaming}
+              disabled={isLoading || isStreaming}
             />
           </div>
         )}
@@ -179,11 +179,7 @@ export function ChatInputCard({
               badge={selectedTeam ? <SelectedTeamBadge team={selectedTeam} /> : undefined}
               isGroupChat={isGroupChat}
               team={selectedTeam}
-              onPasteFile={
-                isChatShell(selectedTeam) && attachmentState.attachments.length === 0
-                  ? onPasteFile
-                  : undefined
-              }
+              onPasteFile={isChatShell(selectedTeam) ? onPasteFile : undefined}
             />
           </div>
         )}

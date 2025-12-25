@@ -12,8 +12,6 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import {
   SUPPORTED_EXTENSIONS,
   MAX_FILE_SIZE,
-  isSupportedExtension,
-  isValidFileSize,
   formatFileSize,
   getFileIcon,
   isImageExtension,
@@ -33,8 +31,8 @@ interface FileUploadProps {
   error: string | null;
   /** Whether the component is disabled */
   disabled?: boolean;
-  /** Callback when file is selected */
-  onFileSelect: (file: File) => void;
+  /** Callback when file(s) are selected */
+  onFileSelect: (files: File | File[]) => void;
   /** Callback to remove the attachment */
   onRemove: () => void;
 }
@@ -253,19 +251,10 @@ export default function FileUpload({
 
   const handleFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (file) {
-        // Validate file before passing to parent
-        if (!isSupportedExtension(file.name)) {
-          // Let parent handle the error
-          onFileSelect(file);
-          return;
-        }
-        if (!isValidFileSize(file.size)) {
-          onFileSelect(file);
-          return;
-        }
-        onFileSelect(file);
+      const files = e.target.files;
+      if (files && files.length > 0) {
+        // Pass all files as an array
+        onFileSelect(Array.from(files));
       }
       // Reset input so same file can be selected again
       if (fileInputRef.current) {
@@ -287,9 +276,9 @@ export default function FileUpload({
 
       if (disabled || isUploading || attachment) return;
 
-      const file = e.dataTransfer.files?.[0];
-      if (file) {
-        onFileSelect(file);
+      const files = e.dataTransfer.files;
+      if (files && files.length > 0) {
+        onFileSelect(Array.from(files));
       }
     },
     [disabled, isUploading, attachment, onFileSelect]
@@ -308,6 +297,7 @@ export default function FileUpload({
         ref={fileInputRef}
         type="file"
         accept={acceptString}
+        multiple
         onChange={handleFileChange}
         className="hidden"
         disabled={disabled || isUploading}
