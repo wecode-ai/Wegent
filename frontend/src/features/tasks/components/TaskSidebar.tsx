@@ -26,11 +26,14 @@ import {
   Code2,
   MessageSquare,
   Users,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext';
 import TaskListSection from './TaskListSection';
 import { useTranslation } from '@/hooks/useTranslation';
+import { isTaskUnread } from '@/utils/taskViewStatus';
 import MobileSidebar from '@/features/layout/MobileSidebar';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { UserFloatingMenu } from '@/features/layout/components/UserFloatingMenu';
@@ -78,6 +81,10 @@ export default function TaskSidebar({
   const [dialogSearchTerm, setDialogSearchTerm] = useState('');
   const [dialogSearchResults, setDialogSearchResults] = useState<Task[]>([]);
   const [isDialogSearching, setIsDialogSearching] = useState(false);
+
+  // Group chats collapse/expand state
+  const [isGroupChatsExpanded, setIsGroupChatsExpanded] = useState(false);
+  const maxVisibleGroupChats = 5;
 
   // Custom debounce hook
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -629,17 +636,50 @@ export default function TaskSidebar({
         ) : (
           (() => {
             // Separate group chats and regular tasks
-            const groupChats = tasks
+            const allGroupChats = tasks
               .filter(task => task.is_group_chat)
               .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
             const regularTasks = tasks
               .filter(task => !task.is_group_chat)
               .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
+            // Separate unread and read group chats, both sorted by updated_at desc
+            const unreadGroupChats = allGroupChats.filter(isTaskUnread);
+            const readGroupChats = allGroupChats.filter(task => !isTaskUnread(task));
+
+            // Merge: unread first, then read
+            const orderedGroupChats = [...unreadGroupChats, ...readGroupChats];
+
+            // Calculate visible group chats based on collapse state
+            let visibleGroupChats: typeof orderedGroupChats;
+            if (isSearchResult) {
+              // Search mode: show all
+              visibleGroupChats = orderedGroupChats;
+            } else if (unreadGroupChats.length === 0) {
+              // No unread: show max 5 or all if expanded
+              visibleGroupChats = isGroupChatsExpanded
+                ? orderedGroupChats
+                : orderedGroupChats.slice(0, maxVisibleGroupChats);
+            } else {
+              // Has unread: always show all unread + remaining slots for read
+              const remainingSlots = maxVisibleGroupChats - unreadGroupChats.length;
+              visibleGroupChats = isGroupChatsExpanded
+                ? orderedGroupChats
+                : [...unreadGroupChats, ...readGroupChats.slice(0, Math.max(0, remainingSlots))];
+            }
+
+            // Calculate how many read chats are collapsed (for display text)
+            const collapsedReadCount = readGroupChats.length - (visibleGroupChats.length - unreadGroupChats.length);
+
+            // Determine if expand/collapse button should be shown
+            // Button should show when there are more read chats than can fit after showing all unread chats
+            const maxReadSlotsWhenCollapsed = Math.max(0, maxVisibleGroupChats - unreadGroupChats.length);
+            const shouldShowExpandCollapseButton = readGroupChats.length > maxReadSlotsWhenCollapsed;
+
             return (
               <>
                 {/* Group Chats Section */}
-                {groupChats.length > 0 && (
+                {allGroupChats.length > 0 && (
                   <>
                     {!isCollapsed && (
                       <div className="px-1 pb-1 text-xs font-medium text-text-muted">
@@ -647,14 +687,59 @@ export default function TaskSidebar({
                       </div>
                     )}
                     <TaskListSection
-                      tasks={groupChats}
+                      tasks={visibleGroupChats}
                       title=""
-                      unreadCount={getUnreadCount(groupChats)}
+                      unreadCount={getUnreadCount(visibleGroupChats)}
                       onTaskClick={() => setIsMobileSidebarOpen(false)}
                       isCollapsed={isCollapsed}
                       showTitle={false}
                       key={`group-chats-${viewStatusVersion}`}
                     />
+                    {/* Expand/Collapse button for group chats */}
+                    {!isSearchResult && shouldShowExpandCollapseButton && !isCollapsed && (
+                      <button
+                        onClick={() => setIsGroupChatsExpanded(!isGroupChatsExpanded)}
+                        className="flex items-center gap-1 px-1 py-1.5 text-xs text-text-muted hover:text-text-primary transition-colors w-full"
+                      >
+                        {isGroupChatsExpanded ? (
+                          <>
+                            <ChevronUp className="h-3.5 w-3.5" />
+                            <span>{t('tasks.group_chats_collapse')}</span>
+                          </>
+                        ) : (
+                          <>
+                            <ChevronDown className="h-3.5 w-3.5" />
+                            <span>{t('tasks.group_chats_expand', { count: collapsedReadCount })}</span>
+                          </>
+                        )}
+                      </button>
+                    )}
+                    {/* Collapsed mode: show icon + tooltip for expand/collapse */}
+                    {!isSearchResult && shouldShowExpandCollapseButton && isCollapsed && (
+                      <TooltipProvider>
+                        <Tooltip delayDuration={300}>
+                          <TooltipTrigger asChild>
+                            <button
+                              onClick={() => setIsGroupChatsExpanded(!isGroupChatsExpanded)}
+                              className="flex items-center justify-center w-full py-1.5 text-text-muted hover:text-text-primary transition-colors"
+                            >
+                              {isGroupChatsExpanded ? (
+                                <ChevronUp className="h-3.5 w-3.5" />
+                              ) : (
+                                <ChevronDown className="h-3.5 w-3.5" />
+                              )}
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent side="right">
+                            <p>
+                              {isGroupChatsExpanded
+                                ? t('tasks.group_chats_collapse')
+                                : t('tasks.group_chats_expand', { count: collapsedReadCount })}
+                            </p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    )}
                   </>
                 )}
                 {/* History Section - with search button next to title */}
@@ -662,7 +747,7 @@ export default function TaskSidebar({
                   <>
                     {!isCollapsed && (
                       <div
-                        className={`px-1 pb-1 text-xs font-medium text-text-muted flex items-center justify-between ${groupChats.length > 0 ? 'pt-3 mt-2 border-t border-border' : ''}`}
+                        className={`px-1 pb-1 text-xs font-medium text-text-muted flex items-center justify-between ${allGroupChats.length > 0 ? 'pt-3 mt-2 border-t border-border' : ''}`}
                       >
                         <div className="flex items-center gap-1">
                           <span>{t('tasks.history_title')}</span>
@@ -694,7 +779,7 @@ export default function TaskSidebar({
                         )}
                       </div>
                     )}
-                    {isCollapsed && groupChats.length > 0 && (
+                    {isCollapsed && allGroupChats.length > 0 && (
                       <div className="border-t border-border my-2" />
                     )}
                     <TaskListSection
