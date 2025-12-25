@@ -20,8 +20,8 @@ from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
 from executor_manager.executors.dispatcher import ExecutorDispatcher
 from executor_manager.tasks.task_processor import TaskProcessor
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel
+from fastapi.responses import PlainTextResponse, StreamingResponse
+from pydantic import BaseModel, Field
 from shared.logger import setup_logger
 from shared.models.task import TasksRequest
 from shared.telemetry.config import get_otel_config
@@ -585,3 +585,116 @@ async def cancel_task(request: CancelTaskRequest, http_request: Request):
     except Exception as e:
         logger.error(f"Error cancelling task {request.task_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Code Tool Endpoints
+# ============================================================================
+
+
+class CodeToolExecuteRequest(BaseModel):
+    """Request body for Code Tool execution."""
+
+    session_id: str = Field(..., description="Chat session ID")
+    prompt: str = Field(..., description="Task prompt")
+    system_prompt: Optional[str] = Field(None, description="System prompt")
+    input_files: Optional[list[str]] = Field(None, description="Input file paths")
+    timeout: int = Field(default=300, description="Execution timeout")
+    user_id: Optional[int] = Field(None, description="User ID")
+
+
+@app.post("/executor-manager/code-tool/execute")
+async def execute_code_tool(request: CodeToolExecuteRequest, http_request: Request):
+    """
+    Execute Code Tool in an isolated Docker container.
+
+    This endpoint starts a Claude Code Agent in a Docker container
+    and streams execution results back via SSE.
+
+    The container is reused for multiple requests within the same session
+    to maintain state (installed packages, files, etc.).
+    """
+    from executor_manager.services.code_tool import CodeToolSessionManager
+
+    client_ip = http_request.client.host if http_request.client else "unknown"
+    logger.info(
+        f"Received code tool request: session={request.session_id}, "
+        f"prompt_len={len(request.prompt)} from {client_ip}"
+    )
+
+    session_manager = CodeToolSessionManager()
+
+    async def event_stream():
+        try:
+            async for event in session_manager.execute_in_container(
+                session_id=request.session_id,
+                prompt=request.prompt,
+                system_prompt=request.system_prompt,
+                input_files=request.input_files or [],
+                timeout=request.timeout,
+                user_id=request.user_id or 0,
+            ):
+                yield f"data: {event.json()}\n\n"
+        except Exception as e:
+            logger.exception(f"Error in code tool stream: {e}")
+            import json
+            from datetime import datetime
+
+            error_event = json.dumps(
+                {
+                    "event_type": "error",
+                    "data": {"message": str(e), "code": "STREAM_ERROR"},
+                    "timestamp": datetime.now().isoformat(),
+                }
+            )
+            yield f"data: {error_event}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.get("/executor-manager/code-tool/session/{session_id}")
+async def get_code_tool_session(session_id: str, http_request: Request):
+    """Get Code Tool session information."""
+    from executor_manager.services.code_tool import CodeToolSessionManager
+
+    client_ip = http_request.client.host if http_request.client else "unknown"
+    logger.info(f"Get code tool session: {session_id} from {client_ip}")
+
+    session_manager = CodeToolSessionManager()
+    session_info = await session_manager.get_session_info(session_id)
+
+    if session_info is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Session {session_id} not found",
+        )
+
+    return session_info
+
+
+@app.delete("/executor-manager/code-tool/session/{session_id}")
+async def destroy_code_tool_session(session_id: str, http_request: Request):
+    """Destroy a Code Tool session and its container."""
+    from executor_manager.services.code_tool import CodeToolSessionManager
+
+    client_ip = http_request.client.host if http_request.client else "unknown"
+    logger.info(f"Destroy code tool session: {session_id} from {client_ip}")
+
+    session_manager = CodeToolSessionManager()
+    success = await session_manager.destroy_session(session_id)
+
+    if success:
+        return {"status": "success", "message": f"Session {session_id} destroyed"}
+    else:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to destroy session {session_id}",
+        )

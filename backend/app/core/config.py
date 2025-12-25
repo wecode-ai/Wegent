@@ -181,6 +181,24 @@ class Settings(BaseSettings):
     # Whether to reject new requests during shutdown (503 Service Unavailable)
     SHUTDOWN_REJECT_NEW_REQUESTS: bool = True
 
+    # Code Tool configuration
+    # Enable/disable Code Tool feature for Chat Agent
+    CODE_TOOL_ENABLED: bool = False
+    # Executor Manager URL for Code Tool
+    EXECUTOR_MANAGER_URL: str = "http://localhost:8001"
+    # Default timeout for Code Tool execution (seconds)
+    CODE_TOOL_DEFAULT_TIMEOUT: int = 300
+    # Maximum timeout for Code Tool execution (seconds)
+    CODE_TOOL_MAX_TIMEOUT: int = 1800
+    # Session idle timeout before cleanup (seconds)
+    CODE_TOOL_SESSION_IDLE_TIMEOUT: int = 1800
+    # Maximum file size for Code Tool uploads (bytes)
+    CODE_TOOL_MAX_FILE_SIZE: int = 100 * 1024 * 1024  # 100MB
+    # Download link expiration time (seconds)
+    CODE_TOOL_DOWNLOAD_LINK_EXPIRE: int = 86400  # 24 hours
+    # Temporary directory for Code Tool files
+    CODE_TOOL_TEMP_DIR: str = "/tmp/code-tool"
+
     # OpenTelemetry configuration is centralized in shared/telemetry/config.py
     # Use: from shared.telemetry.config import get_otel_config
     # All OTEL_* environment variables are read from there

@@ -4,6 +4,7 @@
 
 """Built-in tools module."""
 
+from .code_execution import CodeExecutionTool, create_code_execution_tool
 from .file_reader import FileListSkill, FileReaderSkill
 from .knowledge_base import KnowledgeBaseTool
 from .web_search import WebSearchTool
@@ -13,4 +14,6 @@ __all__ = [
     "KnowledgeBaseTool",
     "FileReaderSkill",
     "FileListSkill",
+    "CodeExecutionTool",
+    "create_code_execution_tool",
 ]

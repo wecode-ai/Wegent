@@ -61,12 +61,14 @@ class WebSocketStreamConfig:
     user_name: str
     is_group_chat: bool = False
     enable_web_search: bool = False
+    enable_code_execution: bool = False  # Enable Code Tool
     search_engine: str | None = None
     bot_name: str = ""
     bot_namespace: str = "default"
     extra_tools: list[BaseTool] = field(default_factory=list)
     message_id: int | None = None  # Message ID for ordering in frontend
     shell_type: str = "Chat"  # Shell type for frontend display
+    uploaded_files: list[dict] = field(default_factory=list)  # Uploaded files for Code Tool
 
 
 # SSE response headers
@@ -670,6 +672,34 @@ class ChatService:
                         default_max_results=settings.WEB_SEARCH_DEFAULT_MAX_RESULTS,
                     )
                 )
+
+            # Add Code Execution Tool if enabled
+            if config.enable_code_execution and getattr(
+                settings, "CODE_TOOL_ENABLED", False
+            ):
+                try:
+                    from app.services.chat_v2.tools.builtin import (
+                        create_code_execution_tool,
+                    )
+                    from app.services.code_tool import CodeToolService
+
+                    code_tool_service = CodeToolService()
+                    code_execution_tool = create_code_execution_tool(
+                        session_id=f"chat_{task_id}",
+                        code_tool_service=code_tool_service,
+                        conversation_history=history,
+                        uploaded_files=config.uploaded_files,
+                        stream_callback=None,  # Could add callback for progress
+                    )
+                    extra_tools.append(code_execution_tool)
+                    logger.info(
+                        "[WS_STREAM] Added Code Execution Tool for task_id=%d",
+                        task_id,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "[WS_STREAM] Failed to load Code Execution Tool: %s", str(e)
+                    )
 
             # Get chat history
             history = await self._get_chat_history(task_id, config.is_group_chat)
