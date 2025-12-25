@@ -223,7 +223,7 @@ describe('AttachmentUploadPreview', () => {
       // Wait for image to load
       await waitFor(
         () => {
-          const img = screen.queryByAlt('photo.png');
+          const img = screen.queryByAltText('photo.png');
           expect(img).toBeInTheDocument();
         },
         { timeout: 1000 }

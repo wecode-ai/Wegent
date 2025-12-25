@@ -241,12 +241,16 @@ class TestProcessAttachments:
         ) as mock_attachment_service:
             mock_attachment_service.get_attachment.return_value = attachment
             mock_attachment_service.is_image_attachment.return_value = True
+            # When image has no base64, it falls back to text document processing
+            mock_attachment_service.build_document_text_prefix.return_value = (
+                ""  # Empty content
+            )
 
             # Act
             result = await _process_attachments(db, attachment_ids, user_id, message)
 
             # Assert
-            # Should return original message since image has no data
+            # Should return original message since document has no content
             assert result == message
 
     @pytest.mark.asyncio

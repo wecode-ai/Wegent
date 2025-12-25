@@ -33,6 +33,7 @@ from app.models.kind import Kind
 from app.models.subtask import Subtask
 from app.models.user import User
 from app.schemas.kind import Bot, Shell, Task, Team
+from app.services.attachment import attachment_service
 from app.services.chat.chat_service import chat_service
 from app.services.chat.model_resolver import (
     build_default_headers_with_placeholders,
@@ -660,7 +661,6 @@ async def _process_attachments(
         Message with all attachment contents prepended, or vision structure for images
     """
     from app.models.subtask_attachment import AttachmentStatus
-    from app.services.attachment import attachment_service
 
     if not attachment_ids:
         return message
