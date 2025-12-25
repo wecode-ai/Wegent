@@ -26,11 +26,14 @@ import {
   Code2,
   MessageSquare,
   Users,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext';
 import TaskListSection from './TaskListSection';
 import { useTranslation } from '@/hooks/useTranslation';
+import { isTaskUnread } from '@/utils/taskViewStatus';
 import MobileSidebar from '@/features/layout/MobileSidebar';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { UserFloatingMenu } from '@/features/layout/components/UserFloatingMenu';
@@ -78,6 +81,10 @@ export default function TaskSidebar({
   const [dialogSearchTerm, setDialogSearchTerm] = useState('');
   const [dialogSearchResults, setDialogSearchResults] = useState<Task[]>([]);
   const [isDialogSearching, setIsDialogSearching] = useState(false);
+
+  // Group chats collapse/expand state
+  const [isGroupChatsExpanded, setIsGroupChatsExpanded] = useState(false);
+  const maxVisibleGroupChats = 5;
 
   // Custom debounce hook
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -349,102 +356,115 @@ export default function TaskSidebar({
 
   const sidebarContent = (
     <>
-      {/* Logo and Mode Indicator */}
-      <div className="px-1 py-2 sm:py-3">
-        <div
-          className={`flex items-center ${isCollapsed ? 'justify-center' : 'justify-between pl-2'} gap-2`}
-        >
-          {!isCollapsed && (
+      {/* Logo and Mode Indicator - matches Figma: left-[20px] top-[12px] */}
+      <div className={`${isCollapsed ? 'px-2' : 'px-5'} pt-3 pb-4`}>
+        {isCollapsed ? (
+          /* Collapsed mode: Combined button with expand and add icons - matches Figma */
+          <TooltipProvider>
+            <Tooltip delayDuration={300}>
+              <TooltipTrigger asChild>
+                <div
+                  className="flex items-center gap-3 px-4 py-2.5 rounded-3xl border border-border bg-base shadow-sm cursor-pointer hover:bg-hover transition-colors"
+                  onClick={onToggleCollapsed}
+                >
+                  <PanelLeftOpen className="h-4 w-4 text-text-primary flex-shrink-0" />
+                  <button
+                    onClick={e => {
+                      e.stopPropagation();
+                      handleNewAgentClick();
+                    }}
+                    className="flex-shrink-0"
+                    aria-label={t('tasks.new_conversation')}
+                  >
+                    <Plus className="h-4 w-4 text-text-primary" />
+                  </button>
+                </div>
+              </TooltipTrigger>
+              <TooltipContent side="right">
+                <p>{t('sidebar.expand')}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        ) : (
+          /* Expanded mode: Logo and collapse button */
+          <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <Image
                 src="/weibo-logo.png"
                 alt="Weibo Logo"
-                width={20}
-                height={20}
+                width={24}
+                height={23}
                 className="object-container"
               />
-              <span className="text-sm text-text-primary">Wegent</span>
+              <span className="text-sm font-medium text-text-primary">Wegent</span>
             </div>
-          )}
-          {onToggleCollapsed && (
-            <TooltipProvider>
-              <Tooltip delayDuration={300}>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={onToggleCollapsed}
-                    className="h-9 w-9 p-0 text-text-muted hover:text-text-primary hover:bg-hover rounded-xl"
-                    aria-label={isCollapsed ? t('sidebar.expand') : t('sidebar.collapse')}
-                  >
-                    {isCollapsed ? (
-                      <PanelLeftOpen className="h-4 w-4" />
-                    ) : (
+            {onToggleCollapsed && (
+              <TooltipProvider>
+                <Tooltip delayDuration={300}>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={onToggleCollapsed}
+                      className="h-8 w-8 p-0 text-text-muted hover:text-text-primary hover:bg-hover rounded-lg"
+                      aria-label={t('sidebar.collapse')}
+                    >
                       <PanelLeftClose className="h-4 w-4" />
-                    )}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="right">
-                  <p>{isCollapsed ? t('sidebar.expand') : t('sidebar.collapse')}</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )}
-        </div>
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">
+                    <p>{t('sidebar.collapse')}</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+          </div>
+        )}
       </div>
 
       {/* New Conversation Button and Navigation Buttons - wrapped together for onboarding tour */}
-      <div data-tour="mode-toggle">
-        {/* New Conversation Button - always shows "New Conversation" and navigates to chat */}
-        <div className="px-1 mb-1">
-          {isCollapsed ? (
-            <TooltipProvider>
-              <Tooltip delayDuration={300}>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    onClick={handleNewAgentClick}
-                    className="w-full justify-center p-2 h-auto min-h-[44px] text-text-primary hover:bg-hover rounded-xl"
-                    aria-label={t('tasks.new_conversation')}
-                  >
-                    <Plus className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="right">
-                  <p>{t('tasks.new_conversation')}</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          ) : (
+      <div data-tour="mode-toggle" className="px-2.5">
+        {/* New Conversation Button - only show in expanded mode, collapsed mode has it in the top combined button */}
+        {!isCollapsed && (
+          <div className="mb-1">
             <Button
               variant="ghost"
               onClick={handleNewAgentClick}
-              className="w-full justify-start px-2 py-1.5 h-8 text-sm text-text-primary hover:bg-hover rounded-xl"
+              className="w-full justify-between px-3 h-9 text-sm text-text-primary hover:bg-hover rounded-md group"
               size="sm"
             >
-              <Plus className="h-4 w-4 mr-0.5" />
-              {t('tasks.new_conversation')}
+              <span className="flex items-center">
+                <Plus className="h-4 w-4 flex-shrink-0" />
+                <span className="ml-1.5">{t('tasks.new_conversation')}</span>
+              </span>
+              <span className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity">
+                ›
+              </span>
             </Button>
-          )}
-        </div>
+          </div>
+        )}
 
-        {/* Navigation Buttons - hide in collapsed mode */}
+        {/* Navigation Buttons - matches Figma: spacing and style */}
         {!isCollapsed && navigationButtons.length > 0 && (
-          <div className="px-1 mb-2 space-y-1">
+          <div className="space-y-0.5">
             {navigationButtons.map(btn => (
               <div key={btn.path} className="relative group">
                 <Button
                   variant="ghost"
                   onClick={() => handleNavigationClick(btn.path, btn.isActive)}
-                  className={`w-full justify-start px-2 py-1.5 h-8 text-sm rounded-xl transition-colors ${
+                  className={`w-full justify-start px-3 h-9 text-sm rounded-md transition-colors ${
                     btn.isActive
                       ? 'bg-primary/10 text-primary font-medium'
                       : 'text-text-primary hover:bg-hover'
                   }`}
                   size="sm"
                 >
-                  <btn.icon className={`h-4 w-4 mr-0.5 ${btn.isActive ? 'text-primary' : ''}`} />
-                  {btn.label}
+                  <span className="flex items-center">
+                    <btn.icon
+                      className={`h-4 w-4 flex-shrink-0 ${btn.isActive ? 'text-primary' : ''}`}
+                    />
+                    <span className="ml-1.5">{btn.label}</span>
+                  </span>
                 </Button>
                 {/* Show "New Task" button on hover when in code mode */}
                 {btn.isActive && btn.tooltip && (
@@ -588,9 +608,9 @@ export default function TaskSidebar({
         </DialogContent>
       </Dialog>
 
-      {/* Tasks Section */}
+      {/* Tasks Section - matches Figma: left-[20px] top-[198px] with border */}
       <div
-        className={`flex-1 ${isCollapsed ? 'px-0' : 'pl-2 pr-1'} pt-2 overflow-y-auto task-list-scrollbar border-t border-border`}
+        className={`flex-1 ${isCollapsed ? 'px-0' : 'px-2.5'} pt-4 overflow-y-auto task-list-scrollbar border-t border-border mt-3`}
         ref={scrollRef}
       >
         {/* Search Result Header */}
@@ -606,27 +626,7 @@ export default function TaskSidebar({
             </button>
           </div>
         )}
-        {/* Search Button for collapsed mode */}
-        {isCollapsed && !isSearchResult && (
-          <div className="px-1 pb-2 flex justify-center">
-            <TooltipProvider>
-              <Tooltip delayDuration={300}>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={handleOpenSearchDialog}
-                    className="p-1 text-text-muted hover:text-text-primary transition-colors rounded hover:bg-hover"
-                    aria-label={t('tasks.search_placeholder_chat')}
-                  >
-                    <Search className="h-4 w-4" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="right">
-                  <p>{t('tasks.search_placeholder_chat')}</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          </div>
-        )}
+        {/* Search Button for collapsed mode - removed, search is now in the combined top button */}
         {isSearching ? (
           <div className="text-center py-8 text-xs text-text-muted">{t('tasks.searching')}</div>
         ) : tasks.length === 0 ? (
@@ -636,17 +636,50 @@ export default function TaskSidebar({
         ) : (
           (() => {
             // Separate group chats and regular tasks
-            const groupChats = tasks
+            const allGroupChats = tasks
               .filter(task => task.is_group_chat)
               .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
             const regularTasks = tasks
               .filter(task => !task.is_group_chat)
               .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
+            // Separate unread and read group chats, both sorted by updated_at desc
+            const unreadGroupChats = allGroupChats.filter(isTaskUnread);
+            const readGroupChats = allGroupChats.filter(task => !isTaskUnread(task));
+
+            // Merge: unread first, then read
+            const orderedGroupChats = [...unreadGroupChats, ...readGroupChats];
+
+            // Calculate visible group chats based on collapse state
+            let visibleGroupChats: typeof orderedGroupChats;
+            if (isSearchResult) {
+              // Search mode: show all
+              visibleGroupChats = orderedGroupChats;
+            } else if (unreadGroupChats.length === 0) {
+              // No unread: show max 5 or all if expanded
+              visibleGroupChats = isGroupChatsExpanded
+                ? orderedGroupChats
+                : orderedGroupChats.slice(0, maxVisibleGroupChats);
+            } else {
+              // Has unread: always show all unread + remaining slots for read
+              const remainingSlots = maxVisibleGroupChats - unreadGroupChats.length;
+              visibleGroupChats = isGroupChatsExpanded
+                ? orderedGroupChats
+                : [...unreadGroupChats, ...readGroupChats.slice(0, Math.max(0, remainingSlots))];
+            }
+
+            // Calculate how many read chats are collapsed (for display text)
+            const collapsedReadCount = readGroupChats.length - (visibleGroupChats.length - unreadGroupChats.length);
+
+            // Determine if expand/collapse button should be shown
+            // Button should show when there are more read chats than can fit after showing all unread chats
+            const maxReadSlotsWhenCollapsed = Math.max(0, maxVisibleGroupChats - unreadGroupChats.length);
+            const shouldShowExpandCollapseButton = readGroupChats.length > maxReadSlotsWhenCollapsed;
+
             return (
               <>
                 {/* Group Chats Section */}
-                {groupChats.length > 0 && (
+                {allGroupChats.length > 0 && (
                   <>
                     {!isCollapsed && (
                       <div className="px-1 pb-1 text-xs font-medium text-text-muted">
@@ -654,14 +687,59 @@ export default function TaskSidebar({
                       </div>
                     )}
                     <TaskListSection
-                      tasks={groupChats}
+                      tasks={visibleGroupChats}
                       title=""
-                      unreadCount={getUnreadCount(groupChats)}
+                      unreadCount={getUnreadCount(visibleGroupChats)}
                       onTaskClick={() => setIsMobileSidebarOpen(false)}
                       isCollapsed={isCollapsed}
                       showTitle={false}
                       key={`group-chats-${viewStatusVersion}`}
                     />
+                    {/* Expand/Collapse button for group chats */}
+                    {!isSearchResult && shouldShowExpandCollapseButton && !isCollapsed && (
+                      <button
+                        onClick={() => setIsGroupChatsExpanded(!isGroupChatsExpanded)}
+                        className="flex items-center gap-1 px-1 py-1.5 text-xs text-text-muted hover:text-text-primary transition-colors w-full"
+                      >
+                        {isGroupChatsExpanded ? (
+                          <>
+                            <ChevronUp className="h-3.5 w-3.5" />
+                            <span>{t('tasks.group_chats_collapse')}</span>
+                          </>
+                        ) : (
+                          <>
+                            <ChevronDown className="h-3.5 w-3.5" />
+                            <span>{t('tasks.group_chats_expand', { count: collapsedReadCount })}</span>
+                          </>
+                        )}
+                      </button>
+                    )}
+                    {/* Collapsed mode: show icon + tooltip for expand/collapse */}
+                    {!isSearchResult && shouldShowExpandCollapseButton && isCollapsed && (
+                      <TooltipProvider>
+                        <Tooltip delayDuration={300}>
+                          <TooltipTrigger asChild>
+                            <button
+                              onClick={() => setIsGroupChatsExpanded(!isGroupChatsExpanded)}
+                              className="flex items-center justify-center w-full py-1.5 text-text-muted hover:text-text-primary transition-colors"
+                            >
+                              {isGroupChatsExpanded ? (
+                                <ChevronUp className="h-3.5 w-3.5" />
+                              ) : (
+                                <ChevronDown className="h-3.5 w-3.5" />
+                              )}
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent side="right">
+                            <p>
+                              {isGroupChatsExpanded
+                                ? t('tasks.group_chats_collapse')
+                                : t('tasks.group_chats_expand', { count: collapsedReadCount })}
+                            </p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    )}
                   </>
                 )}
                 {/* History Section - with search button next to title */}
@@ -669,7 +747,7 @@ export default function TaskSidebar({
                   <>
                     {!isCollapsed && (
                       <div
-                        className={`px-1 pb-1 text-xs font-medium text-text-muted flex items-center justify-between ${groupChats.length > 0 ? 'pt-3 mt-2 border-t border-border' : ''}`}
+                        className={`px-1 pb-1 text-xs font-medium text-text-muted flex items-center justify-between ${allGroupChats.length > 0 ? 'pt-3 mt-2 border-t border-border' : ''}`}
                       >
                         <div className="flex items-center gap-1">
                           <span>{t('tasks.history_title')}</span>
@@ -701,7 +779,7 @@ export default function TaskSidebar({
                         )}
                       </div>
                     )}
-                    {isCollapsed && groupChats.length > 0 && (
+                    {isCollapsed && allGroupChats.length > 0 && (
                       <div className="border-t border-border my-2" />
                     )}
                     <TaskListSection
@@ -724,8 +802,8 @@ export default function TaskSidebar({
         )}
       </div>
 
-      {/* User Menu */}
-      <div className="p-2 border-t border-border" data-tour="settings-link">
+      {/* User Menu - matches Figma: left-[20px] top-[852px] with border */}
+      <div className="px-2.5 py-3 border-t border-border" data-tour="settings-link">
         <UserFloatingMenu />
       </div>
     </>

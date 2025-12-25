@@ -230,14 +230,14 @@ export function QuickAccessCards({
 
   if (isLoading || isQuickAccessLoading) {
     return (
-      <div className="flex flex-wrap gap-3 mt-4">
+      <div className="flex flex-wrap items-center justify-center gap-3 mt-6">
         {[1, 2, 3].map(i => (
           <div
             key={i}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg border border-border bg-surface animate-pulse"
+            className="flex items-center gap-1 h-[42px] px-4 rounded-full border border-border bg-surface animate-pulse"
           >
-            <div className="w-5 h-5 bg-muted rounded" />
-            <div className="w-20 h-4 bg-muted rounded" />
+            <div className="w-4 h-4 bg-muted rounded" />
+            <div className="w-16 h-3 bg-muted rounded" />
           </div>
         ))}
       </div>
@@ -259,14 +259,14 @@ export function QuickAccessCards({
       <div
         onClick={() => !isClicked && !isPending && handleTeamClick(team)}
         className={`
-          group relative flex items-center gap-1.5 px-3 py-1.5
+          group relative flex items-center gap-1 h-[42px] px-4
           rounded-full border cursor-pointer transition-all duration-200
           ${
             isClicked || isPending
               ? 'switching-card border-primary bg-primary/10 ring-2 ring-primary/50'
               : isSelected
-                ? 'border-primary bg-primary/5 ring-1 ring-primary/30'
-                : 'border-border bg-surface hover:bg-hover hover:border-border-strong'
+                ? 'border-primary bg-primary/5'
+                : 'border-border bg-base hover:bg-hover hover:border-border-strong hover:shadow-sm'
           }
           ${isClicked || isPending ? 'pointer-events-none' : ''}
         `}
@@ -279,8 +279,8 @@ export function QuickAccessCards({
           }`}
         />
         <span
-          className={`text-sm font-medium transition-colors duration-200 whitespace-nowrap ${
-            isClicked || isSelected ? 'text-primary' : 'text-text-secondary'
+          className={`text-xs font-normal transition-colors duration-200 whitespace-nowrap ${
+            isClicked || isSelected ? 'text-primary' : 'text-text-primary'
           }`}
         >
           {team.name}
@@ -378,7 +378,21 @@ export function QuickAccessCards({
           animation: slide-fade 0.2s ease-out forwards;
         }
       `}</style>
-      <div className="flex flex-wrap items-center gap-2 mt-4" data-tour="quick-access-cards">
+      <div
+        className="flex flex-wrap items-center justify-start gap-2.5 mt-6"
+        data-tour="quick-access-cards"
+      >
+        {/* Show selected team first with highlighted style */}
+        {selectedTeam && (
+          <div className="flex items-center gap-1.5 h-[42px] px-4 rounded-full border border-primary bg-primary/5 text-primary">
+            <TeamIconDisplay
+              iconId={selectedTeam.icon}
+              size="sm"
+              className="flex-shrink-0 text-primary"
+            />
+            <span className="text-xs font-medium whitespace-nowrap">{selectedTeam.name}</span>
+          </div>
+        )}
         {displayTeams.map(team => renderTeamCard(team))}
 
         {/* More button - always show for team selection */}
@@ -386,19 +400,19 @@ export function QuickAccessCards({
           <button
             onClick={() => setShowMoreTeams(!showMoreTeams)}
             className={`
-                flex items-center gap-1.5 px-3 py-1.5
+                flex items-center gap-1 h-[42px] px-4
                 rounded-full border cursor-pointer transition-all duration-200
                 ${
                   showMoreTeams
-                    ? 'border-primary bg-primary/5 ring-1 ring-primary/30'
-                    : 'border-border bg-surface hover:bg-hover hover:border-border-strong'
+                    ? 'border-primary bg-primary/5'
+                    : 'border-border bg-base hover:bg-hover hover:border-border-strong'
                 }
               `}
             title={t('teams.more_teams')}
           >
-            <span className="text-sm font-medium text-text-secondary">{t('teams.more')}</span>
+            <span className="text-xs font-normal text-text-primary">{t('teams.more')}</span>
             <ChevronDownIcon
-              className={`w-3.5 h-3.5 text-text-muted transition-transform duration-200 ${showMoreTeams ? 'rotate-180' : ''}`}
+              className={`w-2.5 h-2.5 text-text-muted transition-transform duration-200 ${showMoreTeams ? 'rotate-180' : ''}`}
             />
           </button>
 
@@ -497,6 +511,9 @@ export function QuickAccessCards({
             </div>
           )}
         </div>
+
+        {/* Divider */}
+        <div className="h-7 w-px bg-border mx-1" />
 
         {/* Wizard button - quick create agent (only show in chat mode) */}
         {showWizardButton && (
