@@ -168,9 +168,7 @@ def _parse_wegent_tools(tools: Optional[List[WegentTool]]) -> Dict[str, Any]:
     return result
 
 
-def _extract_input_text(
-    input_data: Union[str, List[InputItem]]
-) -> str:
+def _extract_input_text(input_data: Union[str, List[InputItem]]) -> str:
     """
     Extract the user input text from the input field.
 
@@ -460,8 +458,16 @@ async def _create_streaming_response(
                     "taskType": "chat",
                     "autoDeleteExecutor": "false",
                     "source": "chat_shell",  # Use chat_shell to enable session_manager cancel
-                    **({"modelId": model_info.get("model_id")} if model_info.get("model_id") else {}),
-                    **({"forceOverrideBotModel": "true"} if model_info.get("model_id") else {}),
+                    **(
+                        {"modelId": model_info.get("model_id")}
+                        if model_info.get("model_id")
+                        else {}
+                    ),
+                    **(
+                        {"forceOverrideBotModel": "true"}
+                        if model_info.get("model_id")
+                        else {}
+                    ),
                 },
             },
             "apiVersion": "agent.wecode.io/v1",
@@ -590,7 +596,9 @@ async def _create_streaming_response(
                             if isinstance(st.result, dict):
                                 content = st.result.get("value", "")
                                 if content:
-                                    history.append({"role": "assistant", "content": content})
+                                    history.append(
+                                        {"role": "assistant", "content": content}
+                                    )
 
             messages = message_builder.build_messages(
                 history=history,
@@ -611,17 +619,25 @@ async def _create_streaming_response(
             # Stream response with periodic saves
             last_redis_save = asyncio.get_event_loop().time()
             last_db_save = asyncio.get_event_loop().time()
-            redis_save_interval = getattr(settings, "STREAMING_REDIS_SAVE_INTERVAL", 1.0)
+            redis_save_interval = getattr(
+                settings, "STREAMING_REDIS_SAVE_INTERVAL", 1.0
+            )
             db_save_interval = getattr(settings, "STREAMING_DB_SAVE_INTERVAL", 3.0)
 
             async for chunk in provider.stream_chat(messages, cancel_event):
                 # Check for cancellation
-                if cancel_event.is_set() or await session_manager.is_cancelled(assistant_subtask_id):
+                if cancel_event.is_set() or await session_manager.is_cancelled(
+                    assistant_subtask_id
+                ):
                     logger.info(f"Stream cancelled for subtask {assistant_subtask_id}")
                     # Save partial content before breaking
                     if accumulated_content:
-                        await session_manager.save_streaming_content(assistant_subtask_id, accumulated_content)
-                        await db_handler.save_partial_response(assistant_subtask_id, accumulated_content)
+                        await session_manager.save_streaming_content(
+                            assistant_subtask_id, accumulated_content
+                        )
+                        await db_handler.save_partial_response(
+                            assistant_subtask_id, accumulated_content
+                        )
                     break
 
                 if chunk.type == ChunkType.CONTENT and chunk.content:
@@ -631,27 +647,37 @@ async def _create_streaming_response(
                     # Save to Redis periodically
                     current_time = asyncio.get_event_loop().time()
                     if current_time - last_redis_save >= redis_save_interval:
-                        await session_manager.save_streaming_content(assistant_subtask_id, accumulated_content)
+                        await session_manager.save_streaming_content(
+                            assistant_subtask_id, accumulated_content
+                        )
                         last_redis_save = current_time
 
                     # Save to DB periodically
                     if current_time - last_db_save >= db_save_interval:
-                        await db_handler.save_partial_response(assistant_subtask_id, accumulated_content)
+                        await db_handler.save_partial_response(
+                            assistant_subtask_id, accumulated_content
+                        )
                         last_db_save = current_time
 
                 elif chunk.type == ChunkType.ERROR:
                     logger.error(f"LLM error: {chunk.error}")
                     await db_handler.update_subtask_status(
-                        assistant_subtask_id, "FAILED", error=chunk.error or "Unknown LLM error"
+                        assistant_subtask_id,
+                        "FAILED",
+                        error=chunk.error or "Unknown LLM error",
                     )
                     return
 
             # Stream completed (not cancelled)
-            if not cancel_event.is_set() and not await session_manager.is_cancelled(assistant_subtask_id):
+            if not cancel_event.is_set() and not await session_manager.is_cancelled(
+                assistant_subtask_id
+            ):
                 result = {"value": accumulated_content}
 
                 # Save final content
-                await session_manager.save_streaming_content(assistant_subtask_id, accumulated_content)
+                await session_manager.save_streaming_content(
+                    assistant_subtask_id, accumulated_content
+                )
 
                 # Save chat history
                 await session_manager.append_user_and_assistant_messages(
@@ -673,6 +699,7 @@ async def _create_streaming_response(
                         task_crd.status.completedAt = datetime.now()
                         task_kind.json = task_crd.model_dump(mode="json")
                         from sqlalchemy.orm.attributes import flag_modified
+
                         flag_modified(task_kind, "json")
                         db_gen.commit()
 
@@ -1073,12 +1100,22 @@ async def cancel_response(
     """
     Cancel a running response.
 
+    For Chat Shell type tasks (source="chat_shell"), this will stop the model request
+    and save partial content to the subtask result.
+
+    For other task types (Executor-based), this will call the executor_manager to cancel.
+
     Args:
         response_id: Response ID in format "resp_{task_id}"
 
     Returns:
         ResponseObject with status 'cancelled' or current status
     """
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.services.chat.db_handler import db_handler
+    from app.services.chat.session_manager import session_manager
+
     # Extract task_id from response_id
     if not response_id.startswith("resp_"):
         raise HTTPException(
@@ -1094,21 +1131,117 @@ async def cancel_response(
             detail=f"Invalid response_id format: '{response_id}'",
         )
 
-    # Cancel task using service (includes executor_manager call)
-    try:
-        await task_kinds_service.cancel_task(
-            db=db,
-            task_id=task_id,
-            user_id=current_user.id,
-            background_task_runner=background_tasks.add_task,
+    # Get task to check if it's a Chat Shell type
+    task_kind = (
+        db.query(Kind)
+        .filter(
+            Kind.id == task_id,
+            Kind.user_id == current_user.id,
+            Kind.kind == "Task",
+            Kind.is_active == True,
         )
-    except HTTPException as e:
-        if e.status_code == 404:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Response '{response_id}' not found",
+        .first()
+    )
+
+    if not task_kind:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Response '{response_id}' not found",
+        )
+
+    # Check if this is a Chat Shell task (source="chat_shell")
+    task_crd = Task.model_validate(task_kind.json)
+    source_label = (
+        task_crd.metadata.labels.get("source") if task_crd.metadata.labels else None
+    )
+    is_chat_shell = source_label == "chat_shell"
+
+    logger.info(
+        f"[CANCEL] task_id={task_id}, source={source_label}, is_chat_shell={is_chat_shell}"
+    )
+
+    if is_chat_shell:
+        # For Chat Shell tasks, use session_manager to cancel the stream
+        # Find running assistant subtask
+        from app.models.subtask import SubtaskStatus
+
+        running_subtask = (
+            db.query(Subtask)
+            .filter(
+                Subtask.task_id == task_id,
+                Subtask.user_id == current_user.id,
+                Subtask.role == SubtaskRole.ASSISTANT,
+                Subtask.status.in_(
+                    [
+                        SubtaskStatus.PENDING,
+                        SubtaskStatus.RUNNING,
+                    ]
+                ),
             )
-        raise
+            .order_by(Subtask.id.desc())
+            .first()
+        )
+
+        if running_subtask:
+            logger.info(
+                f"[CANCEL] Found running subtask: id={running_subtask.id}, status={running_subtask.status}"
+            )
+
+            # Get partial content from Redis before cancelling
+            partial_content = await session_manager.get_streaming_content(
+                running_subtask.id
+            )
+            logger.info(
+                f"[CANCEL] Got partial content from Redis: length={len(partial_content) if partial_content else 0}"
+            )
+
+            # Cancel the stream (this sets the cancel event)
+            await session_manager.cancel_stream(running_subtask.id)
+            logger.info(f"[CANCEL] Stream cancelled for subtask {running_subtask.id}")
+
+            # Update subtask status to COMPLETED with partial content
+            running_subtask.status = SubtaskStatus.COMPLETED
+            running_subtask.progress = 100
+            running_subtask.completed_at = datetime.now()
+            running_subtask.updated_at = datetime.now()
+            running_subtask.result = {"value": partial_content or ""}
+
+            # Update task status to COMPLETED
+            if task_crd.status:
+                task_crd.status.status = "COMPLETED"
+                task_crd.status.errorMessage = ""
+                task_crd.status.updatedAt = datetime.now()
+                task_crd.status.completedAt = datetime.now()
+
+            task_kind.json = task_crd.model_dump(mode="json")
+            task_kind.updated_at = datetime.now()
+            flag_modified(task_kind, "json")
+
+            db.commit()
+            db.refresh(task_kind)
+            db.refresh(running_subtask)
+
+            logger.info(
+                f"[CANCEL] Chat Shell task cancelled: task_id={task_id}, subtask_id={running_subtask.id}"
+            )
+        else:
+            logger.info(f"[CANCEL] No running subtask found for task {task_id}")
+    else:
+        # For Executor-based tasks, use the existing cancel service
+        try:
+            await task_kinds_service.cancel_task(
+                db=db,
+                task_id=task_id,
+                user_id=current_user.id,
+                background_task_runner=background_tasks.add_task,
+            )
+        except HTTPException as e:
+            if e.status_code == 404:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Response '{response_id}' not found",
+                )
+            raise
 
     # Get updated task data for response
     try:
@@ -1125,13 +1258,15 @@ async def cancel_response(
             output=[],
         )
 
-    # Reconstruct model string
-    task_kind = (
-        db.query(Kind)
-        .filter(Kind.id == task_id, Kind.kind == "Task", Kind.is_active == True)
-        .first()
+    # Get subtasks for output (to include partial content)
+    subtasks = (
+        db.query(Subtask)
+        .filter(Subtask.task_id == task_id, Subtask.user_id == current_user.id)
+        .order_by(Subtask.message_id.asc())
+        .all()
     )
 
+    # Reconstruct model string
     model_string = "unknown"
     if task_kind and task_kind.json:
         task_crd = Task.model_validate(task_kind.json)
@@ -1147,7 +1282,7 @@ async def cancel_response(
         else:
             model_string = f"{team_namespace}#{team_name}"
 
-    return _task_to_response_object(task_dict, model_string)
+    return _task_to_response_object(task_dict, model_string, subtasks=subtasks)
 
 
 @router.delete("/{response_id}", response_model=ResponseDeletedObject)
