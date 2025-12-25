@@ -668,9 +668,13 @@ export default function TaskSidebar({
                 : [...unreadGroupChats, ...readGroupChats.slice(0, Math.max(0, remainingSlots))];
             }
 
-            // Calculate how many read chats are collapsed
+            // Calculate how many read chats are collapsed (for display text)
             const collapsedReadCount = readGroupChats.length - (visibleGroupChats.length - unreadGroupChats.length);
-            const hasCollapsedReadChats = collapsedReadCount > 0;
+
+            // Determine if expand/collapse button should be shown
+            // Button should show when there are more read chats than can fit after showing all unread chats
+            const maxReadSlotsWhenCollapsed = Math.max(0, maxVisibleGroupChats - unreadGroupChats.length);
+            const shouldShowExpandCollapseButton = readGroupChats.length > maxReadSlotsWhenCollapsed;
 
             return (
               <>
@@ -692,7 +696,7 @@ export default function TaskSidebar({
                       key={`group-chats-${viewStatusVersion}`}
                     />
                     {/* Expand/Collapse button for group chats */}
-                    {!isSearchResult && hasCollapsedReadChats && !isCollapsed && (
+                    {!isSearchResult && shouldShowExpandCollapseButton && !isCollapsed && (
                       <button
                         onClick={() => setIsGroupChatsExpanded(!isGroupChatsExpanded)}
                         className="flex items-center gap-1 px-1 py-1.5 text-xs text-text-muted hover:text-text-primary transition-colors w-full"
@@ -711,7 +715,7 @@ export default function TaskSidebar({
                       </button>
                     )}
                     {/* Collapsed mode: show icon + tooltip for expand/collapse */}
-                    {!isSearchResult && hasCollapsedReadChats && isCollapsed && (
+                    {!isSearchResult && shouldShowExpandCollapseButton && isCollapsed && (
                       <TooltipProvider>
                         <Tooltip delayDuration={300}>
                           <TooltipTrigger asChild>
