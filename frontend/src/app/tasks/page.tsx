@@ -8,7 +8,6 @@ import { Suspense, useState } from 'react';
 import { teamService } from '@/features/tasks/service/teamService';
 import TopNavigation from '@/features/layout/TopNavigation';
 import { TaskSidebar } from '@/features/tasks/components/sidebar';
-import { ChatArea } from '@/features/tasks/components/workbench';
 import { TaskParamSync } from '@/features/tasks/components/params';
 import { TeamShareHandler } from '@/features/tasks/components/share';
 import OidcTokenHandler from '@/features/login/components/OidcTokenHandler';
@@ -22,6 +21,7 @@ import { UserProvider } from '@/features/common/UserContext';
 import { TaskContextProvider } from '@/features/tasks/contexts/taskContext';
 import { ChatStreamProvider } from '@/features/tasks/contexts/chatStreamContext';
 import { SocketProvider } from '@/contexts/SocketContext';
+import ChatArea from '@/features/tasks/components/ChatArea';
 
 function TasksPageContent() {
   // Team state from service

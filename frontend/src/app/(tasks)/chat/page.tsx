@@ -26,7 +26,6 @@ import { GithubStarButton } from '@/features/layout/GithubStarButton';
 import { ThemeToggle } from '@/features/theme/ThemeToggle';
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
 import { Team } from '@/types/api';
-import { ChatArea } from '@/features/tasks/components/workbench';
 import { saveLastTab } from '@/utils/userPreferences';
 import { useUser } from '@/features/common/UserContext';
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
@@ -35,6 +34,7 @@ import { paths } from '@/config/paths';
 import { Button } from '@/components/ui/button';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut';
+import ChatArea from '@/features/tasks/components/ChatArea';
 
 export default function ChatPage() {
   const { t } = useTranslation();

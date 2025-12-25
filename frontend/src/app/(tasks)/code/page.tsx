@@ -15,7 +15,6 @@ import {
   SearchDialog,
 } from '@/features/tasks/components/sidebar';
 import OnboardingTour from '@/features/onboarding/OnboardingTour';
-import { ChatArea, Workbench } from '@/features/tasks/components/workbench';
 import { TaskParamSync } from '@/features/tasks/components/params';
 import { TeamShareHandler } from '@/features/tasks/components/share';
 import OidcTokenHandler from '@/features/login/components/OidcTokenHandler';
@@ -34,6 +33,8 @@ import { calculateOpenLinks } from '@/utils/openLinks';
 import { useUser } from '@/features/common/UserContext';
 import { paths } from '@/config/paths';
 import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut';
+import { Workbench } from '@/features/tasks/components';
+import ChatArea from '@/features/tasks/components/ChatArea';
 
 export default function CodePage() {
   // Get search params to check for taskId
