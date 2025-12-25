@@ -133,6 +133,9 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     const newSocket = io(socketUrl + '/chat', {
       path: SOCKETIO_PATH,
       auth: { token },
+      // Pass token in query params for 7-layer load balancer routing
+      // This allows LB to parse JWT and route based on user_id without inspecting WebSocket frames
+      query: { token },
       autoConnect: true,
       reconnection: true,
       reconnectionAttempts: Infinity,
