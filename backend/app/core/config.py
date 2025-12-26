@@ -173,6 +173,8 @@ class Settings(BaseSettings):
     #         }
     #     }
     # }
+    # Supports ${{path}} variable substitution, e.g.:
+    # "headers": {"X-User": "${{user.name}}"} will be replaced with actual username
     CHAT_MCP_SERVERS: str = "{}"
 
     # Maximum time to wait for active streaming requests to complete (seconds)
