@@ -321,6 +321,21 @@
     "cancel": "Cancel",
     "close": "Close"
   },
+  "mermaid": {
+    "exportPng": "Export PNG",
+    "exportSvg": "Export SVG",
+    "copyCode": "Copy Code",
+    "copyImage": "Copy Image",
+    "viewCode": "View Code",
+    "sourceCode": "Mermaid Source Code",
+    "escToClose": "Press ESC to close",
+    "zoomIn": "Zoom In",
+    "zoomOut": "Zoom Out",
+    "resetZoom": "Reset Zoom",
+    "renderError": "Mermaid render failed",
+    "copied": "Copied to clipboard",
+    "exportSuccess": "Image exported"
+  },
   "correction": {
     "enable": "Enable AI correction mode",
     "disable": "Disable AI correction mode",
