@@ -206,42 +206,56 @@ def build_connections(
     # Get the header key from settings
     user_header_key = getattr(settings, "CHAT_MCP_SERVERS_USER_HEADER", "wegent-user")
 
-    def _build_headers(cfg: dict[str, Any]) -> dict[str, str] | None:
+    def _build_headers(
+        cfg: dict[str, Any], server_name: str, server_type: str
+    ) -> dict[str, str] | None:
         """Build headers dict, optionally adding username header."""
         headers = dict(cfg.get("headers") or {})
         if username:
             sanitized_username = sanitize_header_value(username)
             if sanitized_username:
                 headers[user_header_key] = sanitized_username
+                logger.debug(
+                    "[MCP] Added user header '%s' for server '%s' (type=%s)",
+                    user_header_key,
+                    server_name,
+                    server_type,
+                )
+            elif username != sanitized_username:
+                logger.warning(
+                    "[MCP] Username '%s' was sanitized to empty string, "
+                    "skipping user header for server '%s'",
+                    username[:50] + "..." if len(username) > 50 else username,
+                    server_name,
+                )
         return headers if headers else None
-
-    builders = {
-        "sse": lambda cfg: SSEConnection(
-            transport="sse",
-            url=cfg["url"],
-            headers=_build_headers(cfg),
-            timeout=cfg.get("timeout", 30.0),
-        ),
-        "stdio": lambda cfg: StdioConnection(
-            transport="stdio",
-            command=cfg["command"],
-            args=cfg.get("args", []),
-            env=cfg.get("env"),
-        ),
-        "streamable-http": lambda cfg: StreamableHttpConnection(
-            transport="streamable_http",
-            url=cfg["url"],
-            headers=_build_headers(cfg),
-        ),
-    }
 
     connections = {}
     for name, cfg in config.items():
         server_type = cfg.get("type", "sse")
-        builder = builders.get(server_type)
-        if not builder:
+
+        if server_type == "sse":
+            connections[name] = SSEConnection(
+                transport="sse",
+                url=cfg["url"],
+                headers=_build_headers(cfg, name, server_type),
+                timeout=cfg.get("timeout", 30.0),
+            )
+        elif server_type == "stdio":
+            connections[name] = StdioConnection(
+                transport="stdio",
+                command=cfg["command"],
+                args=cfg.get("args", []),
+                env=cfg.get("env"),
+            )
+        elif server_type == "streamable-http":
+            connections[name] = StreamableHttpConnection(
+                transport="streamable_http",
+                url=cfg["url"],
+                headers=_build_headers(cfg, name, server_type),
+            )
+        else:
             raise ValueError(f"Unknown MCP server type: {server_type}")
-        connections[name] = builder(cfg)
 
     return connections
 

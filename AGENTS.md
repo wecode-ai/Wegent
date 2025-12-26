@@ -289,6 +289,13 @@ alembic downgrade -1                               # Rollback
   - Can be overridden by per-engine `max_results` in `WEB_SEARCH_ENGINES` config
   - LLM can override by passing `max_results` parameter to the tool
 
+**MCP (Model Context Protocol) Configuration:**
+- `CHAT_MCP_ENABLED`: Enable/disable MCP tools in Chat Shell mode (default: `false`)
+- `CHAT_MCP_SERVERS`: JSON config for MCP servers (see config.py comments for format)
+- `CHAT_MCP_SERVERS_USER_HEADER`: HTTP header key for passing username to MCP servers (default: `wegent-user`)
+  - Only applies to `sse` and `streamable-http` type MCP servers
+  - Username is sanitized to RFC 7230 compliant characters (printable ASCII only)
+
 ### Frontend
 
 **Tech:** Next.js 15, React 19, TypeScript, Tailwind CSS, shadcn/ui, i18next
