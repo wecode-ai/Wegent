@@ -25,7 +25,8 @@ interface MarkdownWithMermaidProps {
   source: string;
   theme: 'light' | 'dark';
   /** Custom components to override default rendering */
-  components?: Record<string, React.ComponentType<React.PropsWithChildren<unknown>>>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  components?: Record<string, React.ComponentType<any>>;
 }
 
 /**
@@ -84,11 +85,7 @@ export const MarkdownWithMermaid = memo(function MarkdownWithMermaid({
   // Default components with link handling
   const defaultComponents = useMemo(
     () => ({
-      a: ({
-        href,
-        children,
-        ...props
-      }: React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
+      a: ({ href, children, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
         <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
           {children}
         </a>
