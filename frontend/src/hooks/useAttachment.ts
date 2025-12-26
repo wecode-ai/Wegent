@@ -7,15 +7,16 @@
  */
 
 import { useState, useCallback } from 'react'
+import { useTranslation } from '@/hooks/useTranslation'
 import {
   uploadAttachment,
   deleteAttachment,
   isSupportedExtension,
   isValidFileSize,
   MAX_FILE_SIZE,
-  SUPPORTED_EXTENSIONS,
+  getErrorMessageFromCode,
 } from '@/apis/attachments'
-import type { AttachmentUploadState } from '@/types/api'
+import type { AttachmentUploadState, TruncationInfo } from '@/types/api'
 
 interface UseAttachmentReturn {
   /** Current attachment state */
@@ -28,9 +29,12 @@ interface UseAttachmentReturn {
   reset: () => void
   /** Check if ready to send (no upload in progress, attachment ready or no attachment) */
   isReadyToSend: boolean
+  /** Truncation info if content was truncated */
+  truncationInfo: TruncationInfo | null
 }
 
 export function useAttachment(): UseAttachmentReturn {
+  const { t } = useTranslation('common')
   const [state, setState] = useState<AttachmentUploadState>({
     file: null,
     attachment: null,
@@ -38,6 +42,7 @@ export function useAttachment(): UseAttachmentReturn {
     uploadProgress: 0,
     error: null,
   })
+  const [truncationInfo, setTruncationInfo] = useState<TruncationInfo | null>(null)
 
   const handleFileSelect = useCallback(async (file: File) => {
     // Validate file type
@@ -48,7 +53,7 @@ export function useAttachment(): UseAttachmentReturn {
         attachment: null,
         isUploading: false,
         uploadProgress: 0,
-        error: `不支持的文件类型。支持的类型: ${SUPPORTED_EXTENSIONS.join(', ')}`,
+        error: `${t('attachment.errors.unsupported_type')}: ${t('attachment.errors.unsupported_type_hint', { types: t('attachment.supported_types') })}`,
       }))
       return
     }
@@ -61,7 +66,7 @@ export function useAttachment(): UseAttachmentReturn {
         attachment: null,
         isUploading: false,
         uploadProgress: 0,
-        error: `文件大小超过 ${MAX_FILE_SIZE / (1024 * 1024)} MB 限制`,
+        error: `${t('attachment.errors.file_too_large')}: ${t('attachment.errors.file_too_large_hint', { size: Math.round(MAX_FILE_SIZE / (1024 * 1024)) })}`,
       }))
       return
     }
@@ -75,6 +80,7 @@ export function useAttachment(): UseAttachmentReturn {
       uploadProgress: 0,
       error: null,
     }))
+    setTruncationInfo(null)
 
     try {
       const attachment = await uploadAttachment(file, progress => {
@@ -86,13 +92,16 @@ export function useAttachment(): UseAttachmentReturn {
 
       // Check if parsing succeeded
       if (attachment.status === 'failed') {
+        const errorMessage = getErrorMessageFromCode(attachment.error_code, t) ||
+          attachment.error_message ||
+          t('attachment.errors.parse_failed')
         setState(prev => ({
           ...prev,
           file: null,
           attachment: null,
           isUploading: false,
           uploadProgress: 0,
-          error: attachment.error_message || '文件解析失败',
+          error: errorMessage,
         }))
         // Try to delete the failed attachment
         try {
@@ -101,6 +110,11 @@ export function useAttachment(): UseAttachmentReturn {
           // Ignore delete errors
         }
         return
+      }
+
+      // Store truncation info if present
+      if (attachment.truncation_info?.is_truncated) {
+        setTruncationInfo(attachment.truncation_info)
       }
 
       setState(prev => ({
@@ -113,25 +127,28 @@ export function useAttachment(): UseAttachmentReturn {
           status: attachment.status,
           text_length: attachment.text_length,
           error_message: attachment.error_message,
+          error_code: attachment.error_code,
           subtask_id: null,
           file_extension: file.name.substring(file.name.lastIndexOf('.')),
           created_at: new Date().toISOString(),
+          truncation_info: attachment.truncation_info,
         },
         isUploading: false,
         uploadProgress: 100,
         error: null,
       }))
     } catch (err) {
+      const errorMessage = (err as Error).message || t('attachment.errors.network_error')
       setState(prev => ({
         ...prev,
         file: null,
         attachment: null,
         isUploading: false,
         uploadProgress: 0,
-        error: (err as Error).message || '上传失败',
+        error: `${t('attachment.errors.network_error')}: ${errorMessage}`,
       }))
     }
-  }, [])
+  }, [t])
 
   const handleRemove = useCallback(async () => {
     const attachmentId = state.attachment?.id
@@ -144,6 +161,7 @@ export function useAttachment(): UseAttachmentReturn {
       uploadProgress: 0,
       error: null,
     })
+    setTruncationInfo(null)
 
     // Try to delete from server if it exists and is not linked to a subtask
     if (attachmentId && !state.attachment?.subtask_id) {
@@ -163,6 +181,7 @@ export function useAttachment(): UseAttachmentReturn {
       uploadProgress: 0,
       error: null,
     })
+    setTruncationInfo(null)
   }, [])
 
   const isReadyToSend =
@@ -175,5 +194,6 @@ export function useAttachment(): UseAttachmentReturn {
     handleRemove,
     reset,
     isReadyToSend,
+    truncationInfo,
   }
 }

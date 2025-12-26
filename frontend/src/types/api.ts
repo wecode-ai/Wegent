@@ -429,6 +429,13 @@ export interface DifyParametersSchema {
 // Attachment Types
 export type AttachmentStatus = 'uploading' | 'parsing' | 'ready' | 'failed';
 
+export interface TruncationInfo {
+  is_truncated: boolean;
+  original_length?: number | null;
+  truncated_length?: number | null;
+  truncation_message_key?: string | null;
+}
+
 export interface Attachment {
   id: number;
   filename: string;
@@ -437,9 +444,11 @@ export interface Attachment {
   status: AttachmentStatus;
   text_length?: number | null;
   error_message?: string | null;
+  error_code?: string | null;
   subtask_id?: number | null;
   file_extension: string;
   created_at: string;
+  truncation_info?: TruncationInfo | null;
 }
 
 export interface AttachmentUploadState {

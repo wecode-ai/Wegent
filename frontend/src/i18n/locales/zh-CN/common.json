@@ -1042,5 +1042,32 @@
       "button": "删除群组",
       "confirmMessage": "确定要删除这个群聊吗？此操作无法撤销。"
     }
+  },
+  "attachment": {
+    "errors": {
+      "unsupported_type": "文件格式不支持",
+      "unsupported_type_hint": "请上传以下格式的文件：{{types}}",
+      "file_too_large": "文件太大了",
+      "file_too_large_hint": "文件大小不能超过 {{size}} MB，请压缩后重试",
+      "parse_failed": "文件解析失败",
+      "parse_failed_hint": "该文件可能已损坏或格式异常，请尝试重新导出后上传",
+      "encrypted_pdf": "无法解析加密文件",
+      "encrypted_pdf_hint": "请移除 PDF 密码保护后重新上传",
+      "legacy_doc": "文件格式过旧",
+      "legacy_doc_hint": "请将 .doc 文件另存为 .docx 格式后上传",
+      "legacy_ppt": "文件格式过旧",
+      "legacy_ppt_hint": "请将 .ppt 文件另存为 .pptx 格式后上传",
+      "legacy_xls": "文件格式过旧",
+      "legacy_xls_hint": "请将 .xls 文件另存为 .xlsx 格式后上传",
+      "network_error": "上传失败",
+      "network_error_hint": "网络连接异常，请检查网络后重试",
+      "content_truncated": "文件内容已截断",
+      "content_truncated_hint": "文件内容过长，已自动保留前 {{length}} 万字符"
+    },
+    "truncation": {
+      "notice": "⚠️ 文件内容过长，已自动截断（原始 {{original}} 字符 → 截断至 {{truncated}} 字符）"
+    },
+    "supported_types": "PDF、Word、Excel、TXT、Markdown、图片",
+    "characters": "字符"
   }
 }
