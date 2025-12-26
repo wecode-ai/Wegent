@@ -1048,5 +1048,32 @@
       "button": "Delete Group",
       "confirmMessage": "Are you sure you want to delete this group chat? This action cannot be undone."
     }
+  },
+  "attachment": {
+    "errors": {
+      "unsupported_type": "Unsupported file format",
+      "unsupported_type_hint": "Please upload files in these formats: {{types}}",
+      "file_too_large": "File is too large",
+      "file_too_large_hint": "File size cannot exceed {{size}} MB. Please compress and try again",
+      "parse_failed": "Failed to parse file",
+      "parse_failed_hint": "The file may be corrupted or in an unusual format. Please re-export and upload again",
+      "encrypted_pdf": "Cannot parse encrypted file",
+      "encrypted_pdf_hint": "Please remove PDF password protection and upload again",
+      "legacy_doc": "Outdated file format",
+      "legacy_doc_hint": "Please save the .doc file as .docx format and upload again",
+      "legacy_ppt": "Outdated file format",
+      "legacy_ppt_hint": "Please save the .ppt file as .pptx format and upload again",
+      "legacy_xls": "Outdated file format",
+      "legacy_xls_hint": "Please save the .xls file as .xlsx format and upload again",
+      "network_error": "Upload failed",
+      "network_error_hint": "Network connection error. Please check your network and try again",
+      "content_truncated": "File content truncated",
+      "content_truncated_hint": "File content was too long. Kept first {{length}} million characters"
+    },
+    "truncation": {
+      "notice": "⚠️ Content too long, auto-truncated ({{original}} chars → {{truncated}} chars)"
+    },
+    "supported_types": "PDF, Word, Excel, TXT, Markdown, Images",
+    "characters": "chars"
   }
 }

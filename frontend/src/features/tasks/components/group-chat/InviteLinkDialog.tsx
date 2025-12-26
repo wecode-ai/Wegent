@@ -34,7 +34,13 @@ interface InviteLinkDialogProps {
   onMembersChanged?: () => void; // Callback to refresh task detail after converting to group chat
 }
 
-export function InviteLinkDialog({ open, onClose, taskId, taskTitle, onMembersChanged }: InviteLinkDialogProps) {
+export function InviteLinkDialog({
+  open,
+  onClose,
+  taskId,
+  taskTitle,
+  onMembersChanged,
+}: InviteLinkDialogProps) {
   const { t } = useTranslation('chat');
   const { toast } = useToast();
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);

@@ -43,7 +43,8 @@ export default function ChatPage() {
   const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams();
 
   // Task context for refreshing task list
-  const { refreshTasks, selectedTaskDetail, setSelectedTask, refreshSelectedTaskDetail } = useTaskContext();
+  const { refreshTasks, selectedTaskDetail, setSelectedTask, refreshSelectedTaskDetail } =
+    useTaskContext();
 
   // Get current task title for top navigation
   const currentTaskTitle = selectedTaskDetail?.title;
