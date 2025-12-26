@@ -125,9 +125,7 @@ class DocumentParser:
         """Check if extracted text length is within limits."""
         return len(text) <= cls.get_max_text_length()
 
-    def parse(
-        self, binary_data: bytes, extension: str
-    ) -> ParseResult:
+    def parse(self, binary_data: bytes, extension: str) -> ParseResult:
         """
         Parse document and extract text content.
 
