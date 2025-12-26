@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import ConflictException, NotFoundException
 from app.db.session import SessionLocal
 from app.models.kind import Kind
+from app.models.task import TaskResource
 from app.services.group_permission import check_user_group_permission
 
 logger = logging.getLogger(__name__)
@@ -315,6 +316,242 @@ class KindBaseService(ABC):
         pass
 
     def _format_resource(self, resource: Kind) -> Dict[str, Any]:
+        """Format resource for API response directly from stored JSON"""
+        # Get the stored resource data
+        stored_resource = resource.json
+
+        # Ensure metadata has the correct name and namespace from the database
+        result = stored_resource.copy()
+
+        # Update metadata with values from the database (in case they were changed)
+        if "metadata" not in result:
+            result["metadata"] = {}
+
+        result["metadata"]["name"] = resource.name
+        result["metadata"]["namespace"] = resource.namespace
+
+        # Ensure apiVersion and kind are set correctly
+        result["apiVersion"] = "agent.wecode.io/v1"
+        result["kind"] = self.kind
+
+        return result
+
+
+class TaskResourceBaseService(KindBaseService):
+    """
+    Base service for Task and Workspace resources that use the tasks table.
+
+    This class overrides the database operations from KindBaseService to use
+    the TaskResource model (tasks table) instead of the Kind model (kinds table).
+    """
+
+    def _build_filters(
+        self, user_id: int, namespace: str, name: Optional[str] = None
+    ) -> List:
+        """Build database query filters using TaskResource model"""
+        filters = [
+            TaskResource.kind == self.kind,
+            TaskResource.namespace == namespace,
+            TaskResource.is_active == True,
+        ]
+
+        # For personal resources, filter by user_id
+        # For group resources, we query by namespace only
+        if namespace == "default":
+            filters.append(TaskResource.user_id == user_id)
+
+        if name:
+            filters.append(TaskResource.name == name)
+
+        return filters
+
+    def list_resources(self, user_id: int, namespace: str) -> List[TaskResource]:
+        """List all resources in a namespace using tasks table"""
+        # Check group permission for non-default namespaces
+        if not self._check_group_permission(user_id, namespace, "Reporter"):
+            return []
+
+        with self.get_db() as db:
+            filters = self._build_filters(user_id, namespace)
+            return db.query(TaskResource).filter(and_(*filters)).all()
+
+    def get_resource(
+        self, user_id: int, namespace: str, name: str
+    ) -> Optional[TaskResource]:
+        """Get a specific resource using tasks table"""
+        # Check group permission for non-default namespaces
+        if not self._check_group_permission(user_id, namespace, "Reporter"):
+            return None
+
+        with self.get_db() as db:
+            filters = self._build_filters(user_id, namespace, name)
+            return db.query(TaskResource).filter(and_(*filters)).first()
+
+    def create_resource(self, user_id: int, resource: Dict[str, Any]) -> int:
+        """Create a new resource in tasks table and return its ID"""
+        # Check group permission for non-default namespaces (need Maintainer or Owner)
+        namespace = resource.get("metadata", {}).get("namespace", "default")
+        if not self._check_group_permission(user_id, namespace, "Maintainer"):
+            raise NotFoundException(
+                f"Namespace '{namespace}' not found or permission denied"
+            )
+
+        with self.get_db() as db:
+            # Check if resource already exists
+            existing = self.get_resource(
+                user_id, resource["metadata"]["namespace"], resource["metadata"]["name"]
+            )
+
+            if existing:
+                raise ConflictException(
+                    f"{self.kind} '{resource['metadata']['name']}' already exists"
+                )
+
+            # Extract resource data
+            resource_data = self._extract_resource_data(resource)
+
+            # Validate references
+            self._validate_references(db, user_id, resource)
+
+            # Create new resource in tasks table
+            db_resource = TaskResource(
+                user_id=user_id,
+                kind=self.kind,
+                name=resource["metadata"]["name"],
+                namespace=resource["metadata"]["namespace"],
+                json=resource_data,
+            )
+
+            db.add(db_resource)
+            db.commit()
+            db.refresh(db_resource)
+
+            # Get the resource ID
+            resource_id = db_resource.id
+
+            # Log resource creation
+            logger.info(
+                f"Created {self.kind} resource in tasks table: name='{resource['metadata']['name']}', "
+                f"namespace='{resource['metadata']['namespace']}', user_id={user_id}, "
+                f"resource_id={resource_id}"
+            )
+
+            # Perform side effects
+            self._perform_side_effects(db, user_id, db_resource, resource)
+
+            return resource_id
+
+    def update_resource(
+        self, user_id: int, namespace: str, name: str, resource: Dict[str, Any]
+    ) -> int:
+        """Update an existing resource in tasks table and return its ID"""
+        # Check group permission for non-default namespaces (need Developer or above)
+        if not self._check_group_permission(user_id, namespace, "Developer"):
+            raise NotFoundException(
+                f"{self.kind} '{name}' not found or permission denied"
+            )
+
+        with self.get_db() as db:
+            filters = self._build_filters(user_id, namespace, name)
+            db_resource = db.query(TaskResource).filter(and_(*filters)).first()
+            if not db_resource:
+                raise NotFoundException(f"{self.kind} '{name}' not found")
+
+            # Validate references
+            self._validate_references(db, user_id, resource)
+
+            # Extract resource data
+            resource_data = self._extract_resource_data(resource)
+
+            # Update resource
+            db_resource.json = resource_data
+            db_resource.updated_at = datetime.now()
+
+            db.commit()
+            db.refresh(db_resource)
+
+            # Get the resource ID
+            resource_id = db_resource.id
+
+            # Log resource update
+            logger.info(
+                f"Updated {self.kind} resource in tasks table: name='{name}', "
+                f"namespace='{namespace}', user_id={user_id}, "
+                f"resource_id={resource_id}"
+            )
+
+            # Perform side effects
+            self._update_side_effects(db, user_id, db_resource, resource)
+
+            return resource_id
+
+    def soft_delete_resource(self, user_id: int, namespace: str, name: str) -> bool:
+        """Soft delete a resource in tasks table (mark as inactive)"""
+        # Check group permission for non-default namespaces (need Maintainer or Owner)
+        if not self._check_group_permission(user_id, namespace, "Maintainer"):
+            raise NotFoundException(
+                f"{self.kind} '{name}' not found or permission denied"
+            )
+
+        with self.get_db() as db:
+            filters = self._build_filters(user_id, namespace, name)
+            db_resource = db.query(TaskResource).filter(and_(*filters)).first()
+            if not db_resource:
+                logger.warning(
+                    f"Attempted to soft delete non-existent {self.kind} '{name}' in namespace '{namespace}' for user {user_id}"
+                )
+                raise NotFoundException(f"{self.kind} '{name}' not found")
+
+            db_resource.is_active = False
+            db_resource.updated_at = datetime.now()
+
+            # Perform pre-delete side effects
+            self._pre_delete_side_effects(db, user_id, db_resource)
+
+            db.commit()
+            logger.info(
+                f"Soft deleted {self.kind} '{name}' in tasks table in namespace '{namespace}' for user {user_id}"
+            )
+
+            # Perform post-delete side effects
+            self._post_delete_side_effects(db, user_id, db_resource)
+
+            return True
+
+    def delete_resource(self, user_id: int, namespace: str, name: str) -> bool:
+        """Hard delete a resource from tasks table (permanently remove from database)"""
+        # Check group permission for non-default namespaces (need Maintainer or Owner)
+        if not self._check_group_permission(user_id, namespace, "Maintainer"):
+            raise NotFoundException(
+                f"{self.kind} '{name}' not found or permission denied"
+            )
+
+        with self.get_db() as db:
+            filters = self._build_filters(user_id, namespace, name)
+            db_resource = db.query(TaskResource).filter(and_(*filters)).first()
+            if not db_resource:
+                logger.warning(
+                    f"Attempted to hard delete non-existent {self.kind} '{name}' in namespace '{namespace}' for user {user_id}"
+                )
+                raise NotFoundException(f"{self.kind} '{name}' not found")
+
+            # Perform pre-delete side effects
+            self._pre_delete_side_effects(db, user_id, db_resource)
+
+            # Check if deletion should proceed
+            if self._should_delete_resource(db, user_id, db_resource):
+                db.delete(db_resource)
+                db.commit()
+                logger.info(
+                    f"Hard deleted {self.kind} '{name}' from tasks table in namespace '{namespace}' for user {user_id}"
+                )
+
+            # Perform post-delete side effects
+            self._post_delete_side_effects(db, user_id, db_resource)
+
+            return True
+
+    def _format_resource(self, resource: TaskResource) -> Dict[str, Any]:
         """Format resource for API response directly from stored JSON"""
         # Get the stored resource data
         stored_resource = resource.json

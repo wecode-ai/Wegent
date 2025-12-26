@@ -338,7 +338,7 @@ async def export_task_docx(
     - Formatted markdown content
     - Embedded images and attachment info
     """
-    from app.models.kind import Kind
+    from app.models.task import TaskResource
     from app.services.task_member_service import task_member_service
 
     # Check if user has access to the task (owner or group chat member)
@@ -347,11 +347,11 @@ async def export_task_docx(
 
     # Query task without user_id filter since we already validated access
     task = (
-        db.query(Kind)
+        db.query(TaskResource)
         .filter(
-            Kind.id == task_id,
-            Kind.kind == "Task",
-            Kind.is_active == True,
+            TaskResource.id == task_id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active == True,
         )
         .first()
     )

@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.kind import Kind
+from app.models.task import TaskResource
 from app.models.task_member import MemberStatus, TaskMember
 from app.models.user import User
 from app.schemas.task_member import TaskMemberListResponse, TaskMemberResponse
@@ -25,14 +26,14 @@ logger = logging.getLogger(__name__)
 class TaskMemberService:
     """Service for managing group chat members."""
 
-    def get_task(self, db: Session, task_id: int) -> Optional[Kind]:
+    def get_task(self, db: Session, task_id: int) -> Optional[TaskResource]:
         """Get a task by ID"""
         return (
-            db.query(Kind)
+            db.query(TaskResource)
             .filter(
-                Kind.id == task_id,
-                Kind.kind == "Task",
-                Kind.is_active == True,
+                TaskResource.id == task_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active == True,
             )
             .first()
         )

@@ -1017,6 +1017,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         Returns:
             List of running task info dictionaries
         """
+        from app.models.task import TaskResource
         from app.schemas.kind import Task
 
         if not teams:
@@ -1024,7 +1025,9 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
 
         # Get all active tasks
         all_tasks = (
-            db.query(Kind).filter(Kind.kind == "Task", Kind.is_active == True).all()
+            db.query(TaskResource)
+            .filter(TaskResource.kind == "Task", TaskResource.is_active == True)
+            .all()
         )
 
         running_tasks = []

@@ -938,9 +938,13 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         Returns:
             List of running task info dictionaries
         """
+        from app.models.task import TaskResource
+
         # Get all active tasks
         all_tasks = (
-            db.query(Kind).filter(Kind.kind == "Task", Kind.is_active == True).all()
+            db.query(TaskResource)
+            .filter(TaskResource.kind == "Task", TaskResource.is_active == True)
+            .all()
         )
 
         running_tasks = []
@@ -2106,11 +2110,15 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         """
         Update all references to this team in tasks when team name/namespace changes
         """
+        from app.models.task import TaskResource
+
         # Find all tasks that reference this team
         tasks = (
-            db.query(Kind)
+            db.query(TaskResource)
             .filter(
-                Kind.user_id == user_id, Kind.kind == "Task", Kind.is_active == True
+                TaskResource.user_id == user_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active == True,
             )
             .all()
         )

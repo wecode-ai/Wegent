@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.task import TaskResource
 from app.schemas.kind import Task
 from app.services.adapters.executor_kinds import executor_kinds_service
 from app.services.base import BaseService
@@ -45,11 +46,11 @@ class JobService(BaseService[Kind, None, None]):
                 )
             )
 
-            # Query candidates using kinds table
-            # Join with kinds table to check task status
+            # Query candidates using tasks table
+            # Join with tasks table to check task status
             candidates: List[Subtask] = (
                 db.query(Subtask)
-                .join(Kind, Subtask.task_id == Kind.id)
+                .join(TaskResource, Subtask.task_id == TaskResource.id)
                 .filter(
                     and_(
                         Subtask.status.in_(
@@ -60,9 +61,9 @@ class JobService(BaseService[Kind, None, None]):
                             ]
                         ),
                         Subtask.updated_at <= cutoff,
-                        Kind.kind == "Task",
-                        Kind.is_active == True,
-                        Kind.updated_at <= cutoff,
+                        TaskResource.kind == "Task",
+                        TaskResource.is_active == True,
+                        TaskResource.updated_at <= cutoff,
                         Subtask.executor_name.isnot(None),
                         Subtask.executor_name != "",
                         Subtask.executor_deleted_at == False,
@@ -78,13 +79,13 @@ class JobService(BaseService[Kind, None, None]):
             # Filter candidates by checking task status from JSON
             valid_candidates = []
             for subtask in candidates:
-                # Get task from kinds table
+                # Get task from tasks table
                 task = (
-                    db.query(Kind)
+                    db.query(TaskResource)
                     .filter(
-                        Kind.id == subtask.task_id,
-                        Kind.kind == "Task",
-                        Kind.is_active == True,
+                        TaskResource.id == subtask.task_id,
+                        TaskResource.kind == "Task",
+                        TaskResource.is_active == True,
                     )
                     .first()
                 )

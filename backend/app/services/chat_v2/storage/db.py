@@ -124,8 +124,8 @@ class DatabaseHandler:
 
     def _update_task_status_sync(self, task_id: int) -> None:
         """Update task status based on subtask status."""
-        from app.models.kind import Kind
         from app.models.subtask import Subtask, SubtaskRole
+        from app.models.task import TaskResource
         from app.schemas.kind import Task
 
         user_id = None
@@ -135,8 +135,12 @@ class DatabaseHandler:
         try:
             with _db_session() as db:
                 task = (
-                    db.query(Kind)
-                    .filter(Kind.id == task_id, Kind.kind == "Task", Kind.is_active)
+                    db.query(TaskResource)
+                    .filter(
+                        TaskResource.id == task_id,
+                        TaskResource.kind == "Task",
+                        TaskResource.is_active,
+                    )
                     .first()
                 )
                 if not task:

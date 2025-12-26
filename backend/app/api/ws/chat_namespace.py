@@ -44,6 +44,7 @@ from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Bot, Shell, Task, Team
 from app.services.chat.rag_integration import retrieve_and_assemble_rag_prompt
@@ -129,11 +130,11 @@ async def can_access_task(user_id: int, task_id: int) -> bool:
     db = SessionLocal()
     try:
         task = (
-            db.query(Kind)
+            db.query(TaskResource)
             .filter(
-                Kind.id == task_id,
-                Kind.kind == "Task",
-                Kind.is_active == True,
+                TaskResource.id == task_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active == True,
             )
             .first()
         )
@@ -723,11 +724,11 @@ class ChatNamespace(socketio.AsyncNamespace):
             task_json = {}
             if payload.task_id:
                 existing_task = (
-                    db.query(Kind)
+                    db.query(TaskResource)
                     .filter(
-                        Kind.id == payload.task_id,
-                        Kind.kind == "Task",
-                        Kind.is_active == True,
+                        TaskResource.id == payload.task_id,
+                        TaskResource.kind == "Task",
+                        TaskResource.is_active == True,
                     )
                     .first()
                 )
@@ -849,13 +850,13 @@ class ChatNamespace(socketio.AsyncNamespace):
                     task_id=payload.task_id,
                 )
 
-                # Get the task Kind object from database
+                # Get the task TaskResource object from database
                 task = (
-                    db.query(Kind)
+                    db.query(TaskResource)
                     .filter(
-                        Kind.id == task_dict["id"],
-                        Kind.kind == "Task",
-                        Kind.is_active == True,
+                        TaskResource.id == task_dict["id"],
+                        TaskResource.kind == "Task",
+                        TaskResource.is_active == True,
                     )
                     .first()
                 )
@@ -1223,11 +1224,11 @@ class ChatNamespace(socketio.AsyncNamespace):
 
             # Update task status
             task = (
-                db.query(Kind)
+                db.query(TaskResource)
                 .filter(
-                    Kind.id == subtask.task_id,
-                    Kind.kind == "Task",
-                    Kind.is_active == True,
+                    TaskResource.id == subtask.task_id,
+                    TaskResource.kind == "Task",
+                    TaskResource.is_active == True,
                 )
                 .first()
             )
@@ -1298,10 +1299,11 @@ class ChatNamespace(socketio.AsyncNamespace):
         finally:
             db.close()
 
-    def _fetch_retry_context(
-        self, db, payload: "ChatRetryPayload"
-    ) -> tuple[
-        Optional["Subtask"], Optional["Kind"], Optional["Kind"], Optional["Subtask"]
+    def _fetch_retry_context(self, db, payload: "ChatRetryPayload") -> tuple[
+        Optional["Subtask"],
+        Optional["TaskResource"],
+        Optional["Kind"],
+        Optional["Subtask"],
     ]:
         """
         Fetch all required database entities for retry operation in a single optimized query.
@@ -1315,7 +1317,7 @@ class ChatNamespace(socketio.AsyncNamespace):
         """
         from sqlalchemy.orm import aliased, joinedload
 
-        TaskKind = aliased(Kind)
+        TaskKind = aliased(TaskResource)
         TeamKind = aliased(Kind)
 
         # Optimized query: fetch failed_ai_subtask, task, and team in one go
