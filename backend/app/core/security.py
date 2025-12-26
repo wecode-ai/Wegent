@@ -316,23 +316,31 @@ def get_current_user_flexible(
     token: Optional[str] = Depends(oauth2_scheme_optional),
     db: Session = Depends(get_db),
     api_key: str = Depends(get_api_key_from_header),
+    wegent_source: Optional[str] = Header(default=None, alias="wegent-source"),
+    wegent_username: Optional[str] = Header(default=None, alias="wegent-username"),
 ) -> User:
     """
-    Flexible authentication: supports both JWT token and API key.
+    Flexible authentication: supports JWT token, API key, and trusted source.
 
-    This function tries JWT authentication first, then falls back to API key.
-    Use this for endpoints that need to support both authentication methods.
+    This function tries authentication in the following order:
+    1. JWT token
+    2. API key
+    3. Trusted source (via wegent-source and wegent-username headers)
+
+    Use this for endpoints that need to support multiple authentication methods.
 
     Args:
         token: Optional JWT token
         db: Database session
         api_key: API key string
+        wegent_source: Trusted source identifier (from wegent-source header)
+        wegent_username: Username to impersonate (from wegent-username header)
 
     Returns:
         Authenticated User object
 
     Raises:
-        HTTPException: If neither authentication method succeeds
+        HTTPException: If no authentication method succeeds
     """
     # Try JWT first
     if token:
@@ -348,8 +356,93 @@ def get_current_user_flexible(
     if user and user.is_active:
         return user
 
+    # Try trusted source authentication
+    user = get_current_user_from_trusted_source(db, wegent_source, wegent_username)
+    if user:
+        return user
+
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid authentication credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+
+def get_wegent_source_header(
+    wegent_source: Optional[str] = Header(default=None, alias="wegent-source"),
+) -> Optional[str]:
+    """
+    Extract wegent-source header value.
+
+    This is used to identify the trusted source that is making the request.
+    Returns the source name if it's in the trusted sources whitelist, None otherwise.
+
+    Args:
+        wegent_source: Trusted source identifier (from wegent-source header)
+
+    Returns:
+        Source name if trusted, None otherwise
+    """
+    if not wegent_source:
+        return None
+
+    # Get API trusted sources from configuration
+    trusted_sources_str = settings.API_TRUSTED_SOURCES
+    if not trusted_sources_str:
+        return None
+
+    # Parse trusted sources (comma-separated list)
+    trusted_sources = [s.strip() for s in trusted_sources_str.split(",") if s.strip()]
+
+    # Only return the source if it's in the whitelist
+    if wegent_source in trusted_sources:
+        return wegent_source
+
+    return None
+
+
+def get_current_user_from_trusted_source(
+    db: Session,
+    wegent_source: Optional[str],
+    wegent_username: Optional[str],
+) -> Optional[User]:
+    """
+    Authenticate user via API trusted source headers.
+
+    Allows trusted services to proxy requests on behalf of users.
+    The service must be in the API_TRUSTED_SOURCES whitelist.
+
+    Args:
+        db: Database session
+        wegent_source: API trusted source identifier (from wegent-source header)
+        wegent_username: Username to impersonate (from wegent-username header)
+
+    Returns:
+        User object if authentication succeeds, None otherwise
+    """
+    # Check if both headers are provided
+    if not wegent_source or not wegent_username:
+        return None
+
+    # Get API trusted sources from configuration
+    trusted_sources_str = settings.API_TRUSTED_SOURCES
+    if not trusted_sources_str:
+        return None
+
+    # Parse trusted sources (comma-separated list)
+    trusted_sources = [s.strip() for s in trusted_sources_str.split(",") if s.strip()]
+
+    # Verify the source is in the whitelist
+    if wegent_source not in trusted_sources:
+        return None
+
+    # Look up the user by username
+    user = user_service.get_user_by_name(db=db, user_name=wegent_username)
+    if not user:
+        return None
+
+    # Verify user is active
+    if not user.is_active:
+        return None
+
+    return user

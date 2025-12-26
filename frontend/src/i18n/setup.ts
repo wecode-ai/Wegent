@@ -23,6 +23,7 @@ async function loadTranslations() {
     'admin',
     'wizard',
     'groups',
+    'knowledge',
   ];
 
   for (const lng of supportedLanguages) {
@@ -59,7 +60,18 @@ export async function initI18n() {
     debug: process.env.NODE_ENV === 'development',
     // Namespace configuration
     defaultNS: 'common',
-    ns: ['common', 'chat', 'settings', 'history', 'prompts', 'tasks', 'admin', 'wizard', 'groups'],
+    ns: [
+      'common',
+      'chat',
+      'settings',
+      'history',
+      'prompts',
+      'tasks',
+      'admin',
+      'wizard',
+      'groups',
+      'knowledge',
+    ],
   });
 
   return i18next;
