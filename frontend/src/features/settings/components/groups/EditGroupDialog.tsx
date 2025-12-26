@@ -11,9 +11,16 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { updateGroup } from '@/apis/groups';
 import { toast } from 'sonner';
-import type { Group, GroupUpdate } from '@/types/group';
+import type { Group, GroupUpdate, GroupVisibility } from '@/types/group';
 
 interface EditGroupDialogProps {
   isOpen: boolean;
@@ -33,14 +40,14 @@ export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroup
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    if (group) {
+    if (isOpen && group) {
       setFormData({
         display_name: group.display_name || '',
         visibility: group.visibility,
         description: group.description || '',
       });
     }
-  }, [group]);
+  }, [isOpen, group]);
 
   const validateForm = (): boolean => {
     const newErrors: Record<string, string> = {};
@@ -116,9 +123,10 @@ export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroup
             id="display_name"
             value={formData.display_name}
             onChange={e => {
-              setFormData({ ...formData, display_name: e.target.value });
+              const value = e.target.value;
+              setFormData(prev => ({ ...prev, display_name: value }));
               if (errors.display_name) {
-                setErrors({ ...errors, display_name: '' });
+                setErrors(prev => ({ ...prev, display_name: '' }));
               }
             }}
             placeholder="My Group"
@@ -128,13 +136,48 @@ export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroup
           {errors.display_name && <p className="text-sm text-error mt-1">{errors.display_name}</p>}
         </div>
 
+        {/* Visibility */}
+        <div>
+          <Label htmlFor="visibility">{t('groups.visibility')}</Label>
+          <Select
+            value={formData.visibility}
+            onValueChange={(value: GroupVisibility) => {
+              // Prevent setting empty value (Radix Select may trigger this unexpectedly)
+              if (value) {
+                setFormData(prev => ({ ...prev, visibility: value }));
+              }
+            }}
+            disabled={isSubmitting}
+          >
+            <SelectTrigger id="visibility" data-testid="visibility-select">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="internal">
+                <div className="flex flex-col">
+                  <span>{t('groups.internal')}</span>
+                </div>
+              </SelectItem>
+              <SelectItem value="public">
+                <div className="flex flex-col">
+                  <span>{t('groups.public')}</span>
+                </div>
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-text-muted mt-1">
+            {formData.visibility === 'public' && t('groupCreate.visibilityPublicHint')}
+            {formData.visibility === 'internal' && t('groupCreate.visibilityInternalHint')}
+          </p>
+        </div>
+
         {/* Description */}
         <div>
           <Label htmlFor="description">{t('groups.description')}</Label>
           <Textarea
             id="description"
             value={formData.description}
-            onChange={e => setFormData({ ...formData, description: e.target.value })}
+            onChange={e => setFormData(prev => ({ ...prev, description: e.target.value }))}
             placeholder={t('groupCreate.descriptionPlaceholder')}
             rows={3}
             disabled={isSubmitting}

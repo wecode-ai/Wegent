@@ -20,7 +20,7 @@ import {
 } from '@/components/ui/select';
 import { createGroup, listGroups } from '@/apis/groups';
 import { toast } from 'sonner';
-import type { GroupCreate, Group } from '@/types/group';
+import type { GroupCreate, Group, GroupVisibility } from '@/types/group';
 
 interface CreateGroupDialogProps {
   isOpen: boolean;
@@ -33,7 +33,7 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
   const [formData, setFormData] = useState<GroupCreate>({
     name: '',
     display_name: '',
-    visibility: 'public',
+    visibility: 'internal',
     description: '',
   });
   const [parentGroup, setParentGroup] = useState<string>('__none__');
@@ -128,7 +128,7 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
       setFormData({
         name: '',
         display_name: '',
-        visibility: 'public',
+        visibility: 'internal',
         description: '',
       });
       setParentGroup('__none__');
@@ -150,7 +150,7 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
       setFormData({
         name: '',
         display_name: '',
-        visibility: 'public',
+        visibility: 'internal',
         description: '',
       });
       setParentGroup('__none__');
@@ -228,6 +228,38 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
             </SelectContent>
           </Select>
           <p className="text-xs text-text-muted mt-1">{t('groupCreate.parentGroupHint')}</p>
+        </div>
+
+        {/* Visibility */}
+        <div>
+          <Label htmlFor="visibility">{t('groups.visibility')}</Label>
+          <Select
+            value={formData.visibility}
+            onValueChange={(value: GroupVisibility) =>
+              setFormData({ ...formData, visibility: value })
+            }
+            disabled={isSubmitting}
+          >
+            <SelectTrigger id="visibility" data-testid="visibility-select">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="internal">
+                <div className="flex flex-col">
+                  <span>{t('groups.internal')}</span>
+                </div>
+              </SelectItem>
+              <SelectItem value="public">
+                <div className="flex flex-col">
+                  <span>{t('groups.public')}</span>
+                </div>
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-text-muted mt-1">
+            {formData.visibility === 'public' && t('groupCreate.visibilityPublicHint')}
+            {formData.visibility === 'internal' && t('groupCreate.visibilityInternalHint')}
+          </p>
         </div>
 
         {/* Description */}

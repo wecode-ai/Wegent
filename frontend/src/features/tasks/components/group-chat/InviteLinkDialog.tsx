@@ -31,9 +31,16 @@ interface InviteLinkDialogProps {
   onClose: () => void;
   taskId: number;
   taskTitle: string;
+  onMembersChanged?: () => void; // Callback to refresh task detail after converting to group chat
 }
 
-export function InviteLinkDialog({ open, onClose, taskId, taskTitle }: InviteLinkDialogProps) {
+export function InviteLinkDialog({
+  open,
+  onClose,
+  taskId,
+  taskTitle,
+  onMembersChanged,
+}: InviteLinkDialogProps) {
   const { t } = useTranslation('chat');
   const { toast } = useToast();
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
@@ -52,8 +59,10 @@ export function InviteLinkDialog({ open, onClose, taskId, taskTitle }: InviteLin
     setLoading(true);
     try {
       // First, ensure the task is converted to a group chat
+      let wasConverted = false;
       try {
         await taskMemberApi.convertToGroupChat(taskId);
+        wasConverted = true;
       } catch (conversionError: unknown) {
         // Ignore conversion errors - task might already be a group chat or user might not be owner
         // The important part is the generateInviteLink call below
@@ -63,6 +72,11 @@ export function InviteLinkDialog({ open, onClose, taskId, taskTitle }: InviteLin
       // Generate the invite link
       const response = await taskMemberApi.generateInviteLink(taskId, parseInt(expiresHours));
       setInviteUrl(response.invite_url);
+
+      // Trigger UI refresh if task was converted to group chat
+      if (wasConverted) {
+        onMembersChanged?.();
+      }
     } catch (error: unknown) {
       toast({
         title: t('groupChat.inviteLink.generateFailed'),

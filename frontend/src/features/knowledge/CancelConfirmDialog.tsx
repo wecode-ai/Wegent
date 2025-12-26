@@ -4,7 +4,7 @@
 
 'use client';
 
-import { useTranslation } from 'react-i18next';
+import { useTranslation } from '@/hooks/useTranslation';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -31,7 +31,7 @@ export default function CancelConfirmDialog({
   onClose,
   onConfirm,
 }: CancelConfirmDialogProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation('knowledge');
 
   const handleConfirm = () => {
     onConfirm();
@@ -42,16 +42,16 @@ export default function CancelConfirmDialog({
     <AlertDialog open={isOpen} onOpenChange={open => !open && onClose()}>
       <AlertDialogContent className="max-w-sm">
         <AlertDialogHeader>
-          <AlertDialogTitle>{t('wiki.cancel_dialog_title')}</AlertDialogTitle>
-          <AlertDialogDescription>{t('wiki.cancel_dialog_description')}</AlertDialogDescription>
+          <AlertDialogTitle>{t('cancel_dialog_title')}</AlertDialogTitle>
+          <AlertDialogDescription>{t('cancel_dialog_description')}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel onClick={onClose}>{t('actions.cancel')}</AlertDialogCancel>
+          <AlertDialogCancel onClick={onClose}>{t('common:actions.cancel')}</AlertDialogCancel>
           <AlertDialogAction
             onClick={handleConfirm}
             className="bg-error hover:bg-error/90 text-white"
           >
-            {t('actions.confirm')}
+            {t('common:actions.confirm')}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
