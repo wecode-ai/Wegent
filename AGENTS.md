@@ -79,6 +79,22 @@ cd frontend && npm run test:e2e    # E2E tests (Playwright)
 - **Function length**: Max 50 lines per function (preferred)
 - **Avoid duplication**: Extract common logic into shared utilities
 
+### Code Design Guidelines
+
+⚠️ **Follow these guidelines when implementing new features or modifying existing code:**
+
+1. **Long-term maintainability over short-term simplicity**: When multiple implementation approaches exist, avoid solutions that are simpler to implement now but will increase maintenance costs in the long run. Choose the approach that balances implementation effort with long-term sustainability.
+
+2. **Use design patterns for decoupling**: Actively consider applying design patterns (e.g., Strategy, Factory, Observer, Adapter) to decouple modules and improve code flexibility. This makes the codebase easier to extend and test.
+
+3. **Manage complexity through extraction**: If a module is already complex, prioritize extracting common logic into utilities or creating new modules rather than adding more complexity to the existing module. When in doubt, split rather than extend.
+
+4. **Reference, extract, then reuse**: Before implementing new functionality, always:
+   - Search for existing implementations that solve similar problems
+   - Extract reusable patterns from existing code if found
+   - Create shared utilities that can be reused across the codebase
+   - Never copy-paste code or write duplicate logic
+
 ### Python (Backend, Executor, Shared)
 
 **Standards:** PEP 8, Black formatter (line length: 88), isort, type hints required
