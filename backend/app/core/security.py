@@ -368,20 +368,53 @@ def get_current_user_flexible(
     )
 
 
+def get_wegent_source_header(
+    wegent_source: Optional[str] = Header(default=None, alias="wegent-source"),
+) -> Optional[str]:
+    """
+    Extract wegent-source header value.
+
+    This is used to identify the trusted source that is making the request.
+    Returns the source name if it's in the trusted sources whitelist, None otherwise.
+
+    Args:
+        wegent_source: Trusted source identifier (from wegent-source header)
+
+    Returns:
+        Source name if trusted, None otherwise
+    """
+    if not wegent_source:
+        return None
+
+    # Get API trusted sources from configuration
+    trusted_sources_str = settings.API_TRUSTED_SOURCES
+    if not trusted_sources_str:
+        return None
+
+    # Parse trusted sources (comma-separated list)
+    trusted_sources = [s.strip() for s in trusted_sources_str.split(",") if s.strip()]
+
+    # Only return the source if it's in the whitelist
+    if wegent_source in trusted_sources:
+        return wegent_source
+
+    return None
+
+
 def get_current_user_from_trusted_source(
     db: Session,
     wegent_source: Optional[str],
     wegent_username: Optional[str],
 ) -> Optional[User]:
     """
-    Authenticate user via trusted source headers.
+    Authenticate user via API trusted source headers.
 
     Allows trusted services to proxy requests on behalf of users.
-    The service must be in the TRUSTED_SOURCES whitelist.
+    The service must be in the API_TRUSTED_SOURCES whitelist.
 
     Args:
         db: Database session
-        wegent_source: Trusted source identifier (from wegent-source header)
+        wegent_source: API trusted source identifier (from wegent-source header)
         wegent_username: Username to impersonate (from wegent-username header)
 
     Returns:
@@ -391,8 +424,8 @@ def get_current_user_from_trusted_source(
     if not wegent_source or not wegent_username:
         return None
 
-    # Get trusted sources from configuration
-    trusted_sources_str = settings.TRUSTED_SOURCES
+    # Get API trusted sources from configuration
+    trusted_sources_str = settings.API_TRUSTED_SOURCES
     if not trusted_sources_str:
         return None
 

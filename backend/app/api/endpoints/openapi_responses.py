@@ -313,6 +313,7 @@ def _setup_chat_session(
     input_text: str,
     tool_settings: Dict[str, Any],
     task_id: Optional[int] = None,
+    api_trusted_source: Optional[str] = None,
 ) -> ChatSessionSetup:
     """
     Set up chat session: build config, create task and subtasks.
@@ -325,6 +326,7 @@ def _setup_chat_session(
         input_text: User input text
         tool_settings: Tool settings
         task_id: Optional existing task ID
+        api_trusted_source: Optional API trusted source name (from wegent-source header)
 
     Returns:
         ChatSessionSetup with task, subtasks, and config
@@ -466,7 +468,7 @@ def _setup_chat_session(
                     "taskType": "chat",
                     "autoDeleteExecutor": "false",
                     "source": "chat_shell",
-                    "ext_source": "api",
+                    "is_api_call": "true",
                     **(
                         {"modelId": model_info.get("model_id")}
                         if model_info.get("model_id")
@@ -475,6 +477,11 @@ def _setup_chat_session(
                     **(
                         {"forceOverrideBotModel": "true"}
                         if model_info.get("model_id")
+                        else {}
+                    ),
+                    **(
+                        {"api_trusted_source": api_trusted_source}
+                        if api_trusted_source
                         else {}
                     ),
                 },
@@ -749,6 +756,7 @@ async def _create_streaming_response(
     input_text: str,
     tool_settings: Dict[str, Any],
     task_id: Optional[int] = None,
+    api_trusted_source: Optional[str] = None,
 ) -> StreamingResponse:
     """
     Create a streaming response for Chat Shell type teams.
@@ -764,6 +772,7 @@ async def _create_streaming_response(
         input_text: Extracted input text
         tool_settings: Parsed tool settings (enable_mcp, enable_web_search, search_engine)
         task_id: Optional existing task ID for follow-up conversations
+        api_trusted_source: Optional API trusted source name (from wegent-source header)
 
     Returns:
         StreamingResponse with SSE events
@@ -772,7 +781,7 @@ async def _create_streaming_response(
 
     # Set up chat session (config, task, subtasks)
     setup = _setup_chat_session(
-        db, user, team, model_info, input_text, tool_settings, task_id
+        db, user, team, model_info, input_text, tool_settings, task_id, api_trusted_source
     )
 
     response_id = f"resp_{setup.task_id}"
@@ -1053,6 +1062,7 @@ async def _create_sync_response(
     input_text: str,
     tool_settings: Dict[str, Any],
     task_id: Optional[int] = None,
+    api_trusted_source: Optional[str] = None,
 ) -> ResponseObject:
     """
     Create a synchronous (blocking) response for Chat Shell type teams.
@@ -1068,6 +1078,7 @@ async def _create_sync_response(
         input_text: Extracted input text
         tool_settings: Parsed tool settings (enable_mcp, enable_web_search, search_engine)
         task_id: Optional existing task ID for follow-up conversations
+        api_trusted_source: Optional API trusted source name (from wegent-source header)
 
     Returns:
         ResponseObject with completed status and output
@@ -1082,7 +1093,7 @@ async def _create_sync_response(
 
     # Set up chat session (config, task, subtasks)
     setup = _setup_chat_session(
-        db, user, team, model_info, input_text, tool_settings, task_id
+        db, user, team, model_info, input_text, tool_settings, task_id, api_trusted_source
     )
 
     response_id = f"resp_{setup.task_id}"
@@ -1262,6 +1273,7 @@ async def create_response(
     request_body: ResponseCreateInput,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user_flexible),
+    wegent_source: Optional[str] = Depends(security.get_wegent_source_header),
 ):
     """
     Create a new response (execute a task).
@@ -1473,6 +1485,7 @@ async def create_response(
                 input_text=input_text,
                 tool_settings=tool_settings,
                 task_id=task_id,
+                api_trusted_source=wegent_source,
             )
         else:
             return await _create_sync_response(
@@ -1484,6 +1497,7 @@ async def create_response(
                 input_text=input_text,
                 tool_settings=tool_settings,
                 task_id=task_id,
+                api_trusted_source=wegent_source,
             )
 
     # Non-Chat Shell type (Executor-based): streaming not supported
@@ -1504,6 +1518,7 @@ async def create_response(
         source="api",
         model_id=model_info.get("model_id"),
         force_override_bot_model=model_info.get("model_id") is not None,
+        api_trusted_source=wegent_source,
     )
 
     try:

@@ -242,11 +242,23 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                         "taskType": obj_in.task_type,  # default: chat, code
                         "autoDeleteExecutor": obj_in.auto_delete_executor,  # default: false, true
                         "source": obj_in.source,
+                        # Mark as API call if source is "api"
+                        **(
+                            {"is_api_call": "true"}
+                            if obj_in.source == "api"
+                            else {}
+                        ),
                         # Model selection fields
                         **({"modelId": obj_in.model_id} if obj_in.model_id else {}),
                         **(
                             {"forceOverrideBotModel": "true"}
                             if obj_in.force_override_bot_model
+                            else {}
+                        ),
+                        # Trusted source field
+                        **(
+                            {"api_trusted_source": obj_in.api_trusted_source}
+                            if obj_in.api_trusted_source
                             else {}
                         ),
                     },
