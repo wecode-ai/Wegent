@@ -2,6 +2,16 @@
   "attachment": {
     "characters": "characters"
   },
+  "urlPreview": {
+    "loading": "Loading...",
+    "loadFailed": "Failed to load",
+    "openOriginal": "Open Original",
+    "zoomIn": "Zoom In",
+    "zoomOut": "Zoom Out",
+    "rotate": "Rotate",
+    "download": "Download",
+    "close": "Close"
+  },
   "workbench": {
     "overview": "Overview",
     "files_changed": "Files Changed",

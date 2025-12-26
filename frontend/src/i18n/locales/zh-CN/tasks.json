@@ -2,6 +2,16 @@
   "attachment": {
     "characters": "字符"
   },
+  "urlPreview": {
+    "loading": "加载中...",
+    "loadFailed": "加载失败",
+    "openOriginal": "打开原图",
+    "zoomIn": "放大",
+    "zoomOut": "缩小",
+    "rotate": "旋转",
+    "download": "下载",
+    "close": "关闭"
+  },
   "workbench": {
     "overview": "概览",
     "files_changed": "文件变更",

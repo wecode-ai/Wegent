@@ -35,6 +35,9 @@ import type { ClarificationData, FinalPromptData, ClarificationAnswer } from '@/
 import type { SourceReference } from '@/types/socket';
 import { useTraceAction } from '@/hooks/useTraceAction';
 import { useMessageFeedback } from '@/hooks/useMessageFeedback';
+import ImagePreview from '@/components/common/ImagePreview';
+import LinkCard from '@/components/common/LinkCard';
+import { isImageUrl } from '@/utils/url-detector';
 export interface Message {
   type: 'user' | 'ai';
   content: string;
@@ -252,6 +255,60 @@ const MessageBubble = memo(
         }),
     });
 
+    // Shared markdown components for URL rendering (img and a tags)
+    // This function returns component overrides for MarkdownEditor.Markdown
+    const getUrlRenderingComponents = () => ({
+      img: ({ src, alt }: { src?: string; alt?: string }) => {
+        if (src) {
+          return <ImagePreview src={src} alt={alt || ''} className="my-2" />;
+        }
+        return <img src={src} alt={alt} />;
+      },
+      a: ({
+        href,
+        children,
+        ...props
+      }: {
+        href?: string;
+        children?: React.ReactNode;
+        [key: string]: unknown;
+      }) => {
+        // Check if this is an image URL
+        if (href && isImageUrl(href)) {
+          const altText =
+            typeof children === 'string'
+              ? children
+              : Array.isArray(children)
+                ? children.join('')
+                : '';
+          return <ImagePreview src={href} alt={altText} className="my-2" />;
+        }
+        // For non-image URLs, render as LinkCard for standalone links
+        if (href) {
+          const linkText =
+            typeof children === 'string'
+              ? children
+              : Array.isArray(children)
+                ? children.join('')
+                : '';
+          // If link text equals the URL, render as card
+          if (linkText === href || !linkText) {
+            return <LinkCard url={href} className="my-2" />;
+          }
+          // If link text is different from URL, check if it looks like a domain
+          const isDomainText = /^(?:https?:\/\/)?[\w.-]+\.[a-z]{2,}(?:\/|$)/i.test(linkText);
+          if (isDomainText) {
+            return <LinkCard url={href} linkText={linkText} className="my-2" />;
+          }
+        }
+        return (
+          <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+            {children}
+          </a>
+        );
+      },
+    });
+
     // Determine if this is a user-type message (for styling purposes)
     const isUserTypeMessage = msg.type === 'user';
 
@@ -456,11 +513,50 @@ const MessageBubble = memo(
             components={
               paragraphAction
                 ? {
-                    a: ({ href, children, ...props }) => (
-                      <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                        {children}
-                      </a>
-                    ),
+                    img: ({ src, alt }) => {
+                      if (src) {
+                        return <ImagePreview src={src} alt={alt || ''} className="my-2" />;
+                      }
+                      return <img src={src} alt={alt} />;
+                    },
+                    a: ({ href, children, ...props }) => {
+                      // Check if this is an image URL
+                      if (href && isImageUrl(href)) {
+                        const altText =
+                          typeof children === 'string'
+                            ? children
+                            : Array.isArray(children)
+                              ? children.join('')
+                              : '';
+                        return <ImagePreview src={href} alt={altText} className="my-2" />;
+                      }
+                      // For non-image URLs, render as LinkCard for standalone links
+                      // or as regular link if it has custom text
+                      if (href) {
+                        const linkText =
+                          typeof children === 'string'
+                            ? children
+                            : Array.isArray(children)
+                              ? children.join('')
+                              : '';
+                        // If link text equals the URL, render as card
+                        if (linkText === href || !linkText) {
+                          return <LinkCard url={href} className="my-2" />;
+                        }
+                        // If link text is different from URL, check if it looks like a domain
+                        const isDomainText = /^(?:https?:\/\/)?[\w.-]+\.[a-z]{2,}(?:\/|$)/i.test(
+                          linkText
+                        );
+                        if (isDomainText) {
+                          return <LinkCard url={href} linkText={linkText} className="my-2" />;
+                        }
+                      }
+                      return (
+                        <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+                          {children}
+                        </a>
+                      );
+                    },
                     p: ({ children }) => {
                       const text = extractText(children);
                       return wrapWithAction(<p>{children}</p>, text);
@@ -499,11 +595,49 @@ const MessageBubble = memo(
                     },
                   }
                 : {
-                    a: ({ href, children, ...props }) => (
-                      <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                        {children}
-                      </a>
-                    ),
+                    img: ({ src, alt }) => {
+                      if (src) {
+                        return <ImagePreview src={src} alt={alt || ''} className="my-2" />;
+                      }
+                      return <img src={src} alt={alt} />;
+                    },
+                    a: ({ href, children, ...props }) => {
+                      // Check if this is an image URL
+                      if (href && isImageUrl(href)) {
+                        const altText =
+                          typeof children === 'string'
+                            ? children
+                            : Array.isArray(children)
+                              ? children.join('')
+                              : '';
+                        return <ImagePreview src={href} alt={altText} className="my-2" />;
+                      }
+                      // For non-image URLs, render as LinkCard for standalone links
+                      if (href) {
+                        const linkText =
+                          typeof children === 'string'
+                            ? children
+                            : Array.isArray(children)
+                              ? children.join('')
+                              : '';
+                        // If link text equals the URL, render as card
+                        if (linkText === href || !linkText) {
+                          return <LinkCard url={href} className="my-2" />;
+                        }
+                        // If link text is different from URL, check if it looks like a domain
+                        const isDomainText = /^(?:https?:\/\/)?[\w.-]+\.[a-z]{2,}(?:\/|$)/i.test(
+                          linkText
+                        );
+                        if (isDomainText) {
+                          return <LinkCard url={href} linkText={linkText} className="my-2" />;
+                        }
+                      }
+                      return (
+                        <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+                          {children}
+                        </a>
+                      );
+                    },
                   }
             }
           />
@@ -978,13 +1112,7 @@ const MessageBubble = memo(
                   source={prefixText}
                   style={{ background: 'transparent' }}
                   wrapperElement={{ 'data-color-mode': theme }}
-                  components={{
-                    a: ({ href, children, ...props }) => (
-                      <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                        {children}
-                      </a>
-                    ),
-                  }}
+                  components={getUrlRenderingComponents()}
                 />
               )}
               {/* Render the clarification form */}
@@ -1002,13 +1130,7 @@ const MessageBubble = memo(
                     source={suffixText}
                     style={{ background: 'transparent' }}
                     wrapperElement={{ 'data-color-mode': theme }}
-                    components={{
-                      a: ({ href, children, ...props }) => (
-                        <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                          {children}
-                        </a>
-                      ),
-                    }}
+                    components={getUrlRenderingComponents()}
                   />
                 </div>
               )}
@@ -1112,13 +1234,7 @@ const MessageBubble = memo(
                 source={prefixText}
                 style={{ background: 'transparent' }}
                 wrapperElement={{ 'data-color-mode': theme }}
-                components={{
-                  a: ({ href, children, ...props }) => (
-                    <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                      {children}
-                    </a>
-                  ),
-                }}
+                components={getUrlRenderingComponents()}
               />
             )}
             {/* Render the clarification form */}
@@ -1136,13 +1252,7 @@ const MessageBubble = memo(
                   source={suffixText}
                   style={{ background: 'transparent' }}
                   wrapperElement={{ 'data-color-mode': theme }}
-                  components={{
-                    a: ({ href, children, ...props }) => (
-                      <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                        {children}
-                      </a>
-                    ),
-                  }}
+                  components={getUrlRenderingComponents()}
                 />
               </div>
             )}
@@ -1204,13 +1314,7 @@ const MessageBubble = memo(
                 source={contentToRender}
                 style={{ background: 'transparent' }}
                 wrapperElement={{ 'data-color-mode': theme }}
-                components={{
-                  a: ({ href, children, ...props }) => (
-                    <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                      {children}
-                    </a>
-                  ),
-                }}
+                components={getUrlRenderingComponents()}
               />
               {/* Show copy and download buttons during streaming */}
               <SourceReferences sources={msg.sources || msg.result?.sources || []} />
