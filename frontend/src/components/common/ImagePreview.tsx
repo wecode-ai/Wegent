@@ -237,18 +237,19 @@ export default function ImagePreview({
 
   return (
     <>
-      <div className="relative inline-block my-2">
+      {/* Use span instead of div to avoid hydration error when rendered inside <p> tags */}
+      <span className="relative inline-block my-2">
         {/* Loading skeleton */}
         {isLoading && (
-          <div
-            className="absolute inset-0 bg-muted animate-pulse rounded-lg"
+          <span
+            className="absolute inset-0 bg-muted animate-pulse rounded-lg block"
             style={{ maxWidth, maxHeight, minWidth: 100, minHeight: 60 }}
           />
         )}
 
         {/* Image thumbnail */}
-        <div
-          className={`cursor-pointer rounded-lg overflow-hidden border border-border hover:border-primary transition-colors ${
+        <span
+          className={`cursor-pointer rounded-lg overflow-hidden border border-border hover:border-primary transition-colors block ${
             isLoading ? 'opacity-0' : 'opacity-100'
           }`}
           onClick={handleImageClick}
@@ -263,8 +264,8 @@ export default function ImagePreview({
             onError={handleImageError}
             loading="lazy"
           />
-        </div>
-      </div>
+        </span>
+      </span>
 
       {/* Lightbox modal */}
       {showLightbox && (

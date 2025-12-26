@@ -697,7 +697,8 @@ const MessageBubble = memo(
         }
 
         // Use SmartTextLine to detect and render URLs (images and links) in plain text
-        return <SmartTextLine key={idx} text={line} />;
+        // Pass disabled={isStreaming} to avoid metadata fetching during streaming
+        return <SmartTextLine key={idx} text={line} disabled={isStreaming} />;
       });
     };
     // Helper function to parse Markdown clarification questions
