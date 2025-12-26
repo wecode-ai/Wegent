@@ -29,6 +29,7 @@ export interface KnowledgeBaseContext extends BaseContextItem {
   description?: string;
   retriever_name?: string;
   retriever_namespace?: string;
+  document_count?: number;
 }
 
 /**
