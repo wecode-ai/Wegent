@@ -22,8 +22,7 @@ import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import MarkdownEditor from '@uiw/react-markdown-editor';
-import ThinkingComponent from './ThinkingComponent';
-import InlineToolStatus from './InlineToolStatus';
+import { ThinkingDisplay } from './thinking';
 import ClarificationForm from '../clarification/ClarificationForm';
 import FinalPromptMessage from './FinalPromptMessage';
 import ClarificationAnswerSummary from '../clarification/ClarificationAnswerSummary';
@@ -1279,15 +1278,15 @@ const MessageBubble = memo(
     return (
       <div className={`flex ${shouldAlignRight ? 'justify-end' : 'justify-start'}`} translate="no">
         <div
-          className={`flex ${shouldAlignRight ? 'max-w-[75%] w-auto' : isUserTypeMessage ? 'max-w-[75%] w-auto' : 'w-full'} flex-col gap-3 ${shouldAlignRight ? 'items-end' : 'items-start'}`}
+          className={`flex ${shouldAlignRight ? 'max-w-[75%] w-auto' : isUserTypeMessage ? 'max-w-[75%] w-auto' : 'w-full'} flex-col ${shouldAlignRight ? 'items-end' : 'items-start'}`}
         >
-          {/* Show inline tool status for Chat shell type only */}
-          {!isUserTypeMessage && msg.thinking && msg.result?.shell_type === 'Chat' && (
-            <InlineToolStatus thinking={msg.thinking} taskStatus={msg.subtaskStatus} />
-          )}
-          {/* Show thinking component for all other cases (non-Chat shell types or legacy data without shell_type) */}
-          {msg.type === 'ai' && msg.thinking && msg.result?.shell_type !== 'Chat' && (
-            <ThinkingComponent thinking={msg.thinking} taskStatus={msg.subtaskStatus} />
+          {/* Show thinking display for AI messages */}
+          {!isUserTypeMessage && msg.thinking && (
+            <ThinkingDisplay
+              thinking={msg.thinking}
+              taskStatus={msg.subtaskStatus}
+              shellType={msg.result?.shell_type}
+            />
           )}
           <div
             className={`${bubbleBaseClasses} ${bubbleTypeClasses}`}
