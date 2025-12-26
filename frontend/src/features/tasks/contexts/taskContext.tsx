@@ -130,15 +130,47 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     setTaskLoading(true);
     const result = await loadPages(loadedPages, false);
 
+    // Fetch group chats separately to ensure complete group chat list
+    // This is needed because /tasks/lite may not return all group chats due to pagination
+    let groupChatTasks: Task[] = [];
+    try {
+      const groupChatsResult = await taskApis.getGroupChats({ page: 1, limit: 100 });
+      groupChatTasks = groupChatsResult.items || [];
+    } catch (err) {
+      console.warn('[TaskContext] Failed to load group chats:', err);
+    }
+
     // Only update tasks if no error occurred - preserve existing data on network error
     if (!result.error) {
-      setTasks(result.items);
+      // Strategy: Use group chats from /tasks/group-chats API (complete list)
+      // and regular tasks (non-group-chat) from /tasks/lite
+      const regularTasks = result.items.filter((t: Task) => !t.is_group_chat);
+
+      // Create a Set of group chat IDs from API response for deduplication
+      const groupChatIds = new Set(groupChatTasks.map((t: Task) => t.id));
+
+      // Also include any group chats from /tasks/lite that weren't in /tasks/group-chats
+      // (edge case: newly created group chats that haven't been indexed yet)
+      const additionalGroupChats = result.items.filter(
+        (t: Task) => t.is_group_chat && !groupChatIds.has(t.id)
+      );
+
+      const mergedTasks = [...regularTasks, ...groupChatTasks, ...additionalGroupChats];
+
+      // Sort by created_at descending
+      mergedTasks.sort((a, b) => {
+        const dateA = new Date(a.created_at).getTime();
+        const dateB = new Date(b.created_at).getTime();
+        return dateB - dateA;
+      });
+
+      setTasks(mergedTasks);
       setLoadedPages(result.pages || []);
       setHasMore(result.hasMore);
 
       // Initialize task view status on first load (if not already initialized)
-      if (result.items.length > 0) {
-        initializeTaskViewStatus(result.items);
+      if (mergedTasks.length > 0) {
+        initializeTaskViewStatus(mergedTasks);
       }
     } else {
       // On error, preserve existing data without clearing
