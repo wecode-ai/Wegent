@@ -2,22 +2,22 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import React, { Fragment } from 'react'
-import { Dialog, Transition } from '@headlessui/react'
-import { XMarkIcon } from '@heroicons/react/24/outline'
-import { useTranslation } from '@/hooks/useTranslation'
+import React, { Fragment } from 'react';
+import { Dialog, Transition } from '@headlessui/react';
+import { XMarkIcon } from '@heroicons/react/24/outline';
+import { useTranslation } from '@/hooks/useTranslation';
 
 interface MobileSidebarProps {
-  isOpen: boolean
-  onClose: () => void
-  children: React.ReactNode
-  title?: string
+  isOpen: boolean;
+  onClose: () => void;
+  children: React.ReactNode;
+  title?: string;
 }
 
 export function MobileSidebar({ isOpen, onClose, children, title }: MobileSidebarProps) {
-  const { t } = useTranslation('common')
+  const { t } = useTranslation('common');
 
   return (
     <Transition.Root show={isOpen} as={Fragment}>
@@ -67,7 +67,7 @@ export function MobileSidebar({ isOpen, onClose, children, title }: MobileSideba
                   </button>
                 </div>
               </Transition.Child>
-              
+
               {/* 侧边栏内容容器 - 现代化设计 */}
               <div className="flex grow flex-col overflow-y-auto bg-surface shadow-2xl w-full">
                 {title && (
@@ -77,16 +77,14 @@ export function MobileSidebar({ isOpen, onClose, children, title }: MobileSideba
                     </h2>
                   </div>
                 )}
-                <div className="flex-1 flex flex-col min-h-0">
-                  {children}
-                </div>
+                <div className="flex-1 flex flex-col min-h-0">{children}</div>
               </div>
             </Dialog.Panel>
           </Transition.Child>
         </div>
       </Dialog>
     </Transition.Root>
-  )
+  );
 }
 
-export default MobileSidebar
+export default MobileSidebar;

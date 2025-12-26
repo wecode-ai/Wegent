@@ -7,7 +7,7 @@
 import React from 'react';
 import { Upload } from 'lucide-react';
 import ChatInput from './ChatInput';
-import AttachmentUploadPreview from '../AttachmentUploadPreview';
+import InputBadgeDisplay from './InputBadgeDisplay';
 import ExternalApiParamsInput from '../params/ExternalApiParamsInput';
 import { SelectedTeamBadge } from '../selector/SelectedTeamBadge';
 import ChatInputControls, { ChatInputControlsProps } from './ChatInputControls';
@@ -43,7 +43,7 @@ export interface ChatInputCardProps extends Omit<ChatInputControlsProps, 'taskIn
   onDrop: (e: React.DragEvent) => void;
 
   // Attachment handlers
-  onPasteFile?: (file: File) => void;
+  onPasteFile?: (files: File | File[]) => void;
 
   // Submit
   canSubmit: boolean;
@@ -102,6 +102,9 @@ export function ChatInputCard({
   setEnableDeepThinking,
   enableClarification,
   setEnableClarification,
+  enableCorrectionMode,
+  correctionModelName,
+  onCorrectionModeToggle,
   selectedContexts,
   setSelectedContexts,
   attachmentState,
@@ -151,18 +154,16 @@ export function ChatInputCard({
           </div>
         )}
 
-        {/* File Upload Preview - show above input on its own row (multi-attachment) */}
-        {(attachmentState.attachments.length > 0 ||
-          attachmentState.uploadingFiles.size > 0 ||
-          attachmentState.errors.size > 0) && (
-          <div className="px-3 pt-2">
-            <AttachmentUploadPreview
-              state={attachmentState}
-              onRemove={onAttachmentRemove}
-              disabled={hasMessages || isLoading || isStreaming}
-            />
-          </div>
-        )}
+        {/* Unified Badge Display - Knowledge bases and attachments */}
+        <InputBadgeDisplay
+          contexts={selectedContexts}
+          attachmentState={attachmentState}
+          onRemoveContext={contextId => {
+            setSelectedContexts(selectedContexts.filter(ctx => ctx.id !== contextId));
+          }}
+          onRemoveAttachment={onAttachmentRemove}
+          disabled={isLoading || isStreaming}
+        />
 
         {/* Chat Input with inline badge */}
         {!shouldHideChatInput && (
@@ -179,11 +180,7 @@ export function ChatInputCard({
               badge={selectedTeam ? <SelectedTeamBadge team={selectedTeam} /> : undefined}
               isGroupChat={isGroupChat}
               team={selectedTeam}
-              onPasteFile={
-                isChatShell(selectedTeam) && attachmentState.attachments.length === 0
-                  ? onPasteFile
-                  : undefined
-              }
+              onPasteFile={isChatShell(selectedTeam) ? onPasteFile : undefined}
             />
           </div>
         )}
@@ -213,6 +210,9 @@ export function ChatInputCard({
             setEnableDeepThinking={setEnableDeepThinking}
             enableClarification={enableClarification}
             setEnableClarification={setEnableClarification}
+            enableCorrectionMode={enableCorrectionMode}
+            correctionModelName={correctionModelName}
+            onCorrectionModeToggle={onCorrectionModeToggle}
             selectedContexts={selectedContexts}
             setSelectedContexts={setSelectedContexts}
             attachmentState={attachmentState}

@@ -227,12 +227,7 @@ export default function ChatArea({
       e.preventDefault();
       e.stopPropagation();
       if (!chatState.selectedTeam || !isChatShell(chatState.selectedTeam)) return;
-      if (
-        chatState.isLoading ||
-        streamHandlers.isStreaming ||
-        chatState.attachmentState.attachments.length > 0
-      )
-        return;
+      if (chatState.isLoading || streamHandlers.isStreaming) return;
       chatState.setIsDragging(true);
     },
     [chatState, streamHandlers.isStreaming]
@@ -259,16 +254,11 @@ export default function ChatArea({
       e.stopPropagation();
       chatState.setIsDragging(false);
       if (!chatState.selectedTeam || !isChatShell(chatState.selectedTeam)) return;
-      if (
-        chatState.isLoading ||
-        streamHandlers.isStreaming ||
-        chatState.attachmentState.attachments.length > 0
-      )
-        return;
+      if (chatState.isLoading || streamHandlers.isStreaming) return;
 
-      const file = e.dataTransfer.files?.[0];
-      if (file) {
-        chatState.handleFileSelect(file);
+      const files = e.dataTransfer.files;
+      if (files && files.length > 0) {
+        chatState.handleFileSelect(Array.from(files));
       }
     },
     [chatState, streamHandlers.isStreaming]
@@ -369,6 +359,9 @@ export default function ChatArea({
     setEnableDeepThinking: chatState.setEnableDeepThinking,
     enableClarification: chatState.enableClarification,
     setEnableClarification: chatState.setEnableClarification,
+    enableCorrectionMode: chatState.enableCorrectionMode,
+    correctionModelName: chatState.correctionModelName,
+    onCorrectionModeToggle: chatState.handleCorrectionModeToggle,
     selectedContexts: chatState.selectedContexts,
     setSelectedContexts: chatState.setSelectedContexts,
     attachmentState: chatState.attachmentState,
@@ -426,6 +419,9 @@ export default function ChatArea({
               onSendMessage={handleSendMessageFromChild}
               isGroupChat={selectedTaskDetail?.is_group_chat || false}
               onRetry={streamHandlers.handleRetry}
+              enableCorrectionMode={chatState.enableCorrectionMode}
+              correctionModelId={chatState.correctionModelId}
+              enableCorrectionWebSearch={chatState.enableCorrectionWebSearch}
             />
           </div>
         </div>

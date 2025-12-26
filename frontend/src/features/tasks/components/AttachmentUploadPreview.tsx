@@ -5,9 +5,11 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { X, Loader2 } from 'lucide-react';
+import { X, Loader2, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { useTranslation } from '@/hooks/useTranslation';
 import {
   formatFileSize,
   getFileIcon,
@@ -15,7 +17,7 @@ import {
   getAttachmentPreviewUrl,
 } from '@/apis/attachments';
 import { getToken } from '@/apis/user';
-import type { Attachment, MultiAttachmentUploadState } from '@/types/api';
+import type { Attachment, MultiAttachmentUploadState, TruncationInfo } from '@/types/api';
 
 interface AttachmentUploadPreviewProps {
   /** Current attachments state */
@@ -24,6 +26,8 @@ interface AttachmentUploadPreviewProps {
   onRemove: (attachmentId: number) => void;
   /** Whether the component is disabled */
   disabled?: boolean;
+  /** Truncation info for attachments */
+  truncatedAttachments?: Map<number, TruncationInfo>;
 }
 
 /**
@@ -97,17 +101,43 @@ function AttachmentPreviewInline({
   attachment,
   disabled,
   onRemove,
+  truncationInfo,
 }: {
   attachment: Attachment;
   disabled?: boolean;
   onRemove: () => void;
+  truncationInfo?: TruncationInfo;
 }) {
+  const { t } = useTranslation('common');
   const isImage = isImageExtension(attachment.file_extension);
   const {
     blobUrl: imageUrl,
     isLoading: imageLoading,
     error: imageError,
   } = useAuthenticatedImageInline(attachment.id, isImage);
+
+  const isTruncated = truncationInfo?.is_truncated || attachment.truncation_info?.is_truncated;
+  const truncInfo = truncationInfo || attachment.truncation_info;
+
+  // Truncation indicator component
+  const TruncationIndicator = () =>
+    isTruncated ? (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="ml-1 text-amber-500 flex-shrink-0">
+            <AlertTriangle className="h-3 w-3" />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>
+          <p className="text-xs">
+            {t('attachment.truncation.notice', {
+              original: truncInfo?.original_length?.toLocaleString(),
+              truncated: truncInfo?.truncated_length?.toLocaleString(),
+            })}
+          </p>
+        </TooltipContent>
+      </Tooltip>
+    ) : null;
 
   // For images, show thumbnail preview
   if (isImage && !imageError) {
@@ -165,6 +195,7 @@ function AttachmentPreviewInline({
           {attachment.status === 'parsing' && (
             <Loader2 className="h-3 w-3 animate-spin text-primary ml-1" />
           )}
+          <TruncationIndicator />
           {!disabled && (
             <Button
               type="button"
@@ -199,12 +230,14 @@ function AttachmentPreviewInline({
         </span>
         <span className="text-xs text-text-muted">
           {formatFileSize(attachment.file_size)}
-          {attachment.text_length && ` · ${attachment.text_length.toLocaleString()} 字符`}
+          {attachment.text_length &&
+            ` · ${attachment.text_length.toLocaleString()} ${t('attachment.characters')}`}
         </span>
       </div>
       {attachment.status === 'parsing' && (
         <Loader2 className="h-3 w-3 animate-spin text-primary ml-1" />
       )}
+      <TruncationIndicator />
       {!disabled && (
         <Button
           type="button"
@@ -228,6 +261,7 @@ export default function AttachmentUploadPreview({
   state,
   onRemove,
   disabled = false,
+  truncatedAttachments,
 }: AttachmentUploadPreviewProps) {
   const hasAttachments = state.attachments.length > 0;
   const isUploading = state.uploadingFiles.size > 0;
@@ -261,6 +295,7 @@ export default function AttachmentUploadPreview({
                 attachment={attachment}
                 disabled={disabled}
                 onRemove={() => onRemove(attachment.id)}
+                truncationInfo={truncatedAttachments?.get(attachment.id)}
               />
             </div>
           ))}

@@ -43,7 +43,8 @@ export default function ChatPage() {
   const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams();
 
   // Task context for refreshing task list
-  const { refreshTasks, selectedTaskDetail, setSelectedTask } = useTaskContext();
+  const { refreshTasks, selectedTaskDetail, setSelectedTask, refreshSelectedTaskDetail } =
+    useTaskContext();
 
   // Get current task title for top navigation
   const currentTaskTitle = selectedTaskDetail?.title;
@@ -52,6 +53,12 @@ export default function ChatPage() {
   const handleTaskDeleted = () => {
     setSelectedTask(null);
     refreshTasks();
+  };
+
+  // Handle members changed (when converting to group chat or adding/removing members)
+  const handleMembersChanged = () => {
+    refreshTasks();
+    refreshSelectedTaskDetail(false);
   };
 
   // Chat stream context
@@ -212,6 +219,7 @@ export default function ChatPage() {
             taskDetail={selectedTaskDetail}
             onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
             onTaskDeleted={handleTaskDeleted}
+            onMembersChanged={handleMembersChanged}
             isSidebarCollapsed={isCollapsed}
           >
             {/* Create Group Chat Button - only show when no task is open */}
