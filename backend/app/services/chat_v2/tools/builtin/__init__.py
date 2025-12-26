@@ -6,6 +6,7 @@
 
 from .evaluation import SubmitEvaluationResultTool
 from .file_reader import FileListSkill, FileReaderSkill
+from .invoke_skill import InvokeSkillTool
 from .knowledge_base import KnowledgeBaseTool
 from .web_search import WebSearchTool
 
@@ -15,4 +16,5 @@ __all__ = [
     "FileReaderSkill",
     "FileListSkill",
     "SubmitEvaluationResultTool",
+    "InvokeSkillTool",
 ]

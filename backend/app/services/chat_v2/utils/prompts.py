@@ -301,3 +301,38 @@ def append_mermaid_prompt(system_prompt: str) -> str:
         The system prompt with Mermaid diagram instructions appended.
     """
     return system_prompt + MERMAID_DIAGRAM_PROMPT
+
+
+# Skill Metadata Prompt Template
+SKILL_METADATA_PROMPT = """
+
+## Available Skills
+
+The following skills provide specialized guidance for specific tasks. When your task matches a skill's description, use the `invoke_skill` tool to load the full instructions.
+
+{skill_list}
+
+**Usage**: Call `invoke_skill(skill_name="<skill-name>")` to load detailed instructions before performing the related task.
+"""
+
+
+def append_skill_metadata_prompt(system_prompt: str, skills: list[dict]) -> str:
+    """
+    Append skill metadata to system prompt.
+
+    Args:
+        system_prompt: The original system prompt.
+        skills: List of skill metadata [{"name": "...", "description": "..."}]
+
+    Returns:
+        System prompt with skill metadata appended.
+    """
+    if not skills:
+        return system_prompt
+
+    skill_list = "\n".join(
+        [f"- **{s['name']}**: {s['description']}" for s in skills]
+    )
+
+    skill_section = SKILL_METADATA_PROMPT.format(skill_list=skill_list)
+    return system_prompt + skill_section

@@ -409,6 +409,7 @@
     "team": "Team",
     "models": "Models",
     "shells": "Shells",
+    "skills": "Skills",
     "retrievers": "Retrievers",
     "personal": "Personal",
     "groups": "Groups",
@@ -691,7 +692,14 @@
     "no_skills_available": "No skills available. Upload skills in the Skills tab.",
     "loading_skills": "Loading skills...",
     "select_skill_to_add": "Select a skill to add...",
-    "manage_skills_button": "Manage Skills"
+    "manage_skills_button": "Manage Skills",
+    "system_skill": "System",
+    "public_readonly": "System skills are read-only",
+    "public_no_download": "System skills cannot be downloaded",
+    "no_skills_hint": "Upload a skill ZIP package or use system skills",
+    "delete_success": "Skill deleted successfully",
+    "delete_failed": "Failed to delete skill",
+    "download_success": "Download started"
   },
   "models": {
     "label": "Model",

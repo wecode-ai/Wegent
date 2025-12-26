@@ -434,7 +434,8 @@ class BatchResponse(BaseModel):
 class SkillSpec(BaseModel):
     """Skill specification"""
 
-    description: str  # Extracted from SKILL.md YAML frontmatter
+    description: str  # Trigger condition description (from SKILL.md YAML frontmatter)
+    prompt: Optional[str] = None  # Full prompt content (from SKILL.md body)
     version: Optional[str] = None  # Skill version
     author: Optional[str] = None  # Author
     tags: Optional[List[str]] = None  # Tags

@@ -76,6 +76,7 @@ export interface SkillMetadata {
 
 export interface SkillSpec {
   description: string;
+  prompt?: string;
   version?: string;
   author?: string;
   tags?: string[];

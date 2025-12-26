@@ -301,6 +301,15 @@ class ChatConfigBuilder:
 
             system_prompt = append_deep_thinking_prompt(system_prompt, True)
 
+        # Inject skill metadata if bot has skills configured
+        skills = self._get_bot_skills(bot)
+        if skills:
+            from app.services.chat_v2.utils.prompts import (
+                append_skill_metadata_prompt,
+            )
+
+            system_prompt = append_skill_metadata_prompt(system_prompt, skills)
+
         # CRITICAL: Log the final system prompt being sent to the LLM
         logger.info(
             "[SYSTEM_PROMPT_DEBUG] Final system prompt for bot '%s' (user_id=%d, team_id=%d):\n---\n%s\n---",
@@ -385,3 +394,79 @@ class ChatConfigBuilder:
         )
 
         return shell_type
+
+    def _get_bot_skills(self, bot: Kind) -> list[dict]:
+        """
+        Get skills for the bot from Ghost.
+
+        Returns list of skill metadata: [{"name": "...", "description": "..."}]
+        """
+        from app.schemas.kind import Ghost, Skill
+
+        bot_crd = Bot.model_validate(bot.json)
+        if not bot_crd.spec or not bot_crd.spec.ghostRef:
+            return []
+
+        # Query Ghost
+        ghost = (
+            self.db.query(Kind)
+            .filter(
+                Kind.user_id == self.team.user_id,
+                Kind.kind == "Ghost",
+                Kind.name == bot_crd.spec.ghostRef.name,
+                Kind.namespace == bot_crd.spec.ghostRef.namespace,
+                Kind.is_active == True,  # noqa: E712
+            )
+            .first()
+        )
+
+        if not ghost or not ghost.json:
+            return []
+
+        ghost_crd = Ghost.model_validate(ghost.json)
+        if not ghost_crd.spec.skills:
+            return []
+
+        # Query each skill (user's first, then public)
+        skills = []
+        for skill_name in ghost_crd.spec.skills:
+            skill = self._find_skill(skill_name)
+            if skill:
+                skill_crd = Skill.model_validate(skill.json)
+                skills.append(
+                    {
+                        "name": skill_crd.metadata.name,
+                        "description": skill_crd.spec.description,
+                    }
+                )
+
+        return skills
+
+    def _find_skill(self, skill_name: str) -> Kind | None:
+        """Find skill by name (user's first, then public)."""
+        # User's skill
+        skill = (
+            self.db.query(Kind)
+            .filter(
+                Kind.user_id == self.team.user_id,
+                Kind.kind == "Skill",
+                Kind.name == skill_name,
+                Kind.is_active == True,  # noqa: E712
+            )
+            .first()
+        )
+
+        if skill:
+            return skill
+
+        # Public skill (user_id=0)
+        return (
+            self.db.query(Kind)
+            .filter(
+                Kind.user_id == 0,
+                Kind.kind == "Skill",
+                Kind.name == skill_name,
+                Kind.is_active == True,  # noqa: E712
+            )
+            .first()
+        )

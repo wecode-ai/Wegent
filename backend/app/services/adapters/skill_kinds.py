@@ -76,6 +76,7 @@ class SkillKindsService:
             "metadata": {"name": name, "namespace": namespace},
             "spec": {
                 "description": metadata["description"],
+                "prompt": metadata.get("prompt"),
                 "version": metadata.get("version"),
                 "author": metadata.get("author"),
                 "tags": metadata.get("tags"),
@@ -227,6 +228,7 @@ class SkillKindsService:
         skill_json["spec"].update(
             {
                 "description": metadata["description"],
+                "prompt": metadata.get("prompt"),
                 "version": metadata.get("version"),
                 "author": metadata.get("author"),
                 "tags": metadata.get("tags"),
