@@ -71,5 +71,16 @@
       "WebFetch": "Fetch Web Content",
       "WebSearch": "Search Web"
     }
+  },
+  "urlPreview": {
+    "loading": "Loading link preview...",
+    "loadFailed": "Failed to load link preview",
+    "openInNewTab": "Open in new tab",
+    "imageLoadFailed": "Failed to load image",
+    "zoomIn": "Zoom in",
+    "zoomOut": "Zoom out",
+    "rotate": "Rotate",
+    "download": "Download",
+    "close": "Close"
   }
 }
