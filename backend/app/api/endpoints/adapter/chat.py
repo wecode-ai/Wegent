@@ -1921,9 +1921,7 @@ async def correct_response(
         )
 
         # Get model display name for persistence (from processed model_config)
-        model_display_name = model_config.get(
-            "model_id", request.correction_model_id
-        )
+        model_display_name = model_config.get("model_id", request.correction_model_id)
 
         # Save correction to subtask.result for persistence
         from sqlalchemy.orm.attributes import flag_modified
