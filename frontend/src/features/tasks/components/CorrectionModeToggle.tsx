@@ -121,6 +121,7 @@ export default function CorrectionModeToggle({
               size="icon"
               onClick={handleToggle}
               disabled={disabled}
+              data-feature-tour="ai-cross-validation"
               className={cn(
                 'h-8 w-8 rounded-full flex-shrink-0 transition-colors',
                 enabled

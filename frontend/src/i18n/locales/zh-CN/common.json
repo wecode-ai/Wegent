@@ -566,8 +566,8 @@
     "view_feature_updates_desc": "重新查看新功能引导",
     "no_feature_tours": "暂无功能引导",
     "v1_0_21": {
-      "placeholder_title": "v1.0.21 新功能",
-      "placeholder_description": "这是未来功能引导的占位符。新功能将在这里高亮展示。"
+      "ai_cross_validation_title": "AI 交叉验证",
+      "ai_cross_validation_description": "启用 AI 交叉验证，让另一个 AI 模型验证并改进回答。点击选择验证模型，它将从准确性、逻辑性和完整性三个维度评估回答质量。"
     }
   },
   "common": {
