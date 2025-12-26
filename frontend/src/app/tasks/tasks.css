@@ -53,3 +53,72 @@
   overflow-wrap: break-word;
   box-sizing: border-box;
 }
+
+/* Unify markdown text size with thinking process */
+.wmde-markdown {
+  font-size: 0.875rem; /* text-sm = 14px */
+  line-height: 1.5;
+}
+
+.wmde-markdown h1,
+.wmde-markdown h2,
+.wmde-markdown h3,
+.wmde-markdown h4,
+.wmde-markdown h5,
+.wmde-markdown h6 {
+  font-weight: 600;
+  margin-top: 1em;
+  margin-bottom: 0.5em;
+}
+
+.wmde-markdown h1 {
+  font-size: 1.25rem;
+} /* 20px */
+.wmde-markdown h2 {
+  font-size: 1.125rem;
+} /* 18px */
+.wmde-markdown h3 {
+  font-size: 1rem;
+} /* 16px */
+.wmde-markdown h4,
+.wmde-markdown h5,
+.wmde-markdown h6 {
+  font-size: 0.875rem;
+} /* 14px */
+
+.wmde-markdown p {
+  margin-bottom: 0.75em;
+}
+
+.wmde-markdown ul,
+.wmde-markdown ol {
+  margin-bottom: 0.75em;
+  padding-left: 1.5em;
+}
+
+.wmde-markdown li {
+  margin-bottom: 0.25em;
+}
+
+.wmde-markdown code {
+  font-size: 0.875em;
+}
+
+.wmde-markdown pre code {
+  font-size: 0.8125rem; /* 13px */
+}
+
+/* Search icon slide animation */
+@keyframes slide-horizontal {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  50% {
+    transform: translateX(4px);
+  }
+}
+
+.animate-slide {
+  animation: slide-horizontal 1.5s ease-in-out infinite;
+}

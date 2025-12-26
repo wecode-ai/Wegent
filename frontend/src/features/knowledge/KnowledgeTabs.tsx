@@ -24,14 +24,14 @@ interface KnowledgeTabsProps {
 
 const tabs: KnowledgeTabItem[] = [
   {
-    id: 'code',
-    labelKey: 'tabs.code',
-    icon: CodeBracketIcon,
-  },
-  {
     id: 'document',
     labelKey: 'tabs.document',
     icon: DocumentTextIcon,
+  },
+  {
+    id: 'code',
+    labelKey: 'tabs.code',
+    icon: CodeBracketIcon,
   },
 ];
 

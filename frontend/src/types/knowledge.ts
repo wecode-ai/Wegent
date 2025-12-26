@@ -27,13 +27,31 @@ export interface RetrievalConfig {
   };
 }
 
-// Splitter Config types (sentence splitter only)
-export interface SplitterConfig {
+// Splitter Config types
+export type SplitterType = 'sentence' | 'semantic';
+
+// Base splitter config
+export interface BaseSplitterConfig {
+  type: SplitterType;
+}
+
+// Sentence splitter config
+export interface SentenceSplitterConfig extends BaseSplitterConfig {
   type: 'sentence';
   separator?: string;
   chunk_size?: number;
   chunk_overlap?: number;
 }
+
+// Semantic splitter config
+export interface SemanticSplitterConfig extends BaseSplitterConfig {
+  type: 'semantic';
+  buffer_size?: number; // 1-10, default 1
+  breakpoint_percentile_threshold?: number; // 50-100, default 95
+}
+
+// Union type for splitter config
+export type SplitterConfig = SentenceSplitterConfig | SemanticSplitterConfig;
 
 // Knowledge Base types
 export interface KnowledgeBase {

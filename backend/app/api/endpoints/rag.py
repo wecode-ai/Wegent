@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core.security import get_current_user
+from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.rag import (
     DocumentDeleteResponse,
@@ -31,6 +32,7 @@ from app.schemas.rag import (
     SplitterConfig,
 )
 from app.services.adapters.retriever_kinds import retriever_kinds_service
+from app.services.group_permission import get_effective_role_in_group
 from app.services.rag.document_service import DocumentService
 from app.services.rag.retrieval_service import RetrievalService
 from app.services.rag.storage.factory import create_storage_backend
@@ -65,6 +67,73 @@ def get_retriever_and_backend(
     storage_backend = create_storage_backend(retriever)
 
     return retriever, storage_backend
+
+
+def get_index_owner_user_id(
+    db: Session, knowledge_id: str, current_user_id: int
+) -> int:
+    """
+    Get the user_id that should be used for index naming in per_user strategy.
+
+    For personal knowledge bases (namespace="default"), use the current user's ID.
+    For group knowledge bases (namespace!="default"), use the knowledge base creator's ID.
+
+    This ensures that all group members access the same index created by the KB owner.
+
+    Args:
+        db: Database session
+        knowledge_id: Knowledge base ID (Kind.id as string)
+        current_user_id: Current requesting user's ID
+
+    Returns:
+        User ID to use for index naming
+
+    Raises:
+        HTTPException: If knowledge base not found or access denied
+    """
+    try:
+        kb_id = int(knowledge_id)
+    except ValueError:
+        # If knowledge_id is not a valid integer, return current user's ID
+        # This handles legacy cases where knowledge_id might be a string identifier
+        return current_user_id
+
+    # Get the knowledge base
+    kb = (
+        db.query(Kind)
+        .filter(
+            Kind.id == kb_id,
+            Kind.kind == "KnowledgeBase",
+            Kind.is_active == True,
+        )
+        .first()
+    )
+
+    if not kb:
+        # Knowledge base not found, return current user's ID
+        # The actual access check will happen later in the retrieval process
+        return current_user_id
+
+    # Check access permission
+    if kb.namespace == "default":
+        # Personal knowledge base - must be owned by current user
+        if kb.user_id != current_user_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied to this knowledge base",
+            )
+        return current_user_id
+    else:
+        # Group knowledge base - check if user has access to the group
+        role = get_effective_role_in_group(db, current_user_id, kb.namespace)
+        if role is None:
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied to this knowledge base",
+            )
+        # Return the knowledge base creator's user_id for index naming
+        # This ensures all group members access the same index
+        return kb.user_id
 
 
 @router.post("/documents/upload", response_model=DocumentUploadResponse)
@@ -127,6 +196,15 @@ async def upload_document(
                     detail=f"Invalid splitter_config JSON: {str(e)}",
                 ) from e
 
+        # Get the correct user_id for index naming
+        # For group knowledge bases, use the KB creator's user_id
+        # This ensures all group members access the same index
+        index_owner_user_id = get_index_owner_user_id(
+            db=db,
+            knowledge_id=knowledge_id,
+            current_user_id=current_user.id,
+        )
+
         # Get retriever and create backend
         _, storage_backend = get_retriever_and_backend(
             retriever_name=retriever_name,
@@ -147,13 +225,15 @@ async def upload_document(
             tmp_path = tmp.name
 
         try:
-            # Index document (pass user_id for per_user index strategy and splitter config)
+            # Index document
+            # Use index_owner_user_id for per_user index strategy to ensure
+            # all group members access the same index created by the KB owner
             result = await doc_service.index_document(
                 knowledge_id=knowledge_id,
                 file_path=tmp_path,
                 embedding_model_name=embedding_model_name,
                 embedding_model_namespace=embedding_model_namespace,
-                user_id=current_user.id,
+                user_id=index_owner_user_id,
                 db=db,
                 splitter_config=parsed_splitter_config,
             )
@@ -219,6 +299,15 @@ async def retrieve_documents(
         ```
     """
     try:
+        # Get the correct user_id for index naming
+        # For group knowledge bases, use the KB creator's user_id
+        # This ensures all group members access the same index
+        index_owner_user_id = get_index_owner_user_id(
+            db=db,
+            knowledge_id=request.knowledge_id,
+            current_user_id=current_user.id,
+        )
+
         # Get retriever and create backend
         _, storage_backend = get_retriever_and_backend(
             retriever_name=request.retriever_ref.name,
@@ -230,13 +319,15 @@ async def retrieve_documents(
         # Create retrieval service
         retrieval_service = RetrievalService(storage_backend=storage_backend)
 
-        # Prepare retrieval parameters (pass user_id for per_user index strategy)
+        # Prepare retrieval parameters
+        # Use index_owner_user_id for per_user index strategy to ensure
+        # all group members access the same index created by the KB owner
         retrieval_params = {
             "query": request.query,
             "knowledge_id": request.knowledge_id,
             "embedding_model_name": request.embedding_model_ref.model_name,
             "embedding_model_namespace": request.embedding_model_ref.model_namespace,
-            "user_id": current_user.id,
+            "user_id": index_owner_user_id,
             "db": db,
             "top_k": request.top_k,
             "score_threshold": request.score_threshold,
@@ -251,6 +342,8 @@ async def retrieve_documents(
 
         result = await retrieval_service.retrieve(**retrieval_params)
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -282,6 +375,15 @@ async def delete_document(
         HTTPException: If deletion fails
     """
     try:
+        # Get the correct user_id for index naming
+        # For group knowledge bases, use the KB creator's user_id
+        # This ensures all group members access the same index
+        index_owner_user_id = get_index_owner_user_id(
+            db=db,
+            knowledge_id=knowledge_id,
+            current_user_id=current_user.id,
+        )
+
         # Get retriever and create backend
         _, storage_backend = get_retriever_and_backend(
             retriever_name=retriever_name,
@@ -293,10 +395,13 @@ async def delete_document(
         # Create document service
         doc_service = DocumentService(storage_backend=storage_backend)
 
+        # Use index_owner_user_id for per_user index strategy
         result = await doc_service.delete_document(
-            knowledge_id=knowledge_id, doc_ref=doc_ref, user_id=current_user.id
+            knowledge_id=knowledge_id, doc_ref=doc_ref, user_id=index_owner_user_id
         )
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -330,6 +435,15 @@ async def list_documents(
         HTTPException: If listing fails
     """
     try:
+        # Get the correct user_id for index naming
+        # For group knowledge bases, use the KB creator's user_id
+        # This ensures all group members access the same index
+        index_owner_user_id = get_index_owner_user_id(
+            db=db,
+            knowledge_id=knowledge_id,
+            current_user_id=current_user.id,
+        )
+
         # Get retriever and create backend
         _, storage_backend = get_retriever_and_backend(
             retriever_name=retriever_name,
@@ -341,13 +455,16 @@ async def list_documents(
         # Create document service
         doc_service = DocumentService(storage_backend=storage_backend)
 
+        # Use index_owner_user_id for per_user index strategy
         result = await doc_service.list_documents(
             knowledge_id=knowledge_id,
             page=page,
             page_size=page_size,
-            user_id=current_user.id,
+            user_id=index_owner_user_id,
         )
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
