@@ -453,7 +453,7 @@ const MessageBubble = memo(
                       );
                     },
                     img: ({ src, alt }) => {
-                      if (!src) return null;
+                      if (!src || typeof src !== 'string') return null;
                       return <SmartImage src={src} alt={alt} />;
                     },
                     p: ({ children }) => {
@@ -505,7 +505,7 @@ const MessageBubble = memo(
                       );
                     },
                     img: ({ src, alt }) => {
-                      if (!src) return null;
+                      if (!src || typeof src !== 'string') return null;
                       return <SmartImage src={src} alt={alt} />;
                     },
                   }
@@ -990,7 +990,7 @@ const MessageBubble = memo(
                       );
                     },
                     img: ({ src, alt }) => {
-                      if (!src) return null;
+                      if (!src || typeof src !== 'string') return null;
                       return <SmartImage src={src} alt={alt} />;
                     },
                   }}
@@ -1023,7 +1023,7 @@ const MessageBubble = memo(
                         );
                       },
                       img: ({ src, alt }) => {
-                        if (!src) return null;
+                        if (!src || typeof src !== 'string') return null;
                         return <SmartImage src={src} alt={alt} />;
                       },
                     }}
@@ -1142,7 +1142,7 @@ const MessageBubble = memo(
                     );
                   },
                   img: ({ src, alt }) => {
-                    if (!src) return null;
+                    if (!src || typeof src !== 'string') return null;
                     return <SmartImage src={src} alt={alt} />;
                   },
                 }}
@@ -1175,7 +1175,7 @@ const MessageBubble = memo(
                       );
                     },
                     img: ({ src, alt }) => {
-                      if (!src) return null;
+                      if (!src || typeof src !== 'string') return null;
                       return <SmartImage src={src} alt={alt} />;
                     },
                   }}
@@ -1252,7 +1252,7 @@ const MessageBubble = memo(
                     );
                   },
                   img: ({ src, alt }) => {
-                    if (!src) return null;
+                    if (!src || typeof src !== 'string') return null;
                     return <SmartImage src={src} alt={alt} />;
                   },
                 }}
