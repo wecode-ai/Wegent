@@ -19,7 +19,6 @@ Architecture:
 - models/: LangChain model factory
 - storage/: Unified storage handler
 - tools/: Tool registry and implementations
-- context.py: Typed context objects for better separation of concerns
 """
 
 import asyncio
@@ -35,7 +34,6 @@ from langchain_core.tools.base import BaseTool
 from app.core.config import settings
 
 from .agents import LangGraphAgentBuilder
-from .context import ChatStreamContext
 from .messages import MessageConverter
 from .models import LangChainModelFactory
 from .storage import storage_handler
@@ -55,9 +53,6 @@ logger = logging.getLogger(__name__)
 @dataclass
 class WebSocketStreamConfig:
     """Configuration for WebSocket streaming.
-
-    This class groups all parameters needed for WebSocket streaming.
-    For cleaner code, use the from_context() factory method with ChatStreamContext.
 
     Attributes:
         task_id: Task ID for the chat session
@@ -104,45 +99,9 @@ class WebSocketStreamConfig:
     shell_type: str = "Chat"  # Shell type for frontend display
     extra_tools: list[BaseTool] = field(default_factory=list)
 
-    @classmethod
-    def from_context(cls, ctx: ChatStreamContext) -> "WebSocketStreamConfig":
-        """Create config from ChatStreamContext.
-
-        This factory method provides a cleaner interface when using the
-        typed context objects from context.py.
-
-        Args:
-            ctx: ChatStreamContext containing all grouped parameters
-
-        Returns:
-            WebSocketStreamConfig instance
-        """
-        return cls(
-            task_id=ctx.task_id,
-            subtask_id=ctx.subtask_id,
-            task_room=ctx.task_room,
-            user_id=ctx.user.user_id,
-            user_name=ctx.user.user_name,
-            is_group_chat=ctx.user.is_group_chat,
-            message_id=ctx.message.assistant_message_id,
-            user_message_id=ctx.message.user_message_id,
-            enable_web_search=ctx.features.enable_web_search,
-            search_engine=ctx.features.search_engine,
-            bot_name=ctx.bot.bot_name,
-            bot_namespace=ctx.bot.bot_namespace,
-            shell_type=ctx.bot.shell_type,
-            extra_tools=list(ctx.bot.extra_tools),
-        )
-
     def get_username_for_message(self) -> str | None:
-        """Get username for message prefix in group chat mode.
-
-        Returns:
-            Username string for group chat, None for single chat
-        """
-        if self.is_group_chat:
-            return self.user_name
-        return None
+        """Get username for message prefix in group chat mode."""
+        return self.user_name if self.is_group_chat else None
 
 
 # SSE response headers
