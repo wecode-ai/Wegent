@@ -353,6 +353,18 @@ export default function TaskSidebar({
             const unreadGroupChats = remainingChats.filter(isTaskUnread);
             const readGroupChats = remainingChats.filter(task => !isTaskUnread(task));
 
+            // Debug logging for pinned group chat sorting
+            if (pinnedGroupChatId) {
+              console.log('[TaskSidebar] Pinned group chat sorting:', {
+                pinnedGroupChatId,
+                allGroupChatIds: allGroupChats.map(t => t.id),
+                pinnedChatFound: pinnedChat.length > 0,
+                pinnedChatIds: pinnedChat.map(t => t.id),
+                unreadGroupChatIds: unreadGroupChats.map(t => t.id),
+                readGroupChatIds: readGroupChats.map(t => t.id),
+              });
+            }
+
             // Merge: pinned first, then unread, then read
             const orderedGroupChats = [...pinnedChat, ...unreadGroupChats, ...readGroupChats];
 
