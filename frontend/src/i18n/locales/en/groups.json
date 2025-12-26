@@ -1,0 +1,135 @@
+{
+  "groups": {
+    "title": "Groups",
+    "create": "Create Group",
+    "name": "Name",
+    "displayName": "Display Name",
+    "visibility": "Visibility",
+    "description": "Description",
+    "owner": "Owner",
+    "role": "Role",
+    "members": "Members",
+    "resources": "Resources",
+    "myRole": "My Role",
+    "createdAt": "Created At",
+    "private": "Private",
+    "internal": "Internal",
+    "public": "Public",
+    "roles": {
+      "Owner": "Owner",
+      "Maintainer": "Maintainer",
+      "Developer": "Developer",
+      "Reporter": "Reporter"
+    },
+    "actions": {
+      "addMember": "Add Member",
+      "removeMember": "Remove Member",
+      "updateRole": "Update Role",
+      "inviteAll": "Sync All Users",
+      "leave": "Leave Group",
+      "transferOwnership": "Transfer Ownership",
+      "delete": "Delete Group",
+      "manageMembers": "Manage Members"
+    },
+    "messages": {
+      "createSuccess": "Group created successfully",
+      "updateSuccess": "Group updated successfully",
+      "deleteSuccess": "Group deleted successfully",
+      "memberAdded": "Member added successfully",
+      "memberRemoved": "Member removed successfully",
+      "roleUpdated": "Role updated successfully",
+      "cannotDeleteWithResources": "Cannot delete group with resources",
+      "deleteFailed": "Failed to delete group",
+      "confirmDelete": "Confirm Delete Group",
+      "cannotDelete": "Cannot Delete",
+      "hasResources": "This group contains {{count}} resources",
+      "removeResourcesFirst": "Please delete or transfer all resources before deleting the group"
+    }
+  },
+  "resourceScope": {
+    "personal": "Personal",
+    "group": "Group",
+    "all": "All",
+    "selectGroup": "Select Group",
+    "allGroups": "All Groups"
+  },
+  "resourceSource": {
+    "personal": "[Personal]",
+    "shared": "[Shared]",
+    "public": "[Public]"
+  },
+  "groupManager": {
+    "subtitle": "Manage your groups and memberships",
+    "noGroups": "No groups yet",
+    "editGroup": "Edit group",
+    "manageMembers": "Manage members",
+    "deleteGroup": "Delete group"
+  },
+  "groupCreate": {
+    "nameImmutable": "Immutable after creation. Use letters, numbers, dashes, and underscores only.",
+    "namePlaceholder": "my-group",
+    "displayNamePlaceholder": "My Group",
+    "descriptionPlaceholder": "Enter group description...",
+    "nameValidation": "Name must contain only letters, numbers, dashes, and underscores",
+    "nameCannotStartWithDefault": "Group name cannot start with 'default'",
+    "parentGroup": "Parent Group",
+    "noParentGroup": "No Parent Group",
+    "parentGroupHint": "Select a parent group to create a subgroup (max 5 levels of nesting)",
+    "finalNameWillBe": "Final group name will be: {{name}}",
+    "visibilityPublicHint": "Public: Agents created in this group can be called via API by anyone.",
+    "visibilityInternalHint": "Internal: Resources are only visible to group members.",
+    "visibilityPrivateHint": "Private: Only visible to the creator."
+  },
+  "groupMembers": {
+    "selectUser": "Select user...",
+    "selectMaintainer": "Select maintainer...",
+    "username": "Username",
+    "invitedBy": "Invited By",
+    "joinDate": "Join Date",
+    "actions": "Actions",
+    "you": "You",
+    "remove": "Remove",
+    "add": "Add",
+    "transfer": "Transfer",
+    "confirmRemove": "Are you sure you want to remove this member?",
+    "confirmInviteAll": "Add all system users (including new users) as Reporters? Existing members will be skipped.",
+    "confirmLeave": "Are you sure you want to leave this group? Your resources will be transferred to the group owner.",
+    "confirmTransfer": "Are you sure you want to transfer ownership? You will become a Maintainer.",
+    "inviteAllSuccess": "Users synced successfully",
+    "leaveSuccess": "You have left the group",
+    "transferSuccess": "Ownership transferred successfully",
+    "transferDescription": "Select a Maintainer to transfer ownership. You will become a Maintainer.",
+    "loadMembersFailed": "Failed to load members",
+    "addMemberFailed": "Failed to add member",
+    "removeMemberFailed": "Failed to remove member",
+    "updateRoleFailed": "Failed to update role",
+    "inviteAllFailed": "Failed to sync users",
+    "leaveFailed": "Failed to leave group",
+    "transferFailed": "Failed to transfer ownership",
+    "enterUsername": "Enter username",
+    "addMemberByUsername": "Enter the username to add. Note: This feature requires backend support for adding members by username.",
+    "userAlreadyMember": "This user is already a member of the group",
+    "addByUsernameNotSupported": "Adding members by username is not yet supported. Please contact admin to use 'Invite All Users' feature",
+    "rolePermissions": "Role Permissions",
+    "roleDescriptions": {
+      "Reporter": "Can only view group resources, cannot make any modifications, can leave group",
+      "Developer": "Can view, create, and edit group resources, can leave group, but cannot delete resources or manage members",
+      "Maintainer": "Has all permissions except deleting group and transferring ownership",
+      "MaintainerDetails": {
+        "title": "Including:",
+        "manageResources": "Manage all resources (view, create, edit, delete)",
+        "manageMembers": "Invite and remove members",
+        "updateRoles": "Modify member roles (except Owner)",
+        "canLeave": "Can leave group"
+      },
+      "Owner": "Has full control of the group",
+      "OwnerDetails": {
+        "title": "Including:",
+        "fullControl": "Manage all resources and members",
+        "deleteGroup": "Delete group",
+        "transferOwnership": "Transfer ownership",
+        "cannotLeave": "Cannot leave group directly (must transfer ownership first)"
+      }
+    }
+  }
+}

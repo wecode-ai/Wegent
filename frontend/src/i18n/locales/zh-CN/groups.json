@@ -1,0 +1,135 @@
+{
+  "groups": {
+    "title": "群组",
+    "create": "创建群组",
+    "name": "名称",
+    "displayName": "显示名称",
+    "visibility": "可见性",
+    "description": "描述",
+    "owner": "Owner",
+    "role": "角色",
+    "members": "成员",
+    "resources": "资源",
+    "myRole": "我的角色",
+    "createdAt": "创建时间",
+    "private": "私有",
+    "internal": "内部",
+    "public": "公开",
+    "roles": {
+      "Owner": "创建者",
+      "Maintainer": "管理员",
+      "Developer": "开发者",
+      "Reporter": "使用者"
+    },
+    "actions": {
+      "addMember": "添加成员",
+      "removeMember": "移除成员",
+      "updateRole": "更新角色",
+      "inviteAll": "同步所有用户",
+      "leave": "离开群组",
+      "transferOwnership": "转移所有权",
+      "delete": "删除群组",
+      "manageMembers": "管理成员"
+    },
+    "messages": {
+      "createSuccess": "群组创建成功",
+      "updateSuccess": "群组更新成功",
+      "deleteSuccess": "群组删除成功",
+      "memberAdded": "成员添加成功",
+      "memberRemoved": "成员移除成功",
+      "roleUpdated": "角色更新成功",
+      "cannotDeleteWithResources": "无法删除包含资源的群组",
+      "deleteFailed": "删除群组失败",
+      "confirmDelete": "确认删除群组",
+      "cannotDelete": "无法删除",
+      "hasResources": "该群组包含 {{count}} 个资源",
+      "removeResourcesFirst": "请先删除或转移所有资源后再删除群组"
+    }
+  },
+  "resourceScope": {
+    "personal": "个人",
+    "group": "群组",
+    "all": "全部",
+    "selectGroup": "选择群组",
+    "allGroups": "所有群组"
+  },
+  "resourceSource": {
+    "personal": "[个人]",
+    "shared": "[共享]",
+    "public": "[公共]"
+  },
+  "groupManager": {
+    "subtitle": "管理您的群组和成员关系",
+    "noGroups": "暂无群组",
+    "editGroup": "编辑群组",
+    "manageMembers": "管理成员",
+    "deleteGroup": "删除群组"
+  },
+  "groupCreate": {
+    "nameImmutable": "创建后不可修改。仅使用字母、数字、短横线和下划线。",
+    "namePlaceholder": "my-group",
+    "displayNamePlaceholder": "我的群组",
+    "descriptionPlaceholder": "输入群组描述...",
+    "nameValidation": "名称只能包含字母、数字、短横线和下划线",
+    "nameCannotStartWithDefault": "群组名称不能以 'default' 开头",
+    "parentGroup": "父群组",
+    "noParentGroup": "无父群组",
+    "parentGroupHint": "选择父群组后，新群组将成为其子群组（最多5级嵌套）",
+    "finalNameWillBe": "最终群组名称将为：{{name}}",
+    "visibilityPublicHint": "公开组：组内资源可被所有人通过 API 调用",
+    "visibilityInternalHint": "内部组：组内资源仅成员可见和使用",
+    "visibilityPrivateHint": "私有组：仅创建者可见和使用"
+  },
+  "groupMembers": {
+    "selectUser": "选择用户...",
+    "selectMaintainer": "选择Maintainer...",
+    "username": "用户名",
+    "invitedBy": "邀请人",
+    "joinDate": "加入日期",
+    "actions": "操作",
+    "you": "你",
+    "remove": "移除",
+    "add": "添加",
+    "transfer": "转让",
+    "confirmRemove": "确定要移除此成员吗？",
+    "confirmInviteAll": "将所有系统用户（包括新用户）添加为Reporter？已是成员的用户将被跳过。",
+    "confirmLeave": "确定要离开此群组吗？",
+    "confirmTransfer": "确定要转让所有权吗？您将成为Maintainer。",
+    "inviteAllSuccess": "用户同步成功",
+    "leaveSuccess": "您已离开群组",
+    "transferSuccess": "所有权转让成功",
+    "transferDescription": "选择一个Maintainer来转让所有权。您将成为Maintainer。",
+    "loadMembersFailed": "加载成员失败",
+    "addMemberFailed": "添加成员失败",
+    "removeMemberFailed": "移除成员失败",
+    "updateRoleFailed": "更新角色失败",
+    "inviteAllFailed": "同步用户失败",
+    "leaveFailed": "离开群组失败",
+    "transferFailed": "转让所有权失败",
+    "enterUsername": "输入用户名",
+    "addMemberByUsername": "输入要添加的用户名。注意：此功能需要后端支持通过用户名添加成员。",
+    "userAlreadyMember": "该用户已经是群组成员",
+    "addByUsernameNotSupported": "暂不支持通过用户名添加成员，请联系管理员使用\"邀请所有用户\"功能",
+    "rolePermissions": "角色权限说明",
+    "roleDescriptions": {
+      "Reporter": "只能查看群组资源，无法进行任何修改操作，可离开群组",
+      "Developer": "可查看、创建、编辑群组资源，可离开群组，但无法删除资源或管理成员",
+      "Maintainer": "拥有除删除群组和转让Owner外的所有权限",
+      "MaintainerDetails": {
+        "title": "包括：",
+        "manageResources": "管理所有资源（查看、创建、编辑、删除）",
+        "manageMembers": "邀请和移除成员",
+        "updateRoles": "修改成员角色（除Owner外）",
+        "canLeave": "可离开群组"
+      },
+      "Owner": "拥有群组的完全控制权",
+      "OwnerDetails": {
+        "title": "包括：",
+        "fullControl": "管理所有资源和成员",
+        "deleteGroup": "删除群组",
+        "transferOwnership": "转让Owner权限",
+        "cannotLeave": "无法直接离开群组（需先转让Owner）"
+      }
+    }
+  }
+}

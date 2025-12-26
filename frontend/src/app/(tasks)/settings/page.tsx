@@ -7,9 +7,11 @@
 import { Suspense, useState, useEffect, useMemo, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import TopNavigation from '@/features/layout/TopNavigation';
-import TaskSidebar from '@/features/tasks/components/TaskSidebar';
-import ResizableSidebar from '@/features/tasks/components/ResizableSidebar';
-import CollapsedSidebarButtons from '@/features/tasks/components/CollapsedSidebarButtons';
+import {
+  TaskSidebar,
+  ResizableSidebar,
+  CollapsedSidebarButtons,
+} from '@/features/tasks/components/sidebar';
 import { SettingsTabNav, SettingsTabId } from '@/features/settings/components/SettingsTabNav';
 import GitHubIntegration from '@/features/settings/components/GitHubIntegration';
 import NotificationSettings from '@/features/settings/components/NotificationSettings';
@@ -32,6 +34,9 @@ function SettingsContent() {
   const searchParams = useSearchParams();
   const { t } = useTranslation('common');
   const isMobile = useIsMobile();
+
+  // Refresh trigger for SettingsTabNav groups list
+  const [groupsRefreshTrigger, setGroupsRefreshTrigger] = useState(0);
 
   // Get initial tab from URL with backward compatibility
   const getInitialTab = (): SettingsTabId => {
@@ -134,7 +139,7 @@ function SettingsContent() {
       case 'personal-retrievers':
         return <RetrieverListWithScope scope="personal" />;
       case 'group-manager':
-        return <GroupManager />;
+        return <GroupManager onGroupsChange={() => setGroupsRefreshTrigger(prev => prev + 1)} />;
       case 'group-models':
         return (
           <ModelListWithScope
@@ -215,6 +220,7 @@ function SettingsContent() {
           onTabChange={handleTabChange}
           selectedGroup={selectedGroup}
           onGroupChange={handleGroupChange}
+          refreshTrigger={groupsRefreshTrigger}
         />
 
         {/* Settings content area */}

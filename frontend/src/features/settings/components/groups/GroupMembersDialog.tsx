@@ -5,7 +5,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useTranslation } from 'react-i18next';
+import { useTranslation } from '@/hooks/useTranslation';
 import Modal from '@/features/common/Modal';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -43,7 +43,7 @@ export function GroupMembersDialog({
   group,
   currentUserId,
 }: GroupMembersDialogProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation('groups');
   const [members, setMembers] = useState<GroupMember[]>([]);
   const [loading, setLoading] = useState(false);
   const [showAddMember, setShowAddMember] = useState(false);
@@ -52,12 +52,14 @@ export function GroupMembersDialog({
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const myRole = group?.my_role;
+  const isPrivateGroup = group?.visibility === 'private';
 
   // Permission checks
-  const canAddMember = myRole === 'Owner' || myRole === 'Maintainer';
+  // Private groups do not allow adding members
+  const canAddMember = (myRole === 'Owner' || myRole === 'Maintainer') && !isPrivateGroup;
   const canRemoveMember = myRole === 'Owner' || myRole === 'Maintainer';
   const canUpdateRole = myRole === 'Owner' || myRole === 'Maintainer';
-  const canInviteAll = myRole === 'Owner' || myRole === 'Maintainer';
+  const canInviteAll = (myRole === 'Owner' || myRole === 'Maintainer') && !isPrivateGroup;
   const canLeave = myRole !== 'Owner';
 
   useEffect(() => {
@@ -343,7 +345,7 @@ export function GroupMembersDialog({
                   setNewMemberUsername('');
                 }}
               >
-                {t('actions.cancel')}
+                {t('common:actions.cancel')}
               </Button>
               <Button
                 size="sm"
@@ -358,7 +360,7 @@ export function GroupMembersDialog({
 
         {/* Members Table */}
         {loading ? (
-          <div className="text-center py-8 text-text-secondary">{t('actions.loading')}</div>
+          <div className="text-center py-8 text-text-secondary">{t('common:actions.loading')}</div>
         ) : (
           <div className="border border-border rounded-lg overflow-hidden">
             <div className="overflow-x-auto max-h-[400px]">
@@ -461,7 +463,7 @@ export function GroupMembersDialog({
         {/* Footer */}
         <div className="flex justify-end pt-4">
           <Button variant="outline" onClick={onClose}>
-            {t('actions.close')}
+            {t('common:actions.close')}
           </Button>
         </div>
       </div>

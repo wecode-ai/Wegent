@@ -10,8 +10,8 @@ import { useUser } from '@/features/common/UserContext';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { paths } from '@/config/paths';
-import { useTranslation } from 'react-i18next';
-import RepositorySelector from '@/features/tasks/components/RepositorySelector';
+import { useTranslation } from '@/hooks/useTranslation';
+import { RepositorySelector } from '@/features/tasks/components/selector';
 import { WikiConfigResponse } from '@/apis/wiki';
 
 interface AddRepoModalProps {
@@ -36,7 +36,7 @@ export default function AddRepoModal({
   selectedRepo,
   wikiConfig,
 }: AddRepoModalProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation('knowledge');
   const { user } = useUser();
   const router = useRouter();
 
@@ -52,13 +52,13 @@ export default function AddRepoModal({
   // Check if user has git info configured
   if (!hasGitInfo()) {
     return (
-      <Modal isOpen={isOpen} onClose={onClose} title={t('wiki.add_repository')} maxWidth="md">
+      <Modal isOpen={isOpen} onClose={onClose} title={t('add_repository')} maxWidth="md">
         <div className="flex flex-col items-center py-8">
           <p className="text-sm text-text-secondary mb-6 text-center leading-relaxed">
-            {t('guide.description')}
+            {t('common:guide.description')}
           </p>
           <Button variant="default" size="sm" onClick={handleGoToSettings}>
-            {t('branches.set_token')}
+            {t('common:branches.set_token')}
           </Button>
         </div>
       </Modal>
@@ -66,21 +66,21 @@ export default function AddRepoModal({
   }
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={t('wiki.add_repository')} maxWidth="md">
+    <Modal isOpen={isOpen} onClose={onClose} title={t('add_repository')} maxWidth="md">
       <form onSubmit={onSubmit} className="space-y-5">
         {formErrors.submit && <div className="text-red-500 text-sm mb-4">{formErrors.submit}</div>}
 
         {/* Show warning if no bound model */}
         {wikiConfig && !wikiConfig.has_bound_model && (
           <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 px-4 py-3 rounded-md text-sm">
-            {t('wiki.no_bound_model_warning')}
+            {t('no_bound_model_warning')}
           </div>
         )}
 
         {/* Repository Selector */}
         <div>
           <label className="block text-sm font-medium text-text-secondary mb-2">
-            {t('wiki.repository')}
+            {t('repository')}
           </label>
           <div className="px-3 py-2 border border-border rounded-md bg-base">
             <RepositorySelector
@@ -102,7 +102,7 @@ export default function AddRepoModal({
             className="px-4 py-2 text-sm font-medium text-text-primary bg-surface border border-border rounded-md hover:bg-surface-hover focus:outline-none focus:ring-2 focus:ring-primary/40"
             disabled={isSubmitting}
           >
-            {t('actions.cancel')}
+            {t('common:actions.cancel')}
           </button>
           <button
             type="submit"
@@ -133,10 +133,10 @@ export default function AddRepoModal({
                     d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                   ></path>
                 </svg>
-                {t('wiki.adding')}
+                {t('adding')}
               </div>
             ) : (
-              t('wiki.add_repository')
+              t('add_repository')
             )}
           </button>
         </div>

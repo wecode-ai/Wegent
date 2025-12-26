@@ -5,6 +5,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -15,7 +16,8 @@ import {
 import { Button } from '@/components/ui/button';
 import { useTranslation } from '@/hooks/useTranslation';
 import { updateDocument } from '@/apis/knowledge';
-import type { KnowledgeDocument } from '@/types/knowledge';
+import type { KnowledgeDocument, SplitterConfig } from '@/types/knowledge';
+import { SplitterSettingsSection } from './SplitterSettingsSection';
 
 interface EditDocumentDialogProps {
   open: boolean;
@@ -30,16 +32,40 @@ export function EditDocumentDialog({
   document,
   onSuccess,
 }: EditDocumentDialogProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation('knowledge');
   const [name, setName] = useState('');
+  const [splitterConfig, setSplitterConfig] = useState<Partial<SplitterConfig>>({
+    type: 'sentence',
+    separator: '\n\n',
+    chunk_size: 1024,
+    chunk_overlap: 50,
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   // Reset form when document changes
   useEffect(() => {
     if (document) {
       setName(document.name);
+      // Load existing splitter_config or use defaults
+      if (document.splitter_config) {
+        setSplitterConfig({
+          type: document.splitter_config.type || 'sentence',
+          separator: document.splitter_config.separator ?? '\n\n',
+          chunk_size: document.splitter_config.chunk_size ?? 1024,
+          chunk_overlap: document.splitter_config.chunk_overlap ?? 50,
+        });
+      } else {
+        setSplitterConfig({
+          type: 'sentence',
+          separator: '\n\n',
+          chunk_size: 1024,
+          chunk_overlap: 50,
+        });
+      }
       setError('');
+      setShowAdvanced(false); // Reset to collapsed state
     }
   }, [document]);
 
@@ -50,7 +76,7 @@ export function EditDocumentDialog({
 
     const trimmedName = name.trim();
     if (!trimmedName) {
-      setError(t('knowledge.document.document.nameRequired'));
+      setError(t('document.document.nameRequired'));
       return;
     }
 
@@ -58,10 +84,13 @@ export function EditDocumentDialog({
     setError('');
 
     try {
-      await updateDocument(document.id, { name: trimmedName });
+      // Only update name, splitter_config is read-only
+      await updateDocument(document.id, {
+        name: trimmedName,
+      });
       onSuccess();
     } catch (err) {
-      setError(t('knowledge.document.document.updateFailed'));
+      setError(t('document.document.updateFailed'));
       console.error('Failed to update document:', err);
     } finally {
       setLoading(false);
@@ -70,26 +99,57 @@ export function EditDocumentDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{t('knowledge.document.document.edit')}</DialogTitle>
+          <DialogTitle>{t('document.document.edit')}</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit}>
-          <div className="py-4 space-y-4">
+          <div className="py-4 space-y-6">
+            {/* Document Name */}
             <div>
               <label className="block text-sm font-medium text-text-primary mb-1.5">
-                {t('knowledge.document.document.columns.name')}
+                {t('document.document.columns.name')}
               </label>
               <input
                 type="text"
                 value={name}
                 onChange={e => setName(e.target.value)}
                 className="w-full h-9 px-3 text-sm bg-surface border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
-                placeholder={t('knowledge.document.document.namePlaceholder')}
+                placeholder={t('document.document.namePlaceholder')}
                 autoFocus
               />
-              {error && <p className="mt-1.5 text-xs text-error">{error}</p>}
             </div>
+
+            {/* Advanced Settings - Splitter Configuration (Collapsible, Read-only) */}
+            <div className="border-t border-border pt-4">
+              <button
+                type="button"
+                onClick={() => setShowAdvanced(!showAdvanced)}
+                className="flex items-center gap-2 text-sm font-medium text-text-primary hover:text-primary transition-colors w-full"
+              >
+                {showAdvanced ? (
+                  <ChevronDown className="w-4 h-4" />
+                ) : (
+                  <ChevronRight className="w-4 h-4" />
+                )}
+                {t('document.splitter.title')}
+                <span className="text-xs text-text-muted font-normal ml-auto">
+                  {t('document.advancedSettings.readOnly')}
+                </span>
+              </button>
+
+              {showAdvanced && (
+                <div className="mt-4">
+                  <SplitterSettingsSection
+                    config={splitterConfig}
+                    onChange={() => {}} // No-op since it's read-only
+                    readOnly={true}
+                  />
+                </div>
+              )}
+            </div>
+
+            {error && <p className="text-xs text-error">{error}</p>}
           </div>
           <DialogFooter>
             <Button
@@ -98,10 +158,10 @@ export function EditDocumentDialog({
               onClick={() => onOpenChange(false)}
               disabled={loading}
             >
-              {t('actions.cancel')}
+              {t('common:actions.cancel')}
             </Button>
             <Button type="submit" variant="primary" disabled={loading || !name.trim()}>
-              {loading ? t('actions.saving') : t('actions.save')}
+              {loading ? t('common:actions.saving') : t('common:actions.save')}
             </Button>
           </DialogFooter>
         </form>

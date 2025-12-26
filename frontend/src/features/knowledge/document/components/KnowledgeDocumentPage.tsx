@@ -41,24 +41,24 @@ interface DocumentTab {
 const tabs: DocumentTab[] = [
   {
     id: 'personal',
-    labelKey: 'knowledge.document.tabs.personal',
+    labelKey: 'document.tabs.personal',
     icon: <User className="w-4 h-4" />,
   },
   {
     id: 'group',
-    labelKey: 'knowledge.document.tabs.group',
+    labelKey: 'document.tabs.group',
     icon: <Users className="w-4 h-4" />,
   },
   {
     id: 'external',
-    labelKey: 'knowledge.document.tabs.external',
+    labelKey: 'document.tabs.external',
     icon: <Globe className="w-4 h-4" />,
     disabled: true,
   },
 ];
 
 export function KnowledgeDocumentPage() {
-  const { t } = useTranslation();
+  const { t } = useTranslation('knowledge');
   const [activeTab, setActiveTab] = useState<DocumentTabType>('personal');
   const [groups, setGroups] = useState<Group[]>([]);
   const [loadingGroups, setLoadingGroups] = useState(true);
@@ -123,11 +123,16 @@ export function KnowledgeDocumentPage() {
     setShowCreateDialog(true);
   };
 
-  const handleCreate = async (data: { name: string; description?: string }) => {
+  const handleCreate = async (data: {
+    name: string;
+    description?: string;
+    retrieval_config?: Parameters<typeof personalKb.create>[0]['retrieval_config'];
+  }) => {
     await personalKb.create({
       name: data.name,
       description: data.description,
       namespace: createForGroup || 'default',
+      retrieval_config: data.retrieval_config,
     });
     setShowCreateDialog(false);
     // Refresh the appropriate list based on whether it's a group or personal knowledge base
@@ -139,7 +144,7 @@ export function KnowledgeDocumentPage() {
     setCreateForGroup(null);
   };
 
-  const handleUpdate = async (data: { name: string; description?: string }) => {
+  const handleUpdate = async (data: Parameters<typeof personalKb.update>[1]) => {
     if (!editingKb) return;
     await personalKb.update(editingKb.id, data);
     setEditingKb(null);
@@ -191,7 +196,7 @@ export function KnowledgeDocumentPage() {
               <span>{t(tab.labelKey)}</span>
               {tab.disabled && (
                 <span className="ml-1 text-xs px-1.5 py-0.5 rounded-full bg-muted text-text-muted">
-                  {t('common.coming_soon')}
+                  {t('common:coming_soon')}
                 </span>
               )}
             </button>
@@ -227,7 +232,7 @@ export function KnowledgeDocumentPage() {
         {activeTab === 'external' && (
           <div className="flex flex-col items-center justify-center py-16 text-text-muted">
             <Globe className="w-12 h-12 mb-4 opacity-50" />
-            <p>{t('common.coming_soon')}</p>
+            <p>{t('common:coming_soon')}</p>
           </div>
         )}
       </div>
@@ -241,6 +246,8 @@ export function KnowledgeDocumentPage() {
         }}
         onSubmit={handleCreate}
         loading={personalKb.loading}
+        scope={createForGroup ? 'group' : 'personal'}
+        groupName={createForGroup || undefined}
       />
 
       <EditKnowledgeBaseDialog
@@ -280,7 +287,7 @@ function PersonalKnowledgeContent({
   onDeleteKb,
   onCreateKb,
 }: PersonalKnowledgeContentProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation('knowledge');
   const [searchQuery, setSearchQuery] = useState('');
 
   const filteredKnowledgeBases = useMemo(() => {
@@ -311,10 +318,10 @@ function PersonalKnowledgeContent({
             <Plus className="w-8 h-8 text-primary" />
           </div>
           <h3 className="font-medium text-base mb-2 text-text-primary">
-            {t('knowledge.document.knowledgeBase.create')}
+            {t('document.knowledgeBase.create')}
           </h3>
           <p className="text-sm text-text-muted text-center">
-            {t('knowledge.document.knowledgeBase.createDesc')}
+            {t('document.knowledgeBase.createDesc')}
           </p>
         </Card>
       </div>
@@ -330,7 +337,7 @@ function PersonalKnowledgeContent({
           <input
             type="text"
             className="w-full h-9 pl-9 pr-3 text-sm bg-surface border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
-            placeholder={t('knowledge.document.knowledgeBase.search')}
+            placeholder={t('document.knowledgeBase.search')}
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
           />
@@ -348,7 +355,7 @@ function PersonalKnowledgeContent({
             <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center mb-3">
               <Plus className="w-6 h-6 text-primary" />
             </div>
-            <h3 className="font-medium text-sm">{t('knowledge.document.knowledgeBase.create')}</h3>
+            <h3 className="font-medium text-sm">{t('document.knowledgeBase.create')}</h3>
           </Card>
         )}
 
@@ -368,7 +375,7 @@ function PersonalKnowledgeContent({
       {searchQuery && filteredKnowledgeBases.length === 0 && (
         <div className="flex flex-col items-center justify-center py-12 text-text-secondary">
           <FileText className="w-12 h-12 mb-4 opacity-50" />
-          <p>{t('knowledge.document.knowledgeBase.noResults')}</p>
+          <p>{t('document.knowledgeBase.noResults')}</p>
         </div>
       )}
     </div>
@@ -395,7 +402,7 @@ function GroupKnowledgeContent({
   onDeleteKb,
   onCreateKb,
 }: GroupKnowledgeContentProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation('knowledge');
   const [selectedGroup, setSelectedGroup] = useState<Group | null>(null);
 
   if (loadingGroups) {
@@ -410,7 +417,7 @@ function GroupKnowledgeContent({
     return (
       <div className="flex flex-col items-center justify-center py-12 text-text-secondary">
         <Users className="w-12 h-12 mb-4 opacity-50" />
-        <p className="text-sm">{t('knowledge.document.noGroupHint')}</p>
+        <p className="text-sm">{t('document.noGroupHint')}</p>
       </div>
     );
   }
@@ -502,7 +509,7 @@ function GroupKnowledgeBaseList({
   onDeleteKb,
   onCreateKb,
 }: GroupKnowledgeBaseListProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation('knowledge');
   const { knowledgeBases, loading, refresh } = useKnowledgeBases({
     scope: 'group',
     groupName: group.name,
@@ -565,17 +572,17 @@ function GroupKnowledgeBaseList({
                 <Plus className="w-8 h-8 text-primary" />
               </div>
               <h3 className="font-medium text-base mb-2 text-text-primary">
-                {t('knowledge.document.knowledgeBase.create')}
+                {t('document.knowledgeBase.create')}
               </h3>
               <p className="text-sm text-text-muted text-center">
-                {t('knowledge.document.knowledgeBase.createDesc')}
+                {t('document.knowledgeBase.createDesc')}
               </p>
             </Card>
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center py-12 text-text-secondary">
             <FileText className="w-12 h-12 mb-4 opacity-50" />
-            <p>{t('knowledge.document.knowledgeBase.empty')}</p>
+            <p>{t('document.knowledgeBase.empty')}</p>
           </div>
         )
       ) : (
@@ -587,7 +594,7 @@ function GroupKnowledgeBaseList({
               <input
                 type="text"
                 className="w-full h-9 pl-9 pr-3 text-sm bg-surface border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
-                placeholder={t('knowledge.document.knowledgeBase.search')}
+                placeholder={t('document.knowledgeBase.search')}
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
               />
@@ -605,9 +612,7 @@ function GroupKnowledgeBaseList({
                 <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center mb-3">
                   <Plus className="w-6 h-6 text-primary" />
                 </div>
-                <h3 className="font-medium text-sm">
-                  {t('knowledge.document.knowledgeBase.create')}
-                </h3>
+                <h3 className="font-medium text-sm">{t('document.knowledgeBase.create')}</h3>
               </Card>
             )}
 
@@ -629,7 +634,7 @@ function GroupKnowledgeBaseList({
           {searchQuery && filteredKnowledgeBases.length === 0 && (
             <div className="flex flex-col items-center justify-center py-12 text-text-secondary">
               <FileText className="w-12 h-12 mb-4 opacity-50" />
-              <p>{t('knowledge.document.knowledgeBase.noResults')}</p>
+              <p>{t('document.knowledgeBase.noResults')}</p>
             </div>
           )}
         </div>
@@ -656,7 +661,7 @@ function KnowledgeBaseCard({
   canEdit = true,
   canDelete = true,
 }: KnowledgeBaseCardProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation('knowledge');
 
   return (
     <Card
@@ -692,7 +697,7 @@ function KnowledgeBaseCard({
                 e.stopPropagation();
                 onEdit();
               }}
-              title={t('actions.edit')}
+              title={t('common:actions.edit')}
             >
               <Pencil className="w-4 h-4" />
             </button>
@@ -704,7 +709,7 @@ function KnowledgeBaseCard({
                 e.stopPropagation();
                 onDelete();
               }}
-              title={t('actions.delete')}
+              title={t('common:actions.delete')}
             >
               <Trash2 className="w-4 h-4" />
             </button>
@@ -715,7 +720,7 @@ function KnowledgeBaseCard({
               e.stopPropagation();
               onClick();
             }}
-            title={t('actions.view')}
+            title={t('common:actions.view')}
           >
             <ArrowRight className="w-4 h-4" />
           </button>

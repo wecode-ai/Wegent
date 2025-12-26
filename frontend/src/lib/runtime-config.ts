@@ -19,6 +19,8 @@ export interface RuntimeConfig {
   apiUrl: string;
   /** Socket.IO direct URL. Empty string means use proxy */
   socketDirectUrl: string;
+  /** Enable chat context feature (knowledge base background) */
+  enableChatContext: boolean;
 }
 
 // Cache for runtime config to avoid repeated API calls
@@ -58,6 +60,7 @@ export const fetchRuntimeConfig = async (): Promise<RuntimeConfig> => {
       const fallback: RuntimeConfig = {
         apiUrl: process.env.NEXT_PUBLIC_API_URL || '',
         socketDirectUrl: process.env.NEXT_PUBLIC_SOCKET_DIRECT_URL || '',
+        enableChatContext: process.env.NEXT_PUBLIC_ENABLE_CHAT_CONTEXT === 'true',
       };
       runtimeConfigCache = fallback;
       return fallback;
@@ -81,6 +84,7 @@ export const getRuntimeConfigSync = (): RuntimeConfig => {
   return {
     apiUrl: process.env.NEXT_PUBLIC_API_URL || '',
     socketDirectUrl: process.env.NEXT_PUBLIC_SOCKET_DIRECT_URL || '',
+    enableChatContext: process.env.NEXT_PUBLIC_ENABLE_CHAT_CONTEXT === 'true',
   };
 };
 
@@ -126,6 +130,15 @@ export const getApiBaseUrl = (): string => {
 export const getSocketUrl = (): string => {
   const config = getRuntimeConfigSync();
   return config.socketDirectUrl;
+};
+
+/**
+ * Check if chat context feature is enabled
+ * Returns true if the feature is enabled, false otherwise
+ */
+export const isChatContextEnabled = (): boolean => {
+  const config = getRuntimeConfigSync();
+  return config.enableChatContext;
 };
 
 /**

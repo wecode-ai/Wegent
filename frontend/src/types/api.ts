@@ -450,6 +450,13 @@ export interface DifyParametersSchema {
 // Attachment Types
 export type AttachmentStatus = 'uploading' | 'parsing' | 'ready' | 'failed';
 
+export interface TruncationInfo {
+  is_truncated: boolean;
+  original_length?: number | null;
+  truncated_length?: number | null;
+  truncation_message_key?: string | null;
+}
+
 export interface Attachment {
   id: number;
   filename: string;
@@ -458,9 +465,11 @@ export interface Attachment {
   status: AttachmentStatus;
   text_length?: number | null;
   error_message?: string | null;
+  error_code?: string | null;
   subtask_id?: number | null;
   file_extension: string;
   created_at: string;
+  truncation_info?: TruncationInfo | null;
 }
 
 export interface AttachmentUploadState {
@@ -469,6 +478,12 @@ export interface AttachmentUploadState {
   isUploading: boolean;
   uploadProgress: number;
   error: string | null;
+}
+
+export interface MultiAttachmentUploadState {
+  attachments: Attachment[];
+  uploadingFiles: Map<string, { file: File; progress: number }>;
+  errors: Map<string, string>;
 }
 
 // Quick Access Types
@@ -516,3 +531,16 @@ export interface SystemConfigResponse {
 export interface SystemConfigUpdate {
   teams: number[];
 }
+
+// Knowledge Base / RAG Types
+export interface KnowledgeBaseRef {
+  knowledge_id: number; // Knowledge base ID (database ID)
+  retriever_name: string;
+  retriever_namespace: string;
+}
+
+// Import KnowledgeBase types from knowledge.ts to avoid duplication
+export type {
+  KnowledgeBase,
+  KnowledgeBaseListResponse as KnowledgeBasesResponse,
+} from './knowledge';

@@ -5,15 +5,22 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useTranslation } from 'react-i18next';
+import { useTranslation } from '@/hooks/useTranslation';
 import Modal from '@/features/common/Modal';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { updateGroup } from '@/apis/groups';
 import { toast } from 'sonner';
-import type { Group, GroupUpdate } from '@/types/group';
+import type { Group, GroupUpdate, GroupVisibility } from '@/types/group';
 
 interface EditGroupDialogProps {
   isOpen: boolean;
@@ -23,7 +30,7 @@ interface EditGroupDialogProps {
 }
 
 export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroupDialogProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation('groups');
   const [formData, setFormData] = useState<GroupUpdate>({
     display_name: '',
     visibility: 'private',
@@ -33,20 +40,20 @@ export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroup
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    if (group) {
+    if (isOpen && group) {
       setFormData({
         display_name: group.display_name || '',
         visibility: group.visibility,
         description: group.description || '',
       });
     }
-  }, [group]);
+  }, [isOpen, group]);
 
   const validateForm = (): boolean => {
     const newErrors: Record<string, string> = {};
 
     if (formData.display_name && formData.display_name.length > 100) {
-      newErrors.display_name = t('validation.max_length', { max: 100 });
+      newErrors.display_name = t('common:validation.max_length', { max: 100 });
     }
 
     setErrors(newErrors);
@@ -95,7 +102,12 @@ export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroup
   }
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} title={t('actions.edit_group')} maxWidth="md">
+    <Modal
+      isOpen={isOpen}
+      onClose={handleClose}
+      title={t('common:actions.edit_group')}
+      maxWidth="md"
+    >
       <form onSubmit={handleSubmit} className="space-y-4">
         {/* Name (read-only) */}
         <div>
@@ -111,9 +123,10 @@ export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroup
             id="display_name"
             value={formData.display_name}
             onChange={e => {
-              setFormData({ ...formData, display_name: e.target.value });
+              const value = e.target.value;
+              setFormData(prev => ({ ...prev, display_name: value }));
               if (errors.display_name) {
-                setErrors({ ...errors, display_name: '' });
+                setErrors(prev => ({ ...prev, display_name: '' }));
               }
             }}
             placeholder="My Group"
@@ -123,13 +136,48 @@ export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroup
           {errors.display_name && <p className="text-sm text-error mt-1">{errors.display_name}</p>}
         </div>
 
+        {/* Visibility */}
+        <div>
+          <Label htmlFor="visibility">{t('groups.visibility')}</Label>
+          <Select
+            value={formData.visibility}
+            onValueChange={(value: GroupVisibility) => {
+              // Prevent setting empty value (Radix Select may trigger this unexpectedly)
+              if (value) {
+                setFormData(prev => ({ ...prev, visibility: value }));
+              }
+            }}
+            disabled={isSubmitting}
+          >
+            <SelectTrigger id="visibility" data-testid="visibility-select">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="internal">
+                <div className="flex flex-col">
+                  <span>{t('groups.internal')}</span>
+                </div>
+              </SelectItem>
+              <SelectItem value="public">
+                <div className="flex flex-col">
+                  <span>{t('groups.public')}</span>
+                </div>
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-text-muted mt-1">
+            {formData.visibility === 'public' && t('groupCreate.visibilityPublicHint')}
+            {formData.visibility === 'internal' && t('groupCreate.visibilityInternalHint')}
+          </p>
+        </div>
+
         {/* Description */}
         <div>
           <Label htmlFor="description">{t('groups.description')}</Label>
           <Textarea
             id="description"
             value={formData.description}
-            onChange={e => setFormData({ ...formData, description: e.target.value })}
+            onChange={e => setFormData(prev => ({ ...prev, description: e.target.value }))}
             placeholder={t('groupCreate.descriptionPlaceholder')}
             rows={3}
             disabled={isSubmitting}
@@ -139,7 +187,7 @@ export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroup
         {/* Actions */}
         <div className="flex justify-end gap-3 pt-4">
           <Button type="button" variant="outline" onClick={handleClose} disabled={isSubmitting}>
-            {t('actions.cancel')}
+            {t('common:actions.cancel')}
           </Button>
           <Button type="submit" disabled={isSubmitting}>
             {isSubmitting ? (
@@ -164,10 +212,10 @@ export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroup
                     d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                   />
                 </svg>
-                {t('actions.saving')}
+                {t('common:actions.saving')}
               </div>
             ) : (
-              t('actions.save')
+              t('common:actions.save')
             )}
           </Button>
         </div>

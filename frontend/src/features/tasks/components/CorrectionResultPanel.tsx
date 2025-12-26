@@ -15,7 +15,7 @@ import {
   ChevronDown,
   ChevronUp,
 } from 'lucide-react';
-import MessageBubble, { Message } from './MessageBubble';
+import MessageBubble, { Message } from './message/MessageBubble';
 import { useTranslation } from '@/hooks/useTranslation';
 import { cn } from '@/lib/utils';
 import { CorrectionResponse, correctionApis } from '@/apis/correction';

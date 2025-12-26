@@ -5,7 +5,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useTranslation } from 'react-i18next';
+import { useTranslation } from '@/hooks/useTranslation';
 import Modal from '@/features/common/Modal';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -20,7 +20,7 @@ import {
 } from '@/components/ui/select';
 import { createGroup, listGroups } from '@/apis/groups';
 import { toast } from 'sonner';
-import type { GroupCreate, Group } from '@/types/group';
+import type { GroupCreate, Group, GroupVisibility } from '@/types/group';
 
 interface CreateGroupDialogProps {
   isOpen: boolean;
@@ -29,11 +29,11 @@ interface CreateGroupDialogProps {
 }
 
 export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDialogProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation('groups');
   const [formData, setFormData] = useState<GroupCreate>({
     name: '',
     display_name: '',
-    visibility: 'public',
+    visibility: 'internal',
     description: '',
   });
   const [parentGroup, setParentGroup] = useState<string>('__none__');
@@ -68,10 +68,10 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
 
   const validateName = (name: string): string | null => {
     if (!name) {
-      return t('validation.required');
+      return t('common:validation.required');
     }
     if (name.length > 100) {
-      return t('validation.max_length', { max: 100 });
+      return t('common:validation.max_length', { max: 100 });
     }
     // Check if name starts with "default" (case-insensitive)
     if (name.toLowerCase().startsWith('default')) {
@@ -93,7 +93,7 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
     }
 
     if (formData.display_name && formData.display_name.length > 100) {
-      newErrors.display_name = t('validation.max_length', { max: 100 });
+      newErrors.display_name = t('common:validation.max_length', { max: 100 });
     }
 
     setErrors(newErrors);
@@ -128,7 +128,7 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
       setFormData({
         name: '',
         display_name: '',
-        visibility: 'public',
+        visibility: 'internal',
         description: '',
       });
       setParentGroup('__none__');
@@ -150,7 +150,7 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
       setFormData({
         name: '',
         display_name: '',
-        visibility: 'public',
+        visibility: 'internal',
         description: '',
       });
       setParentGroup('__none__');
@@ -230,6 +230,38 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
           <p className="text-xs text-text-muted mt-1">{t('groupCreate.parentGroupHint')}</p>
         </div>
 
+        {/* Visibility */}
+        <div>
+          <Label htmlFor="visibility">{t('groups.visibility')}</Label>
+          <Select
+            value={formData.visibility}
+            onValueChange={(value: GroupVisibility) =>
+              setFormData({ ...formData, visibility: value })
+            }
+            disabled={isSubmitting}
+          >
+            <SelectTrigger id="visibility" data-testid="visibility-select">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="internal">
+                <div className="flex flex-col">
+                  <span>{t('groups.internal')}</span>
+                </div>
+              </SelectItem>
+              <SelectItem value="public">
+                <div className="flex flex-col">
+                  <span>{t('groups.public')}</span>
+                </div>
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-text-muted mt-1">
+            {formData.visibility === 'public' && t('groupCreate.visibilityPublicHint')}
+            {formData.visibility === 'internal' && t('groupCreate.visibilityInternalHint')}
+          </p>
+        </div>
+
         {/* Description */}
         <div>
           <Label htmlFor="description">{t('groups.description')}</Label>
@@ -246,7 +278,7 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
         {/* Actions */}
         <div className="flex justify-end gap-3 pt-4">
           <Button type="button" variant="outline" onClick={handleClose} disabled={isSubmitting}>
-            {t('actions.cancel')}
+            {t('common:actions.cancel')}
           </Button>
           <Button type="submit" disabled={isSubmitting}>
             {isSubmitting ? (
@@ -271,7 +303,7 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
                     d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                   />
                 </svg>
-                {t('actions.creating')}
+                {t('common:actions.creating')}
               </div>
             ) : (
               t('groups.create')

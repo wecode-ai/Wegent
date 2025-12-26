@@ -32,8 +32,15 @@ logger = setup_logger("claude_response_processor")
 # Maximum retry count for API errors per session
 MAX_API_ERROR_RETRIES = 3
 
-# Error pattern to detect API errors that need retry
-API_ERROR_PATTERN = "API Error: Cannot read properties of undefined"
+# Error patterns to detect API errors that need retry
+API_ERROR_PATTERNS = [
+    "API Error: Cannot read properties of undefined",
+    "API Error: undefined is not an object",
+]
+
+
+def contains_api_error(text: str) -> bool:
+    return any(pattern in text for pattern in API_ERROR_PATTERNS)
 
 
 async def process_response(
@@ -302,7 +309,7 @@ def _handle_assistant_message(msg: AssistantMessage, state_manager, thinking_man
     
     # Check if the message contains API error that needs retry
     msg_json_str = json.dumps(msg_dict, ensure_ascii=False)
-    needs_retry = API_ERROR_PATTERN in msg_json_str
+    needs_retry = contains_api_error(msg_json_str)
     if needs_retry:
         logger.warning(f"Detected API error in AssistantMessage: {msg_json_str}")
 
@@ -530,7 +537,7 @@ async def _process_result_message(
         result_str = str(msg.result) if msg.result is not None else "No result"
         
         # Check if this is an API error that can be retried
-        if API_ERROR_PATTERN in result_str and client and session_id and api_error_retry_count < max_retries:
+        if contains_api_error(result_str) and client and session_id and api_error_retry_count < max_retries:
             logger.warning(
                 f"Detected retryable API error in ResultMessage for session {session_id}, "
                 f"retry {api_error_retry_count + 1}/{max_retries}"
@@ -558,7 +565,7 @@ async def _process_result_message(
                 logger.error(f"Failed to send retry message: {retry_error}")
                 # Fall through to fail the task
         
-        elif API_ERROR_PATTERN in result_str and api_error_retry_count >= max_retries:
+        elif contains_api_error(result_str) and api_error_retry_count >= max_retries:
             logger.error(
                 f"Max API error retries ({max_retries}) reached for session {session_id}"
             )

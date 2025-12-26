@@ -7,9 +7,11 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import TopNavigation from '@/features/layout/TopNavigation';
-import TaskSidebar from '@/features/tasks/components/TaskSidebar';
-import ResizableSidebar from '@/features/tasks/components/ResizableSidebar';
-import CollapsedSidebarButtons from '@/features/tasks/components/CollapsedSidebarButtons';
+import {
+  TaskSidebar,
+  ResizableSidebar,
+  CollapsedSidebarButtons,
+} from '@/features/tasks/components/sidebar';
 import '@/app/tasks/tasks.css';
 import '@/features/common/scrollbar.css';
 import { GithubStarButton } from '@/features/layout/GithubStarButton';
@@ -33,7 +35,7 @@ import {
 } from '@/features/knowledge';
 
 export default function KnowledgePage() {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation('knowledge');
   const router = useRouter();
   const { user } = useUser();
   const { clearAllStreams } = useChatStreamContext();
@@ -160,7 +162,7 @@ export default function KnowledgePage() {
         <TopNavigation
           activePage="wiki"
           variant="with-sidebar"
-          title={t('knowledge.title')}
+          title={t('title')}
           onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
           isSidebarCollapsed={isCollapsed}
         >
@@ -178,7 +180,7 @@ export default function KnowledgePage() {
               <SearchBox
                 value={mainSearchTerm}
                 onChange={setMainSearchTerm}
-                placeholder={t('wiki.search_repositories')}
+                placeholder={t('search_repositories')}
                 size="md"
                 className="mb-6 max-w-2xl mx-auto"
               />

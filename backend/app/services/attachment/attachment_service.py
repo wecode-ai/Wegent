@@ -13,7 +13,12 @@ from typing import Any, Dict, Optional, Union
 from sqlalchemy.orm import Session
 
 from app.models.subtask_attachment import AttachmentStatus, SubtaskAttachment
-from app.services.attachment.parser import DocumentParseError, DocumentParser
+from app.services.attachment.parser import (
+    DocumentParseError,
+    DocumentParser,
+    ParseResult,
+    TruncationInfo,
+)
 from app.services.attachment.storage_backend import StorageError, generate_storage_key
 from app.services.attachment.storage_factory import get_storage_backend
 
@@ -42,7 +47,7 @@ class AttachmentService:
         filename: str,
         binary_data: bytes,
         subtask_id: int = 0,
-    ) -> SubtaskAttachment:
+    ) -> tuple[SubtaskAttachment, Optional[TruncationInfo]]:
         """
         Upload and process a file attachment.
 
@@ -54,7 +59,7 @@ class AttachmentService:
             subtask_id: Subtask ID to link to (0 means unlinked)
 
         Returns:
-            Created SubtaskAttachment record
+            Tuple of (Created SubtaskAttachment record, TruncationInfo if truncated)
 
         Raises:
             ValueError: If file validation fails
@@ -134,16 +139,20 @@ class AttachmentService:
         db.flush()
 
         # Parse document
+        truncation_info = None
         try:
-            extracted_text, text_length, image_base64 = self.parser.parse(
-                binary_data, extension
-            )
+            parse_result: ParseResult = self.parser.parse(binary_data, extension)
 
             # Update attachment with parsed content
-            attachment.extracted_text = extracted_text if extracted_text else ""
-            attachment.text_length = text_length if text_length else 0
-            attachment.image_base64 = image_base64 if image_base64 else ""
+            attachment.extracted_text = parse_result.text if parse_result.text else ""
+            attachment.text_length = (
+                parse_result.text_length if parse_result.text_length else 0
+            )
+            attachment.image_base64 = (
+                parse_result.image_base64 if parse_result.image_base64 else ""
+            )
             attachment.status = AttachmentStatus.READY
+            truncation_info = parse_result.truncation_info
 
         except DocumentParseError as e:
             logger.error(f"Document parsing failed for attachment {attachment.id}: {e}")
@@ -158,10 +167,11 @@ class AttachmentService:
         logger.info(
             f"Attachment uploaded successfully: id={attachment.id}, "
             f"filename={filename}, text_length={attachment.text_length}, "
-            f"storage_backend={storage_backend.backend_type}"
+            f"storage_backend={storage_backend.backend_type}, "
+            f"truncated={truncation_info.is_truncated if truncation_info else False}"
         )
 
-        return attachment
+        return attachment, truncation_info
 
     def get_attachment(
         self,
@@ -399,6 +409,9 @@ class AttachmentService:
         """
         Build a text prefix containing document content for prepending to messages.
 
+        If the text was truncated during parsing, a truncation notice is added
+        to inform the model that the content is incomplete.
+
         Args:
             attachment: SubtaskAttachment record with extracted_text
 
@@ -408,10 +421,22 @@ class AttachmentService:
         if not attachment.extracted_text:
             return None
 
-        return (
-            f"【文件内容 - {attachment.original_filename}】:\n"
-            f"{attachment.extracted_text}\n\n"
-        )
+        # Check if text was truncated by comparing text_length with max limit
+        max_text_length = DocumentParser.get_max_text_length()
+        is_truncated = attachment.text_length >= max_text_length
+
+        # Build the prefix with optional truncation notice
+        prefix = f"[File Content - {attachment.original_filename}]:\n"
+
+        if is_truncated:
+            prefix += (
+                f"(Note: The file content is too long and has been truncated to "
+                f"{max_text_length} characters. The following is only partial content.)\n"
+            )
+
+        prefix += f"{attachment.extracted_text}\n\n"
+
+        return prefix
 
     def build_message_with_attachment(
         self,
@@ -446,7 +471,7 @@ class AttachmentService:
         doc_prefix = self.build_document_text_prefix(attachment)
         if doc_prefix:
             # For documents, combine text
-            return f"{doc_prefix}【用户问题】:\n{message}"
+            return f"{doc_prefix}[User Question]:\n{message}"
 
         return message
 

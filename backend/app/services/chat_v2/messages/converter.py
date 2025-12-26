@@ -30,6 +30,7 @@ class MessageConverter:
         history: list[dict[str, Any]],
         current_message: str | dict[str, Any],
         system_prompt: str = "",
+        username: str | None = None,
     ) -> list[dict[str, Any]]:
         """Build a complete message list from history, current message, and system prompt.
 
@@ -42,6 +43,7 @@ class MessageConverter:
             history: Previous messages in the conversation
             current_message: The current user message (string or vision dict)
             system_prompt: Optional system prompt to prepend
+            username: Optional username to prefix the current message (for group chat)
 
         Returns:
             List of message dicts ready for LLM API
@@ -55,13 +57,29 @@ class MessageConverter:
 
         if isinstance(current_message, dict):
             if current_message.get("type") == "vision":
+                # For vision messages, add username prefix to text if provided
+                vision_data = current_message.copy()
+                if username and vision_data.get("text"):
+                    vision_data["text"] = f"User[{username}]: {vision_data['text']}"
+                messages.append(MessageConverter._build_vision_from_dict(vision_data))
+            elif current_message.get("type") == "multi_vision":
+                # For multi-vision messages, add username prefix to text if provided
+                multi_vision_data = current_message.copy()
+                if username and multi_vision_data.get("text"):
+                    multi_vision_data["text"] = (
+                        f"User[{username}]: {multi_vision_data['text']}"
+                    )
                 messages.append(
-                    MessageConverter._build_vision_from_dict(current_message)
+                    MessageConverter._build_multi_vision_from_dict(multi_vision_data)
                 )
             else:
                 messages.append(current_message)
         else:
-            messages.append({"role": "user", "content": current_message})
+            # For plain text messages, add username prefix if provided (group chat)
+            content = (
+                f"User[{username}]: {current_message}" if username else current_message
+            )
+            messages.append({"role": "user", "content": content})
 
         return messages
 
@@ -73,6 +91,43 @@ class MessageConverter:
             image_base64=vision_data.get("image_base64", ""),
             mime_type=vision_data.get("mime_type", "image/png"),
         )
+
+    @staticmethod
+    def _build_multi_vision_from_dict(
+        multi_vision_data: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Build multi-vision message from a multi-vision data dict with multiple images."""
+        text = multi_vision_data.get("text", "")
+        images = multi_vision_data.get("images", [])
+
+        # Build content array with text and all images
+        content = [{"type": "text", "text": text}]
+
+        for image_data in images:
+            image_base64 = image_data.get("image_base64", "")
+            mime_type = image_data.get("mime_type", "image/png")
+
+            # Compress image if needed
+            try:
+                image_bytes = base64.b64decode(image_base64)
+                compressed_bytes = MessageConverter._compress_image(
+                    image_bytes, mime_type
+                )
+                compressed_base64 = base64.b64encode(compressed_bytes).decode("utf-8")
+
+                content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{mime_type};base64,{compressed_base64}"
+                        },
+                    }
+                )
+            except Exception as e:
+                logger.error(f"Failed to process image: {e}")
+                continue
+
+        return {"role": "user", "content": content}
 
     @staticmethod
     def _compress_image(image_data: bytes, mime_type: str = "image/png") -> bytes:

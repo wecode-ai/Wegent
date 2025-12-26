@@ -10,7 +10,7 @@ import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
 import { useUser } from '@/features/common/UserContext';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import type { ChatTipItem, Team } from '@/types/api';
-import MentionAutocomplete from './chat/MentionAutocomplete';
+import MentionAutocomplete from '../chat/MentionAutocomplete';
 
 interface ChatInputProps {
   message: string;
@@ -28,8 +28,8 @@ interface ChatInputProps {
   // Group chat support
   isGroupChat?: boolean;
   team?: Team | null;
-  // Callback when file is pasted (e.g., image from clipboard)
-  onPasteFile?: (file: File) => void;
+  // Callback when file(s) are pasted (e.g., images from clipboard)
+  onPasteFile?: (files: File | File[]) => void;
 }
 
 export default function ChatInput({
@@ -337,30 +337,35 @@ export default function ChatInput({
 
       // Check if clipboard contains files (images or other files)
       if (clipboardData.files && clipboardData.files.length > 0) {
-        const file = clipboardData.files[0];
-
         // If onPasteFile callback is provided, handle file paste
-        if (onPasteFile && file) {
+        if (onPasteFile) {
           e.preventDefault();
-          onPasteFile(file);
+          // Pass all files as an array
+          onPasteFile(Array.from(clipboardData.files));
           return;
         }
       }
 
       // Check if clipboard contains image items (for screenshots)
       const items = clipboardData.items;
-      if (items) {
+      if (items && onPasteFile) {
+        const imageFiles: File[] = [];
         for (let i = 0; i < items.length; i++) {
           const item = items[i];
           // Check if the item is an image type
           if (item.type.startsWith('image/')) {
             const file = item.getAsFile();
-            if (file && onPasteFile) {
-              e.preventDefault();
-              onPasteFile(file);
-              return;
+            if (file) {
+              imageFiles.push(file);
             }
           }
+        }
+
+        if (imageFiles.length > 0) {
+          e.preventDefault();
+          // Pass all image files
+          onPasteFile(imageFiles);
+          return;
         }
       }
 

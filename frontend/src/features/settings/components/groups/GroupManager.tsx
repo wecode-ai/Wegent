@@ -5,7 +5,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useTranslation } from 'react-i18next';
+import { useTranslation } from '@/hooks/useTranslation';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { listGroups } from '@/apis/groups';
@@ -18,8 +18,12 @@ import { DeleteGroupConfirmDialog } from './DeleteGroupConfirmDialog';
 import { GroupMembersDialog } from './GroupMembersDialog';
 import { useUser } from '@/features/common/UserContext';
 
-export function GroupManager() {
-  const { t } = useTranslation();
+interface GroupManagerProps {
+  onGroupsChange?: () => void;
+}
+
+export function GroupManager({ onGroupsChange }: GroupManagerProps) {
+  const { t } = useTranslation('groups');
   const { user } = useUser();
   const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(true);
@@ -69,12 +73,13 @@ export function GroupManager() {
 
   const handleSuccess = () => {
     loadGroups();
+    onGroupsChange?.();
   };
 
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-text-secondary">{t('actions.loading')}</div>
+        <div className="text-text-secondary">{t('common:actions.loading')}</div>
       </div>
     );
   }
@@ -114,13 +119,16 @@ export function GroupManager() {
                     {t('groups.displayName')}
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-medium text-text-primary">
+                    {t('groups.visibility')}
+                  </th>
+                  <th className="px-4 py-3 text-left text-sm font-medium text-text-primary">
                     {t('groups.myRole')}
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-medium text-text-primary">
                     {t('groups.members')}
                   </th>
                   <th className="px-4 py-3 text-right text-sm font-medium text-text-primary">
-                    {t('actions.edit')}
+                    {t('common:actions.edit')}
                   </th>
                 </tr>
               </thead>
@@ -132,6 +140,11 @@ export function GroupManager() {
                     </td>
                     <td className="px-4 py-3 text-sm text-text-secondary">
                       {group.display_name || '-'}
+                    </td>
+                    <td className="px-4 py-3 text-sm">
+                      <Badge variant={group.visibility === 'public' ? 'success' : 'secondary'}>
+                        {t(`groups.${group.visibility}`)}
+                      </Badge>
                     </td>
                     <td className="px-4 py-3 text-sm">
                       {group.my_role ? (
