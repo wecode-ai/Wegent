@@ -1,7 +1,3 @@
-// SPDX-FileCopyrightText: 2025 Weibo, Inc.
-//
-// SPDX-License-Identifier: Apache-2.0
-
 'use client';
 
 import * as React from 'react';
@@ -45,6 +41,9 @@ interface SearchableSelectProps {
   listFooter?: React.ReactNode; // Content rendered at the end of the list (after items, before footer)
   showChevron?: boolean; // Whether to show chevron icon
   defaultOpen?: boolean; // Whether to open the dropdown by default
+  open?: boolean; // Controlled open state
+  onOpenChange?: (open: boolean) => void; // Callback when open state changes (for controlled mode)
+  hideTrigger?: boolean; // Whether to hide the trigger button (useful for external trigger)
 }
 
 export function SearchableSelect({
@@ -67,8 +66,22 @@ export function SearchableSelect({
   listFooter,
   showChevron = false,
   defaultOpen = false,
+  open,
+  onOpenChange,
+  hideTrigger = false,
 }: SearchableSelectProps) {
-  const [isOpen, setIsOpen] = React.useState(defaultOpen);
+  // Support both controlled and uncontrolled modes
+  const [internalOpen, setInternalOpen] = React.useState(defaultOpen);
+  const isOpen = open !== undefined ? open : internalOpen;
+  const setIsOpen = React.useCallback(
+    (newOpen: boolean) => {
+      if (open === undefined) {
+        setInternalOpen(newOpen);
+      }
+      onOpenChange?.(newOpen);
+    },
+    [open, onOpenChange]
+  );
   const [searchValue, setSearchValue] = React.useState('');
 
   // Find selected item
@@ -110,6 +123,7 @@ export function SearchableSelect({
               'shadow-sm hover:bg-hover transition-colors',
               'focus:outline-none focus:ring-2 focus:ring-primary/20',
               'disabled:cursor-not-allowed disabled:opacity-50',
+              hideTrigger && 'sr-only',
               triggerClassName
             )}
           >
