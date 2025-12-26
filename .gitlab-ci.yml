@@ -227,6 +227,10 @@ trigger_update_simulation_web:
         changes:
           - frontend/**/*
           - wecode/docker/frontend/**/*
+      - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == "develop" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"'
+        changes:
+          - frontend/**/*
+          - wecode/docker/frontend/**/*
 
 trigger_update_simulation_backend_web:
     stage: production
@@ -245,6 +249,10 @@ trigger_update_simulation_backend_web:
         strategy: depend
     rules:
       - if: '$CI_COMMIT_BRANCH == "develop"'
+        changes:
+          - backend/**/*
+          - wecode/docker/backend/**/*
+      - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == "develop" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"'
         changes:
           - backend/**/*
           - wecode/docker/backend/**/*
