@@ -335,6 +335,7 @@ class ChatService:
         task_id: int,
         is_group_chat: bool,
         max_iterations: int,
+        message_id: int | None = None,
     ) -> StreamingResponse:
         """Full streaming with database and session management using StreamingCore."""
 
@@ -361,8 +362,10 @@ class ChatService:
                         yield emitter.get_event()
                     return
 
-                # Get chat history
-                history = await self._get_chat_history(task_id, is_group_chat)
+                # Get chat history (exclude current user message to avoid duplication)
+                history = await self._get_chat_history(
+                    task_id, is_group_chat, exclude_after_message_id=message_id
+                )
 
                 # Build messages
                 messages = MessageConverter.build_messages(
@@ -671,8 +674,13 @@ class ChatService:
                     )
                 )
 
-            # Get chat history
-            history = await self._get_chat_history(task_id, config.is_group_chat)
+            # Get chat history (exclude current user message to avoid duplication)
+            # The current user message will be added by build_messages()
+            history = await self._get_chat_history(
+                task_id,
+                config.is_group_chat,
+                exclude_after_message_id=config.message_id,
+            )
 
             # Build messages
             messages = MessageConverter.build_messages(history, message, system_prompt)
@@ -1097,7 +1105,10 @@ class ChatService:
     # ==================== Helper Methods ====================
 
     async def _get_chat_history(
-        self, task_id: int, is_group_chat: bool
+        self,
+        task_id: int,
+        is_group_chat: bool,
+        exclude_after_message_id: int | None = None,
     ) -> list[dict[str, Any]]:
         """Get chat history for a task directly from database.
 
@@ -1107,40 +1118,54 @@ class ChatService:
         Args:
             task_id: Task ID
             is_group_chat: Whether to include username prefix in user messages
+            exclude_after_message_id: If provided, exclude messages with message_id >= this value.
+                                      This prevents duplicate user messages when the current
+                                      user message is already saved to DB.
 
         Returns:
             List of message dictionaries
         """
-        history = await self._load_history_from_db(task_id, is_group_chat)
+        history = await self._load_history_from_db(
+            task_id, is_group_chat, exclude_after_message_id
+        )
         return self._truncate_history(history)
 
     async def _load_history_from_db(
-        self, task_id: int, is_group_chat: bool
+        self,
+        task_id: int,
+        is_group_chat: bool,
+        exclude_after_message_id: int | None = None,
     ) -> list[dict[str, Any]]:
         """
         Load chat history from database.
 
-        This is called when Redis cache is empty or as a fallback.
-
         Args:
             task_id: Task ID
             is_group_chat: Whether to include username prefix in user messages
+            exclude_after_message_id: If provided, exclude messages with message_id >= this value
 
         Returns:
             List of message dictionaries with role and content
         """
         return await asyncio.to_thread(
-            self._load_history_from_db_sync, task_id, is_group_chat
+            self._load_history_from_db_sync,
+            task_id,
+            is_group_chat,
+            exclude_after_message_id,
         )
 
     def _load_history_from_db_sync(
-        self, task_id: int, is_group_chat: bool
+        self,
+        task_id: int,
+        is_group_chat: bool,
+        exclude_after_message_id: int | None = None,
     ) -> list[dict[str, Any]]:
         """Synchronous implementation of chat history retrieval from database.
 
         Args:
             task_id: Task ID
             is_group_chat: Whether to include username prefix in user messages
+            exclude_after_message_id: If provided, exclude messages with message_id >= this value
         """
         from app.models.subtask import Subtask, SubtaskStatus
         from app.models.user import User
@@ -1149,41 +1174,27 @@ class ChatService:
 
         history: list[dict[str, Any]] = []
         with _db_session() as db:
-            # Query all subtasks for this task (for debugging)
-            all_subtasks = (
-                db.query(Subtask)
-                .filter(Subtask.task_id == task_id)
-                .order_by(Subtask.message_id.asc())
-                .all()
-            )
-            logger.info(
-                f"[CHAT_HISTORY] task_id={task_id}, is_group_chat={is_group_chat}, "
-                f"total_subtasks={len(all_subtasks)}, "
-                f"subtask_details=[{', '.join([f'(id={s.id}, role={s.role.value}, status={s.status.value}, msg_id={s.message_id})' for s in all_subtasks])}]"
-            )
-
-            subtasks = (
+            # Build base query
+            query = (
                 db.query(Subtask, User.user_name)
                 .outerjoin(User, Subtask.sender_user_id == User.id)
                 .filter(
                     Subtask.task_id == task_id,
                     Subtask.status == SubtaskStatus.COMPLETED,
                 )
-                .order_by(Subtask.message_id.asc())
-                .all()
             )
 
-            # Build completed details string separately to avoid f-string escaping issues
-            completed_details = ", ".join(
-                [
-                    f"(id={s.id}, role={s.role.value}, sender={u or 'N/A'})"
-                    for s, u in subtasks
-                ]
-            )
+            # Exclude current and future messages to avoid duplicates
+            # The current user message will be added by build_messages()
+            if exclude_after_message_id is not None:
+                query = query.filter(Subtask.message_id < exclude_after_message_id)
+
+            subtasks = query.order_by(Subtask.message_id.asc()).all()
+
             logger.info(
-                f"[CHAT_HISTORY] task_id={task_id}, "
-                f"completed_subtasks={len(subtasks)}, "
-                f"completed_details=[{completed_details}]"
+                f"[CHAT_HISTORY] task_id={task_id}, is_group_chat={is_group_chat}, "
+                f"exclude_after_message_id={exclude_after_message_id}, "
+                f"completed_subtasks={len(subtasks)}"
             )
 
             for subtask, sender_username in subtasks:
