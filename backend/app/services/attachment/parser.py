@@ -13,6 +13,7 @@ import base64
 import csv
 import io
 import logging
+from dataclasses import dataclass
 from typing import Optional, Tuple
 
 import chardet
@@ -22,10 +23,40 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class TruncationInfo:
+    """Information about content truncation."""
+
+    is_truncated: bool = False
+    original_length: Optional[int] = None
+    truncated_length: Optional[int] = None
+
+
+@dataclass
+class ParseResult:
+    """Result of document parsing."""
+
+    text: str
+    text_length: int
+    image_base64: Optional[str] = None
+    truncation_info: Optional[TruncationInfo] = None
+
+
 class DocumentParseError(Exception):
     """Exception raised when document parsing fails."""
 
-    pass
+    # Error codes for i18n mapping
+    UNSUPPORTED_TYPE = "unsupported_type"
+    FILE_TOO_LARGE = "file_too_large"
+    PARSE_FAILED = "parse_failed"
+    ENCRYPTED_PDF = "encrypted_pdf"
+    LEGACY_DOC = "legacy_doc"
+    LEGACY_PPT = "legacy_ppt"
+    LEGACY_XLS = "legacy_xls"
+
+    def __init__(self, message: str, error_code: Optional[str] = None):
+        super().__init__(message)
+        self.error_code = error_code or self.PARSE_FAILED
 
 
 class DocumentParser:
@@ -94,9 +125,7 @@ class DocumentParser:
         """Check if extracted text length is within limits."""
         return len(text) <= cls.get_max_text_length()
 
-    def parse(
-        self, binary_data: bytes, extension: str
-    ) -> Tuple[str, int, Optional[str]]:
+    def parse(self, binary_data: bytes, extension: str) -> ParseResult:
         """
         Parse document and extract text content.
 
@@ -105,8 +134,8 @@ class DocumentParser:
             extension: File extension (e.g., '.pdf', '.docx')
 
         Returns:
-            Tuple of (extracted_text, text_length, image_base64)
-            image_base64 is None for non-image files
+            ParseResult with extracted text, length, optional image_base64,
+            and truncation_info if content was truncated
 
         Raises:
             DocumentParseError: If parsing fails
@@ -114,10 +143,14 @@ class DocumentParser:
         extension = extension.lower()
 
         if not self.is_supported_extension(extension):
-            raise DocumentParseError(f"Unsupported file type: {extension}")
+            raise DocumentParseError(
+                f"Unsupported file type: {extension}",
+                DocumentParseError.UNSUPPORTED_TYPE,
+            )
 
         try:
             image_base64 = None
+            truncation_info = None
 
             if extension == ".pdf":
                 text = self._parse_pdf(binary_data)
@@ -134,21 +167,40 @@ class DocumentParser:
             elif extension in [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]:
                 text, image_base64 = self._parse_image(binary_data, extension)
             else:
-                raise DocumentParseError(f"Unsupported file type: {extension}")
-
-            # Validate text length
-            if not self.validate_text_length(text):
                 raise DocumentParseError(
-                    f"Extracted text exceeds maximum length ({self.get_max_text_length()} characters)"
+                    f"Unsupported file type: {extension}",
+                    DocumentParseError.UNSUPPORTED_TYPE,
                 )
 
-            return text, len(text), image_base64
+            # Auto-truncate if text exceeds maximum length
+            max_length = self.get_max_text_length()
+            if len(text) > max_length:
+                original_length = len(text)
+                text = text[:max_length]
+                truncation_info = TruncationInfo(
+                    is_truncated=True,
+                    original_length=original_length,
+                    truncated_length=max_length,
+                )
+                logger.info(
+                    f"Text truncated from {original_length} to {max_length} characters"
+                )
+
+            return ParseResult(
+                text=text,
+                text_length=len(text),
+                image_base64=image_base64,
+                truncation_info=truncation_info,
+            )
 
         except DocumentParseError:
             raise
         except Exception as e:
             logger.error(f"Error parsing document: {e}", exc_info=True)
-            raise DocumentParseError(f"Failed to parse document: {str(e)}")
+            raise DocumentParseError(
+                f"Failed to parse document: {str(e)}",
+                DocumentParseError.PARSE_FAILED,
+            ) from e
 
     def _parse_pdf(self, binary_data: bytes) -> str:
         """Parse PDF file and extract text."""
@@ -160,7 +212,10 @@ class DocumentParser:
 
             # Check if PDF is encrypted
             if reader.is_encrypted:
-                raise DocumentParseError("Cannot parse encrypted PDF file")
+                raise DocumentParseError(
+                    "Cannot parse encrypted PDF file",
+                    DocumentParseError.ENCRYPTED_PDF,
+                )
 
             text_parts = []
             for page in reader.pages:
@@ -174,7 +229,10 @@ class DocumentParser:
             raise
         except Exception as e:
             logger.error(f"Error parsing PDF: {e}", exc_info=True)
-            raise DocumentParseError(f"Failed to parse PDF: {str(e)}")
+            raise DocumentParseError(
+                f"Failed to parse PDF: {str(e)}",
+                DocumentParseError.PARSE_FAILED,
+            ) from e
 
     def _parse_word(self, binary_data: bytes, extension: str) -> str:
         """Parse Word document and extract text."""
@@ -183,7 +241,8 @@ class DocumentParser:
                 # For .doc files, we need to handle them differently
                 # python-docx only supports .docx format
                 raise DocumentParseError(
-                    "Legacy .doc format is not fully supported. Please convert to .docx"
+                    "Legacy .doc format is not fully supported. Please convert to .docx",
+                    DocumentParseError.LEGACY_DOC,
                 )
 
             from docx import Document
@@ -212,14 +271,18 @@ class DocumentParser:
             raise
         except Exception as e:
             logger.error(f"Error parsing Word document: {e}", exc_info=True)
-            raise DocumentParseError(f"Failed to parse Word document: {str(e)}")
+            raise DocumentParseError(
+                f"Failed to parse Word document: {str(e)}",
+                DocumentParseError.PARSE_FAILED,
+            ) from e
 
     def _parse_powerpoint(self, binary_data: bytes, extension: str) -> str:
         """Parse PowerPoint file and extract text (text only, no images)."""
         try:
             if extension == ".ppt":
                 raise DocumentParseError(
-                    "Legacy .ppt format is not fully supported. Please convert to .pptx"
+                    "Legacy .ppt format is not fully supported. Please convert to .pptx",
+                    DocumentParseError.LEGACY_PPT,
                 )
 
             from pptx import Presentation
@@ -254,14 +317,18 @@ class DocumentParser:
             raise
         except Exception as e:
             logger.error(f"Error parsing PowerPoint: {e}", exc_info=True)
-            raise DocumentParseError(f"Failed to parse PowerPoint: {str(e)}")
+            raise DocumentParseError(
+                f"Failed to parse PowerPoint: {str(e)}",
+                DocumentParseError.PARSE_FAILED,
+            ) from e
 
     def _parse_excel(self, binary_data: bytes, extension: str) -> str:
         """Parse Excel file and extract text."""
         try:
             if extension == ".xls":
                 raise DocumentParseError(
-                    "Legacy .xls format is not fully supported. Please convert to .xlsx"
+                    "Legacy .xls format is not fully supported. Please convert to .xlsx",
+                    DocumentParseError.LEGACY_XLS,
                 )
 
             from openpyxl import load_workbook
@@ -292,7 +359,10 @@ class DocumentParser:
             raise
         except Exception as e:
             logger.error(f"Error parsing Excel: {e}", exc_info=True)
-            raise DocumentParseError(f"Failed to parse Excel: {str(e)}")
+            raise DocumentParseError(
+                f"Failed to parse Excel: {str(e)}",
+                DocumentParseError.PARSE_FAILED,
+            ) from e
 
     def _parse_csv(self, binary_data: bytes) -> str:
         """Parse CSV file and extract text."""
@@ -314,7 +384,10 @@ class DocumentParser:
 
         except Exception as e:
             logger.error(f"Error parsing CSV: {e}", exc_info=True)
-            raise DocumentParseError(f"Failed to parse CSV: {str(e)}")
+            raise DocumentParseError(
+                f"Failed to parse CSV: {str(e)}",
+                DocumentParseError.PARSE_FAILED,
+            ) from e
 
     def _parse_text(self, binary_data: bytes) -> str:
         """Parse plain text or markdown file."""
@@ -349,8 +422,9 @@ class DocumentParser:
         except Exception as e:
             logger.error(f"Error parsing text file: {e}", exc_info=True)
             raise DocumentParseError(
-                f"Failed to parse text file: {str(last_error or e)}"
-            )
+                f"Failed to parse text file: {str(last_error or e)}",
+                DocumentParseError.PARSE_FAILED,
+            ) from e
 
     def _parse_image(self, binary_data: bytes, extension: str) -> Tuple[str, str]:
         """
@@ -392,7 +466,10 @@ class DocumentParser:
 
         except Exception as e:
             logger.error(f"Error parsing image: {e}", exc_info=True)
-            raise DocumentParseError(f"Failed to parse image: {str(e)}")
+            raise DocumentParseError(
+                f"Failed to parse image: {str(e)}",
+                DocumentParseError.PARSE_FAILED,
+            ) from e
 
 
 # Global parser instance

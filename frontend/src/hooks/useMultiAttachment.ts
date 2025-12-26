@@ -7,15 +7,16 @@
  */
 
 import { useState, useCallback } from 'react';
+import { useTranslation } from '@/hooks/useTranslation';
 import {
   uploadAttachment,
   deleteAttachment,
   isSupportedExtension,
   isValidFileSize,
   MAX_FILE_SIZE,
-  SUPPORTED_EXTENSIONS,
+  getErrorMessageFromCode,
 } from '@/apis/attachments';
-import type { MultiAttachmentUploadState } from '@/types/api';
+import type { MultiAttachmentUploadState, TruncationInfo } from '@/types/api';
 import { toast } from '@/hooks/use-toast';
 
 interface UseMultiAttachmentReturn {
@@ -31,14 +32,20 @@ interface UseMultiAttachmentReturn {
   isReadyToSend: boolean;
   /** Check if any upload is in progress */
   isUploading: boolean;
+  /** Truncation info for attachments that were truncated */
+  truncatedAttachments: Map<number, TruncationInfo>;
 }
 
 export function useMultiAttachment(): UseMultiAttachmentReturn {
+  const { t } = useTranslation('common');
   const [state, setState] = useState<MultiAttachmentUploadState>({
     attachments: [],
     uploadingFiles: new Map(),
     errors: new Map(),
   });
+  const [truncatedAttachments, setTruncatedAttachments] = useState<Map<number, TruncationInfo>>(
+    new Map()
+  );
 
   const handleFileSelect = useCallback(
     async (files: File | File[]) => {
@@ -52,8 +59,10 @@ export function useMultiAttachment(): UseMultiAttachmentReturn {
         if (existingAttachment) {
           // File with same name already exists, show toast and skip upload
           toast({
-            title: '文件已存在',
-            description: `文件 "${file.name}" 已存在，请先删除后再上传`,
+            title: t('attachment.errors.file_exists') || '文件已存在',
+            description:
+              t('attachment.errors.file_exists_hint', { filename: file.name }) ||
+              `文件 "${file.name}" 已存在，请先删除后再上传`,
             variant: 'destructive',
           });
           continue;
@@ -65,7 +74,7 @@ export function useMultiAttachment(): UseMultiAttachmentReturn {
             const newErrors = new Map(prev.errors);
             newErrors.set(
               fileId,
-              `Unsupported file type. Supported types: ${SUPPORTED_EXTENSIONS.join(', ')}`
+              `${t('attachment.errors.unsupported_type')}: ${t('attachment.errors.unsupported_type_hint', { types: t('attachment.supported_types') })}`
             );
             return { ...prev, errors: newErrors };
           });
@@ -76,7 +85,10 @@ export function useMultiAttachment(): UseMultiAttachmentReturn {
         if (!isValidFileSize(file.size)) {
           setState(prev => {
             const newErrors = new Map(prev.errors);
-            newErrors.set(fileId, `File size exceeds ${MAX_FILE_SIZE / (1024 * 1024)} MB limit`);
+            newErrors.set(
+              fileId,
+              `${t('attachment.errors.file_too_large')}: ${t('attachment.errors.file_too_large_hint', { size: Math.round(MAX_FILE_SIZE / (1024 * 1024)) })}`
+            );
             return { ...prev, errors: newErrors };
           });
           continue;
@@ -109,11 +121,15 @@ export function useMultiAttachment(): UseMultiAttachmentReturn {
 
           // Check if parsing succeeded
           if (attachment.status === 'failed') {
+            const errorMessage =
+              getErrorMessageFromCode(attachment.error_code, t) ||
+              attachment.error_message ||
+              t('attachment.errors.parse_failed');
             setState(prev => {
               const newUploadingFiles = new Map(prev.uploadingFiles);
               newUploadingFiles.delete(fileId);
               const newErrors = new Map(prev.errors);
-              newErrors.set(fileId, attachment.error_message || 'File parsing failed');
+              newErrors.set(fileId, errorMessage);
               return {
                 ...prev,
                 uploadingFiles: newUploadingFiles,
@@ -127,6 +143,24 @@ export function useMultiAttachment(): UseMultiAttachmentReturn {
               // Ignore delete errors
             }
             continue;
+          }
+
+          // Store truncation info if present
+          if (attachment.truncation_info?.is_truncated) {
+            setTruncatedAttachments(prev => {
+              const newMap = new Map(prev);
+              newMap.set(attachment.id, attachment.truncation_info!);
+              return newMap;
+            });
+            // Show toast notification for truncation
+            toast({
+              title: t('attachment.errors.content_truncated'),
+              description: t('attachment.truncation.notice', {
+                original: attachment.truncation_info.original_length?.toLocaleString(),
+                truncated: attachment.truncation_info.truncated_length?.toLocaleString(),
+              }),
+              variant: 'default',
+            });
           }
 
           // Add to attachments list
@@ -145,9 +179,11 @@ export function useMultiAttachment(): UseMultiAttachmentReturn {
                   status: attachment.status,
                   text_length: attachment.text_length,
                   error_message: attachment.error_message,
+                  error_code: attachment.error_code,
                   subtask_id: null,
                   file_extension: file.name.substring(file.name.lastIndexOf('.')),
                   created_at: new Date().toISOString(),
+                  truncation_info: attachment.truncation_info,
                 },
               ],
               uploadingFiles: newUploadingFiles,
@@ -158,7 +194,10 @@ export function useMultiAttachment(): UseMultiAttachmentReturn {
             const newUploadingFiles = new Map(prev.uploadingFiles);
             newUploadingFiles.delete(fileId);
             const newErrors = new Map(prev.errors);
-            newErrors.set(fileId, (err as Error).message || 'Upload failed');
+            newErrors.set(
+              fileId,
+              `${t('attachment.errors.network_error')}: ${(err as Error).message || t('attachment.errors.network_error_hint')}`
+            );
             return {
               ...prev,
               uploadingFiles: newUploadingFiles,
@@ -168,7 +207,7 @@ export function useMultiAttachment(): UseMultiAttachmentReturn {
         }
       }
     },
-    [state.attachments]
+    [state.attachments, t]
   );
 
   const handleRemove = useCallback(
@@ -180,6 +219,13 @@ export function useMultiAttachment(): UseMultiAttachmentReturn {
         ...prev,
         attachments: prev.attachments.filter(a => a.id !== attachmentId),
       }));
+
+      // Remove truncation info
+      setTruncatedAttachments(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(attachmentId);
+        return newMap;
+      });
 
       // Try to delete from server if it exists and is not linked to a subtask
       if (attachment && !attachment.subtask_id) {
@@ -199,6 +245,7 @@ export function useMultiAttachment(): UseMultiAttachmentReturn {
       uploadingFiles: new Map(),
       errors: new Map(),
     });
+    setTruncatedAttachments(new Map());
   }, []);
 
   const isUploading = state.uploadingFiles.size > 0;
@@ -214,5 +261,6 @@ export function useMultiAttachment(): UseMultiAttachmentReturn {
     reset,
     isReadyToSend,
     isUploading,
+    truncatedAttachments,
   };
 }

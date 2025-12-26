@@ -12,10 +12,12 @@ It decouples the AI response logic from message saving, allowing for:
 - Clean separation of concerns
 
 Now uses ChatService with ChatConfigBuilder for direct chat streaming.
+Uses ChatStreamContext for better parameter organization.
 """
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from shared.telemetry.context import (
@@ -35,6 +37,66 @@ from app.models.subtask import Subtask
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class StreamTaskData:
+    """Data extracted from ORM objects for background streaming task.
+
+    This dataclass groups all the data needed for streaming that must be
+    extracted from ORM objects before starting the background task.
+    This prevents DetachedInstanceError when the session closes.
+    """
+
+    # Task data
+    task_id: int
+
+    # Team data
+    team_id: int
+    team_user_id: int
+    team_name: str
+    team_json: dict[str, Any]
+
+    # User data
+    user_id: int
+    user_name: str
+
+    # Subtask data (message ordering)
+    subtask_id: int
+    assistant_message_id: int
+    user_message_id: int  # parent_id of assistant subtask
+
+    @classmethod
+    def from_orm(
+        cls,
+        task: Kind,
+        team: Kind,
+        user: User,
+        assistant_subtask: Subtask,
+    ) -> "StreamTaskData":
+        """Extract data from ORM objects.
+
+        Args:
+            task: Task Kind object
+            team: Team Kind object
+            user: User object
+            assistant_subtask: Assistant subtask (contains message_id and parent_id)
+
+        Returns:
+            StreamTaskData with all necessary fields extracted
+        """
+        return cls(
+            task_id=task.id,
+            team_id=team.id,
+            team_user_id=team.user_id,
+            team_name=team.name,
+            team_json=team.json,
+            user_id=user.id,
+            user_name=user.user_name,
+            subtask_id=assistant_subtask.id,
+            assistant_message_id=assistant_subtask.message_id,
+            user_message_id=assistant_subtask.parent_id,
+        )
 
 
 async def trigger_ai_response(
@@ -124,26 +186,19 @@ async def _trigger_direct_chat(
     Emits chat:start event and starts streaming in background task.
 
     Args:
+        task: Task Kind object
+        assistant_subtask: Assistant subtask (contains message_id and parent_id for ordering)
+        team: Team Kind object
+        user: User object
+        message: User message text
+        payload: Chat payload with feature flags
+        task_room: WebSocket room name
+        namespace: ChatNamespace instance
         knowledge_base_ids: Optional list of knowledge base IDs for tool-based RAG
     """
-    from app.api.ws.events import ServerEvents
-    from app.services.chat.ws_emitter import get_ws_emitter
-
     # Extract data from ORM objects before starting background task
-    # This prevents DetachedInstanceError
-    task_data = {
-        "id": task.id,
-    }
-    team_data = {
-        "id": team.id,
-        "user_id": team.user_id,
-        "name": team.name,
-        "json": team.json,
-    }
-    user_data = {
-        "id": user.id,
-        "user_name": user.user_name,
-    }
+    # This prevents DetachedInstanceError when the session is closed
+    stream_data = StreamTaskData.from_orm(task, team, user, assistant_subtask)
 
     # Copy ContextVars (request_id, user_id, etc.) AND trace context before starting background task
     # This ensures logging context and trace parent-child relationships are preserved in the background task
@@ -163,11 +218,7 @@ async def _trigger_direct_chat(
     logger.info("[ai_trigger] Starting background stream task with ChatService")
     stream_task = asyncio.create_task(
         _stream_chat_response(
-            task_data=task_data,
-            subtask_id=assistant_subtask.id,
-            message_id=assistant_subtask.message_id,
-            team_data=team_data,
-            user_data=user_data,
+            stream_data=stream_data,
             message=message,
             payload=payload,
             task_room=task_room,
@@ -183,11 +234,7 @@ async def _trigger_direct_chat(
 
 
 async def _stream_chat_response(
-    task_data: dict[str, Any],
-    subtask_id: int,
-    message_id: int,
-    team_data: dict[str, Any],
-    user_data: dict[str, Any],
+    stream_data: StreamTaskData,
     message: str,
     payload: Any,
     task_room: str,
@@ -203,7 +250,13 @@ async def _stream_chat_response(
     streaming to ChatService.stream_to_websocket().
 
     Args:
+        stream_data: StreamTaskData containing all extracted ORM data
         message: Original user message
+        payload: Chat payload with feature flags (is_group_chat, enable_web_search, etc.)
+        task_room: WebSocket room name
+        namespace: ChatNamespace instance
+        trace_context: Copied ContextVars for logging
+        otel_context: OpenTelemetry context for tracing
         knowledge_base_ids: Optional list of knowledge base IDs for tool-based RAG
     """
     # Restore trace context at the start of background task
@@ -225,7 +278,6 @@ async def _stream_chat_response(
     span_manager.create_span()
     span_manager.enter_span()
 
-    from app.api.ws.events import ServerEvents
     from app.services.chat_v2.config import ChatConfigBuilder
     from app.services.chat_v2.service import (
         WebSocketStreamConfig,
@@ -237,17 +289,17 @@ async def _stream_chat_response(
     try:
         # Set base attributes (user and task info)
         span_manager.set_base_attributes(
-            task_id=task_data["id"],
-            subtask_id=subtask_id,
-            user_id=str(user_data["id"]),
-            user_name=user_data["user_name"],
+            task_id=stream_data.task_id,
+            subtask_id=stream_data.subtask_id,
+            user_id=str(stream_data.user_id),
+            user_name=stream_data.user_name,
         )
 
         # Get team Kind object from database
         team = (
             db.query(Kind)
             .filter(
-                Kind.id == team_data["id"],
+                Kind.id == stream_data.team_id,
                 Kind.kind == "Team",
                 Kind.is_active,
             )
@@ -261,8 +313,8 @@ async def _stream_chat_response(
 
             error_emitter = get_ws_emitter()
             await error_emitter.emit_chat_error(
-                task_id=task_data["id"],
-                subtask_id=subtask_id,
+                task_id=stream_data.task_id,
+                subtask_id=stream_data.subtask_id,
                 error=error_msg,
             )
             return
@@ -271,8 +323,8 @@ async def _stream_chat_response(
         config_builder = ChatConfigBuilder(
             db=db,
             team=team,
-            user_id=user_data["id"],
-            user_name=user_data["user_name"],
+            user_id=stream_data.user_id,
+            user_name=stream_data.user_name,
         )
 
         try:
@@ -281,7 +333,7 @@ async def _stream_chat_response(
                 force_override=payload.force_override_bot_model is not None,
                 enable_clarification=payload.enable_clarification,
                 enable_deep_thinking=payload.enable_deep_thinking,
-                task_id=task_data["id"],
+                task_id=stream_data.task_id,
             )
         except ValueError as e:
             error_msg = str(e)
@@ -292,8 +344,8 @@ async def _stream_chat_response(
 
             error_emitter = get_ws_emitter()
             await error_emitter.emit_chat_error(
-                task_id=task_data["id"],
-                subtask_id=subtask_id,
+                task_id=stream_data.task_id,
+                subtask_id=stream_data.subtask_id,
                 error=error_msg,
             )
             return
@@ -313,7 +365,7 @@ async def _stream_chat_response(
         final_message = message
         if attachment_ids_to_process:
             final_message = await _process_attachments(
-                db, attachment_ids_to_process, user_data["id"], message
+                db, attachment_ids_to_process, stream_data.user_id, message
             )
 
         # Emit chat:start event with shell_type using global emitter for cross-worker broadcasting
@@ -325,9 +377,9 @@ async def _stream_chat_response(
 
         start_emitter = get_ws_emitter()
         await start_emitter.emit_chat_start(
-            task_id=task_data["id"],
-            subtask_id=subtask_id,
-            message_id=message_id,
+            task_id=stream_data.task_id,
+            subtask_id=stream_data.subtask_id,
+            message_id=stream_data.assistant_message_id,
             shell_type=chat_config.shell_type,
         )
         logger.info("[ai_trigger] chat:start emitted")
@@ -335,22 +387,23 @@ async def _stream_chat_response(
         # Prepare knowledge base tools and enhanced system prompt
         extra_tools, enhanced_system_prompt = _prepare_knowledge_base_tools(
             knowledge_base_ids=knowledge_base_ids,
-            user_id=user_data["id"],
+            user_id=stream_data.user_id,
             db=db,
             base_system_prompt=chat_config.system_prompt,
         )
 
         # Create WebSocket stream config
         ws_config = WebSocketStreamConfig(
-            task_id=task_data["id"],
-            subtask_id=subtask_id,
+            task_id=stream_data.task_id,
+            subtask_id=stream_data.subtask_id,
             task_room=task_room,
-            user_id=user_data["id"],
-            user_name=user_data["user_name"],
+            user_id=stream_data.user_id,
+            user_name=stream_data.user_name,
             is_group_chat=payload.is_group_chat,
             enable_web_search=payload.enable_web_search,
             search_engine=payload.search_engine,
-            message_id=message_id,
+            message_id=stream_data.assistant_message_id,
+            user_message_id=stream_data.user_message_id,  # For history exclusion
             bot_name=chat_config.bot_name,
             bot_namespace=chat_config.bot_namespace,
             shell_type=chat_config.shell_type,  # Pass shell_type from chat_config
@@ -372,7 +425,9 @@ async def _stream_chat_response(
         )
 
     except Exception as e:
-        logger.exception("[ai_trigger] Stream error subtask=%d: %s", subtask_id, e)
+        logger.exception(
+            "[ai_trigger] Stream error subtask=%d: %s", stream_data.subtask_id, e
+        )
         # Record error in span
         span_manager.record_exception(e)
         # Use global emitter for cross-worker broadcasting
@@ -380,8 +435,8 @@ async def _stream_chat_response(
 
         error_emitter = get_ws_emitter()
         await error_emitter.emit_chat_error(
-            task_id=task_data["id"],
-            subtask_id=subtask_id,
+            task_id=stream_data.task_id,
+            subtask_id=stream_data.subtask_id,
             error=str(e),
         )
     finally:
@@ -446,7 +501,7 @@ async def _process_attachments(
                 # For text documents, get the formatted content
                 doc_prefix = attachment_service.build_document_text_prefix(attachment)
                 if doc_prefix:
-                    text_attachments.append(f"【附件 {idx}】\n{doc_prefix}")
+                    text_attachments.append(f"[Attachment {idx}]\n{doc_prefix}")
 
     # If we have images, return a multi-vision structure
     if image_attachments:
@@ -454,7 +509,7 @@ async def _process_attachments(
         combined_text = ""
         if text_attachments:
             combined_text = "\n".join(text_attachments) + "\n\n"
-        combined_text += f"【用户问题】:\n{message}"
+        combined_text += f"[User Question]:\n{message}"
 
         return {
             "type": "multi_vision",
@@ -465,7 +520,7 @@ async def _process_attachments(
     # If only text attachments, combine them
     if text_attachments:
         combined_attachments = "\n".join(text_attachments)
-        return f"{combined_attachments}【用户问题】:\n{message}"
+        return f"{combined_attachments}[User Question]:\n{message}"
 
     return message
 
