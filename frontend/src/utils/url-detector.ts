@@ -107,11 +107,10 @@ export function detectUrls(text: string): DetectedUrl[] {
   const processedRanges: Array<{ start: number; end: number }> = []
 
   // Check if a range overlaps with already processed ranges
+  // Uses robust overlap check: two ranges [start, end) and [range.start, range.end) overlap
+  // if and only if start < range.end && end > range.start
   const isOverlapping = (start: number, end: number): boolean => {
-    return processedRanges.some(
-      (range) =>
-        (start >= range.start && start < range.end) || (end > range.start && end <= range.end)
-    )
+    return processedRanges.some((range) => start < range.end && end > range.start)
   }
 
   // First, detect Markdown images: ![alt](url)

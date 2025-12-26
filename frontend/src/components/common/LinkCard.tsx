@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useMemo } from 'react'
 import { ExternalLink, Globe, Loader2 } from 'lucide-react'
 import { useUrlMetadata, type UrlMetadata } from '@/hooks/useUrlMetadata'
 
