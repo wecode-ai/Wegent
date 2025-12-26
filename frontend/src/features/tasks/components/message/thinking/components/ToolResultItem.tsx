@@ -2,13 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import { memo, useState } from 'react'
-import { Maximize2, Minimize2 } from 'lucide-react'
-import { useTranslation } from '@/hooks/useTranslation'
-import type { ToolResultItemProps } from '../types'
-import { shouldCollapse, getContentPreview } from '../utils/thinkingUtils'
+import { memo, useState } from 'react';
+import { Maximize2, Minimize2 } from 'lucide-react';
+import { useTranslation } from '@/hooks/useTranslation';
+import type { ToolResultItemProps } from '../types';
+import { shouldCollapse, getContentPreview } from '../utils/thinkingUtils';
 
 /**
  * Component to display a tool execution result
@@ -18,22 +18,22 @@ const ToolResultItem = memo(function ToolResultItem({
   isError = false,
   itemIndex,
 }: ToolResultItemProps) {
-  const { t } = useTranslation('chat')
-  const [isExpanded, setIsExpanded] = useState(false)
+  const { t } = useTranslation('chat');
+  const [isExpanded, setIsExpanded] = useState(false);
 
-  const resultContent = typeof content === 'string' ? content : JSON.stringify(content, null, 2)
-  const isCollapsible = shouldCollapse(resultContent)
-  const displayContent = isCollapsible && !isExpanded ? getContentPreview(resultContent) : resultContent
+  const resultContent = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
+  const isCollapsible = shouldCollapse(resultContent);
+  const displayContent =
+    isCollapsible && !isExpanded ? getContentPreview(resultContent) : resultContent;
 
-  const bgClass = isError ? 'bg-red-500/5 border-red-500/20' : 'bg-green-500/5 border-green-500/20'
-  const textClass = isError ? 'text-red-400' : 'text-green-400'
+  const textClass = isError ? 'text-red-400' : 'text-green-400';
   const buttonClass = isError
-    ? 'text-red-400 hover:text-red-300'
-    : 'text-green-400 hover:text-green-300'
-  const icon = isError ? '❌' : '✅'
+    ? 'text-red-400 hover:text-red-500 hover:font-semibold'
+    : 'text-green-400 hover:text-green-500 hover:font-semibold';
+  const icon = isError ? '❌' : '✅';
 
   return (
-    <div className={`rounded p-2 border ${bgClass}`}>
+    <div>
       <div className="flex items-center justify-between mb-1">
         <div className={`text-xs font-medium ${textClass}`}>
           {icon} {t('thinking.tool_result') || 'Tool Result'}
@@ -65,7 +65,7 @@ const ToolResultItem = memo(function ToolResultItem({
         {isCollapsible && !isExpanded && <span className="text-blue-400">...</span>}
       </pre>
     </div>
-  )
-})
+  );
+});
 
-export default ToolResultItem
+export default ToolResultItem;

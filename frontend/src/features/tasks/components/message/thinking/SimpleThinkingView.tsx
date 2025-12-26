@@ -5,7 +5,7 @@
 'use client';
 
 import { memo, useState, useMemo } from 'react';
-import { Search, CheckCircle2, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
+import { Search, ChevronDown, ChevronUp } from 'lucide-react';
 import { useTranslation } from '@/hooks/useTranslation';
 import type { ThinkingStep } from './types';
 import { extractToolCalls, isRunningStatus, isTerminalStatus } from './utils/thinkingUtils';
@@ -144,12 +144,9 @@ const SimpleThinkingView = memo(function SimpleThinkingView({
         onClick={() => setIsExpanded(!isExpanded)}
         className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border transition-all hover:bg-surface/50 bg-blue-500/5 border-blue-500/20 text-blue-600 dark:text-blue-400"
       >
-        {isRunning && !isCompleted ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin flex-shrink-0" />
-        ) : (
-          <CheckCircle2 className="h-3.5 w-3.5 flex-shrink-0" />
-        )}
-        <Search className="h-3.5 w-3.5 flex-shrink-0" />
+        <Search
+          className={`h-3.5 w-3.5 flex-shrink-0 ${isRunning && !isCompleted ? 'animate-slide' : ''}`}
+        />
         <span className="text-xs font-medium">{summaryText}</span>
         {isExpanded ? (
           <ChevronUp className="h-3.5 w-3.5 flex-shrink-0" />

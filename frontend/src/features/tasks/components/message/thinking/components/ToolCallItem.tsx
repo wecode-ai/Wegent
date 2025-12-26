@@ -2,53 +2,50 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import { memo, useState } from 'react'
-import { Maximize2, Minimize2 } from 'lucide-react'
-import { useTranslation } from '@/hooks/useTranslation'
-import type { ToolCallItemProps } from '../types'
-import { shouldCollapse, getContentPreview } from '../utils/thinkingUtils'
-import TodoListDisplay from './TodoListDisplay'
-import type { TodoItem } from '../types'
+import { memo, useState } from 'react';
+import { Maximize2, Minimize2 } from 'lucide-react';
+import { useTranslation } from '@/hooks/useTranslation';
+import type { ToolCallItemProps } from '../types';
+import { shouldCollapse, getContentPreview } from '../utils/thinkingUtils';
+import TodoListDisplay from './TodoListDisplay';
+import type { TodoItem } from '../types';
 
 /**
  * Component to display a single tool call with name and parameters
  */
-const ToolCallItem = memo(function ToolCallItem({
-  toolName,
-  input,
-  itemIndex,
-}: ToolCallItemProps) {
-  const { t } = useTranslation('chat')
-  const [expandedParams, setExpandedParams] = useState<Set<string>>(new Set())
+const ToolCallItem = memo(function ToolCallItem({ toolName, input, itemIndex }: ToolCallItemProps) {
+  const { t } = useTranslation('chat');
+  const [expandedParams, setExpandedParams] = useState<Set<string>>(new Set());
 
   const toggleParamExpansion = (paramKey: string) => {
     setExpandedParams(prev => {
-      const newSet = new Set(prev)
+      const newSet = new Set(prev);
       if (newSet.has(paramKey)) {
-        newSet.delete(paramKey)
+        newSet.delete(paramKey);
       } else {
-        newSet.add(paramKey)
+        newSet.add(paramKey);
       }
-      return newSet
-    })
-  }
+      return newSet;
+    });
+  };
 
   // Special handling for TodoWrite tool
   if (toolName === 'TodoWrite' && input && 'todos' in input) {
-    const todos = input.todos as TodoItem[]
+    const todos = input.todos as TodoItem[];
     if (Array.isArray(todos)) {
-      return <TodoListDisplay todos={todos} />
+      return <TodoListDisplay todos={todos} />;
     }
   }
 
   const renderParamValue = (key: string, value: unknown, uniqueId: string) => {
-    const stringValue = typeof value === 'string' ? value : JSON.stringify(value, null, 2)
-    const isCollapsible = shouldCollapse(stringValue)
-    const paramKey = `${uniqueId}-${key}`
-    const isExpanded = expandedParams.has(paramKey)
-    const displayValue = isCollapsible && !isExpanded ? getContentPreview(stringValue) : stringValue
+    const stringValue = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+    const isCollapsible = shouldCollapse(stringValue);
+    const paramKey = `${uniqueId}-${key}`;
+    const isExpanded = expandedParams.has(paramKey);
+    const displayValue =
+      isCollapsible && !isExpanded ? getContentPreview(stringValue) : stringValue;
 
     return (
       <div key={paramKey} className="text-xs">
@@ -57,7 +54,7 @@ const ToolCallItem = memo(function ToolCallItem({
           {isCollapsible && (
             <button
               onClick={() => toggleParamExpansion(paramKey)}
-              className="flex items-center gap-1 text-blue-400 hover:text-blue-300 transition-colors"
+              className="flex items-center gap-1 text-blue-400 hover:text-blue-500 hover:font-semibold transition-colors"
               title={isExpanded ? t('thinking.collapse') : t('thinking.expand')}
             >
               {isExpanded ? (
@@ -74,17 +71,17 @@ const ToolCallItem = memo(function ToolCallItem({
             </button>
           )}
         </div>
-        <pre className="text-text-tertiary overflow-x-auto bg-surface/50 p-1.5 rounded whitespace-pre-wrap break-words">
+        <pre className="text-text-tertiary overflow-x-auto whitespace-pre-wrap break-words">
           {displayValue}
           {isCollapsible && !isExpanded && <span className="text-blue-400">...</span>}
         </pre>
       </div>
-    )
-  }
+    );
+  };
 
   return (
-    <div className="rounded bg-blue-500/5 p-2 border border-blue-500/20">
-      <div className="text-xs font-medium text-blue-400 mb-2">
+    <div>
+      <div className="text-xs font-medium text-blue-400 mb-1">
         {t('thinking.tool_use') || 'Tool Use'}: {toolName}
       </div>
       {input && (
@@ -94,14 +91,14 @@ const ToolCallItem = memo(function ToolCallItem({
               renderParamValue(key, value, `item-${itemIndex}-${key}`)
             )
           ) : (
-            <pre className="text-xs text-text-tertiary overflow-x-auto bg-surface/50 p-1.5 rounded">
+            <pre className="text-xs text-text-tertiary overflow-x-auto">
               {JSON.stringify(input, null, 2)}
             </pre>
           )}
         </div>
       )}
     </div>
-  )
-})
+  );
+});
 
-export default ToolCallItem
+export default ToolCallItem;

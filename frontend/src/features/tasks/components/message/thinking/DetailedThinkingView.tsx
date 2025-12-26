@@ -2,12 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import { memo } from 'react'
-import { useTranslation } from '@/hooks/useTranslation'
-import type { ThinkingStep, TodoItem } from './types'
-import { useThinkingState } from './hooks/useThinkingState'
+import { memo } from 'react';
+import { useTranslation } from '@/hooks/useTranslation';
+import type { ThinkingStep, TodoItem } from './types';
+import { useThinkingState } from './hooks/useThinkingState';
 import {
   formatToolSummary,
   calculateDuration,
@@ -16,19 +16,19 @@ import {
   parseToolCallTags,
   shouldCollapse,
   getContentPreview,
-} from './utils/thinkingUtils'
-import { MAX_CONTENT_HEIGHT } from './utils/constants'
-import ThinkingHeader from './components/ThinkingHeader'
-import ToolCallItem from './components/ToolCallItem'
-import ToolResultItem from './components/ToolResultItem'
-import TodoListDisplay from './components/TodoListDisplay'
-import SystemInfoDisplay from './components/SystemInfoDisplay'
-import ErrorDisplay from './components/ErrorDisplay'
-import ScrollToBottom from './components/ScrollToBottom'
+} from './utils/thinkingUtils';
+import { MAX_CONTENT_HEIGHT } from './utils/constants';
+import ThinkingHeader from './components/ThinkingHeader';
+import ToolCallItem from './components/ToolCallItem';
+import ToolResultItem from './components/ToolResultItem';
+import TodoListDisplay from './components/TodoListDisplay';
+import SystemInfoDisplay from './components/SystemInfoDisplay';
+import ErrorDisplay from './components/ErrorDisplay';
+import ScrollToBottom from './components/ScrollToBottom';
 
 interface DetailedThinkingViewProps {
-  thinking: ThinkingStep[] | null
-  taskStatus?: string
+  thinking: ThinkingStep[] | null;
+  taskStatus?: string;
 }
 
 /**
@@ -39,8 +39,8 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
   thinking,
   taskStatus,
 }: DetailedThinkingViewProps) {
-  const { t: tTasks } = useTranslation('tasks')
-  const { t: tChat } = useTranslation('chat')
+  const { t: tTasks } = useTranslation('tasks');
+  const { t: tChat } = useTranslation('chat');
 
   const {
     items,
@@ -54,63 +54,63 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
     handleScrollToBottom,
     expandedParams,
     toggleParamExpansion,
-  } = useThinkingState({ thinking, taskStatus })
+  } = useThinkingState({ thinking, taskStatus });
 
   // Early return if no items
   if (items.length === 0) {
-    return null
+    return null;
   }
 
   // Format collapsed title
   const formatCollapsedTitle = (): string => {
-    let statusText = ''
+    let statusText = '';
     if (taskStatus === 'COMPLETED') {
-      statusText = tTasks('thinking.execution_completed')
+      statusText = tTasks('thinking.execution_completed');
     } else if (taskStatus === 'FAILED') {
-      statusText = tTasks('thinking.execution_failed')
+      statusText = tTasks('thinking.execution_failed');
     } else if (taskStatus === 'CANCELLED') {
-      statusText = tTasks('thinking.execution_cancelled')
+      statusText = tTasks('thinking.execution_cancelled');
     }
 
-    const toolSummary = formatToolSummary(toolCounts)
-    const duration = calculateDuration(items)
+    const toolSummary = formatToolSummary(toolCounts);
+    const duration = calculateDuration(items);
 
-    let result = statusText
+    let result = statusText;
     if (toolSummary) {
-      result += ' ' + toolSummary
+      result += ' ' + toolSummary;
     }
     if (duration) {
-      result += ' · ' + duration
+      result += ' · ' + duration;
     }
 
-    return result
-  }
+    return result;
+  };
 
   // Get title based on state
   const getTitle = () => {
     if (!isOpen && isCompleted) {
-      return formatCollapsedTitle()
+      return formatCollapsedTitle();
     }
     if (isCompleted) {
-      return tTasks('thinking.execution_completed')
+      return tTasks('thinking.execution_completed');
     }
-    return tChat('messages.thinking') || 'Thinking'
-  }
+    return tChat('messages.thinking') || 'Thinking';
+  };
 
   // Render text content with tool_call parsing
   const renderTextContent = (text: string, uniqueId: string) => {
-    const parsed = parseToolCallTags(text)
+    const parsed = parseToolCallTags(text);
 
     if (!parsed) {
       // Check if this is a TodoWrite tool call in text format
       const todoWriteMatch = text.match(
         /<tool_call>TodoWrite\s*<arg_key>todos<\/arg_key>\s*<arg_value>([\s\S]*?)<\/arg_value>/
-      )
+      );
       if (todoWriteMatch) {
         try {
-          const todosData = JSON.parse(todoWriteMatch[1])
+          const todosData = JSON.parse(todoWriteMatch[1]);
           if (Array.isArray(todosData)) {
-            return <TodoListDisplay todos={todosData as TodoItem[]} />
+            return <TodoListDisplay todos={todosData as TodoItem[]} />;
           }
         } catch {
           // Fall through to text rendering
@@ -118,10 +118,10 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
       }
 
       // No tool_call tags, render as plain text with collapse support
-      const isCollapsible = shouldCollapse(text)
-      const textKey = `${uniqueId}-text`
-      const isExpanded = expandedParams.has(textKey)
-      const displayText = isCollapsible && !isExpanded ? getContentPreview(text) : text
+      const isCollapsible = shouldCollapse(text);
+      const textKey = `${uniqueId}-text`;
+      const isExpanded = expandedParams.has(textKey);
+      const displayText = isCollapsible && !isExpanded ? getContentPreview(text) : text;
 
       return (
         <div className="text-xs text-text-secondary">
@@ -129,7 +129,7 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
             <div className="flex justify-end mb-1">
               <button
                 onClick={() => toggleParamExpansion(textKey)}
-                className="flex items-center gap-1 text-blue-400 hover:text-blue-300 transition-colors text-xs"
+                className="flex items-center gap-1 text-blue-400 hover:text-blue-500 hover:font-semibold transition-colors text-xs"
               >
                 {isExpanded
                   ? tChat('thinking.collapse') || 'Collapse'
@@ -142,13 +142,13 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
             {isCollapsible && !isExpanded && <span className="text-blue-400">...</span>}
           </div>
         </div>
-      )
+      );
     }
 
     // Render with parsed tool_call - handle TodoWrite specially
     if (parsed.toolName === 'TodoWrite' && parsed.args.todos) {
       try {
-        const todosData = JSON.parse(parsed.args.todos)
+        const todosData = JSON.parse(parsed.args.todos);
         if (Array.isArray(todosData)) {
           return (
             <div className="space-y-2">
@@ -164,7 +164,7 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
                 </div>
               )}
             </div>
-          )
+          );
         }
       } catch {
         // Fall through
@@ -177,16 +177,16 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
         {parsed.beforeText && (
           <div className="text-xs text-text-secondary whitespace-pre-wrap">{parsed.beforeText}</div>
         )}
-        <div className="rounded bg-blue-500/5 p-2 border border-blue-500/20">
-          <div className="text-xs font-medium text-blue-400 mb-2">
+        <div>
+          <div className="text-xs font-medium text-blue-400 mb-1">
             {tChat('thinking.pre_tool_call') || 'Tool Call'}: {parsed.toolName}
           </div>
           <div className="space-y-2">
             {Object.entries(parsed.args).map(([key, value]) => {
-              const paramKey = `${uniqueId}-toolcall-${key}`
-              const isCollapsible = shouldCollapse(value)
-              const isExpanded = expandedParams.has(paramKey)
-              const displayValue = isCollapsible && !isExpanded ? getContentPreview(value) : value
+              const paramKey = `${uniqueId}-toolcall-${key}`;
+              const isCollapsible = shouldCollapse(value);
+              const isExpanded = expandedParams.has(paramKey);
+              const displayValue = isCollapsible && !isExpanded ? getContentPreview(value) : value;
 
               return (
                 <div key={paramKey} className="text-xs">
@@ -195,7 +195,7 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
                     {isCollapsible && (
                       <button
                         onClick={() => toggleParamExpansion(paramKey)}
-                        className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                        className="text-xs text-blue-400 hover:text-blue-500 hover:font-semibold transition-colors"
                       >
                         {isExpanded
                           ? tChat('thinking.collapse') || 'Collapse'
@@ -203,12 +203,12 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
                       </button>
                     )}
                   </div>
-                  <pre className="text-text-tertiary overflow-x-auto bg-surface/50 p-1.5 rounded whitespace-pre-wrap break-words">
+                  <pre className="text-text-tertiary overflow-x-auto whitespace-pre-wrap break-words">
                     {displayValue}
                     {isCollapsible && !isExpanded && <span className="text-blue-400">...</span>}
                   </pre>
                 </div>
-              )
+              );
             })}
           </div>
         </div>
@@ -216,13 +216,13 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
           <div className="text-xs text-text-secondary whitespace-pre-wrap">{parsed.afterText}</div>
         )}
       </div>
-    )
-  }
+    );
+  };
 
   // Render details content based on type
   const renderDetailsContent = (item: ThinkingStep, itemIndex: number) => {
-    const details = item.details
-    if (!details) return null
+    const details = item.details;
+    if (!details) return null;
 
     // Handle assistant/user message with content array
     if ((details.type === 'assistant' || details.type === 'user') && details.message?.content) {
@@ -237,7 +237,7 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
                   input={content.input as Record<string, unknown>}
                   itemIndex={itemIndex}
                 />
-              )
+              );
             } else if (content.type === 'tool_result') {
               return (
                 <ToolResultItem
@@ -246,16 +246,18 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
                   isError={content.is_error}
                   itemIndex={itemIndex}
                 />
-              )
+              );
             } else if (content.type === 'text' && content.text) {
               return (
-                <div key={idx}>{renderTextContent(content.text, `item-${itemIndex}-text-${idx}`)}</div>
-              )
+                <div key={idx}>
+                  {renderTextContent(content.text, `item-${itemIndex}-text-${idx}`)}
+                </div>
+              );
             }
-            return null
+            return null;
           })}
         </div>
-      )
+      );
     }
 
     // Handle direct tool_use type
@@ -268,7 +270,7 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
             itemIndex={itemIndex}
           />
         </div>
-      )
+      );
     }
 
     // Handle direct tool_result type
@@ -281,13 +283,13 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
             itemIndex={itemIndex}
           />
         </div>
-      )
+      );
     }
 
     // Handle result message type
     if (details.type === 'result') {
       return (
-        <div className="mt-2 rounded bg-purple-500/5 p-2 border border-purple-500/20">
+        <div>
           <div className="text-xs font-medium text-purple-400 mb-1">
             📋 {tChat('thinking.result_message') || 'Result Message'}
           </div>
@@ -297,18 +299,19 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
             {details.duration_ms !== undefined && <div>Duration: {details.duration_ms}ms</div>}
             {details.usage && (
               <div>
-                Tokens: {details.usage.input_tokens || 0} in / {details.usage.output_tokens || 0} out
+                Tokens: {details.usage.input_tokens || 0} in / {details.usage.output_tokens || 0}{' '}
+                out
               </div>
             )}
           </div>
         </div>
-      )
+      );
     }
 
     // Handle system message type
     if (details.type === 'system') {
       return (
-        <div className="mt-2">
+        <div>
           <SystemInfoDisplay
             subtype={details.subtype}
             model={details.model}
@@ -318,7 +321,7 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
             cwd={details.cwd}
           />
         </div>
-      )
+      );
     }
 
     // Handle execution failed with error_message
@@ -330,17 +333,14 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
             executionType={details.execution_type}
           />
         </div>
-      )
+      );
     }
 
-    return null
-  }
+    return null;
+  };
 
   return (
-    <div
-      className="w-full rounded-lg border border-border shadow-sm relative bg-surface/80"
-      data-thinking-inline
-    >
+    <div className="w-full relative" data-thinking-inline>
       <ThinkingHeader
         title={getTitle()}
         isOpen={isOpen}
@@ -354,20 +354,17 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
         <div className="relative">
           <div
             ref={contentRef}
-            className="overflow-y-auto custom-scrollbar space-y-3 px-3 pb-3 pt-1"
+            className="overflow-y-auto custom-scrollbar space-y-0.5 pb-2 pt-1"
             style={{ maxHeight: MAX_CONTENT_HEIGHT }}
           >
             {items.map((item, index) => {
-              const confidenceText = formatConfidence(item.confidence)
-              const hasLegacyFields = item.action || item.result || item.reasoning
+              const confidenceText = formatConfidence(item.confidence);
+              const hasLegacyFields = item.action || item.result || item.reasoning;
 
               return (
-                <div
-                  key={index}
-                  className="rounded-md border border-border/60 bg-surface shadow-sm relative p-3"
-                >
+                <div key={index} className="relative py-0.5 mb-1">
                   {/* Title */}
-                  <div className="mb-2 font-semibold text-blue-300 text-xs">
+                  <div className="mb-0.5 font-medium text-blue-400 text-xs">
                     {getThinkingText(item.title, tChat)}
                   </div>
 
@@ -375,14 +372,18 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
                   {hasLegacyFields && (
                     <>
                       {item.action && (
-                        <div className="mb-2 text-xs text-text-secondary">
-                          <span className="font-medium">{tChat('messages.action') || 'Action'}: </span>
+                        <div className="mb-1 text-xs text-text-secondary">
+                          <span className="font-medium">
+                            {tChat('messages.action') || 'Action'}:{' '}
+                          </span>
                           {getThinkingText(item.action, tChat)}
                         </div>
                       )}
                       {item.result && (
-                        <div className="mb-2 text-xs text-text-tertiary">
-                          <span className="font-medium">{tChat('messages.result') || 'Result'}: </span>
+                        <div className="mb-1 text-xs text-text-tertiary">
+                          <span className="font-medium">
+                            {tChat('messages.result') || 'Result'}:{' '}
+                          </span>
                           {renderTextContent(
                             getThinkingText(item.result, tChat),
                             `item-${index}-legacy-result`
@@ -390,7 +391,7 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
                         </div>
                       )}
                       {item.reasoning && (
-                        <div className="mb-2 text-xs text-text-tertiary">
+                        <div className="mb-1 text-xs text-text-tertiary">
                           <span className="font-medium">
                             {tChat('messages.reasoning') || 'Reasoning'}:{' '}
                           </span>
@@ -407,7 +408,7 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
                   {renderDetailsContent(item, index)}
 
                   {/* Footer with confidence and next_action */}
-                  <div className="flex flex-wrap items-center justify-between gap-2 mt-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mt-1.5">
                     {confidenceText && (
                       <div className="text-xs text-text-tertiary">
                         <span className="font-medium">
@@ -425,7 +426,7 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
                       )}
                   </div>
                 </div>
-              )
+              );
             })}
           </div>
 
@@ -433,7 +434,7 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
         </div>
       )}
     </div>
-  )
-})
+  );
+});
 
-export default DetailedThinkingView
+export default DetailedThinkingView;
