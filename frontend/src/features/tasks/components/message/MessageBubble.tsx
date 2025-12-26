@@ -31,6 +31,9 @@ import AttachmentPreview from '../input/AttachmentPreview';
 import StreamingWaitIndicator from './StreamingWaitIndicator';
 import BubbleTools, { CopyButton } from './BubbleTools';
 import { SourceReferences } from '../chat/SourceReferences';
+import SmartLink from '@/components/common/SmartLink';
+import ImagePreview from '@/components/common/ImagePreview';
+import { isImageUrl } from '@/utils/url-detector';
 import type { ClarificationData, FinalPromptData, ClarificationAnswer } from '@/types/api';
 import type { SourceReference } from '@/types/socket';
 import { useTraceAction } from '@/hooks/useTraceAction';
@@ -432,11 +435,24 @@ const MessageBubble = memo(
             components={
               paragraphAction
                 ? {
-                    a: ({ href, children, ...props }) => (
-                      <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                        {children}
-                      </a>
-                    ),
+                    a: ({ href, children, ...props }) => {
+                      // Use SmartLink for URLs to render as image preview or link card
+                      if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
+                        return <SmartLink href={href}>{children}</SmartLink>;
+                      }
+                      return (
+                        <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+                          {children}
+                        </a>
+                      );
+                    },
+                    img: ({ src, alt, ...props }) => {
+                      // Use ImagePreview for images with Lightbox support
+                      if (src) {
+                        return <ImagePreview src={src} alt={alt} maxWidth={300} maxHeight={200} />;
+                      }
+                      return <img src={src} alt={alt} {...props} />;
+                    },
                     p: ({ children }) => {
                       const text = extractText(children);
                       return wrapWithAction(<p>{children}</p>, text);
@@ -475,11 +491,24 @@ const MessageBubble = memo(
                     },
                   }
                 : {
-                    a: ({ href, children, ...props }) => (
-                      <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                        {children}
-                      </a>
-                    ),
+                    a: ({ href, children, ...props }) => {
+                      // Use SmartLink for URLs to render as image preview or link card
+                      if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
+                        return <SmartLink href={href}>{children}</SmartLink>;
+                      }
+                      return (
+                        <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+                          {children}
+                        </a>
+                      );
+                    },
+                    img: ({ src, alt, ...props }) => {
+                      // Use ImagePreview for images with Lightbox support
+                      if (src) {
+                        return <ImagePreview src={src} alt={alt} maxWidth={300} maxHeight={200} />;
+                      }
+                      return <img src={src} alt={alt} {...props} />;
+                    },
                   }
             }
           />
@@ -955,11 +984,22 @@ const MessageBubble = memo(
                   style={{ background: 'transparent' }}
                   wrapperElement={{ 'data-color-mode': theme }}
                   components={{
-                    a: ({ href, children, ...props }) => (
-                      <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                        {children}
-                      </a>
-                    ),
+                    a: ({ href, children, ...props }) => {
+                      if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
+                        return <SmartLink href={href}>{children}</SmartLink>;
+                      }
+                      return (
+                        <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+                          {children}
+                        </a>
+                      );
+                    },
+                    img: ({ src, alt, ...props }) => {
+                      if (src) {
+                        return <ImagePreview src={src} alt={alt} maxWidth={300} maxHeight={200} />;
+                      }
+                      return <img src={src} alt={alt} {...props} />;
+                    },
                   }}
                 />
               )}
@@ -979,11 +1019,22 @@ const MessageBubble = memo(
                     style={{ background: 'transparent' }}
                     wrapperElement={{ 'data-color-mode': theme }}
                     components={{
-                      a: ({ href, children, ...props }) => (
-                        <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                          {children}
-                        </a>
-                      ),
+                      a: ({ href, children, ...props }) => {
+                        if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
+                          return <SmartLink href={href}>{children}</SmartLink>;
+                        }
+                        return (
+                          <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+                            {children}
+                          </a>
+                        );
+                      },
+                      img: ({ src, alt, ...props }) => {
+                        if (src) {
+                          return <ImagePreview src={src} alt={alt} maxWidth={300} maxHeight={200} />;
+                        }
+                        return <img src={src} alt={alt} {...props} />;
+                      },
                     }}
                   />
                 </div>
@@ -1089,11 +1140,22 @@ const MessageBubble = memo(
                 style={{ background: 'transparent' }}
                 wrapperElement={{ 'data-color-mode': theme }}
                 components={{
-                  a: ({ href, children, ...props }) => (
-                    <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                      {children}
-                    </a>
-                  ),
+                  a: ({ href, children, ...props }) => {
+                    if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
+                      return <SmartLink href={href}>{children}</SmartLink>;
+                    }
+                    return (
+                      <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+                        {children}
+                      </a>
+                    );
+                  },
+                  img: ({ src, alt, ...props }) => {
+                    if (src) {
+                      return <ImagePreview src={src} alt={alt} maxWidth={300} maxHeight={200} />;
+                    }
+                    return <img src={src} alt={alt} {...props} />;
+                  },
                 }}
               />
             )}
@@ -1113,11 +1175,22 @@ const MessageBubble = memo(
                   style={{ background: 'transparent' }}
                   wrapperElement={{ 'data-color-mode': theme }}
                   components={{
-                    a: ({ href, children, ...props }) => (
-                      <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                        {children}
-                      </a>
-                    ),
+                    a: ({ href, children, ...props }) => {
+                      if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
+                        return <SmartLink href={href}>{children}</SmartLink>;
+                      }
+                      return (
+                        <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+                          {children}
+                        </a>
+                      );
+                    },
+                    img: ({ src, alt, ...props }) => {
+                      if (src) {
+                        return <ImagePreview src={src} alt={alt} maxWidth={300} maxHeight={200} />;
+                      }
+                      return <img src={src} alt={alt} {...props} />;
+                    },
                   }}
                 />
               </div>
@@ -1181,11 +1254,22 @@ const MessageBubble = memo(
                 style={{ background: 'transparent' }}
                 wrapperElement={{ 'data-color-mode': theme }}
                 components={{
-                  a: ({ href, children, ...props }) => (
-                    <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                      {children}
-                    </a>
-                  ),
+                  a: ({ href, children, ...props }) => {
+                    if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
+                      return <SmartLink href={href}>{children}</SmartLink>;
+                    }
+                    return (
+                      <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+                        {children}
+                      </a>
+                    );
+                  },
+                  img: ({ src, alt, ...props }) => {
+                    if (src) {
+                      return <ImagePreview src={src} alt={alt} maxWidth={300} maxHeight={200} />;
+                    }
+                    return <img src={src} alt={alt} {...props} />;
+                  },
                 }}
               />
               {/* Show copy and download buttons during streaming */}
