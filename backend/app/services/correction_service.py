@@ -5,11 +5,12 @@
 """
 AI Correction Service - Evaluates and corrects AI responses using tool calling.
 
-This service uses LangChain's tool calling mechanism to obtain structured
+This service uses LangGraph agent workflow to obtain structured
 evaluation results instead of parsing JSON from free-form text.
 
 Key features:
-- Tool-based structured output (no JSON parsing needed)
+- LangGraph agent-based structured output (consistent with chat_v2)
+- Tool-based evaluation using SubmitEvaluationResultTool
 - Chat history context for better understanding
 - Web search tool for fact verification
 - Fallback to default response on errors
@@ -18,11 +19,14 @@ Key features:
 import logging
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_async
 
 from app.services.chat.tools.base import Tool
+from app.services.chat_v2.agents import LangGraphAgentBuilder
+from app.services.chat_v2.messages import MessageConverter
 from app.services.chat_v2.models import LangChainModelFactory
+from app.services.chat_v2.tools import ToolRegistry
 from app.services.chat_v2.tools.builtin import SubmitEvaluationResultTool
 
 logger = logging.getLogger(__name__)
@@ -104,7 +108,7 @@ Please analyze from the following perspectives:
 
 
 class CorrectionService:
-    """Service for evaluating and correcting AI responses using tool calling."""
+    """Service for evaluating and correcting AI responses using LangGraph agent."""
 
     @trace_async(
         span_name="correction.evaluate_response",
@@ -130,7 +134,8 @@ class CorrectionService:
         """
         Evaluate an AI response and provide corrections if needed.
 
-        Uses LangChain's tool calling mechanism to obtain structured results.
+        Uses LangGraph agent workflow to obtain structured results,
+        consistent with chat_v2 service implementation.
 
         Args:
             original_question: The user's original question
@@ -143,100 +148,136 @@ class CorrectionService:
             Dictionary with scores, corrections, summary, improved_answer, and is_correct
         """
         try:
-            # Create LangChain model from config
+
+            # Create LangChain model from config (consistent with chat_v2)
             llm = LangChainModelFactory.create_from_config(
                 model_config, streaming=False
             )
 
-            # Create evaluation tool
+            # Create tool registry and register evaluation tool
+            tool_registry = ToolRegistry()
             evaluation_tool = SubmitEvaluationResultTool()
+            tool_registry.register(evaluation_tool)
 
-            # Bind tool with forced tool choice
-            llm_with_tool = llm.bind_tools(
-                [evaluation_tool], tool_choice="submit_evaluation_result"
+            # Create LangGraph agent builder (consistent with chat_v2)
+            agent = LangGraphAgentBuilder(
+                llm=llm,
+                tool_registry=tool_registry,
+                max_iterations=10,  # Allow more iterations for tool calls (search + evaluation)
+                enable_checkpointing=False,
             )
 
-            # Build messages
-            messages = self._build_messages(original_question, original_answer, history)
+            # Build messages using MessageConverter (consistent with chat_v2)
+            chat_history = self._build_history(history)
+            user_prompt = self._build_user_prompt(
+                original_question, original_answer, has_history=bool(history)
+            )
 
-            # Invoke model
+            messages = MessageConverter.build_messages(
+                history=chat_history,
+                current_message=user_prompt,
+                system_prompt=CORRECTION_SYSTEM_PROMPT,
+            )
+
+            # Execute agent
             set_span_attribute("correction.message_count", len(messages))
-            add_span_event("correction.invoking_model")
+            add_span_event("correction.invoking_agent")
 
-            response = await llm_with_tool.ainvoke(messages)
+            result = await agent.execute(messages)
 
-            add_span_event("correction.model_invoked")
+            add_span_event("correction.agent_completed")
 
-            # Extract tool call arguments
-            if response.tool_calls and len(response.tool_calls) > 0:
-                tool_call = response.tool_calls[0]
-                args = tool_call["args"]
-
-                set_span_attribute("correction.tool_called", True)
-                set_span_attribute(
-                    "correction.detected_language",
-                    args.get("meta", {}).get("detected_language", "unknown"),
-                )
-
-                return self._format_result(args)
-
-            # Fallback: no tool call (should not happen with tool_choice)
-            logger.warning(
-                "Model did not call evaluation tool despite tool_choice setting"
-            )
-            set_span_attribute("correction.tool_called", False)
-            return self._default_result()
+            # Extract tool call arguments from agent result
+            return self._extract_evaluation_result(result)
 
         except Exception as e:
             logger.exception("Correction evaluation error: %s", e)
             add_span_event("correction.error", {"error": str(e)})
             return self._default_result()
 
-    def _build_messages(
+    def _build_history(
+        self,
+        history: list[dict[str, str]] | None = None,
+    ) -> list[dict[str, str]]:
+        """Build chat history in OpenAI format for MessageConverter.
+
+        Args:
+            history: Optional chat history
+
+        Returns:
+            List of messages in OpenAI format
+        """
+        if not history:
+            return []
+
+        result = []
+        for msg in history:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            result.append({"role": role, "content": content})
+
+        return result
+
+    def _build_user_prompt(
         self,
         original_question: str,
         original_answer: str,
-        history: list[dict[str, str]] | None = None,
-    ) -> list[SystemMessage | HumanMessage]:
-        """Build messages for the LLM.
+        has_history: bool = False,
+    ) -> str:
+        """Build user prompt for evaluation.
 
         Args:
             original_question: User's question
             original_answer: AI's answer
-            history: Optional chat history
+            has_history: Whether chat history is provided
 
         Returns:
-            List of LangChain messages
+            Formatted user prompt string
         """
-        messages = []
-
-        # System message
-        messages.append(SystemMessage(content=CORRECTION_SYSTEM_PROMPT))
-
-        # Add history if provided
-        if history:
-            for msg in history:
-                role = msg.get("role", "user")
-                content = msg.get("content", "")
-                if role == "user":
-                    messages.append(HumanMessage(content=content))
-                elif role == "assistant":
-                    # Use HumanMessage for simplicity (we just need context)
-                    messages.append(HumanMessage(content=f"Assistant: {content}"))
-
-        # User prompt with question and answer
-        if history:
-            user_prompt = CORRECTION_USER_PROMPT_WITH_CONTEXT.format(
+        if has_history:
+            return CORRECTION_USER_PROMPT_WITH_CONTEXT.format(
                 original_question=original_question, original_answer=original_answer
             )
         else:
-            user_prompt = CORRECTION_USER_PROMPT_NO_CONTEXT.format(
+            return CORRECTION_USER_PROMPT_NO_CONTEXT.format(
                 original_question=original_question, original_answer=original_answer
             )
 
-        messages.append(HumanMessage(content=user_prompt))
+    def _extract_evaluation_result(self, result: dict[str, Any]) -> dict[str, Any]:
+        """Extract evaluation result from agent execution result.
 
-        return messages
+        Args:
+            result: Agent execution result containing messages
+
+        Returns:
+            Formatted evaluation result dictionary
+        """
+        messages = result.get("messages", [])
+
+        # Find tool calls in AI messages
+        for msg in reversed(messages):
+            if isinstance(msg, AIMessage) and hasattr(msg, "tool_calls"):
+                tool_calls = msg.tool_calls
+                if tool_calls:
+                    # Find submit_evaluation_result tool call
+                    for tool_call in tool_calls:
+                        if tool_call.get("name") == "submit_evaluation_result":
+                            args = tool_call.get("args", {})
+
+                            set_span_attribute("correction.tool_called", True)
+                            set_span_attribute(
+                                "correction.detected_language",
+                                args.get("meta", {}).get(
+                                    "detected_language", "unknown"
+                                ),
+                            )
+
+                            return self._format_result(args)
+
+        # Fallback: no tool call found
+        logger.warning("Agent did not call evaluation tool in any message")
+        set_span_attribute("correction.tool_called", False)
+        return self._default_result()
 
     def _format_result(self, args: dict[str, Any]) -> dict[str, Any]:
         """Format tool call arguments into API response format.

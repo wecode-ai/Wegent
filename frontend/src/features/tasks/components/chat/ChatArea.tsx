@@ -20,7 +20,9 @@ import { useRouter } from 'next/navigation';
 import { useTaskContext } from '../../contexts/taskContext';
 import { useChatStreamContext } from '../../contexts/chatStreamContext';
 import { Button } from '@/components/ui/button';
-import { useScrollManagement, useFloatingInput, useTeamPreferences } from '../hooks';
+import { useScrollManagement } from '../hooks/useScrollManagement';
+import { useFloatingInput } from '../hooks/useFloatingInput';
+import { useTeamPreferences } from '../hooks/useTeamPreferences';
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
