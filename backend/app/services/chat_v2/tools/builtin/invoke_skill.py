@@ -2,11 +2,20 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Invoke skill tool for on-demand skill prompt expansion."""
+"""Invoke skill tool for on-demand skill prompt expansion.
+
+This tool implements session-level skill expansion caching:
+- Within a single user-AI conversation turn, a skill only needs to be expanded once
+- Subsequent calls to the same skill in the same turn return a confirmation message
+- When the AI finishes responding to the user, the expansion state is cleared
+- The next user message starts a fresh conversation turn
+"""
+
+from typing import Set
 
 from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
@@ -25,13 +34,21 @@ class InvokeSkillTool(BaseTool):
     This tool enables on-demand skill expansion - instead of including
     all skill prompts in the system prompt, skills are loaded only
     when needed, keeping the context window efficient.
+
+    Session-level caching:
+    - Skills are cached within a single conversation turn (one user message -> AI response)
+    - First call returns the full prompt, subsequent calls return a short confirmation
+    - This prevents redundant prompt expansion during multi-tool-call cycles
+    - Cache is automatically fresh for each new tool instance (new conversation turn)
     """
 
     name: str = "invoke_skill"
     description: str = (
         "Load a skill's full instructions when you need specialized guidance. "
         "Call this tool when your task matches one of the available skills' descriptions. "
-        "The skill will provide detailed instructions, examples, and best practices."
+        "The skill will provide detailed instructions, examples, and best practices. "
+        "Note: Within the same response, if you've already loaded a skill, calling it again "
+        "will confirm it's still active without repeating the full instructions."
     )
     args_schema: type[BaseModel] = InvokeSkillInput
 
@@ -40,19 +57,39 @@ class InvokeSkillTool(BaseTool):
     user_id: int
     skill_names: list[str]  # Available skill names for this session
 
+    # Private instance attribute for session-level cache (not shared between instances)
+    # This tracks which skills have been expanded in the current conversation turn
+    _expanded_skills: Set[str] = PrivateAttr(default_factory=set)
+
     class Config:
         arbitrary_types_allowed = True
+
+    def __init__(self, **data):
+        """Initialize with a fresh expanded_skills cache."""
+        super().__init__(**data)
+        self._expanded_skills = set()
 
     def _run(
         self,
         skill_name: str,
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
-        """Invoke skill and return prompt content."""
+        """Invoke skill and return prompt content.
+
+        If the skill has already been expanded in this conversation turn,
+        returns a short confirmation instead of the full prompt to save tokens.
+        """
         if skill_name not in self.skill_names:
             return (
                 f"Error: Skill '{skill_name}' is not available. "
                 f"Available skills: {', '.join(self.skill_names)}"
+            )
+
+        # Check if skill was already expanded in this turn
+        if skill_name in self._expanded_skills:
+            return (
+                f"Skill '{skill_name}' is already active in this conversation turn. "
+                f"Continue using the instructions you received earlier."
             )
 
         # Find skill (user's first, then public)
@@ -63,6 +100,9 @@ class InvokeSkillTool(BaseTool):
         skill_crd = Skill.model_validate(skill.json)
         if not skill_crd.spec.prompt:
             return f"Error: Skill '{skill_name}' has no prompt content."
+
+        # Mark skill as expanded for this turn
+        self._expanded_skills.add(skill_name)
 
         return skill_crd.spec.prompt
 
@@ -94,6 +134,22 @@ class InvokeSkillTool(BaseTool):
             )
             .first()
         )
+
+    def clear_expanded_skills(self) -> None:
+        """Clear the expanded skills cache.
+
+        Call this method when starting a new conversation turn
+        (after the AI has finished responding to the user).
+        """
+        self._expanded_skills.clear()
+
+    def get_expanded_skills(self) -> set[str]:
+        """Get the set of skills that have been expanded in this turn.
+
+        Returns:
+            Set of skill names that have been expanded
+        """
+        return self._expanded_skills.copy()
 
     async def _arun(
         self,
