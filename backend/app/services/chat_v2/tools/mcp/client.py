@@ -18,6 +18,7 @@ import asyncio
 import concurrent.futures
 import inspect
 import logging
+import re
 from typing import Any
 
 from langchain_core.tools.base import BaseTool
@@ -35,6 +36,39 @@ Connection = SSEConnection | StdioConnection | StreamableHttpConnection
 
 # Default timeout for MCP tool execution (60 seconds)
 DEFAULT_TOOL_TIMEOUT = 60.0
+
+# Maximum length for sanitized username in HTTP headers
+MAX_USERNAME_HEADER_LENGTH = 256
+
+
+def sanitize_header_value(value: str) -> str:
+    """Sanitize a string for safe use as an HTTP header value.
+
+    This function ensures the value conforms to RFC 7230 HTTP header field
+    requirements by:
+    - Removing control characters (ASCII 0-31, 127)
+    - Keeping only printable ASCII characters (0x21-0x7E)
+    - Limiting the maximum length to MAX_USERNAME_HEADER_LENGTH characters
+
+    Args:
+        value: The original string to sanitize
+
+    Returns:
+        A sanitized string safe for use as an HTTP header value
+    """
+    if not value:
+        return ""
+
+    # Remove all characters except printable ASCII (0x21-0x7E)
+    # This excludes control characters, space (0x20), and DEL (0x7F)
+    # Pattern keeps: ! " # $ % & ' ( ) * + , - . / 0-9 : ; < = > ? @ A-Z [ \ ] ^ _ ` a-z { | } ~
+    sanitized = re.sub(r"[^\x21-\x7E]", "", value)
+
+    # Limit to max length
+    if len(sanitized) > MAX_USERNAME_HEADER_LENGTH:
+        sanitized = sanitized[:MAX_USERNAME_HEADER_LENGTH]
+
+    return sanitized
 
 
 def wrap_tool_with_protection(
@@ -145,7 +179,9 @@ def wrap_tool_with_protection(
     return tool
 
 
-def build_connections(config: dict[str, dict[str, Any]]) -> dict[str, Connection]:
+def build_connections(
+    config: dict[str, dict[str, Any]], username: str | None = None
+) -> dict[str, Connection]:
     """Build connection configs from server configuration dict.
 
     Args:
@@ -160,15 +196,30 @@ def build_connections(config: dict[str, dict[str, Any]]) -> dict[str, Connection
                     "headers": {...}  # for sse/streamable-http
                 }
             }
+        username: Optional username to pass via HTTP header (for sse/streamable-http)
 
     Returns:
         Dict of server_name to Connection config
     """
+    from app.core.config import settings
+
+    # Get the header key from settings
+    user_header_key = getattr(settings, "CHAT_MCP_SERVERS_USER_HEADER", "wegent-user")
+
+    def _build_headers(cfg: dict[str, Any]) -> dict[str, str] | None:
+        """Build headers dict, optionally adding username header."""
+        headers = dict(cfg.get("headers") or {})
+        if username:
+            sanitized_username = sanitize_header_value(username)
+            if sanitized_username:
+                headers[user_header_key] = sanitized_username
+        return headers if headers else None
+
     builders = {
         "sse": lambda cfg: SSEConnection(
             transport="sse",
             url=cfg["url"],
-            headers=cfg.get("headers"),
+            headers=_build_headers(cfg),
             timeout=cfg.get("timeout", 30.0),
         ),
         "stdio": lambda cfg: StdioConnection(
@@ -180,7 +231,7 @@ def build_connections(config: dict[str, dict[str, Any]]) -> dict[str, Connection
         "streamable-http": lambda cfg: StreamableHttpConnection(
             transport="streamable_http",
             url=cfg["url"],
-            headers=cfg.get("headers"),
+            headers=_build_headers(cfg),
         ),
     }
 
@@ -205,24 +256,26 @@ class MCPClient:
     - client.get_tools() to get all tools directly
 
     Usage:
-        client = MCPClient(config)
+        client = MCPClient(config, username="john")
         await client.connect()
         tools = client.get_tools()
         await client.disconnect()
 
     Or with async context manager:
-        async with MCPClient(config) as client:
+        async with MCPClient(config, username="john") as client:
             tools = client.get_tools()
     """
 
-    def __init__(self, config: dict[str, dict[str, Any]]):
+    def __init__(self, config: dict[str, dict[str, Any]], username: str | None = None):
         """Initialize MCP client.
 
         Args:
             config: MCP servers configuration dict
+            username: Optional username to pass via HTTP header (for sse/streamable-http)
         """
         self.config = config
-        self.connections = build_connections(config) if config else {}
+        self.username = username
+        self.connections = build_connections(config, username) if config else {}
         self._client: MultiServerMCPClient | None = None
         self._tools: list[BaseTool] = []
 

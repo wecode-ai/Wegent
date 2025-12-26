@@ -653,7 +653,10 @@ class ChatService:
             # Load MCP tools if enabled
             if settings.CHAT_MCP_ENABLED:
                 mcp_client = await self._load_mcp_tools(
-                    task_id, config.bot_name, config.bot_namespace
+                    task_id,
+                    config.bot_name,
+                    config.bot_namespace,
+                    username=config.user_name,
                 )
                 if mcp_client:
                     extra_tools.extend(mcp_client.get_tools())
@@ -867,7 +870,11 @@ class ChatService:
                 del namespace._stream_versions[subtask_id]
 
     async def _load_mcp_tools(
-        self, task_id: int, bot_name: str = "", bot_namespace: str = "default"
+        self,
+        task_id: int,
+        bot_name: str = "",
+        bot_namespace: str = "default",
+        username: str | None = None,
     ) -> Any:
         """Load MCP tools for a task, merging backend and bot configurations.
 
@@ -887,6 +894,7 @@ class ChatService:
             task_id: Task ID for session management
             bot_name: Bot name to query Ghost MCP configuration
             bot_namespace: Bot namespace for Ghost query
+            username: Optional username to pass via HTTP header (for sse/streamable-http)
 
         Returns:
             MCPClient instance or None (None on any failure to protect backend stability)
@@ -960,7 +968,7 @@ class ChatService:
 
             # Step 4: Create MCP client with merged configuration
             # Add timeout protection for MCP connection
-            client = MCPClient(merged_servers)
+            client = MCPClient(merged_servers, username=username)
             try:
                 # Timeout for connecting to MCP servers (30 seconds)
                 await asyncio.wait_for(client.connect(), timeout=30.0)
