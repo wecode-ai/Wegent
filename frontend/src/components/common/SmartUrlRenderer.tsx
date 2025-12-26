@@ -118,8 +118,8 @@ export function createSmartMarkdownComponents(options?: {
 
     // Custom image renderer
     img: ({ src, alt, ...props }: React.ImgHTMLAttributes<HTMLImageElement>) => {
-      // If image preview is disabled or no src, render as normal img
-      if (!enableImagePreview || !src) {
+      // If image preview is disabled or no src or src is not a string, render as normal img
+      if (!enableImagePreview || !src || typeof src !== 'string') {
         return <img src={src} alt={alt} {...props} />
       }
 
