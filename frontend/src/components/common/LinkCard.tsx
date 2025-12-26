@@ -6,7 +6,7 @@
 
 import React, { useMemo } from 'react'
 import { ExternalLink, Globe, Loader2 } from 'lucide-react'
-import { useUrlMetadata, type UrlMetadata } from '@/hooks/useUrlMetadata'
+import { useUrlMetadata } from '@/hooks/useUrlMetadata'
 
 interface LinkCardProps {
   /** The URL to display as a card */
