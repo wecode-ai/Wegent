@@ -209,6 +209,44 @@ class WebSocketEmitter:
         )
         logger.info(f"[WS] emit chat:cancelled task={task_id} subtask={subtask_id}")
 
+    async def emit_context_truncated(
+        self,
+        task_id: int,
+        subtask_id: int,
+        original_count: int,
+        truncated_count: int,
+        total_tokens: int,
+    ) -> None:
+        """
+        Emit chat:context_truncated event to task room.
+
+        Notifies the frontend that conversation context has been truncated
+        to fit within the model's context window.
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+            original_count: Original number of messages
+            truncated_count: Number of messages after truncation
+            total_tokens: Total token count after truncation
+        """
+        await self.sio.emit(
+            ServerEvents.CHAT_CONTEXT_TRUNCATED,
+            {
+                "task_id": task_id,
+                "subtask_id": subtask_id,
+                "original_count": original_count,
+                "truncated_count": truncated_count,
+                "total_tokens": total_tokens,
+            },
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+        logger.info(
+            f"[WS] emit chat:context_truncated task={task_id} subtask={subtask_id} "
+            f"{original_count} -> {truncated_count} messages"
+        )
+
     # ============================================================
     # Non-streaming Messages (to task room, exclude sender)
     # ============================================================

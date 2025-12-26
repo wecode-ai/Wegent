@@ -5,7 +5,31 @@
 from datetime import datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+
+class ContextLimitConfig(BaseModel):
+    """Configuration for model context limit.
+
+    Used to control how much of the conversation history is sent to the LLM.
+    When the context exceeds the limit, older messages will be truncated.
+    """
+
+    max_context_tokens: Optional[int] = Field(
+        None,
+        alias="maxContextTokens",
+        description="Maximum context tokens for the model. If not set, uses model-specific default.",
+    )
+    reserved_output_ratio: float = Field(
+        0.2,
+        alias="reservedOutputRatio",
+        ge=0,
+        le=1,
+        description="Ratio of context tokens reserved for output (0-1). Default is 0.2 (20%).",
+    )
+
+    class Config:
+        populate_by_name = True
 
 
 class ModelBase(BaseModel):

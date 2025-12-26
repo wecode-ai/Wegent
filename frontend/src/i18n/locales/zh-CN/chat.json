@@ -364,5 +364,8 @@
     "no_improvement_needed": "未提供改进后的回答",
     "show_details": "显示评估详情",
     "hide_details": "隐藏评估详情"
+  },
+  "contextTruncated": {
+    "hint": "早期对话已省略，仅最近消息参与本次回复"
   }
 }

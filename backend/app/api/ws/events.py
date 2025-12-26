@@ -45,6 +45,7 @@ class ServerEvents:
     CHAT_DONE = "chat:done"
     CHAT_ERROR = "chat:error"
     CHAT_CANCELLED = "chat:cancelled"
+    CHAT_CONTEXT_TRUNCATED = "chat:context_truncated"
 
     # Non-streaming messages (to task room, exclude sender)
     CHAT_MESSAGE = "chat:message"
@@ -233,6 +234,20 @@ class ChatCancelledPayload(BaseModel):
     """Payload for chat:cancelled event."""
 
     subtask_id: int
+
+
+class ChatContextTruncatedPayload(BaseModel):
+    """Payload for chat:context_truncated event.
+
+    Notifies the frontend that conversation context has been truncated
+    to fit within the model's context window.
+    """
+
+    task_id: int
+    subtask_id: int
+    original_count: int = Field(..., description="Original number of messages")
+    truncated_count: int = Field(..., description="Number of messages after truncation")
+    total_tokens: int = Field(..., description="Total token count after truncation")
 
 
 class ChatMessagePayload(BaseModel):

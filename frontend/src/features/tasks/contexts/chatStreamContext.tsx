@@ -46,6 +46,7 @@ import {
   ChatErrorPayload,
   ChatCancelledPayload,
   ChatMessagePayload,
+  ChatContextTruncatedPayload,
 } from '@/types/socket';
 import type { TaskDetailSubtask, Team } from '@/types/api';
 
@@ -115,6 +116,20 @@ export interface UnifiedMessage {
 }
 
 /**
+ * Context truncation information
+ */
+export interface ContextTruncationInfo {
+  /** Original number of messages before truncation */
+  originalCount: number;
+  /** Number of messages after truncation */
+  truncatedCount: number;
+  /** Total token count after truncation */
+  totalTokens: number;
+  /** Timestamp when truncation occurred */
+  timestamp: number;
+}
+
+/**
  * State for a single streaming task
  *
  * Key design: All messages (user and AI) are stored in a single unified messages Map.
@@ -137,6 +152,8 @@ interface StreamState {
   messages: Map<string, UnifiedMessage>;
   /** Current AI response subtask ID (set when chat:start received) */
   subtaskId: number | null;
+  /** Context truncation info (set when chat:context_truncated received) */
+  contextTruncated: ContextTruncationInfo | null;
 }
 
 /**
@@ -286,6 +303,7 @@ const defaultStreamState: StreamState = {
   error: null,
   messages: new Map(),
   subtaskId: null,
+  contextTruncated: null,
 };
 
 /**
@@ -834,6 +852,38 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  /**
+   * Handle chat:context_truncated event from WebSocket
+   * This is triggered when conversation context is truncated to fit within model limits
+   */
+  const handleChatContextTruncated = useCallback((data: ChatContextTruncatedPayload) => {
+    const { task_id, original_count, truncated_count, total_tokens } = data;
+
+    console.log('[ChatStreamContext][chat:context_truncated] Context truncated:', {
+      task_id,
+      original_count,
+      truncated_count,
+      total_tokens,
+    });
+
+    // Update state with truncation info
+    setStreamStates(prev => {
+      const newMap = new Map(prev);
+      const currentState = newMap.get(task_id) || { ...defaultStreamState };
+
+      newMap.set(task_id, {
+        ...currentState,
+        contextTruncated: {
+          originalCount: original_count,
+          truncatedCount: truncated_count,
+          totalTokens: total_tokens,
+          timestamp: Date.now(),
+        },
+      });
+      return newMap;
+    });
+  }, []);
+
   // Register WebSocket event handlers
   useEffect(() => {
     const handlers: ChatEventHandlers = {
@@ -843,6 +893,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       onChatError: handleChatError,
       onChatCancelled: handleChatCancelled,
       onChatMessage: handleChatMessage,
+      onChatContextTruncated: handleChatContextTruncated,
     };
 
     const cleanup = registerChatHandlers(handlers);
@@ -855,6 +906,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     handleChatError,
     handleChatCancelled,
     handleChatMessage,
+    handleChatContextTruncated,
   ]);
 
   /**

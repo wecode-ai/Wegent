@@ -83,6 +83,24 @@ class StreamEmitter(ABC):
         """Emit cancellation event."""
         pass
 
+    @abstractmethod
+    async def emit_context_truncated(
+        self,
+        subtask_id: int,
+        original_count: int,
+        truncated_count: int,
+        total_tokens: int,
+    ) -> None:
+        """Emit context truncation notification.
+
+        Args:
+            subtask_id: Subtask ID
+            original_count: Original number of messages
+            truncated_count: Number of messages after truncation
+            total_tokens: Total token count after truncation
+        """
+        pass
+
 
 class SSEEmitter(StreamEmitter):
     """Server-Sent Events emitter.
@@ -139,6 +157,23 @@ class SSEEmitter(StreamEmitter):
         """Emit cancellation as SSE data."""
         self._events.append(
             self.format_sse({"content": "", "done": True, "cancelled": True})
+        )
+
+    async def emit_context_truncated(
+        self,
+        subtask_id: int,
+        original_count: int,
+        truncated_count: int,
+        total_tokens: int,
+    ) -> None:
+        """Emit context truncation notification as SSE data."""
+        self._events.append(
+            self.format_sse({
+                "type": "context_truncated",
+                "original_count": original_count,
+                "truncated_count": truncated_count,
+                "total_tokens": total_tokens,
+            })
         )
 
     def get_event(self) -> str | None:
@@ -257,3 +292,31 @@ class WebSocketEmitter(StreamEmitter):
             subtask_id=subtask_id,
         )
         logger.info("[WS_EMITTER] chat:cancelled emitted")
+
+    async def emit_context_truncated(
+        self,
+        subtask_id: int,
+        original_count: int,
+        truncated_count: int,
+        total_tokens: int,
+    ) -> None:
+        """Emit chat:context_truncated event using global emitter.
+
+        Notifies the frontend that conversation context has been truncated
+        to fit within the model's context window.
+        """
+        from app.services.chat.ws_emitter import get_ws_emitter
+
+        emitter = get_ws_emitter()
+        await emitter.emit_context_truncated(
+            task_id=self.task_id,
+            subtask_id=subtask_id,
+            original_count=original_count,
+            truncated_count=truncated_count,
+            total_tokens=total_tokens,
+        )
+        logger.info(
+            "[WS_EMITTER] chat:context_truncated emitted: %d -> %d messages",
+            original_count,
+            truncated_count,
+        )

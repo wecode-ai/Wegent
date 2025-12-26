@@ -49,6 +49,12 @@ class ChatConfig:
     task_id: int = 0
     team_id: int = 0
 
+    # Context limit configuration
+    context_limit: dict[str, Any] = field(default_factory=lambda: {
+        "max_context_tokens": None,
+        "reserved_output_ratio": 0.2,
+    })
+
 
 class ChatConfigBuilder:
     """Builder for chat configuration.
@@ -145,6 +151,9 @@ class ChatConfigBuilder:
             self._cached_shell_type = self._resolve_shell_type(bot_crd)
         shell_type = self._cached_shell_type
 
+        # Get context limit configuration from Model spec
+        context_limit = self._get_context_limit(bot)
+
         return ChatConfig(
             model_config=model_config,
             system_prompt=system_prompt,
@@ -156,6 +165,7 @@ class ChatConfigBuilder:
             user_name=self.user_name,
             task_id=task_id,
             team_id=self.team.id,
+            context_limit=context_limit,
         )
 
     def _get_first_bot(self) -> Kind | None:
@@ -385,3 +395,72 @@ class ChatConfigBuilder:
         )
 
         return shell_type
+
+    def _get_context_limit(self, bot: Kind) -> dict[str, Any]:
+        """Extract context limit configuration from Bot's Model spec.
+
+        Queries the Model CRD referenced by the Bot to get contextLimit config.
+
+        Args:
+            bot: Bot Kind object
+
+        Returns:
+            Context limit configuration dictionary with:
+            - max_context_tokens: Maximum context tokens (None = use default)
+            - reserved_output_ratio: Ratio reserved for output (default 0.2)
+        """
+        from app.schemas.kind import Model as ModelCRD
+
+        default_config = {
+            "max_context_tokens": None,
+            "reserved_output_ratio": 0.2,
+        }
+
+        # Get bot spec
+        bot_spec = bot.json.get("spec", {}) if bot.json else {}
+
+        # Get model reference
+        model_ref = bot_spec.get("modelRef", {})
+        model_name = model_ref.get("name")
+        model_namespace = model_ref.get("namespace", "default")
+
+        if not model_name:
+            return default_config
+
+        # Query Model Kind
+        model_kind = (
+            self.db.query(Kind)
+            .filter(
+                Kind.user_id == self.user_id,
+                Kind.kind == "Model",
+                Kind.name == model_name,
+                Kind.namespace == model_namespace,
+                Kind.is_active,
+            )
+            .first()
+        )
+
+        # If not found in user's models, try public models (user_id = 0)
+        if not model_kind:
+            model_kind = (
+                self.db.query(Kind)
+                .filter(
+                    Kind.user_id == 0,
+                    Kind.kind == "Model",
+                    Kind.name == model_name,
+                    Kind.is_active,
+                )
+                .first()
+            )
+
+        if not model_kind or not model_kind.json:
+            return default_config
+
+        # Extract context limit from Model spec
+        model_spec = model_kind.json.get("spec", {})
+        context_limit = model_spec.get("contextLimit", {})
+
+        return {
+            "max_context_tokens": context_limit.get("maxContextTokens"),
+            "reserved_output_ratio": context_limit.get("reservedOutputRatio", 0.2),
+        }
