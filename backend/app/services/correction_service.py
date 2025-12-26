@@ -148,18 +148,6 @@ class CorrectionService:
             Dictionary with scores, corrections, summary, improved_answer, and is_correct
         """
         try:
-            # Log model_config for debugging
-            logger.info(
-                "[correction] model_config: model_id=%s, model=%s, base_url=%s, api_key=%s",
-                model_config.get("model_id", "N/A"),
-                model_config.get("model", "N/A"),
-                model_config.get("base_url", "N/A"),
-                (
-                    model_config.get("api_key", "")[:8] + "..."
-                    if model_config.get("api_key")
-                    else "N/A"
-                ),
-            )
 
             # Create LangChain model from config (consistent with chat_v2)
             llm = LangChainModelFactory.create_from_config(
