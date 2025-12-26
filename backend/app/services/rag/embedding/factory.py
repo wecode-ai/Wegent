@@ -20,6 +20,11 @@ def create_embedding_model_from_crd(
     """
     Create embedding model from Model CRD.
 
+    Query logic:
+    - If namespace='default': query with user_id filter (personal model) or public model (user_id=0)
+    - If namespace!='default': query without user_id filter (group model)
+      Group models may be created by other users in the same group.
+
     Args:
         db: Database session
         user_id: User ID
@@ -33,19 +38,34 @@ def create_embedding_model_from_crd(
         ValueError: If model not found or not an embedding model
     """
     # Query Model CRD from kinds table
-    # Search order: user's models -> public models (user_id=0)
-    model_kind = (
-        db.query(Kind)
-        .filter(
-            Kind.kind == "Model",
-            Kind.name == model_name,
-            Kind.namespace == model_namespace,
-            Kind.is_active == True,
+    # For group resources (namespace != 'default'), don't filter by user_id
+    # since the model may be created by other users in the same group
+    if model_namespace == "default":
+        # Personal or public model: filter by user_id or public (user_id=0)
+        model_kind = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Model",
+                Kind.name == model_name,
+                Kind.namespace == model_namespace,
+                Kind.is_active == True,
+            )
+            .filter((Kind.user_id == user_id) | (Kind.user_id == 0))
+            .order_by(Kind.user_id.desc())  # Prioritize user's models
+            .first()
         )
-        .filter((Kind.user_id == user_id) | (Kind.user_id == 0))
-        .order_by(Kind.user_id.desc())  # Prioritize user's models
-        .first()
-    )
+    else:
+        # Group model: no user_id filter
+        model_kind = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Model",
+                Kind.name == model_name,
+                Kind.namespace == model_namespace,
+                Kind.is_active == True,
+            )
+            .first()
+        )
 
     if not model_kind:
         raise ValueError(

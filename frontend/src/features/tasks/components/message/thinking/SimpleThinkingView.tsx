@@ -1,0 +1,210 @@
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+'use client';
+
+import { memo, useState, useMemo } from 'react';
+import { Search, ChevronDown, ChevronUp } from 'lucide-react';
+import { useTranslation } from '@/hooks/useTranslation';
+import type { ThinkingStep } from './types';
+import { extractToolCalls, isRunningStatus, isTerminalStatus } from './utils/thinkingUtils';
+
+interface SimpleThinkingViewProps {
+  thinking: ThinkingStep[] | null;
+  taskStatus?: string;
+}
+
+interface ToolEntry {
+  toolName: string;
+  query: string;
+  status: 'running' | 'completed';
+  resultCount?: number;
+  startIndex: number;
+  endIndex?: number;
+}
+
+/**
+ * Simple thinking view for Chat shell type
+ * Shows a collapsible timeline of tool usage with minimal detail
+ */
+const SimpleThinkingView = memo(function SimpleThinkingView({
+  thinking,
+  taskStatus,
+}: SimpleThinkingViewProps) {
+  const { t } = useTranslation('chat');
+  const items = useMemo(() => thinking ?? [], [thinking]);
+
+  // Process thinking steps into paired tool entries
+  const toolEntries = useMemo(() => {
+    const entries: ToolEntry[] = [];
+    const toolStartMap = new Map<string, number>();
+
+    if (items.length > 0) {
+      items.forEach((step, index) => {
+        const details = step.details;
+        if (!details) return;
+
+        // Track tool_use starts
+        if (details.type === 'tool_use' && details.status === 'started') {
+          const toolName: string =
+            (typeof details.tool_name === 'string' ? details.tool_name : '') ||
+            (typeof details.name === 'string' ? details.name : '') ||
+            'unknown';
+          const runId = (step as { run_id?: string }).run_id || `${index}`;
+
+          let query: string = '';
+          if (toolName === 'web_search' && details.input) {
+            query = (details.input as { query?: string }).query || '';
+          } else if (toolName === 'wegentFetch' && details.input) {
+            query = (details.input as { url?: string }).url || '';
+          } else {
+            const titleStr = typeof step.title === 'string' ? step.title : '';
+            query = titleStr || toolName;
+          }
+
+          toolStartMap.set(runId, entries.length);
+          entries.push({
+            toolName,
+            query,
+            status: 'running',
+            startIndex: index,
+          });
+        }
+        // Match tool_result with tool_use
+        else if (details.type === 'tool_result' && details.status === 'completed') {
+          const toolName: string =
+            (typeof details.tool_name === 'string' ? details.tool_name : '') ||
+            (typeof details.name === 'string' ? details.name : '') ||
+            'unknown';
+          const runId = (step as { run_id?: string }).run_id || '';
+          const startIdx = toolStartMap.get(runId);
+
+          let resultCount: number | undefined;
+          if (toolName === 'web_search') {
+            try {
+              const output = details.output || details.content;
+              let outputData: { count?: number };
+
+              if (typeof output === 'string') {
+                outputData = JSON.parse(output);
+              } else {
+                outputData = output as { count?: number };
+              }
+
+              resultCount = outputData.count;
+            } catch {
+              // Ignore parse errors
+            }
+          }
+
+          if (startIdx !== undefined && entries[startIdx]) {
+            entries[startIdx].status = 'completed';
+            entries[startIdx].resultCount = resultCount;
+            entries[startIdx].endIndex = index;
+          }
+        }
+      });
+    }
+
+    return entries;
+  }, [items]);
+
+  // Check if any tool is still running
+  const hasRunningTool = toolEntries.some(entry => entry.status === 'running');
+  const isRunning = isRunningStatus(taskStatus);
+  const isCompleted = isTerminalStatus(taskStatus);
+
+  // Also get tool counts from the standard extraction for fallback
+  const toolCounts = useMemo(() => extractToolCalls(items), [items]);
+  const toolCountFromCounts = Object.values(toolCounts).reduce((sum, count) => sum + count, 0);
+
+  // Default to expanded if there's an active tool
+  const [isExpanded, setIsExpanded] = useState(hasRunningTool || isRunning);
+
+  // Early return after hooks
+  if (items.length === 0 || (toolEntries.length === 0 && toolCountFromCounts === 0)) {
+    return null;
+  }
+
+  const toolCount = toolEntries.length > 0 ? toolEntries.length : toolCountFromCounts;
+
+  // Summary text
+  const summaryText =
+    isRunning && !isCompleted
+      ? `${t('messages.using_tools') || 'Using tools'}...`
+      : toolCount > 0
+        ? `${t('messages.used_tools') || 'Used tools'} · ${toolCount} ${t('messages.times') || 'times'}`
+        : `${t('messages.used_tools') || 'Used tools'}`;
+
+  return (
+    <div className="-mb-2">
+      {/* Collapsible header */}
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border transition-all hover:bg-surface/50 bg-blue-500/5 border-blue-500/20 text-blue-600 dark:text-blue-400"
+      >
+        <Search
+          className={`h-3.5 w-3.5 flex-shrink-0 ${isRunning && !isCompleted ? 'animate-slide' : ''}`}
+        />
+        <span className="text-xs font-medium">{summaryText}</span>
+        {isExpanded ? (
+          <ChevronUp className="h-3.5 w-3.5 flex-shrink-0" />
+        ) : (
+          <ChevronDown className="h-3.5 w-3.5 flex-shrink-0" />
+        )}
+      </button>
+
+      {/* Expandable timeline */}
+      {isExpanded && toolEntries.length > 0 && (
+        <div className="mt-2 ml-4 pl-4 space-y-3">
+          {toolEntries.map((entry, index) => (
+            <div key={index} className="relative">
+              {/* Tool start */}
+              <div className="relative">
+                <div
+                  className={`absolute -left-[19px] top-0.5 w-3 h-3 rounded-full border-2 bg-surface ${entry.status === 'running' ? 'border-blue-500 animate-pulse' : 'border-blue-500/40'}`}
+                />
+                <div className="text-xs space-y-1">
+                  <div className="font-medium text-blue-600 dark:text-blue-400">
+                    {entry.status === 'running'
+                      ? `${t('messages.using_tool') || 'Using tool'}: ${entry.toolName}`
+                      : `${t('messages.tool_completed') || 'Tool completed'}: ${entry.toolName}`}
+                  </div>
+                  {entry.query && (
+                    <div className="text-text-secondary">
+                      {entry.toolName === 'web_search'
+                        ? `${t('messages.query') || 'Query'}: ${entry.query}`
+                        : entry.query}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Tool result (only if completed) */}
+              {entry.status === 'completed' && (
+                <div className="relative mt-3">
+                  {/* Vertical line connecting the two dots */}
+                  <div
+                    className="absolute w-0.5 bg-blue-500/20"
+                    style={{ left: '-14px', top: '-2.125rem', height: '2.875rem' }}
+                  />
+                  <div className="absolute -left-[19px] top-0.5 w-3 h-3 rounded-full border-2 border-green-500/40 bg-surface" />
+                  <div className="text-xs">
+                    <div className="font-medium text-green-600 dark:text-green-400">
+                      {entry.toolName === 'web_search' && typeof entry.resultCount === 'number'
+                        ? `${t('messages.found') || 'Found'} ${entry.resultCount} ${t('messages.results') || 'results'}`
+                        : t('messages.tool_completed') || 'Tool completed'}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+});
+
+export default SimpleThinkingView;

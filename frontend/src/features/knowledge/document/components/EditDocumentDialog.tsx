@@ -50,12 +50,22 @@ export function EditDocumentDialog({
       setName(document.name);
       // Load existing splitter_config or use defaults
       if (document.splitter_config) {
-        setSplitterConfig({
-          type: document.splitter_config.type || 'sentence',
-          separator: document.splitter_config.separator ?? '\n\n',
-          chunk_size: document.splitter_config.chunk_size ?? 1024,
-          chunk_overlap: document.splitter_config.chunk_overlap ?? 50,
-        });
+        const config = document.splitter_config;
+        if (config.type === 'semantic') {
+          setSplitterConfig({
+            type: 'semantic',
+            buffer_size: config.buffer_size ?? 1,
+            breakpoint_percentile_threshold: config.breakpoint_percentile_threshold ?? 95,
+          });
+        } else {
+          // Default to sentence splitter
+          setSplitterConfig({
+            type: 'sentence',
+            separator: config.type === 'sentence' ? (config.separator ?? '\n\n') : '\n\n',
+            chunk_size: config.type === 'sentence' ? (config.chunk_size ?? 1024) : 1024,
+            chunk_overlap: config.type === 'sentence' ? (config.chunk_overlap ?? 50) : 50,
+          });
+        }
       } else {
         setSplitterConfig({
           type: 'sentence',
