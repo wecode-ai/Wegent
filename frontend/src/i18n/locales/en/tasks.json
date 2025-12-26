@@ -1,4 +1,7 @@
 {
+  "attachment": {
+    "characters": "characters"
+  },
   "workbench": {
     "overview": "Overview",
     "files_changed": "Files Changed",

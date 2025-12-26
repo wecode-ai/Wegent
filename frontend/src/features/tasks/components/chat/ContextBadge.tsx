@@ -6,6 +6,8 @@
 
 import React from 'react';
 import { X, FileText } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { useTranslation } from '@/hooks/useTranslation';
 import type { ContextItem } from '@/types/context';
 
 interface ContextBadgeProps {
@@ -28,21 +30,33 @@ const getContextIcon = (type: ContextItem['type']) => {
       return FileText;
   }
 };
-
 export default function ContextBadge({ context, onRemove }: ContextBadgeProps) {
+  const { t } = useTranslation('knowledge');
   const Icon = getContextIcon(context.type);
 
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-primary bg-primary/10 text-primary px-2.5 py-2.5 text-xs font-medium max-w-[200px] h-9">
-      <Icon className="w-4 h-4 flex-shrink-0" />
-      <span className="truncate">{context.name}</span>
-      <button
+    <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-primary bg-primary/10 text-primary">
+      <Icon className="h-4 w-4 flex-shrink-0" />
+      <div className="flex flex-col min-w-0 max-w-[150px]">
+        <span className="text-xs font-medium truncate" title={context.name}>
+          {context.name}
+        </span>
+        {context.type === 'knowledge_base' && context.document_count !== undefined && (
+          <span className="text-xs text-primary/70">
+            {t('documents_count', { count: context.document_count })}
+          </span>
+        )}
+      </div>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
         onClick={onRemove}
-        className="ml-0.5 p-0.5 rounded-full hover:bg-primary/20 transition-colors flex-shrink-0"
-        aria-label="Remove"
+        className="h-5 w-5 ml-1 text-primary hover:text-primary hover:bg-primary/20"
+        aria-label={`Remove ${context.name}`}
       >
-        <X className="w-4 h-4" />
-      </button>
-    </span>
+        <X className="h-3 w-3" />
+      </Button>
+    </div>
   );
 }

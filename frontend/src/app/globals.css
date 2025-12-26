@@ -624,3 +624,21 @@ button:focus-visible {
 .driver-popover-arrow-side-bottom {
   border-top-color: rgb(var(--color-bg-surface)) !important;
 }
+
+/* Badge scroll container styling */
+.badge-scroll::-webkit-scrollbar {
+  height: 6px;
+}
+
+.badge-scroll::-webkit-scrollbar-thumb {
+  background: rgb(var(--color-border));
+  border-radius: 3px;
+}
+
+.badge-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--color-border-strong));
+}
+
+.badge-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
