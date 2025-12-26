@@ -4,39 +4,26 @@
 
 'use client';
 
-import React, { useRef, useCallback, useState, useEffect } from 'react';
-import { Paperclip, X, Loader2 } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import {
-  SUPPORTED_EXTENSIONS,
-  MAX_FILE_SIZE,
-  isSupportedExtension,
-  isValidFileSize,
   formatFileSize,
   getFileIcon,
   isImageExtension,
   getAttachmentPreviewUrl,
 } from '@/apis/attachments';
 import { getToken } from '@/apis/user';
-import type { Attachment } from '@/types/api';
+import type { Attachment, MultiAttachmentUploadState } from '@/types/api';
 
-interface FileUploadProps {
-  /** Currently selected/uploaded attachment */
-  attachment: Attachment | null;
-  /** Whether upload is in progress */
-  isUploading: boolean;
-  /** Upload progress (0-100) */
-  uploadProgress: number;
-  /** Error message if any */
-  error: string | null;
+interface AttachmentUploadPreviewProps {
+  /** Current attachments state */
+  state: MultiAttachmentUploadState;
+  /** Callback to remove an attachment */
+  onRemove: (attachmentId: number) => void;
   /** Whether the component is disabled */
   disabled?: boolean;
-  /** Callback when file is selected */
-  onFileSelect: (file: File) => void;
-  /** Callback to remove the attachment */
-  onRemove: () => void;
 }
 
 /**
@@ -104,8 +91,7 @@ function useAuthenticatedImageInline(attachmentId: number, isImage: boolean) {
 }
 
 /**
- * Inline attachment preview component for the input area
- * Shows image thumbnail for images, file icon for other types
+ * Inline attachment preview component
  */
 function AttachmentPreviewInline({
   attachment,
@@ -234,129 +220,62 @@ function AttachmentPreviewInline({
   );
 }
 
-export default function FileUpload({
-  attachment,
-  isUploading,
-  uploadProgress,
-  error,
-  disabled = false,
-  onFileSelect,
+/**
+ * Attachment upload preview component
+ * Only responsible for displaying attachment previews and upload progress
+ */
+export default function AttachmentUploadPreview({
+  state,
   onRemove,
-}: FileUploadProps) {
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  disabled = false,
+}: AttachmentUploadPreviewProps) {
+  const hasAttachments = state.attachments.length > 0;
+  const isUploading = state.uploadingFiles.size > 0;
+  const hasErrors = state.errors.size > 0;
 
-  const handleClick = useCallback(() => {
-    if (!disabled && !isUploading && !attachment) {
-      fileInputRef.current?.click();
-    }
-  }, [disabled, isUploading, attachment]);
-
-  const handleFileChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (file) {
-        // Validate file before passing to parent
-        if (!isSupportedExtension(file.name)) {
-          // Let parent handle the error
-          onFileSelect(file);
-          return;
-        }
-        if (!isValidFileSize(file.size)) {
-          onFileSelect(file);
-          return;
-        }
-        onFileSelect(file);
-      }
-      // Reset input so same file can be selected again
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
-    },
-    [onFileSelect]
-  );
-
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-  }, []);
-
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-
-      if (disabled || isUploading || attachment) return;
-
-      const file = e.dataTransfer.files?.[0];
-      if (file) {
-        onFileSelect(file);
-      }
-    },
-    [disabled, isUploading, attachment, onFileSelect]
-  );
-
-  // Build accept string for file input
-  const acceptString = SUPPORTED_EXTENSIONS.join(',');
-
-  // Tooltip content
-  const tooltipContent = `支持的文件类型: PDF, Word, PPT, Excel, TXT, Markdown, 图片(JPG, PNG, GIF, BMP, WebP)\n最大文件大小: ${MAX_FILE_SIZE / (1024 * 1024)} MB`;
+  // Don't render anything if no content to show
+  if (!hasAttachments && !isUploading && !hasErrors) {
+    return null;
+  }
 
   return (
-    <div className="flex items-center gap-2" onDragOver={handleDragOver} onDrop={handleDrop}>
-      {/* Hidden file input */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept={acceptString}
-        onChange={handleFileChange}
-        className="hidden"
-        disabled={disabled || isUploading}
-      />
-
-      {/* Upload button or attachment preview */}
-      {!attachment && !isUploading && (
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                onClick={handleClick}
-                disabled={disabled}
-                className="h-9 w-9 rounded-full border-border bg-base text-text-primary hover:bg-hover"
-              >
-                <Paperclip className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="top" className="max-w-xs whitespace-pre-line">
-              <p>{tooltipContent}</p>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-      )}
-
-      {/* Uploading state */}
-      {isUploading && (
-        <div className="flex items-center gap-2 px-3 py-1.5 bg-muted rounded-lg">
-          <Loader2 className="h-4 w-4 animate-spin text-primary" />
-          <div className="flex flex-col min-w-[100px]">
-            <span className="text-xs text-text-muted">上传中...</span>
-            <Progress value={uploadProgress} className="h-1 mt-1" />
+    <div className="flex flex-col gap-2">
+      {/* Uploading files */}
+      {isUploading &&
+        Array.from(state.uploadingFiles.entries()).map(([fileId, { file, progress }]) => (
+          <div key={fileId} className="flex items-center gap-2 px-3 py-1.5 bg-muted rounded-lg">
+            <Loader2 className="h-4 w-4 animate-spin text-primary flex-shrink-0" />
+            <div className="flex flex-col min-w-[100px] flex-1">
+              <span className="text-xs text-text-muted truncate">{file.name}</span>
+              <Progress value={progress} className="h-1 mt-1" />
+            </div>
           </div>
+        ))}
+
+      {/* Attachment previews in a horizontal scrollable container */}
+      {hasAttachments && (
+        <div className="flex items-center gap-2 overflow-x-auto max-w-full">
+          {state.attachments.map(attachment => (
+            <div key={attachment.id} className="flex-shrink-0">
+              <AttachmentPreviewInline
+                attachment={attachment}
+                disabled={disabled}
+                onRemove={() => onRemove(attachment.id)}
+              />
+            </div>
+          ))}
         </div>
       )}
 
-      {/* Attachment preview */}
-      {attachment && !isUploading && (
-        <AttachmentPreviewInline attachment={attachment} disabled={disabled} onRemove={onRemove} />
-      )}
-
-      {/* Error message */}
-      {error && !isUploading && !attachment && (
-        <span className="text-xs text-red-500 max-w-[200px] truncate" title={error}>
-          {error}
-        </span>
+      {/* Error messages */}
+      {hasErrors && (
+        <div className="flex flex-col gap-1">
+          {Array.from(state.errors.entries()).map(([fileId, error]) => (
+            <span key={fileId} className="text-xs text-red-500 truncate" title={error}>
+              {error}
+            </span>
+          ))}
+        </div>
       )}
     </div>
   );

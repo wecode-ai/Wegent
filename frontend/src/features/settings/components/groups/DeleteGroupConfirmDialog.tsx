@@ -5,7 +5,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useTranslation } from 'react-i18next';
+import { useTranslation } from '@/hooks/useTranslation';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -33,7 +33,7 @@ export function DeleteGroupConfirmDialog({
   onSuccess,
   group,
 }: DeleteGroupConfirmDialogProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation('groups');
   const [isDeleting, setIsDeleting] = useState(false);
 
   const handleConfirm = async () => {
@@ -90,15 +90,15 @@ export function DeleteGroupConfirmDialog({
 
             {!hasBlockers && (
               <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 px-3 py-2 rounded-md text-sm">
-                <p className="font-medium">{t('common.warning')}:</p>
-                <p className="mt-1">{t('common.cannotUndo')}</p>
+                <p className="font-medium">{t('common:common.warning')}:</p>
+                <p className="mt-1">{t('common:common.cannotUndo')}</p>
               </div>
             )}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel onClick={onClose} disabled={isDeleting}>
-            {t('actions.cancel')}
+            {t('common:actions.cancel')}
           </AlertDialogCancel>
           <AlertDialogAction
             onClick={handleConfirm}
@@ -127,10 +127,10 @@ export function DeleteGroupConfirmDialog({
                     d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                   />
                 </svg>
-                {t('actions.deleting')}
+                {t('common:actions.deleting')}
               </div>
             ) : (
-              t('actions.delete')
+              t('common:actions.delete')
             )}
           </AlertDialogAction>
         </AlertDialogFooter>
