@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
+from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Team
 from app.services.adapters.task_kinds import task_kinds_service
@@ -23,7 +24,7 @@ from app.services.adapters.task_kinds import task_kinds_service
 class ChatSessionSetup(NamedTuple):
     """Result of chat session setup."""
 
-    task: Kind
+    task: TaskResource
     task_id: int
     assistant_subtask: Subtask
     existing_subtasks: List[Subtask]
@@ -124,11 +125,11 @@ def setup_chat_session(
     task = None
     if task_id:
         task = (
-            db.query(Kind)
+            db.query(TaskResource)
             .filter(
-                Kind.id == task_id,
-                Kind.kind == "Task",
-                Kind.is_active == True,
+                TaskResource.id == task_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active == True,
             )
             .first()
         )
@@ -157,7 +158,7 @@ def setup_chat_session(
             "apiVersion": "agent.wecode.io/v1",
         }
 
-        workspace = Kind(
+        workspace = TaskResource(
             user_id=user.id,
             kind="Workspace",
             name=workspace_name,
@@ -217,7 +218,7 @@ def setup_chat_session(
             "apiVersion": "agent.wecode.io/v1",
         }
 
-        task = Kind(
+        task = TaskResource(
             id=new_task_id,
             user_id=user.id,
             kind="Task",

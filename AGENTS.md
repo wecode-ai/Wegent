@@ -253,6 +253,28 @@ Task (Team + Workspace) → Subtasks
 | **Task** | Execution unit | `teamRef`, `workspaceRef` |
 | **Workspace** | Git repository | `repository{}` |
 
+### Database Table Mapping
+
+⚠️ **Important:** Task and Workspace resources are stored in a **separate `tasks` table**, not in the `kinds` table.
+
+| CRD Kind | Database Table | Model Class |
+|----------|----------------|-------------|
+| Ghost, Model, Shell, Bot, Team | `kinds` | `Kind` |
+| **Task, Workspace** | **`tasks`** | **`TaskResource`** |
+
+**Code Usage:**
+```python
+# For Task/Workspace - use TaskResource model
+from app.models.task import TaskResource
+task = db.query(TaskResource).filter(TaskResource.kind == "Task", ...).first()
+
+# For other CRDs (Ghost, Model, Shell, Bot, Team) - use Kind model
+from app.models.kind import Kind
+team = db.query(Kind).filter(Kind.kind == "Team", ...).first()
+```
+
+**Migration Note:** This separation was introduced to improve query performance and data management for Task/Workspace resources which have higher query frequency.
+
 ### Shell Types
 
 | Type | Description |
