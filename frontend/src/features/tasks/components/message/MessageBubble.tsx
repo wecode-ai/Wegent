@@ -121,6 +121,8 @@ export interface MessageBubbleProps {
   isCurrentUserMessage?: boolean;
   /** Callback when user clicks retry button for failed messages */
   onRetry?: (message: Message) => void;
+  /** Message type for feedback storage key differentiation */
+  feedbackMessageType?: 'original' | 'correction';
 }
 
 // Component for rendering a paragraph with hover action button
@@ -231,6 +233,7 @@ const MessageBubble = memo(
     paragraphAction,
     isCurrentUserMessage,
     onRetry,
+    feedbackMessageType,
   }: MessageBubbleProps) {
     // Use trace hook for telemetry (auto-includes user and task context)
     const { trace } = useTraceAction();
@@ -239,10 +242,12 @@ const MessageBubble = memo(
     const { feedback, handleLike, handleDislike } = useMessageFeedback({
       subtaskId: msg.subtaskId,
       timestamp: msg.timestamp,
+      messageType: feedbackMessageType,
       onFeedbackChange: fb =>
         trace.event('message-feedback', {
           'feedback.type': fb ?? 'cancelled',
           'feedback.message_type': msg.type,
+          'feedback.category': feedbackMessageType || 'original',
           ...(msg.subtaskId && { 'subtask.id': msg.subtaskId }),
         }),
     });
@@ -273,7 +278,26 @@ const MessageBubble = memo(
     };
 
     const timestampLabel = formatTimestamp(msg.timestamp);
-    const headerIcon = isUserTypeMessage ? null : <Bot className="w-4 h-4" />;
+    const headerIcon = isUserTypeMessage ? null : msg.botName === t('correction.result_title') ? (
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="24"
+        height="24"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="lucide lucide-circle-check-big h-4 w-4 text-primary"
+        aria-hidden="true"
+      >
+        <path d="M21.801 10A10 10 0 1 1 17 3.335"></path>
+        <path d="m9 11 3 3L22 4"></path>
+      </svg>
+    ) : (
+      <Bot className="w-4 h-4" />
+    );
     const headerLabel = isUserTypeMessage ? '' : msg.botName || t('messages.bot') || 'Bot';
 
     const renderProgressBar = (status: string, progress: number) => {

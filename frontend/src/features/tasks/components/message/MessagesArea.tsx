@@ -30,6 +30,13 @@ import { TaskMembersPanel } from '../group-chat';
 import { useUser } from '@/features/common/UserContext';
 import { useUnifiedMessages, type DisplayMessage } from '../../hooks/useUnifiedMessages';
 import { useTraceAction } from '@/hooks/useTraceAction';
+import {
+  correctionApis,
+  CorrectionResponse,
+  extractCorrectionFromResult,
+  correctionDataToResponse,
+} from '@/apis/correction';
+import CorrectionResultPanel from '../CorrectionResultPanel';
 
 /**
  * Component to render a streaming message with typewriter effect.
@@ -111,6 +118,10 @@ interface MessagesAreaProps {
   onSendMessage?: (content: string) => void;
   isGroupChat?: boolean;
   onRetry?: (message: Message) => void;
+  // Correction mode props
+  enableCorrectionMode?: boolean;
+  correctionModelId?: string | null;
+  enableCorrectionWebSearch?: boolean;
 }
 
 export default function MessagesArea({
@@ -122,6 +133,9 @@ export default function MessagesArea({
   onSendMessage,
   isGroupChat = false,
   onRetry,
+  enableCorrectionMode = false,
+  correctionModelId = null,
+  enableCorrectionWebSearch = false,
 }: MessagesAreaProps) {
   const { t } = useTranslation('chat');
   const { t: tCommon } = useTranslation('common');
@@ -147,6 +161,166 @@ export default function MessagesArea({
 
   // Group chat members panel state
   const [showMembersPanel, setShowMembersPanel] = useState(false);
+
+  // Correction mode state
+  const [correctionResults, setCorrectionResults] = useState<Map<number, CorrectionResponse>>(
+    new Map()
+  );
+  const [correctionLoading, setCorrectionLoading] = useState<Set<number>>(new Set());
+  // Track which messages have been attempted for correction to avoid infinite retry loops
+  const [correctionAttempted, setCorrectionAttempted] = useState<Set<number>>(new Set());
+  // Track applied corrections - maps subtaskId to the improved answer content
+  const [appliedCorrections, setAppliedCorrections] = useState<Map<number, string>>(new Map());
+
+  // Handle retry correction for a specific message
+  const handleRetryCorrection = useCallback(
+    async (subtaskId: number, originalQuestion: string, originalAnswer: string) => {
+      if (!selectedTaskDetail?.id || !correctionModelId) return;
+
+      // Remove from attempted set to allow retry
+      setCorrectionAttempted(prev => {
+        const next = new Set(prev);
+        next.delete(subtaskId);
+        return next;
+      });
+
+      // Remove old correction result
+      setCorrectionResults(prev => {
+        const next = new Map(prev);
+        next.delete(subtaskId);
+        return next;
+      });
+
+      // Set loading state
+      setCorrectionLoading(prev => new Set(prev).add(subtaskId));
+
+      try {
+        const result = await correctionApis.correctResponse({
+          task_id: selectedTaskDetail.id,
+          message_id: subtaskId,
+          original_question: originalQuestion,
+          original_answer: originalAnswer,
+          correction_model_id: correctionModelId,
+          force_retry: true, // Force re-evaluation even if correction exists
+          enable_web_search: enableCorrectionWebSearch,
+        });
+
+        setCorrectionResults(prev => new Map(prev).set(subtaskId, result));
+      } catch (error) {
+        console.error('Retry correction failed:', error);
+        toast({
+          variant: 'destructive',
+          title: 'Correction failed',
+          description: (error as Error)?.message || 'Unknown error',
+        });
+      } finally {
+        setCorrectionLoading(prev => {
+          const next = new Set(prev);
+          next.delete(subtaskId);
+          return next;
+        });
+      }
+    },
+    [selectedTaskDetail?.id, correctionModelId, enableCorrectionWebSearch, toast]
+  );
+
+  // Load persisted correction data from subtask.result when task detail changes
+  useEffect(() => {
+    if (!selectedTaskDetail?.subtasks) return;
+
+    const savedResults = new Map<number, CorrectionResponse>();
+
+    selectedTaskDetail.subtasks.forEach(subtask => {
+      // Only check assistant (AI) messages
+      if (subtask.role !== 'ASSISTANT') return;
+
+      // Extract correction data from subtask.result.correction
+      const correction = extractCorrectionFromResult(subtask.result);
+      if (correction) {
+        savedResults.set(subtask.id, correctionDataToResponse(correction, subtask.id));
+      }
+    });
+
+    // Only update if we found saved corrections
+    if (savedResults.size > 0) {
+      setCorrectionResults(prev => {
+        // Merge with existing results (API results take precedence)
+        const merged = new Map(savedResults);
+        prev.forEach((value, key) => {
+          merged.set(key, value);
+        });
+        return merged;
+      });
+    }
+  }, [selectedTaskDetail?.subtasks]);
+
+  // Trigger correction when AI message completes
+  useEffect(() => {
+    if (!enableCorrectionMode || !correctionModelId || !selectedTaskDetail?.id) return;
+
+    // Find completed AI messages that haven't been corrected yet
+    messages.forEach((msg, index) => {
+      // Skip if not AI message, still streaming, or already corrected/loading
+      if (msg.type !== 'ai' || msg.status === 'streaming') return;
+      if (!msg.subtaskId) return;
+      // Skip failed messages (status === 'error') - no need to correct failed responses
+      if (msg.status === 'error') return;
+      // Skip empty AI messages - nothing to correct
+      if (!msg.content || !msg.content.trim()) return;
+      // Skip if already has result, is loading, or has been attempted (to avoid infinite retry loops)
+      if (
+        correctionResults.has(msg.subtaskId) ||
+        correctionLoading.has(msg.subtaskId) ||
+        correctionAttempted.has(msg.subtaskId)
+      )
+        return;
+
+      // Find the corresponding user message (previous message)
+      const userMsg = index > 0 ? messages[index - 1] : null;
+      if (!userMsg || userMsg.type !== 'user' || !userMsg.content) return;
+
+      // Mark as attempted to prevent infinite retry loops
+      const subtaskId = msg.subtaskId;
+      setCorrectionAttempted(prev => new Set(prev).add(subtaskId));
+      setCorrectionLoading(prev => new Set(prev).add(subtaskId));
+
+      correctionApis
+        .correctResponse({
+          task_id: selectedTaskDetail.id,
+          message_id: subtaskId,
+          original_question: userMsg.content,
+          original_answer: msg.content || '',
+          correction_model_id: correctionModelId,
+          enable_web_search: enableCorrectionWebSearch,
+        })
+        .then(result => {
+          setCorrectionResults(prev => new Map(prev).set(subtaskId, result));
+        })
+        .catch(error => {
+          console.error('Correction failed:', error);
+          toast({
+            variant: 'destructive',
+            title: 'Correction failed',
+            description: (error as Error)?.message || 'Unknown error',
+          });
+        })
+        .finally(() => {
+          setCorrectionLoading(prev => {
+            const next = new Set(prev);
+            next.delete(subtaskId);
+            return next;
+          });
+        });
+    });
+  }, [
+    enableCorrectionMode,
+    correctionModelId,
+    enableCorrectionWebSearch,
+    messages,
+    selectedTaskDetail?.id,
+    toast,
+    correctionAttempted, // Add this dependency so useEffect re-runs when retry button is clicked
+  ]);
 
   // Handle task share
   const handleShareTask = useCallback(async () => {
@@ -535,33 +709,42 @@ export default function MessagesArea({
   }, [onShareButtonRender, shareButton]);
 
   // Convert DisplayMessage to Message format for MessageBubble
-  const convertToMessage = useCallback((msg: DisplayMessage): Message => {
-    // For AI messages, format content with separator
-    let content = msg.content;
-    if (msg.type === 'ai') {
-      content = '${$$}$' + msg.content;
-    }
+  const convertToMessage = useCallback(
+    (msg: DisplayMessage): Message => {
+      // For AI messages, check if there's an applied correction to use instead
+      let content = msg.content;
+      if (msg.type === 'ai') {
+        // Check if this message has an applied correction
+        const appliedContent = msg.subtaskId ? appliedCorrections.get(msg.subtaskId) : undefined;
+        if (appliedContent) {
+          content = '${$$}$' + appliedContent;
+        } else {
+          content = '${$$}$' + msg.content;
+        }
+      }
 
-    return {
-      type: msg.type,
-      content,
-      timestamp: msg.timestamp,
-      botName: msg.botName,
-      subtaskStatus: msg.subtaskStatus,
-      subtaskId: msg.subtaskId,
-      attachments: msg.attachments,
-      senderUserName: msg.senderUserName,
-      senderUserId: msg.senderUserId,
-      shouldShowSender: msg.shouldShowSender,
-      thinking: msg.thinking as Message['thinking'],
-      result: msg.result, // Include result with shell_type for component selection
-      recoveredContent: msg.recoveredContent,
-      isRecovered: msg.isRecovered,
-      isIncomplete: msg.isIncomplete,
-      status: msg.status,
-      error: msg.error,
-    };
-  }, []);
+      return {
+        type: msg.type,
+        content,
+        timestamp: msg.timestamp,
+        botName: msg.botName,
+        subtaskStatus: msg.subtaskStatus,
+        subtaskId: msg.subtaskId,
+        attachments: msg.attachments,
+        senderUserName: msg.senderUserName,
+        senderUserId: msg.senderUserId,
+        shouldShowSender: msg.shouldShowSender,
+        thinking: msg.thinking as Message['thinking'],
+        result: msg.result, // Include result with shell_type for component selection
+        recoveredContent: msg.recoveredContent,
+        isRecovered: msg.isRecovered,
+        isIncomplete: msg.isIncomplete,
+        status: msg.status,
+        error: msg.error,
+      };
+    },
+    [appliedCorrections]
+  );
 
   return (
     <div
@@ -581,6 +764,19 @@ export default function MessagesArea({
             const isCurrentUserMessage =
               msg.type === 'user' ? (isGroupChat ? msg.senderUserId === user?.id : true) : false;
 
+            // Check if this AI message has a correction result
+            const hasCorrectionResult =
+              msg.type === 'ai' &&
+              msg.subtaskId !== undefined &&
+              correctionResults.has(msg.subtaskId);
+            const isCorrecting =
+              msg.type === 'ai' &&
+              msg.subtaskId !== undefined &&
+              correctionLoading.has(msg.subtaskId);
+            const correctionResult = msg.subtaskId
+              ? correctionResults.get(msg.subtaskId)
+              : undefined;
+
             // Use StreamingMessageBubble for streaming AI messages
             if (msg.type === 'ai' && msg.status === 'streaming') {
               return (
@@ -596,6 +792,61 @@ export default function MessagesArea({
                   onSendMessage={onSendMessage}
                   index={index}
                 />
+              );
+            }
+
+            // For AI messages with correction mode enabled, render side by side
+            if (
+              msg.type === 'ai' &&
+              enableCorrectionMode &&
+              (hasCorrectionResult || isCorrecting)
+            ) {
+              // Find the corresponding user message (previous message)
+              const userMsg = index > 0 ? messages[index - 1] : null;
+              const originalQuestion = userMsg?.content || '';
+
+              return (
+                <div key={messageKey} className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <MessageBubble
+                    msg={convertToMessage(msg)}
+                    index={index}
+                    selectedTaskDetail={selectedTaskDetail}
+                    selectedTeam={selectedTeam}
+                    selectedRepo={selectedRepo}
+                    selectedBranch={selectedBranch}
+                    theme={theme as 'light' | 'dark'}
+                    t={t}
+                    onSendMessage={onSendMessage}
+                    isCurrentUserMessage={isCurrentUserMessage}
+                  />
+                  <CorrectionResultPanel
+                    result={
+                      correctionResult || {
+                        message_id: 0,
+                        scores: { accuracy: 0, logic: 0, completeness: 0 },
+                        corrections: [],
+                        summary: '',
+                        improved_answer: '',
+                        is_correct: false,
+                      }
+                    }
+                    isLoading={isCorrecting}
+                    onRetry={
+                      msg.subtaskId && originalQuestion && msg.content
+                        ? () => handleRetryCorrection(msg.subtaskId!, originalQuestion, msg.content)
+                        : undefined
+                    }
+                    subtaskId={msg.subtaskId}
+                    onApply={(improvedAnswer: string) => {
+                      // Update the local state to immediately show the improved answer
+                      if (msg.subtaskId) {
+                        setAppliedCorrections(prev =>
+                          new Map(prev).set(msg.subtaskId!, improvedAnswer)
+                        );
+                      }
+                    }}
+                  />
+                </div>
               );
             }
 

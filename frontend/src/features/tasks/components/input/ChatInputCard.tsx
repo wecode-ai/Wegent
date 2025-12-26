@@ -102,6 +102,9 @@ export function ChatInputCard({
   setEnableDeepThinking,
   enableClarification,
   setEnableClarification,
+  enableCorrectionMode,
+  correctionModelName,
+  onCorrectionModeToggle,
   selectedContexts,
   setSelectedContexts,
   attachmentState,
@@ -207,6 +210,9 @@ export function ChatInputCard({
             setEnableDeepThinking={setEnableDeepThinking}
             enableClarification={enableClarification}
             setEnableClarification={setEnableClarification}
+            enableCorrectionMode={enableCorrectionMode}
+            correctionModelName={correctionModelName}
+            onCorrectionModeToggle={onCorrectionModeToggle}
             selectedContexts={selectedContexts}
             setSelectedContexts={setSelectedContexts}
             attachmentState={attachmentState}
