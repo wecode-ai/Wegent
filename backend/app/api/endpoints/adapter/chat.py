@@ -19,8 +19,8 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core import security
 from app.models.kind import Kind
-from app.models.task import TaskResource
 from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
+from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Bot, Shell, Task, Team
 from app.services.chat.base import ChatServiceBase
@@ -1787,12 +1787,12 @@ async def correct_response(
 
     # Validate that the task belongs to the current user
     task = (
-        db.query(Kind)
+        db.query(TaskResource)
         .filter(
-            Kind.id == request.task_id,
-            Kind.user_id == current_user.id,
-            Kind.kind == "Task",
-            Kind.is_active == True,
+            TaskResource.id == request.task_id,
+            TaskResource.user_id == current_user.id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active == True,
         )
         .first()
     )
@@ -1994,12 +1994,12 @@ async def delete_correction(
 
     # Verify user has access to the task
     task = (
-        db.query(Kind)
+        db.query(TaskResource)
         .filter(
-            Kind.id == subtask.task_id,
-            Kind.user_id == current_user.id,
-            Kind.kind == "Task",
-            Kind.is_active == True,
+            TaskResource.id == subtask.task_id,
+            TaskResource.user_id == current_user.id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active == True,
         )
         .first()
     )
@@ -2074,12 +2074,12 @@ async def apply_correction(
 
     # Verify user has access to the task
     task = (
-        db.query(Kind)
+        db.query(TaskResource)
         .filter(
-            Kind.id == subtask.task_id,
-            Kind.user_id == current_user.id,
-            Kind.kind == "Task",
-            Kind.is_active == True,
+            TaskResource.id == subtask.task_id,
+            TaskResource.user_id == current_user.id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active == True,
         )
         .first()
     )

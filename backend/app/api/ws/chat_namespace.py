@@ -43,8 +43,8 @@ from app.api.ws.events import (
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.kind import Kind
-from app.models.task import TaskResource
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Bot, Shell, Task, Team
 from app.services.chat.rag_integration import retrieve_and_assemble_rag_prompt
@@ -1299,10 +1299,11 @@ class ChatNamespace(socketio.AsyncNamespace):
         finally:
             db.close()
 
-    def _fetch_retry_context(
-        self, db, payload: "ChatRetryPayload"
-    ) -> tuple[
-        Optional["Subtask"], Optional["Kind"], Optional["Kind"], Optional["Subtask"]
+    def _fetch_retry_context(self, db, payload: "ChatRetryPayload") -> tuple[
+        Optional["Subtask"],
+        Optional["TaskResource"],
+        Optional["Kind"],
+        Optional["Subtask"],
     ]:
         """
         Fetch all required database entities for retry operation in a single optimized query.
@@ -1316,7 +1317,7 @@ class ChatNamespace(socketio.AsyncNamespace):
         """
         from sqlalchemy.orm import aliased, joinedload
 
-        TaskKind = aliased(Kind)
+        TaskKind = aliased(TaskResource)
         TeamKind = aliased(Kind)
 
         # Optimized query: fetch failed_ai_subtask, task, and team in one go
