@@ -338,6 +338,12 @@
     "issues_found": "发现的问题",
     "no_corrections_needed": "回答正确，无需纠正",
     "summary": "总结评价",
-    "improved_answer": "改进后的回答"
+    "improved_answer": "改进后的回答",
+    "retry": "重新纠错",
+    "apply": "一键应用",
+    "applying": "应用中...",
+    "applied": "已应用",
+    "apply_success": "已成功应用改进后的回答",
+    "apply_failed": "应用改进回答失败"
   }
 }

@@ -339,6 +339,12 @@
     "issues_found": "Issues Found",
     "no_corrections_needed": "Answer is correct, no corrections needed",
     "summary": "Summary",
-    "improved_answer": "Improved Answer"
+    "improved_answer": "Improved Answer",
+    "retry": "Retry",
+    "apply": "Apply",
+    "applying": "Applying...",
+    "applied": "Applied",
+    "apply_success": "Successfully applied the improved answer",
+    "apply_failed": "Failed to apply the improved answer"
   }
 }

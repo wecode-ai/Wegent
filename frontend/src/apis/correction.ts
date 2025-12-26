@@ -30,6 +30,8 @@ export interface CorrectionRequest {
   original_question: string;
   original_answer: string;
   correction_model_id: string;
+  force_retry?: boolean; // Force re-evaluation even if correction exists
+  enable_web_search?: boolean; // Enable web search tool for fact verification
 }
 
 /**
@@ -65,6 +67,7 @@ export interface CorrectionModeState {
   enabled: boolean;
   correctionModelId: string | null;
   correctionModelName: string | null;
+  enableWebSearch?: boolean; // Enable web search for fact verification
 }
 
 // LocalStorage key for correction mode state
@@ -107,7 +110,8 @@ export const correctionApis = {
   /**
    * Correct an AI response using the specified correction model.
    * The result is automatically persisted to subtask.result.correction.
-   * If a correction already exists, returns the cached result.
+   * If a correction already exists and force_retry is false, returns the cached result.
+   * Set force_retry to true to force re-evaluation.
    */
   async correctResponse(request: CorrectionRequest): Promise<CorrectionResponse> {
     return apiClient.post('/chat/correct', request);
@@ -122,21 +126,51 @@ export const correctionApis = {
   },
 
   /**
+   * Apply the improved answer from correction to replace the AI message content.
+   * This updates subtask.result.value with the improved answer.
+   */
+  async applyCorrection(
+    subtaskId: number,
+    improvedAnswer: string
+  ): Promise<{ message: string; subtask_id: number }> {
+    return apiClient.post(`/chat/subtasks/${subtaskId}/apply-correction`, {
+      improved_answer: improvedAnswer,
+    });
+  },
+
+  /**
    * Get correction mode state from localStorage
    */
   getCorrectionModeState(): CorrectionModeState {
     if (typeof window === 'undefined') {
-      return { enabled: false, correctionModelId: null, correctionModelName: null };
+      return {
+        enabled: false,
+        correctionModelId: null,
+        correctionModelName: null,
+        enableWebSearch: false,
+      };
     }
     try {
       const stored = localStorage.getItem(CORRECTION_MODE_KEY);
       if (stored) {
-        return JSON.parse(stored);
+        const parsed = JSON.parse(stored);
+        // Ensure new fields have default values for backward compatibility
+        return {
+          enabled: parsed.enabled ?? false,
+          correctionModelId: parsed.correctionModelId ?? null,
+          correctionModelName: parsed.correctionModelName ?? null,
+          enableWebSearch: parsed.enableWebSearch ?? false,
+        };
       }
     } catch (e) {
       console.error('Failed to parse correction mode state:', e);
     }
-    return { enabled: false, correctionModelId: null, correctionModelName: null };
+    return {
+      enabled: false,
+      correctionModelId: null,
+      correctionModelName: null,
+      enableWebSearch: false,
+    };
   },
 
   /**

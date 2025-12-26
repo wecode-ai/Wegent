@@ -4,17 +4,30 @@
 
 'use client';
 
-import React from 'react';
-import { CheckCircle, AlertCircle, BarChart3, FileText, Sparkles } from 'lucide-react';
+import React, { useState } from 'react';
+import {
+  CheckCircle,
+  AlertCircle,
+  BarChart3,
+  FileText,
+  Sparkles,
+  RefreshCw,
+  Check,
+} from 'lucide-react';
 import { useTranslation } from '@/hooks/useTranslation';
 import { cn } from '@/lib/utils';
-import { CorrectionResponse } from '@/apis/correction';
+import { CorrectionResponse, correctionApis } from '@/apis/correction';
 import MarkdownEditor from '@uiw/react-markdown-editor';
+import { Button } from '@/components/ui/button';
+import { useToast } from '@/hooks/use-toast';
 
 interface CorrectionResultPanelProps {
   result: CorrectionResponse;
   isLoading?: boolean;
   className?: string;
+  onRetry?: () => void;
+  onApply?: (improvedAnswer: string) => void;
+  subtaskId?: number;
 }
 
 function ScoreBar({ score, label }: { score: number; label: string }) {
@@ -43,8 +56,41 @@ export default function CorrectionResultPanel({
   result,
   isLoading = false,
   className,
+  onRetry,
+  onApply,
+  subtaskId,
 }: CorrectionResultPanelProps) {
   const { t } = useTranslation('chat');
+  const { toast } = useToast();
+  const [isApplying, setIsApplying] = useState(false);
+  const [isApplied, setIsApplied] = useState(false);
+
+  // Handle apply correction
+  const handleApply = async () => {
+    if (!result.improved_answer || !subtaskId) return;
+
+    setIsApplying(true);
+    try {
+      await correctionApis.applyCorrection(subtaskId, result.improved_answer);
+      setIsApplied(true);
+      toast({
+        title: t('correction.apply_success'),
+      });
+      // Call the onApply callback if provided
+      if (onApply) {
+        onApply(result.improved_answer);
+      }
+    } catch (error) {
+      console.error('Failed to apply correction:', error);
+      toast({
+        variant: 'destructive',
+        title: t('correction.apply_failed'),
+        description: (error as Error)?.message || 'Unknown error',
+      });
+    } finally {
+      setIsApplying(false);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -65,9 +111,23 @@ export default function CorrectionResultPanel({
   return (
     <div className={cn('bg-surface rounded-lg border border-border overflow-hidden', className)}>
       {/* Header */}
-      <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-base/50">
-        <CheckCircle className="h-5 w-5 text-primary" />
-        <span className="font-semibold text-text-primary">{t('correction.result_title')}</span>
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-base/50">
+        <div className="flex items-center gap-2">
+          <CheckCircle className="h-5 w-5 text-primary" />
+          <span className="font-semibold text-text-primary">{t('correction.result_title')}</span>
+        </div>
+        {onRetry && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onRetry}
+            disabled={isLoading}
+            className="h-8 text-xs"
+          >
+            <RefreshCw className={cn('h-3 w-3 mr-1', isLoading && 'animate-spin')} />
+            {t('correction.retry')}
+          </Button>
+        )}
       </div>
 
       <div className="p-4 space-y-5">
@@ -137,9 +197,37 @@ export default function CorrectionResultPanel({
         {/* Improved Answer Section */}
         {result.improved_answer && (
           <div className="space-y-2">
-            <div className="flex items-center gap-2 text-sm font-medium text-text-primary">
-              <Sparkles className="h-4 w-4 text-primary" />
-              <span>{t('correction.improved_answer')}</span>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-sm font-medium text-text-primary">
+                <Sparkles className="h-4 w-4 text-primary" />
+                <span>{t('correction.improved_answer')}</span>
+              </div>
+              {subtaskId && (
+                <Button
+                  variant={isApplied ? 'outline' : 'default'}
+                  size="sm"
+                  onClick={handleApply}
+                  disabled={isApplying || isApplied}
+                  className={cn('h-8 text-xs', isApplied && 'text-green-600 border-green-600')}
+                >
+                  {isApplying ? (
+                    <>
+                      <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
+                      {t('correction.applying')}
+                    </>
+                  ) : isApplied ? (
+                    <>
+                      <Check className="h-3 w-3 mr-1" />
+                      {t('correction.applied')}
+                    </>
+                  ) : (
+                    <>
+                      <Check className="h-3 w-3 mr-1" />
+                      {t('correction.apply')}
+                    </>
+                  )}
+                </Button>
+              )}
             </div>
             <div className="pl-6 bg-primary/5 rounded-lg p-3 border border-primary/20">
               <MarkdownEditor.Markdown source={result.improved_answer} />

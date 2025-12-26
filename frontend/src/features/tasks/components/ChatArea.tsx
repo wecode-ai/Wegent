@@ -142,6 +142,8 @@ export default function ChatArea({
   const [enableCorrectionMode, setEnableCorrectionMode] = useState(false);
   const [correctionModelId, setCorrectionModelId] = useState<string | null>(null);
   const [correctionModelName, setCorrectionModelName] = useState<string | null>(null);
+  // Web search settings for correction mode (read from localStorage)
+  const [enableCorrectionWebSearch, setEnableCorrectionWebSearch] = useState(false);
 
   // Handle correction mode toggle
   const handleCorrectionModeToggle = useCallback(
@@ -149,6 +151,16 @@ export default function ChatArea({
       setEnableCorrectionMode(enabled);
       setCorrectionModelId(modelId || null);
       setCorrectionModelName(modelName || null);
+      // When correction mode is enabled, read web search settings from localStorage
+      if (enabled) {
+        // Import dynamically to avoid circular dependency
+        import('@/apis/correction').then(({ correctionApis }) => {
+          const savedState = correctionApis.getCorrectionModeState();
+          setEnableCorrectionWebSearch(savedState.enableWebSearch ?? true);
+        });
+      } else {
+        setEnableCorrectionWebSearch(false);
+      }
     },
     []
   );
@@ -1105,6 +1117,8 @@ export default function ChatArea({
               ? selectedBranch?.name || selectedTaskDetail?.branch_name
               : undefined,
             task_type: taskType,
+            // Correction mode parameters
+            enable_web_search: enableCorrectionMode ? enableCorrectionWebSearch : undefined,
           },
           {
             pendingUserMessage: message,
@@ -1196,6 +1210,8 @@ export default function ChatArea({
       forceOverride,
       enableDeepThinking,
       enableClarification,
+      enableCorrectionMode,
+      enableCorrectionWebSearch,
       refreshTasks,
       searchParams,
       router,
@@ -1578,6 +1594,7 @@ export default function ChatArea({
               isGroupChat={selectedTaskDetail?.is_group_chat || false}
               enableCorrectionMode={enableCorrectionMode}
               correctionModelId={correctionModelId}
+              enableCorrectionWebSearch={enableCorrectionWebSearch}
               onRetry={handleRetry}
             />
           </div>

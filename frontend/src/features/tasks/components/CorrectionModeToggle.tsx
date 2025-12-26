@@ -85,11 +85,12 @@ export default function CorrectionModeToggle({
     const displayName = model.displayName || model.name;
     onToggle(true, model.name, displayName);
 
-    // Save to localStorage
+    // Save to localStorage with web search enabled by default
     const state: CorrectionModeState = {
       enabled: true,
       correctionModelId: model.name,
       correctionModelName: displayName,
+      enableWebSearch: true, // Enable web search by default for fact verification
     };
     correctionApis.saveCorrectionModeState(state);
 

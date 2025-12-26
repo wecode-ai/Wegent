@@ -1741,6 +1741,9 @@ class CorrectionRequest(BaseModel):
     original_question: str
     original_answer: str
     correction_model_id: str
+    force_retry: bool = False  # Force re-evaluation even if correction exists
+    enable_web_search: bool = False  # Enable web search tool for fact verification
+    search_engine: Optional[str] = None  # Search engine name to use
 
 
 @router.post("/correct")
@@ -1821,7 +1824,8 @@ async def correct_response(
     result = subtask.result or {}
     existing_correction = result.get("correction") if isinstance(result, dict) else None
 
-    if existing_correction:
+    # Return cached result only if not forcing retry
+    if existing_correction and not request.force_retry:
         # Return cached result
         return {
             "message_id": subtask.id,
@@ -1831,6 +1835,7 @@ async def correct_response(
             "improved_answer": existing_correction.get("improved_answer", ""),
             "is_correct": existing_correction.get("is_correct", False),
         }
+
     # Get the correction model config
     # First check if it's a public model (user_id=0 in kinds table)
     public_model = (
@@ -1896,12 +1901,60 @@ async def correct_response(
 
     model_config["api_key"] = decrypt_api_key(model_config["api_key"])
 
+    # Build chat history from previous subtasks
+    history: list[dict[str, str]] = []
+    if subtask.message_id > 1:
+        # Get all subtasks before this message
+        previous_subtasks = (
+            db.query(Subtask)
+            .filter(
+                Subtask.task_id == request.task_id,
+                Subtask.message_id < subtask.message_id,
+                Subtask.status == SubtaskStatus.COMPLETED,
+            )
+            .order_by(Subtask.message_id.asc())
+            .all()
+        )
+
+        for prev_subtask in previous_subtasks:
+            if prev_subtask.role == SubtaskRole.USER:
+                history.append({"role": "user", "content": prev_subtask.prompt or ""})
+            elif prev_subtask.role == SubtaskRole.ASSISTANT:
+                # Extract content from result
+                content = ""
+                if prev_subtask.result:
+                    if isinstance(prev_subtask.result, dict):
+                        content = prev_subtask.result.get("value", "")
+                    elif isinstance(prev_subtask.result, str):
+                        content = prev_subtask.result
+                history.append({"role": "assistant", "content": content})
+
+        logger.info(
+            f"Built chat history with {len(history)} messages for correction of subtask {subtask.id}"
+        )
+
+    # Get search tool if enabled
+    tools = None
+    if request.enable_web_search:
+        from app.services.chat.tools import get_web_search_tool
+
+        search_tool = get_web_search_tool(engine_name=request.search_engine)
+        if search_tool:
+            tools = [search_tool]
+            logger.info(
+                f"Enabled web search tool for correction (engine: {request.search_engine or 'default'})"
+            )
+        else:
+            logger.warning("Web search requested but search service not available")
+
     try:
-        # Call correction service
+        # Call correction service with history and tools
         llm_result = await correction_service.evaluate_response(
             original_question=request.original_question,
             original_answer=request.original_answer,
             model_config=model_config,
+            history=history if history else None,
+            tools=tools,
         )
 
         # Get model display name for persistence
@@ -2028,3 +2081,97 @@ async def delete_correction(
         logger.info(f"Deleted correction for subtask {subtask_id}")
 
     return {"message": "Correction deleted"}
+
+
+class ApplyCorrectionRequest(BaseModel):
+    """Request body for applying correction to replace AI message."""
+
+    improved_answer: str
+
+
+@router.post("/subtasks/{subtask_id}/apply-correction")
+async def apply_correction(
+    subtask_id: int,
+    request: ApplyCorrectionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Apply the improved answer from correction to replace the AI message content.
+
+    This endpoint:
+    1. Validates the subtask exists and user has access
+    2. Updates subtask.result.value with the improved answer
+    3. Marks the correction as applied in subtask.result.correction
+
+    Returns:
+        {"message": "Correction applied", "subtask_id": int}
+    """
+    from sqlalchemy.orm.attributes import flag_modified
+
+    # Get the subtask
+    subtask = (
+        db.query(Subtask)
+        .filter(
+            Subtask.id == subtask_id,
+            Subtask.role == SubtaskRole.ASSISTANT,
+        )
+        .first()
+    )
+
+    if not subtask:
+        raise HTTPException(status_code=404, detail="Subtask not found")
+
+    # Verify user has access to the task
+    task = (
+        db.query(Kind)
+        .filter(
+            Kind.id == subtask.task_id,
+            Kind.user_id == current_user.id,
+            Kind.kind == "Task",
+            Kind.is_active == True,
+        )
+        .first()
+    )
+
+    if not task:
+        # Check if user is a group chat member
+        from app.models.task_member import MemberStatus, TaskMember
+
+        member = (
+            db.query(TaskMember)
+            .filter(
+                TaskMember.task_id == subtask.task_id,
+                TaskMember.user_id == current_user.id,
+                TaskMember.status == MemberStatus.ACTIVE,
+            )
+            .first()
+        )
+
+        if not member:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+    # Update subtask.result.value with the improved answer
+    subtask_result = subtask.result or {}
+    if not isinstance(subtask_result, dict):
+        subtask_result = {}
+
+    # Store the original value before replacement (for potential undo)
+    original_value = subtask_result.get("value", "")
+
+    # Update the value with improved answer
+    subtask_result["value"] = request.improved_answer
+
+    # Mark correction as applied and store original value
+    if "correction" in subtask_result:
+        subtask_result["correction"]["applied"] = True
+        subtask_result["correction"]["applied_at"] = datetime.utcnow().isoformat() + "Z"
+        subtask_result["correction"]["original_value"] = original_value
+
+    subtask.result = subtask_result
+    flag_modified(subtask, "result")
+    db.commit()
+
+    logger.info(f"Applied correction for subtask {subtask_id}")
+
+    return {"message": "Correction applied", "subtask_id": subtask_id}
