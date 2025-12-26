@@ -340,15 +340,27 @@ class StreamingCore:
             result,
         )
 
-        # Append assistant message to chat history
-        # Note: User message is already saved before streaming starts
-        await storage_handler.append_message(
+        # Append assistant message to Redis chat history cache
+        # This is part of the dual-write strategy: DB + Redis
+        # User message is saved to Redis in ai_trigger.py before streaming starts
+        redis_save_success = await storage_handler.append_message(
             self.state.task_id,
             "assistant",
             self.state.full_response,
         )
 
-        # Update subtask status to COMPLETED
+        if not redis_save_success:
+            # Redis write failed - log error but continue since DB is authoritative
+            # Clear cache to force DB reload on next read
+            logger.error(
+                "[STREAMING] Failed to save assistant message to Redis: "
+                "task_id=%d, subtask_id=%d. Cache will be cleared.",
+                self.state.task_id,
+                self.state.subtask_id,
+            )
+            await storage_handler.clear_history(self.state.task_id)
+
+        # Update subtask status to COMPLETED (persists to DB)
         await storage_handler.update_subtask_status(
             self.state.subtask_id,
             "COMPLETED",
