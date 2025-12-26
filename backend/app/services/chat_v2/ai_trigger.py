@@ -166,6 +166,7 @@ async def _trigger_direct_chat(
             task_data=task_data,
             subtask_id=assistant_subtask.id,
             message_id=assistant_subtask.message_id,
+            user_message_id=assistant_subtask.parent_id,  # User's message_id for history exclusion
             team_data=team_data,
             user_data=user_data,
             message=message,
@@ -186,6 +187,7 @@ async def _stream_chat_response(
     task_data: dict[str, Any],
     subtask_id: int,
     message_id: int,
+    user_message_id: int,
     team_data: dict[str, Any],
     user_data: dict[str, Any],
     message: str,
@@ -203,6 +205,8 @@ async def _stream_chat_response(
     streaming to ChatService.stream_to_websocket().
 
     Args:
+        message_id: Assistant's message_id for frontend ordering
+        user_message_id: User's message_id for history exclusion
         message: Original user message
         knowledge_base_ids: Optional list of knowledge base IDs for tool-based RAG
     """
@@ -351,6 +355,7 @@ async def _stream_chat_response(
             enable_web_search=payload.enable_web_search,
             search_engine=payload.search_engine,
             message_id=message_id,
+            user_message_id=user_message_id,  # For history exclusion
             bot_name=chat_config.bot_name,
             bot_namespace=chat_config.bot_namespace,
             shell_type=chat_config.shell_type,  # Pass shell_type from chat_config
