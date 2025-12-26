@@ -73,6 +73,7 @@ class WebSocketStreamConfig:
         bot_namespace: Bot namespace
         shell_type: Shell type (Chat, ClaudeCode, Agno) for frontend display
         extra_tools: Additional tools (e.g., KnowledgeBaseTool)
+        context_limit: Context limit configuration for message truncation
     """
 
     # Task identification
@@ -98,6 +99,12 @@ class WebSocketStreamConfig:
     bot_namespace: str = "default"
     shell_type: str = "Chat"  # Shell type for frontend display
     extra_tools: list[BaseTool] = field(default_factory=list)
+
+    # Context limit configuration
+    context_limit: dict[str, Any] = field(default_factory=lambda: {
+        "max_context_tokens": None,
+        "reserved_output_ratio": 0.2,
+    })
 
     def get_username_for_message(self) -> str | None:
         """Get username for message prefix in group chat mode."""
@@ -729,6 +736,46 @@ class ChatService:
             messages = MessageConverter.build_messages(
                 history, message, system_prompt, username=username
             )
+
+            # Apply context truncation if configured
+            truncation_result = None
+            context_limit = config.context_limit
+            if context_limit:
+                from .context import ContextManager
+
+                model_name = model_config.get("model", "gpt-4")
+                context_manager = ContextManager(model_name)
+
+                # Separate system message from other messages for truncation
+                system_messages = [m for m in messages if m.get("role") == "system"]
+                non_system_messages = [m for m in messages if m.get("role") != "system"]
+
+                # Truncate non-system messages
+                truncation_result = context_manager.truncate_messages(
+                    messages=non_system_messages,
+                    system_prompt=system_prompt,
+                    max_context_tokens=context_limit.get("max_context_tokens"),
+                    reserved_output_ratio=context_limit.get("reserved_output_ratio", 0.2),
+                )
+
+                # Rebuild messages with truncated content
+                if truncation_result.was_truncated:
+                    messages = system_messages + truncation_result.messages
+                    logger.info(
+                        "[WS_STREAM] Context truncated: task_id=%d, %d -> %d messages, tokens=%d",
+                        task_id,
+                        truncation_result.original_count,
+                        truncation_result.truncated_count,
+                        truncation_result.total_tokens,
+                    )
+
+                    # Emit truncation event to frontend
+                    await emitter.emit_context_truncated(
+                        subtask_id=subtask_id,
+                        original_count=truncation_result.original_count,
+                        truncated_count=truncation_result.truncated_count,
+                        total_tokens=truncation_result.total_tokens,
+                    )
 
             # Log messages sent to model for debugging
             self._log_messages_for_debug(task_id, subtask_id, messages)

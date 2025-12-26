@@ -31,6 +31,7 @@ export const ServerEvents = {
   CHAT_DONE: 'chat:done',
   CHAT_ERROR: 'chat:error',
   CHAT_CANCELLED: 'chat:cancelled',
+  CHAT_CONTEXT_TRUNCATED: 'chat:context_truncated',
 
   // Non-streaming messages (to task room, exclude sender)
   CHAT_MESSAGE: 'chat:message',
@@ -164,6 +165,17 @@ export interface ChatErrorPayload {
 export interface ChatCancelledPayload {
   task_id: number;
   subtask_id: number;
+}
+
+export interface ChatContextTruncatedPayload {
+  task_id: number;
+  subtask_id: number;
+  /** Original number of messages before truncation */
+  original_count: number;
+  /** Number of messages after truncation */
+  truncated_count: number;
+  /** Total token count after truncation */
+  total_tokens: number;
 }
 
 export interface ChatMessageAttachment {

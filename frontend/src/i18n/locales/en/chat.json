@@ -365,5 +365,8 @@
     "no_improvement_needed": "No improved answer provided",
     "show_details": "Show Evaluation Details",
     "hide_details": "Hide Evaluation Details"
+  },
+  "contextTruncated": {
+    "hint": "Earlier messages omitted, only recent messages included in this response"
   }
 }

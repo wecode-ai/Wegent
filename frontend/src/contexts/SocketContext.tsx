@@ -31,6 +31,7 @@ import {
   ChatErrorPayload,
   ChatCancelledPayload,
   ChatMessagePayload,
+  ChatContextTruncatedPayload,
   ChatSendPayload,
   ChatSendAck,
   TaskCreatedPayload,
@@ -97,6 +98,8 @@ export interface ChatEventHandlers {
   onChatCancelled?: (data: ChatCancelledPayload) => void;
   /** Handler for chat:message event (other users' messages in group chat) */
   onChatMessage?: (data: ChatMessagePayload) => void;
+  /** Handler for chat:context_truncated event (context was truncated due to limit) */
+  onChatContextTruncated?: (data: ChatContextTruncatedPayload) => void;
 }
 
 /** Task event handlers for task list updates */
@@ -445,8 +448,15 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         return () => {};
       }
 
-      const { onChatStart, onChatChunk, onChatDone, onChatError, onChatCancelled, onChatMessage } =
-        handlers;
+      const {
+        onChatStart,
+        onChatChunk,
+        onChatDone,
+        onChatError,
+        onChatCancelled,
+        onChatMessage,
+        onChatContextTruncated,
+      } = handlers;
 
       if (onChatStart) socket.on(ServerEvents.CHAT_START, onChatStart);
       if (onChatChunk) socket.on(ServerEvents.CHAT_CHUNK, onChatChunk);
@@ -454,6 +464,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       if (onChatError) socket.on(ServerEvents.CHAT_ERROR, onChatError);
       if (onChatCancelled) socket.on(ServerEvents.CHAT_CANCELLED, onChatCancelled);
       if (onChatMessage) socket.on(ServerEvents.CHAT_MESSAGE, onChatMessage);
+      if (onChatContextTruncated) socket.on(ServerEvents.CHAT_CONTEXT_TRUNCATED, onChatContextTruncated);
 
       // Return cleanup function
       return () => {
@@ -463,6 +474,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         if (onChatError) socket.off(ServerEvents.CHAT_ERROR, onChatError);
         if (onChatCancelled) socket.off(ServerEvents.CHAT_CANCELLED, onChatCancelled);
         if (onChatMessage) socket.off(ServerEvents.CHAT_MESSAGE, onChatMessage);
+        if (onChatContextTruncated) socket.off(ServerEvents.CHAT_CONTEXT_TRUNCATED, onChatContextTruncated);
       };
     },
     [socket]

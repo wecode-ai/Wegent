@@ -408,6 +408,7 @@ async def _stream_chat_response(
             bot_namespace=chat_config.bot_namespace,
             shell_type=chat_config.shell_type,  # Pass shell_type from chat_config
             extra_tools=extra_tools,  # Pass extra tools including KnowledgeBaseTool
+            context_limit=chat_config.context_limit,  # Pass context limit configuration
         )
 
         # Use ChatService for streaming
