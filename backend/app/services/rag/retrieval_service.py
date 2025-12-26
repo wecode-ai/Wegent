@@ -240,10 +240,19 @@ class RetrievalService:
             f"[RAG] Using retriever: {retriever_name} (namespace: {retriever_namespace})"
         )
 
+        # Determine the correct user_id for resource lookup
+        # For personal resources (namespace='default'), use the KB creator's user_id
+        # because the resources belong to the KB creator, not the current user
+        # For group resources (namespace!='default'), user_id doesn't matter for lookup
+        if retriever_namespace == "default":
+            resource_owner_user_id = kb.user_id
+        else:
+            resource_owner_user_id = user_id
+
         # Get retriever CRD
         retriever = retriever_kinds_service.get_retriever(
             db=db,
-            user_id=user_id,
+            user_id=resource_owner_user_id,
             name=retriever_name,
             namespace=retriever_namespace,
         )
@@ -268,6 +277,13 @@ class RetrievalService:
             raise ValueError(
                 f"Knowledge base {knowledge_base_id} has incomplete embedding config"
             )
+
+        # Determine the correct user_id for embedding model lookup
+        # This may differ from retriever_namespace if they use different namespaces
+        if embedding_model_namespace == "default":
+            embedding_owner_user_id = kb.user_id
+        else:
+            embedding_owner_user_id = user_id
 
         # Extract retrieval parameters
         top_k = retrieval_config.get("top_k", 5)
@@ -305,9 +321,11 @@ class RetrievalService:
             retrieval_setting["keyword_weight"] = keyword_weight
 
         # Create embedding model from CRD
+        # Use embedding_owner_user_id for correct resource lookup
+        # For group KBs, the embedding model may be created by other users in the same group
         embed_model = create_embedding_model_from_crd(
             db=db,
-            user_id=user_id,
+            user_id=embedding_owner_user_id,
             model_name=embedding_model_name,
             model_namespace=embedding_model_namespace,
         )
@@ -317,6 +335,16 @@ class RetrievalService:
             storage_backend=storage_backend, embed_model=embed_model
         )
 
+        # Determine the correct user_id for index naming in per_user strategy
+        # For personal knowledge bases (namespace="default"), use the current user's ID
+        # For group knowledge bases (namespace!="default"), use the KB creator's user_id
+        # This ensures all group members access the same index created by the KB owner
+        if kb.namespace == "default":
+            index_owner_user_id = user_id
+        else:
+            # Group knowledge base - use KB creator's user_id
+            index_owner_user_id = kb.user_id
+
         # Retrieve documents (run in thread pool to avoid event loop conflicts)
         result = await asyncio.to_thread(
             retriever_instance.retrieve,
@@ -324,7 +352,7 @@ class RetrievalService:
             query=query,
             retrieval_setting=retrieval_setting,
             metadata_condition=metadata_condition,
-            user_id=user_id,
+            user_id=index_owner_user_id,
         )
 
         return result

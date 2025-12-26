@@ -16,6 +16,7 @@ import {
   Globe,
   ArrowLeft,
   Search,
+  Clock,
 } from 'lucide-react';
 import { Spinner } from '@/components/ui/spinner';
 import { Card } from '@/components/ui/card';
@@ -663,6 +664,17 @@ function KnowledgeBaseCard({
 }: KnowledgeBaseCardProps) {
   const { t } = useTranslation('knowledge');
 
+  // Format date for compact display (MM-DD HH:mm)
+  const formatDate = (dateString: string) => {
+    if (!dateString) return '';
+    const date = new Date(dateString);
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `${month}-${day} ${hours}:${minutes}`;
+  };
+
   return (
     <Card
       padding="sm"
@@ -681,13 +693,24 @@ function KnowledgeBaseCard({
         {knowledgeBase.description && <p className="line-clamp-2">{knowledgeBase.description}</p>}
       </div>
 
-      {/* Bottom section - document count on left, actions on right */}
+      {/* Bottom section - stats on left, actions on right */}
       <div className="flex items-center justify-between mt-auto pt-2 flex-shrink-0">
-        {/* Document count */}
-        <span className="text-xs text-text-muted flex items-center gap-1">
-          <FileText className="w-3 h-3" />
-          {knowledgeBase.document_count}
-        </span>
+        {/* Document count and updated time */}
+        <div className="flex items-center gap-3 text-xs text-text-muted">
+          <span className="flex items-center gap-1">
+            <FileText className="w-3 h-3" />
+            {knowledgeBase.document_count}
+          </span>
+          <span
+            className="flex items-center gap-1"
+            title={
+              knowledgeBase.updated_at ? new Date(knowledgeBase.updated_at).toLocaleString() : ''
+            }
+          >
+            <Clock className="w-3 h-3" />
+            {formatDate(knowledgeBase.updated_at)}
+          </span>
+        </div>
         {/* Action icons */}
         <div className="flex items-center gap-1">
           {canEdit && onEdit && (

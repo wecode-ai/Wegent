@@ -62,16 +62,22 @@
         "enabled": "Enabled",
         "disabled": "Disabled"
       },
+      "indexStatus": {
+        "available": "Indexed",
+        "unavailable": "Not Indexed"
+      },
       "columns": {
         "name": "Name",
         "type": "Type",
         "size": "Size",
         "date": "Date",
         "status": "Status",
+        "indexStatus": "Index",
         "actions": "Actions"
       },
       "search": "Search documents",
       "empty": "No documents yet",
+      "emptyHint": "Upload your first document to get started",
       "noResults": "No matching documents",
       "filter": {
         "all": "All Status",
@@ -126,37 +132,41 @@
       "weightSum": "Weights must sum to 1.0"
     },
     "splitter": {
-      "splitter": {
-        "title": "Chunking Settings",
-        "type": "Chunking Type",
-        "general": "General",
-        "separator": "Separator",
-        "separatorHint": "Character(s) used to split document",
-        "chunkSize": "Max Chunk Size",
-        "chunkSizeHint": "Maximum characters per chunk (128-8192)",
-        "chunkOverlap": "Chunk Overlap",
-        "chunkOverlapHint": "Overlap characters between chunks",
-        "characters": "characters",
-        "overlapError": "Overlap must be less than chunk size"
-      },
-      "retrievalTest": {
-        "button": "Retrieval Test",
-        "title": "Retrieval Test",
-        "description": "Test knowledge retrieval effectiveness with a given query text.",
-        "sourceText": "Source Text",
-        "placeholder": "Enter query text to test...",
-        "search": "Test",
-        "results": "Results",
-        "emptyHint": "Retrieval test results will be displayed here",
-        "noResults": "No matching results found",
-        "noConfig": "This knowledge base has no retriever or embedding model configured. Cannot perform retrieval test.",
-        "error": "Retrieval test failed, please try again",
-        "configTitle": "Retrieval Parameters",
-        "configHint": "These settings are for testing only and will not be saved to the database.",
-        "modified": "Modified"
-      },
-      "goToSettings": "Go to Settings"
-    }
+      "title": "Chunking Settings",
+      "type": "Chunking Type",
+      "general": "General",
+      "sentence": "Sentence Chunking",
+      "semantic": "Semantic Chunking",
+      "separator": "Separator",
+      "separatorHint": "Character(s) used to split document",
+      "chunkSize": "Max Chunk Size",
+      "chunkSizeHint": "Maximum characters per chunk (128-8192)",
+      "chunkOverlap": "Chunk Overlap",
+      "chunkOverlapHint": "Overlap characters between chunks",
+      "characters": "characters",
+      "overlapError": "Overlap must be less than chunk size",
+      "bufferSize": "Buffer Size",
+      "bufferSizeHint": "Buffer size for semantic chunking (1-10)",
+      "breakpointThreshold": "Breakpoint Threshold",
+      "breakpointThresholdHint": "Percentile threshold for determining breakpoints (50-100)"
+    },
+    "retrievalTest": {
+      "button": "Retrieval Test",
+      "title": "Retrieval Test",
+      "description": "Test knowledge retrieval effectiveness with a given query text.",
+      "sourceText": "Source Text",
+      "placeholder": "Enter query text to test...",
+      "search": "Test",
+      "results": "Results",
+      "emptyHint": "Retrieval test results will be displayed here",
+      "noResults": "No matching results found",
+      "noConfig": "This knowledge base has no retriever or embedding model configured. Cannot perform retrieval test.",
+      "error": "Retrieval test failed, please try again",
+      "configTitle": "Retrieval Parameters",
+      "configHint": "These settings are for testing only and will not be saved to the database.",
+      "modified": "Modified"
+    },
+    "goToSettings": "Go to Settings"
   },
   "add_repository": "Add Repository",
   "add_repository_desc": "Click to add a new repository",

@@ -14,7 +14,7 @@ Supported retrieval modes:
 from typing import Any, ClassVar, Dict, List, Optional
 
 from elasticsearch import Elasticsearch
-from elasticsearch.helpers.vectorstore import (
+from elasticsearch.helpers.vectorstore._async.strategies import (
     AsyncBM25Strategy,
     AsyncDenseVectorStrategy,
 )
@@ -53,12 +53,22 @@ class ElasticsearchBackend(BaseStorageBackend):
         """Initialize Elasticsearch backend."""
         super().__init__(config)
 
-        # Build connection kwargs
+        # Build connection kwargs for native Elasticsearch client
+        # (used in list_documents and test_connection)
         self.es_kwargs = {}
         if self.username and self.password:
             self.es_kwargs["basic_auth"] = (self.username, self.password)
         elif self.api_key:
             self.es_kwargs["api_key"] = self.api_key
+
+        # Build connection kwargs for LlamaIndex ElasticsearchStore
+        # Note: ElasticsearchStore uses different parameter names (es_user, es_password, es_api_key)
+        self.llama_es_kwargs = {}
+        if self.username and self.password:
+            self.llama_es_kwargs["es_user"] = self.username
+            self.llama_es_kwargs["es_password"] = self.password
+        elif self.api_key:
+            self.llama_es_kwargs["es_api_key"] = self.api_key
 
     def create_vector_store(
         self, index_name: str, retrieval_mode: str = "vector"
@@ -81,8 +91,10 @@ class ElasticsearchBackend(BaseStorageBackend):
             # Pure BM25 keyword search
             retrieval_strategy = AsyncBM25Strategy()
         elif retrieval_mode == "hybrid":
-            # Hybrid search: vector + BM25 with RRF fusion
-            retrieval_strategy = AsyncDenseVectorStrategy(hybrid=True, rrf=True)
+            # Hybrid search: vector + BM25 with linear combination
+            # Note: rrf=False uses linear combination instead of RRF fusion
+            # RRF requires Elasticsearch paid license (Platinum/Enterprise)
+            retrieval_strategy = AsyncDenseVectorStrategy(hybrid=True, rrf=False, text_field="content")
         else:
             # Default: Pure vector search
             retrieval_strategy = AsyncDenseVectorStrategy(hybrid=False)
@@ -91,7 +103,7 @@ class ElasticsearchBackend(BaseStorageBackend):
             index_name=index_name,
             es_url=self.url,
             retrieval_strategy=retrieval_strategy,
-            **self.es_kwargs,
+            **self.llama_es_kwargs,
         )
 
     def index_with_metadata(

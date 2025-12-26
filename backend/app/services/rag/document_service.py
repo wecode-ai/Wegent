@@ -8,16 +8,20 @@ Refactored to use modular architecture with pluggable storage backends.
 """
 
 import asyncio
+import logging
 import uuid
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
 from app.models.subtask_attachment import AttachmentStatus, SubtaskAttachment
 from app.schemas.rag import SplitterConfig
+from app.services.attachment import attachment_service
 from app.services.rag.embedding.factory import create_embedding_model_from_crd
 from app.services.rag.index import DocumentIndexer
 from app.services.rag.storage.base import BaseStorageBackend
+
+logger = logging.getLogger(__name__)
 
 
 class DocumentService:
@@ -35,22 +39,24 @@ class DocumentService:
         """
         self.storage_backend = storage_backend
 
-    def _get_attachment_text(self, db: Session, attachment_id: int) -> tuple[str, str]:
+    def _get_attachment_binary(
+        self, db: Session, attachment_id: int
+    ) -> Tuple[bytes, str, str]:
         """
-        Get extracted text content and filename from attachment.
+        Get original binary data and metadata from attachment.
 
-        The text content was already extracted during attachment upload,
-        so we can directly use it without re-parsing the file.
+        This method retrieves the original binary data from storage (MySQL or
+        external storage like S3/MinIO) for RAG indexing.
 
         Args:
             db: Database session
             attachment_id: Attachment ID
 
         Returns:
-            Tuple of (extracted_text, filename)
+            Tuple of (binary_data, filename, file_extension)
 
         Raises:
-            ValueError: If attachment not found or has no extracted text
+            ValueError: If attachment not found, not ready, or binary data unavailable
         """
         # Query attachment
         attachment = (
@@ -68,13 +74,30 @@ class DocumentService:
                 f"Attachment {attachment_id} is not ready (status: {attachment.status})"
             )
 
-        # Get extracted text content
-        if not attachment.extracted_text:
+        # Get original binary data from storage (supports MySQL and external storage)
+        binary_data = attachment_service.get_attachment_binary_data(
+            db=db,
+            attachment=attachment,
+        )
+
+        if binary_data is None:
+            logger.error(
+                f"Failed to retrieve binary data for attachment {attachment_id}, "
+                f"storage_backend={attachment.storage_backend}, "
+                f"storage_key={attachment.storage_key}"
+            )
             raise ValueError(
-                f"Attachment {attachment_id} has no extracted text content"
+                f"Attachment {attachment_id} has no binary data available"
             )
 
-        return attachment.extracted_text, attachment.original_filename
+        logger.info(
+            f"Retrieved binary data for attachment {attachment_id}: "
+            f"filename={attachment.original_filename}, "
+            f"size={len(binary_data)} bytes, "
+            f"extension={attachment.file_extension}"
+        )
+
+        return binary_data, attachment.original_filename, attachment.file_extension
 
     def _index_document_sync(
         self,
@@ -86,6 +109,7 @@ class DocumentService:
         user_id: int,
         db: Session,
         splitter_config: Optional[SplitterConfig] = None,
+        document_id: Optional[int] = None,
     ) -> Dict:
         """
         Synchronous document indexing implementation.
@@ -100,6 +124,7 @@ class DocumentService:
             user_id: User ID
             db: Database session
             splitter_config: Optional splitter configuration
+            document_id: Optional document ID to use as doc_ref
 
         Returns:
             Indexing result dict
@@ -107,8 +132,11 @@ class DocumentService:
         if file_path is None and attachment_id is None:
             raise ValueError("Either file_path or attachment_id must be provided")
 
-        # Generate document reference ID
-        doc_ref = f"doc_{uuid.uuid4().hex[:12]}"
+        # Use document_id as doc_ref if provided, otherwise generate a random one
+        if document_id is not None:
+            doc_ref = str(document_id)
+        else:
+            doc_ref = f"doc_{uuid.uuid4().hex[:12]}"
 
         # Create embedding model from CRD
         embed_model = create_embedding_model_from_crd(
@@ -126,14 +154,17 @@ class DocumentService:
         )
 
         if attachment_id is not None:
-            # Get pre-extracted text from attachment (no temp file needed)
-            text_content, filename = self._get_attachment_text(db, attachment_id)
+            # Get original binary data from attachment (supports MySQL and external storage)
+            binary_data, filename, file_extension = self._get_attachment_binary(
+                db, attachment_id
+            )
 
-            # Index from text directly
-            result = indexer.index_from_text(
+            # Index from binary data directly (indexer handles parsing)
+            result = indexer.index_from_binary(
                 knowledge_id=knowledge_id,
-                text_content=text_content,
+                binary_data=binary_data,
                 source_file=filename,
+                file_extension=file_extension,
                 doc_ref=doc_ref,
                 user_id=user_id,
             )
@@ -158,6 +189,7 @@ class DocumentService:
         file_path: Optional[str] = None,
         attachment_id: Optional[int] = None,
         splitter_config: Optional[SplitterConfig] = None,
+        document_id: Optional[int] = None,
     ) -> Dict:
         """
         Index a document into storage backend.
@@ -171,10 +203,11 @@ class DocumentService:
             file_path: Path to document file (optional, mutually exclusive with attachment_id)
             attachment_id: Attachment ID (optional, mutually exclusive with file_path)
             splitter_config: Optional splitter configuration. If None, defaults to SemanticSplitter
+            document_id: Optional document ID to use as doc_ref
 
         Returns:
             Indexing result dict with:
-                - doc_ref: Generated document reference ID
+                - doc_ref: Document reference ID (document_id if provided, otherwise generated)
                 - knowledge_id: Knowledge base ID
                 - source_file: Source filename
                 - chunk_count: Number of chunks created
@@ -196,6 +229,7 @@ class DocumentService:
             user_id,
             db,
             splitter_config,
+            document_id,
         )
 
     async def delete_document(

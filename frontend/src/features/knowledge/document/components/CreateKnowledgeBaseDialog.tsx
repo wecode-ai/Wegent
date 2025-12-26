@@ -64,8 +64,16 @@ export function CreateKnowledgeBaseDialog({
   const [accordionValue, setAccordionValue] = useState<string>('');
 
   // Load data when dialog opens
-  const { refetch: refetchRetrievers } = useRetrievers(scope, groupName);
-  const { refetch: refetchModels } = useEmbeddingModels();
+  const {
+    retrievers,
+    loading: loadingRetrievers,
+    refetch: refetchRetrievers,
+  } = useRetrievers(scope, groupName);
+  const {
+    models: embeddingModels,
+    loading: loadingModels,
+    refetch: refetchModels,
+  } = useEmbeddingModels(scope, groupName);
 
   useEffect(() => {
     if (open) {
@@ -73,6 +81,36 @@ export function CreateKnowledgeBaseDialog({
       refetchModels();
     }
   }, [open, refetchRetrievers, refetchModels]);
+
+  // Auto-select default retriever when data is loaded and no selection exists
+  useEffect(() => {
+    if (!loadingRetrievers && retrievers.length > 0 && !retrievalConfig.retriever_name) {
+      const firstRetriever = retrievers[0];
+      setRetrievalConfig(prev => ({
+        ...prev,
+        retriever_name: firstRetriever.name,
+        retriever_namespace: firstRetriever.namespace,
+      }));
+    }
+  }, [loadingRetrievers, retrievers, retrievalConfig.retriever_name]);
+
+  // Auto-select default embedding model when data is loaded and no selection exists
+  useEffect(() => {
+    if (
+      !loadingModels &&
+      embeddingModels.length > 0 &&
+      !retrievalConfig.embedding_config?.model_name
+    ) {
+      const firstModel = embeddingModels[0];
+      setRetrievalConfig(prev => ({
+        ...prev,
+        embedding_config: {
+          model_name: firstModel.name,
+          model_namespace: firstModel.namespace || 'default',
+        },
+      }));
+    }
+  }, [loadingModels, embeddingModels, retrievalConfig.embedding_config?.model_name]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

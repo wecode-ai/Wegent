@@ -43,6 +43,11 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
         - scope='group': group retrievers (requires group_name or queries all user's groups)
         - scope='all': personal + all user's groups
 
+        Query logic:
+        - For personal scope (namespace='default'): query with user_id filter
+        - For group scope (namespace!='default'): query without user_id filter
+          Group retrievers may be created by other users in the same group.
+
         Args:
             db: Database session
             user_id: User ID
@@ -53,41 +58,61 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
             List of retriever summaries
         """
         # Determine which namespaces to query based on scope
-        namespaces_to_query = []
+        personal_namespaces = []
+        group_namespaces = []
 
         if scope == "personal":
             # Personal retrievers only (default namespace)
-            namespaces_to_query = ["default"]
+            personal_namespaces = ["default"]
         elif scope == "group":
             # Group retrievers - if group_name not provided, query all user's groups
             if group_name:
-                namespaces_to_query = [group_name]
+                group_namespaces = [group_name]
             else:
                 # Query all user's groups (excluding default)
                 user_groups = get_user_groups(db, user_id)
-                namespaces_to_query = user_groups if user_groups else []
+                group_namespaces = user_groups if user_groups else []
         elif scope == "all":
             # Personal + all user's groups
-            namespaces_to_query = ["default"] + get_user_groups(db, user_id)
+            personal_namespaces = ["default"]
+            group_namespaces = get_user_groups(db, user_id)
         else:
             raise ValueError(f"Invalid scope: {scope}")
 
         # Handle empty namespaces case
-        if not namespaces_to_query:
+        if not personal_namespaces and not group_namespaces:
             return []
 
-        # Query retrievers from all target namespaces
-        retrievers = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == user_id,
-                Kind.kind == "Retriever",
-                Kind.namespace.in_(namespaces_to_query),
-                Kind.is_active == True,
+        retrievers = []
+
+        # Query personal retrievers (with user_id filter)
+        if personal_namespaces:
+            personal_retrievers = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == user_id,
+                    Kind.kind == "Retriever",
+                    Kind.namespace.in_(personal_namespaces),
+                    Kind.is_active == True,
+                )
+                .order_by(Kind.created_at.desc())
+                .all()
             )
-            .order_by(Kind.created_at.desc())
-            .all()
-        )
+            retrievers.extend(personal_retrievers)
+
+        # Query group retrievers (without user_id filter)
+        if group_namespaces:
+            group_retrievers = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "Retriever",
+                    Kind.namespace.in_(group_namespaces),
+                    Kind.is_active == True,
+                )
+                .order_by(Kind.created_at.desc())
+                .all()
+            )
+            retrievers.extend(group_retrievers)
 
         return [self._kind_to_summary(kind) for kind in retrievers]
 
@@ -101,6 +126,11 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
     ) -> Retriever:
         """
         Get a specific retriever by name.
+
+        Query logic:
+        - If namespace='default': query with user_id filter (personal retriever)
+        - If namespace!='default': query without user_id filter (group retriever)
+          Group retrievers may be created by other users in the same group.
 
         Args:
             db: Database session
@@ -124,17 +154,33 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
                 )
 
         # Query retriever
-        kind = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == user_id,
-                Kind.name == name,
-                Kind.kind == "Retriever",
-                Kind.namespace == namespace,
-                Kind.is_active == True,
+        # For group resources (namespace != 'default'), don't filter by user_id
+        # since the retriever may be created by other users in the same group
+        if namespace == "default":
+            # Personal retriever: filter by user_id
+            kind = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == user_id,
+                    Kind.name == name,
+                    Kind.kind == "Retriever",
+                    Kind.namespace == namespace,
+                    Kind.is_active == True,
+                )
+                .first()
             )
-            .first()
-        )
+        else:
+            # Group retriever: no user_id filter
+            kind = (
+                db.query(Kind)
+                .filter(
+                    Kind.name == name,
+                    Kind.kind == "Retriever",
+                    Kind.namespace == namespace,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
 
         if not kind:
             raise HTTPException(status_code=404, detail="Retriever not found")
@@ -150,6 +196,9 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
     ) -> Retriever:
         """
         Create a new retriever.
+
+        For group resources (namespace != 'default'), check if a retriever with the
+        same name already exists in the group (regardless of who created it).
 
         Args:
             db: Database session
@@ -174,17 +223,33 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
                 )
 
         # Check if retriever with same name already exists
-        existing = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == user_id,
-                Kind.name == retriever.metadata.name,
-                Kind.kind == "Retriever",
-                Kind.namespace == namespace,
-                Kind.is_active == True,
+        # For group resources, check without user_id filter (any user in the group)
+        if namespace == "default":
+            # Personal retriever: check only current user's retrievers
+            existing = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == user_id,
+                    Kind.name == retriever.metadata.name,
+                    Kind.kind == "Retriever",
+                    Kind.namespace == namespace,
+                    Kind.is_active == True,
+                )
+                .first()
             )
-            .first()
-        )
+        else:
+            # Group retriever: check all retrievers in the group
+            existing = (
+                db.query(Kind)
+                .filter(
+                    Kind.name == retriever.metadata.name,
+                    Kind.kind == "Retriever",
+                    Kind.namespace == namespace,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+
         if existing:
             if namespace == "default":
                 raise HTTPException(
@@ -223,6 +288,11 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
         """
         Update an existing retriever.
 
+        Query logic:
+        - If namespace='default': query with user_id filter (personal retriever)
+        - If namespace!='default': query without user_id filter (group retriever)
+          Group retrievers may be created by other users in the same group.
+
         Args:
             db: Database session
             user_id: User ID
@@ -247,17 +317,32 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
                 )
 
         # Query retriever
-        kind = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == user_id,
-                Kind.name == name,
-                Kind.kind == "Retriever",
-                Kind.namespace == namespace,
-                Kind.is_active == True,
+        # For group resources (namespace != 'default'), don't filter by user_id
+        if namespace == "default":
+            # Personal retriever: filter by user_id
+            kind = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == user_id,
+                    Kind.name == name,
+                    Kind.kind == "Retriever",
+                    Kind.namespace == namespace,
+                    Kind.is_active == True,
+                )
+                .first()
             )
-            .first()
-        )
+        else:
+            # Group retriever: no user_id filter
+            kind = (
+                db.query(Kind)
+                .filter(
+                    Kind.name == name,
+                    Kind.kind == "Retriever",
+                    Kind.namespace == namespace,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
 
         if not kind:
             raise HTTPException(status_code=404, detail="Retriever not found")
@@ -265,17 +350,30 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
         # Check for name conflicts if name is being changed
         new_name = retriever.metadata.name
         if new_name != name:
-            conflict = (
-                db.query(Kind)
-                .filter(
-                    Kind.user_id == user_id,
-                    Kind.name == new_name,
-                    Kind.kind == "Retriever",
-                    Kind.namespace == namespace,
-                    Kind.is_active == True,
+            # For group resources, check without user_id filter
+            if namespace == "default":
+                conflict = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.user_id == user_id,
+                        Kind.name == new_name,
+                        Kind.kind == "Retriever",
+                        Kind.namespace == namespace,
+                        Kind.is_active == True,
+                    )
+                    .first()
                 )
-                .first()
-            )
+            else:
+                conflict = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.name == new_name,
+                        Kind.kind == "Retriever",
+                        Kind.namespace == namespace,
+                        Kind.is_active == True,
+                    )
+                    .first()
+                )
             if conflict:
                 raise HTTPException(
                     status_code=409,
@@ -301,6 +399,11 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
         """
         Delete a retriever (soft delete).
 
+        Query logic:
+        - If namespace='default': query with user_id filter (personal retriever)
+        - If namespace!='default': query without user_id filter (group retriever)
+          Group retrievers may be created by other users in the same group.
+
         Args:
             db: Database session
             user_id: User ID
@@ -320,17 +423,32 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
                 )
 
         # Query retriever
-        kind = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == user_id,
-                Kind.name == name,
-                Kind.kind == "Retriever",
-                Kind.namespace == namespace,
-                Kind.is_active == True,
+        # For group resources (namespace != 'default'), don't filter by user_id
+        if namespace == "default":
+            # Personal retriever: filter by user_id
+            kind = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == user_id,
+                    Kind.name == name,
+                    Kind.kind == "Retriever",
+                    Kind.namespace == namespace,
+                    Kind.is_active == True,
+                )
+                .first()
             )
-            .first()
-        )
+        else:
+            # Group retriever: no user_id filter
+            kind = (
+                db.query(Kind)
+                .filter(
+                    Kind.name == name,
+                    Kind.kind == "Retriever",
+                    Kind.namespace == namespace,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
 
         if not kind:
             raise HTTPException(status_code=404, detail="Retriever not found")
@@ -354,39 +472,66 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
         - scope='personal' (default): personal retrievers only
         - scope='group': group retrievers (requires group_name or counts all user's groups)
         - scope='all': personal + all user's groups
+
+        Query logic:
+        - For personal scope (namespace='default'): count with user_id filter
+        - For group scope (namespace!='default'): count without user_id filter
+          Group retrievers may be created by other users in the same group.
         """
         # Determine which namespaces to count based on scope
-        namespaces_to_count = []
+        personal_namespaces = []
+        group_namespaces = []
 
         if scope == "personal":
-            namespaces_to_count = ["default"]
+            personal_namespaces = ["default"]
         elif scope == "group":
             # Group retrievers - if group_name not provided, count all user's groups
             if group_name:
-                namespaces_to_count = [group_name]
+                group_namespaces = [group_name]
             else:
                 # Count all user's groups (excluding default)
                 user_groups = get_user_groups(db, user_id)
-                namespaces_to_count = user_groups if user_groups else []
+                group_namespaces = user_groups if user_groups else []
         elif scope == "all":
-            namespaces_to_count = ["default"] + get_user_groups(db, user_id)
+            personal_namespaces = ["default"]
+            group_namespaces = get_user_groups(db, user_id)
         else:
             raise ValueError(f"Invalid scope: {scope}")
 
         # Handle empty namespaces case
-        if not namespaces_to_count:
+        if not personal_namespaces and not group_namespaces:
             return 0
 
-        return (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == user_id,
-                Kind.kind == "Retriever",
-                Kind.namespace.in_(namespaces_to_count),
-                Kind.is_active == True,
+        total_count = 0
+
+        # Count personal retrievers (with user_id filter)
+        if personal_namespaces:
+            personal_count = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == user_id,
+                    Kind.kind == "Retriever",
+                    Kind.namespace.in_(personal_namespaces),
+                    Kind.is_active == True,
+                )
+                .count()
             )
-            .count()
-        )
+            total_count += personal_count
+
+        # Count group retrievers (without user_id filter)
+        if group_namespaces:
+            group_count = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "Retriever",
+                    Kind.namespace.in_(group_namespaces),
+                    Kind.is_active == True,
+                )
+                .count()
+            )
+            total_count += group_count
+
+        return total_count
 
     def _kind_to_summary(self, kind: Kind) -> Dict[str, Any]:
         """

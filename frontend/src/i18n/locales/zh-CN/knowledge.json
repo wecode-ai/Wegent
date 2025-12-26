@@ -62,16 +62,22 @@
         "enabled": "已启用",
         "disabled": "已停用"
       },
+      "indexStatus": {
+        "available": "可用",
+        "unavailable": "不可用"
+      },
       "columns": {
         "name": "名称",
         "type": "类型",
         "size": "大小",
         "date": "创建时间",
         "status": "状态",
+        "indexStatus": "索引",
         "actions": "操作"
       },
       "search": "搜索文档",
       "empty": "暂无文档",
+      "emptyHint": "上传您的第一个文档开始使用",
       "noResults": "没有匹配的文档",
       "filter": {
         "all": "全部状态",
@@ -129,6 +135,8 @@
       "title": "分段设置",
       "type": "分段类型",
       "general": "通用",
+      "sentence": "句子分段",
+      "semantic": "语义分段",
       "separator": "分段标识符",
       "separatorHint": "用于分割文档的字符",
       "chunkSize": "分段最大长度",
@@ -136,7 +144,11 @@
       "chunkOverlap": "分段重叠长度",
       "chunkOverlapHint": "段落之间重叠的字符数",
       "characters": "字符",
-      "overlapError": "重叠长度必须小于分段长度"
+      "overlapError": "重叠长度必须小于分段长度",
+      "bufferSize": "缓冲区大小",
+      "bufferSizeHint": "语义分段的缓冲区大小 (1-10)",
+      "breakpointThreshold": "断点阈值",
+      "breakpointThresholdHint": "确定断点的百分位阈值 (50-100)"
     },
     "retrievalTest": {
       "button": "召回测试",
