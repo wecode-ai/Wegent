@@ -100,7 +100,7 @@ class ChatService:
     def __init__(
         self,
         workspace_root: str = "/workspace",
-        enable_skills: bool = True,
+        enable_skills: bool = False,
         enable_web_search: bool = False,
         enable_checkpointing: bool = False,
     ):
