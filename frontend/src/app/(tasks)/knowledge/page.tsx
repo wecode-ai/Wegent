@@ -36,7 +36,7 @@ import {
 } from '@/features/knowledge';
 
 export default function KnowledgePage() {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation('knowledge');
   const router = useRouter();
   const { user } = useUser();
   const { clearAllStreams } = useChatStreamContext();
@@ -163,7 +163,7 @@ export default function KnowledgePage() {
         <TopNavigation
           activePage="wiki"
           variant="with-sidebar"
-          title={t('knowledge.title')}
+          title={t('title')}
           onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
           isSidebarCollapsed={isCollapsed}
         >
@@ -182,7 +182,7 @@ export default function KnowledgePage() {
               <SearchBox
                 value={mainSearchTerm}
                 onChange={setMainSearchTerm}
-                placeholder={t('wiki.search_repositories')}
+                placeholder={t('search_repositories')}
                 size="md"
                 className="mb-6 max-w-2xl mx-auto"
               />

@@ -52,12 +52,14 @@ export function GroupMembersDialog({
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const myRole = group?.my_role;
+  const isPrivateGroup = group?.visibility === 'private';
 
   // Permission checks
-  const canAddMember = myRole === 'Owner' || myRole === 'Maintainer';
+  // Private groups do not allow adding members
+  const canAddMember = (myRole === 'Owner' || myRole === 'Maintainer') && !isPrivateGroup;
   const canRemoveMember = myRole === 'Owner' || myRole === 'Maintainer';
   const canUpdateRole = myRole === 'Owner' || myRole === 'Maintainer';
-  const canInviteAll = myRole === 'Owner' || myRole === 'Maintainer';
+  const canInviteAll = (myRole === 'Owner' || myRole === 'Maintainer') && !isPrivateGroup;
   const canLeave = myRole !== 'Owner';
 
   useEffect(() => {

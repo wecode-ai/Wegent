@@ -36,6 +36,9 @@ function SettingsContent() {
   const { t } = useTranslation('common');
   const isMobile = useIsMobile();
 
+  // Refresh trigger for SettingsTabNav groups list
+  const [groupsRefreshTrigger, setGroupsRefreshTrigger] = useState(0);
+
   // Get initial tab from URL with backward compatibility
   const getInitialTab = (): SettingsTabId => {
     const tab = searchParams.get('tab');
@@ -137,7 +140,7 @@ function SettingsContent() {
       case 'personal-retrievers':
         return <RetrieverListWithScope scope="personal" />;
       case 'group-manager':
-        return <GroupManager />;
+        return <GroupManager onGroupsChange={() => setGroupsRefreshTrigger(prev => prev + 1)} />;
       case 'group-models':
         return (
           <ModelListWithScope
@@ -219,6 +222,7 @@ function SettingsContent() {
           onTabChange={handleTabChange}
           selectedGroup={selectedGroup}
           onGroupChange={handleGroupChange}
+          refreshTrigger={groupsRefreshTrigger}
         />
 
         {/* Settings content area */}
