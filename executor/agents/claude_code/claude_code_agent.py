@@ -438,6 +438,86 @@ class ClaudeCodeAgent(Agent):
             logger.info(f"Updating prompt for session_id: {self.session_id}")
             self.prompt = new_prompt
 
+    def update_model_config(self, new_model_config: Dict[str, Any]) -> None:
+        """
+        Update model configuration and reinitialize client if needed
+
+        Args:
+            new_model_config: New model configuration from bot agent_config
+        """
+        if not new_model_config:
+            logger.warning("No model configuration provided for update")
+            return
+
+        try:
+            # Extract model information from new config
+            env = new_model_config.get("env", {})
+            new_model_id = env.get("model_id", "")
+
+            # Get current model ID from existing options for comparison
+            current_model_id = None
+            if self.client and hasattr(self.client, '_options'):
+                current_options = self.client._options
+                if hasattr(current_options, 'model'):
+                    current_model_id = current_options.model
+                elif hasattr(current_options, '_model'):
+                    current_model_id = current_options._model
+
+            # Check if model actually changed
+            if current_model_id == new_model_id:
+                logger.info(f"Model unchanged: {current_model_id}, skipping reinitialization")
+                return
+
+            logger.info(f"Model changed from {current_model_id} to {new_model_id}, reinitializing client")
+
+            # Update Claude Code settings with new model configuration
+            if "bot" in self.task_data and len(self.task_data["bot"]) > 0:
+                bot_config = self.task_data["bot"][0]
+                # Update bot config with new model
+                bot_config["agent_config"] = new_model_config
+
+                # Recreate Claude model configuration
+                user_name = self.task_data["user"]["name"]
+                git_url = self.task_data["git_url"]
+                agent_config = self._create_claude_model(
+                    bot_config, user_name=user_name, git_url=git_url
+                )
+
+                if agent_config:
+                    # Save updated config to settings.json
+                    claude_dir = os.path.expanduser("~/.claude")
+                    Path(claude_dir).mkdir(parents=True, exist_ok=True)
+                    settings_path = os.path.join(claude_dir, "settings.json")
+                    with open(settings_path, "w") as f:
+                        json.dump(agent_config, f, indent=2)
+                    logger.info(f"Updated Claude Code settings with new model: {new_model_id}")
+
+                    # Update options for new client creation
+                    self._extract_claude_options(self.task_data)
+                    self.options["permission_mode"] = "bypassPermissions"
+
+                    # Close existing client if it exists
+                    if self.client and self.session_id in self._clients:
+                        try:
+                            await self.client.close()
+                            del self._clients[self.session_id]
+                            logger.info(f"Closed existing client for session_id: {self.session_id}")
+                        except Exception as e:
+                            logger.warning(f"Error closing existing client: {e}")
+
+                    # Clear client reference to force recreation on next execution
+                    self.client = None
+
+                    logger.info(f"Successfully updated model configuration to: {new_model_id}")
+                else:
+                    logger.error("Failed to create Claude model configuration with new model")
+            else:
+                logger.error("No bot config found in task_data for model update")
+
+        except Exception as e:
+            logger.error(f"Failed to update model configuration: {e}")
+            # Don't raise exception - continue with existing configuration
+
     def initialize(self) -> TaskStatus:
         """
         Initialize the Claude Code Agent with configuration from task_data.

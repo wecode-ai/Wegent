@@ -891,17 +891,51 @@ class ChatNamespace(socketio.AsyncNamespace):
 
                 user_subtask_for_attachment = user_subtask
 
-            # Update user subtask with context metadata
+                # Query the created user subtask and add model override metadata
+                if user_subtask_for_attachment and payload.force_override_bot_model:
+                    try:
+                        if not user_subtask_for_attachment.metadata:
+                            user_subtask_for_attachment.metadata = {}
+                        user_subtask_for_attachment.metadata.update({
+                            "modelId": payload.force_override_bot_model,
+                            "forceOverrideBotModel": "true"
+                        })
+                        db.commit()
+                        logger.info(
+                            f"[WS] chat:send stored model override in subtask {user_subtask_for_attachment.id} (executor mode): "
+                            f"modelId={payload.force_override_bot_model}"
+                        )
+                    except Exception as e:
+                        logger.exception(
+                            f"[WS] chat:send failed to store model metadata in executor mode: {e}"
+                        )
+                        db.rollback()
+
+            # Update user subtask with context metadata and model override info
             if context_metadata and user_subtask_for_attachment:
                 try:
-                    user_subtask_for_attachment.metadata = context_metadata
+                    # Add model override information to subtask metadata
+                    if payload.force_override_bot_model:
+                        if not user_subtask_for_attachment.metadata:
+                            user_subtask_for_attachment.metadata = {}
+                        user_subtask_for_attachment.metadata.update({
+                            "modelId": payload.force_override_bot_model,
+                            "forceOverrideBotModel": "true"
+                        })
+                        logger.info(
+                            f"[WS] chat:send stored model override in subtask {user_subtask_for_attachment.id}: "
+                            f"modelId={payload.force_override_bot_model}"
+                        )
+
+                    # Add context metadata
+                    user_subtask_for_attachment.metadata.update(context_metadata)
                     db.commit()
                     logger.info(
-                        f"[WS] chat:send stored context metadata in subtask {user_subtask_for_attachment.id}"
+                        f"[WS] chat:send stored context and model metadata in subtask {user_subtask_for_attachment.id}"
                     )
                 except Exception as e:
                     logger.exception(
-                        f"[WS] chat:send failed to store context metadata: {e}"
+                        f"[WS] chat:send failed to store metadata: {e}"
                     )
                     db.rollback()
 

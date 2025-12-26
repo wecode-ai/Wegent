@@ -210,6 +210,73 @@ class AgnoAgent(Agent):
             logger.info(f"Updating prompt for session_id: {self.session_id}")
             self.prompt = new_prompt
 
+    def update_model_config(self, new_model_config: Dict[str, Any]) -> None:
+        """
+        Update model configuration and reinitialize agents if needed
+
+        Args:
+            new_model_config: New model configuration from bot agent_config
+        """
+        if not new_model_config:
+            logger.warning("No model configuration provided for update")
+            return
+
+        try:
+            # Extract model information from new config
+            env = new_model_config.get("env", {})
+            new_model_id = env.get("model_id", "")
+
+            # Get current model ID from existing configuration for comparison
+            current_model_id = None
+            if self.single_agent and hasattr(self.single_agent, 'model'):
+                current_model_id = self.single_agent.model
+            elif self.team:
+                # For team mode, check the first agent's model
+                if hasattr(self.team, 'agents') and self.team.agents:
+                    current_model_id = self.team.agents[0].model
+
+            # Check if model actually changed
+            if current_model_id == new_model_id:
+                logger.info(f"Model unchanged: {current_model_id}, skipping reinitialization")
+                return
+
+            logger.info(f"Model changed from {current_model_id} to {new_model_id}, reinitializing agents")
+
+            # Update bot configuration in task_data
+            if "bot" in self.task_data and len(self.task_data["bot"]) > 0:
+                bot_config = self.task_data["bot"][0]
+                # Update bot config with new model
+                bot_config["agent_config"] = new_model_config
+
+                # Rebuild team and agents with new model configuration
+                self.team = self.team_builder.build_team(self.task_data)
+                if self.team:
+                    # Update single agent reference if in single mode
+                    if self.mode != "team" and hasattr(self.team, 'agents') and self.team.agents:
+                        self.single_agent = self.team.agents[0]
+
+                    logger.info(f"Successfully updated model configuration to: {new_model_id}")
+
+                    # Clear existing client to force recreation on next execution
+                    if self.session_id in self._clients:
+                        try:
+                            if hasattr(self._clients[self.session_id], 'close'):
+                                await self._clients[self.session_id].close()
+                            del self._clients[self.session_id]
+                            logger.info(f"Closed existing client for session_id: {self.session_id}")
+                        except Exception as e:
+                            logger.warning(f"Error closing existing client: {e}")
+
+                    self.client = None
+                else:
+                    logger.error("Failed to rebuild team with new model configuration")
+            else:
+                logger.error("No bot config found in task_data for model update")
+
+        except Exception as e:
+            logger.error(f"Failed to update model configuration: {e}")
+            # Don't raise exception - continue with existing configuration
+
     def initialize(self) -> TaskStatus:
         """
         Initialize the Agno Agent with configuration from task_data.
