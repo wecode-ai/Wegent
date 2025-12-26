@@ -690,7 +690,11 @@ class ChatService:
             )
 
             # Build messages
-            messages = MessageConverter.build_messages(history, message, system_prompt)
+            # For group chat, add username prefix to current message so model knows who sent it
+            username = config.user_name if config.is_group_chat else None
+            messages = MessageConverter.build_messages(
+                history, message, system_prompt, username=username
+            )
 
             # Log messages sent to model for debugging
             self._log_messages_for_debug(task_id, subtask_id, messages)
