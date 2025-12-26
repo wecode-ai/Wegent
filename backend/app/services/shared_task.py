@@ -19,6 +19,7 @@ from app.models.kind import Kind
 from app.models.shared_task import SharedTask
 from app.models.subtask import Subtask
 from app.models.subtask_attachment import SubtaskAttachment
+from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.shared_task import (
     JoinSharedTaskResponse,
@@ -134,11 +135,11 @@ class SharedTaskService:
 
                 # Query task
                 task = (
-                    db.query(Kind)
+                    db.query(TaskResource)
                     .filter(
-                        Kind.id == task_id,
-                        Kind.kind == "Task",
-                        Kind.is_active == True,
+                        TaskResource.id == task_id,
+                        TaskResource.kind == "Task",
+                        TaskResource.is_active == True,
                     )
                     .first()
                 )
@@ -169,14 +170,16 @@ class SharedTaskService:
                         workspace_ref = task_crd.spec.workspaceRef
 
                         # Find the workspace by name and namespace
+                        from app.models.task import TaskResource as TaskResourceModel
+
                         workspace = (
-                            db.query(Kind)
+                            db.query(TaskResourceModel)
                             .filter(
-                                Kind.name == workspace_ref.name,
-                                Kind.namespace == workspace_ref.namespace,
-                                Kind.user_id == user_id,
-                                Kind.kind == "Workspace",
-                                Kind.is_active == True,
+                                TaskResourceModel.name == workspace_ref.name,
+                                TaskResourceModel.namespace == workspace_ref.namespace,
+                                TaskResourceModel.user_id == user_id,
+                                TaskResourceModel.kind == "Workspace",
+                                TaskResourceModel.is_active == True,
                             )
                             .first()
                         )
@@ -247,11 +250,11 @@ class SharedTaskService:
 
         # Get the task to get the actual owner's user_id for token generation
         task = (
-            db.query(Kind)
+            db.query(TaskResource)
             .filter(
-                Kind.id == task_id,
-                Kind.kind == "Task",
-                Kind.is_active == True,
+                TaskResource.id == task_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active == True,
             )
             .first()
         )
@@ -280,12 +283,12 @@ class SharedTaskService:
 
         # Validate task still exists and is active
         task = (
-            db.query(Kind)
+            db.query(TaskResource)
             .filter(
-                Kind.id == share_info.task_id,
-                Kind.user_id == share_info.user_id,
-                Kind.kind == "Task",
-                Kind.is_active == True,
+                TaskResource.id == share_info.task_id,
+                TaskResource.user_id == share_info.user_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active == True,
             )
             .first()
         )
@@ -341,12 +344,14 @@ class SharedTaskService:
                 f"git_url={git_url}, git_domain={git_domain}"
             )
             # Find workspace by gitRepoId in workspace JSON
+            from app.models.task import TaskResource as TaskResourceModel
+
             all_workspaces = (
-                db.query(Kind)
+                db.query(TaskResourceModel)
                 .filter(
-                    Kind.user_id == new_user_id,
-                    Kind.kind == "Workspace",
-                    Kind.is_active == True,
+                    TaskResourceModel.user_id == new_user_id,
+                    TaskResourceModel.kind == "Workspace",
+                    TaskResourceModel.is_active == True,
                 )
                 .all()
             )
@@ -413,7 +418,7 @@ class SharedTaskService:
                     )
 
                     # Save workspace to database
-                    new_workspace = Kind(
+                    new_workspace = TaskResourceModel(
                         kind="Workspace",
                         name=workspace_name,
                         user_id=new_user_id,
@@ -508,7 +513,9 @@ class SharedTaskService:
         unique_task_name = f"Copy of {original_task.name}-{timestamp}"
 
         # Create new task with updated team reference
-        new_task = Kind(
+        from app.models.task import TaskResource
+
+        new_task = TaskResource(
             kind="Task",
             name=unique_task_name,
             user_id=new_user_id,
@@ -626,12 +633,12 @@ class SharedTaskService:
 
         # Validate original task still exists and is active
         original_task = (
-            db.query(Kind)
+            db.query(TaskResource)
             .filter(
-                Kind.id == share_info.task_id,
-                Kind.user_id == share_info.user_id,
-                Kind.kind == "Task",
-                Kind.is_active == True,
+                TaskResource.id == share_info.task_id,
+                TaskResource.user_id == share_info.user_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active == True,
             )
             .first()
         )
@@ -655,12 +662,12 @@ class SharedTaskService:
         if existing_share and existing_share.is_active:
             # Verify that the copied task still exists and is active
             copied_task_check = (
-                db.query(Kind)
+                db.query(TaskResource)
                 .filter(
-                    Kind.id == existing_share.copied_task_id,
-                    Kind.user_id == user_id,
-                    Kind.kind == "Task",
-                    Kind.is_active == True,
+                    TaskResource.id == existing_share.copied_task_id,
+                    TaskResource.user_id == user_id,
+                    TaskResource.kind == "Task",
+                    TaskResource.is_active == True,
                 )
                 .first()
             )
@@ -774,12 +781,12 @@ class SharedTaskService:
 
         # Now check if task exists and is active
         task = (
-            db.query(Kind)
+            db.query(TaskResource)
             .filter(
-                Kind.id == task_id,
-                Kind.user_id == user_id,
-                Kind.kind == "Task",
-                Kind.is_active == True,
+                TaskResource.id == task_id,
+                TaskResource.user_id == user_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active == True,
             )
             .first()
         )
