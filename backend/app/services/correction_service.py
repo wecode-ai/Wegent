@@ -163,7 +163,7 @@ class CorrectionService:
             agent = LangGraphAgentBuilder(
                 llm=llm,
                 tool_registry=tool_registry,
-                max_iterations=3,  # Evaluation should complete in few iterations
+                max_iterations=10,  # Allow more iterations for tool calls (search + evaluation)
                 enable_checkpointing=False,
             )
 
