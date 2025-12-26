@@ -340,6 +340,19 @@ async def _stream_chat_response(
             base_system_prompt=chat_config.system_prompt,
         )
 
+        # Prepare user message for Redis cache (will be saved in finalize)
+        # Normalize content for vision/multi_vision messages
+        user_message_for_cache = message
+        if isinstance(final_message, dict):
+            if final_message.get("type") in ("vision", "multi_vision"):
+                user_message_for_cache = final_message.get("text", message)
+
+        # For group chat, add username prefix to match the format used in DB loading
+        if payload.is_group_chat:
+            user_message_for_cache = (
+                f"User[{user_data['user_name']}]: {user_message_for_cache}"
+            )
+
         # Create WebSocket stream config
         ws_config = WebSocketStreamConfig(
             task_id=task_data["id"],
@@ -353,8 +366,9 @@ async def _stream_chat_response(
             message_id=message_id,
             bot_name=chat_config.bot_name,
             bot_namespace=chat_config.bot_namespace,
-            shell_type=chat_config.shell_type,  # Pass shell_type from chat_config
-            extra_tools=extra_tools,  # Pass extra tools including KnowledgeBaseTool
+            shell_type=chat_config.shell_type,
+            extra_tools=extra_tools,
+            user_message_for_cache=user_message_for_cache,
         )
 
         # Use ChatService for streaming

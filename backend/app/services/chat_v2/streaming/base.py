@@ -64,6 +64,8 @@ class StreamingState:
     shell_type: str = (
         "Chat"  # Shell type (Chat, ClaudeCode, Agno, etc.) for frontend display
     )
+    # User message for Redis cache (set before streaming starts)
+    user_message_for_cache: str = ""
 
     # Runtime state
     full_response: str = ""
@@ -340,15 +342,42 @@ class StreamingCore:
             result,
         )
 
-        # Append assistant message to chat history
-        # Note: User message is already saved before streaming starts
-        await storage_handler.append_message(
-            self.state.task_id,
-            "assistant",
-            self.state.full_response,
-        )
+        # Save both user and assistant messages to Redis in one operation
+        # This ensures atomicity and avoids message duplication issues
+        if self.state.user_message_for_cache:
+            redis_save_success = (
+                await storage_handler.append_user_and_assistant_messages(
+                    self.state.task_id,
+                    self.state.user_message_for_cache,
+                    self.state.full_response,
+                )
+            )
 
-        # Update subtask status to COMPLETED
+            if not redis_save_success:
+                logger.error(
+                    "[STREAMING] Failed to save messages to Redis: "
+                    "task_id=%d, subtask_id=%d. Cache will be cleared.",
+                    self.state.task_id,
+                    self.state.subtask_id,
+                )
+                await storage_handler.clear_history(self.state.task_id)
+        else:
+            # Fallback: only save assistant message if user message not provided
+            redis_save_success = await storage_handler.append_message(
+                self.state.task_id,
+                "assistant",
+                self.state.full_response,
+            )
+            if not redis_save_success:
+                logger.error(
+                    "[STREAMING] Failed to save assistant message to Redis: "
+                    "task_id=%d, subtask_id=%d. Cache will be cleared.",
+                    self.state.task_id,
+                    self.state.subtask_id,
+                )
+                await storage_handler.clear_history(self.state.task_id)
+
+        # Update subtask status to COMPLETED (persists to DB)
         await storage_handler.update_subtask_status(
             self.state.subtask_id,
             "COMPLETED",

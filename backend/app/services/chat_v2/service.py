@@ -67,6 +67,7 @@ class WebSocketStreamConfig:
     extra_tools: list[BaseTool] = field(default_factory=list)
     message_id: int | None = None  # Message ID for ordering in frontend
     shell_type: str = "Chat"  # Shell type for frontend display
+    user_message_for_cache: str = ""  # User message for Redis cache (saved in finalize)
 
 
 # SSE response headers
@@ -627,7 +628,8 @@ class ChatService:
             search_engine=config.search_engine,
             extra_tools=list(config.extra_tools),
             message_id=config.message_id,
-            shell_type=config.shell_type,  # Pass shell_type from config
+            shell_type=config.shell_type,
+            user_message_for_cache=config.user_message_for_cache,
         )
 
         # Create streaming core
