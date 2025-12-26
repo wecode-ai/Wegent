@@ -240,7 +240,7 @@ MERMAID_DIAGRAM_PROMPT = """
 
 When you need to visualize concepts, workflows, architectures, or relationships, you can use Mermaid diagram syntax. Wrap your diagram code in a ```mermaid code block. Result will be rendered as an interactive diagram.
 
-You should search detailed information about the diagram type and its syntax to avoid errors and ensure correct rendering.
+You could search detailed information about the diagram type and its syntax to avoid errors and ensure correct rendering.
 
 Supported diagram types include:
 - **flowchart**: Process flows, decision trees, workflows

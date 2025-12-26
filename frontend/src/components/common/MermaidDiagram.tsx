@@ -71,6 +71,7 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
 
     return {
       startOnLoad: false,
+      suppressErrorRendering: true,
       theme: 'base' as const,
       themeVariables: isDark
         ? {
