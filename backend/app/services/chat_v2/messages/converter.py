@@ -30,6 +30,7 @@ class MessageConverter:
         history: list[dict[str, Any]],
         current_message: str | dict[str, Any],
         system_prompt: str = "",
+        username: str | None = None,
     ) -> list[dict[str, Any]]:
         """Build a complete message list from history, current message, and system prompt.
 
@@ -42,6 +43,7 @@ class MessageConverter:
             history: Previous messages in the conversation
             current_message: The current user message (string or vision dict)
             system_prompt: Optional system prompt to prepend
+            username: Optional username to prefix the current message (for group chat)
 
         Returns:
             List of message dicts ready for LLM API
@@ -55,17 +57,29 @@ class MessageConverter:
 
         if isinstance(current_message, dict):
             if current_message.get("type") == "vision":
-                messages.append(
-                    MessageConverter._build_vision_from_dict(current_message)
-                )
+                # For vision messages, add username prefix to text if provided
+                vision_data = current_message.copy()
+                if username and vision_data.get("text"):
+                    vision_data["text"] = f"User[{username}]: {vision_data['text']}"
+                messages.append(MessageConverter._build_vision_from_dict(vision_data))
             elif current_message.get("type") == "multi_vision":
+                # For multi-vision messages, add username prefix to text if provided
+                multi_vision_data = current_message.copy()
+                if username and multi_vision_data.get("text"):
+                    multi_vision_data["text"] = (
+                        f"User[{username}]: {multi_vision_data['text']}"
+                    )
                 messages.append(
-                    MessageConverter._build_multi_vision_from_dict(current_message)
+                    MessageConverter._build_multi_vision_from_dict(multi_vision_data)
                 )
             else:
                 messages.append(current_message)
         else:
-            messages.append({"role": "user", "content": current_message})
+            # For plain text messages, add username prefix if provided (group chat)
+            content = (
+                f"User[{username}]: {current_message}" if username else current_message
+            )
+            messages.append({"role": "user", "content": content})
 
         return messages
 
