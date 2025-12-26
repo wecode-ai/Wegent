@@ -15,15 +15,21 @@ export type FeedbackState = 'like' | 'dislike' | null;
 const FEEDBACK_STORAGE_KEY_PREFIX = 'wegent_message_feedback_';
 
 /**
- * Generate a unique storage key for a message
- * Priority: subtaskId > timestamp (as fallback)
+ // Generate a unique storage key for a message
+ // Priority: subtaskId > timestamp (as fallback)
  */
-function generateStorageKey(subtaskId?: number, timestamp?: number): string | null {
+function generateStorageKey(
+  subtaskId?: number,
+  timestamp?: number,
+  messageType?: 'original' | 'correction'
+): string | null {
+  const suffix = messageType === 'correction' ? '_correction' : '';
+
   if (subtaskId) {
-    return `${FEEDBACK_STORAGE_KEY_PREFIX}subtask_${subtaskId}`;
+    return `${FEEDBACK_STORAGE_KEY_PREFIX}subtask_${subtaskId}${suffix}`;
   }
   if (timestamp) {
-    return `${FEEDBACK_STORAGE_KEY_PREFIX}ts_${timestamp}`;
+    return `${FEEDBACK_STORAGE_KEY_PREFIX}ts_${timestamp}${suffix}`;
   }
   return null;
 }
@@ -74,6 +80,8 @@ export interface UseMessageFeedbackOptions {
   subtaskId?: number;
   /** Message timestamp - fallback identifier if subtaskId is not available */
   timestamp?: number;
+  /** Message type to differentiate between original message and correction */
+  messageType?: 'original' | 'correction';
   /** Callback when feedback changes */
   onFeedbackChange?: (feedback: FeedbackState) => void;
 }
@@ -105,10 +113,10 @@ export interface UseMessageFeedbackReturn {
  * ```
  */
 export function useMessageFeedback(options: UseMessageFeedbackOptions): UseMessageFeedbackReturn {
-  const { subtaskId, timestamp, onFeedbackChange } = options;
+  const { subtaskId, timestamp, messageType, onFeedbackChange } = options;
 
   // Generate storage key based on available identifiers
-  const storageKey = generateStorageKey(subtaskId, timestamp);
+  const storageKey = generateStorageKey(subtaskId, timestamp, messageType);
 
   // Initialize state from localStorage
   const [feedback, setFeedback] = useState<FeedbackState>(() => {

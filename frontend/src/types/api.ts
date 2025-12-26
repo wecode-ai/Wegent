@@ -251,11 +251,32 @@ export interface TaskDetail {
   member_count?: number; // Number of active members in the group
 }
 
+/** Correction data stored in subtask.result.correction */
+export interface CorrectionData {
+  model_id: string;
+  model_name?: string;
+  scores: {
+    accuracy: number;
+    logic: number;
+    completeness: number;
+  };
+  corrections: Array<{
+    issue: string;
+    suggestion: string;
+  }>;
+  summary: string;
+  improved_answer: string;
+  is_correct: boolean;
+  corrected_at?: string;
+}
+
 /** Subtask result structure */
 export interface SubtaskResult {
   thinking?: unknown[];
   value?: string | { workbench?: WorkbenchData };
   workbench?: WorkbenchData;
+  /** Persisted correction data from AI correction mode */
+  correction?: CorrectionData;
   [key: string]: unknown;
 }
 
@@ -429,6 +450,13 @@ export interface DifyParametersSchema {
 // Attachment Types
 export type AttachmentStatus = 'uploading' | 'parsing' | 'ready' | 'failed';
 
+export interface TruncationInfo {
+  is_truncated: boolean;
+  original_length?: number | null;
+  truncated_length?: number | null;
+  truncation_message_key?: string | null;
+}
+
 export interface Attachment {
   id: number;
   filename: string;
@@ -437,9 +465,11 @@ export interface Attachment {
   status: AttachmentStatus;
   text_length?: number | null;
   error_message?: string | null;
+  error_code?: string | null;
   subtask_id?: number | null;
   file_extension: string;
   created_at: string;
+  truncation_info?: TruncationInfo | null;
 }
 
 export interface AttachmentUploadState {

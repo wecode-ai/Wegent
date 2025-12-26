@@ -47,12 +47,7 @@ export function TeamIconPicker({ value, onChange, disabled = false }: TeamIconPi
           <SelectedIconComponent className="w-5 h-5 text-primary" />
         </button>
       </PopoverTrigger>
-      <PopoverContent
-        className="w-[300px] p-3"
-        align="start"
-        side="bottom"
-        sideOffset={4}
-      >
+      <PopoverContent className="w-[300px] p-3" align="start" side="bottom" sideOffset={4}>
         <div className="space-y-2">
           <div className="text-sm font-medium text-text-primary">{t('teams.selectIcon')}</div>
           <div className="grid grid-cols-7 gap-1.5">

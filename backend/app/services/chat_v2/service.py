@@ -52,21 +52,56 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class WebSocketStreamConfig:
-    """Configuration for WebSocket streaming."""
+    """Configuration for WebSocket streaming.
 
+    Attributes:
+        task_id: Task ID for the chat session
+        subtask_id: Assistant subtask ID
+        task_room: WebSocket room name for broadcasting
+
+        user_id: User ID for permission checks and history loading
+        user_name: User name for group chat message prefix
+        is_group_chat: Whether this is a group chat (affects message prefix and history truncation)
+
+        message_id: Assistant's message_id for frontend ordering
+        user_message_id: User's message_id for history exclusion (prevents duplicate messages)
+
+        enable_web_search: Enable web search tool
+        search_engine: Specific search engine to use
+
+        bot_name: Bot name for MCP server loading
+        bot_namespace: Bot namespace
+        shell_type: Shell type (Chat, ClaudeCode, Agno) for frontend display
+        extra_tools: Additional tools (e.g., KnowledgeBaseTool)
+    """
+
+    # Task identification
     task_id: int
     subtask_id: int
     task_room: str
+
+    # User context
     user_id: int
     user_name: str
     is_group_chat: bool = False
+
+    # Message ordering context
+    message_id: int | None = None  # Assistant's message_id for ordering in frontend
+    user_message_id: int | None = None  # User's message_id for history exclusion
+
+    # Feature flags
     enable_web_search: bool = False
     search_engine: str | None = None
+
+    # Bot configuration
     bot_name: str = ""
     bot_namespace: str = "default"
-    extra_tools: list[BaseTool] = field(default_factory=list)
-    message_id: int | None = None  # Message ID for ordering in frontend
     shell_type: str = "Chat"  # Shell type for frontend display
+    extra_tools: list[BaseTool] = field(default_factory=list)
+
+    def get_username_for_message(self) -> str | None:
+        """Get username for message prefix in group chat mode."""
+        return self.user_name if self.is_group_chat else None
 
 
 # SSE response headers
@@ -100,7 +135,7 @@ class ChatService:
     def __init__(
         self,
         workspace_root: str = "/workspace",
-        enable_skills: bool = True,
+        enable_skills: bool = False,
         enable_web_search: bool = False,
         enable_checkpointing: bool = False,
     ):
@@ -335,8 +370,14 @@ class ChatService:
         task_id: int,
         is_group_chat: bool,
         max_iterations: int,
+        user_message_id: int | None = None,
     ) -> StreamingResponse:
-        """Full streaming with database and session management using StreamingCore."""
+        """Full streaming with database and session management using StreamingCore.
+
+        Args:
+            user_message_id: Current user's message_id, used to exclude it from history
+                            (the user message will be added by build_messages())
+        """
 
         async def generate() -> AsyncGenerator[str, None]:
             # Create SSE emitter
@@ -361,8 +402,11 @@ class ChatService:
                         yield emitter.get_event()
                     return
 
-                # Get chat history
-                history = await self._get_chat_history(task_id, is_group_chat)
+                # Get chat history (exclude current user message to avoid duplication)
+                # The current user message will be added by build_messages()
+                history = await self._get_chat_history(
+                    task_id, is_group_chat, exclude_after_message_id=user_message_id
+                )
 
                 # Build messages
                 messages = MessageConverter.build_messages(
@@ -671,11 +715,23 @@ class ChatService:
                     )
                 )
 
-            # Get chat history
-            history = await self._get_chat_history(task_id, config.is_group_chat)
+            # Get chat history (exclude current user message to avoid duplication)
+            # The current user message will be added by build_messages()
+            history = await self._get_chat_history(
+                task_id,
+                config.is_group_chat,
+                exclude_after_message_id=config.user_message_id,
+            )
 
             # Build messages
-            messages = MessageConverter.build_messages(history, message, system_prompt)
+            # For group chat, add username prefix to current message so model knows who sent it
+            username = config.get_username_for_message()
+            messages = MessageConverter.build_messages(
+                history, message, system_prompt, username=username
+            )
+
+            # Log messages sent to model for debugging
+            self._log_messages_for_debug(task_id, subtask_id, messages)
 
             # Create agent with extra tools
             agent = self._create_agent(
@@ -1094,48 +1150,72 @@ class ChatService:
     # ==================== Helper Methods ====================
 
     async def _get_chat_history(
-        self, task_id: int, is_group_chat: bool
+        self,
+        task_id: int,
+        is_group_chat: bool,
+        exclude_after_message_id: int | None = None,
     ) -> list[dict[str, Any]]:
-        """Get chat history for a task.
+        """Get chat history for a task directly from database.
+
+        Always reads from database to ensure data consistency.
+        Database is the single source of truth for chat history.
 
         Args:
             task_id: Task ID
-            is_group_chat: Whether this is a group chat
+            is_group_chat: Whether to include username prefix in user messages
+            exclude_after_message_id: If provided, exclude messages with message_id >= this value.
+                                      Pass the current user's message_id to exclude it from history
+                                      (the user message will be added by build_messages()).
 
         Returns:
             List of message dictionaries
         """
+        history = await self._load_history_from_db(
+            task_id, is_group_chat, exclude_after_message_id
+        )
+        # Only truncate history for group chat to limit context size
+        # Single chat keeps full history for better conversation continuity
         if is_group_chat:
-            history = await self._get_group_chat_history(task_id)
             return self._truncate_history(history)
-        return await storage_handler.get_chat_history(task_id)
+        return history
 
-    async def _get_group_chat_history(self, task_id: int) -> list[dict[str, Any]]:
+    async def _load_history_from_db(
+        self,
+        task_id: int,
+        is_group_chat: bool,
+        exclude_after_message_id: int | None = None,
+    ) -> list[dict[str, Any]]:
         """
-        Get chat history for group chat mode from database.
-
-        In group chat mode, we need to include user names in the messages
-        so the AI can distinguish between different users.
-
-        User messages are formatted as: "User[username]: message content"
-        The "User" prefix indicates that the content in brackets is a username.
-        Assistant messages remain unchanged.
-
-        For messages with attachments:
-        - Image attachments are included as vision content (base64 encoded)
-        - Document attachments have their extracted text prepended to the message
+        Load chat history from database.
 
         Args:
             task_id: Task ID
+            is_group_chat: Whether to include username prefix in user messages
+            exclude_after_message_id: If provided, exclude messages with message_id >= this value
 
         Returns:
             List of message dictionaries with role and content
-            Content can be a string or a list (for vision messages)
         """
-        return await asyncio.to_thread(self._get_group_chat_history_sync, task_id)
+        return await asyncio.to_thread(
+            self._load_history_from_db_sync,
+            task_id,
+            is_group_chat,
+            exclude_after_message_id,
+        )
 
-    def _get_group_chat_history_sync(self, task_id: int) -> list[dict[str, Any]]:
-        """Synchronous implementation of group chat history retrieval."""
+    def _load_history_from_db_sync(
+        self,
+        task_id: int,
+        is_group_chat: bool,
+        exclude_after_message_id: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Synchronous implementation of chat history retrieval from database.
+
+        Args:
+            task_id: Task ID
+            is_group_chat: Whether to include username prefix in user messages
+            exclude_after_message_id: If provided, exclude messages with message_id >= this value
+        """
         from app.models.subtask import Subtask, SubtaskStatus
         from app.models.user import User
         from app.services.attachment import attachment_service
@@ -1143,56 +1223,42 @@ class ChatService:
 
         history: list[dict[str, Any]] = []
         with _db_session() as db:
-            # Query all subtasks for this task (for debugging)
-            all_subtasks = (
-                db.query(Subtask)
-                .filter(Subtask.task_id == task_id)
-                .order_by(Subtask.message_id.asc())
-                .all()
-            )
-            logger.info(
-                f"[GROUP_CHAT_HISTORY] task_id={task_id}, "
-                f"total_subtasks={len(all_subtasks)}, "
-                f"subtask_details=[{', '.join([f'(id={s.id}, role={s.role.value}, status={s.status.value}, msg_id={s.message_id})' for s in all_subtasks])}]"
-            )
-
-            subtasks = (
+            # Build base query
+            query = (
                 db.query(Subtask, User.user_name)
                 .outerjoin(User, Subtask.sender_user_id == User.id)
                 .filter(
                     Subtask.task_id == task_id,
                     Subtask.status == SubtaskStatus.COMPLETED,
                 )
-                .order_by(Subtask.message_id.asc())
-                .all()
             )
 
-            # Build completed details string separately to avoid f-string escaping issues
-            completed_details = ", ".join(
-                [
-                    f"(id={s.id}, role={s.role.value}, sender={u or 'N/A'})"
-                    for s, u in subtasks
-                ]
-            )
+            # Exclude current and future messages to avoid duplicates
+            # The current user message will be added by build_messages()
+            if exclude_after_message_id is not None:
+                query = query.filter(Subtask.message_id < exclude_after_message_id)
+
+            subtasks = query.order_by(Subtask.message_id.asc()).all()
+
             logger.info(
-                f"[GROUP_CHAT_HISTORY] task_id={task_id}, "
-                f"completed_subtasks={len(subtasks)}, "
-                f"completed_details=[{completed_details}]"
+                f"[CHAT_HISTORY] task_id={task_id}, is_group_chat={is_group_chat}, "
+                f"exclude_after_message_id={exclude_after_message_id}, "
+                f"completed_subtasks={len(subtasks)}"
             )
 
             for subtask, sender_username in subtasks:
                 msg = self._build_history_message(
-                    db, subtask, sender_username, attachment_service
+                    db, subtask, sender_username, attachment_service, is_group_chat
                 )
                 if msg:
                     history.append(msg)
                     logger.debug(
-                        f"[GROUP_CHAT_HISTORY] Added message: role={msg.get('role')}, "
+                        f"[CHAT_HISTORY] Added message: role={msg.get('role')}, "
                         f"content_preview={str(msg.get('content', ''))[:100]}..."
                     )
 
         logger.info(
-            f"[GROUP_CHAT_HISTORY] task_id={task_id}, "
+            f"[CHAT_HISTORY] task_id={task_id}, "
             f"final_history_count={len(history)}, "
             f"history_roles=[{', '.join([m.get('role', 'unknown') for m in history])}]"
         )
@@ -1204,13 +1270,22 @@ class ChatService:
         subtask,
         sender_username: str | None,
         attachment_service,
+        is_group_chat: bool = False,
     ) -> dict[str, Any] | None:
-        """Build a single history message from a subtask."""
+        """Build a single history message from a subtask.
+
+        Args:
+            db: Database session
+            subtask: Subtask object
+            sender_username: Username of the sender (for group chat)
+            attachment_service: Attachment service for processing attachments
+            is_group_chat: Whether to include username prefix in user messages
+        """
         from app.models.subtask import SubtaskRole
 
         if subtask.role == SubtaskRole.USER:
             return self._build_user_message(
-                db, subtask, sender_username, attachment_service
+                db, subtask, sender_username, attachment_service, is_group_chat
             )
         elif subtask.role == SubtaskRole.ASSISTANT:
             return self._build_assistant_message(subtask)
@@ -1222,13 +1297,22 @@ class ChatService:
         subtask,
         sender_username: str | None,
         attachment_service,
+        is_group_chat: bool = False,
     ) -> dict[str, Any]:
-        """Build a user message with optional attachments."""
+        """Build a user message with optional attachments.
+
+        Args:
+            db: Database session
+            subtask: Subtask object
+            sender_username: Username of the sender
+            attachment_service: Attachment service for processing attachments
+            is_group_chat: Whether to include username prefix (only for group chat)
+        """
         from app.models.subtask_attachment import AttachmentStatus, SubtaskAttachment
 
-        # Build text content with username prefix
+        # Build text content, optionally with username prefix for group chat
         text_content = subtask.prompt or ""
-        if sender_username:
+        if is_group_chat and sender_username:
             text_content = f"User[{sender_username}]: {text_content}"
 
         # Get attachments
@@ -1276,6 +1360,69 @@ class ChatService:
             history,
             settings.GROUP_CHAT_HISTORY_FIRST_MESSAGES,
             settings.GROUP_CHAT_HISTORY_LAST_MESSAGES,
+        )
+
+    def _log_messages_for_debug(
+        self, task_id: int, subtask_id: int, messages: list[dict[str, Any]]
+    ) -> None:
+        """Log messages sent to model for debugging purposes.
+
+        Logs a summary of messages including:
+        - Total message count
+        - Role distribution
+        - Content preview for each message (truncated)
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+            messages: List of message dicts to be sent to model
+        """
+        if not messages:
+            logger.info(
+                "[MODEL_INPUT] task_id=%d, subtask_id=%d, messages=[]",
+                task_id,
+                subtask_id,
+            )
+            return
+
+        # Count roles
+        role_counts = {}
+        for msg in messages:
+            role = msg.get("role", "unknown")
+            role_counts[role] = role_counts.get(role, 0) + 1
+
+        # Build message summaries with truncated content
+        msg_summaries = []
+        for i, msg in enumerate(messages):
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+
+            # Handle content that might be a list (vision messages)
+            if isinstance(content, list):
+                # Extract text from content blocks
+                text_parts = []
+                for block in content:
+                    if isinstance(block, dict):
+                        if block.get("type") == "text":
+                            text_parts.append(block.get("text", "")[:100])
+                        elif block.get("type") == "image_url":
+                            text_parts.append("[IMAGE]")
+                content_preview = " | ".join(text_parts)[:200]
+            else:
+                content_preview = str(content)[:200]
+
+            # Replace newlines for cleaner log output
+            content_preview = content_preview.replace("\n", "\\n")
+            msg_summaries.append(f"[{i}]{role}: {content_preview}...")
+
+        logger.info(
+            "[MODEL_INPUT] task_id=%d, subtask_id=%d, msg_count=%d, roles=%s, "
+            "messages=[\n  %s\n]",
+            task_id,
+            subtask_id,
+            len(messages),
+            role_counts,
+            "\n  ".join(msg_summaries),
         )
 
     def list_tools(self) -> list[dict[str, Any]]:

@@ -1,4 +1,7 @@
 {
+  "attachment": {
+    "characters": "字符"
+  },
   "workbench": {
     "overview": "概览",
     "files_changed": "文件变更",

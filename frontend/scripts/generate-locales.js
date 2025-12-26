@@ -3,8 +3,22 @@ const path = require('path');
 
 // Supported languages list (excluding existing en and zh-CN)
 const languages = [
-  'ca', 'de', 'es', 'fr', 'hi', 'id', 'it', 'ja', 'ko', 
-  'nl', 'pl', 'pt-BR', 'ru', 'tr', 'vi', 'zh-TW'
+  'ca',
+  'de',
+  'es',
+  'fr',
+  'hi',
+  'id',
+  'it',
+  'ja',
+  'ko',
+  'nl',
+  'pl',
+  'pt-BR',
+  'ru',
+  'tr',
+  'vi',
+  'zh-TW',
 ];
 
 // Namespace list
@@ -22,17 +36,17 @@ if (!fs.existsSync(localesDir)) {
 // Create directory and files for each language
 languages.forEach(lang => {
   const langDir = path.join(localesDir, lang);
-  
+
   // Create language directory
   if (!fs.existsSync(langDir)) {
     fs.mkdirSync(langDir, { recursive: true });
   }
-  
+
   // Create file for each namespace
   namespaces.forEach(ns => {
     const enFilePath = path.join(enDir, `${ns}.json`);
     const langFilePath = path.join(langDir, `${ns}.json`);
-    
+
     // If English file exists and target file doesn't exist, copy English file as template
     if (fs.existsSync(enFilePath) && !fs.existsSync(langFilePath)) {
       const enContent = fs.readFileSync(enFilePath, 'utf8');
