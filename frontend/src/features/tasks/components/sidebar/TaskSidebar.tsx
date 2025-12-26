@@ -361,28 +361,29 @@ export default function TaskSidebar({
             if (isSearchResult) {
               // Search mode: show all
               visibleGroupChats = orderedGroupChats;
-            } else if (unreadGroupChats.length === 0) {
-              // No unread: show max 5 or all if expanded
+            } else if (unreadGroupChats.length === 0 && pinnedChat.length === 0) {
+              // No unread and no pinned: show max 5 or all if expanded
               visibleGroupChats = isGroupChatsExpanded
                 ? orderedGroupChats
                 : orderedGroupChats.slice(0, maxVisibleGroupChats);
             } else {
-              // Has unread: always show all unread + remaining slots for read
-              const remainingSlots = maxVisibleGroupChats - unreadGroupChats.length;
+              // Has unread or pinned: always show pinned + all unread + remaining slots for read
+              const pinnedAndUnreadCount = pinnedChat.length + unreadGroupChats.length;
+              const remainingSlots = Math.max(0, maxVisibleGroupChats - pinnedAndUnreadCount);
               visibleGroupChats = isGroupChatsExpanded
                 ? orderedGroupChats
-                : [...unreadGroupChats, ...readGroupChats.slice(0, Math.max(0, remainingSlots))];
+                : [...pinnedChat, ...unreadGroupChats, ...readGroupChats.slice(0, remainingSlots)];
             }
 
             // Calculate how many read chats are collapsed (for display text)
             const collapsedReadCount =
-              readGroupChats.length - (visibleGroupChats.length - unreadGroupChats.length);
+              readGroupChats.length - (visibleGroupChats.length - pinnedChat.length - unreadGroupChats.length);
 
             // Determine if expand/collapse button should be shown
-            // Button should show when there are more read chats than can fit after showing all unread chats
+            // Button should show when there are more read chats than can fit after showing pinned and all unread chats
             const maxReadSlotsWhenCollapsed = Math.max(
               0,
-              maxVisibleGroupChats - unreadGroupChats.length
+              maxVisibleGroupChats - pinnedChat.length - unreadGroupChats.length
             );
             const shouldShowExpandCollapseButton =
               readGroupChats.length > maxReadSlotsWhenCollapsed;
