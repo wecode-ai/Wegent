@@ -138,7 +138,9 @@ class ExecutorKindsService(
                     Kind.kind == "Task",
                     Kind.is_active == True,
                     text(
-                        "JSON_EXTRACT(json, '$.metadata.labels.type') = 'offline' and JSON_EXTRACT(json, '$.status.status') = :status"
+                        "JSON_EXTRACT(json, '$.metadata.labels.type') = 'offline' "
+                        "and JSON_EXTRACT(json, '$.status.status') = :status "
+                        "and (JSON_EXTRACT(json, '$.metadata.labels.source') IS NULL OR JSON_EXTRACT(json, '$.metadata.labels.source') != 'chat_shell')"
                     ),
                 )
                 .params(status=status)
@@ -153,7 +155,9 @@ class ExecutorKindsService(
                     Kind.kind == "Task",
                     Kind.is_active == True,
                     text(
-                        "(JSON_EXTRACT(json, '$.metadata.labels.type') IS NULL OR JSON_EXTRACT(json, '$.metadata.labels.type') = 'online') and JSON_EXTRACT(json, '$.status.status') = :status"
+                        "(JSON_EXTRACT(json, '$.metadata.labels.type') IS NULL OR JSON_EXTRACT(json, '$.metadata.labels.type') = 'online') "
+                        "and JSON_EXTRACT(json, '$.status.status') = :status "
+                        "and (JSON_EXTRACT(json, '$.metadata.labels.source') IS NULL OR JSON_EXTRACT(json, '$.metadata.labels.source') != 'chat_shell')"
                     ),
                 )
                 .params(status=status)
@@ -766,12 +770,16 @@ class ExecutorKindsService(
             branch_name = ""
 
             if workspace and workspace.json:
-                workspace_crd = Workspace.model_validate(workspace.json)
-                git_url = workspace_crd.spec.repository.gitUrl
-                git_repo = workspace_crd.spec.repository.gitRepo
-                git_repo_id = workspace_crd.spec.repository.gitRepoId or 0
-                git_domain = workspace_crd.spec.repository.gitDomain
-                branch_name = workspace_crd.spec.repository.branchName
+                try:
+                    workspace_crd = Workspace.model_validate(workspace.json)
+                    git_url = workspace_crd.spec.repository.gitUrl
+                    git_repo = workspace_crd.spec.repository.gitRepo
+                    git_repo_id = workspace_crd.spec.repository.gitRepoId or 0
+                    git_domain = workspace_crd.spec.repository.gitDomain
+                    branch_name = workspace_crd.spec.repository.branchName
+                except Exception:
+                    # Handle workspaces with incomplete repository data
+                    pass
 
             # Build user git information - query user by user_id
             user = db.query(User).filter(User.id == subtask.user_id).first()

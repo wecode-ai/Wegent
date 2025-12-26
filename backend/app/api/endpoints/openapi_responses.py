@@ -9,7 +9,7 @@ Compatible with OpenAI Responses API format.
 
 import logging
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core import security
 from app.models.kind import Kind
-from app.models.subtask import Subtask, SubtaskRole
+from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.user import User
 from app.schemas.kind import Bot, Task, Team
 from app.schemas.openapi_response import (
@@ -31,56 +31,22 @@ from app.schemas.openapi_response import (
 from app.schemas.task import TaskCreate
 from app.services.adapters.task_kinds import task_kinds_service
 from app.services.adapters.team_kinds import team_kinds_service
+from app.services.openapi.chat_response import (
+    create_streaming_response,
+    create_sync_response,
+)
+from app.services.openapi.helpers import (
+    check_team_supports_direct_chat,
+    extract_input_text,
+    parse_model_string,
+    parse_wegent_tools,
+    subtask_status_to_message_status,
+    wegent_status_to_openai_status,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-
-def _wegent_status_to_openai_status(wegent_status: str) -> str:
-    """Convert Wegent task status to OpenAI response status."""
-    status_mapping = {
-        "PENDING": "queued",
-        "RUNNING": "in_progress",
-        "COMPLETED": "completed",
-        "FAILED": "failed",
-        "CANCELLED": "cancelled",
-        "CANCELLING": "in_progress",
-        "DELETE": "failed",
-    }
-    return status_mapping.get(wegent_status, "incomplete")
-
-
-def _subtask_status_to_message_status(subtask_status: str) -> str:
-    """Convert subtask status to output message status."""
-    status_mapping = {
-        "PENDING": "in_progress",
-        "RUNNING": "in_progress",
-        "COMPLETED": "completed",
-        "FAILED": "incomplete",
-        "CANCELLED": "incomplete",
-    }
-    return status_mapping.get(subtask_status, "incomplete")
-
-
-def _parse_model_string(model: str) -> Dict[str, Any]:
-    """
-    Parse model string to extract team namespace, team name, and optional model id.
-    Format: namespace#team_name or namespace#team_name#model_id
-    """
-    parts = model.split("#")
-    if len(parts) < 2:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid model format: '{model}'. Expected format: 'namespace#team_name' or 'namespace#team_name#model_id'",
-        )
-
-    result = {
-        "namespace": parts[0],
-        "team_name": parts[1],
-        "model_id": parts[2] if len(parts) > 2 else None,
-    }
-    return result
 
 
 def _task_to_response_object(
@@ -107,7 +73,7 @@ def _task_to_response_object(
             if subtask.role == SubtaskRole.USER:
                 msg = OutputMessage(
                     id=f"msg_{subtask.id}",
-                    status=_subtask_status_to_message_status(subtask.status.value),
+                    status=subtask_status_to_message_status(subtask.status.value),
                     content=[OutputTextContent(text=subtask.prompt)],
                     role="user",
                 )
@@ -122,7 +88,7 @@ def _task_to_response_object(
 
                 msg = OutputMessage(
                     id=f"msg_{subtask.id}",
-                    status=_subtask_status_to_message_status(subtask.status.value),
+                    status=subtask_status_to_message_status(subtask.status.value),
                     content=[OutputTextContent(text=result_text)],
                     role="assistant",
                 )
@@ -137,7 +103,7 @@ def _task_to_response_object(
     return ResponseObject(
         id=f"resp_{task_id}",
         created_at=created_at_unix,
-        status=_wegent_status_to_openai_status(wegent_status),
+        status=wegent_status_to_openai_status(wegent_status),
         error=error,
         model=model_string,
         output=output,
@@ -145,30 +111,53 @@ def _task_to_response_object(
     )
 
 
-@router.post("", response_model=ResponseObject, status_code=status.HTTP_201_CREATED)
+@router.post("")
 async def create_response(
     request_body: ResponseCreateInput,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user_flexible),
+    wegent_source: Optional[str] = Depends(security.get_wegent_source_header),
 ):
     """
     Create a new response (execute a task).
 
     This endpoint is compatible with OpenAI's Responses API format.
-    The response is returned immediately with status 'queued'.
-    Use GET /api/v1/responses/{response_id} to poll for completion.
+
+    For Chat Shell type teams:
+    - When stream=True: Returns SSE stream with OpenAI v1/responses compatible events.
+    - When stream=False (default): Blocks until LLM completes, returns completed response.
+
+    For non-Chat Shell type teams (Executor-based):
+    - Returns response with status 'queued' immediately.
+    - Use GET /api/v1/responses/{response_id} to poll for completion.
 
     Args:
-        request_body: ResponseCreateInput containing model, input, and optional previous_response_id
+        request_body: ResponseCreateInput containing:
         - model: Format "namespace#team_name" or "namespace#team_name#model_id"
-        - input: The user prompt
+        - input: The user prompt (string or list of messages)
+        - stream: Whether to enable streaming output (default: False)
+        - tools: Optional Wegent tools:
+          - {"type": "wegent_deep_thinking"}: Enable deep thinking mode with web search
+            (web search requires WEB_SEARCH_ENABLED=true in system config)
         - previous_response_id: Optional, for follow-up conversations
 
+    Note:
+        - MCP tools are automatically loaded when CHAT_MCP_ENABLED=true (no user tool needed)
+        - Web search is enabled when wegent_deep_thinking is used AND WEB_SEARCH_ENABLED=true
+
     Returns:
-        ResponseObject with status 'queued'
+        ResponseObject with status 'completed' (Chat Shell)
+        or StreamingResponse with SSE events (Chat Shell + stream=true)
+        or ResponseObject with status 'queued' (non-Chat Shell)
     """
     # Parse model string
-    model_info = _parse_model_string(request_body.model)
+    model_info = parse_model_string(request_body.model)
+
+    # Parse tools for settings
+    tool_settings = parse_wegent_tools(request_body.tools)
+
+    # Extract input text
+    input_text = extract_input_text(request_body.input)
 
     # Determine task_id from previous_response_id if provided
     task_id = None
@@ -191,7 +180,6 @@ async def create_response(
                 .filter(
                     Kind.id == previous_task_id,
                     Kind.kind == "Task",
-                    Kind.user_id == current_user.id,
                     Kind.is_active == True,
                 )
                 .first()
@@ -203,7 +191,7 @@ async def create_response(
                 )
 
     # Verify team exists and user has access
-    team = team_kinds_service.get_team_by_name_and_namespace(
+    team = team_kinds_service.get_team_by_name_and_namespace_with_public_group(
         db, model_info["team_name"], model_info["namespace"], current_user.id
     )
     if not team:
@@ -325,9 +313,47 @@ async def create_response(
                     detail=f"Bot '{bot_namespace}/{bot_name}' does not have a valid model configured. Please specify model_id in the request or configure modelRef for the bot.",
                 )
 
-    # Create task using TaskKindsService
+    # Check if team supports direct chat (Chat Shell type)
+    supports_direct_chat = check_team_supports_direct_chat(db, team, current_user.id)
+
+    if supports_direct_chat:
+        # Chat Shell type: use direct LLM call (streaming or sync)
+        if request_body.stream:
+            return await create_streaming_response(
+                db=db,
+                user=current_user,
+                team=team,
+                model_info=model_info,
+                request_body=request_body,
+                input_text=input_text,
+                tool_settings=tool_settings,
+                task_id=task_id,
+                api_trusted_source=wegent_source,
+            )
+        else:
+            return await create_sync_response(
+                db=db,
+                user=current_user,
+                team=team,
+                model_info=model_info,
+                request_body=request_body,
+                input_text=input_text,
+                tool_settings=tool_settings,
+                task_id=task_id,
+                api_trusted_source=wegent_source,
+            )
+
+    # Non-Chat Shell type (Executor-based): streaming not supported
+    if request_body.stream:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Streaming is only supported for teams where all bots use Chat Shell type. "
+            "Please set stream=false to use the queued response mode.",
+        )
+
+    # Non-Chat Shell type (Executor-based): create task and return queued response
     task_create = TaskCreate(
-        prompt=request_body.input,
+        prompt=input_text,
         team_name=model_info["team_name"],
         team_namespace=model_info["namespace"],
         task_type="chat",
@@ -335,6 +361,7 @@ async def create_response(
         source="api",
         model_id=model_info.get("model_id"),
         force_override_bot_model=model_info.get("model_id") is not None,
+        api_trusted_source=wegent_source,
     )
 
     try:
@@ -463,12 +490,21 @@ async def cancel_response(
     """
     Cancel a running response.
 
+    For Chat Shell type tasks (source="chat_shell"), this will stop the model request
+    and save partial content to the subtask result.
+
+    For other task types (Executor-based), this will call the executor_manager to cancel.
+
     Args:
         response_id: Response ID in format "resp_{task_id}"
 
     Returns:
         ResponseObject with status 'cancelled' or current status
     """
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.services.chat_v2.storage import db_handler, session_manager
+
     # Extract task_id from response_id
     if not response_id.startswith("resp_"):
         raise HTTPException(
@@ -484,21 +520,115 @@ async def cancel_response(
             detail=f"Invalid response_id format: '{response_id}'",
         )
 
-    # Cancel task using service (includes executor_manager call)
-    try:
-        await task_kinds_service.cancel_task(
-            db=db,
-            task_id=task_id,
-            user_id=current_user.id,
-            background_task_runner=background_tasks.add_task,
+    # Get task to check if it's a Chat Shell type
+    task_kind = (
+        db.query(Kind)
+        .filter(
+            Kind.id == task_id,
+            Kind.kind == "Task",
+            Kind.is_active == True,
         )
-    except HTTPException as e:
-        if e.status_code == 404:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Response '{response_id}' not found",
+        .first()
+    )
+
+    if not task_kind:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Response '{response_id}' not found",
+        )
+
+    # Check if this is a Chat Shell task (source="chat_shell")
+    task_crd = Task.model_validate(task_kind.json)
+    source_label = (
+        task_crd.metadata.labels.get("source") if task_crd.metadata.labels else None
+    )
+    is_chat_shell = source_label == "chat_shell"
+
+    logger.info(
+        f"[CANCEL] task_id={task_id}, source={source_label}, is_chat_shell={is_chat_shell}"
+    )
+
+    if is_chat_shell:
+        # For Chat Shell tasks, use session_manager to cancel the stream
+        # Find running assistant subtask
+        running_subtask = (
+            db.query(Subtask)
+            .filter(
+                Subtask.task_id == task_id,
+                Subtask.user_id == current_user.id,
+                Subtask.role == SubtaskRole.ASSISTANT,
+                Subtask.status.in_(
+                    [
+                        SubtaskStatus.PENDING,
+                        SubtaskStatus.RUNNING,
+                    ]
+                ),
             )
-        raise
+            .order_by(Subtask.id.desc())
+            .first()
+        )
+
+        if running_subtask:
+            logger.info(
+                f"[CANCEL] Found running subtask: id={running_subtask.id}, status={running_subtask.status}"
+            )
+
+            # Get partial content from Redis before cancelling
+            partial_content = await session_manager.get_streaming_content(
+                running_subtask.id
+            )
+            logger.info(
+                f"[CANCEL] Got partial content from Redis: length={len(partial_content) if partial_content else 0}"
+            )
+
+            # Cancel the stream (this sets the cancel event)
+            await session_manager.cancel_stream(running_subtask.id)
+            logger.info(f"[CANCEL] Stream cancelled for subtask {running_subtask.id}")
+
+            # Update subtask status to COMPLETED with partial content
+            running_subtask.status = SubtaskStatus.COMPLETED
+            running_subtask.progress = 100
+            running_subtask.completed_at = datetime.now()
+            running_subtask.updated_at = datetime.now()
+            running_subtask.result = {"value": partial_content or ""}
+
+            # Update task status to COMPLETED
+            if task_crd.status:
+                task_crd.status.status = "COMPLETED"
+                task_crd.status.errorMessage = ""
+                task_crd.status.updatedAt = datetime.now()
+                task_crd.status.completedAt = datetime.now()
+                task_crd.status.result =  {"value": partial_content or ""}
+
+            task_kind.json = task_crd.model_dump(mode="json")
+            task_kind.updated_at = datetime.now()
+            flag_modified(task_kind, "json")
+
+            db.commit()
+            db.refresh(task_kind)
+            db.refresh(running_subtask)
+
+            logger.info(
+                f"[CANCEL] Chat Shell task cancelled: task_id={task_id}, subtask_id={running_subtask.id}"
+            )
+        else:
+            logger.info(f"[CANCEL] No running subtask found for task {task_id}")
+    else:
+        # For Executor-based tasks, use the existing cancel service
+        try:
+            await task_kinds_service.cancel_task(
+                db=db,
+                task_id=task_id,
+                user_id=current_user.id,
+                background_task_runner=background_tasks.add_task,
+            )
+        except HTTPException as e:
+            if e.status_code == 404:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Response '{response_id}' not found",
+                )
+            raise
 
     # Get updated task data for response
     try:
@@ -515,13 +645,15 @@ async def cancel_response(
             output=[],
         )
 
-    # Reconstruct model string
-    task_kind = (
-        db.query(Kind)
-        .filter(Kind.id == task_id, Kind.kind == "Task", Kind.is_active == True)
-        .first()
+    # Get subtasks for output (to include partial content)
+    subtasks = (
+        db.query(Subtask)
+        .filter(Subtask.task_id == task_id, Subtask.user_id == current_user.id)
+        .order_by(Subtask.message_id.asc())
+        .all()
     )
 
+    # Reconstruct model string
     model_string = "unknown"
     if task_kind and task_kind.json:
         task_crd = Task.model_validate(task_kind.json)
@@ -537,7 +669,7 @@ async def cancel_response(
         else:
             model_string = f"{team_namespace}#{team_name}"
 
-    return _task_to_response_object(task_dict, model_string)
+    return _task_to_response_object(task_dict, model_string, subtasks=subtasks)
 
 
 @router.delete("/{response_id}", response_model=ResponseDeletedObject)
@@ -549,12 +681,17 @@ async def delete_response(
     """
     Delete a response.
 
+    For Chat Shell type tasks with running streams, this will stop the model request
+    before deleting.
+
     Args:
         response_id: Response ID in format "resp_{task_id}"
 
     Returns:
         ResponseDeletedObject confirming deletion
     """
+    from app.services.chat_v2.storage import session_manager
+
     # Extract task_id from response_id
     if not response_id.startswith("resp_"):
         raise HTTPException(
@@ -569,6 +706,57 @@ async def delete_response(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid response_id format: '{response_id}'",
         )
+
+    # Get task to check if it's a Chat Shell type with running stream
+    task_kind = (
+        db.query(Kind)
+        .filter(
+            Kind.id == task_id,
+            Kind.kind == "Task",
+            Kind.is_active == True,
+        )
+        .first()
+    )
+
+    if task_kind:
+        # Check if this is a Chat Shell task (source="chat_shell")
+        task_crd = Task.model_validate(task_kind.json)
+        source_label = (
+            task_crd.metadata.labels.get("source") if task_crd.metadata.labels else None
+        )
+        is_chat_shell = source_label == "chat_shell"
+
+        if is_chat_shell:
+            # For Chat Shell tasks, stop any running stream before deleting
+            running_subtask = (
+                db.query(Subtask)
+                .filter(
+                    Subtask.task_id == task_id,
+                    Subtask.user_id == current_user.id,
+                    Subtask.role == SubtaskRole.ASSISTANT,
+                    Subtask.status.in_(
+                        [
+                            SubtaskStatus.PENDING,
+                            SubtaskStatus.RUNNING,
+                        ]
+                    ),
+                )
+                .order_by(Subtask.id.desc())
+                .first()
+            )
+
+            if running_subtask:
+                logger.info(
+                    f"[DELETE] Stopping running stream before delete: task_id={task_id}, subtask_id={running_subtask.id}"
+                )
+                # Cancel the stream (this sets the cancel event)
+                await session_manager.cancel_stream(running_subtask.id)
+                # Clean up streaming content from Redis
+                await session_manager.delete_streaming_content(running_subtask.id)
+                await session_manager.unregister_stream(running_subtask.id)
+                logger.info(
+                    f"[DELETE] Stream stopped for subtask {running_subtask.id}"
+                )
 
     try:
         task_kinds_service.delete_task(db, task_id=task_id, user_id=current_user.id)

@@ -114,6 +114,9 @@ export function GroupManager() {
                     {t('groups.displayName')}
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-medium text-text-primary">
+                    {t('groups.visibility')}
+                  </th>
+                  <th className="px-4 py-3 text-left text-sm font-medium text-text-primary">
                     {t('groups.myRole')}
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-medium text-text-primary">
@@ -132,6 +135,11 @@ export function GroupManager() {
                     </td>
                     <td className="px-4 py-3 text-sm text-text-secondary">
                       {group.display_name || '-'}
+                    </td>
+                    <td className="px-4 py-3 text-sm">
+                      <Badge variant={group.visibility === 'public' ? 'success' : 'secondary'}>
+                        {t(`groups.${group.visibility}`)}
+                      </Badge>
                     </td>
                     <td className="px-4 py-3 text-sm">
                       {group.my_role ? (

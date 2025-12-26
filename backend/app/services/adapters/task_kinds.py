@@ -242,11 +242,23 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                         "taskType": obj_in.task_type,  # default: chat, code
                         "autoDeleteExecutor": obj_in.auto_delete_executor,  # default: false, true
                         "source": obj_in.source,
+                        # Mark as API call if source is "api"
+                        **(
+                            {"is_api_call": "true"}
+                            if obj_in.source == "api"
+                            else {}
+                        ),
                         # Model selection fields
                         **({"modelId": obj_in.model_id} if obj_in.model_id else {}),
                         **(
                             {"forceOverrideBotModel": "true"}
                             if obj_in.force_override_bot_model
+                            else {}
+                        ),
+                        # Trusted source field
+                        **(
+                            {"api_trusted_source": obj_in.api_trusted_source}
+                            if obj_in.api_trusted_source
                             else {}
                         ),
                     },
@@ -1683,12 +1695,16 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         branch_name = ""
 
         if workspace and workspace.json:
-            workspace_crd = Workspace.model_validate(workspace.json)
-            git_url = workspace_crd.spec.repository.gitUrl
-            git_repo = workspace_crd.spec.repository.gitRepo
-            git_repo_id = workspace_crd.spec.repository.gitRepoId or 0
-            git_domain = workspace_crd.spec.repository.gitDomain
-            branch_name = workspace_crd.spec.repository.branchName
+            try:
+                workspace_crd = Workspace.model_validate(workspace.json)
+                git_url = workspace_crd.spec.repository.gitUrl
+                git_repo = workspace_crd.spec.repository.gitRepo
+                git_repo_id = workspace_crd.spec.repository.gitRepoId or 0
+                git_domain = workspace_crd.spec.repository.gitDomain
+                branch_name = workspace_crd.spec.repository.branchName
+            except Exception:
+                # Handle workspaces with incomplete repository data
+                pass
 
         # Get team data (including shared teams)
         team = (
