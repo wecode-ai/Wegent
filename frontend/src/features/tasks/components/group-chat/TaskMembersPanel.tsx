@@ -133,8 +133,10 @@ export function TaskMembersPanel({
     setGeneratingLink(true);
     try {
       // First, ensure the task is converted to a group chat
+      let wasConverted = false;
       try {
         await taskMemberApi.convertToGroupChat(taskId);
+        wasConverted = true;
       } catch (conversionError: unknown) {
         // Ignore conversion errors - task might already be a group chat
         console.log('Task conversion:', conversionError);
@@ -143,6 +145,11 @@ export function TaskMembersPanel({
       // Generate the invite link with permanent expiration (0 hours)
       const response = await taskMemberApi.generateInviteLink(taskId, 0);
       setInviteUrl(response.invite_url);
+
+      // Trigger UI refresh if task was converted to group chat
+      if (wasConverted) {
+        onMembersChanged?.();
+      }
     } catch (error: unknown) {
       toast({
         title: t('groupChat.inviteLink.generateFailed'),
