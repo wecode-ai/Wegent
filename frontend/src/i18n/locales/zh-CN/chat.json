@@ -320,6 +320,21 @@
     "cancel": "取消",
     "close": "关闭"
   },
+  "mermaid": {
+    "exportPng": "导出 PNG",
+    "exportSvg": "导出 SVG",
+    "copyCode": "复制代码",
+    "copyImage": "复制图片",
+    "viewCode": "查看代码",
+    "sourceCode": "Mermaid 源代码",
+    "escToClose": "按 ESC 关闭",
+    "zoomIn": "放大",
+    "zoomOut": "缩小",
+    "resetZoom": "重置缩放",
+    "renderError": "Mermaid 渲染失败",
+    "copied": "已复制到剪贴板",
+    "exportSuccess": "图片已导出"
+  },
   "correction": {
     "enable": "启用 AI 校验模式",
     "disable": "禁用 AI 校验模式",

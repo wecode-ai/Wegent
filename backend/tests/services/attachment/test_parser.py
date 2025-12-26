@@ -6,13 +6,14 @@
 Unit tests for the document parser service.
 """
 
-import pytest
-from unittest.mock import patch, MagicMock
 import io
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from app.services.attachment.parser import (
-    DocumentParser,
     DocumentParseError,
+    DocumentParser,
     ParseResult,
     TruncationInfo,
 )
@@ -46,7 +47,9 @@ class TestDocumentParser:
             ".webp",
         ]
         for ext in expected_extensions:
-            assert self.parser.is_supported_extension(ext), f"Extension {ext} should be supported"
+            assert self.parser.is_supported_extension(
+                ext
+            ), f"Extension {ext} should be supported"
 
     def test_unsupported_extension(self):
         """Test that unsupported extensions are rejected."""

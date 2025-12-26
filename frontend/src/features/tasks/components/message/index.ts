@@ -17,11 +17,7 @@ export {
   ScrollToBottom,
   useThinkingState,
 } from './thinking';
-export type {
-  ThinkingStep,
-  TodoItem,
-  ThinkingDisplayProps,
-} from './thinking';
+export type { ThinkingStep, TodoItem, ThinkingDisplayProps } from './thinking';
 export { default as LoadingDots } from './LoadingDots';
 export { default as StreamingWaitIndicator } from './StreamingWaitIndicator';
 export { default as DiffViewer } from './DiffViewer';
