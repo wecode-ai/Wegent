@@ -47,7 +47,7 @@ export default function CodePage() {
   const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams();
 
   // Task context for workbench data
-  const { selectedTaskDetail, setSelectedTask, refreshTasks, refreshSelectedTaskDetail } = useTaskContext();
+  const { selectedTaskDetail, setSelectedTask, refreshTasks, refreshSelectedTaskDetail, setPinnedGroupChatId, selectedTask } = useTaskContext();
 
   // Chat stream context for real-time workbench and thinking data
   const { getStreamState, clearAllStreams } = useChatStreamContext();
@@ -63,6 +63,11 @@ export default function CodePage() {
 
   // Handle members changed (when converting to group chat or adding/removing members)
   const handleMembersChanged = () => {
+    // Pin the current task to the top of the group chat list
+    // This ensures newly converted group chats appear at the top
+    if (selectedTask) {
+      setPinnedGroupChatId(selectedTask.id);
+    }
     refreshTasks();
     refreshSelectedTaskDetail(false);
   };

@@ -43,7 +43,7 @@ export default function ChatPage() {
   const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams();
 
   // Task context for refreshing task list
-  const { refreshTasks, selectedTaskDetail, setSelectedTask, refreshSelectedTaskDetail } = useTaskContext();
+  const { refreshTasks, selectedTaskDetail, setSelectedTask, refreshSelectedTaskDetail, setPinnedGroupChatId, selectedTask } = useTaskContext();
 
   // Get current task title for top navigation
   const currentTaskTitle = selectedTaskDetail?.title;
@@ -56,6 +56,11 @@ export default function ChatPage() {
 
   // Handle members changed (when converting to group chat or adding/removing members)
   const handleMembersChanged = () => {
+    // Pin the current task to the top of the group chat list
+    // This ensures newly converted group chats appear at the top
+    if (selectedTask) {
+      setPinnedGroupChatId(selectedTask.id);
+    }
     refreshTasks();
     refreshSelectedTaskDetail(false);
   };

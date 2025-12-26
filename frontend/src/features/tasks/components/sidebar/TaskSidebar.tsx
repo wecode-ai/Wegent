@@ -68,6 +68,7 @@ export default function TaskSidebar({
     markAllTasksAsViewed,
     viewStatusVersion,
     setSelectedTask,
+    pinnedGroupChatId,
   } = useTaskContext();
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -343,12 +344,17 @@ export default function TaskSidebar({
               .filter(task => !task.is_group_chat)
               .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
-            // Separate unread and read group chats, both sorted by updated_at desc
-            const unreadGroupChats = allGroupChats.filter(isTaskUnread);
-            const readGroupChats = allGroupChats.filter(task => !isTaskUnread(task));
+            // Separate pinned, unread, and read group chats
+            // Priority order: pinned (newly converted) > unread > read
+            const pinnedChat = pinnedGroupChatId
+              ? allGroupChats.filter(t => t.id === pinnedGroupChatId)
+              : [];
+            const remainingChats = allGroupChats.filter(t => t.id !== pinnedGroupChatId);
+            const unreadGroupChats = remainingChats.filter(isTaskUnread);
+            const readGroupChats = remainingChats.filter(task => !isTaskUnread(task));
 
-            // Merge: unread first, then read
-            const orderedGroupChats = [...unreadGroupChats, ...readGroupChats];
+            // Merge: pinned first, then unread, then read
+            const orderedGroupChats = [...pinnedChat, ...unreadGroupChats, ...readGroupChats];
 
             // Calculate visible group chats based on collapse state
             let visibleGroupChats: typeof orderedGroupChats;
