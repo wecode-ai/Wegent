@@ -340,49 +340,6 @@ async def _stream_chat_response(
             base_system_prompt=chat_config.system_prompt,
         )
 
-        # Save user message to Redis chat history cache (dual-write strategy)
-        # This ensures Redis cache has the user message for subsequent AI responses
-        # The user message is already persisted to DB via subtask creation above
-        from app.services.chat_v2.storage import storage_handler
-
-        # Normalize user message content for Redis storage
-        # For vision/multi_vision messages, store the text portion
-        user_message_for_cache = message
-        if isinstance(final_message, dict):
-            if final_message.get("type") in ("vision", "multi_vision"):
-                user_message_for_cache = final_message.get("text", message)
-
-        # For group chat, add username prefix to match the format used in DB loading
-        if payload.is_group_chat:
-            user_message_for_cache = (
-                f"User[{user_data['user_name']}]: {user_message_for_cache}"
-            )
-
-        redis_save_success = await storage_handler.append_message(
-            task_data["id"],
-            "user",
-            user_message_for_cache,
-        )
-
-        if redis_save_success:
-            logger.info(
-                "[ai_trigger] Saved user message to Redis: task_id=%d, len=%d, is_group=%s",
-                task_data["id"],
-                len(str(user_message_for_cache)),
-                payload.is_group_chat,
-            )
-        else:
-            # Redis write failed - log error but continue since DB is authoritative
-            # The history will be recovered from DB on next read when Redis is empty
-            logger.error(
-                "[ai_trigger] Failed to save user message to Redis: task_id=%d, len=%d. "
-                "History will be recovered from DB on next cache miss.",
-                task_data["id"],
-                len(str(user_message_for_cache)),
-            )
-            # Clear potentially corrupted Redis cache to force DB reload on next read
-            await storage_handler.clear_history(task_data["id"])
-
         # Create WebSocket stream config
         ws_config = WebSocketStreamConfig(
             task_id=task_data["id"],

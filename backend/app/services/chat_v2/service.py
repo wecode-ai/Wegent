@@ -1099,15 +1099,10 @@ class ChatService:
     async def _get_chat_history(
         self, task_id: int, is_group_chat: bool
     ) -> list[dict[str, Any]]:
-        """Get chat history for a task.
+        """Get chat history for a task directly from database.
 
-        Uses Redis as primary cache for performance, with DB as fallback.
-        Both single chat and group chat use the same unified approach.
-
-        Strategy:
-        1. Try to get history from Redis (fast path)
-        2. If Redis is empty, load from DB and backfill to Redis
-        3. Apply truncation for token limit management
+        Always reads from database to ensure data consistency.
+        Database is the single source of truth for chat history.
 
         Args:
             task_id: Task ID
@@ -1116,25 +1111,7 @@ class ChatService:
         Returns:
             List of message dictionaries
         """
-        # Try Redis first (fast path)
-        history = await storage_handler.get_chat_history(task_id)
-
-        if not history:
-            # Redis empty, load from DB and backfill
-            logger.info(
-                f"[CHAT_HISTORY] Redis cache empty for task_id={task_id}, "
-                f"loading from database"
-            )
-            history = await self._load_history_from_db(task_id, is_group_chat)
-
-            # Backfill to Redis if we got data from DB
-            if history:
-                await storage_handler.save_chat_history(task_id, history)
-                logger.info(
-                    f"[CHAT_HISTORY] Backfilled {len(history)} messages to Redis "
-                    f"for task_id={task_id}"
-                )
-
+        history = await self._load_history_from_db(task_id, is_group_chat)
         return self._truncate_history(history)
 
     async def _load_history_from_db(
