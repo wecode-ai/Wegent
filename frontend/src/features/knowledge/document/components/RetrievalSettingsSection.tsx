@@ -50,8 +50,8 @@ export function RetrievalSettingsSection({
 }: RetrievalSettingsSectionProps) {
   const { t } = useTranslation('knowledge');
   const { retrievers, loading: loadingRetrievers } = useRetrievers(scope, groupName);
-  const { models: embeddingModels, loading: loadingModels } = useEmbeddingModels();
-  const { methods: retrievalMethods } = useRetrievalMethods();
+  const { models: embeddingModels, loading: loadingModels } = useEmbeddingModels(scope, groupName);
+  const { methods: retrievalMethods, loading: loadingMethods } = useRetrievalMethods();
 
   const [topK, setTopK] = useState(config.top_k ?? 5);
   const [scoreThreshold, setScoreThreshold] = useState(config.score_threshold ?? 0.7);
@@ -66,11 +66,18 @@ export function RetrievalSettingsSection({
   }, [selectedRetriever, retrievalMethods]);
 
   // Ensure vector mode is selected if current mode is not available
+  // Only reset if retrievers AND retrieval methods are loaded and we have a valid selection
   useEffect(() => {
-    if (config.retrieval_mode && !availableModes.includes(config.retrieval_mode)) {
+    if (
+      !loadingRetrievers &&
+      !loadingMethods &&
+      selectedRetriever &&
+      config.retrieval_mode &&
+      !availableModes.includes(config.retrieval_mode)
+    ) {
       onChange({ ...config, retrieval_mode: 'vector' });
     }
-  }, [availableModes, config, onChange]);
+  }, [availableModes, config, onChange, loadingRetrievers, loadingMethods, selectedRetriever]);
 
   // Auto-select first retriever if data exists and no selection
   useEffect(() => {
@@ -179,7 +186,10 @@ export function RetrievalSettingsSection({
         ) : retrievers.length === 0 ? (
           <div className="space-y-2">
             <p className="text-sm text-warning">{t('document.retrieval.noRetriever')}</p>
-            <Link href="/settings" className="text-sm text-primary hover:underline">
+            <Link
+              href="/settings?section=personal&tab=personal-retrievers"
+              className="text-sm text-primary hover:underline"
+            >
               {t('document.goToSettings')}
             </Link>
           </div>
@@ -208,7 +218,10 @@ export function RetrievalSettingsSection({
         ) : embeddingModels.length === 0 ? (
           <div className="space-y-2">
             <p className="text-sm text-warning">{t('document.retrieval.noEmbeddingModel')}</p>
-            <Link href="/settings" className="text-sm text-primary hover:underline">
+            <Link
+              href="/settings?section=personal&tab=personal-models"
+              className="text-sm text-primary hover:underline"
+            >
               {t('document.goToSettings')}
             </Link>
           </div>
