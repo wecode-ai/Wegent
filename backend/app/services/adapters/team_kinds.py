@@ -1390,7 +1390,9 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             Team Kind if found, None otherwise
         """
         # First, try standard lookup (user's own teams and shared teams)
-        team = self.get_team_by_name_and_namespace(db, team_name, team_namespace, user_id)
+        team = self.get_team_by_name_and_namespace(
+            db, team_name, team_namespace, user_id
+        )
         if team:
             return team
 

@@ -243,11 +243,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                         "autoDeleteExecutor": obj_in.auto_delete_executor,  # default: false, true
                         "source": obj_in.source,
                         # Mark as API call if source is "api"
-                        **(
-                            {"is_api_call": "true"}
-                            if obj_in.source == "api"
-                            else {}
-                        ),
+                        **({"is_api_call": "true"} if obj_in.source == "api" else {}),
                         # Model selection fields
                         **({"modelId": obj_in.model_id} if obj_in.model_id else {}),
                         **(

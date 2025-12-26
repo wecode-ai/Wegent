@@ -145,8 +145,12 @@ class AttachmentService:
 
             # Update attachment with parsed content
             attachment.extracted_text = parse_result.text if parse_result.text else ""
-            attachment.text_length = parse_result.text_length if parse_result.text_length else 0
-            attachment.image_base64 = parse_result.image_base64 if parse_result.image_base64 else ""
+            attachment.text_length = (
+                parse_result.text_length if parse_result.text_length else 0
+            )
+            attachment.image_base64 = (
+                parse_result.image_base64 if parse_result.image_base64 else ""
+            )
             attachment.status = AttachmentStatus.READY
             truncation_info = parse_result.truncation_info
 
@@ -405,6 +409,9 @@ class AttachmentService:
         """
         Build a text prefix containing document content for prepending to messages.
 
+        If the text was truncated during parsing, a truncation notice is added
+        to inform the model that the content is incomplete.
+
         Args:
             attachment: SubtaskAttachment record with extracted_text
 
@@ -414,10 +421,22 @@ class AttachmentService:
         if not attachment.extracted_text:
             return None
 
-        return (
-            f"【文件内容 - {attachment.original_filename}】:\n"
-            f"{attachment.extracted_text}\n\n"
-        )
+        # Check if text was truncated by comparing text_length with max limit
+        max_text_length = DocumentParser.get_max_text_length()
+        is_truncated = attachment.text_length >= max_text_length
+
+        # Build the prefix with optional truncation notice
+        prefix = f"[File Content - {attachment.original_filename}]:\n"
+
+        if is_truncated:
+            prefix += (
+                f"(Note: The file content is too long and has been truncated to "
+                f"{max_text_length} characters. The following is only partial content.)\n"
+            )
+
+        prefix += f"{attachment.extracted_text}\n\n"
+
+        return prefix
 
     def build_message_with_attachment(
         self,
@@ -452,7 +471,7 @@ class AttachmentService:
         doc_prefix = self.build_document_text_prefix(attachment)
         if doc_prefix:
             # For documents, combine text
-            return f"{doc_prefix}【用户问题】:\n{message}"
+            return f"{doc_prefix}[User Question]:\n{message}"
 
         return message
 

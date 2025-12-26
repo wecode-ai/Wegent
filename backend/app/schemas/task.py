@@ -63,7 +63,9 @@ class TaskCreate(BaseModel):
     model_id: Optional[str] = None  # Model name (not database ID)
     force_override_bot_model: Optional[bool] = False
     # API trusted source field
-    api_trusted_source: Optional[str] = None  # API trusted source name (from wegent-source header)
+    api_trusted_source: Optional[str] = (
+        None  # API trusted source name (from wegent-source header)
+    )
 
 
 class TaskUpdate(BaseModel):

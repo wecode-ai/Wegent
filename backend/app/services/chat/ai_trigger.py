@@ -695,7 +695,7 @@ async def _process_attachments(
                 # For text documents, get the formatted content
                 doc_prefix = attachment_service.build_document_text_prefix(attachment)
                 if doc_prefix:
-                    text_attachments.append(f"【附件 {idx}】\n{doc_prefix}")
+                    text_attachments.append(f"[Attachment {idx}]\n{doc_prefix}")
 
     # If we have images, return a multi-vision structure
     if image_attachments:
@@ -703,7 +703,7 @@ async def _process_attachments(
         combined_text = ""
         if text_attachments:
             combined_text = "\n".join(text_attachments) + "\n\n"
-        combined_text += f"【用户问题】:\n{message}"
+        combined_text += f"[User Question]:\n{message}"
 
         return {
             "type": "multi_vision",
@@ -714,6 +714,6 @@ async def _process_attachments(
     # If only text attachments, combine them
     if text_attachments:
         combined_attachments = "\n".join(text_attachments)
-        return f"{combined_attachments}【用户问题】:\n{message}"
+        return f"{combined_attachments}[User Question]:\n{message}"
 
     return message

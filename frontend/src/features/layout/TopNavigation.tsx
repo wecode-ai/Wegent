@@ -81,7 +81,12 @@ export default function TopNavigation({
 
         {/* Show task title dropdown when in with-sidebar variant */}
         {variant === 'with-sidebar' && (
-          <TaskTitleDropdown title={title} taskDetail={taskDetail} onTaskDeleted={onTaskDeleted} onMembersChanged={onMembersChanged} />
+          <TaskTitleDropdown
+            title={title}
+            taskDetail={taskDetail}
+            onTaskDeleted={onTaskDeleted}
+            onMembersChanged={onMembersChanged}
+          />
         )}
 
         {/* Show title as heading when explicitly provided and not in with-sidebar variant */}
