@@ -16,10 +16,10 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.kind import Kind
-from app.models.task import TaskResource
 from app.models.shared_task import SharedTask
 from app.models.subtask import Subtask
 from app.models.subtask_attachment import SubtaskAttachment
+from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.shared_task import (
     JoinSharedTaskResponse,

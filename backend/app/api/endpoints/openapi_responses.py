@@ -17,8 +17,8 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core import security
 from app.models.kind import Kind
-from app.models.task import TaskResource
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Bot, Task, Team
 from app.schemas.openapi_response import (
