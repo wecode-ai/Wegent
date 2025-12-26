@@ -835,7 +835,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                     type="online",
                     task_type=task_type,
                     auto_delete_executor="false",
-                    source="chat_shell",
+                    source="web",
                     model_id=payload.force_override_bot_model,
                     force_override_bot_model=payload.force_override_bot_model
                     is not None,
