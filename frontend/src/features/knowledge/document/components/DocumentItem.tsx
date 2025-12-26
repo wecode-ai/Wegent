@@ -123,6 +123,15 @@ export function DocumentItem({
         <span className="text-xs text-text-muted">{formatDateTime(document.created_at)}</span>
       </div>
 
+      {/* Index status (is_active) */}
+      <div className="w-16 flex-shrink-0 text-center">
+        <Badge variant={document.is_active ? 'success' : 'warning'} size="sm">
+          {document.is_active
+            ? t('document.document.indexStatus.available')
+            : t('document.document.indexStatus.unavailable')}
+        </Badge>
+      </div>
+
       {/* Status badge */}
       <div className="w-16 flex-shrink-0 text-center">
         <Badge variant={document.status === 'enabled' ? 'success' : 'secondary'} size="sm">
