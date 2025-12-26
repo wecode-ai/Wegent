@@ -17,6 +17,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
+    JSON,
 )
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy import (
@@ -64,13 +65,11 @@ class KnowledgeDocument(Base):
     status = Column(
         SQLEnum(DocumentStatus, values_callable=lambda obj: [e.value for e in obj]),
         nullable=False,
-        default=DocumentStatus.ENABLED,
+        default=DocumentStatus.DISABLED,  # Default to disabled, user can enable manually
     )
     user_id = Column(Integer, nullable=False, index=True)
-    is_active = Column(Boolean, nullable=False, default=True)
-    splitter_config = Column(
-        JSON, nullable=True
-    )  # Splitter configuration for document chunking
+    is_active = Column(Boolean, nullable=False, default=False)  # Default to False, set to True after indexing completes
+    splitter_config = Column(JSON, nullable=True)  # Splitter configuration for document chunking
     created_at = Column(DateTime, nullable=False, default=func.now())
     updated_at = Column(
         DateTime, nullable=False, default=func.now(), onupdate=func.now()

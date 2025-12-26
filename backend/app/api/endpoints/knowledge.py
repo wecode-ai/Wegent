@@ -319,17 +319,13 @@ async def create_document(
             if retrieval_config:
                 # Extract configuration using snake_case format
                 retriever_name = retrieval_config.get("retriever_name")
-                retriever_namespace = retrieval_config.get(
-                    "retriever_namespace", "default"
-                )
+                retriever_namespace = retrieval_config.get("retriever_namespace", "default")
                 embedding_config = retrieval_config.get("embedding_config")
 
                 if retriever_name and embedding_config:
                     # Extract embedding model info
                     embedding_model_name = embedding_config.get("model_name")
-                    embedding_model_namespace = embedding_config.get(
-                        "model_namespace", "default"
-                    )
+                    embedding_model_namespace = embedding_config.get("model_namespace", "default")
 
                     # Schedule RAG indexing in background
                     # Note: We use a synchronous function that creates its own event loop
@@ -346,6 +342,7 @@ async def create_document(
                         embedding_model_namespace=embedding_model_namespace,
                         user_id=current_user.id,
                         splitter_config=data.splitter_config,
+                        document_id=document.id,
                     )
                     logger.info(
                         f"Scheduled RAG indexing for document {document.id} in knowledge base {knowledge_base_id}"
@@ -363,6 +360,60 @@ async def create_document(
         )
 
 
+def _get_index_owner_user_id_sync(
+    db: Session, knowledge_base_id: str, current_user_id: int
+) -> int:
+    """
+    Get the user_id that should be used for index naming in per_user strategy.
+    Synchronous version for use in background tasks.
+
+    For personal knowledge bases (namespace="default"), use the current user's ID.
+    For group knowledge bases (namespace!="default"), use the knowledge base creator's ID.
+
+    This ensures that all group members access the same index created by the KB owner.
+
+    Args:
+        db: Database session
+        knowledge_base_id: Knowledge base ID (Kind.id as string)
+        current_user_id: Current requesting user's ID
+
+    Returns:
+        User ID to use for index naming
+    """
+    from app.models.kind import Kind
+    from app.services.group_permission import get_effective_role_in_group
+
+    try:
+        kb_id = int(knowledge_base_id)
+    except ValueError:
+        # If knowledge_base_id is not a valid integer, return current user's ID
+        return current_user_id
+
+    # Get the knowledge base
+    kb = (
+        db.query(Kind)
+        .filter(
+            Kind.id == kb_id,
+            Kind.kind == "KnowledgeBase",
+            Kind.is_active == True,
+        )
+        .first()
+    )
+
+    if not kb:
+        # Knowledge base not found, return current user's ID
+        return current_user_id
+
+    # Check access permission
+    if kb.namespace == "default":
+        # Personal knowledge base - use current user's ID
+        return current_user_id
+    else:
+        # Group knowledge base - return the KB creator's user_id for index naming
+        # This ensures all group members access the same index
+        return kb.user_id
+
+
 def _index_document_background(
     knowledge_base_id: str,
     attachment_id: int,
@@ -372,6 +423,7 @@ def _index_document_background(
     embedding_model_namespace: str,
     user_id: int,
     splitter_config: Optional[SplitterConfig] = None,
+    document_id: Optional[int] = None,
 ):
     """
     Background task for RAG document indexing.
@@ -390,8 +442,9 @@ def _index_document_background(
         retriever_namespace: Retriever namespace
         embedding_model_name: Embedding model name
         embedding_model_namespace: Embedding model namespace
-        user_id: User ID
+        user_id: User ID (the user who triggered the indexing)
         splitter_config: Optional splitter configuration
+        document_id: Optional document ID to use as doc_ref
     """
     logger.info(
         f"Background task started: indexing document for knowledge base {knowledge_base_id}, "
@@ -401,6 +454,19 @@ def _index_document_background(
     # Create a new database session for the background task
     db = SessionLocal()
     try:
+        # Get the correct user_id for index naming
+        # For group knowledge bases, use the KB creator's user_id
+        # This ensures all group members access the same index
+        index_owner_user_id = _get_index_owner_user_id_sync(
+            db=db,
+            knowledge_base_id=knowledge_base_id,
+            current_user_id=user_id,
+        )
+        logger.info(
+            f"Using index_owner_user_id={index_owner_user_id} for indexing "
+            f"(original user_id={user_id})"
+        )
+
         # Get retriever from database
         retriever_crd = retriever_kinds_service.get_retriever(
             db=db,
@@ -425,21 +491,38 @@ def _index_document_background(
 
         # Run the async index_document in a new event loop
         # This is necessary because BackgroundTasks runs in a thread without an event loop
+        # Use index_owner_user_id for per_user index strategy to ensure
+        # all group members access the same index created by the KB owner
         result = asyncio.run(
             doc_service.index_document(
                 knowledge_id=knowledge_base_id,
                 embedding_model_name=embedding_model_name,
                 embedding_model_namespace=embedding_model_namespace,
-                user_id=user_id,
+                user_id=index_owner_user_id,
                 db=db,
                 attachment_id=attachment_id,
                 splitter_config=splitter_config,
+                document_id=document_id,
             )
         )
 
         logger.info(
             f"Successfully indexed document for knowledge base {knowledge_base_id}: {result}"
         )
+
+        # Update document is_active to True after successful indexing
+        if document_id:
+            from app.models.knowledge import KnowledgeDocument
+
+            doc = db.query(KnowledgeDocument).filter(
+                KnowledgeDocument.id == document_id
+            ).first()
+            if doc:
+                doc.is_active = True
+                db.commit()
+                logger.info(
+                    f"Updated document {document_id} is_active to True after successful indexing"
+                )
     except Exception as e:
         logger.error(
             f"Failed to index document for knowledge base {knowledge_base_id}: {str(e)}",
