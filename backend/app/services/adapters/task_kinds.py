@@ -599,30 +599,37 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         """
         from app.models.task_member import MemberStatus, TaskMember
 
-        # Count total group chats where user is a member (not owner)
-        # Exclude tasks where user is the owner to avoid duplicates with /tasks/lite
+        # Count total group chats where user is a member OR owner of a group chat
+        # This includes:
+        # 1. Tasks where user is in task_members (invited to group chat)
+        # 2. Tasks where user is owner AND task has is_group_chat=true in spec
         count_sql = text(
             """
             SELECT COUNT(DISTINCT k.id)
             FROM tasks k
-            INNER JOIN task_members tm ON k.id = tm.task_id AND tm.user_id = :user_id AND tm.status = 'ACTIVE'
+            LEFT JOIN task_members tm ON k.id = tm.task_id AND tm.user_id = :user_id AND tm.status = 'ACTIVE'
             WHERE k.kind = 'Task'
             AND k.is_active = true
-            AND k.user_id != :user_id
+            AND (
+                tm.id IS NOT NULL
+                OR (k.user_id = :user_id AND JSON_EXTRACT(k.json, '$.spec.is_group_chat') = true)
+            )
         """
         )
         total_result = db.execute(count_sql, {"user_id": user_id}).scalar()
 
         # Get task IDs sorted by updated_at (most recently active first)
-        # Exclude tasks where user is the owner
         ids_sql = text(
             """
             SELECT DISTINCT k.id, k.updated_at
             FROM tasks k
-            INNER JOIN task_members tm ON k.id = tm.task_id AND tm.user_id = :user_id AND tm.status = 'ACTIVE'
+            LEFT JOIN task_members tm ON k.id = tm.task_id AND tm.user_id = :user_id AND tm.status = 'ACTIVE'
             WHERE k.kind = 'Task'
             AND k.is_active = true
-            AND k.user_id != :user_id
+            AND (
+                tm.id IS NOT NULL
+                OR (k.user_id = :user_id AND JSON_EXTRACT(k.json, '$.spec.is_group_chat') = true)
+            )
             ORDER BY k.updated_at DESC
             LIMIT :limit OFFSET :skip
         """

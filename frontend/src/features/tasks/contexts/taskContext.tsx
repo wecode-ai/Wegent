@@ -130,7 +130,8 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     setTaskLoading(true);
     const result = await loadPages(loadedPages, false);
 
-    // Also fetch group chats to ensure they're visible even if not recently updated
+    // Fetch group chats separately to ensure complete group chat list
+    // This is needed because /tasks/lite may not return all group chats due to pagination
     let groupChatTasks: Task[] = [];
     try {
       const groupChatsResult = await taskApis.getGroupChats({ page: 1, limit: 100 });
@@ -141,11 +142,20 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
 
     // Only update tasks if no error occurred - preserve existing data on network error
     if (!result.error) {
-      // Merge group chats with regular tasks, avoiding duplicates
-      const regularTasks = result.items;
-      const regularTaskIds = new Set(regularTasks.map((t: Task) => t.id));
-      const uniqueGroupChats = groupChatTasks.filter((gc: Task) => !regularTaskIds.has(gc.id));
-      const mergedTasks = [...regularTasks, ...uniqueGroupChats];
+      // Strategy: Use group chats from /tasks/group-chats API (complete list)
+      // and regular tasks (non-group-chat) from /tasks/lite
+      const regularTasks = result.items.filter((t: Task) => !t.is_group_chat);
+
+      // Create a Set of group chat IDs from API response for deduplication
+      const groupChatIds = new Set(groupChatTasks.map((t: Task) => t.id));
+
+      // Also include any group chats from /tasks/lite that weren't in /tasks/group-chats
+      // (edge case: newly created group chats that haven't been indexed yet)
+      const additionalGroupChats = result.items.filter(
+        (t: Task) => t.is_group_chat && !groupChatIds.has(t.id)
+      );
+
+      const mergedTasks = [...regularTasks, ...groupChatTasks, ...additionalGroupChats];
 
       // Sort by created_at descending
       mergedTasks.sort((a, b) => {
