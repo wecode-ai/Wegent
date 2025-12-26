@@ -215,9 +215,10 @@ def build_connections(
             sanitized_username = sanitize_header_value(username)
             if sanitized_username:
                 headers[user_header_key] = sanitized_username
-                logger.debug(
-                    "[MCP] Added user header '%s' for server '%s' (type=%s)",
+                logger.info(
+                    "[MCP] Added user header '%s=%s' for server '%s' (type=%s)",
                     user_header_key,
+                    sanitized_username,
                     server_name,
                     server_type,
                 )
