@@ -33,10 +33,11 @@ import { modelApis, type UnifiedModel } from '@/apis/models';
 import type { TestConversation } from '../types';
 import type { ModelRecommendation } from '@/apis/wizard';
 import GeneratingLoader from './GeneratingLoader';
-import MessageBubble, {
+import {
+  MessageBubble,
   type Message,
   type ParagraphAction,
-} from '@/features/tasks/components/MessageBubble';
+} from '@/features/tasks/components/message';
 import { useTheme } from '@/features/theme/ThemeProvider';
 import '../wizard-animations.css';
 
@@ -88,7 +89,7 @@ function ParagraphOptimizePopover({
             <Wand2 className="w-4 h-4 text-primary" />
           )}
           <span className="text-sm font-medium">
-            {isLoading ? t('wizard.optimizing') : t('wizard.optimize_paragraph')}
+            {isLoading ? t('wizard:optimizing') : t('wizard:optimize_paragraph')}
           </span>
         </div>
         {!isLoading && (
@@ -118,7 +119,7 @@ function ParagraphOptimizePopover({
       {isLoading ? (
         <div className="flex flex-col items-center justify-center py-4 gap-2">
           <Spinner className="w-6 h-6 text-primary" />
-          <p className="text-sm text-text-muted">{t('wizard.optimizing_prompt')}</p>
+          <p className="text-sm text-text-muted">{t('wizard:optimizing_prompt')}</p>
         </div>
       ) : (
         <>
@@ -126,7 +127,7 @@ function ParagraphOptimizePopover({
           <Textarea
             value={localFeedback}
             onChange={e => setLocalFeedback(e.target.value)}
-            placeholder={t('wizard.iterate_placeholder')}
+            placeholder={t('wizard:iterate_placeholder')}
             className="min-h-[60px] text-sm resize-none"
             autoFocus
             disabled={isLoading}
@@ -147,7 +148,7 @@ function ParagraphOptimizePopover({
               disabled={isLoading || !localFeedback.trim()}
             >
               <RefreshCw className="w-3.5 h-3.5 mr-1" />
-              {t('wizard.iterate_button')}
+              {t('wizard:iterate_button')}
             </Button>
           </div>
         </>
@@ -187,7 +188,7 @@ export default function PreviewAdjustStep({
   promptRefreshed = false,
   sampleTestMessage = '',
 }: PreviewAdjustStepProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation(['common', 'wizard']);
   const { theme } = useTheme();
   const [testMessage, setTestMessage] = useState(sampleTestMessage);
   const [feedbackMessage, setFeedbackMessage] = useState('');
@@ -405,7 +406,7 @@ export default function PreviewAdjustStep({
   // When user clicks the action button on a paragraph, open the unified optimize popover
   const paragraphAction: ParagraphAction = {
     icon: <Wand2 className="w-4 h-4" />,
-    tooltip: t('wizard.optimize_paragraph'),
+    tooltip: t('wizard:optimize_paragraph'),
     onAction: (paragraphText: string, event?: React.MouseEvent) => {
       openOptimizePopover(paragraphText, event);
     },
@@ -418,11 +419,11 @@ export default function PreviewAdjustStep({
       <div className="flex items-center justify-between p-3 border-b border-border flex-shrink-0">
         <Label className="text-sm font-medium flex items-center gap-2">
           <FileText className="w-4 h-4 text-text-secondary" />
-          {t('wizard.system_prompt')}
+          {t('wizard:system_prompt')}
           {showRefreshSuccess && (
             <span className="flex items-center gap-1 text-xs text-primary refresh-toast">
               <Sparkles className="w-3 h-3 refresh-success-icon" />
-              {t('wizard.prompt_refreshed')}
+              {t('wizard:prompt_refreshed')}
             </span>
           )}
         </Label>
@@ -444,7 +445,7 @@ export default function PreviewAdjustStep({
           value={systemPrompt}
           onChange={e => onPromptChange(e.target.value)}
           className={`min-h-[200px] h-full font-mono text-sm resize-none transition-all duration-300 ${isRefreshing ? 'prompt-refreshing prompt-refresh-border' : ''}`}
-          placeholder={t('wizard.system_prompt_placeholder')}
+          placeholder={t('wizard:system_prompt_placeholder')}
         />
       </div>
 
@@ -452,9 +453,9 @@ export default function PreviewAdjustStep({
       <div className="border-t border-border p-3 flex-shrink-0 space-y-3" ref={iteratePanelRef}>
         <div className="flex items-center gap-2">
           <Wand2 className="w-4 h-4 text-primary" />
-          <span className="text-sm font-medium text-text-primary">{t('wizard.iterate_label')}</span>
+          <span className="text-sm font-medium text-text-primary">{t('wizard:iterate_label')}</span>
         </div>
-        <p className="text-xs text-text-muted">{t('wizard.preview_adjust_iterate_hint')}</p>
+        <p className="text-xs text-text-muted">{t('wizard:preview_adjust_iterate_hint')}</p>
 
         {/* Quoted text area - shows when text is selected from AI response */}
         {quotedText && (
@@ -462,7 +463,7 @@ export default function PreviewAdjustStep({
             <div className="flex items-start gap-2">
               <Quote className="w-4 h-4 text-primary flex-shrink-0 mt-0.5" />
               <div className="flex-1 min-w-0">
-                <p className="text-xs text-text-muted mb-1">{t('wizard.quoted_text_label')}</p>
+                <p className="text-xs text-text-muted mb-1">{t('wizard:quoted_text_label')}</p>
                 <p className="text-sm text-text-primary line-clamp-3 italic">
                   &ldquo;{quotedText}&rdquo;
                 </p>
@@ -482,14 +483,14 @@ export default function PreviewAdjustStep({
         {!quotedText && latestConversation && (
           <p className="text-xs text-text-muted flex items-center gap-1.5">
             <Quote className="w-3 h-3" />
-            {t('wizard.select_text_hint')}
+            {t('wizard:select_text_hint')}
           </p>
         )}
 
         <Textarea
           value={feedbackMessage}
           onChange={e => setFeedbackMessage(e.target.value)}
-          placeholder={t('wizard.iterate_placeholder')}
+          placeholder={t('wizard:iterate_placeholder')}
           className="min-h-[80px] text-sm border-border focus:border-primary/50"
           onKeyDown={e => {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -510,7 +511,7 @@ export default function PreviewAdjustStep({
             ) : (
               <>
                 <RefreshCw className="w-4 h-4 mr-1" />
-                {t('wizard.iterate_button')}
+                {t('wizard:iterate_button')}
               </>
             )}
           </Button>
@@ -528,7 +529,7 @@ export default function PreviewAdjustStep({
           <div className="flex items-center gap-3 flex-shrink-0">
             <Label className="text-sm font-medium flex items-center gap-2 flex-shrink-0">
               <Cpu className="w-4 h-4 text-text-secondary" />
-              {t('wizard.select_model')}
+              {t('wizard:select_model')}
             </Label>
             <Select
               value={selectedModel?.model_name || ''}
@@ -537,7 +538,7 @@ export default function PreviewAdjustStep({
             >
               <SelectTrigger className="w-[200px]">
                 <SelectValue
-                  placeholder={isLoadingModels ? t('models.loading') : t('wizard.select_model')}
+                  placeholder={isLoadingModels ? t('models.loading') : t('wizard:select_model')}
                 />
               </SelectTrigger>
               <SelectContent>
@@ -555,7 +556,7 @@ export default function PreviewAdjustStep({
                 ))}
                 {availableModels.length === 0 && !isLoadingModels && (
                   <div className="px-2 py-4 text-center text-sm text-text-muted">
-                    {t('wizard.no_models_available')}
+                    {t('wizard:no_models_available')}
                   </div>
                 )}
               </SelectContent>
@@ -568,20 +569,20 @@ export default function PreviewAdjustStep({
             <div className="flex items-center justify-between flex-shrink-0">
               <Label className="text-sm font-medium flex items-center gap-2">
                 <MessageSquare className="w-4 h-4 text-text-secondary" />
-                {t('wizard.single_round_preview')}
+                {t('wizard:single_round_preview')}
               </Label>
               <div className="flex items-center gap-2">
                 {showRefreshSuccess && (
                   <span className="text-xs text-primary flex items-center gap-1 refresh-toast">
                     <Sparkles className="w-3 h-3" />
-                    {t('wizard.preview_cleared')}
+                    {t('wizard:preview_cleared')}
                   </span>
                 )}
                 <span
                   ref={singleRoundHintRef}
                   className="text-xs text-text-muted bg-muted px-2 py-1 rounded"
                 >
-                  {t('wizard.single_round_hint')}
+                  {t('wizard:single_round_hint')}
                 </span>
               </div>
             </div>
@@ -602,14 +603,14 @@ export default function PreviewAdjustStep({
                     {showRefreshSuccess ? (
                       <>
                         <Sparkles className="w-10 h-10 mb-3 text-primary opacity-70 refresh-success-icon" />
-                        <p className="text-sm text-primary">{t('wizard.prompt_optimized')}</p>
-                        <p className="text-xs mt-1">{t('wizard.try_new_prompt')}</p>
+                        <p className="text-sm text-primary">{t('wizard:prompt_optimized')}</p>
+                        <p className="text-xs mt-1">{t('wizard:try_new_prompt')}</p>
                       </>
                     ) : (
                       <>
                         <MessageSquare className="w-10 h-10 mb-3 opacity-50" />
-                        <p className="text-sm">{t('wizard.test_empty')}</p>
-                        <p className="text-xs mt-1">{t('wizard.preview_adjust_empty_hint')}</p>
+                        <p className="text-sm">{t('wizard:test_empty')}</p>
+                        <p className="text-xs mt-1">{t('wizard:preview_adjust_empty_hint')}</p>
                       </>
                     )}
                   </div>
@@ -644,7 +645,7 @@ export default function PreviewAdjustStep({
                               }}
                             >
                               <Wand2 className="w-3.5 h-3.5" />
-                              {t('wizard.optimize_response')}
+                              {t('wizard:optimize_response')}
                             </Button>
                           </div>
                         )}
@@ -681,7 +682,7 @@ export default function PreviewAdjustStep({
                     ref={testInputRef}
                     value={testMessage}
                     onChange={e => setTestMessage(e.target.value)}
-                    placeholder={t('wizard.preview_adjust_input_placeholder')}
+                    placeholder={t('wizard:preview_adjust_input_placeholder')}
                     className="min-h-[50px] max-h-[80px] flex-1 text-sm resize-none"
                     onKeyDown={e => {
                       if (e.key === 'Enter' && !e.shiftKey) {
@@ -696,7 +697,7 @@ export default function PreviewAdjustStep({
                     disabled={isTestingPrompt || !testMessage.trim() || !selectedModel}
                     className="self-end whitespace-nowrap"
                   >
-                    {isTestingPrompt ? <Spinner className="w-4 h-4" /> : t('wizard.click_to_test')}
+                    {isTestingPrompt ? <Spinner className="w-4 h-4" /> : t('wizard:click_to_test')}
                   </Button>
                 </div>
               </div>
@@ -720,7 +721,7 @@ export default function PreviewAdjustStep({
               onClick={() => setIsPromptExpanded(true)}
             >
               <ChevronLeft className="w-4 h-4" />
-              <span className="writing-mode-vertical text-xs">{t('wizard.system_prompt')}</span>
+              <span className="writing-mode-vertical text-xs">{t('wizard:system_prompt')}</span>
               <FileText className="w-4 h-4 text-text-secondary" />
             </Button>
           </div>

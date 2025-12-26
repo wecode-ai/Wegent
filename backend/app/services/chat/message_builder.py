@@ -8,12 +8,33 @@ from typing import Any
 
 
 def is_vision_message(message: Any) -> bool:
-    """Check if message is a vision message."""
-    return isinstance(message, dict) and message.get("type") == "vision"
+    """Check if message is a vision message (single or multi)."""
+    return isinstance(message, dict) and message.get("type") in (
+        "vision",
+        "multi_vision",
+    )
 
 
 def build_vision_content(message: dict[str, Any]) -> list[dict[str, Any]]:
     """Build OpenAI-compatible vision content blocks from a vision message dict."""
+    # Handle multi_vision type (multiple images)
+    if message.get("type") == "multi_vision":
+        content = [{"type": "text", "text": message.get("text", "")}]
+
+        # Add all images
+        for image_data in message.get("images", []):
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{image_data['mime_type']};base64,{image_data['image_base64']}"
+                    },
+                }
+            )
+
+        return content
+
+    # Handle single vision type
     return [
         {"type": "text", "text": message.get("text", "")},
         {

@@ -9,7 +9,8 @@
     "clear": "清空聊天",
     "copy": "复制",
     "regenerate": "重新生成",
-    "stop": "停止"
+    "stop": "停止",
+    "retry": "重试"
   },
   "status": {
     "typing": "AI 正在输入...",
@@ -50,7 +51,19 @@
     "content_incomplete": "回答未完成",
     "content_incomplete_desc": "连接已断开，这是生成的部分内容",
     "like": "喜欢",
-    "dislike": "不喜欢"
+    "dislike": "不喜欢",
+    "searching": "搜索中",
+    "searched_for": "为你搜索",
+    "results": "条结果",
+    "using_tool": "使用工具中",
+    "used_tool": "已使用工具",
+    "times": "次",
+    "used_tools": "使用了工具",
+    "using_tools": "使用工具中",
+    "tool_completed": "工具完成",
+    "query": "查询",
+    "search_completed": "搜索完成",
+    "found": "找到"
   },
   "shared_task": {
     "share_task": "分享",
@@ -144,7 +157,16 @@
   "send_shortcut_cmd_enter_mac": "⌘+回车发送，回车换行",
   "send_shortcut_cmd_enter_win": "Ctrl+回车发送，回车换行",
   "errors": {
-    "payload_too_large": "内容过长：对话历史或附件超出限制，请开始新对话或减小附件大小"
+    "request_failed": "请求大模型接口失败",
+    "request_failed_retry": "请求大模型接口失败, 请点击重试",
+    "model_unsupported": "当前模型不支持请切换大模型",
+    "payload_too_large": "内容过长：对话历史或附件超出限制，请开始新对话或减小附件大小",
+    "llm_unsupported": "当前模型不支持此请求（如多模态消息），请更换其他模型",
+    "llm_error": "模型调用失败：模型暂时不可用，请稍后重试",
+    "invalid_parameter": "参数错误：请求参数不正确，请检查输入内容",
+    "network_error": "网络连接失败：请检查网络连接后重试",
+    "timeout_error": "请求超时：服务响应时间过长，请稍后重试",
+    "generic_error": "请求失败：未知错误，请重试或联系管理员"
   },
   "clarification": {
     "title": "智能追问 (Smart Follow-up)",
@@ -203,6 +225,10 @@
     "enable": "启用联网搜索",
     "disable": "禁用联网搜索",
     "select_engine": "选择搜索引擎"
+  },
+  "deep_thinking": {
+    "enable": "启用深度思考",
+    "disable": "禁用深度思考"
   },
   "clarification_toggle": {
     "enable": "启用智能追问模式",

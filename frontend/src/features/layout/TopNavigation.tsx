@@ -21,6 +21,8 @@ type TopNavigationProps = {
   children?: React.ReactNode;
   onMobileSidebarToggle?: () => void;
   onTaskDeleted?: () => void;
+  onMembersChanged?: () => void; // Callback to refresh task detail when converted to group chat
+  isSidebarCollapsed?: boolean;
 };
 
 export default function TopNavigation({
@@ -31,6 +33,8 @@ export default function TopNavigation({
   children,
   onMobileSidebarToggle,
   onTaskDeleted,
+  onMembersChanged,
+  isSidebarCollapsed = false,
 }: TopNavigationProps) {
   const { t } = useTranslation('common');
   const isMobile = useIsMobile();
@@ -43,7 +47,11 @@ export default function TopNavigation({
   const shouldShowLogo = showLogo || (variant === 'standalone' && !isMobile);
 
   return (
-    <div className="relative flex items-center justify-between px-4 sm:px-6 py-2 sm:py-3 min-h-[44px] bg-base">
+    <div
+      className={`relative flex items-center justify-between py-2 sm:py-3 min-h-[44px] bg-base ${
+        isSidebarCollapsed && isDesktop ? 'pl-24 pr-4 sm:pr-6' : 'px-4 sm:px-6'
+      }`}
+    >
       {/* Left side - Mobile sidebar toggle, Logo, and Title */}
       <div className="flex items-center gap-3">
         {showHamburgerMenu && (
@@ -73,7 +81,12 @@ export default function TopNavigation({
 
         {/* Show task title dropdown when in with-sidebar variant */}
         {variant === 'with-sidebar' && (
-          <TaskTitleDropdown title={title} taskDetail={taskDetail} onTaskDeleted={onTaskDeleted} />
+          <TaskTitleDropdown
+            title={title}
+            taskDetail={taskDetail}
+            onTaskDeleted={onTaskDeleted}
+            onMembersChanged={onMembersChanged}
+          />
         )}
 
         {/* Show title as heading when explicitly provided and not in with-sidebar variant */}

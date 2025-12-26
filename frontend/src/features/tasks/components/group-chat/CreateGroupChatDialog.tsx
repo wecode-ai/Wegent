@@ -29,7 +29,8 @@ import {
 import { teamService } from '@/features/tasks/service/teamService';
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext';
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
-import ModelSelector, { Model } from '@/features/tasks/components/ModelSelector';
+import { ModelSelector, type Model } from '@/features/tasks/components/selector';
+import { useUser } from '@/features/common/UserContext';
 
 interface CreateGroupChatDialogProps {
   open: boolean;
@@ -49,6 +50,7 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
   const { teams, isTeamsLoading } = teamService.useTeams();
   const { sendMessage } = useChatStreamContext();
   const { refreshTasks, setSelectedTask } = useTaskContext();
+  const { user } = useUser();
 
   // Filter teams to only show chat-type teams (agent_type === 'chat')
   const chatTeams = useMemo(() => {
@@ -117,7 +119,11 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
           pendingUserMessage: undefined,
           pendingAttachment: null,
           immediateTaskId: -Date.now(), // Temporary negative ID for immediate feedback
-          onTaskIdResolved: realTaskId => {
+          // Pass current user information to ensure proper sender display
+          currentUserId: user?.id,
+          currentUserName: user?.user_name,
+          // Called when message is sent successfully with the real task ID
+          onMessageSent: (_localMessageId: string, realTaskId: number, _subtaskId: number) => {
             // Close dialog and reset form when task ID is resolved
             onOpenChange(false);
             setTitle('');
@@ -140,15 +146,12 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
 
             // Navigate to the new task to show streaming output
             router.push(`/chat?taskId=${realTaskId}`);
-          },
-          onAIComplete: () => {
+
             // Success toast
             toast({
               title: t('groupChat.create.success'),
               description: t('groupChat.create.successDesc'),
             });
-
-            setIsCreating(false);
           },
           onError: error => {
             toast({

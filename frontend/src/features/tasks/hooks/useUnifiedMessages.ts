@@ -66,6 +66,13 @@ export interface DisplayMessage {
   subtaskStatus?: string;
   /** Thinking data for AI messages */
   thinking?: unknown;
+  /** Full result data from backend (for executor tasks and shell_type) */
+  result?: {
+    value?: string;
+    thinking?: unknown[];
+    workbench?: Record<string, unknown>;
+    shell_type?: string; // Shell type for frontend display (Chat, ClaudeCode, Agno, etc.)
+  };
   /** Whether this message is from the current user (for alignment) */
   isCurrentUser?: boolean;
   /** Whether to show the sender avatar/name */
@@ -228,9 +235,12 @@ export function useUnifiedMessages({
         subtaskStatus: msg.subtaskStatus,
         // Get thinking from result field (for executor tasks)
         thinking: msg.result?.thinking,
+        // Include full result object (contains shell_type and other metadata)
+        result: msg.result,
         isCurrentUser: msg.type === 'user' && (msg.senderUserId === user?.id || !msg.senderUserId),
         showSender: isGroupChat && msg.type === 'user',
       };
+
       messages.push(displayMsg);
 
       // Track pending user messages

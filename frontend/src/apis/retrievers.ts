@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { apiClient } from './client';
+import { UnifiedModel, UnifiedModelListResponse } from './models';
 
 // Retriever CRD Types
 export interface IndexStrategy {
@@ -177,5 +178,14 @@ export const retrieverApis = {
     return apiClient.get(
       `/retrievers/storage-types/${encodeURIComponent(storageType)}/retrieval-methods`
     );
+  },
+
+  /**
+   * Get embedding models (filter models by modelType=embedding)
+   */
+  async getEmbeddingModels(): Promise<UnifiedModel[]> {
+    const response = await apiClient.get<UnifiedModelListResponse>('/models/unified');
+    const models = response?.data || [];
+    return models.filter((model: UnifiedModel) => model.modelCategoryType === 'embedding');
   },
 };

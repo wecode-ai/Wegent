@@ -126,7 +126,7 @@ frontend/
 - Implement declarative API for resource CRUD operations
 - Manage user authentication and authorization
 - Coordinate execution layer for task scheduling
-- Provide WebSocket support for real-time communication
+- Provide WebSocket support for real-time chat communication (Socket.IO)
 
 **Technology Stack**:
 - **Framework**: FastAPI 0.68+
@@ -135,6 +135,7 @@ frontend/
 - **Authentication**: JWT (PyJWT), OAuth (Authlib)
 - **Async Support**: asyncio, aiohttp
 - **Cache**: Redis client
+- **Real-time Communication**: Socket.IO (python-socketio) with Redis adapter
 
 **Core Features**:
 - 🚀 High-performance async API
@@ -314,12 +315,47 @@ sequenceDiagram
 
 | Communication Type | Protocol | Purpose |
 |-------------------|----------|---------|
-| **Frontend ↔ Backend** | HTTP/HTTPS, WebSocket | API calls, real-time updates |
+| **Frontend ↔ Backend** | HTTP/HTTPS, WebSocket (Socket.IO) | API calls, real-time chat streaming |
 | **Backend ↔ Database** | MySQL Protocol | Data persistence |
-| **Backend ↔ Redis** | Redis Protocol | Cache operations |
+| **Backend ↔ Redis** | Redis Protocol | Cache operations, Socket.IO adapter |
 | **Backend ↔ Executor Manager** | HTTP | Task scheduling |
 | **Executor Manager ↔ Executor** | Docker API | Container management |
 | **Executor ↔ Agent** | Process invocation | Task execution |
+
+### WebSocket Architecture (Socket.IO)
+
+The chat system uses Socket.IO for bidirectional real-time communication:
+
+**Namespace**: `/chat`
+**Path**: `/socket.io`
+
+**Client → Server Events**:
+| Event | Purpose |
+|-------|---------|
+| `chat:send` | Send a chat message |
+| `chat:cancel` | Cancel ongoing stream |
+| `chat:resume` | Resume stream after reconnect |
+| `task:join` | Join a task room |
+| `task:leave` | Leave a task room |
+| `history:sync` | Sync message history |
+
+**Server → Client Events**:
+| Event | Purpose |
+|-------|---------|
+| `chat:start` | AI started generating response |
+| `chat:chunk` | Streaming content chunk |
+| `chat:done` | AI response completed |
+| `chat:error` | Error occurred |
+| `chat:cancelled` | Stream was cancelled |
+| `chat:message` | Non-streaming message (group chat) |
+| `task:created` | New task created |
+| `task:status` | Task status update |
+
+**Room-based Message Routing**:
+- User Room: `user:{user_id}` - For personal notifications
+- Task Room: `task:{task_id}` - For chat streaming and group chat
+
+**Redis Adapter**: Enables multi-worker support for horizontal scaling
 
 ---
 

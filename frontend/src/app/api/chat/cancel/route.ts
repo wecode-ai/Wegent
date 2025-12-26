@@ -9,9 +9,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-
-// Get backend URL from environment
-const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { getInternalApiUrl } from '@/lib/server-config';
 
 export async function POST(request: NextRequest) {
   try {
@@ -27,11 +25,12 @@ export async function POST(request: NextRequest) {
     const authHeader = request.headers.get('Authorization');
 
     // Forward request to backend
+    const backendUrl = getInternalApiUrl();
     console.log(
       '[CANCEL_DEBUG] Forwarding cancel request to backend:',
-      `${BACKEND_URL}/api/chat/cancel`
+      `${backendUrl}/api/chat/cancel`
     );
-    const backendResponse = await fetch(`${BACKEND_URL}/api/chat/cancel`, {
+    const backendResponse = await fetch(`${backendUrl}/api/chat/cancel`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

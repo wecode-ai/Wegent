@@ -49,6 +49,7 @@ interface SettingsTabNavProps {
   onTabChange: (tab: SettingsTabId) => void;
   selectedGroup?: string | null;
   onGroupChange?: (groupName: string | null) => void;
+  refreshTrigger?: number;
 }
 
 interface TabItem {
@@ -70,8 +71,9 @@ export function SettingsTabNav({
   onTabChange,
   selectedGroup,
   onGroupChange,
+  refreshTrigger,
 }: SettingsTabNavProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation(['common', 'groups']);
   const isMobile = useIsMobile();
   const indicatorContainerRef = useRef<HTMLDivElement | null>(null);
   const itemRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -96,7 +98,7 @@ export function SettingsTabNav({
 
   useEffect(() => {
     loadGroups();
-  }, [loadGroups]);
+  }, [loadGroups, refreshTrigger]);
 
   // Resource tabs that have both personal and group versions
   // Team (智能体) is placed first as the default entry module

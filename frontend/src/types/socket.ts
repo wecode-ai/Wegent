@@ -14,6 +14,7 @@ export const ClientEvents = {
   CHAT_SEND: 'chat:send',
   CHAT_CANCEL: 'chat:cancel',
   CHAT_RESUME: 'chat:resume',
+  CHAT_RETRY: 'chat:retry',
   TASK_JOIN: 'task:join',
   TASK_LEAVE: 'task:leave',
   HISTORY_SYNC: 'history:sync',
@@ -55,13 +56,19 @@ export interface ChatSendPayload {
   team_id: number;
   message: string;
   title?: string;
-  attachment_id?: number;
+  attachment_id?: number; // Single attachment (deprecated, use attachment_ids)
+  attachment_ids?: number[]; // Multiple attachments support
+  enable_deep_thinking?: boolean;
   enable_web_search?: boolean;
   search_engine?: string;
   enable_clarification?: boolean;
   force_override_bot_model?: string;
   force_override_bot_model_type?: string;
   is_group_chat?: boolean;
+  contexts?: Array<{
+    type: string;
+    data: Record<string, unknown>;
+  }>;
   // Repository info for code tasks
   git_url?: string;
   git_repo?: string;
@@ -82,6 +89,11 @@ export interface ChatResumePayload {
   offset: number;
 }
 
+export interface ChatRetryPayload {
+  task_id: number;
+  subtask_id: number;
+}
+
 export interface TaskJoinPayload {
   task_id: number;
 }
@@ -99,10 +111,20 @@ export interface HistorySyncPayload {
 // Server -> Client Payloads
 // ============================================================
 
+export interface SourceReference {
+  /** Source index number (e.g., 1, 2, 3) */
+  index: number;
+  /** Document title/filename */
+  title: string;
+  /** Knowledge base ID */
+  kb_id: number;
+}
+
 export interface ChatStartPayload {
   task_id: number;
   subtask_id: number;
   bot_name?: string;
+  shell_type?: string; // Shell type for frontend display (Chat, ClaudeCode, Agno, etc.)
 }
 
 export interface ChatChunkPayload {
@@ -114,7 +136,10 @@ export interface ChatChunkPayload {
     value?: string;
     thinking?: unknown[];
     workbench?: Record<string, unknown>;
+    sources?: SourceReference[];
   };
+  /** Knowledge base source references (for RAG citations) */
+  sources?: SourceReference[];
 }
 
 export interface ChatDonePayload {
@@ -124,12 +149,16 @@ export interface ChatDonePayload {
   result: Record<string, unknown>;
   /** Message ID for ordering (primary sort key) */
   message_id?: number;
+  /** Knowledge base source references (for RAG citations) */
+  sources?: SourceReference[];
 }
 
 export interface ChatErrorPayload {
   subtask_id: number;
   error: string;
   type?: string;
+  /** Message ID for ordering (primary sort key) */
+  message_id?: number;
 }
 
 export interface ChatCancelledPayload {

@@ -99,7 +99,19 @@ export interface UnifiedMessage {
     value?: string;
     thinking?: unknown[];
     workbench?: Record<string, unknown>;
+    shell_type?: string; // Shell type for frontend display (Chat, ClaudeCode, Agno, etc.)
+    sources?: Array<{
+      index: number;
+      title: string;
+      kb_id: number;
+    }>;
   };
+  /** Knowledge base source references (for RAG citations) */
+  sources?: Array<{
+    index: number;
+    title: string;
+    kb_id: number;
+  }>;
 }
 
 /**
@@ -159,16 +171,25 @@ export interface ChatMessageRequest {
   model_id?: string;
   /** Force override bot's default model */
   force_override_bot_model?: boolean;
-  /** Attachment ID for file upload (optional) */
+  /** Attachment ID for file upload (optional, deprecated - use attachment_ids) */
   attachment_id?: number;
+  /** Attachment IDs for multiple file uploads (optional) */
+  attachment_ids?: number[];
   /** Enable web search for this message */
   enable_web_search?: boolean;
   /** Search engine to use (when web search is enabled) */
   search_engine?: string;
   /** Enable clarification mode for this message */
   enable_clarification?: boolean;
+  /** Enable deep thinking mode for this message */
+  enable_deep_thinking?: boolean;
   /** Mark this as a group chat task */
   is_group_chat?: boolean;
+  /** Context items (knowledge bases, etc.) */
+  contexts?: Array<{
+    type: string;
+    data: Record<string, unknown>;
+  }>;
   // Repository info for code tasks
   git_url?: string;
   git_repo?: string;
@@ -195,6 +216,9 @@ interface SyncBackendMessagesOptions {
 /**
  * Context type for chat stream management
  */
+/**
+ * Context type for chat stream management
+ */
 interface ChatStreamContextType {
   /** Get stream state for a specific task */
   getStreamState: (taskId: number) => StreamState | undefined;
@@ -202,21 +226,20 @@ interface ChatStreamContextType {
   isTaskStreaming: (taskId: number) => boolean;
   /** Get all currently streaming task IDs */
   getStreamingTaskIds: () => number[];
-  /** Send a chat message (returns immediately after message is saved) */
+  /** Send a chat message (returns task ID) */
   sendMessage: (
     request: ChatMessageRequest,
     options?: {
+      /** Local message ID from caller's message queue for precise update */
+      localMessageId?: string;
       pendingUserMessage?: string;
       pendingAttachment?: unknown;
-      /** Callback when AI response completes (chat:done event) */
-      onAIComplete?: (taskId: number, subtaskId: number) => void;
+      pendingAttachments?: unknown[];
       onError?: (error: Error) => void;
-      /** Callback when task ID is resolved (for new tasks) */
-      onTaskIdResolved?: (taskId: number) => void;
+      /** Callback when message is sent, passes back localMessageId for precise update */
+      onMessageSent?: (localMessageId: string, taskId: number, subtaskId: number) => void;
       /** Temporary task ID for immediate UI feedback (for new tasks) */
       immediateTaskId?: number;
-      /** Callback when user message is sent successfully (before AI response) */
-      onMessageSent?: (taskId: number, subtaskId: number) => void;
       /** Current user ID for group chat sender info */
       currentUserId?: number;
       /** Current user name for group chat sender info */
@@ -295,10 +318,10 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     Map<
       number,
       {
-        onAIComplete?: (taskId: number, subtaskId: number) => void;
         onError?: (error: Error) => void;
-        onTaskIdResolved?: (taskId: number) => void;
-        onMessageSent?: (taskId: number, subtaskId: number) => void;
+        /** Local message ID for precise update callback */
+        localMessageId?: string;
+        onMessageSent?: (localMessageId: string, taskId: number, subtaskId: number) => void;
       }
     >
   >(new Map());
@@ -345,30 +368,21 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
   }, [streamStates]);
 
   /**
-   * Helper function to log messages Map state
-   */
-  const logMessagesState = (
-    action: string,
-    taskId: number,
-    messages: Map<string, UnifiedMessage>
-  ) => {
-    const msgList = Array.from(messages.values()).map(m => ({
-      id: m.id,
-      type: m.type,
-      status: m.status,
-      subtaskId: m.subtaskId,
-      contentLen: m.content?.length || 0,
-    }));
-    console.log(`[ChatStreamContext][${action}] taskId=${taskId}, messages:`, msgList);
-  };
-
-  /**
    * Handle chat:start event from WebSocket
    * This indicates AI has started generating response
    * Creates a new AI message in the unified messages Map
    */
   const handleChatStart = useCallback((data: ChatStartPayload) => {
-    const { task_id, subtask_id } = data;
+    const { task_id, subtask_id, shell_type } = data;
+
+    // DEBUG: Log the complete chat:start event payload
+    console.log('[ChatStreamContext][chat:start] Received event:', {
+      full_data: data,
+      task_id,
+      subtask_id,
+      shell_type,
+      has_shell_type: !!shell_type,
+    });
 
     // Track subtask to task mapping
     if (subtask_id) {
@@ -376,6 +390,10 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     }
 
     const aiMessageId = generateMessageId('ai', subtask_id);
+
+    // Build initial result object with shell_type if available
+    const initialResult = shell_type ? { shell_type } : undefined;
+    console.log('[ChatStreamContext][chat:start] Initial result:', initialResult);
 
     setStreamStates(prev => {
       const newMap = new Map(prev);
@@ -393,14 +411,8 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           content: '',
           timestamp: Date.now(),
           subtaskId: subtask_id,
+          result: initialResult, // Include shell_type from chat:start event
         });
-
-        console.log('[ChatStreamContext][chat:start] Added AI message to existing task', {
-          taskId: task_id,
-          aiMessageId,
-          subtaskId: subtask_id,
-        });
-        logMessagesState('chat:start', task_id, newMessages);
 
         newMap.set(task_id, {
           ...currentState,
@@ -426,6 +438,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
             content: '',
             timestamp: Date.now(),
             subtaskId: subtask_id,
+            result: initialResult, // Include shell_type from chat:start event
           });
 
           // Move state from temp ID to real ID
@@ -441,8 +454,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           if (callbacks) {
             callbacksRef.current.delete(tempId);
             callbacksRef.current.set(task_id, callbacks);
-            // Notify about resolved task ID
-            callbacks.onTaskIdResolved?.(task_id);
           }
 
           // Update temp to real mapping
@@ -463,13 +474,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         subtaskId: subtask_id,
       });
 
-      console.log('[ChatStreamContext][chat:start] Created new task state', {
-        taskId: task_id,
-        aiMessageId,
-        subtaskId: subtask_id,
-      });
-      logMessagesState('chat:start (new)', task_id, newMessages);
-
       newMap.set(task_id, {
         ...defaultStreamState,
         subtaskId: subtask_id,
@@ -485,7 +489,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
    * For executor tasks, also update the result field (contains thinking, workbench)
    */
   const handleChatChunk = useCallback((data: ChatChunkPayload) => {
-    const { subtask_id, content, result } = data;
+    const { subtask_id, content, result, sources } = data;
 
     // Find task ID from subtask
     let taskId = subtaskToTaskRef.current.get(subtask_id);
@@ -518,7 +522,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       const newMessages = new Map(currentState.messages);
       const existingMessage = newMessages.get(aiMessageId);
       if (existingMessage) {
-        // For executor tasks, result contains full data (thinking, workbench)
+        // For executor tasks, result contains full data (thinking, workbench, sources)
         // Content is accumulated, but result is replaced with latest
         const updatedMessage: UnifiedMessage = {
           ...existingMessage,
@@ -528,6 +532,11 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         if (result) {
           updatedMessage.result = result as UnifiedMessage['result'];
         }
+        // If sources are provided directly (chat v2), update them
+        if (sources) {
+          updatedMessage.sources = sources;
+        }
+
         newMessages.set(aiMessageId, updatedMessage);
       }
 
@@ -545,7 +554,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
    * NO REFRESH needed - the UI will display the content from messages Map
    */
   const handleChatDone = useCallback((data: ChatDonePayload) => {
-    const { task_id: eventTaskId, subtask_id, result, message_id } = data;
+    const { task_id: eventTaskId, subtask_id, result, message_id, sources } = data;
 
     // Find task ID from subtask mapping, or use task_id from event (for group chat members)
     let taskId = subtaskToTaskRef.current.get(subtask_id);
@@ -557,11 +566,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         taskId = realId;
         // Update the mapping to use the real ID
         subtaskToTaskRef.current.set(subtask_id, realId);
-      } else {
-        console.warn('[ChatStreamContext][chat:done] Temporary ID found but no real ID mapping', {
-          tempId: taskId,
-          subtask_id,
-        });
       }
     }
 
@@ -595,42 +599,63 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       const existingMessage = newMessages.get(aiMessageId);
 
       if (existingMessage) {
+        // Check if this chat:done represents an error completion
+        // Backend sends result.error when the message failed
+        const hasError = result?.error !== undefined;
+        const finalStatus = hasError ? 'error' : 'completed';
+        const finalSubtaskStatus = hasError ? 'FAILED' : 'COMPLETED';
+
+        // Only log when error status is being preserved (for debugging error flow)
+        if (hasError) {
+          console.log('[ChatStreamContext][chat:done] Preserving error status:', {
+            subtaskId: subtask_id,
+            errorMessage: result?.error,
+          });
+        }
+
         newMessages.set(aiMessageId, {
           ...existingMessage,
-          status: 'completed',
+          status: finalStatus,
+          subtaskStatus: finalSubtaskStatus, // Update subtaskStatus for ThinkingComponent
           content: finalContent || existingMessage.content,
+          // Preserve error from chat:error if this is an error completion
+          error: hasError ? (result.error as string) : existingMessage.error,
           // Set messageId from backend for proper sorting
           messageId: message_id,
-        });
-      } else {
-        console.warn('[ChatStreamContext][chat:done] AI message not found, cannot update status', {
-          taskId,
-          aiMessageId,
-          subtask_id,
-          availableMessages: Array.from(newMessages.keys()),
+          // Set sources if provided
+          sources: sources || existingMessage.sources,
         });
       }
-
-      logMessagesState('chat:done', taskId, newMessages);
 
       newMap.set(taskId, {
         ...currentState,
         isStopping: false,
         messages: newMessages,
       });
+
       return newMap;
     });
-
-    // Call AI completion callback (for any cleanup needed by ChatArea)
-    const callbacks = callbacksRef.current.get(taskId);
-    callbacks?.onAIComplete?.(taskId, subtask_id);
+    // Note: AI completion is handled by the streaming state change, no callback needed
   }, []);
 
   /**
    * Handle chat:error event from WebSocket
    */
   const handleChatError = useCallback((data: ChatErrorPayload) => {
-    const { subtask_id, error } = data;
+    const eventId = Math.random().toString(36).substr(2, 9);
+    console.log(
+      `[ChatStreamContext][chat:error][${eventId}] RAW data received:`,
+      data,
+      typeof data
+    );
+    const { subtask_id, error, message_id } = data;
+
+    console.log(`[ChatStreamContext][chat:error][${eventId}] Received error event:`, {
+      subtask_id,
+      error,
+      message_id,
+      hasMessageId: message_id !== undefined,
+    });
 
     // Find task ID from subtask
     let taskId = subtaskToTaskRef.current.get(subtask_id);
@@ -663,10 +688,29 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       const newMessages = new Map(currentState.messages);
       const existingMessage = newMessages.get(aiMessageId);
       if (existingMessage) {
-        newMessages.set(aiMessageId, {
+        const updatedMessage = {
           ...existingMessage,
-          status: 'error',
+          status: 'error' as const,
+          subtaskStatus: 'FAILED', // Update subtaskStatus for ThinkingComponent
           error: error,
+          // Set messageId from backend for proper sorting, preserve existing if undefined
+          messageId: message_id ?? existingMessage.messageId,
+        };
+
+        console.log('[ChatStreamContext][chat:error] Updating AI message:', {
+          aiMessageId,
+          subtask_id,
+          oldMessageId: existingMessage.messageId,
+          newMessageId: message_id,
+          updatedMessage,
+        });
+
+        newMessages.set(aiMessageId, updatedMessage);
+      } else {
+        console.warn('[ChatStreamContext][chat:error] AI message not found:', {
+          aiMessageId,
+          subtask_id,
+          availableMessages: Array.from(newMessages.keys()),
         });
       }
 
@@ -683,10 +727,11 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     const callbacks = callbacksRef.current.get(taskId);
     callbacks?.onError?.(errorObj);
 
-    console.error('[ChatStreamContext] chat:error received', {
+    console.error(`[ChatStreamContext][chat:error][${eventId}] processed`, {
       task_id: taskId,
       subtask_id,
       error,
+      message_id,
     });
   }, []);
   /**
@@ -723,6 +768,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         newMessages.set(aiMessageId, {
           ...existingMessage,
           status: 'completed',
+          subtaskStatus: 'CANCELLED', // Update subtaskStatus for ThinkingComponent
         });
       }
 
@@ -733,12 +779,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       });
       return newMap;
     });
-
-    // Call AI completion callback (cancelled is treated as completed)
-    const callbacks = callbacksRef.current.get(taskId);
-    callbacks?.onAIComplete?.(taskId, subtask_id);
-
-    console.log('[ChatStreamContext] chat:cancelled received', { task_id: taskId, subtask_id });
+    // Note: AI completion is handled by the streaming state change, no callback needed
   }, []);
 
   /**
@@ -749,16 +790,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
   const handleChatMessage = useCallback((data: ChatMessagePayload) => {
     const { task_id, subtask_id, message_id, role, content, sender, created_at, attachments } =
       data;
-
-    console.log('[ChatStreamContext][chat:message] Received', {
-      task_id,
-      subtask_id,
-      message_id,
-      role,
-      sender,
-      contentLen: content?.length || 0,
-      attachmentsCount: attachments?.length || 0,
-    });
 
     // Generate message ID based on role
     const isUserMessage = role === 'user' || role?.toUpperCase() === 'USER';
@@ -774,9 +805,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
 
       // Check if message already exists (avoid duplicates)
       if (currentState.messages.has(msgId)) {
-        console.log('[ChatStreamContext][chat:message] Message already exists, skipping', {
-          msgId,
-        });
         return prev;
       }
 
@@ -797,15 +825,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       };
 
       newMessages.set(msgId, newMessage);
-
-      console.log('[ChatStreamContext][chat:message] Added message to task', {
-        taskId: task_id,
-        msgId,
-        messageId: message_id,
-        senderUserName: sender?.user_name,
-        attachmentsCount: attachments?.length || 0,
-      });
-      logMessagesState('chat:message', task_id, newMessages);
 
       newMap.set(task_id, {
         ...currentState,
@@ -853,28 +872,22 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     async (
       request: ChatMessageRequest,
       options?: {
+        /** Local message ID from caller's message queue for precise update */
+        localMessageId?: string;
         pendingUserMessage?: string;
         pendingAttachment?: unknown;
-        /** Callback when AI response completes (chat:done event) */
-        onAIComplete?: (taskId: number, subtaskId: number) => void;
+        pendingAttachments?: unknown[];
         onError?: (error: Error) => void;
-        onTaskIdResolved?: (taskId: number) => void;
+        /** Callback when message is sent, passes back localMessageId for precise update */
+        onMessageSent?: (localMessageId: string, taskId: number, subtaskId: number) => void;
+        /** Temporary task ID for immediate UI feedback (for new tasks) */
         immediateTaskId?: number;
-        /** Callback when user message is sent successfully (before AI response) */
-        onMessageSent?: (taskId: number, subtaskId: number) => void;
         /** Current user ID for group chat sender info */
         currentUserId?: number;
         /** Current user name for group chat sender info */
         currentUserName?: string;
       }
     ): Promise<number> => {
-      console.log('[ChatStreamContext] sendMessage called', {
-        isConnected,
-        teamId: request.team_id,
-        taskId: request.task_id,
-        messagePreview: request.message?.substring(0, 50),
-      });
-
       // Check WebSocket connection
       if (!isConnected) {
         console.error('[ChatStreamContext] WebSocket not connected, isConnected:', isConnected);
@@ -886,22 +899,22 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       // Use provided immediateTaskId or generate one for new tasks
       const immediateTaskId = options?.immediateTaskId || request.task_id || -Date.now();
 
-      // Store callbacks for AI response events (chat:start, chat:done, etc.)
+      // Use provided localMessageId or generate one
+      const userMessageId = options?.localMessageId || generateMessageId('user');
+
+      // Store callbacks for error handling
       callbacksRef.current.set(immediateTaskId, {
-        onAIComplete: options?.onAIComplete,
         onError: options?.onError,
-        onTaskIdResolved: options?.onTaskIdResolved,
+        localMessageId: userMessageId,
         onMessageSent: options?.onMessageSent,
       });
-
-      // Create a new user message for this send operation
-      const userMessageId = generateMessageId('user');
       const userMessage: UnifiedMessage = {
         id: userMessageId,
         type: 'user',
         status: 'pending',
         content: options?.pendingUserMessage || request.message,
         attachment: options?.pendingAttachment,
+        attachments: options?.pendingAttachments,
         timestamp: Date.now(),
         // Add sender info for group chat
         senderUserName: options?.currentUserName,
@@ -935,12 +948,15 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         message: request.message,
         title: request.title,
         attachment_id: request.attachment_id,
+        attachment_ids: request.attachment_ids,
         enable_web_search: request.enable_web_search,
         search_engine: request.search_engine,
         enable_clarification: request.enable_clarification,
+        enable_deep_thinking: request.enable_deep_thinking,
         force_override_bot_model: request.model_id,
         force_override_bot_model_type: request.force_override_bot_model ? 'user' : undefined,
         is_group_chat: request.is_group_chat,
+        contexts: request.contexts,
         // Repository info for code tasks
         git_url: request.git_url,
         git_repo: request.git_repo,
@@ -999,47 +1015,64 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         const subtaskId = response.subtask_id;
         const messageId = response.message_id;
 
-        // Update user message status to completed and set subtaskId and messageId
+        // Update user message and migrate state in a SINGLE setStreamStates call
+        // This prevents race conditions where the subtaskId update is lost during migration
         setStreamStates(prev => {
           const newMap = new Map(prev);
-          const currentState = newMap.get(immediateTaskId);
-          if (currentState) {
-            const newMessages = new Map(currentState.messages);
-            const msg = newMessages.get(userMessageId);
-            if (msg) {
-              newMessages.set(userMessageId, {
-                ...msg,
-                status: 'completed',
-                subtaskId,
-                messageId,
-              });
-            }
 
-            // If we got a real task ID different from immediate, migrate state
-            if (realTaskId !== immediateTaskId && realTaskId > 0) {
-              newMap.delete(immediateTaskId);
-              newMap.set(realTaskId, { ...currentState, messages: newMessages });
+          // Check if state was already migrated by handleChatStart (race condition)
+          // If chat:start arrived before sendChatMessage returned, state is already at realTaskId
+          let currentState = newMap.get(immediateTaskId);
+          let stateAlreadyMigrated = false;
 
-              // Update callbacks
-              const callbacks = callbacksRef.current.get(immediateTaskId);
-              if (callbacks) {
-                callbacksRef.current.delete(immediateTaskId);
-                callbacksRef.current.set(realTaskId, callbacks);
-              }
-
-              // Update temp to real mapping
-              tempToRealTaskIdRef.current.set(immediateTaskId, realTaskId);
-            } else {
-              newMap.set(immediateTaskId, { ...currentState, messages: newMessages });
-            }
+          if (!currentState && realTaskId !== immediateTaskId && realTaskId > 0) {
+            // State was already migrated to realTaskId by handleChatStart
+            currentState = newMap.get(realTaskId);
+            stateAlreadyMigrated = true;
           }
+
+          if (!currentState) return prev;
+
+          // Update user message with subtaskId and messageId
+          const newMessages = new Map(currentState.messages);
+          const msg = newMessages.get(userMessageId);
+          if (msg) {
+            newMessages.set(userMessageId, {
+              ...msg,
+              status: 'completed',
+              subtaskId,
+              messageId,
+            });
+          }
+
+          const updatedState = { ...currentState, messages: newMessages };
+
+          // If task ID changed (for new tasks) and not already migrated, migrate state
+          if (realTaskId !== immediateTaskId && realTaskId > 0 && !stateAlreadyMigrated) {
+            newMap.delete(immediateTaskId);
+            newMap.set(realTaskId, updatedState);
+          } else if (stateAlreadyMigrated) {
+            // State was already migrated, just update at realTaskId
+            newMap.set(realTaskId, updatedState);
+          } else {
+            newMap.set(immediateTaskId, updatedState);
+          }
+
           return newMap;
         });
 
-        // Notify about resolved task ID
+        // Update callbacks if task ID changed
         if (realTaskId !== immediateTaskId && realTaskId > 0) {
-          options?.onTaskIdResolved?.(realTaskId);
-          // Join the task room for receiving AI response events
+          const callbacks = callbacksRef.current.get(immediateTaskId);
+          if (callbacks) {
+            callbacksRef.current.delete(immediateTaskId);
+            callbacksRef.current.set(realTaskId, callbacks);
+          }
+          tempToRealTaskIdRef.current.set(immediateTaskId, realTaskId);
+        }
+
+        // Join the task room for receiving AI response events
+        if (realTaskId !== immediateTaskId && realTaskId > 0) {
           await joinTask(realTaskId);
         } else if (request.task_id && request.task_id > 0) {
           // Existing task, join the room for receiving AI response events
@@ -1051,16 +1084,10 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           subtaskToTaskRef.current.set(subtaskId, realTaskId);
         }
 
-        console.log('[ChatStreamContext] Message sent successfully via WebSocket', {
-          immediateTaskId,
-          realTaskId,
-          subtaskId,
-        });
-
-        // Message sent successfully - call onMessageSent callback
+        // Message sent successfully - call onMessageSent callback with localMessageId
         // NO REFRESH - the UI will display user message from messages Map
         const finalTaskId = realTaskId > 0 ? realTaskId : immediateTaskId;
-        options?.onMessageSent?.(finalTaskId, subtaskId || 0);
+        options?.onMessageSent?.(userMessageId, finalTaskId, subtaskId || 0);
 
         return realTaskId;
       } catch (error) {
@@ -1171,10 +1198,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           if (result.error) {
             console.error('[ChatStreamContext] Failed to cancel stream:', result.error);
           }
-
-          // Call onAIComplete callback
-          const callbacks = callbacksRef.current.get(taskId);
-          callbacks?.onAIComplete?.(taskId, subtaskId);
+          // Note: AI completion is handled by the streaming state change, no callback needed
         } catch (error) {
           console.error('[ChatStreamContext] Exception during cancelChatStream:', error);
         }
@@ -1246,10 +1270,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
   const clearAllStreams = useCallback((): void => {
     // Only clear frontend state, do NOT cancel backend streams
     // This allows AI to continue generating in the background when user switches tasks
-    console.log(
-      '[ChatStreamContext] Clearing all stream states (frontend only, backend continues)'
-    );
-
     callbacksRef.current.clear();
     subtaskToTaskRef.current.clear();
     tempToRealTaskIdRef.current.clear();
@@ -1276,18 +1296,14 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         onError?: (error: Error) => void;
       }
     ): Promise<boolean> => {
-      console.log('[ChatStreamContext] resumeStream called', { taskId, isConnected });
-
       // Check WebSocket connection
       if (!isConnected) {
-        console.log('[ChatStreamContext] WebSocket not connected, cannot resume stream');
         return false;
       }
 
       // Check if already streaming for this task
       const existingState = streamStates.get(taskId);
       if (existingState && computeIsStreaming(existingState.messages)) {
-        console.log('[ChatStreamContext] Already streaming for task', taskId);
         return true;
       }
 
@@ -1304,19 +1320,12 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         if (response.streaming) {
           const { subtask_id, cached_content } = response.streaming;
 
-          console.log('[ChatStreamContext] Found active streaming session', {
-            taskId,
-            subtaskId: subtask_id,
-            cachedContentLength: cached_content?.length || 0,
-          });
-
           // Track subtask to task mapping
           subtaskToTaskRef.current.set(subtask_id, taskId);
 
           // Store callbacks
           if (options) {
             callbacksRef.current.set(taskId, {
-              onAIComplete: options.onComplete,
               onError: options.onError,
             });
           }
@@ -1349,16 +1358,9 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
             return newMap;
           });
 
-          console.log('[ChatStreamContext] Stream resumed successfully', {
-            taskId,
-            subtaskId: subtask_id,
-            initialContentLength: initialContent.length,
-          });
-
           return true;
         }
 
-        console.log('[ChatStreamContext] No active streaming session for task', taskId);
         return false;
       } catch (error) {
         console.error('[ChatStreamContext] Error resuming stream:', error);
@@ -1372,176 +1374,165 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
   /**
    * Sync backend subtasks to unified messages Map
    *
-   * This method converts backend TaskDetailSubtask[] to UnifiedMessage format
-   * and merges them into the messages Map. It preserves any existing pending/streaming
-   * messages that don't have a matching backend subtask yet.
+   * Simple: merge backend messages into existing messages (don't replace)
+   */
+  /**
+   * Sync backend subtasks to unified messages Map
    *
-   * Key design:
-   * - Backend subtasks are the source of truth for completed messages
-   * - Pending/streaming messages from frontend are preserved until confirmed by backend
-   * - Uses subtaskId as the unique key to avoid duplicates
+   * Simple: merge backend messages into existing messages (don't replace)
    */
   const syncBackendMessages = useCallback(
     (taskId: number, subtasks: TaskDetailSubtask[], options?: SyncBackendMessagesOptions): void => {
-      if (!subtasks || subtasks.length === 0) {
-        return;
-      }
+      if (!subtasks || subtasks.length === 0) return;
 
       const { teamName, isGroupChat, currentUserId, currentUserName } = options || {};
 
       setStreamStates(prev => {
         const newMap = new Map(prev);
         const currentState = newMap.get(taskId) || { ...defaultStreamState };
-        const newMessages = new Map<string, UnifiedMessage>();
+        // Start with existing messages, don't create new Map
+        const messages = new Map(currentState.messages);
 
-        // First, add all backend subtasks as messages
-        // Sort by message_id (primary) and created_at (secondary) to maintain correct order
-        // This matches backend sorting logic
-        const sortedSubtasks = [...subtasks].sort((a, b) => {
-          // Primary sort by message_id
-          if (a.message_id !== b.message_id) {
-            return a.message_id - b.message_id;
+        // Build a set of existing subtaskIds to check for duplicates
+        // This handles the case where user message has temp ID but same subtaskId
+        const existingSubtaskIds = new Set<number>();
+        // Count existing user messages (with temp IDs like "user-xxx")
+        // These are messages added by sendMessage that may not have subtaskId yet
+        let existingUserMessageCount = 0;
+        for (const msg of messages.values()) {
+          if (msg.subtaskId) {
+            existingSubtaskIds.add(msg.subtaskId);
           }
-          // Secondary sort by created_at
-          return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
-        });
+          if (msg.type === 'user') {
+            existingUserMessageCount++;
+          }
+        }
 
-        for (const subtask of sortedSubtasks) {
-          // Backend returns role as uppercase 'USER' or 'ASSISTANT'
+        // Count incoming user messages from backend
+        const incomingUserSubtasks = subtasks.filter(
+          s => s.role === 'USER' || s.role?.toUpperCase() === 'USER'
+        );
+
+        for (const subtask of subtasks) {
+          // Track subtask to task mapping for WebSocket event handling
+          // IMPORTANT: This must be done for ALL subtasks, including RUNNING ones,
+          // so that chat:chunk events can find the correct taskId
+          subtaskToTaskRef.current.set(subtask.id, taskId);
+
           const isUserMessage = subtask.role === 'USER' || subtask.role?.toUpperCase() === 'USER';
-          const messageType: MessageType = isUserMessage ? 'user' : 'ai';
-
-          // Generate message ID based on type and subtask ID
           const messageId = isUserMessage ? `user-backend-${subtask.id}` : `ai-${subtask.id}`;
 
-          // Determine message status based on subtask status
-          let status: MessageStatus = 'completed';
-          if (subtask.status === 'RUNNING' || subtask.status === 'PENDING') {
-            if (isUserMessage) {
-              status = 'pending';
-            } else {
-              // For AI messages with RUNNING status:
-              // Only set to 'streaming' if we already have this message in streaming state
-              // (created by chat:start event). Otherwise, skip it - the message will be
-              // created when chat:start event arrives.
-              const existingMessage = currentState.messages.get(messageId);
-              if (existingMessage && existingMessage.status === 'streaming') {
-                status = 'streaming';
-              } else {
-                // Skip this AI message - it will be created by chat:start event
-                continue;
-              }
+          // Skip if already exists by message ID (don't overwrite streaming messages)
+          if (messages.has(messageId)) {
+            continue;
+          }
+
+          // Skip if already exists by subtaskId (handles temp ID user messages)
+          if (existingSubtaskIds.has(subtask.id)) {
+            continue;
+          }
+
+          // KEY FIX: Skip USER messages if we already have the same number of user messages
+          // This handles the race condition where sendMessage adds a user message with temp ID,
+          // but syncBackendMessages is called before the subtaskId is set on that message.
+          // We compare counts: if existing user messages >= incoming user subtasks, skip adding more.
+          if (isUserMessage && existingUserMessageCount >= incomingUserSubtasks.length) {
+            continue;
+          }
+
+          // Check if frontend already has error state from chat:error WebSocket event
+          const existingMessage = currentState.messages.get(messageId);
+          const hasFrontendError =
+            existingMessage && existingMessage.status === 'error' && existingMessage.error;
+
+          // For RUNNING/PENDING AI messages:
+          // - If we already have a streaming message for this subtask (from chat:start), skip
+          // - Otherwise, create a streaming placeholder so the message is visible
+          // This handles the page refresh case where chat:start was missed
+          if (!isUserMessage && (subtask.status === 'RUNNING' || subtask.status === 'PENDING')) {
+            // Check if we already have this AI message (created by chat:start)
+            const existingAiMessage = messages.get(messageId);
+            if (existingAiMessage) {
+              // Already have this message, skip
+              continue;
             }
-          } else if (subtask.status === 'FAILED' || subtask.status === 'CANCELLED') {
+            // Create a streaming placeholder for this RUNNING message
+            // This ensures the message is visible after page refresh
+            const content = typeof subtask.result?.value === 'string' ? subtask.result.value : '';
+            messages.set(messageId, {
+              id: messageId,
+              type: 'ai',
+              status: hasFrontendError ? 'error' : 'streaming', // Preserve error state if exists
+              content,
+              timestamp: new Date(subtask.created_at).getTime(),
+              subtaskId: subtask.id,
+              messageId: subtask.message_id,
+              attachments: subtask.attachments,
+              botName: subtask.bots?.[0]?.name || teamName,
+              subtaskStatus: subtask.status,
+              result: subtask.result as UnifiedMessage['result'],
+              error: hasFrontendError ? existingMessage.error : undefined, // Preserve error if exists
+            });
+            continue;
+          }
+
+          // Determine status
+          let status: MessageStatus = 'completed';
+          if (subtask.status === 'FAILED' || subtask.status === 'CANCELLED') {
+            status = 'error';
+          } else if (hasFrontendError) {
+            // Preserve frontend error state when backend DB hasn't been updated yet
             status = 'error';
           }
 
-          // Get content from prompt (user) or result.value (AI)
-          let content = '';
-          if (isUserMessage) {
-            content = subtask.prompt || '';
-          } else {
-            // AI message - get content from result.value
-            const resultValue = subtask.result?.value;
-            if (typeof resultValue === 'string') {
-              content = resultValue;
-            } else if (resultValue && typeof resultValue === 'object') {
-              // Handle object result (e.g., workbench data)
-              content = '';
-            }
-          }
+          // Get content
+          const content = isUserMessage
+            ? subtask.prompt || ''
+            : typeof subtask.result?.value === 'string'
+              ? subtask.result.value
+              : '';
 
-          // Get bot name for AI messages
-          let botName = teamName;
-          if (!isUserMessage && subtask.bots && subtask.bots.length > 0) {
-            botName = subtask.bots[0].name || teamName;
-          }
+          // Determine error field using OR logic:
+          // 1. Use frontend error if it exists (from chat:error WebSocket event)
+          // 2. Otherwise use backend error_message (from FAILED/CANCELLED status)
+          // This preserves frontend error state when backend DB hasn't been updated yet
+          const errorField = hasFrontendError
+            ? existingMessage.error
+            : subtask.error_message || undefined;
 
-          // Determine if we should show sender info (for group chat)
-          const shouldShowSender = isGroupChat && isUserMessage;
-
-          // For user messages, use sender_user_name from backend, or fallback to currentUserName if it's the current user
-          const isCurrentUserMessage =
-            isUserMessage &&
-            (subtask.sender_user_id === currentUserId ||
-              (!subtask.sender_user_id && currentUserId));
-          const senderUserName =
-            subtask.sender_user_name || (isCurrentUserMessage ? currentUserName : undefined);
-
-          const message: UnifiedMessage = {
+          messages.set(messageId, {
             id: messageId,
-            type: messageType,
+            type: isUserMessage ? 'user' : 'ai',
             status,
             content,
             timestamp: new Date(subtask.created_at).getTime(),
             subtaskId: subtask.id,
             messageId: subtask.message_id,
             attachments: subtask.attachments,
-            botName,
-            senderUserName,
+            botName: !isUserMessage && subtask.bots?.[0]?.name ? subtask.bots[0].name : teamName,
+            senderUserName:
+              subtask.sender_user_name ||
+              (isUserMessage && subtask.sender_user_id === currentUserId
+                ? currentUserName
+                : undefined),
             senderUserId: subtask.sender_user_id || (isUserMessage ? currentUserId : undefined),
-            shouldShowSender,
+            shouldShowSender: isGroupChat && isUserMessage,
             subtaskStatus: subtask.status,
-            // Store full result for executor tasks (contains thinking, workbench)
             result: subtask.result as UnifiedMessage['result'],
-            error: subtask.error_message || undefined,
-          };
-
-          newMessages.set(messageId, message);
-        }
-        // Then, preserve any pending/streaming messages from frontend that don't have
-        // a matching backend subtask yet
-        //
-        // Build a set of backend user subtask IDs for deduplication
-        // Note: We only check user messages because:
-        // 1. Frontend user messages may have subtaskId set to AI's subtaskId (from response.subtask_id)
-        // 2. We need to match by content/timestamp instead of subtaskId for user messages
-        const backendUserSubtasks = subtasks.filter(
-          s => s.role === 'USER' || s.role?.toUpperCase() === 'USER'
-        );
-
-        for (const [msgId, msg] of currentState.messages) {
-          // Skip messages that were created from backend (they're already in newMessages)
-          if (msgId.startsWith('user-backend-') || msgId.startsWith('ai-')) {
-            continue;
-          }
-
-          // For frontend user messages, check if there's a matching backend user message
-          // by comparing content (since subtaskId might be wrong - set to AI's subtaskId)
-          if (msg.type === 'user') {
-            const hasMatchingBackendMessage = backendUserSubtasks.some(
-              s => s.prompt === msg.content
-            );
-            if (hasMatchingBackendMessage) {
-              // This user message already exists in backend response, skip it
-              continue;
-            }
-          }
-
-          // Keep frontend messages that:
-          // 1. Don't have a matching backend message yet
-          // 2. Only keep if it's a pending or streaming message (not completed/error)
-          if (msg.status === 'pending' || msg.status === 'streaming') {
-            newMessages.set(msgId, msg);
-          }
+            error: errorField,
+          });
         }
 
-        // Find current streaming subtask ID if any
+        // Find current streaming subtask ID
         let currentSubtaskId: number | null = null;
-
-        for (const msg of newMessages.values()) {
+        for (const msg of messages.values()) {
           if (msg.type === 'ai' && msg.status === 'streaming') {
             currentSubtaskId = msg.subtaskId || null;
             break;
           }
         }
 
-        newMap.set(taskId, {
-          ...currentState,
-          subtaskId: currentSubtaskId,
-          messages: newMessages,
-        });
-
+        newMap.set(taskId, { ...currentState, subtaskId: currentSubtaskId, messages });
         return newMap;
       });
     },

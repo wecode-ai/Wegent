@@ -26,6 +26,7 @@ class ClientEvents:
     CHAT_SEND = "chat:send"
     CHAT_CANCEL = "chat:cancel"
     CHAT_RESUME = "chat:resume"
+    CHAT_RETRY = "chat:retry"
 
     # Task room events
     TASK_JOIN = "task:join"
@@ -65,6 +66,13 @@ class ServerEvents:
 # ============================================================
 
 
+class ContextItem(BaseModel):
+    """Generic context item that can be of different types."""
+
+    type: str = Field(..., description="Context type (e.g., 'knowledge_base')")
+    data: Dict[str, Any] = Field(..., description="Context-specific data")
+
+
 class ChatSendPayload(BaseModel):
     """Payload for chat:send event."""
 
@@ -72,7 +80,15 @@ class ChatSendPayload(BaseModel):
     team_id: int = Field(..., description="Team ID")
     message: str = Field(..., description="User message content")
     title: Optional[str] = Field(None, description="Custom title for new tasks")
-    attachment_id: Optional[int] = Field(None, description="Optional attachment ID")
+    attachment_id: Optional[int] = Field(
+        None, description="Optional attachment ID (deprecated, use attachment_ids)"
+    )
+    attachment_ids: Optional[List[int]] = Field(
+        None, description="Optional list of attachment IDs"
+    )
+    enable_deep_thinking: bool = Field(
+        False, description="Enable deep thinking mode (uses chat_v2)"
+    )
     enable_web_search: bool = Field(False, description="Enable web search")
     search_engine: Optional[str] = Field(None, description="Search engine to use")
     enable_clarification: bool = Field(
@@ -86,6 +102,9 @@ class ChatSendPayload(BaseModel):
     )
     is_group_chat: bool = Field(
         False, description="Whether this is a group chat (for new tasks)"
+    )
+    contexts: Optional[List[ContextItem]] = Field(
+        None, description="Context items (knowledge bases, etc.)"
     )
     # Repository info for code tasks
     git_url: Optional[str] = Field(None, description="Git repository URL")
@@ -116,6 +135,26 @@ class ChatResumePayload(BaseModel):
     task_id: int = Field(..., description="Task ID")
     subtask_id: int = Field(..., description="Subtask ID to resume")
     offset: int = Field(0, description="Current content offset")
+
+
+class ChatRetryPayload(BaseModel):
+    """Payload for chat:retry event."""
+
+    task_id: int = Field(..., description="Task ID")
+    subtask_id: int = Field(..., description="Failed AI subtask ID to retry")
+    # Optional: Model to use for retry (overrides task metadata model if provided)
+    force_override_bot_model: Optional[str] = Field(
+        None, description="Model ID to override bot model for this retry"
+    )
+    force_override_bot_model_type: Optional[str] = Field(
+        None, description="Model type (public/user) for the override model"
+    )
+    # Flag indicating whether to use model override
+    # When false and force_override_bot_model is None, use bot's default model
+    use_model_override: bool = Field(
+        False,
+        description="If true, use force_override_bot_model; if false, use bot's default model",
+    )
 
 
 class TaskJoinPayload(BaseModel):
@@ -150,12 +189,23 @@ class ChatStartPayload(BaseModel):
     bot_name: Optional[str] = None
 
 
+class SourceReference(BaseModel):
+    """Reference to a knowledge base source document."""
+
+    index: int = Field(..., description="Source index number (e.g., 1, 2, 3)")
+    title: str = Field(..., description="Document title/filename")
+    kb_id: int = Field(..., description="Knowledge base ID")
+
+
 class ChatChunkPayload(BaseModel):
     """Payload for chat:chunk event."""
 
     subtask_id: int
     content: str
     offset: int
+    sources: Optional[List[SourceReference]] = Field(
+        None, description="Knowledge base source references (for RAG citations)"
+    )
 
 
 class ChatDonePayload(BaseModel):
@@ -166,6 +216,9 @@ class ChatDonePayload(BaseModel):
     result: Dict[str, Any] = Field(default_factory=dict)
     message_id: Optional[int] = None  # Add message_id for message ordering
     task_id: Optional[int] = None  # Add task_id for group chat members
+    sources: Optional[List[SourceReference]] = Field(
+        None, description="Knowledge base source references (for RAG citations)"
+    )
 
 
 class ChatErrorPayload(BaseModel):

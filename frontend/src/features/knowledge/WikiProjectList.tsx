@@ -5,7 +5,7 @@
 'use client';
 
 import { useEffect, useRef, useCallback } from 'react';
-import { useTranslation } from 'react-i18next';
+import { useTranslation } from '@/hooks/useTranslation';
 import { WikiProject, WikiGeneration } from '@/types/wiki';
 import { getProjectDisplayName } from './wikiUtils';
 import { Card } from '@/components/ui/card';
@@ -49,7 +49,7 @@ export default function WikiProjectList({
   onLoadMore,
   currentUserId,
 }: WikiProjectListProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation('knowledge');
   const observerRef = useRef<IntersectionObserver | null>(null);
   const loadMoreTriggerRef = useRef<HTMLDivElement | null>(null);
 
@@ -137,10 +137,8 @@ export default function WikiProjectList({
               />
             </svg>
           </div>
-          <h3 className="font-medium text-base mb-2 text-text-primary">
-            {t('wiki.add_repository')}
-          </h3>
-          <p className="text-sm text-text-muted text-center">{t('wiki.add_repository_desc')}</p>
+          <h3 className="font-medium text-base mb-2 text-text-primary">{t('add_repository')}</h3>
+          <p className="text-sm text-text-muted text-center">{t('add_repository_desc')}</p>
         </Card>
       </div>
     );
@@ -171,7 +169,7 @@ export default function WikiProjectList({
               />
             </svg>
           </div>
-          <h3 className="font-medium text-sm">{t('wiki.add_repository')}</h3>
+          <h3 className="font-medium text-sm">{t('add_repository')}</h3>
         </Card>
 
         {/* Project card list */}
@@ -240,7 +238,7 @@ export default function WikiProjectList({
                       <button
                         className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors opacity-0 group-hover:opacity-100"
                         onClick={e => onRegenerateClick(project.id, e)}
-                        title={t('wiki.regenerate')}
+                        title={t('regenerate')}
                         disabled={regeneratingIds.has(project.id)}
                       >
                         {regeneratingIds.has(project.id) ? (
@@ -268,7 +266,7 @@ export default function WikiProjectList({
                       <button
                         className="p-1.5 rounded-md text-text-muted hover:text-error hover:bg-error/10 transition-colors opacity-0 group-hover:opacity-100"
                         onClick={e => onDeleteClick(project.id, e)}
-                        title={t('common.delete')}
+                        title={t('common:actions.delete')}
                         disabled={deletingIds.has(project.id)}
                       >
                         {deletingIds.has(project.id) ? (
@@ -298,7 +296,7 @@ export default function WikiProjectList({
                         e.stopPropagation();
                         onProjectClick(project.id);
                       }}
-                      title={t('wiki.view_detail')}
+                      title={t('view_detail')}
                     >
                       <svg
                         className="w-4 h-4"
@@ -336,15 +334,15 @@ export default function WikiProjectList({
                               onTaskClick(taskId);
                             }
                           }}
-                          title={t('wiki.view_task')}
+                          title={t('view_task')}
                         >
                           <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span>
-                          {t('wiki.indexing')}
+                          {t('indexing')}
                         </button>
                       ) : (
                         <span className="px-2 py-1 text-xs rounded-full bg-primary/10 text-primary flex items-center gap-1">
                           <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span>
-                          {t('wiki.indexing')}
+                          {t('indexing')}
                         </span>
                       )}
                       {/* Cancel button - only show if current user is task executor */}
@@ -352,12 +350,12 @@ export default function WikiProjectList({
                         <button
                           className="px-2 py-1 text-xs rounded-full text-text-muted border border-border hover:bg-hover hover:text-error transition-colors"
                           onClick={e => onCancelClick(project.id, e)}
-                          title={t('wiki.cancel_title')}
+                          title={t('cancel_title')}
                           disabled={cancellingIds.has(project.generations[0].id)}
                         >
                           {cancellingIds.has(project.generations[0].id)
-                            ? t('wiki.cancelling')
-                            : t('wiki.cancel')}
+                            ? t('cancelling')
+                            : t('cancel')}
                         </button>
                       )}
                     </div>

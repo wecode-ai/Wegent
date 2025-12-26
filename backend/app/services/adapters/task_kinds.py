@@ -243,11 +243,23 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                         "taskType": obj_in.task_type,  # default: chat, code
                         "autoDeleteExecutor": obj_in.auto_delete_executor,  # default: false, true
                         "source": obj_in.source,
+                        # Mark as API call if source is "api"
+                        **(
+                            {"is_api_call": "true"}
+                            if obj_in.source == "api"
+                            else {}
+                        ),
                         # Model selection fields
                         **({"modelId": obj_in.model_id} if obj_in.model_id else {}),
                         **(
                             {"forceOverrideBotModel": "true"}
                             if obj_in.force_override_bot_model
+                            else {}
+                        ),
+                        # Trusted source field
+                        **(
+                            {"api_trusted_source": obj_in.api_trusted_source}
+                            if obj_in.api_trusted_source
                             else {}
                         ),
                     },
@@ -859,7 +871,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         Get Task by ID and user ID (only active tasks)
         Allows access if user is the owner OR a member of the group chat
         """
-        from app.models.task_member import MemberStatus, TaskMember
+        from app.services.task_member_service import task_member_service
 
         # First, try to find task owned by user
         task = (
@@ -873,33 +885,23 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             .first()
         )
 
-        # If not found as owner, check if user is a group chat member
-        if not task:
-            # Check if user is a member of this task's group chat
-            member = (
-                db.query(TaskMember)
-                .filter(
-                    TaskMember.task_id == task_id,
-                    TaskMember.user_id == user_id,
-                    TaskMember.status == MemberStatus.ACTIVE,
-                )
-                .first()
+        # First, check if task exists
+        task = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.id == task_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active == True,
+                text("JSON_EXTRACT(json, '$.status.status') != 'DELETE'"),
             )
-
-            if member:
-                # User is a member, fetch the task without user_id filter
-                task = (
-                    db.query(TaskResource)
-                    .filter(
-                        TaskResource.id == task_id,
-                        TaskResource.kind == "Task",
-                        TaskResource.is_active == True,
-                        text("JSON_EXTRACT(json, '$.status.status') != 'DELETE'"),
-                    )
-                    .first()
-                )
+            .first()
+        )
 
         if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        # Check if user has access (owner or active member)
+        if not task_member_service.is_member(db, task_id, user_id):
             raise HTTPException(status_code=404, detail="Task not found")
 
         # For group chat members, use the task owner's user_id to convert task dict
@@ -1706,12 +1708,16 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         branch_name = ""
 
         if workspace and workspace.json:
-            workspace_crd = Workspace.model_validate(workspace.json)
-            git_url = workspace_crd.spec.repository.gitUrl
-            git_repo = workspace_crd.spec.repository.gitRepo
-            git_repo_id = workspace_crd.spec.repository.gitRepoId or 0
-            git_domain = workspace_crd.spec.repository.gitDomain
-            branch_name = workspace_crd.spec.repository.branchName
+            try:
+                workspace_crd = Workspace.model_validate(workspace.json)
+                git_url = workspace_crd.spec.repository.gitUrl
+                git_repo = workspace_crd.spec.repository.gitRepo
+                git_repo_id = workspace_crd.spec.repository.gitRepoId or 0
+                git_domain = workspace_crd.spec.repository.gitDomain
+                branch_name = workspace_crd.spec.repository.branchName
+            except Exception:
+                # Handle workspaces with incomplete repository data
+                pass
 
         # Get team data (including shared teams)
         team = (

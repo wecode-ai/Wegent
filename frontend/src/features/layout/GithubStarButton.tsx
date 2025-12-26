@@ -86,9 +86,9 @@ export function GithubStarButton({ className = '' }: { className?: string }) {
   }, []);
 
   const mergedClassName = `
-    px-3 py-1.5 rounded-full border border-transparent
-    flex items-center gap-2 text-sm font-normal text-text-primary
-    hover:border-border transition-colors duration-200 min-w-[5rem]
+    h-8 pl-2 pr-3 rounded-[7px] border border-border
+    flex items-center gap-1 text-sm font-normal text-text-primary
+    bg-base hover:bg-hover transition-colors duration-200 min-w-[5rem]
     ${className}
   `.trim();
 
@@ -122,7 +122,7 @@ export function GithubStarButton({ className = '' }: { className?: string }) {
         stroke="currentColor"
         fill="currentColor"
         viewBox="0 0 15 15"
-        className="h-5 w-5 flex-shrink-0"
+        className="h-3.5 w-3.5 flex-shrink-0"
         aria-hidden="true"
       >
         <path

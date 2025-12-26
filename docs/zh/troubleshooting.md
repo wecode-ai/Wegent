@@ -281,18 +281,75 @@ app.add_middleware(
 
 **2. 检查前端 API URL**
 ```bash
-# frontend/.env.local
-NEXT_PUBLIC_API_URL=http://localhost:8000
+# frontend/.env.local 或环境变量
+# 运行时变量（推荐，可在不重新构建的情况下更改）：
+RUNTIME_INTERNAL_API_URL=http://localhost:8000
+RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000
 
-# 确保与后端地址一致
+# 旧版（已弃用）：
+# NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
+
+> **注意**: 前端现在使用 `RUNTIME_INTERNAL_API_URL` 替代 `NEXT_PUBLIC_API_URL`。运行时变量可以在不重新构建应用的情况下更改。
 
 **3. 使用浏览器开发工具调试**
 - 打开 F12 开发者工具
 - 查看 Network 标签
 - 检查请求和响应头
 
-### 问题 8: GitHub API 连接失败
+### 问题 8: WebSocket 连接失败
+
+**症状**: 聊天功能不工作、无法接收实时更新、控制台显示 Socket.IO 连接错误
+
+**解决方案**:
+
+**1. 检查 Socket.IO 服务器状态**
+```bash
+# 查看后端日志中的 Socket.IO 初始化信息
+docker-compose logs backend | grep -i "socket"
+
+# 验证 Socket.IO 端点是否可访问
+curl -I http://localhost:8000/socket.io/
+```
+
+**2. 验证 JWT Token**
+```bash
+# 在浏览器控制台检查 token 是否有效
+localStorage.getItem('token')
+
+# Token 应该在 Socket.IO auth 中传递
+```
+
+**3. 检查 WebSocket 的 CORS 配置**
+```python
+# backend/app/core/socketio.py
+# 确保 CORS 源配置正确
+SOCKETIO_CORS_ORIGINS = "*"  # 或特定的源
+```
+
+**4. 验证 Redis 连接（多工作进程必需）**
+```bash
+# Socket.IO 适配器需要 Redis
+docker-compose exec redis redis-cli ping
+```
+
+**5. 检查前端 Socket.IO 配置**
+```typescript
+// frontend/src/contexts/SocketContext.tsx
+// 验证连接参数
+const socket = io(API_URL + '/chat', {
+  path: '/socket.io',
+  auth: { token },
+  transports: ['websocket', 'polling'],
+});
+```
+
+**6. 在浏览器中调试 WebSocket**
+- 打开 F12 开发者工具
+- 进入 Network 标签 → WS 过滤器
+- 检查 WebSocket 连接状态和消息
+
+### 问题 9: GitHub API 连接失败
 
 **症状**: 无法克隆仓库或访问 GitHub
 
@@ -336,7 +393,7 @@ ssh -T git@github.com
 
 ## ⚙️ 任务执行问题
 
-### 问题 9: 任务一直处于 PENDING 状态
+### 问题 10: 任务一直处于 PENDING 状态
 
 **诊断流程**:
 
@@ -378,7 +435,7 @@ curl http://localhost:8000/api/tasks/<task-id>
 # 检查 Bot、Shell、Model 配置是否正确
 ```
 
-### 问题 10: 任务执行失败
+### 问题 11: 任务执行失败
 
 **诊断步骤**:
 
@@ -411,7 +468,7 @@ docker logs -f <executor-container-id>
 | `Timeout` | 执行超时 | 增加超时设置或优化任务 |
 | `Out of memory` | 内存不足 | 增加容器内存限制 |
 
-### 问题 11: Agent 无响应或卡住
+### 问题 12: Agent 无响应或卡住
 
 **解决方案**:
 
@@ -443,7 +500,7 @@ docker kill <executor-container-id>
 
 ## ⚡ 性能问题
 
-### 问题 12: 系统响应慢
+### 问题 13: 系统响应慢
 
 **诊断和优化**:
 
@@ -493,7 +550,7 @@ services:
           memory: 4G
 ```
 
-### 问题 13: 磁盘空间不足
+### 问题 14: 磁盘空间不足
 
 **清理方案**:
 
@@ -520,7 +577,7 @@ find /path/to/workspace -type d -mtime +90 -exec rm -rf {} \;
 
 ## 💻 开发环境问题
 
-### 问题 14: Python 依赖安装失败
+### 问题 15: Python 依赖安装失败
 
 **解决方案**:
 
@@ -541,7 +598,7 @@ conda activate wegent
 uv sync
 ```
 
-### 问题 15: Node.js 依赖安装失败
+### 问题 16: Node.js 依赖安装失败
 
 **解决方案**:
 
@@ -564,7 +621,7 @@ nvm use 18
 npm install
 ```
 
-### 问题 16: 热重载不工作
+### 问题 17: 热重载不工作
 
 **前端热重载**:
 ```bash

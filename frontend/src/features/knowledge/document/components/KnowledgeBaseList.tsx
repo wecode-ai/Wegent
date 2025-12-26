@@ -28,7 +28,7 @@ export function KnowledgeBaseList({
   groupName,
   canManage = true,
 }: KnowledgeBaseListProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation('knowledge');
   const { knowledgeBases, loading, error, create, update, remove, refresh } = useKnowledgeBases({
     scope,
     groupName,
@@ -39,12 +39,17 @@ export function KnowledgeBaseList({
   const [deletingKb, setDeletingKb] = useState<KnowledgeBase | null>(null);
   const [selectedKb, setSelectedKb] = useState<KnowledgeBase | null>(null);
 
-  const handleCreate = async (data: { name: string; description?: string }) => {
+  const handleCreate = async (data: {
+    name: string;
+    description?: string;
+    retrieval_config?: Parameters<typeof create>[0]['retrieval_config'];
+  }) => {
     try {
       await create({
         name: data.name,
         description: data.description,
         namespace: scope === 'group' && groupName ? groupName : 'default',
+        retrieval_config: data.retrieval_config,
       });
       setShowCreateDialog(false);
     } catch {
@@ -52,7 +57,7 @@ export function KnowledgeBaseList({
     }
   };
 
-  const handleUpdate = async (data: { name: string; description?: string }) => {
+  const handleUpdate = async (data: Parameters<typeof update>[1]) => {
     if (!editingKb) return;
     try {
       await update(editingKb.id, data);
@@ -99,7 +104,7 @@ export function KnowledgeBaseList({
       <div className="flex flex-col items-center justify-center py-12 text-text-secondary">
         <p>{error}</p>
         <Button variant="outline" className="mt-4" onClick={refresh}>
-          {t('actions.retry')}
+          {t('common:actions.retry')}
         </Button>
       </div>
     );
@@ -110,12 +115,12 @@ export function KnowledgeBaseList({
       {/* Header */}
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold text-text-primary">
-          {scope === 'personal' ? t('knowledge.document.personal') : t('knowledge.document.team')}
+          {scope === 'personal' ? t('document.personal') : t('document.team')}
         </h2>
         {canManage && (
           <Button variant="primary" size="sm" onClick={() => setShowCreateDialog(true)}>
             <Plus className="w-4 h-4 mr-1" />
-            {t('knowledge.document.knowledgeBase.create')}
+            {t('document.knowledgeBase.create')}
           </Button>
         )}
       </div>
@@ -137,11 +142,11 @@ export function KnowledgeBaseList({
       ) : (
         <div className="flex flex-col items-center justify-center py-12 text-text-secondary">
           <FolderOpen className="w-12 h-12 mb-4 opacity-50" />
-          <p>{t('knowledge.document.knowledgeBase.empty')}</p>
+          <p>{t('document.knowledgeBase.empty')}</p>
           {canManage && (
             <Button variant="outline" className="mt-4" onClick={() => setShowCreateDialog(true)}>
               <Plus className="w-4 h-4 mr-1" />
-              {t('knowledge.document.knowledgeBase.create')}
+              {t('document.knowledgeBase.create')}
             </Button>
           )}
         </div>
@@ -153,6 +158,8 @@ export function KnowledgeBaseList({
         onOpenChange={setShowCreateDialog}
         onSubmit={handleCreate}
         loading={loading}
+        scope={scope}
+        groupName={groupName}
       />
 
       <EditKnowledgeBaseDialog

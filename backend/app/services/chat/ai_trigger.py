@@ -124,15 +124,12 @@ async def _trigger_direct_chat(
     """
     from app.api.ws.events import ServerEvents
 
-    # Emit chat:start event
+    # Emit chat:start event using global emitter for cross-worker broadcasting
     logger.info(f"[ai_trigger] Emitting chat:start event")
-    await namespace.emit(
-        ServerEvents.CHAT_START,
-        {
-            "task_id": task.id,
-            "subtask_id": assistant_subtask.id,
-        },
-        room=task_room,
+    emitter = get_ws_emitter()
+    await emitter.emit_chat_start(
+        task_id=task.id,
+        subtask_id=assistant_subtask.id,
     )
     logger.info(f"[ai_trigger] chat:start emitted")
 
@@ -178,6 +175,7 @@ async def _trigger_direct_chat(
         )
     )
     namespace._active_streams[assistant_subtask.id] = stream_task
+    namespace._stream_versions[assistant_subtask.id] = "v1"
     logger.info(f"[ai_trigger] Background stream task started")
 
 
@@ -224,6 +222,15 @@ async def _stream_chat_response(
     full_response = ""
     mcp_session = None  # Initialize for cleanup in finally block
 
+    # Get subtask message_id for error events
+    subtask_message_id = None
+    try:
+        subtask = db.query(Subtask).filter(Subtask.id == subtask_id).first()
+        if subtask:
+            subtask_message_id = subtask.message_id
+    except Exception as e:
+        logger.warning(f"Failed to get subtask message_id: {e}")
+
     try:
         # Set base attributes (user and task info)
         span_manager.set_base_attributes(
@@ -258,10 +265,26 @@ async def _stream_chat_response(
             # Record error in span
             span_manager.record_error(TelemetryEventNames.BOT_NOT_FOUND, error_msg)
 
-            await namespace.emit(
-                ServerEvents.CHAT_ERROR,
-                {"subtask_id": subtask_id, "error": error_msg},
-                room=task_room,
+            emitter = get_ws_emitter()
+            await emitter.emit_chat_error(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                error=error_msg,
+                message_id=subtask_message_id,
+            )
+
+            # IMPORTANT: Also emit chat:done to signal stream completion
+            # This ensures frontend knows the stream has ended, even though it failed
+            await emitter.emit_chat_done(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                offset=0,
+                result={"value": "", "error": error_msg},
+                message_id=subtask_message_id,
+            )
+            logger.info(
+                f"[ai_trigger] Emitted chat:error and chat:done for bot not found: "
+                f"task={task_id} subtask={subtask_id}"
             )
             return
 
@@ -286,22 +309,20 @@ async def _stream_chat_response(
             system_prompt, payload.enable_clarification
         )
 
-        # Handle attachment
+        # Handle attachments (supports both single and multiple)
+        # Convert single attachment_id to list for unified processing
+        attachment_ids_to_process = []
+        if payload.attachment_ids:
+            attachment_ids_to_process = payload.attachment_ids
+        elif payload.attachment_id:
+            # Backward compatibility: convert single attachment_id to list
+            attachment_ids_to_process = [payload.attachment_id]
+
         final_message = message
-        if payload.attachment_id:
-            from app.models.subtask_attachment import AttachmentStatus
-            from app.services.attachment import attachment_service
-
-            attachment = attachment_service.get_attachment(
-                db=db,
-                attachment_id=payload.attachment_id,
-                user_id=user_data["id"],
+        if attachment_ids_to_process:
+            final_message = await _process_attachments(
+                db, attachment_ids_to_process, user_data["id"], message
             )
-
-            if attachment and attachment.status == AttachmentStatus.READY:
-                final_message = attachment_service.build_message_with_attachment(
-                    message, attachment
-                )
 
         # Prepare tools
         all_tools = []
@@ -366,6 +387,9 @@ async def _stream_chat_response(
         from app.services.chat.providers import get_provider
         from app.services.chat.providers.base import ChunkType
 
+        # Get global emitter
+        emitter = get_ws_emitter()
+
         # Check if this is a group chat - get history from database with user names
         is_group_chat = payload.is_group_chat
         if is_group_chat:
@@ -404,10 +428,25 @@ async def _stream_chat_response(
                 TelemetryEventNames.PROVIDER_CREATION_FAILED, error_msg
             )
 
-            await namespace.emit(
-                ServerEvents.CHAT_ERROR,
-                {"subtask_id": subtask_id, "error": error_msg},
-                room=task_room,
+            await emitter.emit_chat_error(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                error=error_msg,
+                message_id=subtask_message_id,
+            )
+
+            # IMPORTANT: Also emit chat:done to signal stream completion
+            # This ensures frontend knows the stream has ended, even though it failed
+            await emitter.emit_chat_done(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                offset=0,
+                result={"value": "", "error": error_msg},
+                message_id=subtask_message_id,
+            )
+            logger.info(
+                f"[ai_trigger] Emitted chat:error and chat:done for provider creation failed: "
+                f"task={task_id} subtask={subtask_id}"
             )
             return
 
@@ -428,10 +467,9 @@ async def _stream_chat_response(
         async for chunk in stream_gen:
             if cancel_event.is_set() or await session_manager.is_cancelled(subtask_id):
                 # Cancelled
-                await namespace.emit(
-                    ServerEvents.CHAT_CANCELLED,
-                    {"subtask_id": subtask_id},
-                    room=task_room,
+                await emitter.emit_chat_cancelled(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
                 )
                 break
 
@@ -439,14 +477,11 @@ async def _stream_chat_response(
                 full_response += chunk.content
 
                 # Emit chunk
-                await namespace.emit(
-                    ServerEvents.CHAT_CHUNK,
-                    {
-                        "subtask_id": subtask_id,
-                        "content": chunk.content,
-                        "offset": offset,
-                    },
-                    room=task_room,
+                await emitter.emit_chat_chunk(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    content=chunk.content,
+                    offset=offset,
                 )
                 offset += len(chunk.content)
 
@@ -479,16 +514,29 @@ async def _stream_chat_response(
                     TelemetryEventNames.STREAM_CHUNK_ERROR, error_msg, model_config
                 )
 
-                await namespace.emit(
-                    ServerEvents.CHAT_ERROR,
-                    {
-                        "subtask_id": subtask_id,
-                        "error": error_msg,
-                    },
-                    room=task_room,
+                await emitter.emit_chat_error(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    error=error_msg,
+                    message_id=subtask_message_id,
                 )
                 await db_handler.update_subtask_status(
                     subtask_id, "FAILED", error=chunk.error
+                )
+
+                # IMPORTANT: Also emit chat:done to signal stream completion
+                # This ensures frontend knows the stream has ended, even though it failed
+                # Without this, frontend may wait indefinitely or have ordering issues
+                await emitter.emit_chat_done(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    offset=offset,
+                    result={"value": full_response, "error": error_msg},
+                    message_id=subtask_message_id,
+                )
+                logger.info(
+                    f"[ai_trigger] Emitted chat:error and chat:done for failed stream: "
+                    f"task={task_id} subtask={subtask_id} message_id={subtask_message_id}"
                 )
                 return
 
@@ -501,6 +549,8 @@ async def _stream_chat_response(
             await session_manager.publish_streaming_done(subtask_id, result)
 
             # Save chat history
+            # Note: The message parameter might be RAG prompt, but the original message
+            # is already saved in user_subtask.prompt, so this is fine for Redis history
             await session_manager.append_user_and_assistant_messages(
                 task_id, message, full_response
             )
@@ -511,8 +561,6 @@ async def _stream_chat_response(
             )
 
             # Get message_id from database for proper message ordering
-            from app.models.subtask import Subtask
-
             subtask = db.query(Subtask).filter(Subtask.id == subtask_id).first()
             message_id = subtask.message_id if subtask else None
 
@@ -550,10 +598,28 @@ async def _stream_chat_response(
         # Record error in span
         span_manager.record_exception(e)
 
-        await namespace.emit(
-            ServerEvents.CHAT_ERROR,
-            {"subtask_id": subtask_id, "error": str(e)},
-            room=task_room,
+        # Use global emitter for cross-worker broadcasting
+        error_emitter = get_ws_emitter()
+        await error_emitter.emit_chat_error(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            error=str(e),
+            message_id=subtask_message_id,
+        )
+
+        # IMPORTANT: Also emit chat:done to signal stream completion
+        # This ensures frontend knows the stream has ended, even though it failed
+        # Without this, frontend may wait indefinitely or have ordering issues
+        await error_emitter.emit_chat_done(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            offset=0,  # No content was streamed
+            result={"value": "", "error": str(e)},
+            message_id=subtask_message_id,
+        )
+        logger.info(
+            f"[ai_trigger] Emitted chat:error and chat:done for exception: "
+            f"task={task_id} subtask={subtask_id} message_id={subtask_message_id}"
         )
     finally:
         # Detach OTEL context first (before exiting span)
@@ -567,9 +633,87 @@ async def _stream_chat_response(
         await session_manager.delete_streaming_content(subtask_id)
         if subtask_id in namespace._active_streams:
             del namespace._active_streams[subtask_id]
+        if subtask_id in getattr(namespace, "_stream_versions", {}):
+            del namespace._stream_versions[subtask_id]
         # Cleanup MCP session when stream ends
         if mcp_session:
             from app.services.chat.tools import cleanup_mcp_session
 
             await cleanup_mcp_session(task_id)
         db.close()
+
+
+async def _process_attachments(
+    db: Any,
+    attachment_ids: list[int],
+    user_id: int,
+    message: str,
+) -> str:
+    """
+    Process multiple attachments and build message with all attachment contents.
+
+    Args:
+        db: Database session (SQLAlchemy Session)
+        attachment_ids: List of attachment IDs
+        user_id: User ID
+        message: Original message
+
+    Returns:
+        Message with all attachment contents prepended, or vision structure for images
+    """
+    from app.models.subtask_attachment import AttachmentStatus
+    from app.services.attachment import attachment_service
+
+    if not attachment_ids:
+        return message
+
+    # Collect all attachments
+    text_attachments = []
+    image_attachments = []
+
+    for idx, attachment_id in enumerate(attachment_ids, start=1):
+        attachment = attachment_service.get_attachment(
+            db=db,
+            attachment_id=attachment_id,
+            user_id=user_id,
+        )
+
+        if attachment and attachment.status == AttachmentStatus.READY:
+            # Separate images and text documents
+            if (
+                attachment_service.is_image_attachment(attachment)
+                and attachment.image_base64
+            ):
+                image_attachments.append(
+                    {
+                        "image_base64": attachment.image_base64,
+                        "mime_type": attachment.mime_type,
+                        "filename": attachment.original_filename,
+                    }
+                )
+            else:
+                # For text documents, get the formatted content
+                doc_prefix = attachment_service.build_document_text_prefix(attachment)
+                if doc_prefix:
+                    text_attachments.append(f"【附件 {idx}】\n{doc_prefix}")
+
+    # If we have images, return a multi-vision structure
+    if image_attachments:
+        # Build text content from text attachments
+        combined_text = ""
+        if text_attachments:
+            combined_text = "\n".join(text_attachments) + "\n\n"
+        combined_text += f"【用户问题】:\n{message}"
+
+        return {
+            "type": "multi_vision",
+            "text": combined_text,
+            "images": image_attachments,
+        }
+
+    # If only text attachments, combine them
+    if text_attachments:
+        combined_attachments = "\n".join(text_attachments)
+        return f"{combined_attachments}【用户问题】:\n{message}"
+
+    return message

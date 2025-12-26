@@ -245,16 +245,73 @@ app.add_middleware(
 
 **2. Check frontend API URL**
 ```bash
-# frontend/.env.local
-NEXT_PUBLIC_API_URL=http://localhost:8000
+# frontend/.env.local or environment variables
+# Runtime variables (recommended, can be changed without rebuilding):
+RUNTIME_INTERNAL_API_URL=http://localhost:8000
+RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000
 
-# Ensure it matches backend address
+# Legacy (deprecated):
+# NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
+
+> **Note**: The frontend now uses `RUNTIME_INTERNAL_API_URL` instead of `NEXT_PUBLIC_API_URL`. Runtime variables can be changed without rebuilding the application.
 
 **3. Use browser dev tools for debugging**
 - Open F12 developer tools
 - Check Network tab
 - Inspect request and response headers
+
+### Issue 7: WebSocket Connection Fails
+
+**Symptoms**: Chat not working, real-time updates not received, Socket.IO connection errors in console
+
+**Solutions**:
+
+**1. Check Socket.IO server status**
+```bash
+# View backend logs for Socket.IO initialization
+docker-compose logs backend | grep -i "socket"
+
+# Verify Socket.IO endpoint is accessible
+curl -I http://localhost:8000/socket.io/
+```
+
+**2. Verify JWT token**
+```bash
+# Check if token is valid (in browser console)
+localStorage.getItem('token')
+
+# Token should be passed in Socket.IO auth
+```
+
+**3. Check CORS configuration for WebSocket**
+```python
+# backend/app/core/socketio.py
+# Ensure CORS origins are correctly configured
+SOCKETIO_CORS_ORIGINS = "*"  # Or specific origins
+```
+
+**4. Verify Redis connection (required for multi-worker)**
+```bash
+# Redis is required for Socket.IO adapter
+docker-compose exec redis redis-cli ping
+```
+
+**5. Check frontend Socket.IO configuration**
+```typescript
+// frontend/src/contexts/SocketContext.tsx
+// Verify connection parameters
+const socket = io(API_URL + '/chat', {
+  path: '/socket.io',
+  auth: { token },
+  transports: ['websocket', 'polling'],
+});
+```
+
+**6. Debug WebSocket in browser**
+- Open F12 developer tools
+- Go to Network tab → WS filter
+- Check WebSocket connection status and messages
 
 ---
 

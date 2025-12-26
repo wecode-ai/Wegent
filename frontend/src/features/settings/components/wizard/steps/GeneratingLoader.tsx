@@ -38,18 +38,18 @@ function RobotPart({
 }
 
 export default function GeneratingLoader({ className }: GeneratingLoaderProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation('wizard');
   const [tipIndex, setTipIndex] = useState(0);
   const [dots, setDots] = useState('');
   const [assemblyStep, setAssemblyStep] = useState(0);
 
   // Tips to cycle through - now synced with robot assembly
   const tips = [
-    t('wizard.loading_tip_analyzing'),
-    t('wizard.loading_tip_generating'),
-    t('wizard.loading_tip_generating_test_data'),
-    t('wizard.loading_tip_optimizing'),
-    t('wizard.loading_tip_almost_done'),
+    t('loading_tip_analyzing'),
+    t('loading_tip_generating'),
+    t('loading_tip_generating_test_data'),
+    t('loading_tip_optimizing'),
+    t('loading_tip_almost_done'),
   ];
 
   // Robot assembly animation - each step reveals more parts (slower pace)
@@ -237,9 +237,7 @@ export default function GeneratingLoader({ className }: GeneratingLoaderProps) {
       </div>
 
       {/* Main text */}
-      <p className="mt-6 text-base font-medium text-text-primary">
-        {t('wizard.generating_prompt')}
-      </p>
+      <p className="mt-6 text-base font-medium text-text-primary">{t('generating_prompt')}</p>
 
       {/* Dynamic tip with animated dots */}
       <p className="mt-2 text-sm text-text-muted h-5 transition-opacity duration-300">
@@ -248,7 +246,7 @@ export default function GeneratingLoader({ className }: GeneratingLoaderProps) {
       </p>
 
       {/* Progress hint */}
-      <p className="mt-4 text-xs text-text-muted/70">{t('wizard.loading_patience_hint')}</p>
+      <p className="mt-4 text-xs text-text-muted/70">{t('loading_patience_hint')}</p>
     </div>
   );
 }

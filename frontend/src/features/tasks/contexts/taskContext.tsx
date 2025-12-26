@@ -15,6 +15,7 @@ import React, {
 } from 'react';
 import { Task, TaskDetail, TaskStatus } from '@/types/api';
 import { taskApis } from '@/apis/tasks';
+import { ApiError } from '@/apis/client';
 import { notifyTaskCompletion } from '@/utils/notification';
 import {
   markTaskAsViewed,
@@ -46,8 +47,9 @@ type TaskContextType = {
   getUnreadCount: (tasks: Task[]) => number;
   markAllTasksAsViewed: () => void;
   viewStatusVersion: number;
-  /** Whether there was a network error during the last fetch */
-  hasNetworkError: boolean;
+  // Access denied state for 403 errors when accessing shared tasks
+  accessDenied: boolean;
+  clearAccessDenied: () => void;
 };
 
 const TaskContext = createContext<TaskContextType | undefined>(undefined);
@@ -64,7 +66,8 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   const [isSearching, setIsSearching] = useState<boolean>(false);
   const [isSearchResult, setIsSearchResult] = useState<boolean>(false);
   const [viewStatusVersion, setViewStatusVersion] = useState<number>(0);
-  const [hasNetworkError, setHasNetworkError] = useState<boolean>(false);
+  // Access denied state for 403 errors when accessing shared tasks
+  const [accessDenied, setAccessDenied] = useState<boolean>(false);
 
   // Track task status for notification
   const taskStatusMapRef = useRef<Map<number, TaskStatus>>(new Map());
@@ -112,16 +115,13 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
 
     // Only update if no error occurred
     if (!result.error) {
-      setHasNetworkError(false);
       setTasks(prev => [...prev, ...result.items]);
       setLoadedPages(prev =>
         Array.from(new Set([...prev, ...(result.pages || [])])).sort((a, b) => a - b)
       );
       setHasMore(result.hasMore);
-    } else {
-      // On error, set network error flag but don't clear existing data
-      setHasNetworkError(true);
     }
+    // On error, preserve existing data without clearing
     setLoadingMore(false);
   };
 
@@ -132,7 +132,6 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
 
     // Only update tasks if no error occurred - preserve existing data on network error
     if (!result.error) {
-      setHasNetworkError(false);
       setTasks(result.items);
       setLoadedPages(result.pages || []);
       setHasMore(result.hasMore);
@@ -142,9 +141,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
         initializeTaskViewStatus(result.items);
       }
     } else {
-      // On error, set network error flag but don't clear existing data
-      // This ensures the list remains visible and polling continues
-      setHasNetworkError(true);
+      // On error, preserve existing data without clearing
       console.warn('[TaskContext] Network error during refresh, preserving existing task list');
     }
 
@@ -395,42 +392,11 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     };
   }, [isConnected, registerTaskHandlers, handleTaskCreated, handleTaskInvited, handleTaskStatus]);
 
-  // Polling strategy:
-  // - When WebSocket is connected: rely on real-time updates, use longer polling interval (60s) as fallback
-  // - When WebSocket is disconnected: use shorter polling interval (10s) for faster updates
-  // - Only poll when there are incomplete tasks OR network error (for recovery)
-  useEffect(() => {
-    const hasIncompleteTasks = tasks.some(
-      task =>
-        task.status !== 'COMPLETED' &&
-        task.status !== 'FAILED' &&
-        task.status !== 'CANCELLED' &&
-        task.status !== 'DELETE'
-    );
-
-    let interval: NodeJS.Timeout | null = null;
-
-    // Continue polling if there are incomplete tasks OR if there was a network error
-    // This allows recovery when network connection is restored
-    if (hasIncompleteTasks || hasNetworkError) {
-      // Use longer interval when WebSocket is connected (real-time updates via WebSocket)
-      // Use shorter interval when WebSocket is disconnected (fallback to polling)
-      const pollingInterval = isConnected ? 60000 : 10000;
-
-      console.log(
-        `[TaskContext] Setting up polling with ${pollingInterval / 1000}s interval (WebSocket ${isConnected ? 'connected' : 'disconnected'})`
-      );
-
-      interval = setInterval(() => {
-        refreshTasks();
-      }, pollingInterval);
-    }
-
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadedPages, tasks, hasNetworkError, isConnected]); // Added isConnected to dependencies
+  // Removed polling - relying entirely on WebSocket real-time updates
+  // Task list will be updated via WebSocket events:
+  // - task:created - new task created
+  // - task:invited - user invited to group chat
+  // - task:status - task status/progress updates
 
   const refreshSelectedTaskDetail = async (isAutoRefresh: boolean = false) => {
     if (!selectedTask) return;
@@ -448,6 +414,8 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     }
 
     try {
+      // Clear access denied state before fetching
+      setAccessDenied(false);
       const updatedTaskDetail = await taskApis.getTaskDetail(selectedTask.id);
 
       // Extract workbench data from subtasks
@@ -482,6 +450,18 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
 
       setSelectedTaskDetail(taskDetailWithWorkbench);
     } catch (error) {
+      // Check if it's a 403 Forbidden or 404 Not Found error (access denied or task not found)
+      // Both cases should show the access denied UI to prevent information leakage
+      if (error instanceof ApiError && (error.status === 403 || error.status === 404)) {
+        console.warn(
+          '[TaskContext] Access denied or task not found:',
+          selectedTask.id,
+          error.status
+        );
+        setAccessDenied(true);
+        setSelectedTaskDetail(null);
+        return;
+      }
       console.error('Failed to refresh selected task detail:', error);
     }
   };
@@ -513,6 +493,17 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTask, leaveTask, joinTask]);
+
+  // Re-join task room when WebSocket reconnects
+  // This handles the case where page is refreshed and selectedTask is set from URL
+  // before WebSocket connection is established
+  useEffect(() => {
+    if (isConnected && selectedTask) {
+      console.log(`[TaskContext] WebSocket connected, re-joining room for task ${selectedTask.id}`);
+      joinTask(selectedTask.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConnected]);
 
   // Mark task as viewed when selectedTaskDetail is loaded
   // This ensures we have the correct status and timestamps from the backend
@@ -577,6 +568,11 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     []
   );
 
+  // Clear access denied state (called when navigating away or starting new task)
+  const clearAccessDenied = useCallback(() => {
+    setAccessDenied(false);
+  }, []);
+
   return (
     <TaskContext.Provider
       value={{
@@ -599,7 +595,8 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
         getUnreadCount,
         markAllTasksAsViewed: handleMarkAllTasksAsViewed,
         viewStatusVersion,
-        hasNetworkError,
+        accessDenied,
+        clearAccessDenied,
       }}
     >
       {children}
