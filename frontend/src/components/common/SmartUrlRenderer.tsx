@@ -16,14 +16,23 @@ interface SmartLinkProps {
   children: React.ReactNode
   /** Whether to use compact mode */
   compact?: boolean
+  /**
+   * Whether to disable rich rendering (metadata fetching).
+   * When true, renders URLs as simple clickable links.
+   * Useful during streaming to avoid excessive API calls.
+   */
+  disabled?: boolean
 }
 
 /**
  * SmartLink component that renders URLs intelligently:
  * - Image URLs: Rendered as inline image previews with Lightbox
  * - Web URLs: Rendered as rich link cards with metadata
+ *
+ * @param disabled - When true, skips metadata fetching and renders as simple link.
+ *                   Use this during streaming to avoid excessive API calls.
  */
-export function SmartLink({ href, children, compact = false }: SmartLinkProps) {
+export function SmartLink({ href, children, compact = false, disabled = false }: SmartLinkProps) {
   // Check if it's an image URL
   if (isImageUrl(href)) {
     // Extract alt text from children if it's a simple string
@@ -37,13 +46,13 @@ export function SmartLink({ href, children, compact = false }: SmartLinkProps) {
   // If link text is the same as URL, use LinkCard
   // If link text is different (e.g., "[Click here](url)"), show both text and card
   if (!linkText || linkText === href) {
-    return <LinkCard url={href} compact={compact} />
+    return <LinkCard url={href} compact={compact} disabled={disabled} />
   }
 
   // For links with custom text, show the link text with a card below
   return (
     <span className="inline-block">
-      <LinkCard url={href} linkText={linkText} compact={compact} />
+      <LinkCard url={href} linkText={linkText} compact={compact} disabled={disabled} />
     </span>
   )
 }
@@ -65,13 +74,23 @@ export function SmartImage({ src, alt }: SmartImageProps) {
 /**
  * Create custom Markdown components for MarkdownEditor.Markdown
  * that support smart URL rendering.
+ *
+ * @param options.disabled - When true, skips metadata fetching for link cards.
+ *                           Use this during streaming to avoid excessive API calls.
  */
 export function createSmartMarkdownComponents(options?: {
   enableLinkCards?: boolean
   enableImagePreview?: boolean
   compact?: boolean
+  /** When true, disables rich rendering (metadata fetching) for links */
+  disabled?: boolean
 }) {
-  const { enableLinkCards = true, enableImagePreview = true, compact = false } = options || {}
+  const {
+    enableLinkCards = true,
+    enableImagePreview = true,
+    compact = false,
+    disabled = false,
+  } = options || {}
 
   return {
     // Custom link renderer
@@ -90,7 +109,11 @@ export function createSmartMarkdownComponents(options?: {
       }
 
       // Use SmartLink for intelligent rendering
-      return <SmartLink href={href} compact={compact}>{children}</SmartLink>
+      return (
+        <SmartLink href={href} compact={compact} disabled={disabled}>
+          {children}
+        </SmartLink>
+      )
     },
 
     // Custom image renderer
@@ -111,6 +134,12 @@ interface SmartTextLineProps {
   text: string
   /** CSS class name for the container */
   className?: string
+  /**
+   * Whether to disable rich rendering (metadata fetching).
+   * When true, renders URLs as simple clickable links.
+   * Useful during streaming to avoid excessive API calls.
+   */
+  disabled?: boolean
 }
 
 /**
@@ -119,10 +148,13 @@ interface SmartTextLineProps {
  *
  * Detects URLs in the text and renders them appropriately:
  * - Image URLs: Rendered as inline image previews
- * - Web URLs: Rendered as rich link cards
+ * - Web URLs: Rendered as rich link cards (unless disabled)
  * - Other text: Rendered as plain text
+ *
+ * @param disabled - When true, skips metadata fetching and renders URLs as simple links.
+ *                   Use this during streaming to avoid excessive API calls.
  */
-export function SmartTextLine({ text, className = '' }: SmartTextLineProps) {
+export function SmartTextLine({ text, className = '', disabled = false }: SmartTextLineProps) {
   // If empty line, return non-breaking space to preserve line height
   if (!text) {
     return <div className={`text-sm break-all min-h-[1.25em] ${className}`}>{'\u00A0'}</div>
@@ -165,6 +197,7 @@ export function SmartTextLine({ text, className = '' }: SmartTextLineProps) {
           url={urlInfo.url}
           linkText={urlInfo.linkText}
           compact={false}
+          disabled={disabled}
         />
       )
     }

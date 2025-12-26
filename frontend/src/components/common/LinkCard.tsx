@@ -15,6 +15,12 @@ interface LinkCardProps {
   linkText?: string
   /** Whether to show a compact version */
   compact?: boolean
+  /**
+   * Whether to disable metadata fetching.
+   * When true, renders as a simple link without fetching metadata.
+   * Useful during streaming to avoid excessive API calls.
+   */
+  disabled?: boolean
 }
 
 /**
@@ -33,9 +39,13 @@ function getDomain(url: string): string {
  * LinkCard component for rendering web page URLs as rich preview cards.
  * Fetches metadata (title, description, favicon) from the backend API.
  * Falls back to a simple link on error.
+ *
+ * @param disabled - When true, skips metadata fetching and renders as simple link.
+ *                   Use this during streaming to avoid excessive API calls.
  */
-export default function LinkCard({ url, linkText, compact = false }: LinkCardProps) {
-  const { metadata, isLoading, error } = useUrlMetadata(url)
+export default function LinkCard({ url, linkText, compact = false, disabled = false }: LinkCardProps) {
+  // Only fetch metadata when not disabled
+  const { metadata, isLoading, error } = useUrlMetadata(disabled ? '' : url)
   const domain = useMemo(() => getDomain(url), [url])
 
   // Simple link fallback
@@ -51,6 +61,11 @@ export default function LinkCard({ url, linkText, compact = false }: LinkCardPro
       <ExternalLink className="h-3 w-3 flex-shrink-0" />
     </a>
   )
+
+  // When disabled, just render as simple link
+  if (disabled) {
+    return <SimpleLinkFallback />
+  }
 
   // Loading state
   if (isLoading) {

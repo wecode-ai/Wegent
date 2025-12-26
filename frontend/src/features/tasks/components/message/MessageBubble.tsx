@@ -277,6 +277,15 @@ const MessageBubble = memo(
     const headerIcon = isUserTypeMessage ? null : <Bot className="w-4 h-4" />;
     const headerLabel = isUserTypeMessage ? '' : msg.botName || t('messages.bot') || 'Bot';
 
+    // Determine if message is currently streaming (to disable URL metadata fetching)
+    // During streaming, we show simple links to avoid excessive API calls
+    const isStreaming =
+      msg.subtaskStatus === 'RUNNING' ||
+      msg.subtaskStatus === 'PENDING' ||
+      msg.subtaskStatus === 'PROCESSING' ||
+      isWaiting ||
+      msg.isWaiting;
+
     const renderProgressBar = (status: string, progress: number) => {
       const normalizedStatus = (status ?? '').toUpperCase();
       const isActiveStatus = ['RUNNING', 'PENDING', 'PROCESSING'].includes(normalizedStatus);
@@ -437,7 +446,11 @@ const MessageBubble = memo(
                       if (!href) {
                         return <span>{children}</span>;
                       }
-                      return <SmartLink href={href}>{children}</SmartLink>;
+                      return (
+                        <SmartLink href={href} disabled={isStreaming}>
+                          {children}
+                        </SmartLink>
+                      );
                     },
                     img: ({ src, alt }) => {
                       if (!src) return null;
@@ -485,7 +498,11 @@ const MessageBubble = memo(
                       if (!href) {
                         return <span>{children}</span>;
                       }
-                      return <SmartLink href={href}>{children}</SmartLink>;
+                      return (
+                        <SmartLink href={href} disabled={isStreaming}>
+                          {children}
+                        </SmartLink>
+                      );
                     },
                     img: ({ src, alt }) => {
                       if (!src) return null;
@@ -966,7 +983,11 @@ const MessageBubble = memo(
                       if (!href) {
                         return <span>{children}</span>;
                       }
-                      return <SmartLink href={href}>{children}</SmartLink>;
+                      return (
+                        <SmartLink href={href} disabled={isStreaming}>
+                          {children}
+                        </SmartLink>
+                      );
                     },
                     img: ({ src, alt }) => {
                       if (!src) return null;
@@ -995,7 +1016,11 @@ const MessageBubble = memo(
                         if (!href) {
                           return <span>{children}</span>;
                         }
-                        return <SmartLink href={href}>{children}</SmartLink>;
+                        return (
+                          <SmartLink href={href} disabled={isStreaming}>
+                            {children}
+                          </SmartLink>
+                        );
                       },
                       img: ({ src, alt }) => {
                         if (!src) return null;
@@ -1110,7 +1135,11 @@ const MessageBubble = memo(
                     if (!href) {
                       return <span>{children}</span>;
                     }
-                    return <SmartLink href={href}>{children}</SmartLink>;
+                    return (
+                      <SmartLink href={href} disabled={isStreaming}>
+                        {children}
+                      </SmartLink>
+                    );
                   },
                   img: ({ src, alt }) => {
                     if (!src) return null;
@@ -1139,7 +1168,11 @@ const MessageBubble = memo(
                       if (!href) {
                         return <span>{children}</span>;
                       }
-                      return <SmartLink href={href}>{children}</SmartLink>;
+                      return (
+                        <SmartLink href={href} disabled={isStreaming}>
+                          {children}
+                        </SmartLink>
+                      );
                     },
                     img: ({ src, alt }) => {
                       if (!src) return null;
@@ -1212,7 +1245,11 @@ const MessageBubble = memo(
                     if (!href) {
                       return <span>{children}</span>;
                     }
-                    return <SmartLink href={href}>{children}</SmartLink>;
+                    return (
+                      <SmartLink href={href} disabled={isStreaming}>
+                        {children}
+                      </SmartLink>
+                    );
                   },
                   img: ({ src, alt }) => {
                     if (!src) return null;
