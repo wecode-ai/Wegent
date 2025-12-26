@@ -256,7 +256,7 @@ export function ChatInputControls({
             forceOverride={forceOverride}
             setForceOverride={setForceOverride}
             selectedTeam={selectedTeam}
-            disabled={isLoading || isStreaming || (hasMessages && !isChatShell(selectedTeam))}
+            disabled={isLoading || isStreaming}
             compact={shouldCollapseSelectors}
           />
         )}

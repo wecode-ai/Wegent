@@ -143,12 +143,17 @@ export default function ModelSelector({
   }, [showDefaultOption, setForceOverride, disabled]);
 
   // Get compatible provider based on team agent_type
-  // agent_type 'agno' -> provider 'openai', agent_type 'claude'/'claudecode' -> provider 'claude'
+  // agent_type 'agno' -> show all models (no provider filter)
+  // agent_type 'claude'/'claudecode' -> provider 'claude'
+  // agent_type 'chat' -> show all models (no provider filter)
   const compatibleProvider = useMemo((): string | null => {
     if (!selectedTeam?.agent_type) return null;
     const agentType = selectedTeam.agent_type.toLowerCase();
-    if (agentType === 'agno') return 'openai';
+    // Agno supports multiple LLM providers, show all available models
+    if (agentType === 'agno') return null;
+    // ClaudeCode only supports Claude models
     if (agentType === 'claude' || agentType === 'claudecode') return 'claude';
+    // Chat shell shows all models
     return null;
   }, [selectedTeam?.agent_type]);
 
