@@ -13,7 +13,7 @@ import json
 import logging
 import uuid
 from datetime import datetime
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, Optional
 
 from app.schemas.openapi_response import (
     OutputMessage,
@@ -35,18 +35,17 @@ def _generate_message_id() -> str:
     return f"msg_{uuid.uuid4().hex[:12]}"
 
 
-def _format_sse_event(event_type: str, data: Dict[str, Any]) -> str:
+def _format_sse_event(data: Dict[str, Any]) -> str:
     """
     Format data as Server-Sent Event (SSE).
 
     Args:
-        event_type: Event type (e.g., 'response.created')
         data: Event data dictionary
 
     Returns:
-        Formatted SSE string
+        Formatted SSE string (data only, without event line)
     """
-    return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 class OpenAPIStreamingService:
@@ -88,6 +87,7 @@ class OpenAPIStreamingService:
 
         message_id = _generate_message_id()
         accumulated_text = ""
+        sequence_number = 0
 
         try:
             # Event 1: response.created
@@ -99,87 +99,111 @@ class OpenAPIStreamingService:
                 output=[],
                 previous_response_id=previous_response_id,
             )
-            yield _format_sse_event(
-                "response.created",
-                {"type": "response.created", "response": initial_response.model_dump()},
-            )
+            yield _format_sse_event({
+                "response": initial_response.model_dump(),
+                "sequence_number": sequence_number,
+                "type": "response.created",
+            })
+            sequence_number += 1
 
-            # Event 2: response.output_item.added
-            yield _format_sse_event(
-                "response.output_item.added",
-                {
-                    "type": "response.output_item.added",
-                    "output_index": 0,
-                    "item": {
-                        "type": "message",
-                        "id": message_id,
-                        "role": "assistant",
-                        "content": [],
-                    },
-                },
-            )
+            # Event 2: response.in_progress
+            yield _format_sse_event({
+                "response": initial_response.model_dump(),
+                "sequence_number": sequence_number,
+                "type": "response.in_progress",
+            })
+            sequence_number += 1
 
-            # Event 3: response.content_part.added
-            yield _format_sse_event(
-                "response.content_part.added",
-                {
-                    "type": "response.content_part.added",
-                    "output_index": 0,
-                    "content_index": 0,
-                    "part": {"type": "output_text", "text": ""},
+            # Event 3: response.output_item.added
+            yield _format_sse_event({
+                "item": {
+                    "content": [],
+                    "id": message_id,
+                    "role": "assistant",
+                    "status": "in_progress",
+                    "type": "message",
                 },
-            )
+                "output_index": 0,
+                "sequence_number": sequence_number,
+                "type": "response.output_item.added",
+            })
+            sequence_number += 1
+
+            # Event 4: response.content_part.added
+            yield _format_sse_event({
+                "content_index": 0,
+                "item_id": message_id,
+                "output_index": 0,
+                "part": {
+                    "annotations": [],
+                    "text": "",
+                    "type": "output_text",
+                },
+                "sequence_number": sequence_number,
+                "type": "response.content_part.added",
+            })
+            sequence_number += 1
 
             # Stream text deltas
             async for chunk in chat_stream:
                 if chunk:
                     accumulated_text += chunk
-                    yield _format_sse_event(
-                        "response.output_text.delta",
-                        {
-                            "type": "response.output_text.delta",
-                            "output_index": 0,
-                            "content_index": 0,
-                            "delta": chunk,
-                        },
-                    )
+                    yield _format_sse_event({
+                        "content_index": 0,
+                        "delta": chunk,
+                        "item_id": message_id,
+                        "output_index": 0,
+                        "sequence_number": sequence_number,
+                        "type": "response.output_text.delta",
+                    })
+                    sequence_number += 1
 
             # Event: response.output_text.done
-            yield _format_sse_event(
-                "response.output_text.done",
-                {
-                    "type": "response.output_text.done",
-                    "output_index": 0,
-                    "content_index": 0,
-                    "text": accumulated_text,
-                },
-            )
+            yield _format_sse_event({
+                "content_index": 0,
+                "item_id": message_id,
+                "output_index": 0,
+                "sequence_number": sequence_number,
+                "text": accumulated_text,
+                "type": "response.output_text.done",
+            })
+            sequence_number += 1
 
             # Event: response.content_part.done
-            yield _format_sse_event(
-                "response.content_part.done",
-                {
-                    "type": "response.content_part.done",
-                    "output_index": 0,
-                    "content_index": 0,
-                    "part": {"type": "output_text", "text": accumulated_text},
+            yield _format_sse_event({
+                "content_index": 0,
+                "item_id": message_id,
+                "output_index": 0,
+                "part": {
+                    "annotations": [],
+                    "text": accumulated_text,
+                    "type": "output_text",
                 },
-            )
+                "sequence_number": sequence_number,
+                "type": "response.content_part.done",
+            })
+            sequence_number += 1
 
             # Event: response.output_item.done
-            yield _format_sse_event(
-                "response.output_item.done",
-                {
-                    "type": "response.output_item.done",
-                    "output_index": 0,
-                    "item": {
-                        "type": "message",
-                        "id": message_id,
-                        "role": "assistant",
-                        "content": [{"type": "output_text", "text": accumulated_text}],
-                    },
+            yield _format_sse_event({
+                "item": {
+                    "content": [
+                        {
+                            "annotations": [],
+                            "text": accumulated_text,
+                            "type": "output_text",
+                        }
+                    ],
+                    "id": message_id,
+                    "role": "assistant",
+                    "status": "completed",
+                    "type": "message",
                 },
-            )
+                "output_index": 0,
+                "sequence_number": sequence_number,
+                "type": "response.output_item.done",
+            })
+            sequence_number += 1
 
             # Event: response.completed
             final_response = ResponseObject(
@@ -197,10 +221,11 @@ class OpenAPIStreamingService:
                 ],
                 previous_response_id=previous_response_id,
             )
-            yield _format_sse_event(
-                "response.completed",
-                {"type": "response.completed", "response": final_response.model_dump()},
-            )
+            yield _format_sse_event({
+                "response": final_response.model_dump(),
+                "sequence_number": sequence_number,
+                "type": "response.completed",
+            })
 
         except Exception as e:
             logger.exception(f"Error during streaming response: {e}")
@@ -225,10 +250,11 @@ class OpenAPIStreamingService:
                 ),
                 previous_response_id=previous_response_id,
             )
-            yield _format_sse_event(
-                "response.failed",
-                {"type": "response.failed", "response": error_response.model_dump()},
-            )
+            yield _format_sse_event({
+                "response": error_response.model_dump(),
+                "sequence_number": sequence_number,
+                "type": "response.failed",
+            })
 
 
 # Global service instance
