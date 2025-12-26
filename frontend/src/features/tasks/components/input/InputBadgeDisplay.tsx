@@ -8,6 +8,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
+import ContextBadge from '../chat/ContextBadge';
 import {
   formatFileSize,
   getFileIcon,
@@ -15,13 +16,19 @@ import {
   getAttachmentPreviewUrl,
 } from '@/apis/attachments';
 import { getToken } from '@/apis/user';
+import { useTranslation } from '@/hooks/useTranslation';
 import type { Attachment, MultiAttachmentUploadState } from '@/types/api';
+import type { ContextItem } from '@/types/context';
 
-interface AttachmentUploadPreviewProps {
+interface InputBadgeDisplayProps {
+  /** Selected knowledge base contexts */
+  contexts: ContextItem[];
   /** Current attachments state */
-  state: MultiAttachmentUploadState;
+  attachmentState: MultiAttachmentUploadState;
+  /** Callback to remove a context */
+  onRemoveContext: (contextId: number | string) => void;
   /** Callback to remove an attachment */
-  onRemove: (attachmentId: number) => void;
+  onRemoveAttachment: (attachmentId: number) => void;
   /** Whether the component is disabled */
   disabled?: boolean;
 }
@@ -89,7 +96,6 @@ function useAuthenticatedImageInline(attachmentId: number, isImage: boolean) {
 
   return { blobUrl, isLoading, error };
 }
-
 /**
  * Inline attachment preview component
  */
@@ -97,10 +103,12 @@ function AttachmentPreviewInline({
   attachment,
   disabled,
   onRemove,
+  t,
 }: {
   attachment: Attachment;
   disabled?: boolean;
   onRemove: () => void;
+  t: (key: string) => string;
 }) {
   const isImage = isImageExtension(attachment.file_extension);
   const {
@@ -199,7 +207,8 @@ function AttachmentPreviewInline({
         </span>
         <span className="text-xs text-text-muted">
           {formatFileSize(attachment.file_size)}
-          {attachment.text_length && ` · ${attachment.text_length.toLocaleString()} 字符`}
+          {attachment.text_length &&
+            ` · ${attachment.text_length.toLocaleString()} ${t('attachment.characters')}`}
         </span>
       </div>
       {attachment.status === 'parsing' && (
@@ -221,28 +230,32 @@ function AttachmentPreviewInline({
 }
 
 /**
- * Attachment upload preview component
- * Only responsible for displaying attachment previews and upload progress
+ * Unified badge display component that shows both knowledge base badges and attachment badges
+ * in a single horizontal scrollable row
  */
-export default function AttachmentUploadPreview({
-  state,
-  onRemove,
+export default function InputBadgeDisplay({
+  contexts,
+  attachmentState,
+  onRemoveContext,
+  onRemoveAttachment,
   disabled = false,
-}: AttachmentUploadPreviewProps) {
-  const hasAttachments = state.attachments.length > 0;
-  const isUploading = state.uploadingFiles.size > 0;
-  const hasErrors = state.errors.size > 0;
+}: InputBadgeDisplayProps) {
+  const { t } = useTranslation('tasks');
+  const hasContexts = contexts.length > 0;
+  const hasAttachments = attachmentState.attachments.length > 0;
+  const isUploading = attachmentState.uploadingFiles.size > 0;
+  const hasErrors = attachmentState.errors.size > 0;
 
-  // Don't render anything if no content to show
-  if (!hasAttachments && !isUploading && !hasErrors) {
+  // Only render if there are items to display
+  if (!hasContexts && !hasAttachments && !isUploading && !hasErrors) {
     return null;
   }
 
   return (
-    <div className="flex flex-col gap-2">
-      {/* Uploading files */}
+    <div className="flex flex-col gap-2 px-3 pt-2 pb-1">
+      {/* Uploading files progress indicators */}
       {isUploading &&
-        Array.from(state.uploadingFiles.entries()).map(([fileId, { file, progress }]) => (
+        Array.from(attachmentState.uploadingFiles.entries()).map(([fileId, { file, progress }]) => (
           <div key={fileId} className="flex items-center gap-2 px-3 py-1.5 bg-muted rounded-lg">
             <Loader2 className="h-4 w-4 animate-spin text-primary flex-shrink-0" />
             <div className="flex flex-col min-w-[100px] flex-1">
@@ -252,15 +265,24 @@ export default function AttachmentUploadPreview({
           </div>
         ))}
 
-      {/* Attachment previews in a horizontal scrollable container */}
-      {hasAttachments && (
-        <div className="flex items-center gap-2 overflow-x-auto max-w-full">
-          {state.attachments.map(attachment => (
-            <div key={attachment.id} className="flex-shrink-0">
+      {/* Unified badge display area - knowledge bases first, then attachments */}
+      {(hasContexts || hasAttachments) && (
+        <div className="flex items-center gap-2 overflow-x-auto max-w-full badge-scroll">
+          {/* Knowledge base badges */}
+          {contexts.map(context => (
+            <div key={`context-${context.type}-${context.id}`} className="flex-shrink-0">
+              <ContextBadge context={context} onRemove={() => onRemoveContext(context.id)} />
+            </div>
+          ))}
+
+          {/* Attachment badges */}
+          {attachmentState.attachments.map(attachment => (
+            <div key={`attachment-${attachment.id}`} className="flex-shrink-0">
               <AttachmentPreviewInline
                 attachment={attachment}
                 disabled={disabled}
-                onRemove={() => onRemove(attachment.id)}
+                onRemove={() => onRemoveAttachment(attachment.id)}
+                t={t}
               />
             </div>
           ))}
@@ -270,7 +292,7 @@ export default function AttachmentUploadPreview({
       {/* Error messages */}
       {hasErrors && (
         <div className="flex flex-col gap-1">
-          {Array.from(state.errors.entries()).map(([fileId, error]) => (
+          {Array.from(attachmentState.errors.entries()).map(([fileId, error]) => (
             <span key={fileId} className="text-xs text-red-500 truncate" title={error}>
               {error}
             </span>

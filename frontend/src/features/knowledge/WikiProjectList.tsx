@@ -137,9 +137,7 @@ export default function WikiProjectList({
               />
             </svg>
           </div>
-          <h3 className="font-medium text-base mb-2 text-text-primary">
-            {t('add_repository')}
-          </h3>
+          <h3 className="font-medium text-base mb-2 text-text-primary">{t('add_repository')}</h3>
           <p className="text-sm text-text-muted text-center">{t('add_repository_desc')}</p>
         </Card>
       </div>

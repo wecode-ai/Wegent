@@ -14,6 +14,7 @@ class RetrievalMode(str, Enum):
     """Retrieval mode enum."""
 
     VECTOR = "vector"  # Pure vector search
+    KEYWORD = "keyword"  # Pure BM25 keyword search (full-text search)
     HYBRID = "hybrid"  # Hybrid search (vector + BM25)
 
 
@@ -116,7 +117,7 @@ class RetrieveRequest(BaseModel):
     )
     retrieval_mode: RetrievalMode = Field(
         RetrievalMode.VECTOR,
-        description="Retrieval mode: 'vector' for pure vector search, 'hybrid' for vector + BM25",
+        description="Retrieval mode: 'vector' for pure vector search, 'keyword' for pure BM25 keyword search, 'hybrid' for vector + BM25",
     )
     hybrid_weights: Optional[HybridWeights] = Field(
         None,

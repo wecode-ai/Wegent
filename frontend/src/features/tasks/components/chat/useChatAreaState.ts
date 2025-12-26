@@ -16,6 +16,7 @@ import type { ContextItem } from '@/types/context';
 import type { Model } from '../selector/ModelSelector';
 import { useMultiAttachment } from '@/hooks/useMultiAttachment';
 import { userApis } from '@/apis/user';
+import { correctionApis } from '@/apis/correction';
 import { getLastTeamIdByMode, saveLastTeamByMode, saveLastRepo } from '@/utils/userPreferences';
 import { useTaskContext } from '../../contexts/taskContext';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
@@ -63,6 +64,13 @@ export interface ChatAreaState {
   // Clarification state
   enableClarification: boolean;
   setEnableClarification: (value: boolean) => void;
+
+  // Correction mode state
+  enableCorrectionMode: boolean;
+  correctionModelId: string | null;
+  correctionModelName: string | null;
+  enableCorrectionWebSearch: boolean;
+  handleCorrectionModeToggle: (enabled: boolean, modelId?: string, modelName?: string) => void;
 
   // External API params
   externalApiParams: Record<string, string>;
@@ -151,6 +159,12 @@ export function useChatAreaState({
   // Toggle states
   const [enableDeepThinking, setEnableDeepThinking] = useState(true);
   const [enableClarification, setEnableClarification] = useState(false);
+
+  // Correction mode state (persisted in localStorage)
+  const [enableCorrectionMode, setEnableCorrectionMode] = useState(false);
+  const [correctionModelId, setCorrectionModelId] = useState<string | null>(null);
+  const [correctionModelName, setCorrectionModelName] = useState<string | null>(null);
+  const [enableCorrectionWebSearch, setEnableCorrectionWebSearch] = useState(false);
 
   // External API params
   const [externalApiParams, setExternalApiParams] = useState<Record<string, string>>({});
@@ -247,6 +261,23 @@ export function useChatAreaState({
     setAppMode(mode);
   }, []);
 
+  // Handle correction mode toggle
+  const handleCorrectionModeToggle = useCallback(
+    (enabled: boolean, modelId?: string, modelName?: string) => {
+      setEnableCorrectionMode(enabled);
+      setCorrectionModelId(modelId || null);
+      setCorrectionModelName(modelName || null);
+      // When correction mode is enabled, read web search settings from localStorage
+      if (enabled) {
+        const savedState = correctionApis.getCorrectionModeState();
+        setEnableCorrectionWebSearch(savedState.enableWebSearch ?? true);
+      } else {
+        setEnableCorrectionWebSearch(false);
+      }
+    },
+    []
+  );
+
   // Check if a team is compatible with the current mode
   const isTeamCompatibleWithMode = useCallback(
     (team: Team): boolean => {
@@ -339,6 +370,13 @@ export function useChatAreaState({
     // Clarification state
     enableClarification,
     setEnableClarification,
+
+    // Correction mode state
+    enableCorrectionMode,
+    correctionModelId,
+    correctionModelName,
+    enableCorrectionWebSearch,
+    handleCorrectionModeToggle,
 
     // External API params
     externalApiParams,

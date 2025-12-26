@@ -5,8 +5,9 @@
 'use client';
 
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
-import { Check, FileText } from 'lucide-react';
+import { Check, FileText, ArrowRight } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import Link from 'next/link';
 import {
   Command,
   CommandEmpty,
@@ -142,6 +143,7 @@ export default function ContextSelector({
         description: kb.description ?? undefined,
         retriever_name: kb.retrieval_config?.retriever_name,
         retriever_namespace: kb.retrieval_config?.retriever_namespace,
+        document_count: kb.document_count,
       };
       onSelect(context);
     }
@@ -195,9 +197,17 @@ export default function ContextSelector({
                 </button>
               </div>
             ) : sortedKnowledgeBases.length === 0 ? (
-              <CommandEmpty className="py-4 text-center text-sm text-text-muted">
-                {t('no_knowledge_bases')}
-              </CommandEmpty>
+              <div className="py-6 px-4 text-center">
+                <p className="text-sm text-text-muted mb-3">{t('no_knowledge_bases')}</p>
+                <Link
+                  href="/knowledge"
+                  onClick={() => onOpenChange(false)}
+                  className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 font-medium transition-colors"
+                >
+                  {t('go_to_create')}
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </Link>
+              </div>
             ) : (
               <>
                 <CommandEmpty className="py-4 text-center text-sm text-text-muted">

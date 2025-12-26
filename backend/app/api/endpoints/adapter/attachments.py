@@ -12,41 +12,22 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import Response
-from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
+from app.schemas.attachment import (
+    AttachmentDetailResponse,
+    AttachmentResponse,
+    TruncationInfo,
+)
 from app.services.attachment import attachment_service
 from app.services.attachment.parser import DocumentParseError, DocumentParser
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-
-class AttachmentResponse(BaseModel):
-    """Response model for attachment operations."""
-
-    id: int
-    filename: str
-    file_size: int
-    mime_type: str
-    status: str
-    text_length: Optional[int] = None
-    error_message: Optional[str] = None
-
-    class Config:
-        from_attributes = True
-
-
-class AttachmentDetailResponse(AttachmentResponse):
-    """Detailed response model including subtask_id."""
-
-    subtask_id: Optional[int] = None
-    file_extension: str
-    created_at: str
 
 
 @router.post("/upload", response_model=AttachmentResponse)
@@ -68,11 +49,11 @@ async def upload_attachment(
     - Images (.jpg, .jpeg, .png, .gif, .bmp, .webp)
 
     Limits:
-    - Maximum file size: 20 MB
-    - Maximum extracted text: 50,000 characters
+    - Maximum file size: 100 MB
+    - Maximum extracted text: 1,500,000 characters (auto-truncated if exceeded)
 
     Returns:
-        Attachment details including ID and processing status
+        Attachment details including ID, processing status, and truncation info
     """
     logger.info(
         f"[attachments.py] upload_attachment: user_id={current_user.id}, filename={file.filename}"
@@ -86,23 +67,35 @@ async def upload_attachment(
         binary_data = await file.read()
     except Exception as e:
         logger.error(f"Error reading uploaded file: {e}")
-        raise HTTPException(status_code=400, detail="Failed to read uploaded file")
+        raise HTTPException(
+            status_code=400, detail="Failed to read uploaded file"
+        ) from e
 
     # Validate file size before processing
     if not DocumentParser.validate_file_size(len(binary_data)):
-        max_size_mb = DocumentParser.MAX_FILE_SIZE / (1024 * 1024)
+        max_size_mb = DocumentParser.get_max_file_size() / (1024 * 1024)
         raise HTTPException(
             status_code=400,
             detail=f"File size exceeds maximum limit ({max_size_mb} MB)",
         )
 
     try:
-        attachment = attachment_service.upload_attachment(
+        attachment, truncation_info = attachment_service.upload_attachment(
             db=db,
             user_id=current_user.id,
             filename=file.filename,
             binary_data=binary_data,
         )
+
+        # Build truncation info for response
+        response_truncation_info = None
+        if truncation_info and truncation_info.is_truncated:
+            response_truncation_info = TruncationInfo(
+                is_truncated=True,
+                original_length=truncation_info.original_length,
+                truncated_length=truncation_info.truncated_length,
+                truncation_message_key="content_truncated",
+            )
 
         return AttachmentResponse(
             id=attachment.id,
@@ -112,15 +105,26 @@ async def upload_attachment(
             status=attachment.status.value,
             text_length=attachment.text_length,
             error_message=attachment.error_message,
+            truncation_info=response_truncation_info,
         )
 
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except DocumentParseError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        # Return error with error_code for i18n mapping
+        error_code = getattr(e, "error_code", None)
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": str(e),
+                "error_code": error_code,
+            },
+        ) from e
     except Exception as e:
         logger.error(f"Error uploading attachment: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to upload attachment")
+        raise HTTPException(
+            status_code=500, detail="Failed to upload attachment"
+        ) from e
 
 
 @router.get("/{attachment_id}", response_model=AttachmentDetailResponse)

@@ -29,7 +29,7 @@ export function useTypewriter(content: string, speed = 15) {
 
   useEffect(() => {
     const timer = setInterval(() => {
-      setDisplayedContent((current) => {
+      setDisplayedContent(current => {
         const target = contentRef.current;
 
         // If current is longer than target (e.g. content truncated/reset but not caught above),
