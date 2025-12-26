@@ -328,7 +328,7 @@ class StreamingCore:
         """
         result = self.state.get_current_result()
 
-        # Save final content to Redis
+        # Save final content to Redis for streaming recovery
         await storage_handler.save_streaming_content(
             self.state.subtask_id,
             self.state.full_response,
@@ -340,15 +340,8 @@ class StreamingCore:
             result,
         )
 
-        # Append assistant message to chat history
-        # Note: User message is already saved before streaming starts
-        await storage_handler.append_message(
-            self.state.task_id,
-            "assistant",
-            self.state.full_response,
-        )
-
-        # Update subtask status to COMPLETED
+        # Update subtask status to COMPLETED (persists to DB)
+        # Database is the single source of truth for chat history
         await storage_handler.update_subtask_status(
             self.state.subtask_id,
             "COMPLETED",

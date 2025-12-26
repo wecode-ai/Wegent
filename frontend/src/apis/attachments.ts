@@ -7,6 +7,7 @@
  */
 
 import { getToken } from './user';
+import type { TruncationInfo } from '@/types/api';
 
 // API base URL - use relative path for browser compatibility
 const API_BASE_URL = '';
@@ -27,6 +28,8 @@ export interface AttachmentResponse {
   status: AttachmentStatus;
   text_length?: number | null;
   error_message?: string | null;
+  error_code?: string | null;
+  truncation_info?: TruncationInfo | null;
 }
 
 /**
@@ -36,6 +39,65 @@ export interface AttachmentDetailResponse extends AttachmentResponse {
   subtask_id?: number | null;
   file_extension: string;
   created_at: string;
+}
+
+/**
+ * Error code to i18n key mapping
+ */
+const ERROR_CODE_MAPPING: Record<
+  string,
+  { titleKey: string; hintKey: string; hintParams?: Record<string, string | number> }
+> = {
+  unsupported_type: {
+    titleKey: 'attachment.errors.unsupported_type',
+    hintKey: 'attachment.errors.unsupported_type_hint',
+  },
+  file_too_large: {
+    titleKey: 'attachment.errors.file_too_large',
+    hintKey: 'attachment.errors.file_too_large_hint',
+    hintParams: { size: 100 },
+  },
+  parse_failed: {
+    titleKey: 'attachment.errors.parse_failed',
+    hintKey: 'attachment.errors.parse_failed_hint',
+  },
+  encrypted_pdf: {
+    titleKey: 'attachment.errors.encrypted_pdf',
+    hintKey: 'attachment.errors.encrypted_pdf_hint',
+  },
+  legacy_doc: {
+    titleKey: 'attachment.errors.legacy_doc',
+    hintKey: 'attachment.errors.legacy_doc_hint',
+  },
+  legacy_ppt: {
+    titleKey: 'attachment.errors.legacy_ppt',
+    hintKey: 'attachment.errors.legacy_ppt_hint',
+  },
+  legacy_xls: {
+    titleKey: 'attachment.errors.legacy_xls',
+    hintKey: 'attachment.errors.legacy_xls_hint',
+  },
+};
+
+/**
+ * Get localized error message from error code
+ * @param errorCode - Backend error code
+ * @param t - i18n translation function
+ * @returns Localized error message or undefined
+ */
+export function getErrorMessageFromCode(
+  errorCode: string | null | undefined,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  t: (key: string, params?: Record<string, any>) => string
+): string | undefined {
+  if (!errorCode) return undefined;
+
+  const mapping = ERROR_CODE_MAPPING[errorCode];
+  if (!mapping) return undefined;
+
+  const title = t(mapping.titleKey);
+  const hint = t(mapping.hintKey, mapping.hintParams || { types: t('attachment.supported_types') });
+  return `${title}: ${hint}`;
 }
 
 /**

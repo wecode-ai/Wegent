@@ -27,6 +27,7 @@ type TaskTitleDropdownProps = {
   taskDetail?: TaskDetail | null;
   className?: string;
   onTaskDeleted?: () => void;
+  onMembersChanged?: () => void; // Callback to refresh task detail when converted to group chat
 };
 
 export default function TaskTitleDropdown({
@@ -34,6 +35,7 @@ export default function TaskTitleDropdown({
   taskDetail,
   className,
   onTaskDeleted,
+  onMembersChanged,
 }: TaskTitleDropdownProps) {
   const { t } = useTranslation();
   const router = useRouter();
@@ -191,12 +193,14 @@ export default function TaskTitleDropdown({
                 onTaskDeleted();
               }
             }}
+            onMembersChanged={onMembersChanged}
           />
           <InviteLinkDialog
             open={showInviteLinkDialog}
             onClose={() => setShowInviteLinkDialog(false)}
             taskId={taskDetail.id}
             taskTitle={taskDetail.title}
+            onMembersChanged={onMembersChanged}
           />
         </>
       )}

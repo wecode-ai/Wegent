@@ -50,8 +50,8 @@ export function RetrievalSettingsSection({
 }: RetrievalSettingsSectionProps) {
   const { t } = useTranslation('knowledge');
   const { retrievers, loading: loadingRetrievers } = useRetrievers(scope, groupName);
-  const { models: embeddingModels, loading: loadingModels } = useEmbeddingModels();
-  const { methods: retrievalMethods } = useRetrievalMethods();
+  const { models: embeddingModels, loading: loadingModels } = useEmbeddingModels(scope, groupName);
+  const { methods: retrievalMethods, loading: loadingMethods } = useRetrievalMethods();
 
   const [topK, setTopK] = useState(config.top_k ?? 5);
   const [scoreThreshold, setScoreThreshold] = useState(config.score_threshold ?? 0.7);
@@ -66,11 +66,18 @@ export function RetrievalSettingsSection({
   }, [selectedRetriever, retrievalMethods]);
 
   // Ensure vector mode is selected if current mode is not available
+  // Only reset if retrievers AND retrieval methods are loaded and we have a valid selection
   useEffect(() => {
-    if (config.retrieval_mode && !availableModes.includes(config.retrieval_mode)) {
+    if (
+      !loadingRetrievers &&
+      !loadingMethods &&
+      selectedRetriever &&
+      config.retrieval_mode &&
+      !availableModes.includes(config.retrieval_mode)
+    ) {
       onChange({ ...config, retrieval_mode: 'vector' });
     }
-  }, [availableModes, config, onChange]);
+  }, [availableModes, config, onChange, loadingRetrievers, loadingMethods, selectedRetriever]);
 
   // Auto-select first retriever if data exists and no selection
   useEffect(() => {
@@ -179,7 +186,10 @@ export function RetrievalSettingsSection({
         ) : retrievers.length === 0 ? (
           <div className="space-y-2">
             <p className="text-sm text-warning">{t('document.retrieval.noRetriever')}</p>
-            <Link href="/settings" className="text-sm text-primary hover:underline">
+            <Link
+              href="/settings?section=personal&tab=personal-retrievers"
+              className="text-sm text-primary hover:underline"
+            >
               {t('document.goToSettings')}
             </Link>
           </div>
@@ -195,9 +205,7 @@ export function RetrievalSettingsSection({
                 label: retriever.displayName || retriever.name,
               }))}
             />
-            <p className="text-xs text-text-muted">
-              {t('document.retrieval.retrieverHint')}
-            </p>
+            <p className="text-xs text-text-muted">{t('document.retrieval.retrieverHint')}</p>
           </>
         )}
       </div>
@@ -209,10 +217,11 @@ export function RetrievalSettingsSection({
           <div className="text-sm text-text-secondary">{t('common:actions.loading')}</div>
         ) : embeddingModels.length === 0 ? (
           <div className="space-y-2">
-            <p className="text-sm text-warning">
-              {t('document.retrieval.noEmbeddingModel')}
-            </p>
-            <Link href="/settings" className="text-sm text-primary hover:underline">
+            <p className="text-sm text-warning">{t('document.retrieval.noEmbeddingModel')}</p>
+            <Link
+              href="/settings?section=personal&tab=personal-models"
+              className="text-sm text-primary hover:underline"
+            >
               {t('document.goToSettings')}
             </Link>
           </div>
@@ -228,9 +237,7 @@ export function RetrievalSettingsSection({
                 label: model.displayName || model.name,
               }))}
             />
-            <p className="text-xs text-text-muted">
-              {t('document.retrieval.embeddingModelHint')}
-            </p>
+            <p className="text-xs text-text-muted">{t('document.retrieval.embeddingModelHint')}</p>
           </>
         )}
       </div>
@@ -291,9 +298,7 @@ export function RetrievalSettingsSection({
       {/* Score Threshold Slider */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <Label htmlFor="score-threshold">
-            Score {t('document.retrieval.threshold')}
-          </Label>
+          <Label htmlFor="score-threshold">Score {t('document.retrieval.threshold')}</Label>
           <span className="text-sm text-text-secondary font-medium">
             {scoreThreshold.toFixed(2)}
           </span>
@@ -307,9 +312,7 @@ export function RetrievalSettingsSection({
           step={0.05}
           disabled={isOtherSettingsDisabled}
         />
-        <p className="text-xs text-text-muted">
-          {t('document.retrieval.scoreThresholdHint')}
-        </p>
+        <p className="text-xs text-text-muted">{t('document.retrieval.scoreThresholdHint')}</p>
       </div>
 
       {/* Hybrid Weights (only when hybrid mode is selected) */}

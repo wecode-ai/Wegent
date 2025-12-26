@@ -23,8 +23,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import MarkdownEditor from '@uiw/react-markdown-editor';
 import MarkdownWithMermaid from '@/components/common/MarkdownWithMermaid';
-import ThinkingComponent from './ThinkingComponent';
-import InlineToolStatus from './InlineToolStatus';
+import { ThinkingDisplay } from './thinking';
 import ClarificationForm from '../clarification/ClarificationForm';
 import FinalPromptMessage from './FinalPromptMessage';
 import ClarificationAnswerSummary from '../clarification/ClarificationAnswerSummary';
@@ -122,6 +121,8 @@ export interface MessageBubbleProps {
   isCurrentUserMessage?: boolean;
   /** Callback when user clicks retry button for failed messages */
   onRetry?: (message: Message) => void;
+  /** Message type for feedback storage key differentiation */
+  feedbackMessageType?: 'original' | 'correction';
 }
 
 // Component for rendering a paragraph with hover action button
@@ -232,6 +233,7 @@ const MessageBubble = memo(
     paragraphAction,
     isCurrentUserMessage,
     onRetry,
+    feedbackMessageType,
   }: MessageBubbleProps) {
     // Use trace hook for telemetry (auto-includes user and task context)
     const { trace } = useTraceAction();
@@ -240,10 +242,12 @@ const MessageBubble = memo(
     const { feedback, handleLike, handleDislike } = useMessageFeedback({
       subtaskId: msg.subtaskId,
       timestamp: msg.timestamp,
+      messageType: feedbackMessageType,
       onFeedbackChange: fb =>
         trace.event('message-feedback', {
           'feedback.type': fb ?? 'cancelled',
           'feedback.message_type': msg.type,
+          'feedback.category': feedbackMessageType || 'original',
           ...(msg.subtaskId && { 'subtask.id': msg.subtaskId }),
         }),
     });
@@ -274,7 +278,26 @@ const MessageBubble = memo(
     };
 
     const timestampLabel = formatTimestamp(msg.timestamp);
-    const headerIcon = isUserTypeMessage ? null : <Bot className="w-4 h-4" />;
+    const headerIcon = isUserTypeMessage ? null : msg.botName === t('correction.result_title') ? (
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="24"
+        height="24"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="lucide lucide-circle-check-big h-4 w-4 text-primary"
+        aria-hidden="true"
+      >
+        <path d="M21.801 10A10 10 0 1 1 17 3.335"></path>
+        <path d="m9 11 3 3L22 4"></path>
+      </svg>
+    ) : (
+      <Bot className="w-4 h-4" />
+    );
     const headerLabel = isUserTypeMessage ? '' : msg.botName || t('messages.bot') || 'Bot';
 
     const renderProgressBar = (status: string, progress: number) => {
@@ -1170,10 +1193,7 @@ const MessageBubble = memo(
         <div className="space-y-2">
           {contentToRender ? (
             <>
-              <MarkdownWithMermaid
-                source={contentToRender}
-                theme={theme}
-              />
+              <MarkdownWithMermaid source={contentToRender} theme={theme} />
               {/* Show copy and download buttons during streaming */}
               <SourceReferences sources={msg.sources || msg.result?.sources || []} />
               <BubbleTools
@@ -1241,15 +1261,15 @@ const MessageBubble = memo(
     return (
       <div className={`flex ${shouldAlignRight ? 'justify-end' : 'justify-start'}`} translate="no">
         <div
-          className={`flex ${shouldAlignRight ? 'max-w-[75%] w-auto' : isUserTypeMessage ? 'max-w-[75%] w-auto' : 'w-full'} flex-col gap-3 ${shouldAlignRight ? 'items-end' : 'items-start'}`}
+          className={`flex ${shouldAlignRight ? 'max-w-[75%] w-auto' : isUserTypeMessage ? 'max-w-[75%] w-auto' : 'w-full'} flex-col ${shouldAlignRight ? 'items-end' : 'items-start'}`}
         >
-          {/* Show inline tool status for Chat shell type only */}
-          {!isUserTypeMessage && msg.thinking && msg.result?.shell_type === 'Chat' && (
-            <InlineToolStatus thinking={msg.thinking} taskStatus={msg.subtaskStatus} />
-          )}
-          {/* Show thinking component for all other cases (non-Chat shell types or legacy data without shell_type) */}
-          {msg.type === 'ai' && msg.thinking && msg.result?.shell_type !== 'Chat' && (
-            <ThinkingComponent thinking={msg.thinking} taskStatus={msg.subtaskStatus} />
+          {/* Show thinking display for AI messages */}
+          {!isUserTypeMessage && msg.thinking && (
+            <ThinkingDisplay
+              thinking={msg.thinking}
+              taskStatus={msg.subtaskStatus}
+              shellType={msg.result?.shell_type}
+            />
           )}
           <div
             className={`${bubbleBaseClasses} ${bubbleTypeClasses}`}

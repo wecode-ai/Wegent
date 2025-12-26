@@ -4,7 +4,7 @@
 
 'use client';
 
-import { FolderOpen, Pencil, Trash2, FileText, ArrowRight } from 'lucide-react';
+import { FolderOpen, Pencil, Trash2, FileText, ArrowRight, Clock } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import type { KnowledgeBase } from '@/types/knowledge';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -41,7 +41,14 @@ export function KnowledgeBaseCard({
   };
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString();
+    if (!dateString) return '';
+    const date = new Date(dateString);
+    // Format as MM-DD HH:mm for compact display
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `${month}-${day} ${hours}:${minutes}`;
   };
 
   return (
@@ -72,7 +79,15 @@ export function KnowledgeBaseCard({
             <FileText className="w-3 h-3" />
             {knowledgeBase.document_count}
           </span>
-          <span>{formatDate(knowledgeBase.updated_at)}</span>
+          <span
+            className="flex items-center gap-1"
+            title={
+              knowledgeBase.updated_at ? new Date(knowledgeBase.updated_at).toLocaleString() : ''
+            }
+          >
+            <Clock className="w-3 h-3" />
+            {formatDate(knowledgeBase.updated_at)}
+          </span>
         </div>
 
         {/* Action buttons */}

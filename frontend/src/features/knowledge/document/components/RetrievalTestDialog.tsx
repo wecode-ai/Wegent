@@ -145,8 +145,8 @@ export function RetrievalTestDialog({
           namespace: config.retriever_namespace,
         },
         embedding_model_ref: {
-          name: config.embedding_config.model_name,
-          namespace: config.embedding_config.model_namespace,
+          model_name: config.embedding_config.model_name,
+          model_namespace: config.embedding_config.model_namespace,
         },
         // Use test config values instead of database config
         top_k: testConfig.top_k,
@@ -371,11 +371,7 @@ export function RetrievalTestDialog({
                   onClick={handleSearch}
                   disabled={!query.trim() || loading || !hasRetrievalConfig}
                 >
-                  {loading ? (
-                    <Spinner className="w-4 h-4" />
-                  ) : (
-                    t('document.retrievalTest.search')
-                  )}
+                  {loading ? <Spinner className="w-4 h-4" /> : t('document.retrievalTest.search')}
                 </Button>
               </div>
             </div>

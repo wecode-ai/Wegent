@@ -21,6 +21,7 @@ type TopNavigationProps = {
   children?: React.ReactNode;
   onMobileSidebarToggle?: () => void;
   onTaskDeleted?: () => void;
+  onMembersChanged?: () => void; // Callback to refresh task detail when converted to group chat
   isSidebarCollapsed?: boolean;
 };
 
@@ -32,6 +33,7 @@ export default function TopNavigation({
   children,
   onMobileSidebarToggle,
   onTaskDeleted,
+  onMembersChanged,
   isSidebarCollapsed = false,
 }: TopNavigationProps) {
   const { t } = useTranslation('common');
@@ -79,7 +81,12 @@ export default function TopNavigation({
 
         {/* Show task title dropdown when in with-sidebar variant */}
         {variant === 'with-sidebar' && (
-          <TaskTitleDropdown title={title} taskDetail={taskDetail} onTaskDeleted={onTaskDeleted} />
+          <TaskTitleDropdown
+            title={title}
+            taskDetail={taskDetail}
+            onTaskDeleted={onTaskDeleted}
+            onMembersChanged={onMembersChanged}
+          />
         )}
 
         {/* Show title as heading when explicitly provided and not in with-sidebar variant */}

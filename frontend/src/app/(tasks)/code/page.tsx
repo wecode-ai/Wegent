@@ -47,7 +47,8 @@ export default function CodePage() {
   const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams();
 
   // Task context for workbench data
-  const { selectedTaskDetail, setSelectedTask, refreshTasks } = useTaskContext();
+  const { selectedTaskDetail, setSelectedTask, refreshTasks, refreshSelectedTaskDetail } =
+    useTaskContext();
 
   // Chat stream context for real-time workbench and thinking data
   const { getStreamState, clearAllStreams } = useChatStreamContext();
@@ -59,6 +60,12 @@ export default function CodePage() {
   const handleTaskDeleted = () => {
     setSelectedTask(null);
     refreshTasks();
+  };
+
+  // Handle members changed (when converting to group chat or adding/removing members)
+  const handleMembersChanged = () => {
+    refreshTasks();
+    refreshSelectedTaskDetail(false);
   };
 
   // Router for navigation
@@ -278,6 +285,7 @@ export default function CodePage() {
             taskDetail={selectedTaskDetail}
             onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
             onTaskDeleted={handleTaskDeleted}
+            onMembersChanged={handleMembersChanged}
             isSidebarCollapsed={isCollapsed}
           >
             {shareButton}

@@ -75,7 +75,10 @@
     "parentGroup": "Parent Group",
     "noParentGroup": "No Parent Group",
     "parentGroupHint": "Select a parent group to create a subgroup (max 5 levels of nesting)",
-    "finalNameWillBe": "Final group name will be: {{name}}"
+    "finalNameWillBe": "Final group name will be: {{name}}",
+    "visibilityPublicHint": "Public: Agents created in this group can be called via API by anyone.",
+    "visibilityInternalHint": "Internal: Resources are only visible to group members.",
+    "visibilityPrivateHint": "Private: Only visible to the creator."
   },
   "groupMembers": {
     "selectUser": "Select user...",

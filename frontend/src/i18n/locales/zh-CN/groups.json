@@ -75,7 +75,10 @@
     "parentGroup": "父群组",
     "noParentGroup": "无父群组",
     "parentGroupHint": "选择父群组后，新群组将成为其子群组（最多5级嵌套）",
-    "finalNameWillBe": "最终群组名称将为：{{name}}"
+    "finalNameWillBe": "最终群组名称将为：{{name}}",
+    "visibilityPublicHint": "公开组：组内资源可被所有人通过 API 调用",
+    "visibilityInternalHint": "内部组：组内资源仅成员可见和使用",
+    "visibilityPrivateHint": "私有组：仅创建者可见和使用"
   },
   "groupMembers": {
     "selectUser": "选择用户...",

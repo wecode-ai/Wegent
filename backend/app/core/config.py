@@ -124,7 +124,7 @@ class Settings(BaseSettings):
 
     # File upload configuration
     MAX_UPLOAD_FILE_SIZE_MB: int = 100  # Maximum file size in MB
-    MAX_EXTRACTED_TEXT_LENGTH: int = 1500000  # Maximum extracted text length
+    MAX_EXTRACTED_TEXT_LENGTH: int = 500000  # Maximum extracted text length
 
     # Attachment storage backend configuration
     # Supported backends: "mysql" (default), "s3", "minio"
@@ -180,6 +180,12 @@ class Settings(BaseSettings):
     GRACEFUL_SHUTDOWN_TIMEOUT: int = 600
     # Whether to reject new requests during shutdown (503 Service Unavailable)
     SHUTDOWN_REJECT_NEW_REQUESTS: bool = True
+
+    # API trusted sources configuration (comma-separated list)
+    # When set, allows trusted services to proxy requests on behalf of users
+    # via wegent-source and wegent-username headers
+    # Example: "service-a,service-b,internal-gateway"
+    API_TRUSTED_SOURCES: str = ""
 
     # OpenTelemetry configuration is centralized in shared/telemetry/config.py
     # Use: from shared.telemetry.config import get_otel_config

@@ -20,7 +20,9 @@ import { useRouter } from 'next/navigation';
 import { useTaskContext } from '../../contexts/taskContext';
 import { useChatStreamContext } from '../../contexts/chatStreamContext';
 import { Button } from '@/components/ui/button';
-import { useScrollManagement, useFloatingInput, useTeamPreferences } from '../hooks';
+import { useScrollManagement } from '../hooks/useScrollManagement';
+import { useFloatingInput } from '../hooks/useFloatingInput';
+import { useTeamPreferences } from '../hooks/useTeamPreferences';
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
@@ -359,6 +361,9 @@ export default function ChatArea({
     setEnableDeepThinking: chatState.setEnableDeepThinking,
     enableClarification: chatState.enableClarification,
     setEnableClarification: chatState.setEnableClarification,
+    enableCorrectionMode: chatState.enableCorrectionMode,
+    correctionModelName: chatState.correctionModelName,
+    onCorrectionModeToggle: chatState.handleCorrectionModeToggle,
     selectedContexts: chatState.selectedContexts,
     setSelectedContexts: chatState.setSelectedContexts,
     attachmentState: chatState.attachmentState,
@@ -416,6 +421,9 @@ export default function ChatArea({
               onSendMessage={handleSendMessageFromChild}
               isGroupChat={selectedTaskDetail?.is_group_chat || false}
               onRetry={streamHandlers.handleRetry}
+              enableCorrectionMode={chatState.enableCorrectionMode}
+              correctionModelId={chatState.correctionModelId}
+              enableCorrectionWebSearch={chatState.enableCorrectionWebSearch}
             />
           </div>
         </div>
