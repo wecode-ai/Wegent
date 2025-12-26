@@ -61,14 +61,14 @@ class MessageConverter:
                 vision_data = current_message.copy()
                 if username and vision_data.get("text"):
                     vision_data["text"] = f"User[{username}]: {vision_data['text']}"
-                messages.append(
-                    MessageConverter._build_vision_from_dict(vision_data)
-                )
+                messages.append(MessageConverter._build_vision_from_dict(vision_data))
             elif current_message.get("type") == "multi_vision":
                 # For multi-vision messages, add username prefix to text if provided
                 multi_vision_data = current_message.copy()
                 if username and multi_vision_data.get("text"):
-                    multi_vision_data["text"] = f"User[{username}]: {multi_vision_data['text']}"
+                    multi_vision_data["text"] = (
+                        f"User[{username}]: {multi_vision_data['text']}"
+                    )
                 messages.append(
                     MessageConverter._build_multi_vision_from_dict(multi_vision_data)
                 )
@@ -76,7 +76,9 @@ class MessageConverter:
                 messages.append(current_message)
         else:
             # For plain text messages, add username prefix if provided (group chat)
-            content = f"User[{username}]: {current_message}" if username else current_message
+            content = (
+                f"User[{username}]: {current_message}" if username else current_message
+            )
             messages.append({"role": "user", "content": content})
 
         return messages

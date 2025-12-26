@@ -19,6 +19,7 @@ Architecture:
 - models/: LangChain model factory
 - storage/: Unified storage handler
 - tools/: Tool registry and implementations
+- context.py: Typed context objects for better separation of concerns
 """
 
 import asyncio
@@ -34,6 +35,7 @@ from langchain_core.tools.base import BaseTool
 from app.core.config import settings
 
 from .agents import LangGraphAgentBuilder
+from .context import ChatStreamContext
 from .messages import MessageConverter
 from .models import LangChainModelFactory
 from .storage import storage_handler
@@ -52,22 +54,95 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class WebSocketStreamConfig:
-    """Configuration for WebSocket streaming."""
+    """Configuration for WebSocket streaming.
 
+    This class groups all parameters needed for WebSocket streaming.
+    For cleaner code, use the from_context() factory method with ChatStreamContext.
+
+    Attributes:
+        task_id: Task ID for the chat session
+        subtask_id: Assistant subtask ID
+        task_room: WebSocket room name for broadcasting
+
+        user_id: User ID for permission checks and history loading
+        user_name: User name for group chat message prefix
+        is_group_chat: Whether this is a group chat (affects message prefix and history truncation)
+
+        message_id: Assistant's message_id for frontend ordering
+        user_message_id: User's message_id for history exclusion (prevents duplicate messages)
+
+        enable_web_search: Enable web search tool
+        search_engine: Specific search engine to use
+
+        bot_name: Bot name for MCP server loading
+        bot_namespace: Bot namespace
+        shell_type: Shell type (Chat, ClaudeCode, Agno) for frontend display
+        extra_tools: Additional tools (e.g., KnowledgeBaseTool)
+    """
+
+    # Task identification
     task_id: int
     subtask_id: int
     task_room: str
+
+    # User context
     user_id: int
     user_name: str
     is_group_chat: bool = False
-    enable_web_search: bool = False
-    search_engine: str | None = None
-    bot_name: str = ""
-    bot_namespace: str = "default"
-    extra_tools: list[BaseTool] = field(default_factory=list)
+
+    # Message ordering context
     message_id: int | None = None  # Assistant's message_id for ordering in frontend
     user_message_id: int | None = None  # User's message_id for history exclusion
+
+    # Feature flags
+    enable_web_search: bool = False
+    search_engine: str | None = None
+
+    # Bot configuration
+    bot_name: str = ""
+    bot_namespace: str = "default"
     shell_type: str = "Chat"  # Shell type for frontend display
+    extra_tools: list[BaseTool] = field(default_factory=list)
+
+    @classmethod
+    def from_context(cls, ctx: ChatStreamContext) -> "WebSocketStreamConfig":
+        """Create config from ChatStreamContext.
+
+        This factory method provides a cleaner interface when using the
+        typed context objects from context.py.
+
+        Args:
+            ctx: ChatStreamContext containing all grouped parameters
+
+        Returns:
+            WebSocketStreamConfig instance
+        """
+        return cls(
+            task_id=ctx.task_id,
+            subtask_id=ctx.subtask_id,
+            task_room=ctx.task_room,
+            user_id=ctx.user.user_id,
+            user_name=ctx.user.user_name,
+            is_group_chat=ctx.user.is_group_chat,
+            message_id=ctx.message.assistant_message_id,
+            user_message_id=ctx.message.user_message_id,
+            enable_web_search=ctx.features.enable_web_search,
+            search_engine=ctx.features.search_engine,
+            bot_name=ctx.bot.bot_name,
+            bot_namespace=ctx.bot.bot_namespace,
+            shell_type=ctx.bot.shell_type,
+            extra_tools=list(ctx.bot.extra_tools),
+        )
+
+    def get_username_for_message(self) -> str | None:
+        """Get username for message prefix in group chat mode.
+
+        Returns:
+            Username string for group chat, None for single chat
+        """
+        if self.is_group_chat:
+            return self.user_name
+        return None
 
 
 # SSE response headers
@@ -691,7 +766,7 @@ class ChatService:
 
             # Build messages
             # For group chat, add username prefix to current message so model knows who sent it
-            username = config.user_name if config.is_group_chat else None
+            username = config.get_username_for_message()
             messages = MessageConverter.build_messages(
                 history, message, system_prompt, username=username
             )
