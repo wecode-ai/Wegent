@@ -7,7 +7,7 @@
 import React from 'react'
 import ImagePreview from '@/components/common/ImagePreview'
 import LinkCard from '@/components/common/LinkCard'
-import { isImageUrl } from '@/utils/url-detector'
+import { isImageUrl, detectUrls } from '@/utils/url-detector'
 
 interface SmartLinkProps {
   /** The URL to render */
@@ -104,4 +104,81 @@ export function createSmartMarkdownComponents(options?: {
       return <SmartImage src={src} alt={alt} />
     },
   }
+}
+
+interface SmartTextLineProps {
+  /** The text line to render */
+  text: string
+  /** CSS class name for the container */
+  className?: string
+}
+
+/**
+ * SmartTextLine component for rendering a single line of plain text
+ * with intelligent URL detection and rendering.
+ *
+ * Detects URLs in the text and renders them appropriately:
+ * - Image URLs: Rendered as inline image previews
+ * - Web URLs: Rendered as rich link cards
+ * - Other text: Rendered as plain text
+ */
+export function SmartTextLine({ text, className = '' }: SmartTextLineProps) {
+  // If empty line, return non-breaking space to preserve line height
+  if (!text) {
+    return <div className={`text-sm break-all min-h-[1.25em] ${className}`}>{'\u00A0'}</div>
+  }
+
+  // Detect URLs in the text
+  const detectedUrls = detectUrls(text)
+
+  // If no URLs found, render as plain text
+  if (detectedUrls.length === 0) {
+    return <div className={`text-sm break-all min-h-[1.25em] ${className}`}>{text}</div>
+  }
+
+  // Build segments: alternating between plain text and URL components
+  const segments: React.ReactNode[] = []
+  let lastIndex = 0
+
+  detectedUrls.forEach((urlInfo, index) => {
+    // Add text before this URL
+    if (urlInfo.startIndex > lastIndex) {
+      const textBefore = text.slice(lastIndex, urlInfo.startIndex)
+      if (textBefore) {
+        segments.push(<span key={`text-${index}`}>{textBefore}</span>)
+      }
+    }
+
+    // Add the URL component
+    if (urlInfo.isImage) {
+      segments.push(
+        <ImagePreview
+          key={`url-${index}`}
+          src={urlInfo.url}
+          alt={urlInfo.altText || urlInfo.linkText}
+        />
+      )
+    } else {
+      segments.push(
+        <LinkCard
+          key={`url-${index}`}
+          url={urlInfo.url}
+          linkText={urlInfo.linkText}
+          compact={false}
+        />
+      )
+    }
+
+    lastIndex = urlInfo.endIndex
+  })
+
+  // Add any remaining text after the last URL
+  if (lastIndex < text.length) {
+    const textAfter = text.slice(lastIndex)
+    if (textAfter) {
+      segments.push(<span key="text-end">{textAfter}</span>)
+    }
+  }
+
+  return <div className={`text-sm break-all min-h-[1.25em] ${className}`}>{segments}</div>
 }

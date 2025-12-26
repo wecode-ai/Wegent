@@ -35,7 +35,7 @@ import type { ClarificationData, FinalPromptData, ClarificationAnswer } from '@/
 import type { SourceReference } from '@/types/socket';
 import { useTraceAction } from '@/hooks/useTraceAction';
 import { useMessageFeedback } from '@/hooks/useMessageFeedback';
-import { SmartLink, SmartImage } from '@/components/common/SmartUrlRenderer';
+import { SmartLink, SmartImage, SmartTextLine } from '@/components/common/SmartUrlRenderer';
 export interface Message {
   type: 'user' | 'ai';
   content: string;
@@ -655,12 +655,8 @@ const MessageBubble = memo(
           return <React.Fragment key={idx}>{renderProgressBar(status, progress)}</React.Fragment>;
         }
 
-        // Use non-breaking space for empty lines to preserve line height
-        return (
-          <div key={idx} className="text-sm break-all min-h-[1.25em]">
-            {line || '\u00A0'}
-          </div>
-        );
+        // Use SmartTextLine to detect and render URLs (images and links) in plain text
+        return <SmartTextLine key={idx} text={line} />;
       });
     };
     // Helper function to parse Markdown clarification questions
