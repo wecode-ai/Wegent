@@ -292,9 +292,9 @@ alembic downgrade -1                               # Rollback
 **MCP (Model Context Protocol) Configuration:**
 - `CHAT_MCP_ENABLED`: Enable/disable MCP tools in Chat Shell mode (default: `false`)
 - `CHAT_MCP_SERVERS`: JSON config for MCP servers (see config.py comments for format)
-- `CHAT_MCP_SERVERS_USER_HEADER`: HTTP header key for passing username to MCP servers (default: `wegent-user`)
-  - Only applies to `sse` and `streamable-http` type MCP servers
-  - Username is sanitized to RFC 7230 compliant characters (printable ASCII only)
+  - Supports `${{path}}` variable substitution in config values (headers, urls, etc.)
+  - Available variables: `user.name`, `user.id`
+  - Example: `"headers": {"X-User": "${{user.name}}"}` will be replaced with actual username
 
 ### Frontend
 

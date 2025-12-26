@@ -173,9 +173,9 @@ class Settings(BaseSettings):
     #         }
     #     }
     # }
+    # Supports ${{path}} variable substitution, e.g.:
+    # "headers": {"X-User": "${{user.name}}"} will be replaced with actual username
     CHAT_MCP_SERVERS: str = "{}"
-    # HTTP header key for passing username to MCP servers (sse/streamable-http only)
-    CHAT_MCP_SERVERS_USER_HEADER: str = "wegent-user"
 
     # Maximum time to wait for active streaming requests to complete (seconds)
     # Default: 600 seconds (10 minutes) to allow long-running streaming requests to complete

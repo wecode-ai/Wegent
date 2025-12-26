@@ -652,11 +652,18 @@ class ChatService:
 
             # Load MCP tools if enabled
             if settings.CHAT_MCP_ENABLED:
+                # Build task_data for MCP variable substitution
+                mcp_task_data = {
+                    "user": {
+                        "name": config.user_name,
+                        "id": config.user_id,
+                    }
+                }
                 mcp_client = await self._load_mcp_tools(
                     task_id,
                     config.bot_name,
                     config.bot_namespace,
-                    username=config.user_name,
+                    task_data=mcp_task_data,
                 )
                 if mcp_client:
                     extra_tools.extend(mcp_client.get_tools())
@@ -874,7 +881,7 @@ class ChatService:
         task_id: int,
         bot_name: str = "",
         bot_namespace: str = "default",
-        username: str | None = None,
+        task_data: dict[str, Any] | None = None,
     ) -> Any:
         """Load MCP tools for a task, merging backend and bot configurations.
 
@@ -885,6 +892,9 @@ class ChatService:
         If a server name exists in both configurations, the bot's configuration
         takes precedence to allow per-bot customization.
 
+        Variable substitution is supported using ${{path}} placeholders in the
+        MCP server configuration. Values are replaced from task_data.
+
         Protection mechanisms:
         - Timeout protection: MCP connection with timeout (30s default)
         - Exception isolation: All MCP errors are caught and logged
@@ -894,7 +904,8 @@ class ChatService:
             task_id: Task ID for session management
             bot_name: Bot name to query Ghost MCP configuration
             bot_namespace: Bot namespace for Ghost query
-            username: Optional username to pass via HTTP header (for sse/streamable-http)
+            task_data: Optional dict for variable substitution in MCP config.
+                Example: {"user": {"name": "john"}} allows using ${{user.name}}
 
         Returns:
             MCPClient instance or None (None on any failure to protect backend stability)
@@ -968,7 +979,7 @@ class ChatService:
 
             # Step 4: Create MCP client with merged configuration
             # Add timeout protection for MCP connection
-            client = MCPClient(merged_servers, username=username)
+            client = MCPClient(merged_servers, task_data=task_data)
             try:
                 # Timeout for connecting to MCP servers (30 seconds)
                 await asyncio.wait_for(client.connect(), timeout=30.0)
