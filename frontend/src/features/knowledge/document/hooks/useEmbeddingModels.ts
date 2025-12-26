@@ -3,10 +3,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useState, useCallback } from 'react';
-import { retrieverApis } from '@/apis/retrievers';
-import { UnifiedModel } from '@/apis/models';
+import { modelApis, UnifiedModel } from '@/apis/models';
 
-export function useEmbeddingModels() {
+/**
+ * Hook to fetch embedding models with scope support.
+ *
+ * @param scope - Resource scope: 'personal', 'group', or 'all'
+ * @param groupName - Group name (required when scope is 'group')
+ */
+export function useEmbeddingModels(scope?: 'personal' | 'group' | 'all', groupName?: string) {
   const [models, setModels] = useState<UnifiedModel[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -14,14 +19,21 @@ export function useEmbeddingModels() {
   const fetchModels = useCallback(async () => {
     try {
       setLoading(true);
-      const data = await retrieverApis.getEmbeddingModels();
-      setModels(data);
+      // Use modelApis.getUnifiedModels with scope support and filter by embedding type
+      const response = await modelApis.getUnifiedModels(
+        undefined, // shellType
+        false, // includeConfig
+        scope || 'all', // scope - default to 'all' to include personal + group + public models
+        groupName, // groupName
+        'embedding' // modelCategoryType - filter by embedding models
+      );
+      setModels(response?.data || []);
     } catch (err) {
       setError(err as Error);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [scope, groupName]);
 
   useEffect(() => {
     fetchModels();
