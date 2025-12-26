@@ -18,7 +18,11 @@ import { DeleteGroupConfirmDialog } from './DeleteGroupConfirmDialog';
 import { GroupMembersDialog } from './GroupMembersDialog';
 import { useUser } from '@/features/common/UserContext';
 
-export function GroupManager() {
+interface GroupManagerProps {
+  onGroupsChange?: () => void;
+}
+
+export function GroupManager({ onGroupsChange }: GroupManagerProps) {
   const { t } = useTranslation('groups');
   const { user } = useUser();
   const [groups, setGroups] = useState<Group[]>([]);
@@ -69,6 +73,7 @@ export function GroupManager() {
 
   const handleSuccess = () => {
     loadGroups();
+    onGroupsChange?.();
   };
 
   if (loading) {
