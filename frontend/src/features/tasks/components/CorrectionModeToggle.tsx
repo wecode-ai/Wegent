@@ -6,7 +6,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { CheckCircle } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { ActionButton } from '@/components/ui/action-button';
 import { useTranslation } from '@/hooks/useTranslation';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Button } from '@/components/ui/button';
 import { modelApis, UnifiedModel } from '@/apis/models';
 import { correctionApis, CorrectionModeState } from '@/apis/correction';
 
@@ -116,20 +117,20 @@ export default function CorrectionModeToggle({
       <TooltipProvider>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={handleToggle}
-              disabled={disabled}
-              className={cn(
-                'h-8 w-8 rounded-full flex-shrink-0 transition-colors',
-                enabled
-                  ? 'border-primary bg-primary/10 text-primary hover:bg-primary/20'
-                  : 'border-border bg-base text-text-primary hover:bg-hover'
-              )}
-            >
-              <CheckCircle className="h-4 w-4" />
-            </Button>
+            <div>
+              <ActionButton
+                variant="outline"
+                onClick={handleToggle}
+                disabled={disabled}
+                icon={<CheckCircle className="h-4 w-4" />}
+                className={cn(
+                  'transition-colors',
+                  enabled
+                    ? 'border-primary bg-primary/10 text-primary hover:bg-primary/20'
+                    : 'border-border bg-base text-text-primary hover:bg-hover'
+                )}
+              />
+            </div>
           </TooltipTrigger>
           <TooltipContent side="top">
             <p>
