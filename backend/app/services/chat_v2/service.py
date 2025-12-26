@@ -363,8 +363,11 @@ class ChatService:
                     return
 
                 # Get chat history (exclude current user message to avoid duplication)
+                # message_id is the assistant's message_id, user's message_id = assistant's - 1
+                # We need to exclude messages with message_id >= user's message_id
+                user_message_id = message_id - 1 if message_id else None
                 history = await self._get_chat_history(
-                    task_id, is_group_chat, exclude_after_message_id=message_id
+                    task_id, is_group_chat, exclude_after_message_id=user_message_id
                 )
 
                 # Build messages
@@ -676,10 +679,13 @@ class ChatService:
 
             # Get chat history (exclude current user message to avoid duplication)
             # The current user message will be added by build_messages()
+            # config.message_id is the assistant's message_id, user's message_id = assistant's - 1
+            # We need to exclude messages with message_id >= user's message_id
+            user_message_id = config.message_id - 1 if config.message_id else None
             history = await self._get_chat_history(
                 task_id,
                 config.is_group_chat,
-                exclude_after_message_id=config.message_id,
+                exclude_after_message_id=user_message_id,
             )
 
             # Build messages
@@ -1119,8 +1125,10 @@ class ChatService:
             task_id: Task ID
             is_group_chat: Whether to include username prefix in user messages
             exclude_after_message_id: If provided, exclude messages with message_id >= this value.
-                                      This prevents duplicate user messages when the current
-                                      user message is already saved to DB.
+                                      Pass the current user's message_id to exclude the current
+                                      user message (which will be added by build_messages()).
+                                      Note: Caller should compute user_message_id from
+                                      assistant_message_id - 1.
 
         Returns:
             List of message dictionaries
