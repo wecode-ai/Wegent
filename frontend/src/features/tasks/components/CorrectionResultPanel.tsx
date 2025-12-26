@@ -99,10 +99,10 @@ export default function CorrectionResultPanel({
   if (isLoading) {
     return (
       <div className={cn('bg-surface rounded-xl border border-border p-4', className)}>
-        <div className="flex items-center gap-2 mb-4">
+        {/* <div className="flex items-center gap-2 mb-4">
           <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary"></div>
           <span className="text-sm text-text-secondary">{t('correction.evaluating')}</span>
-        </div>
+        </div> */}
         <div className="space-y-3">
           {[1, 2, 3].map(i => (
             <div key={i} className="h-6 bg-border/50 rounded animate-pulse" />
