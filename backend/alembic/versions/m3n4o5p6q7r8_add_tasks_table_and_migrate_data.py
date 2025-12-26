@@ -1,7 +1,7 @@
 """add_tasks_table_and_migrate_data
 
-Revision ID: l2m3n4o5p6q7
-Revises: 56b6ed7610fe
+Revision ID: m3n4o5p6q7r8
+Revises: l2m3n4o5p6q7
 Create Date: 2025-12-23 16:30:00.000000+08:00
 
 This migration creates a new 'tasks' table for storing Task and Workspace resources,
@@ -17,8 +17,8 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "l2m3n4o5p6q7"
-down_revision: Union[str, Sequence[str], None] = "56b6ed7610fe"
+revision: str = "m3n4o5p6q7r8"
+down_revision: Union[str, Sequence[str], None] = "l2m3n4o5p6q7"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
