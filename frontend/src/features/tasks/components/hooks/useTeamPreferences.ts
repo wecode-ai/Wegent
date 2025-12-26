@@ -239,6 +239,8 @@ export function useTeamPreferences({
    * Effect: Set model when viewing existing task.
    *
    * This replaces the original useEffect at lines 249-303 in ChatArea.tsx.
+   * Fixed: Now correctly sets model on initial task load (not just when switching tasks).
+   * The model should be set whenever task ID changes, including when a new task is created.
    */
   useEffect(() => {
     if (!selectedTaskDetail?.id || !selectedTeam) return;
@@ -246,12 +248,7 @@ export function useTeamPreferences({
     const taskIdChanged = prevTaskIdForModelRef.current !== selectedTaskDetail.id;
     if (!taskIdChanged) return;
 
-    const isUserSwitchingTasks =
-      prevTaskIdForModelRef.current !== undefined && prevTaskIdForModelRef.current !== null;
-
     prevTaskIdForModelRef.current = selectedTaskDetail.id;
-
-    if (!isUserSwitchingTasks) return;
 
     const taskModelId = selectedTaskDetail.model_id;
 
