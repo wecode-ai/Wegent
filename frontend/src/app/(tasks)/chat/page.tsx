@@ -16,6 +16,7 @@ import {
   SearchDialog,
 } from '@/features/tasks/components/sidebar';
 import OnboardingTour from '@/features/onboarding/OnboardingTour';
+import FeatureTour from '@/features/onboarding/FeatureTour';
 import { TaskParamSync } from '@/features/tasks/components/params';
 import { TeamShareHandler, TaskShareHandler } from '@/features/tasks/components/share';
 import { InviteJoinHandler, CreateGroupChatDialog } from '@/features/tasks/components/group-chat';
@@ -191,6 +192,8 @@ export default function ChatPage() {
         isLoading={isTeamsLoading}
         hasShareId={hasShareId}
       />
+      {/* Feature tour for new features (only for old users) */}
+      <FeatureTour currentPage="/chat" isLoading={isTeamsLoading} />
       <div className="flex smart-h-screen bg-base text-text-primary box-border">
         {/* Collapsed sidebar floating buttons */}
         {isCollapsed && !isMobile && (

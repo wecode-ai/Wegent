@@ -557,6 +557,19 @@
     "done": "Done",
     "restart_tour": "Restart Onboarding Tour"
   },
+  "featureTour": {
+    "skip": "Skip",
+    "next": "Next",
+    "previous": "Previous",
+    "done": "Got it!",
+    "view_feature_updates": "View Feature Updates",
+    "view_feature_updates_desc": "Re-watch the guided tour for new features",
+    "no_feature_tours": "No feature tours available",
+    "v1_0_21": {
+      "placeholder_title": "New Features in v1.0.21",
+      "placeholder_description": "This is a placeholder for future feature tours. New features will be highlighted here."
+    }
+  },
   "common": {
     "back": "Back",
     "cancel": "Cancel",
