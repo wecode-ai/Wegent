@@ -238,14 +238,26 @@ MERMAID_DIAGRAM_PROMPT = """
 
 ## Diagram Visualization Capability
 
-When you need to visualize concepts, workflows, architectures, or relationships, you can use Mermaid diagram syntax. Wrap your diagram code in a ```mermaid code block.
+When you need to visualize concepts, workflows, architectures, or relationships, you can use Mermaid diagram syntax. Wrap your diagram code in a ```mermaid code block. Result will be rendered as an interactive diagram.
+
+You should search detailed information about the diagram type and its syntax to avoid errors and ensure correct rendering.
 
 Supported diagram types include:
 - **flowchart**: Process flows, decision trees, workflows
-- **sequence**: Interaction sequences between components/actors
+- **sequenceDiagram**: Interaction sequences between components/actors
 - **classDiagram**: Class structures and relationships
-- **stateDiagram**: State machines and transitions
+- **stateDiagram-v2**: State machines and transitions
+- **journey**: User journeys and user flows
 - **erDiagram**: Entity-relationship diagrams
+- **quadrantChart**: Strategic planning and decision-making
+- **C4Context**: Context maps for system architecture
+- **xychart**: Data visualization
+- **block**: block diagrams
+- **packet**: packet diagrams
+- **kanban**: Kanban boards 
+- **architecture-beta**: Architecture diagrams
+- **radar-beta**: Radar charts
+- **treemap-beta**: Treemaps for data visualization
 - **gantt**: Project timelines and schedules
 - **pie**: Proportional data distribution
 - **mindmap**: Hierarchical idea organization
