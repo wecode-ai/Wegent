@@ -12,6 +12,7 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { DocsButton } from '@/features/layout/DocsButton';
 import { FeedbackButton } from '@/features/layout/FeedbackButton';
 import { ThemeToggle } from '@/features/theme/ThemeToggle';
+import LanguageSwitcher from '@/components/LanguageSwitcher';
 import { paths } from '@/config/paths';
 import {
   UserCircleIcon,
@@ -139,6 +140,9 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
             className="w-full px-3 py-2"
             onToggle={() => setIsExpanded(false)}
           />
+
+          {/* Language switcher */}
+          <LanguageSwitcher menuItemMode onLanguageChange={() => setIsExpanded(false)} />
 
           {/* Admin link */}
           {isAdmin && (

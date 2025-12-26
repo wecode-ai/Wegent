@@ -6,39 +6,46 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
-export type ThemeMode = 'light' | 'dark';
+export type ThemeMode = 'light' | 'dark' | 'system';
+export type ResolvedTheme = 'light' | 'dark';
 
 type ThemeContextValue = {
   theme: ThemeMode;
+  resolvedTheme: ResolvedTheme;
   setTheme: (next: ThemeMode) => void;
   toggleTheme: () => void;
 };
 
-const DEFAULT_THEME: ThemeMode = 'light';
+const DEFAULT_THEME: ThemeMode = 'system';
 const STORAGE_KEY = 'wegent.theme';
 
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
-function applyTheme(theme: ThemeMode) {
+function getSystemTheme(): ResolvedTheme {
+  if (typeof window === 'undefined') return 'light';
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+function applyTheme(resolvedTheme: ResolvedTheme) {
   const root = typeof document !== 'undefined' ? document.documentElement : null;
   if (!root) return;
 
-  // 暂时禁用过渡效果，避免闪烁
+  // Temporarily disable transitions to avoid flicker
   root.classList.add('no-transition');
 
-  // 批量更新主题相关的 DOM 属性
-  root.dataset.theme = theme;
+  // Batch update theme-related DOM attributes
+  root.dataset.theme = resolvedTheme;
 
-  if (theme === 'dark') {
+  if (resolvedTheme === 'dark') {
     root.classList.add('dark');
   } else {
     root.classList.remove('dark');
   }
 
-  // 强制重绘以应用新主题
+  // Force repaint to apply new theme
   void root.offsetHeight;
 
-  // 在下一帧恢复过渡效果
+  // Restore transitions in next frame
   requestAnimationFrame(() => {
     root.classList.remove('no-transition');
   });
@@ -50,24 +57,31 @@ function resolveInitialTheme(): ThemeMode {
   }
 
   const stored = window.localStorage.getItem(STORAGE_KEY) as ThemeMode | null;
-  if (stored === 'light' || stored === 'dark') {
+  if (stored === 'light' || stored === 'dark' || stored === 'system') {
     return stored;
   }
 
-  try {
-    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
-      ? 'dark'
-      : 'light';
-  } catch {
-    return DEFAULT_THEME;
-  }
+  return DEFAULT_THEME;
 }
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [theme, setThemeState] = useState<ThemeMode>(resolveInitialTheme);
+  const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() => {
+    if (typeof window === 'undefined') return 'light';
+    const initial = resolveInitialTheme();
+    return initial === 'system' ? getSystemTheme() : initial;
+  });
 
+  // Update resolved theme when theme changes or system preference changes
   useEffect(() => {
-    applyTheme(theme);
+    const updateResolvedTheme = () => {
+      const newResolved = theme === 'system' ? getSystemTheme() : theme;
+      setResolvedTheme(newResolved);
+      applyTheme(newResolved);
+    };
+
+    updateResolvedTheme();
+
     try {
       window.localStorage.setItem(STORAGE_KEY, theme);
     } catch {
@@ -75,30 +89,40 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     }
   }, [theme]);
 
+  // Listen for system theme changes when in system mode
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
     const handler = (event: MediaQueryListEvent) => {
-      const stored = window.localStorage.getItem(STORAGE_KEY) as ThemeMode | null;
-      if (!stored) {
-        setThemeState(event.matches ? 'dark' : 'light');
+      if (theme === 'system') {
+        const newResolved = event.matches ? 'dark' : 'light';
+        setResolvedTheme(newResolved);
+        applyTheme(newResolved);
       }
     };
 
     mediaQuery.addEventListener('change', handler);
     return () => mediaQuery.removeEventListener('change', handler);
-  }, []);
+  }, [theme]);
 
   const setTheme = useCallback((next: ThemeMode) => {
     setThemeState(next);
   }, []);
 
   const toggleTheme = useCallback(() => {
-    setThemeState(prev => (prev === 'dark' ? 'light' : 'dark'));
+    setThemeState(prev => {
+      // Cycle through: light -> dark -> system -> light
+      if (prev === 'light') return 'dark';
+      if (prev === 'dark') return 'system';
+      return 'light';
+    });
   }, []);
 
-  const value = useMemo(() => ({ theme, setTheme, toggleTheme }), [theme, setTheme, toggleTheme]);
+  const value = useMemo(
+    () => ({ theme, resolvedTheme, setTheme, toggleTheme }),
+    [theme, resolvedTheme, setTheme, toggleTheme]
+  );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }

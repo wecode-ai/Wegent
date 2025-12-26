@@ -59,7 +59,8 @@
     "settings": "Settings",
     "docs": "Docs",
     "feedback": "Feedback",
-    "admin": "Admin"
+    "admin": "Admin",
+    "language": "Language"
   },
   "sidebar": {
     "recent_visits": "Recent Visits",
@@ -70,7 +71,8 @@
   },
   "theme": {
     "light": "Light Mode",
-    "dark": "Dark Mode"
+    "dark": "Dark Mode",
+    "system": "Follow System"
   },
   "user": {
     "default_name": "User",

@@ -59,7 +59,8 @@
     "settings": "设置",
     "docs": "文档",
     "feedback": "问题反馈",
-    "admin": "系统管理"
+    "admin": "系统管理",
+    "language": "语言"
   },
   "sidebar": {
     "recent_visits": "最近访问",
@@ -70,7 +71,8 @@
   },
   "theme": {
     "light": "浅色模式",
-    "dark": "深色模式"
+    "dark": "深色模式",
+    "system": "跟随系统"
   },
   "user": {
     "default_name": "用户",

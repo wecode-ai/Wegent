@@ -4,7 +4,7 @@
 
 'use client';
 
-import { Moon, Sun } from 'lucide-react';
+import { Moon, Sun, Monitor } from 'lucide-react';
 import { useTheme } from './ThemeProvider';
 import { useTranslation } from '@/hooks/useTranslation';
 
@@ -19,7 +19,6 @@ export function ThemeToggle({
 }) {
   const { theme, toggleTheme } = useTheme();
   const { t } = useTranslation('common');
-  const isDark = theme === 'dark';
 
   const baseClassName = showLabel
     ? 'flex items-center gap-3 text-sm text-text-primary hover:bg-muted transition-colors duration-150'
@@ -27,8 +26,22 @@ export function ThemeToggle({
 
   const mergedClassName = `${baseClassName} ${className}`.trim();
 
-  const Icon = isDark ? Sun : Moon;
-  const label = isDark ? t('theme.light', 'Light Mode') : t('theme.dark', 'Dark Mode');
+  // Choose icon based on theme mode (not resolved theme)
+  const getIcon = () => {
+    if (theme === 'system') return Monitor;
+    if (theme === 'dark') return Sun;
+    return Moon;
+  };
+
+  // Get label based on what clicking will switch to
+  const getLabel = () => {
+    if (theme === 'light') return t('theme.dark', 'Dark Mode');
+    if (theme === 'dark') return t('theme.system', 'Follow System');
+    return t('theme.light', 'Light Mode');
+  };
+
+  const Icon = getIcon();
+  const label = getLabel();
 
   const handleClick = () => {
     // Execute callback to close menu first, then toggle theme to avoid flicker
