@@ -161,12 +161,12 @@ export function SkillListWithScope({ scope }: SkillListWithScopeProps) {
               {skill.tags && skill.tags.length > 0 && (
                 <div className="flex flex-wrap gap-1 mb-3">
                   {skill.tags.slice(0, 3).map(tag => (
-                    <Badge key={tag} variant="outline" className="text-xs">
+                    <Badge key={tag} variant="info" className="text-xs">
                       {tag}
                     </Badge>
                   ))}
                   {skill.tags.length > 3 && (
-                    <Badge variant="outline" className="text-xs">
+                    <Badge variant="info" className="text-xs">
                       +{skill.tags.length - 3}
                     </Badge>
                   )}
