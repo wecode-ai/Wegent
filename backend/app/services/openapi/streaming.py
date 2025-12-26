@@ -110,7 +110,12 @@ class OpenAPIStreamingService:
                 {
                     "type": "response.output_item.added",
                     "output_index": 0,
-                    "item": {"type": "message", "role": "assistant", "content": []},
+                    "item": {
+                        "type": "message",
+                        "id": message_id,
+                        "role": "assistant",
+                        "content": [],
+                    },
                 },
             )
 
