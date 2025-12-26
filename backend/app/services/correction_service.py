@@ -154,7 +154,11 @@ class CorrectionService:
                 model_config.get("model_id", "N/A"),
                 model_config.get("model", "N/A"),
                 model_config.get("base_url", "N/A"),
-                model_config.get("api_key", "")[:8] + "..." if model_config.get("api_key") else "N/A",
+                (
+                    model_config.get("api_key", "")[:8] + "..."
+                    if model_config.get("api_key")
+                    else "N/A"
+                ),
             )
 
             # Create LangChain model from config (consistent with chat_v2)
@@ -283,9 +287,7 @@ class CorrectionService:
                             return self._format_result(args)
 
         # Fallback: no tool call found
-        logger.warning(
-            "Agent did not call evaluation tool in any message"
-        )
+        logger.warning("Agent did not call evaluation tool in any message")
         set_span_attribute("correction.tool_called", False)
         return self._default_result()
 
