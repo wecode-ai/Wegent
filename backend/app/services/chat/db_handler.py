@@ -136,7 +136,11 @@ class DatabaseHandler:
             with _db_session() as db:
                 task = (
                     db.query(TaskResource)
-                    .filter(TaskResource.id == task_id, TaskResource.kind == "Task", TaskResource.is_active)
+                    .filter(
+                        TaskResource.id == task_id,
+                        TaskResource.kind == "Task",
+                        TaskResource.is_active,
+                    )
                     .first()
                 )
                 if not task:

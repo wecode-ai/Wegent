@@ -942,7 +942,9 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         # Get all active tasks
         all_tasks = (
-            db.query(TaskResource).filter(TaskResource.kind == "Task", TaskResource.is_active == True).all()
+            db.query(TaskResource)
+            .filter(TaskResource.kind == "Task", TaskResource.is_active == True)
+            .all()
         )
 
         running_tasks = []
@@ -2114,7 +2116,9 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         tasks = (
             db.query(TaskResource)
             .filter(
-                TaskResource.user_id == user_id, TaskResource.kind == "Task", TaskResource.is_active == True
+                TaskResource.user_id == user_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active == True,
             )
             .all()
         )

@@ -435,7 +435,11 @@ class TaskKindService(TaskResourceBaseService):
                 )
 
     def _perform_side_effects(
-        self, db: Session, user_id: int, db_resource: TaskResource, resource: Dict[str, Any]
+        self,
+        db: Session,
+        user_id: int,
+        db_resource: TaskResource,
+        resource: Dict[str, Any],
     ) -> None:
         """Create subtasks for the new task"""
         try:
@@ -472,7 +476,11 @@ class TaskKindService(TaskResourceBaseService):
             logger.error(f"Error creating subtasks: {str(e)}")
 
     def _update_side_effects(
-        self, db: Session, user_id: int, db_resource: TaskResource, resource: Dict[str, Any]
+        self,
+        db: Session,
+        user_id: int,
+        db_resource: TaskResource,
+        resource: Dict[str, Any],
     ) -> None:
         """Update subtasks for the existing task"""
         try:

@@ -375,7 +375,9 @@ class TaskResourceBaseService(KindBaseService):
             filters = self._build_filters(user_id, namespace)
             return db.query(TaskResource).filter(and_(*filters)).all()
 
-    def get_resource(self, user_id: int, namespace: str, name: str) -> Optional[TaskResource]:
+    def get_resource(
+        self, user_id: int, namespace: str, name: str
+    ) -> Optional[TaskResource]:
         """Get a specific resource using tasks table"""
         # Check group permission for non-default namespaces
         if not self._check_group_permission(user_id, namespace, "Reporter"):

@@ -12,7 +12,6 @@ from app.models.kind import Kind
 from app.models.task import TaskResource
 from app.services.kind_factory import KindServiceFactory
 
-
 # Kinds that use the tasks table instead of kinds table
 TASK_RESOURCE_KINDS = {"Task", "Workspace"}
 
@@ -88,7 +87,9 @@ class KindService:
                 resource = (
                     db.query(Kind)
                     .filter(
-                        Kind.id == resource_id, Kind.kind == kind, Kind.is_active == True
+                        Kind.id == resource_id,
+                        Kind.kind == kind,
+                        Kind.is_active == True,
                     )
                     .first()
                 )
@@ -99,7 +100,9 @@ class KindService:
             service = KindServiceFactory.get_service(kind)
             return service._format_resource(resource)
 
-    def get_resource_by_id(self, kind: str, resource_id: int) -> Optional[Union[Kind, TaskResource]]:
+    def get_resource_by_id(
+        self, kind: str, resource_id: int
+    ) -> Optional[Union[Kind, TaskResource]]:
         """Get a resource by its ID using a new session"""
         from app.db.session import SessionLocal
 
@@ -119,7 +122,9 @@ class KindService:
                 resource = (
                     db.query(Kind)
                     .filter(
-                        Kind.id == resource_id, Kind.kind == kind, Kind.is_active == True
+                        Kind.id == resource_id,
+                        Kind.kind == kind,
+                        Kind.is_active == True,
                     )
                     .first()
                 )

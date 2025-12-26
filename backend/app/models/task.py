@@ -34,16 +34,44 @@ class TaskResource(Base):
     __tablename__ = "tasks"
 
     id = Column(Integer, primary_key=True, index=True, comment="Primary key")
-    user_id = Column(Integer, nullable=False, default=0, index=True, comment="User ID, references users.id")
-    kind = Column(String(50), nullable=False, default="", index=True, comment="Resource type: Task/Workspace")
+    user_id = Column(
+        Integer,
+        nullable=False,
+        default=0,
+        index=True,
+        comment="User ID, references users.id",
+    )
+    kind = Column(
+        String(50),
+        nullable=False,
+        default="",
+        index=True,
+        comment="Resource type: Task/Workspace",
+    )
     name = Column(String(100), nullable=False, default="", comment="Resource name")
-    namespace = Column(String(100), nullable=False, default="default", comment="Namespace")
+    namespace = Column(
+        String(100), nullable=False, default="default", comment="Namespace"
+    )
     json = Column(JSON, nullable=False, comment="Resource-specific data (JSON)")
     is_active = Column(Boolean, nullable=False, default=True, comment="Active flag")
-    created_at = Column(DateTime, nullable=False, default=datetime.now, index=True, comment="Creation time")
-    updated_at = Column(DateTime, nullable=False, default=datetime.now, onupdate=datetime.now, comment="Update time")
+    created_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.now,
+        index=True,
+        comment="Creation time",
+    )
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.now,
+        onupdate=datetime.now,
+        comment="Update time",
+    )
 
     __table_args__ = (
-        UniqueConstraint("user_id", "kind", "name", "namespace", name="uniq_user_kind_name_namespace"),
+        UniqueConstraint(
+            "user_id", "kind", "name", "namespace", name="uniq_user_kind_name_namespace"
+        ),
         {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_unicode_ci"},
     )

@@ -16,9 +16,9 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.config import settings
 from app.models.kind import Kind
-from app.models.task import TaskResource
 from app.models.shared_team import SharedTeam
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Bot, Ghost, Model, Shell, Task, Team, Workspace
 from app.schemas.task import TaskCreate, TaskDetail, TaskInDB, TaskStatus, TaskUpdate
@@ -65,7 +65,11 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         # Check if already exists
         existing_task = (
             db.query(TaskResource)
-            .filter(TaskResource.id == task_id, TaskResource.kind == "Task", TaskResource.is_active == True)
+            .filter(
+                TaskResource.id == task_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active == True,
+            )
             .first()
         )
         if existing_task:

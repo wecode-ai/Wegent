@@ -17,8 +17,8 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.config import settings
 from app.models.kind import Kind
-from app.models.task import TaskResource
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Bot, Ghost, Model, Shell, Task, Team, Workspace
 from app.schemas.subtask import SubtaskExecutorUpdate
@@ -63,7 +63,9 @@ class ExecutorKindsService(
                 task = (
                     db.query(TaskResource)
                     .filter(
-                        TaskResource.id == task_id, TaskResource.kind == "Task", TaskResource.is_active == True
+                        TaskResource.id == task_id,
+                        TaskResource.kind == "Task",
+                        TaskResource.is_active == True,
                     )
                     .params(type=type)
                     .first()
@@ -234,7 +236,11 @@ class ExecutorKindsService(
         """Update task status to RUNNING (only when task is PENDING) using tasks table"""
         task = (
             db.query(TaskResource)
-            .filter(TaskResource.id == task_id, TaskResource.kind == "Task", TaskResource.is_active == True)
+            .filter(
+                TaskResource.id == task_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active == True,
+            )
             .first()
         )
 
@@ -1128,7 +1134,11 @@ class ExecutorKindsService(
         # Get task from tasks table
         task = (
             db.query(TaskResource)
-            .filter(TaskResource.id == task_id, TaskResource.kind == "Task", TaskResource.is_active == True)
+            .filter(
+                TaskResource.id == task_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active == True,
+            )
             .first()
         )
         if not task:
