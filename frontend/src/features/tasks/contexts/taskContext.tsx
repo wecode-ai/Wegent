@@ -130,15 +130,37 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     setTaskLoading(true);
     const result = await loadPages(loadedPages, false);
 
+    // Also fetch group chats to ensure they're visible even if not recently updated
+    let groupChatTasks: Task[] = [];
+    try {
+      const groupChatsResult = await taskApis.getGroupChats({ page: 1, limit: 100 });
+      groupChatTasks = groupChatsResult.items || [];
+    } catch (err) {
+      console.warn('[TaskContext] Failed to load group chats:', err);
+    }
+
     // Only update tasks if no error occurred - preserve existing data on network error
     if (!result.error) {
-      setTasks(result.items);
+      // Merge group chats with regular tasks, avoiding duplicates
+      const regularTasks = result.items;
+      const regularTaskIds = new Set(regularTasks.map((t: Task) => t.id));
+      const uniqueGroupChats = groupChatTasks.filter((gc: Task) => !regularTaskIds.has(gc.id));
+      const mergedTasks = [...regularTasks, ...uniqueGroupChats];
+
+      // Sort by created_at descending
+      mergedTasks.sort((a, b) => {
+        const dateA = new Date(a.created_at).getTime();
+        const dateB = new Date(b.created_at).getTime();
+        return dateB - dateA;
+      });
+
+      setTasks(mergedTasks);
       setLoadedPages(result.pages || []);
       setHasMore(result.hasMore);
 
       // Initialize task view status on first load (if not already initialized)
-      if (result.items.length > 0) {
-        initializeTaskViewStatus(result.items);
+      if (mergedTasks.length > 0) {
+        initializeTaskViewStatus(mergedTasks);
       }
     } else {
       // On error, preserve existing data without clearing

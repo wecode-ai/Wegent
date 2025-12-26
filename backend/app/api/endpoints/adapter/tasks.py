@@ -149,6 +149,26 @@ def search_tasks_by_title(
     return {"total": total, "items": items}
 
 
+@router.get("/group-chats", response_model=TaskLiteListResponse)
+def get_group_chats(
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(50, ge=1, le=100, description="Items per page"),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get current user's group chat list (paginated).
+    Only returns tasks where user is a member (not owner).
+    This endpoint helps ensure group chats remain visible even when
+    they haven't been updated for a long time.
+    """
+    skip = (page - 1) * limit
+    items, total = task_kinds_service.get_user_group_chats(
+        db=db, user_id=current_user.id, skip=skip, limit=limit
+    )
+    return {"total": total, "items": items}
+
+
 @router.get("/{task_id}", response_model=TaskDetail)
 def get_task(
     task_id: int = Depends(with_task_telemetry),

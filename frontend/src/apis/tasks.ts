@@ -188,6 +188,13 @@ export const taskApis = {
     return apiClient.get(`/tasks/search?${query}`);
   },
 
+  getGroupChats: async (params?: PaginationParams): Promise<TaskListResponse> => {
+    const query = new URLSearchParams();
+    if (params?.limit) query.append('limit', params.limit.toString());
+    if (params?.page) query.append('page', params.page.toString());
+    return apiClient.get(`/tasks/group-chats?${query}`);
+  },
+
   // Create task and return its id directly ({ task_id: number } from backend)
   createTask: async (): Promise<number> => {
     const res = await apiClient.post<{ task_id: number }>('/tasks');
