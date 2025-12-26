@@ -599,7 +599,8 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         """
         from app.models.task_member import MemberStatus, TaskMember
 
-        # Count total group chats where user is a member
+        # Count total group chats where user is a member (not owner)
+        # Exclude tasks where user is the owner to avoid duplicates with /tasks/lite
         count_sql = text(
             """
             SELECT COUNT(DISTINCT k.id)
@@ -607,11 +608,13 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             INNER JOIN task_members tm ON k.id = tm.task_id AND tm.user_id = :user_id AND tm.status = 'ACTIVE'
             WHERE k.kind = 'Task'
             AND k.is_active = true
+            AND k.user_id != :user_id
         """
         )
         total_result = db.execute(count_sql, {"user_id": user_id}).scalar()
 
         # Get task IDs sorted by updated_at (most recently active first)
+        # Exclude tasks where user is the owner
         ids_sql = text(
             """
             SELECT DISTINCT k.id, k.updated_at
@@ -619,6 +622,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             INNER JOIN task_members tm ON k.id = tm.task_id AND tm.user_id = :user_id AND tm.status = 'ACTIVE'
             WHERE k.kind = 'Task'
             AND k.is_active = true
+            AND k.user_id != :user_id
             ORDER BY k.updated_at DESC
             LIMIT :limit OFFSET :skip
         """
