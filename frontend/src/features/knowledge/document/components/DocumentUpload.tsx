@@ -188,14 +188,14 @@ export function DocumentUpload({ open, onOpenChange, onUploadComplete }: Documen
 
         <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={handleClose}>
-            {t('common:cancel')}
+            {t('common:actions.cancel')}
           </Button>
           <Button
             variant="primary"
             onClick={handleConfirm}
             disabled={!state.attachment || state.isUploading || !!state.error}
           >
-            {t('common:confirm')}
+            {t('common:actions.confirm')}
           </Button>
         </div>
       </DialogContent>

@@ -70,7 +70,7 @@ export default function KnowledgePage() {
   } = useWikiProjects();
 
   // Active knowledge tab
-  const [activeTab, setActiveTab] = useState<KnowledgeTabType>('code');
+  const [activeTab, setActiveTab] = useState<KnowledgeTabType>('document');
 
   // Search term for project list
   const [mainSearchTerm, setMainSearchTerm] = useState('');
