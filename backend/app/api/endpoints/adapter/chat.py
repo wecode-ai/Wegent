@@ -1863,7 +1863,7 @@ async def correct_response(
         model_config_data = spec.get("modelConfig", {})
         env = model_config_data.get("env", {})
         model_config = {
-            "provider": env.get("model", "openai"),
+            "model": env.get("model", "openai"),
             "model_id": env.get("model_id", ""),
             "api_key": env.get("api_key", ""),
             "base_url": env.get("base_url"),
@@ -1890,7 +1890,7 @@ async def correct_response(
             model_config_data = model_crd.spec.modelConfig
             env = model_config_data.get("env", {})
             model_config = {
-                "provider": env.get("model", "openai"),
+                "model": env.get("model", "openai"),
                 "model_id": env.get("model_id", ""),
                 "api_key": env.get("api_key", ""),
                 "base_url": env.get("base_url"),
