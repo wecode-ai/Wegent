@@ -69,7 +69,14 @@ async def create_streaming_response(
 
     # Set up chat session (config, task, subtasks)
     setup = setup_chat_session(
-        db, user, team, model_info, input_text, tool_settings, task_id, api_trusted_source
+        db,
+        user,
+        team,
+        model_info,
+        input_text,
+        tool_settings,
+        task_id,
+        api_trusted_source,
     )
 
     response_id = f"resp_{setup.task_id}"
@@ -212,7 +219,9 @@ async def create_streaming_response(
                 except Exception as e:
                     logger.error(f"Failed to create LLM from model config: {e}")
                     await db_handler.update_subtask_status(
-                        assistant_subtask_id, "FAILED", error=f"Failed to create LLM: {e}"
+                        assistant_subtask_id,
+                        "FAILED",
+                        error=f"Failed to create LLM: {e}",
                     )
                     return
 
@@ -381,7 +390,14 @@ async def create_sync_response(
 
     # Set up chat session (config, task, subtasks)
     setup = setup_chat_session(
-        db, user, team, model_info, input_text, tool_settings, task_id, api_trusted_source
+        db,
+        user,
+        team,
+        model_info,
+        input_text,
+        tool_settings,
+        task_id,
+        api_trusted_source,
     )
 
     response_id = f"resp_{setup.task_id}"
