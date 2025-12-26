@@ -3,34 +3,55 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-AI Correction Service - Evaluates and corrects AI responses.
+AI Correction Service - Evaluates and corrects AI responses using tool calling.
 
-This service supports:
-- Chat history context for better understanding of conversation flow
+This service uses LangChain's tool calling mechanism to obtain structured
+evaluation results instead of parsing JSON from free-form text.
+
+Key features:
+- Tool-based structured output (no JSON parsing needed)
+- Chat history context for better understanding
 - Web search tool for fact verification
-- Tool calling flow with request count and time limiting
+- Fallback to default response on errors
 """
 
-import asyncio
-import json
 import logging
-import re
-import time
 from typing import Any
 
-from app.core.config import settings
-from app.services.chat.base import get_http_client
-from app.services.chat.message_builder import message_builder
-from app.services.chat.providers import get_provider
-from app.services.chat.providers.base import ChunkType
-from app.services.chat.tool_handler import ToolCallAccumulator, ToolHandler
+from langchain_core.messages import HumanMessage, SystemMessage
+from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_async
+
 from app.services.chat.tools.base import Tool
-from shared.telemetry.decorators import trace_async, add_span_event, set_span_attribute
+from app.services.chat_v2.models import LangChainModelFactory
+from app.services.chat_v2.tools.builtin import SubmitEvaluationResultTool
 
 logger = logging.getLogger(__name__)
 
 
-CORRECTION_PROMPT_TEMPLATE = """The user is not satisfied with the following AI response. Please analyze the reasons.
+# System prompt for evaluation using tool calling
+CORRECTION_SYSTEM_PROMPT = """# Role
+You are an expert AI Evaluator using the `submit_evaluation_result` tool.
+
+# Task
+Analyze the User Question and AI Response based on the provided Context/References.
+
+# Workflow
+1. **Analyze**: Check for factual errors, missing information, and logic flaws.
+2. **Language Check**: Identify the language of the User Question. You MUST use this language for all text fields in the tool (description, suggestion, summary, improved_answer).
+3. **Construct Output**:
+   - If the original response is >90% good, do not invent issues.
+   - For `improved_answer`: Apply the **Superset Rule**. Keep all good parts of the original text, only fix errors and add missing info. Do NOT output a shortened summary.
+4. **Call Tool**: Execute `submit_evaluation_result` with your analysis.
+
+# Important
+- You MUST call the `submit_evaluation_result` tool to submit your evaluation.
+- All text fields must be in the same language as the User Question.
+- Focus on CRITICAL missing information or factual errors, not minor style issues.
+"""
+
+
+# User prompt template with context
+CORRECTION_USER_PROMPT_WITH_CONTEXT = """The user is not satisfied with the following AI response. Please analyze the reasons.
 
 ## Conversation Context
 The above messages show the conversation history leading up to this response.
@@ -55,33 +76,11 @@ Please analyze from the following perspectives:
 4. **Logic errors**: Check for fallacies or contradictions.
 
 5. **Missing considerations**: Identify truly important missing perspectives.
-
-## Language Constraint (CRITICAL)
-**You MUST detect the language of the `{original_question}`.** **ALL content within the JSON values (including "summary", "issue", "suggestion", and "improved_answer") MUST be written in that SAME detected language.** (e.g., if the question is Chinese, the entire JSON content must be Chinese).
-
-## Output Format (JSON)
-You MUST respond with ONLY a valid JSON object:
-{{
-  "scores": {{
-    "accuracy": <1-10>,
-    "logic": <1-10>,
-    "completeness": <1-10>
-  }},
-  "corrections": [
-    {{
-      "issue": "Brief description of the problem in the detected language", 
-      "category": "context_mismatch|fact_error|logic_error|missing_point", 
-      "suggestion": "How to fix it in the detected language"
-    }}
-  ],
-  "summary": "Summary of why user is dissatisfied (2-3 sentences) in the detected language",
-  "improved_answer": "Provide the COMPLETE corrected answer in the detected language. IMPORTANT: This answer must INTEGRATE the corrections while RETAINING all correct and relevant details from the original response. Do NOT summarize or shorten the original content unless it was repetitive.",
-  "is_correct": <true/false>
-}}"""
+"""
 
 
-# Prompt template without context (for backward compatibility when no history)
-CORRECTION_PROMPT_TEMPLATE_NO_CONTEXT = """The user is not satisfied with the following AI response. Please analyze the reasons.
+# User prompt template without context
+CORRECTION_USER_PROMPT_NO_CONTEXT = """The user is not satisfied with the following AI response. Please analyze the reasons.
 
 ## User Question
 {original_question}
@@ -101,37 +100,11 @@ Please analyze from the following perspectives:
 3. **Logic errors**: Check for fallacies or contradictions.
 
 4. **Missing considerations**: Identify truly important missing perspectives.
+"""
 
-## Language Constraint (CRITICAL)
-**You MUST detect the language of the `{original_question}`.** **ALL content within the JSON values (including "summary", "issue", "suggestion", and "improved_answer") MUST be written in that SAME detected language.** (e.g., if the question is Chinese, the entire JSON content must be Chinese).
-
-## Output Format (JSON)
-You MUST respond with ONLY a valid JSON object:
-{{
-  "scores": {{
-    "accuracy": <1-10>,
-    "logic": <1-10>,
-    "completeness": <1-10>
-  }},
-  "corrections": [
-    {{
-      "issue": "Brief description of the problem in the detected language", 
-      "category": "dissatisfaction|fact_error|logic_error|missing_point", 
-      "suggestion": "How to fix it in the detected language"
-    }}
-  ],
-  "summary": "Summary of why user is dissatisfied (2-3 sentences) in the detected language",
-  "improved_answer": "Provide the COMPLETE corrected answer in the detected language. IMPORTANT: This answer must INTEGRATE the corrections while RETAINING all correct and relevant details from the original response. Do NOT summarize or shorten the original content unless it was repetitive.",
-  "is_correct": <true/false>
-}}"""
-
-
-# Configuration for tool calling limits
-CORRECTION_TOOL_MAX_REQUESTS = 3  # Maximum tool calling iterations
-CORRECTION_TOOL_MAX_TIME_SECONDS = 30  # Maximum time for tool calling flow
 
 class CorrectionService:
-    """Service for evaluating and correcting AI responses."""
+    """Service for evaluating and correcting AI responses using tool calling."""
 
     @trace_async(
         span_name="correction.evaluate_response",
@@ -157,219 +130,168 @@ class CorrectionService:
         """
         Evaluate an AI response and provide corrections if needed.
 
+        Uses LangChain's tool calling mechanism to obtain structured results.
+
         Args:
             original_question: The user's original question
             original_answer: The AI's original answer
             model_config: Model configuration for the correction model
             history: Optional chat history (list of {"role": str, "content": str})
-            tools: Optional list of Tool instances (e.g., web search)
+            tools: Optional list of Tool instances (e.g., web search) - NOT USED YET
 
         Returns:
             Dictionary with scores, corrections, summary, improved_answer, and is_correct
         """
-        # Choose prompt template based on whether history is provided
-        if history:
-            prompt = CORRECTION_PROMPT_TEMPLATE.format(
-                original_question=original_question, original_answer=original_answer
-            )
-        else:
-            prompt = CORRECTION_PROMPT_TEMPLATE_NO_CONTEXT.format(
-                original_question=original_question, original_answer=original_answer
-            )
-
-        # Build messages for the LLM
-        messages = message_builder.build_messages(
-            history=history or [],
-            current_message=prompt,
-            system_prompt="You are a professional AI response reviewer. Always respond with valid JSON only.",
-        )
-
-        # Get provider and make request
-        client = await get_http_client()
-        provider = get_provider(model_config, client)
-        if not provider:
-            raise ValueError("Failed to create provider from model config")
-
-        # Collect response
-        cancel_event = asyncio.Event()
-        accumulated_content = ""
-
         try:
-            if tools:
-                # Use tool calling flow
-                tool_handler = ToolHandler(tools)
-                async for chunk in self._handle_tool_calling_flow(
-                    provider, messages, tool_handler, cancel_event
-                ):
-                    if chunk.type == ChunkType.CONTENT and chunk.content:
-                        accumulated_content += chunk.content
-                    elif chunk.type == ChunkType.ERROR:
-                        raise ValueError(chunk.error or "Unknown error from LLM")
-            else:
-                # Simple streaming without tools
-                async for chunk in provider.stream_chat(messages, cancel_event):
-                    if chunk.type == ChunkType.CONTENT and chunk.content:
-                        accumulated_content += chunk.content
-                    elif chunk.type == ChunkType.ERROR:
-                        raise ValueError(chunk.error or "Unknown error from LLM")
+            # Create LangChain model from config
+            llm = LangChainModelFactory.create_from_config(
+                model_config, streaming=False
+            )
+
+            # Create evaluation tool
+            evaluation_tool = SubmitEvaluationResultTool()
+
+            # Bind tool with forced tool choice
+            llm_with_tool = llm.bind_tools(
+                [evaluation_tool], tool_choice="submit_evaluation_result"
+            )
+
+            # Build messages
+            messages = self._build_messages(original_question, original_answer, history)
+
+            # Invoke model
+            set_span_attribute("correction.message_count", len(messages))
+            add_span_event("correction.invoking_model")
+
+            response = await llm_with_tool.ainvoke(messages)
+
+            add_span_event("correction.model_invoked")
+
+            # Extract tool call arguments
+            if response.tool_calls and len(response.tool_calls) > 0:
+                tool_call = response.tool_calls[0]
+                args = tool_call["args"]
+
+                set_span_attribute("correction.tool_called", True)
+                set_span_attribute(
+                    "correction.detected_language",
+                    args.get("meta", {}).get("detected_language", "unknown"),
+                )
+
+                return self._format_result(args)
+
+            # Fallback: no tool call (should not happen with tool_choice)
+            logger.warning(
+                "Model did not call evaluation tool despite tool_choice setting"
+            )
+            set_span_attribute("correction.tool_called", False)
+            return self._default_result()
+
         except Exception as e:
-            logger.error(f"Correction evaluation error: {e}")
-            raise
+            logger.exception("Correction evaluation error: %s", e)
+            add_span_event("correction.error", {"error": str(e)})
+            return self._default_result()
 
-        # Parse JSON response
-        return self._parse_correction_response(accumulated_content)
-
-    async def _handle_tool_calling_flow(
+    def _build_messages(
         self,
-        provider,
-        messages: list[dict[str, Any]],
-        tool_handler: ToolHandler,
-        cancel_event: asyncio.Event,
-    ):
-        """
-        Handle tool calling flow with request count and time limiting.
-
-        The flow suppresses all intermediate content and only outputs the final
-        response after tool execution is complete.
+        original_question: str,
+        original_answer: str,
+        history: list[dict[str, str]] | None = None,
+    ) -> list[SystemMessage | HumanMessage]:
+        """Build messages for the LLM.
 
         Args:
-            provider: LLM provider instance
-            messages: Conversation messages
-            tool_handler: Tool handler instance
-            cancel_event: Cancellation event
+            original_question: User's question
+            original_answer: AI's answer
+            history: Optional chat history
 
-        Yields:
-            StreamChunk objects for the final response only
+        Returns:
+            List of LangChain messages
         """
-        max_requests = CORRECTION_TOOL_MAX_REQUESTS
-        max_time_seconds = CORRECTION_TOOL_MAX_TIME_SECONDS
+        messages = []
 
-        tools = tool_handler.format_for_provider(provider.provider_name)
-        start_time = time.monotonic()
-        request_count = 0
-        all_tool_results: list[dict[str, Any]] = []
+        # System message
+        messages.append(SystemMessage(content=CORRECTION_SYSTEM_PROMPT))
 
-        # Extract original question content for summary request
-        original_question = messages[-1]
+        # Add history if provided
+        if history:
+            for msg in history:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                if role == "user":
+                    messages.append(HumanMessage(content=content))
+                elif role == "assistant":
+                    # Use HumanMessage for simplicity (we just need context)
+                    messages.append(HumanMessage(content=f"Assistant: {content}"))
 
-        while request_count < max_requests:
-            # Check time limit
-            elapsed = time.monotonic() - start_time
-            if elapsed >= max_time_seconds:
-                logger.warning(
-                    "Correction tool calling flow exceeded time limit: %.1fs >= %.1fs",
-                    elapsed,
-                    max_time_seconds,
-                )
-                break
-
-            # Check cancellation
-            if cancel_event.is_set():
-                return
-
-            request_count += 1
-            logger.debug(
-                "Correction tool calling request %d/%d, elapsed %.1fs/%.1fs",
-                request_count,
-                max_requests,
-                elapsed,
-                max_time_seconds,
+        # User prompt with question and answer
+        if history:
+            user_prompt = CORRECTION_USER_PROMPT_WITH_CONTEXT.format(
+                original_question=original_question, original_answer=original_answer
             )
-            accumulator = ToolCallAccumulator()
-
-            async for chunk in provider.stream_chat(
-                messages, cancel_event, tools=tools
-            ):
-                if chunk.type == ChunkType.TOOL_CALL and chunk.tool_call:
-                    # Pass thought_signature for Gemini 3 Pro function calling support
-                    accumulator.add_chunk(chunk.tool_call, chunk.thought_signature)
-
-            # No tool calls - exit loop to generate final response
-            if not accumulator.has_calls():
-                break
-
-            # Execute tool calls (suppress intermediate content)
-            tool_calls = accumulator.get_calls()
-            # Add assistant message with tool calls
-            messages.append(ToolHandler.build_assistant_message(None, tool_calls))
-            # Execute tools and collect results
-            tool_results = await tool_handler.execute_all(tool_calls)
-            messages.extend(tool_results)
-            all_tool_results.extend(tool_results)
-
-            logger.info(
-                "Correction executed %d tool calls in step %d",
-                len(tool_calls),
-                request_count,
-            )
-
-        logger.info(
-            "Correction tool calling flow completed (requests=%d, time=%.1fs, tool_calls=%d), "
-            "generating final response",
-            request_count,
-            time.monotonic() - start_time,
-            len(all_tool_results),
-        )
-
-        # If tool execution occurred, add summary request
-        if all_tool_results:
-            summary_request = (
-                "Based on the tool execution results above, provide your final correction analysis. "
-                "Remember to output ONLY valid JSON in the required format."
-            )
-            messages.append({"role": "user", "content": summary_request})
-            messages.append(original_question)
-
-        # Final request without tools to get the response
-        async for chunk in provider.stream_chat(messages, cancel_event, tools=None):
-            yield chunk
-
-    def _parse_correction_response(self, response: str) -> dict[str, Any]:
-        """Parse the correction response JSON."""
-        # Try to extract JSON from the response
-        # Handle cases where LLM wraps JSON in markdown code blocks
-        json_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", response)
-        if json_match:
-            json_str = json_match.group(1)
         else:
-            # Try to find JSON object directly
-            json_match = re.search(r"\{[\s\S]*\}", response)
-            if json_match:
-                json_str = json_match.group(0)
-            else:
-                json_str = response
-
-        try:
-            result = json.loads(json_str)
-
-            # Validate and normalize the response
-            scores = result.get("scores", {})
-            return {
-                "scores": {
-                    "accuracy": self._clamp_score(scores.get("accuracy", 5)),
-                    "logic": self._clamp_score(scores.get("logic", 5)),
-                    "completeness": self._clamp_score(scores.get("completeness", 5)),
-                },
-                "corrections": result.get("corrections", []),
-                "summary": result.get("summary", ""),
-                "improved_answer": result.get("improved_answer", ""),
-                "is_correct": result.get("is_correct", False),
-            }
-        except json.JSONDecodeError as e:
-            logger.error(
-                f"Failed to parse correction response: {e}, response: {response[:500]}"
+            user_prompt = CORRECTION_USER_PROMPT_NO_CONTEXT.format(
+                original_question=original_question, original_answer=original_answer
             )
-            # Return default response on parse error
-            return {
-                "scores": {"accuracy": 5, "logic": 5, "completeness": 5},
-                "corrections": [],
-                "summary": "Unable to parse correction response",
-                "improved_answer": "",
-                "is_correct": True,
-            }
+
+        messages.append(HumanMessage(content=user_prompt))
+
+        return messages
+
+    def _format_result(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Format tool call arguments into API response format.
+
+        Args:
+            args: Tool call arguments from model
+
+        Returns:
+            Formatted result dictionary
+        """
+        scores = args.get("scores", {})
+        issues = args.get("issues", [])
+
+        return {
+            "scores": {
+                "accuracy": self._clamp_score(scores.get("accuracy", 5)),
+                "logic": self._clamp_score(scores.get("logic", 5)),
+                "completeness": self._clamp_score(scores.get("completeness", 5)),
+            },
+            "corrections": [
+                {
+                    "issue": issue.get("description", ""),
+                    "category": issue.get("category", ""),
+                    "suggestion": issue.get("suggestion", ""),
+                }
+                for issue in issues
+            ],
+            "summary": args.get("summary", ""),
+            "improved_answer": args.get("improved_answer", ""),
+            "is_correct": args.get("is_pass", False),
+        }
+
+    def _default_result(self) -> dict[str, Any]:
+        """Return default result when evaluation fails.
+
+        Returns:
+            Default evaluation result
+        """
+        return {
+            "scores": {"accuracy": 5, "logic": 5, "completeness": 5},
+            "corrections": [],
+            "summary": "Unable to evaluate response",
+            "improved_answer": "",
+            "is_correct": True,
+        }
 
     def _clamp_score(self, score: Any) -> int:
-        """Clamp score to valid range 1-10."""
+        """Clamp score to valid range 1-10.
+
+        Args:
+            score: Score value to clamp
+
+        Returns:
+            Clamped score between 1 and 10
+        """
         try:
             score_int = int(score)
             return max(1, min(10, score_int))

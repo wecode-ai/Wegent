@@ -4,6 +4,7 @@
 
 """Built-in tools module."""
 
+from .evaluation import SubmitEvaluationResultTool
 from .file_reader import FileListSkill, FileReaderSkill
 from .web_search import WebSearchTool
 
@@ -11,4 +12,5 @@ __all__ = [
     "WebSearchTool",
     "FileReaderSkill",
     "FileListSkill",
+    "SubmitEvaluationResultTool",
 ]
