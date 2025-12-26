@@ -45,7 +45,8 @@
   scrollbar-color: rgb(var(--color-scrollbar-thumb)) rgb(var(--color-scrollbar-track));
 }
 /* Fix markdown code/pre overflow issue */
-.markdown-body pre, .markdown-body code {
+.markdown-body pre,
+.markdown-body code {
   max-width: 100%;
   white-space: pre-wrap;
   word-break: break-word;

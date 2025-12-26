@@ -1,10 +1,13 @@
 {
   "title": "Knowledge Base",
   "add_context": "Add Context",
+  "tooltip": "Knowledge Base",
   "search_placeholder": "Search...",
   "no_knowledge_bases": "No knowledge bases found",
+  "go_to_create": "Go to Create Knowledge Base",
   "fetch_error": "Failed to load knowledge bases",
   "documents": "documents",
+  "documents_count": "{{count}} documents",
   "modules": {
     "title": "Knowledge Space",
     "code": "Code Knowledge",

@@ -599,7 +599,7 @@ async def cancel_response(
                 task_crd.status.errorMessage = ""
                 task_crd.status.updatedAt = datetime.now()
                 task_crd.status.completedAt = datetime.now()
-                task_crd.status.result =  {"value": partial_content or ""}
+                task_crd.status.result = {"value": partial_content or ""}
 
             task_kind.json = task_crd.model_dump(mode="json")
             task_kind.updated_at = datetime.now()
@@ -755,9 +755,7 @@ async def delete_response(
                 # Clean up streaming content from Redis
                 await session_manager.delete_streaming_content(running_subtask.id)
                 await session_manager.unregister_stream(running_subtask.id)
-                logger.info(
-                    f"[DELETE] Stream stopped for subtask {running_subtask.id}"
-                )
+                logger.info(f"[DELETE] Stream stopped for subtask {running_subtask.id}")
 
     try:
         task_kinds_service.delete_task(db, task_id=task_id, user_id=current_user.id)

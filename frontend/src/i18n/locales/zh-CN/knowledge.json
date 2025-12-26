@@ -1,10 +1,13 @@
 {
   "title": "知识库",
   "add_context": "添加背景信息",
+  "tooltip": "知识库",
   "search_placeholder": "搜索...",
   "no_knowledge_bases": "未找到知识库",
+  "go_to_create": "前往创建知识库",
   "fetch_error": "加载知识库失败",
   "documents": "文档",
+  "documents_count": "{{count}} 篇文档",
   "modules": {
     "title": "我的知识",
     "code": "代码知识",

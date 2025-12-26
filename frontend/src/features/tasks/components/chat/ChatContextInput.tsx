@@ -7,7 +7,6 @@
 import React, { useState } from 'react';
 import AddContextButton from './AddContextButton';
 import ContextSelector from './ContextSelector';
-import ContextBadge from './ContextBadge';
 import type { ContextItem } from '@/types/context';
 import { isChatContextEnabled } from '@/lib/runtime-config';
 
@@ -20,6 +19,9 @@ interface ChatContextInputProps {
  * Generic context input component for chat
  * Currently supports: knowledge_base
  * Future: person, bot, team
+ *
+ * Note: Badge rendering is now handled by InputBadgeDisplay component
+ * This component only handles the button and selector logic
  */
 export default function ChatContextInput({
   selectedContexts,
@@ -35,39 +37,22 @@ export default function ChatContextInput({
     onContextsChange(selectedContexts.filter(ctx => ctx.id !== id));
   };
 
-  const handleRemoveBadge = (id: number | string) => {
-    handleDeselect(id);
-  };
-
   // If chat context feature is disabled, don't render anything
   if (!isChatContextEnabled()) {
     return null;
   }
 
   return (
-    <div className="flex items-center gap-2 flex-wrap">
-      <ContextSelector
-        open={selectorOpen}
-        onOpenChange={setSelectorOpen}
-        selectedContexts={selectedContexts}
-        onSelect={handleSelect}
-        onDeselect={handleDeselect}
-      >
-        <div>
-          <AddContextButton
-            hasSelection={selectedContexts.length > 0}
-            onClick={() => setSelectorOpen(true)}
-          />
-        </div>
-      </ContextSelector>
-
-      {selectedContexts.map(ctx => (
-        <ContextBadge
-          key={`${ctx.type}-${ctx.id}`}
-          context={ctx}
-          onRemove={() => handleRemoveBadge(ctx.id)}
-        />
-      ))}
-    </div>
+    <ContextSelector
+      open={selectorOpen}
+      onOpenChange={setSelectorOpen}
+      selectedContexts={selectedContexts}
+      onSelect={handleSelect}
+      onDeselect={handleDeselect}
+    >
+      <div>
+        <AddContextButton onClick={() => setSelectorOpen(true)} />
+      </div>
+    </ContextSelector>
   );
 }
