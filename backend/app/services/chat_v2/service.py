@@ -1128,7 +1128,11 @@ class ChatService:
         history = await self._load_history_from_db(
             task_id, is_group_chat, exclude_after_message_id
         )
-        return self._truncate_history(history)
+        # Only truncate history for group chat to limit context size
+        # Single chat keeps full history for better conversation continuity
+        if is_group_chat:
+            return self._truncate_history(history)
+        return history
 
     async def _load_history_from_db(
         self,
