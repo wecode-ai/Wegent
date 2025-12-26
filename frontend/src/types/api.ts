@@ -56,6 +56,7 @@ export interface Bot {
   id: number;
   name: string;
   namespace?: string; // Namespace for group bots (default: 'default')
+  ghost_id?: number; // Ghost ID for skill management
   shell_name: string; // Shell name user selected (e.g., 'ClaudeCode', 'my-custom-shell')
   shell_type: string; // Actual agent type (e.g., 'ClaudeCode', 'Agno', 'Dify')
   agent_config: Record<string, unknown>;

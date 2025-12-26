@@ -12,6 +12,7 @@ from app.models.namespace import Namespace
 from app.models.namespace_member import NamespaceMember
 from app.models.shared_team import SharedTeam
 from app.models.skill_binary import SkillBinary
+from app.models.skill_secret import SkillSecret
 from app.models.subtask import Subtask
 from app.models.system_config import SystemConfig
 from app.models.task_member import TaskMember
@@ -26,6 +27,7 @@ __all__ = [
     "Subtask",
     "SharedTeam",
     "SkillBinary",
+    "SkillSecret",
     "SystemConfig",
     "Namespace",
     "NamespaceMember",
