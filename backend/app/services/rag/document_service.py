@@ -86,9 +86,7 @@ class DocumentService:
                 f"storage_backend={attachment.storage_backend}, "
                 f"storage_key={attachment.storage_key}"
             )
-            raise ValueError(
-                f"Attachment {attachment_id} has no binary data available"
-            )
+            raise ValueError(f"Attachment {attachment_id} has no binary data available")
 
         logger.info(
             f"Retrieved binary data for attachment {attachment_id}: "

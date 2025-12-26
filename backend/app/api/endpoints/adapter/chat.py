@@ -1843,70 +1843,26 @@ async def correct_response(
             "is_correct": existing_correction.get("is_correct", False),
         }
 
-    # Get the correction model config
-    # First check if it's a public model (user_id=0 in kinds table)
-    public_model = (
-        db.query(Kind)
-        .filter(
-            Kind.user_id == 0,
-            Kind.kind == "Model",
-            Kind.name == request.correction_model_id,
-            Kind.is_active == True,
-        )
-        .first()
+    # Get the correction model config using chat_v2's unified model resolver
+    # This handles: env var placeholders, decryption, default_headers, etc.
+    from app.services.chat_v2.models.resolver import (
+        _find_model,
+        extract_and_process_model_config,
     )
 
-    model_config = None
-    if public_model and public_model.json:
-        # Public models store config in json.spec.modelConfig.env
-        spec = public_model.json.get("spec", {})
-        model_config_data = spec.get("modelConfig", {})
-        env = model_config_data.get("env", {})
-        model_config = {
-            "model": env.get("model", "openai"),
-            "model_id": env.get("model_id", ""),
-            "api_key": env.get("api_key", ""),
-            "base_url": env.get("base_url"),
-            "default_headers": env.get("custom_headers", {}),
-        }
-    else:
-        # Try user-defined model
-        user_model = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == current_user.id,
-                Kind.kind == "Model",
-                Kind.name == request.correction_model_id,
-                Kind.is_active == True,
-            )
-            .first()
-        )
-
-        if user_model and user_model.json:
-            from app.schemas.kind import Model as ModelCRD
-
-            model_crd = ModelCRD.model_validate(user_model.json)
-            # modelConfig is a Dict[str, Any], so use dictionary access
-            model_config_data = model_crd.spec.modelConfig
-            env = model_config_data.get("env", {})
-            model_config = {
-                "model": env.get("model", "openai"),
-                "model_id": env.get("model_id", ""),
-                "api_key": env.get("api_key", ""),
-                "base_url": env.get("base_url"),
-                "default_headers": env.get("custom_headers") or {},
-            }
-
-    if not model_config:
+    model_spec = _find_model(db, request.correction_model_id, current_user.id)
+    if not model_spec:
         raise HTTPException(
             status_code=400,
             detail=f"Correction model '{request.correction_model_id}' not found",
         )
 
-    # Decrypt API key if encrypted
-    from shared.utils.crypto import decrypt_api_key
-
-    model_config["api_key"] = decrypt_api_key(model_config["api_key"])
+    # Extract and process model config with all placeholder handling
+    model_config = extract_and_process_model_config(
+        model_spec=model_spec,
+        user_id=current_user.id,
+        user_name=current_user.user_name or "",
+    )
 
     # Build chat history from previous subtasks
     history: list[dict[str, str]] = []
@@ -1964,22 +1920,8 @@ async def correct_response(
             tools=tools,
         )
 
-        # Get model display name for persistence
-        model_display_name = request.correction_model_id
-        if public_model and public_model.json:
-            model_display_name = (
-                public_model.json.get("spec", {})
-                .get("modelConfig", {})
-                .get("env", {})
-                .get("model_id", request.correction_model_id)
-            )
-        elif user_model and user_model.json:
-            model_display_name = (
-                user_model.json.get("spec", {})
-                .get("modelConfig", {})
-                .get("env", {})
-                .get("model_id", request.correction_model_id)
-            )
+        # Get model display name for persistence (from processed model_config)
+        model_display_name = model_config.get("model_id", request.correction_model_id)
 
         # Save correction to subtask.result for persistence
         from sqlalchemy.orm.attributes import flag_modified
