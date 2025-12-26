@@ -341,10 +341,14 @@
     "summary": "Summary",
     "improved_answer": "Improved Answer",
     "retry": "Retry",
+    "retry_evaluation": "Retry Evaluation",
     "apply": "Apply",
     "applying": "Applying...",
     "applied": "Applied",
     "apply_success": "Successfully applied the improved answer",
-    "apply_failed": "Failed to apply the improved answer"
+    "apply_failed": "Failed to apply the improved answer",
+    "no_improvement_needed": "No improved answer provided",
+    "show_details": "Show Evaluation Details",
+    "hide_details": "Hide Evaluation Details"
   }
 }
