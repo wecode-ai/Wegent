@@ -195,9 +195,7 @@ export function RetrievalSettingsSection({
                 label: retriever.displayName || retriever.name,
               }))}
             />
-            <p className="text-xs text-text-muted">
-              {t('document.retrieval.retrieverHint')}
-            </p>
+            <p className="text-xs text-text-muted">{t('document.retrieval.retrieverHint')}</p>
           </>
         )}
       </div>
@@ -209,9 +207,7 @@ export function RetrievalSettingsSection({
           <div className="text-sm text-text-secondary">{t('common:actions.loading')}</div>
         ) : embeddingModels.length === 0 ? (
           <div className="space-y-2">
-            <p className="text-sm text-warning">
-              {t('document.retrieval.noEmbeddingModel')}
-            </p>
+            <p className="text-sm text-warning">{t('document.retrieval.noEmbeddingModel')}</p>
             <Link href="/settings" className="text-sm text-primary hover:underline">
               {t('document.goToSettings')}
             </Link>
@@ -228,9 +224,7 @@ export function RetrievalSettingsSection({
                 label: model.displayName || model.name,
               }))}
             />
-            <p className="text-xs text-text-muted">
-              {t('document.retrieval.embeddingModelHint')}
-            </p>
+            <p className="text-xs text-text-muted">{t('document.retrieval.embeddingModelHint')}</p>
           </>
         )}
       </div>
@@ -291,9 +285,7 @@ export function RetrievalSettingsSection({
       {/* Score Threshold Slider */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <Label htmlFor="score-threshold">
-            Score {t('document.retrieval.threshold')}
-          </Label>
+          <Label htmlFor="score-threshold">Score {t('document.retrieval.threshold')}</Label>
           <span className="text-sm text-text-secondary font-medium">
             {scoreThreshold.toFixed(2)}
           </span>
@@ -307,9 +299,7 @@ export function RetrievalSettingsSection({
           step={0.05}
           disabled={isOtherSettingsDisabled}
         />
-        <p className="text-xs text-text-muted">
-          {t('document.retrieval.scoreThresholdHint')}
-        </p>
+        <p className="text-xs text-text-muted">{t('document.retrieval.scoreThresholdHint')}</p>
       </div>
 
       {/* Hybrid Weights (only when hybrid mode is selected) */}

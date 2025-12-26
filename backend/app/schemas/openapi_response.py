@@ -50,7 +50,9 @@ class ResponseCreateInput(BaseModel):
     model: str = Field(
         ..., description="Format: namespace#team_name or namespace#team_name#model_id"
     )
-    input: Union[str, List[InputItem]] = Field(..., description="User input prompt or conversation history")
+    input: Union[str, List[InputItem]] = Field(
+        ..., description="User input prompt or conversation history"
+    )
     previous_response_id: Optional[str] = Field(
         default=None, description="Previous response ID for follow-up"
     )
@@ -58,7 +60,8 @@ class ResponseCreateInput(BaseModel):
         default=False, description="Whether to enable streaming output"
     )
     tools: Optional[List[WegentTool]] = Field(
-        default=None, description="Wegent custom tools, e.g., [{'type': 'wegent_deep_thinking'}]"
+        default=None,
+        description="Wegent custom tools, e.g., [{'type': 'wegent_deep_thinking'}]",
     )
 
 

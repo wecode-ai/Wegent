@@ -506,9 +506,7 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
             ) : (
               <>
                 <Upload className="w-10 h-10 mx-auto mb-4 text-text-muted" />
-                <p className="text-text-primary font-medium">
-                  {t('document.document.dropzone')}
-                </p>
+                <p className="text-text-primary font-medium">{t('document.document.dropzone')}</p>
                 <p className="text-sm text-text-muted mt-2">
                   {t('document.document.supportedTypes')}
                 </p>

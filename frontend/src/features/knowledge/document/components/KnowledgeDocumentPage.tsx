@@ -612,9 +612,7 @@ function GroupKnowledgeBaseList({
                 <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center mb-3">
                   <Plus className="w-6 h-6 text-primary" />
                 </div>
-                <h3 className="font-medium text-sm">
-                  {t('document.knowledgeBase.create')}
-                </h3>
+                <h3 className="font-medium text-sm">{t('document.knowledgeBase.create')}</h3>
               </Card>
             )}
 
