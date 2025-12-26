@@ -280,7 +280,7 @@ def list_public_skills(
 @router.post("/public", response_model=Dict[str, Any], status_code=201)
 def create_public_skill(
     skill_in: PublicSkillCreate,
-    current_user: User = Depends(security.get_current_admin_user),
+    current_user: User = Depends(security.get_admin_user),
     db: Session = Depends(get_db),
 ):
     """Create a public skill (admin only)."""
@@ -299,7 +299,7 @@ def create_public_skill(
 def update_public_skill(
     skill_id: int,
     skill_in: PublicSkillUpdate,
-    current_user: User = Depends(security.get_current_admin_user),
+    current_user: User = Depends(security.get_admin_user),
     db: Session = Depends(get_db),
 ):
     """Update a public skill (admin only)."""
@@ -317,7 +317,7 @@ def update_public_skill(
 @router.delete("/public/{skill_id}", status_code=204)
 def delete_public_skill(
     skill_id: int,
-    current_user: User = Depends(security.get_current_admin_user),
+    current_user: User = Depends(security.get_admin_user),
     db: Session = Depends(get_db),
 ):
     """Delete a public skill (admin only)."""
