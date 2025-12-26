@@ -48,7 +48,7 @@ def upgrade() -> None:
             KEY `idx_user_id` (`user_id`),
             KEY `idx_kind` (`kind`),
             KEY `idx_created_at` (`created_at`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """
     )
 

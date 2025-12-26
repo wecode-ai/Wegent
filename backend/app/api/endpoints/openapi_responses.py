@@ -523,11 +523,11 @@ async def cancel_response(
 
     # Get task to check if it's a Chat Shell type
     task_kind = (
-        db.query(Kind)
+        db.query(TaskResource)
         .filter(
-            Kind.id == task_id,
-            Kind.kind == "Task",
-            Kind.is_active == True,
+            TaskResource.id == task_id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active == True,
         )
         .first()
     )
@@ -710,11 +710,11 @@ async def delete_response(
 
     # Get task to check if it's a Chat Shell type with running stream
     task_kind = (
-        db.query(Kind)
+        db.query(TaskResource)
         .filter(
-            Kind.id == task_id,
-            Kind.kind == "Task",
-            Kind.is_active == True,
+            TaskResource.id == task_id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active == True,
         )
         .first()
     )

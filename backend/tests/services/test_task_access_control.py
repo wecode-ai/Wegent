@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
+from app.models.task import TaskResource
 from app.services.adapters.task_kinds import TaskKindsService
 
 
@@ -24,12 +25,12 @@ class TestTaskAccessControl:
     @pytest.fixture
     def task_service(self):
         """Create TaskKindsService instance"""
-        return TaskKindsService(Kind)
+        return TaskKindsService(TaskResource)
 
     @pytest.fixture
     def mock_task(self):
         """Create a mock task"""
-        task = Mock(spec=Kind)
+        task = Mock(spec=TaskResource)
         task.id = 123
         task.user_id = 1
         task.kind = "Task"
@@ -133,7 +134,7 @@ class TestTaskAccessControl:
     def test_deleted_task_not_accessible(self, task_service, mock_db):
         """Test that deleted tasks are not accessible"""
         # Mock a deleted task
-        deleted_task = Mock(spec=Kind)
+        deleted_task = Mock(spec=TaskResource)
         deleted_task.id = 123
         deleted_task.user_id = 1
         deleted_task.kind = "Task"
