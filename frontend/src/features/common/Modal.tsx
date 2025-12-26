@@ -2,26 +2,20 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import { Dialog } from '@headlessui/react'
-import { ReactNode } from 'react'
+import { Dialog } from '@headlessui/react';
+import { ReactNode } from 'react';
 
 type ModalProps = {
-  isOpen: boolean
-  onClose: () => void
-  title: string
-  children: ReactNode
-  maxWidth?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | '3xl' | 'full'
-}
+  isOpen: boolean;
+  onClose: () => void;
+  title: string;
+  children: ReactNode;
+  maxWidth?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | '3xl' | 'full';
+};
 
-export default function Modal({ 
-  isOpen, 
-  onClose, 
-  title, 
-  children, 
-  maxWidth = 'md' 
-}: ModalProps) {
+export default function Modal({ isOpen, onClose, title, children, maxWidth = 'md' }: ModalProps) {
   // Map maxWidth to actual width class
   const maxWidthClass = {
     sm: 'max-w-sm',
@@ -30,18 +24,14 @@ export default function Modal({
     xl: 'max-w-xl',
     '2xl': 'max-w-2xl',
     '3xl': 'max-w-3xl',
-    full: 'max-w-full'
-  }[maxWidth]
-  
+    full: 'max-w-full',
+  }[maxWidth];
+
   return (
-    <Dialog 
-      open={isOpen} 
-      onClose={onClose} 
-      className="relative z-50"
-    >
+    <Dialog open={isOpen} onClose={onClose} className="relative z-50">
       {/* Backdrop */}
       <div className="fixed inset-0 bg-black/50" aria-hidden="true" />
-      
+
       {/* Full-screen container for centering */}
       <div className="fixed inset-0 flex items-center justify-center p-4">
         <Dialog.Panel
@@ -54,13 +44,11 @@ export default function Modal({
               {title}
             </Dialog.Title>
           </div>
-          
+
           {/* Content */}
-          <div>
-            {children}
-          </div>
+          <div>{children}</div>
         </Dialog.Panel>
       </div>
     </Dialog>
-  )
+  );
 }

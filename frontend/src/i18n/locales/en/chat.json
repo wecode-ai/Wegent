@@ -320,5 +320,35 @@
   "common": {
     "cancel": "Cancel",
     "close": "Close"
+  },
+  "correction": {
+    "enable": "Enable AI correction mode",
+    "disable": "Disable AI correction mode",
+    "select_model": "Select Correction Model",
+    "select_model_desc": "Choose a model to evaluate and correct AI responses",
+    "search_model": "Search models...",
+    "no_models": "No models found",
+    "public_model": "Public Model",
+    "user_model": "Custom Model",
+    "evaluating": "Evaluating response...",
+    "result_title": "AI Correction Assessment",
+    "scores": "Scores",
+    "accuracy": "Accuracy",
+    "logic": "Logic",
+    "completeness": "Completeness",
+    "issues_found": "Issues Found",
+    "no_corrections_needed": "Answer is correct, no corrections needed",
+    "summary": "Summary",
+    "improved_answer": "Improved Answer",
+    "retry": "Retry",
+    "retry_evaluation": "Retry Evaluation",
+    "apply": "Apply",
+    "applying": "Applying...",
+    "applied": "Applied",
+    "apply_success": "Successfully applied the improved answer",
+    "apply_failed": "Failed to apply the improved answer",
+    "no_improvement_needed": "No improved answer provided",
+    "show_details": "Show Evaluation Details",
+    "hide_details": "Hide Evaluation Details"
   }
 }

@@ -161,9 +161,7 @@ export function CreateKnowledgeBaseDialog({
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="description">
-                {t('document.knowledgeBase.description')}
-              </Label>
+              <Label htmlFor="description">{t('document.knowledgeBase.description')}</Label>
               <Textarea
                 id="description"
                 value={description}

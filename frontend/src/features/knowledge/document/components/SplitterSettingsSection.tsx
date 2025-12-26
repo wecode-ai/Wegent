@@ -115,9 +115,7 @@ export function SplitterSettingsSection({
             {t('document.splitter.characters')}
           </span>
         </div>
-        <p className="text-xs text-text-muted">
-          {t('document.splitter.chunkOverlapHint')}
-        </p>
+        <p className="text-xs text-text-muted">{t('document.splitter.chunkOverlapHint')}</p>
         {overlapError && <p className="text-sm text-error">{overlapError}</p>}
       </div>
     </div>

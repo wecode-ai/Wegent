@@ -42,9 +42,7 @@ export default function TeamBasicInfoForm({
             {t('team.name')} <span className="text-red-400">*</span>
           </Label>
           <div className="flex items-center gap-2">
-            {setIcon && (
-              <TeamIconPicker value={icon} onChange={setIcon} />
-            )}
+            {setIcon && <TeamIconPicker value={icon} onChange={setIcon} />}
             <Input
               id="teamName"
               value={name}

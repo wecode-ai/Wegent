@@ -230,7 +230,8 @@ function AttachmentPreviewInline({
         </span>
         <span className="text-xs text-text-muted">
           {formatFileSize(attachment.file_size)}
-          {attachment.text_length && ` · ${attachment.text_length.toLocaleString()} ${t('attachment.characters')}`}
+          {attachment.text_length &&
+            ` · ${attachment.text_length.toLocaleString()} ${t('attachment.characters')}`}
         </span>
       </div>
       {attachment.status === 'parsing' && (

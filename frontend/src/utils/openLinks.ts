@@ -39,7 +39,7 @@ export function calculateOpenLinks(taskDetail: TaskDetail | null | undefined): O
 
     // Build git link based on git type
     const git_domain = taskDetail.git_domain || 'github.com';
-    const git_type = git_domain.endsWith('github.com') ? "github" : "gitlab";
+    const git_type = git_domain.endsWith('github.com') ? 'github' : 'gitlab';
     const git_repo = taskDetail.git_repo || '';
     const git_url = taskDetail.git_url || '';
 

@@ -371,11 +371,7 @@ export function RetrievalTestDialog({
                   onClick={handleSearch}
                   disabled={!query.trim() || loading || !hasRetrievalConfig}
                 >
-                  {loading ? (
-                    <Spinner className="w-4 h-4" />
-                  ) : (
-                    t('document.retrievalTest.search')
-                  )}
+                  {loading ? <Spinner className="w-4 h-4" /> : t('document.retrievalTest.search')}
                 </Button>
               </div>
             </div>

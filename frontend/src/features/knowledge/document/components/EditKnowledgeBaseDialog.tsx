@@ -136,9 +136,7 @@ export function EditKnowledgeBaseDialog({
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="edit-description">
-                {t('document.knowledgeBase.description')}
-              </Label>
+              <Label htmlFor="edit-description">{t('document.knowledgeBase.description')}</Label>
               <Textarea
                 id="edit-description"
                 value={description}

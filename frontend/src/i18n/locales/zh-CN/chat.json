@@ -319,5 +319,35 @@
   "common": {
     "cancel": "取消",
     "close": "关闭"
+  },
+  "correction": {
+    "enable": "启用 AI 纠错模式",
+    "disable": "禁用 AI 纠错模式",
+    "select_model": "选择纠错模型",
+    "select_model_desc": "选择一个模型来评估和纠正 AI 回答",
+    "search_model": "搜索模型...",
+    "no_models": "未找到模型",
+    "public_model": "公共模型",
+    "user_model": "自定义模型",
+    "evaluating": "正在评估回答...",
+    "result_title": "AI 纠错评估",
+    "scores": "评分",
+    "accuracy": "准确性",
+    "logic": "逻辑性",
+    "completeness": "完整性",
+    "issues_found": "发现的问题",
+    "no_corrections_needed": "回答正确，无需纠正",
+    "summary": "总结评价",
+    "improved_answer": "改进后的回答",
+    "retry": "重新纠错",
+    "retry_evaluation": "重新评估",
+    "apply": "一键应用",
+    "applying": "应用中...",
+    "applied": "已应用",
+    "apply_success": "已成功应用改进后的回答",
+    "apply_failed": "应用改进回答失败",
+    "no_improvement_needed": "未提供改进后的回答",
+    "show_details": "显示评估详情",
+    "hide_details": "隐藏评估详情"
   }
 }
