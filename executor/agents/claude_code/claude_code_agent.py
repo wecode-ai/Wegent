@@ -598,6 +598,7 @@ class ClaudeCodeAgent(Agent):
             "model",
             "permission_prompt_tool_name",
             "cwd",
+            "max_buffer_size",
         ]
 
         logger.info(
@@ -605,7 +606,11 @@ class ClaudeCodeAgent(Agent):
         )
 
         # Collect all non-None configuration parameters
-        options = {"setting_sources": ["user", "project", "local"]}
+        # Set max_buffer_size to 50MB to handle large file reads (default is 1MB)
+        options = {
+            "setting_sources": ["user", "project", "local"],
+            "max_buffer_size": 50 * 1024 * 1024,  # 50MB
+        }
         bots = task_data.get("bot", [])
         bot_config = bots[0]
         # Extract all non-None parameters from bot_config

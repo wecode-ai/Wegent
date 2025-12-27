@@ -9,8 +9,22 @@ Processes prompts to replace attachment references with local paths
 and builds image content blocks for vision support.
 """
 
+import base64
+import logging
 import re
 from typing import Any, Dict, List
+
+logger = logging.getLogger(__name__)
+
+# Image MIME types that support vision
+IMAGE_MIME_TYPES = {
+    "image/png",
+    "image/jpeg",
+    "image/jpg",
+    "image/gif",
+    "image/webp",
+    "image/bmp",
+}
 
 
 class AttachmentPromptProcessor:
@@ -119,8 +133,12 @@ class AttachmentPromptProcessor:
         """
         Build vision content blocks for image attachments.
 
+        Reads image files from local_path and converts them to base64.
+        This allows the executor to handle images without receiving
+        base64 data in the task payload.
+
         Args:
-            success_attachments: Successfully downloaded attachments
+            success_attachments: Successfully downloaded attachments with local_path
 
         Returns:
             List of content blocks for Claude vision API
@@ -128,22 +146,45 @@ class AttachmentPromptProcessor:
         content_blocks = []
 
         for att in success_attachments:
-            image_base64 = att.get("image_base64")
-            if not image_base64:
+            mime_type = att.get("mime_type", "")
+            local_path = att.get("local_path", "")
+
+            # Skip non-image attachments
+            if mime_type not in IMAGE_MIME_TYPES:
                 continue
 
-            mime_type = att.get("mime_type", "image/png")
+            # Skip if no local path (download failed)
+            if not local_path:
+                logger.warning(
+                    f"Image attachment {att.get('id')} has no local_path, skipping"
+                )
+                continue
 
-            # Build vision content block
-            content_blocks.append(
-                {
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": mime_type,
-                        "data": image_base64,
-                    },
-                }
-            )
+            # Read image file and convert to base64
+            try:
+                with open(local_path, "rb") as f:
+                    image_data = f.read()
+                image_base64 = base64.b64encode(image_data).decode("utf-8")
+
+                # Build vision content block
+                content_blocks.append(
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": mime_type,
+                            "data": image_base64,
+                        },
+                    }
+                )
+                logger.debug(
+                    f"Built image content block for {att.get('original_filename')}"
+                )
+            except FileNotFoundError:
+                logger.error(f"Image file not found: {local_path}")
+            except IOError as e:
+                logger.error(f"Error reading image file {local_path}: {e}")
+            except Exception as e:
+                logger.error(f"Unexpected error processing image {local_path}: {e}")
 
         return content_blocks

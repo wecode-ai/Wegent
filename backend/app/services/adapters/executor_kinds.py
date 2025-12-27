@@ -996,9 +996,9 @@ class ExecutorKindsService(
                     "file_size": att.file_size,
                     "mime_type": att.mime_type,
                 }
-                # Add base64 data for image attachments
-                if att.image_base64:
-                    att_data["image_base64"] = att.image_base64
+                # Note: We intentionally don't include image_base64 here to avoid
+                # large task JSON payloads. The executor will download attachments
+                # via AttachmentDownloader using the attachment id.
                 attachments_data.append(att_data)
 
             if attachments_data:

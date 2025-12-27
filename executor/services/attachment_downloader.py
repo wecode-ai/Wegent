@@ -139,7 +139,7 @@ class AttachmentDownloader:
         Returns:
             Full download URL
         """
-        return f"{self.api_base_url}/api/adapter/attachments/{att_id}/executor-download"
+        return f"{self.api_base_url}/api/attachments/{att_id}/executor-download"
 
     def _download_single(self, att: Dict[str, Any]) -> Dict[str, Any]:
         """

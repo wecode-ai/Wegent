@@ -15,15 +15,18 @@ class User(BaseModel):
 
 
 class Attachment(BaseModel):
-    """Attachment model for executor"""
+    """Attachment model for executor.
+
+    Note: download_url and image_base64 are intentionally not included.
+    The executor constructs download URLs using TASK_API_DOMAIN env var,
+    and reads image data from downloaded files to avoid large task payloads.
+    """
 
     id: int
     original_filename: str
     file_extension: str
     file_size: int
     mime_type: str
-    download_url: str
-    image_base64: Optional[str] = None  # Base64 data for image attachments
 
 
 class Bot(BaseModel):
