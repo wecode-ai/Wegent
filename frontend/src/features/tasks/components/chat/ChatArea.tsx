@@ -15,7 +15,6 @@ import { useChatStreamHandlers } from './useChatStreamHandlers';
 import { allBotsHavePredefinedModel } from '../selector/ModelSelector';
 import type { Team } from '@/types/api';
 import { useTranslation } from '@/hooks/useTranslation';
-import { isChatShell } from '../../service/messageService';
 import { useRouter } from 'next/navigation';
 import { useTaskContext } from '../../contexts/taskContext';
 import { useChatStreamContext } from '../../contexts/chatStreamContext';
@@ -23,6 +22,7 @@ import { Button } from '@/components/ui/button';
 import { useScrollManagement } from '../hooks/useScrollManagement';
 import { useFloatingInput } from '../hooks/useFloatingInput';
 import { useTeamPreferences } from '../hooks/useTeamPreferences';
+import { useAttachmentUpload } from '../hooks/useAttachmentUpload';
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
@@ -223,48 +223,16 @@ export default function ChatArea({
     }
   }, [hasMessages, chatState]);
 
-  // Drag and drop handlers
-  const handleDragEnter = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (!chatState.selectedTeam || !isChatShell(chatState.selectedTeam)) return;
-      if (chatState.isLoading || streamHandlers.isStreaming) return;
-      chatState.setIsDragging(true);
-    },
-    [chatState, streamHandlers.isStreaming]
-  );
-
-  const handleDragLeave = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (e.currentTarget.contains(e.relatedTarget as Node)) return;
-      chatState.setIsDragging(false);
-    },
-    [chatState]
-  );
-
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-  }, []);
-
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      chatState.setIsDragging(false);
-      if (!chatState.selectedTeam || !isChatShell(chatState.selectedTeam)) return;
-      if (chatState.isLoading || streamHandlers.isStreaming) return;
-
-      const files = e.dataTransfer.files;
-      if (files && files.length > 0) {
-        chatState.handleFileSelect(Array.from(files));
-      }
-    },
-    [chatState, streamHandlers.isStreaming]
-  );
+  // Use attachment upload hook - centralizes all attachment upload logic
+  const { handleDragEnter, handleDragLeave, handleDragOver, handleDrop, handlePasteFile } =
+    useAttachmentUpload({
+      team: chatState.selectedTeam,
+      isLoading: chatState.isLoading,
+      isStreaming: streamHandlers.isStreaming,
+      attachmentState: chatState.attachmentState,
+      onFileSelect: chatState.handleFileSelect,
+      setIsDragging: chatState.setIsDragging,
+    });
 
   // Callback for MessagesArea content changes - enhanced with streaming check
   const handleMessagesContentChange = useCallback(() => {
@@ -345,7 +313,7 @@ export default function ChatArea({
     onDrop: handleDrop,
     canSubmit,
     handleSendMessage: streamHandlers.handleSendMessage,
-    onPasteFile: chatState.handleFileSelect,
+    onPasteFile: handlePasteFile,
     // ChatInputControls props
     selectedModel: chatState.selectedModel,
     setSelectedModel: chatState.setSelectedModel,

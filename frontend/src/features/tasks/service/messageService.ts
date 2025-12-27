@@ -37,7 +37,7 @@ export function isChatShell(team: Team | null): boolean {
 
   return false;
 }
-
+/**
 /**
  * Check if a task uses Chat Shell type based on subtask bot information.
  * This is useful when team.agent_type is not available but subtask bots have shell_type.

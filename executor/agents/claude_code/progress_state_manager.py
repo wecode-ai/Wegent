@@ -353,7 +353,6 @@ class ProgressStateManager:
             repo_path = self.project_path
             
             if not repo_path or not os.path.exists(repo_path):
-                logger.warning(f"Working directory not found: {repo_path}")
                 return file_changes
 
             # Initialize Git repository object
