@@ -133,6 +133,23 @@ def get_new_tasks_lite(
     return {"total": len(items), "items": items}
 
 
+@router.get("/lite/groups", response_model=TaskLiteListResponse)
+def get_group_tasks_lite(
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(10, ge=1, le=100, description="Items per page"),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get current user's group chat task list (paginated), excluding DELETE status tasks.
+    Only returns tasks where is_group_chat=true OR has active members in task_members table.
+    """
+    skip = (page - 1) * limit
+    items, total = task_kinds_service.get_user_group_tasks_lite(
+        db=db, user_id=current_user.id, skip=skip, limit=limit
+    )
+    return {"total": total, "items": items}
+
+
 @router.get("/search", response_model=TaskListResponse)
 def search_tasks_by_title(
     title: str = Query(..., min_length=1, description="Search by task title keywords"),
