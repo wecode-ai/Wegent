@@ -51,7 +51,7 @@ export default function TeamShareHandler({
   }, [router]);
 
   useEffect(() => {
-    const teamShareToken = searchParams.get('common:teamShare');
+    const teamShareToken = searchParams.get('teamShare');
 
     if (!teamShareToken) {
       return;
@@ -99,7 +99,7 @@ export default function TeamShareHandler({
     setIsJoining(true);
     setError(null);
     try {
-      await teamApis.joinSharedTeam({ share_token: searchParams.get('common:teamShare')! });
+      await teamApis.joinSharedTeam({ share_token: searchParams.get('teamShare')! });
 
       toast({
         title: t('common:teams.share.join_success', { teamName: shareInfo?.team_name || '' }),

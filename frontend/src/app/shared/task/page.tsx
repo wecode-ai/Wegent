@@ -56,7 +56,7 @@ function SharedTaskContent() {
   }, [isLoggedIn]);
 
   useEffect(() => {
-    const token = searchParams.get('common:token');
+    const token = searchParams.get('token');
 
     if (!token) {
       setError(t('common:shared_task.error_invalid_link'));
@@ -95,7 +95,7 @@ function SharedTaskContent() {
   }, [searchParams, t]);
 
   const handleLoginAndCopy = () => {
-    const token = searchParams.get('common:token');
+    const token = searchParams.get('token');
     if (!token) return;
 
     // Check if we're in an in-app browser
@@ -272,7 +272,7 @@ function SharedTaskContent() {
       {showInAppBrowserGuard && (
         <InAppBrowserGuard
           onProceed={() => {
-            const token = searchParams.get('common:token');
+            const token = searchParams.get('token');
             if (token) {
               proceedToLoginOrChat(token);
             }

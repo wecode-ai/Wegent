@@ -40,8 +40,8 @@ function SettingsContent() {
 
   // Get initial tab from URL with backward compatibility
   const getInitialTab = (): SettingsTabId => {
-    const tab = searchParams.get('common:tab');
-    const section = searchParams.get('common:section');
+    const tab = searchParams.get('tab');
+    const section = searchParams.get('section');
 
     // Backward compatibility: map old section+tab format to new tab IDs
     if (section && tab) {
@@ -67,7 +67,7 @@ function SettingsContent() {
 
   // Selected group state for group scope
   const [selectedGroup, setSelectedGroup] = useState<string | null>(() => {
-    return searchParams.get('common:group') || null;
+    return searchParams.get('group') || null;
   });
 
   // Mobile sidebar state

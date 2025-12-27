@@ -23,11 +23,11 @@ export default function OidcTokenHandler() {
   const searchParams = useSearchParams();
 
   useEffect(() => {
-    const accessToken = searchParams.get('common:access_token');
-    const error = searchParams.get('common:error');
-    const tokenType = searchParams.get('common:token_type');
-    const loginSuccess = searchParams.get('common:login_success');
-    const errorMessage = searchParams.get('common:message');
+    const accessToken = searchParams.get('access_token');
+    const error = searchParams.get('error');
+    const tokenType = searchParams.get('token_type');
+    const loginSuccess = searchParams.get('login_success');
+    const errorMessage = searchParams.get('message');
 
     if (error) {
       console.error('OIDC login failed:', error, errorMessage);

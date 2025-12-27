@@ -96,7 +96,7 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
   }, [router]);
 
   useEffect(() => {
-    const taskShareToken = searchParams.get('common:taskShare');
+    const taskShareToken = searchParams.get('taskShare');
 
     if (!taskShareToken) {
       return;
@@ -236,7 +236,7 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
     setIsCopying(true);
     setError(null);
     try {
-      const shareToken = searchParams.get('common:taskShare');
+      const shareToken = searchParams.get('taskShare');
       if (!shareToken) {
         throw new Error('Share token not found');
       }

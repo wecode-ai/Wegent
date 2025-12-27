@@ -26,7 +26,7 @@ export function InviteJoinHandler() {
   const { toast } = useToast();
   const searchParams = useSearchParams();
   const router = useRouter();
-  const inviteToken = searchParams.get('chat:invite');
+  const inviteToken = searchParams.get('invite');
 
   const [inviteInfo, setInviteInfo] = useState<InviteInfoResponse | null>(null);
   const [loading, setLoading] = useState(false);

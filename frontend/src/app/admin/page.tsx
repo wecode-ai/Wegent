@@ -55,7 +55,7 @@ function AdminContent() {
 
   // Get initial tab from URL
   const getInitialTab = (): AdminTabId => {
-    const tab = searchParams.get('admin:tab');
+    const tab = searchParams.get('tab');
     if (tab && ['users', 'public-models', 'system-config'].includes(tab)) {
       return tab as AdminTabId;
     }
