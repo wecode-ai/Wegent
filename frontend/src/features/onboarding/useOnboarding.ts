@@ -8,6 +8,7 @@ import { driver, Driver, AllowedButtons, Config } from 'driver.js';
 import { useTranslation } from 'react-i18next';
 import 'driver.js/dist/driver.css';
 import { getTourSteps } from './tourSteps';
+import { markCurrentVersionFeatureTourViewed } from './useFeatureTour';
 
 const ONBOARDING_COMPLETED_KEY = 'user_onboarding_completed';
 const ONBOARDING_IN_PROGRESS_KEY = 'onboarding_in_progress';
@@ -41,6 +42,9 @@ export const useOnboarding = ({
     localStorage.setItem(ONBOARDING_COMPLETED_KEY, 'true');
     localStorage.removeItem(ONBOARDING_IN_PROGRESS_KEY);
     localStorage.removeItem(ONBOARDING_CURRENT_STEP_KEY);
+    // Mark current version's Feature Tour as viewed for new users
+    // This prevents new users from seeing Feature Tour after completing onboarding
+    markCurrentVersionFeatureTourViewed();
   };
 
   const isOnboardingInProgress = () => {

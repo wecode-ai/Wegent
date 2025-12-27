@@ -20,6 +20,8 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
 import { useUser } from '@/features/common/UserContext';
 import { userApis } from '@/apis/user';
+import { resetFeatureTourForVersion } from '@/features/onboarding/useFeatureTour';
+import { getAllFeatureTourVersions, CURRENT_APP_VERSION } from '@/features/onboarding/featureTours';
 import type { UserPreferences } from '@/types/api';
 
 export default function NotificationSettings() {
@@ -136,6 +138,15 @@ export default function NotificationSettings() {
     router.push('/chat');
   };
 
+  const handleRestartFeatureTour = () => {
+    // Reset all feature tours and redirect to chat page
+    const versions = getAllFeatureTourVersions();
+    versions.forEach(version => {
+      resetFeatureTourForVersion(version);
+    });
+    router.push('/chat');
+  };
+
   return (
     <div className="space-y-4">
       <div>
@@ -229,6 +240,21 @@ export default function NotificationSettings() {
         </div>
         <Button onClick={handleRestartOnboarding} variant="default" size="default">
           {t('onboarding.restart_tour')}
+        </Button>
+      </div>
+
+      {/* Restart Feature Tour Button */}
+      <div className="flex items-center justify-between p-4 bg-base border border-border rounded-lg">
+        <div className="flex-1">
+          <h3 className="text-sm font-medium text-text-primary">
+            {t('featureTour.view_feature_updates')}
+          </h3>
+          <p className="text-xs text-text-muted mt-1">
+            {t('featureTour.view_feature_updates_desc')}
+          </p>
+        </div>
+        <Button onClick={handleRestartFeatureTour} variant="outline" size="default">
+          {t('featureTour.view_feature_updates')}
         </Button>
       </div>
     </div>

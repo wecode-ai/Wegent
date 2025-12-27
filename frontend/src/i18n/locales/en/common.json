@@ -557,6 +557,19 @@
     "done": "Done",
     "restart_tour": "Restart Onboarding Tour"
   },
+  "featureTour": {
+    "skip": "Skip",
+    "next": "Next",
+    "previous": "Previous",
+    "done": "Got it!",
+    "view_feature_updates": "View Feature Updates",
+    "view_feature_updates_desc": "Re-watch the guided tour for new features",
+    "no_feature_tours": "No feature tours available",
+    "v1_0_21": {
+      "ai_cross_validation_title": "AI Cross-Validation",
+      "ai_cross_validation_description": "Enable AI cross-validation to have another AI model verify and improve answers. Click to select a verification model, which will evaluate accuracy, logic, and completeness of responses."
+    }
+  },
   "common": {
     "back": "Back",
     "cancel": "Cancel",
