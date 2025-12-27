@@ -112,6 +112,7 @@ class SkillValidator:
 
                 return {
                     "description": metadata.get("description", ""),
+                    "displayName": metadata.get("displayName"),
                     "prompt": prompt_content,
                     "version": metadata.get("version"),
                     "author": metadata.get("author"),

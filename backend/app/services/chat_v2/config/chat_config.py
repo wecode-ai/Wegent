@@ -322,14 +322,14 @@ class ChatConfigBuilder:
         )
         system_prompt += current_time_info
 
-        # CRITICAL: Log the final system prompt being sent to the LLM
-        logger.info(
-            "[SYSTEM_PROMPT_DEBUG] Final system prompt for bot '%s' (user_id=%d, team_id=%d):\n---\n%s\n---",
-            bot.name if bot else "UNKNOWN_BOT",
-            self.user_id,
-            self.team.id,
-            system_prompt,
-        )
+        # # CRITICAL: Log the final system prompt being sent to the LLM
+        # logger.info(
+        #     "[SYSTEM_PROMPT_DEBUG] Final system prompt for bot '%s' (user_id=%d, team_id=%d):\n---\n%s\n---",
+        #     bot.name if bot else "UNKNOWN_BOT",
+        #     self.user_id,
+        #     self.team.id,
+        #     system_prompt,
+        # )
 
         return system_prompt
 

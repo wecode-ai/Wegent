@@ -1,13 +1,103 @@
 ---
-description: "Use this skill when you need to visualize concepts, workflows, architectures, or relationships using diagrams. You must use this skill when you want to use mermaid."
-version: "1.0.0"
+description: "Use this skill when you need to draw diagrams. You MUST use this skill BEFORE outputting any mermaid code block."
+displayName: "绘制图表"
+version: "1.2.0"
 author: "Wegent Team"
 tags: ["diagram", "visualization", "mermaid"]
 ---
 
 # Diagram Visualization with Mermaid
 
-When you need to visualize concepts, workflows, architectures, or relationships, use Mermaid diagram syntax. Wrap your diagram code in a ```mermaid code block.
+When you need to visualize concepts, workflows, architectures, or relationships, use Mermaid diagram syntax.
+
+## IMPORTANT: Two-Step Workflow
+
+To create mermaid diagrams, follow this two-step workflow:
+
+1. **Step 1: Validate with `render_mermaid` tool** - Use the tool to validate your mermaid syntax
+2. **Step 2: Output mermaid code block** - After successful validation, output the mermaid code block in your response
+
+This ensures:
+- Syntax is validated before displaying to the user
+- The diagram is automatically saved in the conversation history
+- The diagram can be referenced later in the conversation
+
+### Step 1: Use render_mermaid Tool
+
+Call the `render_mermaid` tool with the following parameters:
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `code` | string | Yes | The mermaid diagram code (without the ```mermaid wrapper) |
+| `diagram_type` | string | No | Diagram type hint (flowchart, sequence, etc.) |
+| `title` | string | No | Optional title for the diagram |
+
+### Example Tool Call
+
+```json
+{
+  "name": "render_mermaid",
+  "arguments": {
+    "code": "flowchart TD\n    A[Start] --> B{Decision}\n    B -->|Yes| C[Action 1]\n    B -->|No| D[Action 2]\n    C --> E[End]\n    D --> E",
+    "title": "Decision Flow"
+  }
+}
+```
+
+### Step 2: Output Mermaid Code Block
+
+When the `render_mermaid` tool returns success, it will include the mermaid code that you should output. Simply include the mermaid code block in your response:
+
+```mermaid
+flowchart TD
+    A[Start] --> B{Decision}
+    B -->|Yes| C[Action 1]
+    B -->|No| D[Action 2]
+    C --> E[End]
+    D --> E
+```
+
+This mermaid code block will be:
+- Rendered as a diagram for the user to see
+- Saved in the conversation history
+- Available for future reference
+
+### Error Handling and Retry
+
+If the diagram has syntax errors, the tool will return detailed error information including:
+- Error message from the mermaid parser
+- Line number where the error occurred (if available)
+- Suggestions for fixing the error
+
+**When you receive an error, you should:**
+1. Read the error message carefully
+2. Identify the problematic line
+3. Fix the syntax issue
+4. Call `render_mermaid` again with the corrected code
+5. Only output the mermaid code block after successful validation
+
+Example error response:
+```
+Mermaid diagram rendering failed.
+
+Error: Parse error on line 3: Unexpected token 'invalid'
+
+Suggestions:
+- Check the syntax at line 3
+- Ensure all node IDs use alphanumeric characters and underscores
+- Verify arrow syntax (-->, ---, -.->)
+
+Please fix the error and try again.
+```
+
+### Complete Workflow Summary
+
+1. **Generate** the mermaid code based on user requirements
+2. **Call** `render_mermaid` tool with the code to validate syntax
+3. **If failed**: Read the error, fix the code, and retry from step 2
+4. **If successful**: Output the mermaid code block in your response
+
+**IMPORTANT**: Only output the mermaid code block AFTER successful validation with the `render_mermaid` tool.
 
 ## Supported Diagram Types
 

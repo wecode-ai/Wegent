@@ -250,6 +250,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             "task:join": "on_task_join",
             "task:leave": "on_task_leave",
             "history:sync": "on_history_sync",
+            "mermaid:result": "on_mermaid_result",
         }
 
     @trace_websocket_event(
@@ -1811,6 +1812,72 @@ class ChatNamespace(socketio.AsyncNamespace):
 
         finally:
             db.close()
+
+    # ============================================================
+    # Mermaid Rendering Events
+    # ============================================================
+
+    async def on_mermaid_result(self, sid: str, data: dict) -> dict:
+        """
+        Handle mermaid:result event from frontend.
+
+        This event is sent by the frontend after attempting to render a mermaid diagram.
+        The result is passed to the waiting RenderMermaidTool via the pending requests dict.
+
+        Args:
+            sid: Socket ID
+            data: MermaidResultPayload fields
+
+        Returns:
+            {"success": true} or {"error": "..."}
+        """
+        from app.api.ws.events import MermaidResultPayload
+        from app.services.chat_v2.tools.builtin.render_mermaid import (
+            handle_mermaid_result,
+        )
+
+        try:
+            # Validate payload
+            payload = MermaidResultPayload.model_validate(data)
+
+            logger.info(
+                f"[WS] mermaid:result received: request_id={payload.request_id}, "
+                f"success={payload.success}, task_id={payload.task_id}"
+            )
+
+            # Pass result to the waiting tool
+            # Convert structured error to dict format expected by render_mermaid tool
+            error_dict = None
+            if payload.error:
+                error_dict = {
+                    "message": payload.error.message,
+                    "line": payload.error.line,
+                    "column": payload.error.column,
+                    "details": payload.error.details,
+                }
+
+            result_dict = {
+                "success": payload.success,
+                "svg": payload.svg,
+                "error": error_dict,
+            }
+
+            handled = handle_mermaid_result(payload.request_id, result_dict)
+
+            if handled:
+                logger.info(
+                    f"[WS] mermaid:result handled successfully: request_id={payload.request_id}"
+                )
+                return {"success": True}
+            else:
+                logger.warning(
+                    f"[WS] mermaid:result no pending request found: request_id={payload.request_id}"
+                )
+                return {"error": "No pending request found"}
+
+        except Exception as e:
+            logger.error(f"[WS] mermaid:result exception: {e}", exc_info=True)
+            return {"error": str(e)}
 
 
 def register_chat_namespace(sio: socketio.AsyncServer):

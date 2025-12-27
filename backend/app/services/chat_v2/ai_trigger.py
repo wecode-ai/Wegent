@@ -393,13 +393,24 @@ async def _stream_chat_response(
         )
 
         # Prepare load_skill tool if skills are configured
+        # Pass task_id to preload previously used skills for follow-up messages
         load_skill_tool = _prepare_load_skill_tool(
             skill_names=chat_config.skill_names,
             user_id=stream_data.user_id,
             db=db,
+            task_id=stream_data.task_id,
         )
         if load_skill_tool:
             extra_tools.append(load_skill_tool)
+
+        # Prepare render_mermaid tool if mermaid-diagram skill is configured
+        render_mermaid_tool = _prepare_render_mermaid_tool(
+            task_id=stream_data.task_id,
+            subtask_id=stream_data.subtask_id,
+            skill_names=chat_config.skill_names,
+        )
+        if render_mermaid_tool:
+            extra_tools.append(render_mermaid_tool)
 
         # Create WebSocket stream config
         ws_config = WebSocketStreamConfig(
@@ -616,6 +627,7 @@ def _prepare_load_skill_tool(
     skill_names: list[str],
     user_id: int,
     db: Any,
+    task_id: Optional[int] = None,
 ) -> Optional[Any]:
     """
     Prepare LoadSkillTool if skills are configured.
@@ -623,10 +635,14 @@ def _prepare_load_skill_tool(
     This function creates a LoadSkillTool instance that allows the model
     to dynamically load skill prompts on demand.
 
+    For follow-up messages, it also preloads skills that were previously used
+    in the conversation to ensure skill prompts remain effective.
+
     Args:
         skill_names: List of skill names available for this session
         user_id: User ID for skill lookup
         db: Database session
+        task_id: Optional task ID for loading previously used skills from history
 
     Returns:
         LoadSkillTool instance or None if no skills configured
@@ -650,9 +666,150 @@ def _prepare_load_skill_tool(
         skill_names=skill_names,
     )
 
+    # Preload skills that were previously used in this conversation
+    # This ensures skill prompts remain effective for follow-up messages
+    if task_id:
+        previously_used_skills = _get_previously_used_skills(db, task_id)
+        if previously_used_skills:
+            # Filter to only skills that are available in this session
+            skills_to_preload = [s for s in previously_used_skills if s in skill_names]
+            if skills_to_preload:
+                preloaded = load_skill_tool.preload_skills(skills_to_preload)
+                logger.info(
+                    "[ai_trigger] ✅ Preloaded %d previously used skills: %s",
+                    len(preloaded),
+                    preloaded,
+                )
+
     logger.info(
         "[ai_trigger] ✅ Created LoadSkillTool with skills: %s",
         skill_names,
     )
 
     return load_skill_tool
+
+
+def _get_previously_used_skills(db: Any, task_id: int) -> list[str]:
+    """
+    Get list of skill names that were previously loaded in this conversation.
+
+    Scans the thinking steps in completed subtasks to find load_skill tool calls.
+
+    Args:
+        db: Database session
+        task_id: Task ID to search for previously used skills
+
+    Returns:
+        List of skill names that were previously loaded
+    """
+    from app.models.subtask import Subtask, SubtaskStatus
+
+    used_skills: set[str] = set()
+
+    try:
+        # Query completed subtasks for this task
+        subtasks = (
+            db.query(Subtask)
+            .filter(
+                Subtask.task_id == task_id,
+                Subtask.status == SubtaskStatus.COMPLETED,
+            )
+            .all()
+        )
+
+        for subtask in subtasks:
+            if not subtask.result or not isinstance(subtask.result, dict):
+                continue
+
+            thinking = subtask.result.get("thinking", [])
+            if not thinking:
+                continue
+
+            for step in thinking:
+                if not isinstance(step, dict):
+                    continue
+
+                details = step.get("details", {})
+                if not isinstance(details, dict):
+                    continue
+
+                # Check if this is a load_skill tool call
+                tool_name = details.get("tool_name") or details.get("name")
+                if tool_name == "load_skill":
+                    # Extract the skill name from the input
+                    tool_input = details.get("input", {})
+                    if isinstance(tool_input, dict):
+                        skill_name = tool_input.get("skill_name")
+                        if skill_name:
+                            used_skills.add(skill_name)
+
+        logger.info(
+            "[ai_trigger] Found %d previously used skills for task %d: %s",
+            len(used_skills),
+            task_id,
+            list(used_skills),
+        )
+
+    except Exception as e:
+        logger.warning(
+            "[ai_trigger] Failed to get previously used skills for task %d: %s",
+            task_id,
+            str(e),
+        )
+
+    return list(used_skills)
+
+
+def _prepare_render_mermaid_tool(
+    task_id: int,
+    subtask_id: int,
+    skill_names: list[str],
+) -> Optional[Any]:
+    """
+    Prepare RenderMermaidTool if mermaid-diagram skill is configured.
+
+    This function creates a RenderMermaidTool instance that allows the model
+    to render mermaid diagrams with frontend validation.
+
+    Args:
+        task_id: Task ID for WebSocket room
+        subtask_id: Subtask ID for correlation
+        skill_names: List of skill names available for this session
+
+    Returns:
+        RenderMermaidTool instance or None if mermaid skill not configured
+    """
+    # Only create the tool if mermaid-diagram skill is available
+    if "mermaid-diagram" not in skill_names:
+        return None
+
+    logger.info(
+        "[ai_trigger] Creating RenderMermaidTool for task_id=%d, subtask_id=%d",
+        task_id,
+        subtask_id,
+    )
+
+    # Import RenderMermaidTool and ws_emitter
+    from app.services.chat.ws_emitter import get_ws_emitter
+    from app.services.chat_v2.tools.builtin import RenderMermaidTool
+
+    ws_emitter = get_ws_emitter()
+    if not ws_emitter:
+        logger.warning(
+            "[ai_trigger] WebSocket emitter not available, skipping RenderMermaidTool"
+        )
+        return None
+
+    # Create RenderMermaidTool with the required dependencies
+    render_mermaid_tool = RenderMermaidTool(
+        task_id=task_id,
+        subtask_id=subtask_id,
+        ws_emitter=ws_emitter,
+    )
+
+    logger.info(
+        "[ai_trigger] ✅ Created RenderMermaidTool for task_id=%d",
+        task_id,
+    )
+
+    return render_mermaid_tool

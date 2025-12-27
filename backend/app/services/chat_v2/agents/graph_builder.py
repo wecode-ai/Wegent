@@ -93,24 +93,11 @@ class LangGraphAgentBuilder:
                 content = msg.content if hasattr(msg, "content") else str(msg)
                 content_str = content if isinstance(content, str) else str(content)
                 # Print FULL content without truncation
-                logger.info(
-                    "[prompt_modifier] Message[%d] type=%s, content_len=%d:\n%s",
-                    i,
-                    msg_type,
-                    len(content_str),
-                    content_str,
-                )
+
             logger.info("[prompt_modifier] ========== MODEL INPUT END ==========")
 
             # Get combined skill prompt from the tool
             skill_prompt = load_skill_tool.get_combined_skill_prompt()
-
-            # Print FULL skill prompt without truncation
-            logger.info(
-                "[prompt_modifier] Skill prompt from load_skill_tool: len=%d, content:\n%s",
-                len(skill_prompt) if skill_prompt else 0,
-                skill_prompt if skill_prompt else "(empty)",
-            )
 
             if not skill_prompt:
                 # No skills loaded, return messages unchanged
@@ -134,18 +121,7 @@ class LangGraphAgentBuilder:
                     updated_content = original_content + skill_prompt
                     new_messages.append(SystemMessage(content=updated_content))
                     system_updated = True
-                    logger.info(
-                        "[prompt_modifier] Injected skill prompts into system message, "
-                        "original_len=%d, skill_prompt_len=%d, new_len=%d",
-                        len(original_content),
-                        len(skill_prompt),
-                        len(updated_content),
-                    )
-                    # Log the FULL updated system message content
-                    logger.info(
-                        "[prompt_modifier] Updated system message (FULL):\n%s",
-                        updated_content,
-                    )
+
                 else:
                     new_messages.append(msg)
 

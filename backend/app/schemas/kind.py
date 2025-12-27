@@ -435,6 +435,9 @@ class SkillSpec(BaseModel):
     """Skill specification"""
 
     description: str  # Trigger condition description (from SKILL.md YAML frontmatter)
+    displayName: Optional[str] = (
+        None  # Friendly display name shown when tool is being used (e.g., "正在渲染图表")
+    )
     prompt: Optional[str] = None  # Full prompt content (from SKILL.md body)
     version: Optional[str] = None  # Skill version
     author: Optional[str] = None  # Author

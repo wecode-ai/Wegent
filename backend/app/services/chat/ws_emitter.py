@@ -507,6 +507,48 @@ class WebSocketEmitter:
         )
         logger.debug(f"[WS] emit unread:count user={user_id} count={count}")
 
+    # ============================================================
+    # Mermaid Rendering Events
+    # ============================================================
+
+    async def emit_mermaid_render(
+        self,
+        task_id: int,
+        subtask_id: int,
+        request_id: str,
+        code: str,
+        diagram_type: Optional[str] = None,
+        title: Optional[str] = None,
+        timeout_ms: int = 30000,
+    ) -> None:
+        """
+        Emit mermaid:render event to task room.
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+            request_id: Unique request ID for correlation
+            code: Mermaid diagram code
+            diagram_type: Optional diagram type hint
+            title: Optional diagram title
+            timeout_ms: Render timeout in milliseconds
+        """
+        await self.sio.emit(
+            ServerEvents.MERMAID_RENDER,
+            {
+                "task_id": task_id,
+                "subtask_id": subtask_id,
+                "request_id": request_id,
+                "code": code,
+                "diagram_type": diagram_type,
+                "title": title,
+                "timeout_ms": timeout_ms,
+            },
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(f"[WS] emit mermaid:render task={task_id} request={request_id}")
+
 
 # Global emitter instance (lazy initialized)
 _ws_emitter: Optional[WebSocketEmitter] = None

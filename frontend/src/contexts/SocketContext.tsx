@@ -25,6 +25,7 @@ import { io, Socket } from 'socket.io-client';
 import { getToken } from '@/apis/user';
 import {
   ServerEvents,
+  ClientMermaidEvents,
   ChatStartPayload,
   ChatChunkPayload,
   ChatDonePayload,
@@ -36,6 +37,8 @@ import {
   TaskCreatedPayload,
   TaskStatusPayload,
   TaskInvitedPayload,
+  MermaidRenderPayload,
+  MermaidResultPayload,
 } from '@/types/socket';
 
 import { fetchRuntimeConfig, getSocketUrl } from '@/lib/runtime-config';
@@ -86,6 +89,10 @@ interface SocketContextType {
   registerChatHandlers: (handlers: ChatEventHandlers) => () => void;
   /** Register task event handlers */
   registerTaskHandlers: (handlers: TaskEventHandlers) => () => void;
+  /** Register mermaid event handlers */
+  registerMermaidHandlers: (handlers: MermaidEventHandlers) => () => void;
+  /** Send mermaid render result back to server */
+  sendMermaidResult: (payload: MermaidResultPayload) => void;
 }
 
 /** Chat event handlers for streaming */
@@ -104,6 +111,12 @@ export interface TaskEventHandlers {
   onTaskCreated?: (data: TaskCreatedPayload) => void;
   onTaskInvited?: (data: TaskInvitedPayload) => void;
   onTaskStatus?: (data: TaskStatusPayload) => void;
+}
+
+/** Mermaid event handlers for diagram rendering */
+export interface MermaidEventHandlers {
+  /** Handler for mermaid:render event (server requests frontend to render a diagram) */
+  onMermaidRender?: (data: MermaidRenderPayload) => void;
 }
 
 const SocketContext = createContext<SocketContextType | undefined>(undefined);
@@ -494,6 +507,54 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     [socket]
   );
 
+  /**
+   * Register mermaid event handlers for diagram rendering
+   * Returns a cleanup function to unregister handlers
+   */
+  const registerMermaidHandlers = useCallback(
+    (handlers: MermaidEventHandlers): (() => void) => {
+      if (!socket) {
+        return () => {};
+      }
+
+      const { onMermaidRender } = handlers;
+
+      if (onMermaidRender) socket.on(ServerEvents.MERMAID_RENDER, onMermaidRender);
+
+      // Return cleanup function
+      return () => {
+        if (onMermaidRender) socket.off(ServerEvents.MERMAID_RENDER, onMermaidRender);
+      };
+    },
+    [socket]
+  );
+
+  /**
+   * Send mermaid render result back to server
+   */
+  const sendMermaidResult = useCallback(
+    (payload: MermaidResultPayload): void => {
+      const currentSocket = socketRef.current;
+
+      if (!currentSocket?.connected) {
+        console.error('[Socket.IO] sendMermaidResult failed: not connected');
+        return;
+      }
+
+      console.log('[Socket.IO] Emitting mermaid:result event', {
+        request_id: payload.request_id,
+        task_id: payload.task_id,
+        subtask_id: payload.subtask_id,
+        success: payload.success,
+        hasError: !!payload.error,
+        svgLength: payload.svg?.length || 0,
+      });
+
+      currentSocket.emit(ClientMermaidEvents.MERMAID_RESULT, payload);
+    },
+    [] // No dependencies - use socketRef
+  );
+
   // Auto-connect when component mounts if token is available
   useEffect(() => {
     // Only run on client side
@@ -564,6 +625,8 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         retryMessage,
         registerChatHandlers,
         registerTaskHandlers,
+        registerMermaidHandlers,
+        sendMermaidResult,
       }}
     >
       {children}

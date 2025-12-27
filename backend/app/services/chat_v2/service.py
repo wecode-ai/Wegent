@@ -449,8 +449,38 @@ class ChatService:
                         else:
                             serializable_input = str(tool_input)
 
-                        # Build friendly title based on tool type
-                        if tool_name == "web_search":
+                        # Build friendly title: try to get display_name from tool instance
+                        tool_instance = None
+                        if agent.tool_registry:
+                            tool_instance = agent.tool_registry.get(tool_name)
+                        display_name = (
+                            getattr(tool_instance, "display_name", None)
+                            if tool_instance
+                            else None
+                        )
+
+                        if display_name:
+                            # Use tool's display_name, with parameter details for specific tools
+                            title = display_name
+                            # For load_skill, append the skill's friendly display name
+                            if tool_name == "load_skill" and tool_instance:
+                                skill_name_param = (
+                                    serializable_input.get("skill_name", "")
+                                    if isinstance(serializable_input, dict)
+                                    else ""
+                                )
+                                if skill_name_param:
+                                    # Try to get friendly display name from LoadSkillTool
+                                    skill_display = skill_name_param
+                                    if hasattr(tool_instance, "get_skill_display_name"):
+                                        skill_display = (
+                                            tool_instance.get_skill_display_name(
+                                                skill_name_param
+                                            )
+                                        )
+                                    title = f"{display_name}：{skill_display}"
+                        elif tool_name == "web_search":
+                            # Fallback for web_search with query
                             query = (
                                 serializable_input
                                 if isinstance(serializable_input, dict)
@@ -460,6 +490,7 @@ class ChatService:
                                 f"正在搜索: {query}" if query else "正在进行网页搜索"
                             )
                         else:
+                            # Default fallback
                             title = f"正在使用工具: {tool_name}"
 
                         state.add_thinking_step(
@@ -505,6 +536,59 @@ class ChatService:
                         title = self._process_tool_output(
                             tool_name, serializable_output, state
                         )
+                        # If title is still the default "Tool completed: xxx", try to use display_name
+                        # Keep the same display_name as tool_start for visual consistency
+                        # Frontend uses color/icon to distinguish running vs completed status
+                        if title == f"Tool completed: {tool_name}":
+                            tool_instance = None
+                            if agent.tool_registry:
+                                tool_instance = agent.tool_registry.get(tool_name)
+                            display_name = (
+                                getattr(tool_instance, "display_name", None)
+                                if tool_instance
+                                else None
+                            )
+                            if display_name:
+                                # Keep the same display_name, remove "正在" prefix for cleaner display
+                                if display_name.startswith("正在"):
+                                    base_title = display_name[
+                                        2:
+                                    ]  # e.g., "正在渲染图表" -> "渲染图表"
+                                else:
+                                    base_title = display_name
+
+                                # For load_skill, append the skill's friendly display name (same as tool_start)
+                                if tool_name == "load_skill" and tool_instance:
+                                    # Find the matching tool_start step to get the skill_name
+                                    skill_display = None
+                                    for step in state.thinking:
+                                        if (
+                                            step.get("run_id") == run_id
+                                            and step.get("details", {}).get("status")
+                                            == "started"
+                                        ):
+                                            # Extract skill_name from the start step's input
+                                            start_input = step.get("details", {}).get(
+                                                "input", {}
+                                            )
+                                            if isinstance(start_input, dict):
+                                                skill_name_param = start_input.get(
+                                                    "skill_name", ""
+                                                )
+                                                if skill_name_param and hasattr(
+                                                    tool_instance,
+                                                    "get_skill_display_name",
+                                                ):
+                                                    skill_display = tool_instance.get_skill_display_name(
+                                                        skill_name_param
+                                                    )
+                                            break
+                                    if skill_display:
+                                        title = f"{base_title}：{skill_display}"
+                                    else:
+                                        title = base_title
+                                else:
+                                    title = base_title
 
                         # Find the matching tool_start step by run_id and update it
                         # This ensures start and end are displayed together in order
@@ -790,8 +874,65 @@ class ChatService:
                     else:
                         serializable_input = str(tool_input)
 
-                    # Build friendly title based on tool type
-                    if tool_name == "web_search":
+                    # Build friendly title: try to get display_name from tool instance
+                    tool_instance = None
+                    if agent.tool_registry:
+                        tool_instance = agent.tool_registry.get(tool_name)
+                    display_name = (
+                        getattr(tool_instance, "display_name", None)
+                        if tool_instance
+                        else None
+                    )
+
+                    logger.debug(
+                        "[handle_tool_event] tool_name=%s, tool_instance=%s, display_name=%s",
+                        tool_name,
+                        tool_instance,
+                        display_name,
+                    )
+
+                    if display_name:
+                        # Use tool's display_name, with parameter details for specific tools
+                        title = display_name
+                        # For load_skill, append the skill's friendly display name
+                        if tool_name == "load_skill" and tool_instance:
+                            skill_name_param = (
+                                serializable_input.get("skill_name", "")
+                                if isinstance(serializable_input, dict)
+                                else ""
+                            )
+                            logger.info(
+                                "[handle_tool_event] load_skill: skill_name_param=%s, has_method=%s",
+                                skill_name_param,
+                                hasattr(tool_instance, "get_skill_display_name"),
+                            )
+                            if skill_name_param:
+                                # Try to get friendly display name from LoadSkillTool
+                                skill_display = skill_name_param
+                                if hasattr(tool_instance, "get_skill_display_name"):
+                                    try:
+                                        skill_display = (
+                                            tool_instance.get_skill_display_name(
+                                                skill_name_param
+                                            )
+                                        )
+                                        logger.info(
+                                            "[handle_tool_event] load_skill: got skill_display=%s for skill_name=%s",
+                                            skill_display,
+                                            skill_name_param,
+                                        )
+                                    except Exception as e:
+                                        logger.warning(
+                                            "[handle_tool_event] load_skill: failed to get skill_display_name: %s",
+                                            str(e),
+                                        )
+                                title = f"{display_name}：{skill_display}"
+                                logger.info(
+                                    "[handle_tool_event] load_skill: final title=%s",
+                                    title,
+                                )
+                    elif tool_name == "web_search":
+                        # Fallback for web_search with query
                         query = (
                             serializable_input
                             if isinstance(serializable_input, dict)
@@ -799,6 +940,7 @@ class ChatService:
                         ).get("query", "")
                         title = f"正在搜索: {query}" if query else "正在进行网页搜索"
                     else:
+                        # Default fallback
                         title = f"正在使用工具: {tool_name}"
 
                     state.add_thinking_step(
@@ -844,6 +986,59 @@ class ChatService:
                     title = self._process_tool_output(
                         tool_name, serializable_output, state
                     )
+
+                    # If title is still the default "Tool completed: xxx", try to use display_name
+                    # Keep the same display_name as tool_start for visual consistency
+                    # Frontend uses color/icon to distinguish running vs completed status
+                    if title == f"Tool completed: {tool_name}":
+                        tool_instance = None
+                        if agent.tool_registry:
+                            tool_instance = agent.tool_registry.get(tool_name)
+                        display_name = (
+                            getattr(tool_instance, "display_name", None)
+                            if tool_instance
+                            else None
+                        )
+                        if display_name:
+                            # Keep the same display_name, remove "正在" prefix for cleaner display
+                            if display_name.startswith("正在"):
+                                base_title = display_name[
+                                    2:
+                                ]  # e.g., "正在渲染图表" -> "渲染图表"
+                            else:
+                                base_title = display_name
+
+                            # For load_skill, append the skill's friendly display name (same as tool_start)
+                            if tool_name == "load_skill" and tool_instance:
+                                # Find the matching tool_start step to get the skill_name
+                                skill_display = None
+                                for step in state.thinking:
+                                    if (
+                                        step.get("run_id") == run_id
+                                        and step.get("details", {}).get("status")
+                                        == "started"
+                                    ):
+                                        # Extract skill_name from the start step's input
+                                        start_input = step.get("details", {}).get(
+                                            "input", {}
+                                        )
+                                        if isinstance(start_input, dict):
+                                            skill_name_param = start_input.get(
+                                                "skill_name", ""
+                                            )
+                                            if skill_name_param and hasattr(
+                                                tool_instance, "get_skill_display_name"
+                                            ):
+                                                skill_display = tool_instance.get_skill_display_name(
+                                                    skill_name_param
+                                                )
+                                        break
+                                if skill_display:
+                                    title = f"{base_title}：{skill_display}"
+                                else:
+                                    title = base_title
+                            else:
+                                title = base_title
 
                     # Find the matching tool_start step by run_id and update it
                     # This ensures start and end are displayed together in order

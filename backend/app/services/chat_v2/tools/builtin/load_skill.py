@@ -43,6 +43,7 @@ class LoadSkillTool(BaseTool):
     """
 
     name: str = "load_skill"
+    display_name: str = "加载技能"
     description: str = (
         "Load a skill's full instructions when you need specialized guidance. "
         "Call this tool when your task matches one of the available skills' descriptions. "
@@ -60,9 +61,12 @@ class LoadSkillTool(BaseTool):
     # Private instance attribute for session-level cache (not shared between instances)
     # This tracks which skills have been expanded in the current conversation turn
     _expanded_skills: Set[str] = PrivateAttr(default_factory=set)
-    
+
     # Store the actual skill prompts that have been loaded (for system prompt injection)
     _loaded_skill_prompts: dict[str, str] = PrivateAttr(default_factory=dict)
+
+    # Cache for skill display names (skill_name -> displayName)
+    _skill_display_names: dict[str, str] = PrivateAttr(default_factory=dict)
 
     class Config:
         arbitrary_types_allowed = True
@@ -72,6 +76,7 @@ class LoadSkillTool(BaseTool):
         super().__init__(**data)
         self._expanded_skills = set()
         self._loaded_skill_prompts = {}
+        self._skill_display_names = {}
 
     def _run(
         self,
@@ -82,7 +87,7 @@ class LoadSkillTool(BaseTool):
 
         If the skill has already been expanded in this conversation turn,
         returns a short confirmation instead of the full prompt to save tokens.
-        
+
         The skill prompt is stored in _loaded_skill_prompts for system prompt injection.
         """
         if skill_name not in self.skill_names:
@@ -108,10 +113,14 @@ class LoadSkillTool(BaseTool):
             return f"Error: Skill '{skill_name}' has no prompt content."
 
         prompt = skill_crd.spec.prompt
-        
+
         # Mark skill as expanded for this turn and store the prompt
         self._expanded_skills.add(skill_name)
         self._loaded_skill_prompts[skill_name] = prompt
+
+        # Cache the display name for friendly UI display
+        if skill_crd.spec.displayName:
+            self._skill_display_names[skill_name] = skill_crd.spec.displayName
 
         # Return a confirmation message (the actual prompt will be injected into system prompt)
         return f"Skill '{skill_name}' has been loaded. The instructions have been added to the system prompt. Please follow them strictly."
@@ -164,26 +173,138 @@ class LoadSkillTool(BaseTool):
 
     def get_loaded_skill_prompts(self) -> dict[str, str]:
         """Get all loaded skill prompts for system prompt injection.
-        
+
         Returns:
             Dictionary mapping skill names to their prompts
         """
         return self._loaded_skill_prompts.copy()
 
+    def get_skill_display_name(self, skill_name: str) -> str:
+        """Get the friendly display name for a skill.
+
+        This method returns the skill's displayName if available,
+        otherwise falls back to the skill_name itself.
+
+        Args:
+            skill_name: The technical name of the skill
+
+        Returns:
+            The friendly display name (e.g., "Mermaid图表") or the skill_name if not found
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        # First check cache
+        if skill_name in self._skill_display_names:
+            logger.info(
+                "[get_skill_display_name] Found in cache: skill_name=%s, display_name=%s",
+                skill_name,
+                self._skill_display_names[skill_name],
+            )
+            return self._skill_display_names[skill_name]
+
+        # Try to load from database if not in cache
+        logger.info(
+            "[get_skill_display_name] Not in cache, querying DB: skill_name=%s, user_id=%s",
+            skill_name,
+            self.user_id,
+        )
+        try:
+            skill = self._find_skill(skill_name)
+            if skill:
+                logger.info(
+                    "[get_skill_display_name] Found skill in DB: name=%s, skill.json=%s",
+                    skill_name,
+                    skill.json,
+                )
+                skill_crd = Skill.model_validate(skill.json)
+                logger.info(
+                    "[get_skill_display_name] Parsed skill CRD: name=%s, spec.displayName=%s",
+                    skill_name,
+                    skill_crd.spec.displayName,
+                )
+                if skill_crd.spec.displayName:
+                    self._skill_display_names[skill_name] = skill_crd.spec.displayName
+                    return skill_crd.spec.displayName
+                else:
+                    logger.info(
+                        "[get_skill_display_name] Skill has no displayName: skill_name=%s",
+                        skill_name,
+                    )
+            else:
+                logger.info(
+                    "[get_skill_display_name] Skill not found in DB: skill_name=%s",
+                    skill_name,
+                )
+        except Exception as e:
+            logger.warning(
+                "[get_skill_display_name] Error querying skill: skill_name=%s, error=%s",
+                skill_name,
+                str(e),
+            )
+
+        # Fallback to skill_name
+        return skill_name
+
     def get_combined_skill_prompt(self) -> str:
         """Get combined skill prompts for system prompt injection.
-        
+
         Returns:
             Combined string of all loaded skill prompts, or empty string if none loaded
         """
         if not self._loaded_skill_prompts:
             return ""
-        
+
         parts = []
         for skill_name, prompt in self._loaded_skill_prompts.items():
             parts.append(f"\n\n## Skill: {skill_name}\n\n{prompt}")
-        
-        return "\n\n# Loaded Skill Instructions\n\nThe following skills have been loaded. " + "".join(parts)
+
+        return (
+            "\n\n# Loaded Skill Instructions\n\nThe following skills have been loaded. "
+            + "".join(parts)
+        )
+
+    def preload_skills(self, skill_names_to_preload: list[str]) -> list[str]:
+        """Preload skills that were previously used in the conversation.
+
+        This method is used to restore skill prompts for follow-up messages.
+        When a user sends a follow-up message, the LoadSkillTool instance is new
+        and doesn't have the previously loaded skill prompts. This method allows
+        preloading those skills so they remain effective for follow-up questions.
+
+        Args:
+            skill_names_to_preload: List of skill names to preload
+
+        Returns:
+            List of skill names that were successfully preloaded
+        """
+        preloaded = []
+        for skill_name in skill_names_to_preload:
+            if skill_name not in self.skill_names:
+                continue
+            if skill_name in self._expanded_skills:
+                # Already loaded
+                preloaded.append(skill_name)
+                continue
+
+            # Find and load the skill
+            skill = self._find_skill(skill_name)
+            if not skill:
+                continue
+
+            skill_crd = Skill.model_validate(skill.json)
+            if not skill_crd.spec.prompt:
+                continue
+
+            prompt = skill_crd.spec.prompt
+
+            # Mark skill as expanded and store the prompt
+            self._expanded_skills.add(skill_name)
+            self._loaded_skill_prompts[skill_name] = prompt
+            preloaded.append(skill_name)
+
+        return preloaded
 
     async def _arun(
         self,

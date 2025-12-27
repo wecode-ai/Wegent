@@ -45,6 +45,14 @@ export const ServerEvents = {
   TASK_SHARED: 'task:shared',
   TASK_INVITED: 'task:invited', // User invited to group chat
   UNREAD_COUNT: 'unread:count',
+
+  // Mermaid rendering events
+  MERMAID_RENDER: 'mermaid:render',
+} as const;
+
+// Client -> Server Mermaid events
+export const ClientMermaidEvents = {
+  MERMAID_RESULT: 'mermaid:result',
 } as const;
 
 // ============================================================
@@ -294,4 +302,62 @@ export interface HistorySyncAck {
 export interface GenericAck {
   success: boolean;
   error?: string;
+}
+
+// ============================================================
+// Mermaid Rendering Payloads
+// ============================================================
+
+/**
+ * Payload for mermaid:render event - Server to Client
+ * Backend requests frontend to render a mermaid diagram
+ */
+export interface MermaidRenderPayload {
+  /** Task ID */
+  task_id: number;
+  /** Subtask ID */
+  subtask_id: number;
+  /** Unique request ID for correlation */
+  request_id: string;
+  /** Mermaid diagram code to render */
+  code: string;
+  /** Diagram type hint: flowchart, sequence, class, etc. */
+  diagram_type?: string;
+  /** Optional title for the diagram */
+  title?: string;
+  /** Render timeout in milliseconds */
+  timeout_ms?: number;
+}
+
+/**
+ * Mermaid render error details
+ */
+export interface MermaidRenderError {
+  /** Error message */
+  message: string;
+  /** Line number where error occurred */
+  line?: number;
+  /** Column number where error occurred */
+  column?: number;
+  /** Detailed error info from mermaid parser */
+  details?: string;
+}
+
+/**
+ * Payload for mermaid:result event - Client to Server
+ * Frontend sends render result back to backend
+ */
+export interface MermaidResultPayload {
+  /** Task ID */
+  task_id: number;
+  /** Subtask ID */
+  subtask_id: number;
+  /** Request ID for correlation */
+  request_id: string;
+  /** Whether render succeeded */
+  success: boolean;
+  /** Rendered SVG content if success */
+  svg?: string;
+  /** Error details if failed */
+  error?: MermaidRenderError;
 }

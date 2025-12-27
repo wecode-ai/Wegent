@@ -35,6 +35,9 @@ class ClientEvents:
     # History sync
     HISTORY_SYNC = "history:sync"
 
+    # Mermaid rendering events
+    MERMAID_RESULT = "mermaid:result"  # Client -> Server: render result
+
 
 class ServerEvents:
     """Server -> Client event names."""
@@ -59,6 +62,9 @@ class ServerEvents:
     TASK_SHARED = "task:shared"
     TASK_INVITED = "task:invited"  # User invited to group chat
     UNREAD_COUNT = "unread:count"
+
+    # Mermaid rendering events
+    MERMAID_RENDER = "mermaid:render"  # Server -> Client: request render
 
 
 # ============================================================
@@ -330,6 +336,55 @@ class UnreadCountPayload(BaseModel):
     """Payload for unread:count event."""
 
     count: int
+
+
+# ============================================================
+# Mermaid Rendering Payloads
+# ============================================================
+
+
+class MermaidRenderPayload(BaseModel):
+    """Payload for mermaid:render event - Server to Client."""
+
+    task_id: int = Field(..., description="Task ID")
+    subtask_id: int = Field(..., description="Subtask ID")
+    request_id: str = Field(..., description="Unique request ID for correlation")
+    code: str = Field(..., description="Mermaid diagram code")
+    diagram_type: Optional[str] = Field(
+        None,
+        description="Diagram type hint: flowchart, sequence, class, etc.",
+    )
+    title: Optional[str] = Field(None, description="Optional diagram title")
+    timeout_ms: int = Field(
+        default=30000,
+        description="Render timeout in milliseconds",
+    )
+
+
+class MermaidRenderError(BaseModel):
+    """Structured error details for mermaid rendering failures."""
+
+    message: str = Field(..., description="Error message")
+    line: Optional[int] = Field(None, description="Line number where error occurred")
+    column: Optional[int] = Field(
+        None, description="Column number where error occurred"
+    )
+    details: Optional[str] = Field(
+        None, description="Detailed error info from mermaid parser"
+    )
+
+
+class MermaidResultPayload(BaseModel):
+    """Payload for mermaid:result event - Client to Server."""
+
+    task_id: int = Field(..., description="Task ID")
+    subtask_id: int = Field(..., description="Subtask ID")
+    request_id: str = Field(..., description="Request ID for correlation")
+    success: bool = Field(..., description="Whether render succeeded")
+    svg: Optional[str] = Field(None, description="Rendered SVG content if success")
+    error: Optional[MermaidRenderError] = Field(
+        None, description="Structured error details if failed"
+    )
 
 
 # ============================================================
