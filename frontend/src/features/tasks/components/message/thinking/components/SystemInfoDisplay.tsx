@@ -20,14 +20,14 @@ const SystemInfoDisplay = memo(function SystemInfoDisplay({
   permissionMode,
   cwd,
 }: SystemInfoDisplayProps) {
-  const { t } = useTranslation('chat');
+  const { t } = useTranslation();
 
   return (
     <div className="space-y-1 text-xs text-text-tertiary">
       {/* Model information */}
       {model && (
         <div className="flex items-center gap-1">
-          <span className="font-medium">{t('thinking.system_model') || 'Model'}:</span>
+          <span className="font-medium">{t('chat:thinking.system_model') || 'Model'}:</span>
           <span>{model}</span>
         </div>
       )}
@@ -35,9 +35,9 @@ const SystemInfoDisplay = memo(function SystemInfoDisplay({
       {/* Tools count */}
       {tools && Array.isArray(tools) && (
         <div className="flex items-center gap-1">
-          <span className="font-medium">{t('thinking.system_tools') || 'Tools'}:</span>
+          <span className="font-medium">{t('chat:thinking.system_tools') || 'Tools'}:</span>
           <span>
-            {tools.length} {t('thinking.system_tools_available') || 'available'}
+            {tools.length} {t('chat:thinking.system_tools_available') || 'available'}
           </span>
         </div>
       )}
@@ -45,7 +45,9 @@ const SystemInfoDisplay = memo(function SystemInfoDisplay({
       {/* MCP Servers status */}
       {mcpServers && Array.isArray(mcpServers) && mcpServers.length > 0 && (
         <div className="flex items-center gap-1">
-          <span className="font-medium">{t('thinking.system_mcp_servers') || 'MCP Servers'}:</span>
+          <span className="font-medium">
+            {t('chat:thinking.system_mcp_servers') || 'MCP Servers'}:
+          </span>
           <div className="flex gap-2">
             {mcpServers.map((server, idx) => {
               const isConnected = server.status === 'connected';
@@ -69,7 +71,9 @@ const SystemInfoDisplay = memo(function SystemInfoDisplay({
       {/* Permission mode */}
       {permissionMode && (
         <div className="flex items-center gap-1">
-          <span className="font-medium">{t('thinking.system_permission') || 'Permission'}:</span>
+          <span className="font-medium">
+            {t('chat:thinking.system_permission') || 'Permission'}:
+          </span>
           <span className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 text-xs">
             {permissionMode}
           </span>
@@ -79,7 +83,7 @@ const SystemInfoDisplay = memo(function SystemInfoDisplay({
       {/* Working directory */}
       {cwd && cwd !== '/app/executor' && (
         <div className="flex items-center gap-1">
-          <span className="font-medium">{t('thinking.system_directory') || 'Directory'}:</span>
+          <span className="font-medium">{t('chat:thinking.system_directory') || 'Directory'}:</span>
           <span className="text-xs">{cwd}</span>
         </div>
       )}

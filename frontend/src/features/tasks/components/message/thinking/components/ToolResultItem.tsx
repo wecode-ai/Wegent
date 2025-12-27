@@ -18,7 +18,7 @@ const ToolResultItem = memo(function ToolResultItem({
   isError = false,
   itemIndex,
 }: ToolResultItemProps) {
-  const { t } = useTranslation('chat');
+  const { t } = useTranslation();
   const [isExpanded, setIsExpanded] = useState(false);
 
   const resultContent = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
@@ -36,7 +36,7 @@ const ToolResultItem = memo(function ToolResultItem({
     <div>
       <div className="flex items-center justify-between mb-1">
         <div className={`text-xs font-medium ${textClass}`}>
-          {icon} {t('thinking.tool_result') || 'Tool Result'}
+          {icon} {t('chat:thinking.tool_result') || 'Tool Result'}
         </div>
         {isCollapsible && (
           <button
@@ -46,12 +46,12 @@ const ToolResultItem = memo(function ToolResultItem({
             {isExpanded ? (
               <>
                 <Minimize2 className="h-3 w-3" />
-                <span className="text-xs">{t('thinking.collapse') || 'Collapse'}</span>
+                <span className="text-xs">{t('chat:thinking.collapse') || 'Collapse'}</span>
               </>
             ) : (
               <>
                 <Maximize2 className="h-3 w-3" />
-                <span className="text-xs">{t('thinking.expand') || 'Expand'}</span>
+                <span className="text-xs">{t('chat:thinking.expand') || 'Expand'}</span>
               </>
             )}
           </button>

@@ -22,7 +22,7 @@ import { taskMemberApi, InviteInfoResponse } from '@/apis/task-member';
 import { useTranslation } from '@/hooks/useTranslation';
 
 export function InviteJoinHandler() {
-  const { t } = useTranslation('chat');
+  const { t } = useTranslation();
   const { toast } = useToast();
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -41,7 +41,7 @@ export function InviteJoinHandler() {
     taskMemberApi
       .getInviteInfo(inviteToken)
       .then(setInviteInfo)
-      .catch(err => setError(err.message || t('groupChat.invite.invalidLink')))
+      .catch(err => setError(err.message || t('chat:groupChat.invite.invalidLink')))
       .finally(() => setLoading(false));
   }, [inviteToken, t]);
 
@@ -53,16 +53,16 @@ export function InviteJoinHandler() {
       const result = await taskMemberApi.joinByInvite(inviteToken);
 
       if (result.already_member) {
-        toast({ title: t('groupChat.invite.alreadyMember') });
+        toast({ title: t('chat:groupChat.invite.alreadyMember') });
       } else {
-        toast({ title: t('groupChat.invite.joinSuccess') });
+        toast({ title: t('chat:groupChat.invite.joinSuccess') });
       }
 
       // Navigate to the group chat
       router.replace(`/chat?taskId=${result.task_id}`);
     } catch (err: unknown) {
       toast({
-        title: err instanceof Error ? err.message : t('groupChat.invite.joinFailed'),
+        title: err instanceof Error ? err.message : t('chat:groupChat.invite.joinFailed'),
         variant: 'destructive',
       });
     } finally {
@@ -84,8 +84,8 @@ export function InviteJoinHandler() {
     <Dialog open={true} onOpenChange={handleClose}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{t('groupChat.invite.title')}</DialogTitle>
-          <DialogDescription>{t('groupChat.invite.description')}</DialogDescription>
+          <DialogTitle>{t('chat:groupChat.invite.title')}</DialogTitle>
+          <DialogDescription>{t('chat:groupChat.invite.description')}</DialogDescription>
         </DialogHeader>
 
         {loading ? (
@@ -96,7 +96,7 @@ export function InviteJoinHandler() {
           <div className="text-center py-8">
             <p className="text-destructive">{error}</p>
             <Button variant="outline" onClick={handleClose} className="mt-4">
-              {t('common.close')}
+              {t('chat:common.close')}
             </Button>
           </div>
         ) : (
@@ -105,7 +105,7 @@ export function InviteJoinHandler() {
               <div className="bg-muted rounded-lg p-4">
                 <h3 className="font-semibold text-lg">{inviteInfo.task_title}</h3>
                 <p className="text-sm text-text-secondary mt-1">
-                  {t('groupChat.invite.invitedBy', {
+                  {t('chat:groupChat.invite.invitedBy', {
                     name: inviteInfo.inviter_name,
                   })}
                 </p>
@@ -115,7 +115,7 @@ export function InviteJoinHandler() {
                 <div className="flex items-center gap-1">
                   <Users className="w-4 h-4" />
                   <span>
-                    {t('groupChat.invite.memberCount', {
+                    {t('chat:groupChat.invite.memberCount', {
                       count: inviteInfo.member_count,
                     })}
                   </span>
@@ -130,10 +130,10 @@ export function InviteJoinHandler() {
 
               <DialogFooter className="gap-2 sm:gap-0">
                 <Button variant="outline" onClick={handleClose}>
-                  {t('common.cancel')}
+                  {t('chat:common.cancel')}
                 </Button>
                 <Button onClick={handleJoin} disabled={joining}>
-                  {joining ? t('groupChat.invite.joining') : t('groupChat.invite.join')}
+                  {joining ? t('chat:groupChat.invite.joining') : t('chat:groupChat.invite.join')}
                 </Button>
               </DialogFooter>
             </div>

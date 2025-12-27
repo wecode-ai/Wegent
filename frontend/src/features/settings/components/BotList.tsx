@@ -41,7 +41,7 @@ interface BotListProps {
 }
 
 export default function BotList({ scope = 'personal', groupName, groupRoleMap }: BotListProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const { toast } = useToast();
   const [bots, setBots] = useState<Bot[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -75,7 +75,7 @@ export default function BotList({ scope = 'personal', groupName, groupRoleMap }:
       } catch {
         toast({
           variant: 'destructive',
-          title: t('bots.loading'),
+          title: t('common:bots.loading'),
         });
       } finally {
         setIsLoading(false);
@@ -89,8 +89,8 @@ export default function BotList({ scope = 'personal', groupName, groupRoleMap }:
     if (scope === 'group' && !groupName) {
       toast({
         variant: 'destructive',
-        title: t('bots.group_required_title'),
-        description: t('bots.group_required_message'),
+        title: t('common:bots.group_required_title'),
+        description: t('common:bots.group_required_message'),
       });
       return;
     }
@@ -150,7 +150,7 @@ export default function BotList({ scope = 'personal', groupName, groupRoleMap }:
       setBotToDelete(null);
       setRunningTasksInfo(null);
     } catch (e) {
-      const errorMessage = e instanceof Error && e.message ? e.message : t('bots.delete');
+      const errorMessage = e instanceof Error && e.message ? e.message : t('common:bots.delete');
       toast({
         variant: 'destructive',
         title: errorMessage,
@@ -171,7 +171,7 @@ export default function BotList({ scope = 'personal', groupName, groupRoleMap }:
       setBotToDelete(null);
       setRunningTasksInfo(null);
     } catch (e) {
-      const errorMessage = e instanceof Error && e.message ? e.message : t('bots.delete');
+      const errorMessage = e instanceof Error && e.message ? e.message : t('common:bots.delete');
       toast({
         variant: 'destructive',
         title: errorMessage,
@@ -248,8 +248,8 @@ export default function BotList({ scope = 'personal', groupName, groupRoleMap }:
     <>
       <div className="space-y-3">
         <div>
-          <h2 className="text-xl font-semibold text-text-primary mb-1">{t('bots.title')}</h2>
-          <p className="text-sm text-text-muted mb-1">{t('bots.description')}</p>
+          <h2 className="text-xl font-semibold text-text-primary mb-1">{t('common:bots.title')}</h2>
+          <p className="text-sm text-text-muted mb-1">{t('common:bots.description')}</p>
         </div>
         <div
           className={`bg-base border border-border rounded-md p-2 w-full ${
@@ -259,7 +259,7 @@ export default function BotList({ scope = 'personal', groupName, groupRoleMap }:
           }`}
         >
           {isLoading ? (
-            <LoadingState fullScreen={false} message={t('bots.loading')} />
+            <LoadingState fullScreen={false} message={t('common:bots.loading')} />
           ) : (
             <>
               {/* Edit/New mode */}
@@ -311,7 +311,9 @@ export default function BotList({ scope = 'personal', groupName, groupRoleMap }:
                                   }}
                                 ></div>
                                 <span className="text-xs text-text-muted">
-                                  {bot.is_active ? t('bots.active') : t('bots.inactive')}
+                                  {bot.is_active
+                                    ? t('common:bots.active')
+                                    : t('common:bots.inactive')}
                                 </span>
                               </div>
                             </ResourceListItem>
@@ -321,7 +323,7 @@ export default function BotList({ scope = 'personal', groupName, groupRoleMap }:
                                   variant="ghost"
                                   size="icon"
                                   onClick={() => handleEditBot(bot)}
-                                  title={t('bots.edit')}
+                                  title={t('common:bots.edit')}
                                   className="h-8 w-8"
                                 >
                                   <PencilIcon className="w-4 h-4" />
@@ -332,7 +334,7 @@ export default function BotList({ scope = 'personal', groupName, groupRoleMap }:
                                   variant="ghost"
                                   size="icon"
                                   onClick={() => handleCloneBot(bot)}
-                                  title={t('bots.copy')}
+                                  title={t('common:bots.copy')}
                                   className="h-8 w-8"
                                 >
                                   <DocumentDuplicateIcon className="w-4 h-4" />
@@ -344,7 +346,7 @@ export default function BotList({ scope = 'personal', groupName, groupRoleMap }:
                                   size="icon"
                                   onClick={() => handleDeleteBot(bot?.id)}
                                   disabled={isCheckingTasks}
-                                  title={t('bots.delete')}
+                                  title={t('common:bots.delete')}
                                   className="h-8 w-8 hover:text-error"
                                 >
                                   <TrashIcon className="w-4 h-4" />
@@ -356,7 +358,7 @@ export default function BotList({ scope = 'personal', groupName, groupRoleMap }:
                       ))
                     ) : (
                       <div className="text-center text-text-muted py-8">
-                        <p className="text-sm">{t('bots.no_bots')}</p>
+                        <p className="text-sm">{t('common:bots.no_bots')}</p>
                       </div>
                     )}
                   </div>
@@ -364,7 +366,7 @@ export default function BotList({ scope = 'personal', groupName, groupRoleMap }:
                     <div className="flex justify-center">
                       {(scope === 'personal' || canCreateInCurrentGroup) && (
                         <UnifiedAddButton onClick={handleCreateBot}>
-                          {t('bots.new_bot')}
+                          {t('common:bots.new_bot')}
                         </UnifiedAddButton>
                       )}
                     </div>
@@ -383,12 +385,12 @@ export default function BotList({ scope = 'personal', groupName, groupRoleMap }:
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{t('bots.delete_confirm_title')}</DialogTitle>
-            <DialogDescription>{t('bots.delete_confirm_message')}</DialogDescription>
+            <DialogTitle>{t('common:bots.delete_confirm_title')}</DialogTitle>
+            <DialogDescription>{t('common:bots.delete_confirm_message')}</DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="secondary" onClick={handleCancelDelete} disabled={isDeleting}>
-              {t('common.cancel')}
+              {t('common:common.cancel')}
             </Button>
             <Button variant="destructive" onClick={handleConfirmDelete} disabled={isDeleting}>
               {isDeleting ? (
@@ -413,10 +415,10 @@ export default function BotList({ scope = 'personal', groupName, groupRoleMap }:
                       d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                     ></path>
                   </svg>
-                  {t('actions.deleting')}
+                  {t('common:actions.deleting')}
                 </div>
               ) : (
-                t('common.confirm')
+                t('common:common.confirm')
               )}
             </Button>
           </DialogFooter>
@@ -430,17 +432,19 @@ export default function BotList({ scope = 'personal', groupName, groupRoleMap }:
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{t('bots.force_delete_confirm_title')}</DialogTitle>
+            <DialogTitle>{t('common:bots.force_delete_confirm_title')}</DialogTitle>
             <DialogDescription>
               <div className="space-y-3">
                 <p>
-                  {t('bots.force_delete_confirm_message', {
+                  {t('common:bots.force_delete_confirm_message', {
                     count: runningTasksInfo?.running_tasks_count || 0,
                   })}
                 </p>
                 {runningTasksInfo && runningTasksInfo.running_tasks.length > 0 && (
                   <div className="bg-muted p-3 rounded-md">
-                    <p className="font-medium text-sm mb-2">{t('bots.running_tasks_list')}</p>
+                    <p className="font-medium text-sm mb-2">
+                      {t('common:bots.running_tasks_list')}
+                    </p>
                     <ul className="text-sm space-y-1">
                       {runningTasksInfo.running_tasks.slice(0, 5).map(task => (
                         <li key={task.task_id} className="text-text-muted">
@@ -450,7 +454,7 @@ export default function BotList({ scope = 'personal', groupName, groupRoleMap }:
                       {runningTasksInfo.running_tasks.length > 5 && (
                         <li className="text-text-muted">
                           ...{' '}
-                          {t('bots.and_more_tasks', {
+                          {t('common:bots.and_more_tasks', {
                             count: runningTasksInfo.running_tasks.length - 5,
                           })}
                         </li>
@@ -458,13 +462,13 @@ export default function BotList({ scope = 'personal', groupName, groupRoleMap }:
                     </ul>
                   </div>
                 )}
-                <p className="text-error text-sm">{t('bots.force_delete_warning')}</p>
+                <p className="text-error text-sm">{t('common:bots.force_delete_warning')}</p>
               </div>
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="secondary" onClick={handleCancelDelete} disabled={isDeleting}>
-              {t('common.cancel')}
+              {t('common:common.cancel')}
             </Button>
             <Button variant="destructive" onClick={handleForceDelete} disabled={isDeleting}>
               {isDeleting ? (
@@ -489,10 +493,10 @@ export default function BotList({ scope = 'personal', groupName, groupRoleMap }:
                       d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                     ></path>
                   </svg>
-                  {t('actions.deleting')}
+                  {t('common:actions.deleting')}
                 </div>
               ) : (
-                t('bots.force_delete')
+                t('common:bots.force_delete')
               )}
             </Button>
           </DialogFooter>

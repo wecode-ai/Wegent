@@ -21,7 +21,7 @@ const stepKeys = [
 ];
 
 export default function WizardStepIndicator({ currentStep, totalSteps }: WizardStepIndicatorProps) {
-  const { t } = useTranslation('wizard');
+  const { t } = useTranslation();
 
   return (
     <div className="w-full mb-6">

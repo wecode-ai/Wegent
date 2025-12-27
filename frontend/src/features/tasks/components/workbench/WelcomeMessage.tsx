@@ -16,7 +16,7 @@ interface WelcomeMessageProps {
 }
 
 export function WelcomeMessage({ className = '', taskType = 'chat' }: WelcomeMessageProps) {
-  const { i18n } = useTranslation('chat');
+  const { i18n } = useTranslation();
   const [welcomeConfig, setWelcomeConfig] = useState<WelcomeConfigResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 

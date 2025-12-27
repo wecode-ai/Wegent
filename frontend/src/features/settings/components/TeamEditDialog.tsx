@@ -58,7 +58,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     groupName,
   } = props;
 
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
 
   // Current editing object (0 means create new)
   const editingTeam: Team | null =
@@ -314,7 +314,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     if (!name.trim()) {
       toast({
         variant: 'destructive',
-        title: t('team.name_required'),
+        title: t('common:team.name_required'),
       });
       return;
     }
@@ -326,7 +326,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
         if (!validation.isValid) {
           toast({
             variant: 'destructive',
-            title: validation.error || t('bot.errors.required'),
+            title: validation.error || t('common:bot.errors.required'),
           });
           return;
         }
@@ -380,7 +380,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
             variant: 'destructive',
             title:
               (error as Error)?.message ||
-              (editingTeam ? t('teams.edit_failed') : t('teams.create_failed')),
+              (editingTeam ? t('common:teams.edit_failed') : t('common:teams.create_failed')),
           });
         } finally {
           setSaving(false);
@@ -393,7 +393,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     if (leaderBotId == null) {
       toast({
         variant: 'destructive',
-        title: mode === 'solo' ? t('team.bot_required') : t('team.leader_required'),
+        title: mode === 'solo' ? t('common:team.bot_required') : t('common:team.leader_required'),
       });
       return;
     }
@@ -458,7 +458,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
         variant: 'destructive',
         title:
           (error as Error)?.message ||
-          (editingTeam ? t('teams.edit_failed') : t('teams.create_failed')),
+          (editingTeam ? t('common:teams.edit_failed') : t('common:teams.create_failed')),
       });
     } finally {
       setSaving(false);
@@ -474,7 +474,9 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       <Dialog open={open} onOpenChange={open => !open && onClose()}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
           <DialogHeader>
-            <DialogTitle>{isEditing ? t('teams.edit_title') : t('teams.create_title')}</DialogTitle>
+            <DialogTitle>
+              {isEditing ? t('common:teams.edit_title') : t('common:teams.create_title')}
+            </DialogTitle>
           </DialogHeader>
 
           <div className="flex-1 overflow-y-auto space-y-6 py-4">
@@ -528,11 +530,11 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
 
           <DialogFooter>
             <Button variant="outline" onClick={onClose}>
-              {t('actions.cancel')}
+              {t('common:actions.cancel')}
             </Button>
             <Button onClick={handleSave} disabled={saving} variant="primary">
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {saving ? t('actions.saving') : t('actions.save')}
+              {saving ? t('common:actions.saving') : t('common:actions.save')}
             </Button>
           </DialogFooter>
         </DialogContent>
