@@ -36,6 +36,11 @@ import {
   TaskCreatedPayload,
   TaskStatusPayload,
   TaskInvitedPayload,
+  CorrectionStartPayload,
+  CorrectionProgressPayload,
+  CorrectionChunkPayload,
+  CorrectionDonePayload,
+  CorrectionErrorPayload,
 } from '@/types/socket';
 
 import { fetchRuntimeConfig, getSocketUrl } from '@/lib/runtime-config';
@@ -86,6 +91,8 @@ interface SocketContextType {
   registerChatHandlers: (handlers: ChatEventHandlers) => () => void;
   /** Register task event handlers */
   registerTaskHandlers: (handlers: TaskEventHandlers) => () => void;
+  /** Register correction event handlers */
+  registerCorrectionHandlers: (handlers: CorrectionEventHandlers) => () => void;
 }
 
 /** Chat event handlers for streaming */
@@ -104,6 +111,15 @@ export interface TaskEventHandlers {
   onTaskCreated?: (data: TaskCreatedPayload) => void;
   onTaskInvited?: (data: TaskInvitedPayload) => void;
   onTaskStatus?: (data: TaskStatusPayload) => void;
+}
+
+/** Correction event handlers for cross-validation progress */
+export interface CorrectionEventHandlers {
+  onCorrectionStart?: (data: CorrectionStartPayload) => void;
+  onCorrectionProgress?: (data: CorrectionProgressPayload) => void;
+  onCorrectionChunk?: (data: CorrectionChunkPayload) => void;
+  onCorrectionDone?: (data: CorrectionDonePayload) => void;
+  onCorrectionError?: (data: CorrectionErrorPayload) => void;
 }
 
 const SocketContext = createContext<SocketContextType | undefined>(undefined);
@@ -494,6 +510,43 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     [socket]
   );
 
+  /**
+   * Register correction event handlers for cross-validation progress
+   * Returns a cleanup function to unregister handlers
+   */
+  const registerCorrectionHandlers = useCallback(
+    (handlers: CorrectionEventHandlers): (() => void) => {
+      if (!socket) {
+        return () => {};
+      }
+
+      const {
+        onCorrectionStart,
+        onCorrectionProgress,
+        onCorrectionChunk,
+        onCorrectionDone,
+        onCorrectionError,
+      } = handlers;
+
+      if (onCorrectionStart) socket.on(ServerEvents.CORRECTION_START, onCorrectionStart);
+      if (onCorrectionProgress) socket.on(ServerEvents.CORRECTION_PROGRESS, onCorrectionProgress);
+      if (onCorrectionChunk) socket.on(ServerEvents.CORRECTION_CHUNK, onCorrectionChunk);
+      if (onCorrectionDone) socket.on(ServerEvents.CORRECTION_DONE, onCorrectionDone);
+      if (onCorrectionError) socket.on(ServerEvents.CORRECTION_ERROR, onCorrectionError);
+
+      // Return cleanup function
+      return () => {
+        if (onCorrectionStart) socket.off(ServerEvents.CORRECTION_START, onCorrectionStart);
+        if (onCorrectionProgress)
+          socket.off(ServerEvents.CORRECTION_PROGRESS, onCorrectionProgress);
+        if (onCorrectionChunk) socket.off(ServerEvents.CORRECTION_CHUNK, onCorrectionChunk);
+        if (onCorrectionDone) socket.off(ServerEvents.CORRECTION_DONE, onCorrectionDone);
+        if (onCorrectionError) socket.off(ServerEvents.CORRECTION_ERROR, onCorrectionError);
+      };
+    },
+    [socket]
+  );
+
   // Auto-connect when component mounts if token is available
   useEffect(() => {
     // Only run on client side
@@ -564,6 +617,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         retryMessage,
         registerChatHandlers,
         registerTaskHandlers,
+        registerCorrectionHandlers,
       }}
     >
       {children}
