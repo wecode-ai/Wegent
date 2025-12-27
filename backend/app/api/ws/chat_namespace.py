@@ -250,7 +250,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             "task:join": "on_task_join",
             "task:leave": "on_task_leave",
             "history:sync": "on_history_sync",
-            "mermaid:result": "on_mermaid_result",
+            "skill:response": "on_skill_response",
         }
 
     @trace_websocket_event(
@@ -1814,70 +1814,67 @@ class ChatNamespace(socketio.AsyncNamespace):
             db.close()
 
     # ============================================================
-    # Mermaid Rendering Events
+    # Generic Skill Events
     # ============================================================
 
-    async def on_mermaid_result(self, sid: str, data: dict) -> dict:
+    async def on_skill_response(self, sid: str, data: dict) -> dict:
         """
-        Handle mermaid:result event from frontend.
+        Handle generic skill response from frontend.
 
-        This event is sent by the frontend after attempting to render a mermaid diagram.
-        The result is passed to the waiting RenderMermaidTool via the pending requests dict.
+        This is the unified handler for all skill responses.
 
         Args:
             sid: Socket ID
-            data: MermaidResultPayload fields
+            data: SkillResponsePayload fields
 
         Returns:
             {"success": true} or {"error": "..."}
         """
-        from app.api.ws.events import MermaidResultPayload
-        from app.services.chat_v2.tools.builtin.render_mermaid import (
-            handle_mermaid_result,
+        from app.api.ws.events import SkillResponsePayload
+        from app.services.chat_v2.tools.pending_requests import (
+            get_pending_request_registry,
         )
 
-        try:
-            # Validate payload
-            payload = MermaidResultPayload.model_validate(data)
+        request_id = data.get("request_id")
+        skill_name = data.get("skill_name")
+        action = data.get("action")
+        success = data.get("success", False)
+        result = data.get("result")
+        error = data.get("error")
 
-            logger.info(
-                f"[WS] mermaid:result received: request_id={payload.request_id}, "
-                f"success={payload.success}, task_id={payload.task_id}"
+        if not request_id:
+            logger.warning("[WS] skill:response received without request_id")
+            return {"error": "Missing request_id"}
+
+        logger.info(
+            f"[WS] skill:response received: {skill_name}:{action} "
+            f"for request {request_id}, success={success}"
+        )
+
+        registry = get_pending_request_registry()
+
+        # Build a complete result object that includes the success flag
+        # This is needed because tools like render_mermaid expect result.get("success")
+        complete_result = {
+            "success": success,
+            "result": result,
+            "error": error,
+        }
+
+        resolved = await registry.resolve(
+            request_id=request_id,
+            result=complete_result,
+            error=None,  # Error is now part of complete_result
+        )
+
+        if not resolved:
+            logger.warning(
+                f"[WS] skill:response could not resolve request {request_id}"
             )
+            return {"error": "No pending request found"}
 
-            # Pass result to the waiting tool
-            # Convert structured error to dict format expected by render_mermaid tool
-            error_dict = None
-            if payload.error:
-                error_dict = {
-                    "message": payload.error.message,
-                    "line": payload.error.line,
-                    "column": payload.error.column,
-                    "details": payload.error.details,
-                }
-
-            result_dict = {
-                "success": payload.success,
-                "svg": payload.svg,
-                "error": error_dict,
-            }
-
-            handled = handle_mermaid_result(payload.request_id, result_dict)
-
-            if handled:
-                logger.info(
-                    f"[WS] mermaid:result handled successfully: request_id={payload.request_id}"
-                )
-                return {"success": True}
-            else:
-                logger.warning(
-                    f"[WS] mermaid:result no pending request found: request_id={payload.request_id}"
-                )
-                return {"error": "No pending request found"}
-
-        except Exception as e:
-            logger.error(f"[WS] mermaid:result exception: {e}", exc_info=True)
-            return {"error": str(e)}
+        logger.info(f"[WS] skill:response resolved request {request_id}")
+        return {"success": True}
 
 
 def register_chat_namespace(sio: socketio.AsyncServer):

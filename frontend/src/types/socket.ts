@@ -46,11 +46,19 @@ export const ServerEvents = {
   TASK_INVITED: 'task:invited', // User invited to group chat
   UNREAD_COUNT: 'unread:count',
 
-  // Mermaid rendering events
+  // Generic Skill Events
+  SKILL_REQUEST: 'skill:request', // Server -> Client: generic skill request
+
+  // Mermaid rendering events (deprecated, use SKILL_REQUEST instead)
   MERMAID_RENDER: 'mermaid:render',
 } as const;
 
-// Client -> Server Mermaid events
+// Client -> Server Skill events
+export const ClientSkillEvents = {
+  SKILL_RESPONSE: 'skill:response', // Client -> Server: generic skill response
+} as const;
+
+// Client -> Server Mermaid events (deprecated, use ClientSkillEvents instead)
 export const ClientMermaidEvents = {
   MERMAID_RESULT: 'mermaid:result',
 } as const;
@@ -360,4 +368,42 @@ export interface MermaidResultPayload {
   svg?: string;
   /** Error details if failed */
   error?: MermaidRenderError;
+}
+
+// ============================================================
+// Generic Skill Payloads
+// ============================================================
+
+/**
+ * Generic payload for skill:request event - Server to Client
+ * Backend requests frontend to perform a skill action
+ */
+export interface SkillRequestPayload {
+  /** Unique request ID for correlation */
+  request_id: string;
+  /** Name of the skill (e.g., 'mermaid-diagram') */
+  skill_name: string;
+  /** Action to perform (e.g., 'render') */
+  action: string;
+  /** Skill-specific data payload */
+  data: Record<string, unknown>;
+}
+
+/**
+ * Generic payload for skill:response event - Client to Server
+ * Frontend sends skill action result back to backend
+ */
+export interface SkillResponsePayload {
+  /** Request ID for correlation */
+  request_id: string;
+  /** Name of the skill */
+  skill_name: string;
+  /** Action that was performed */
+  action: string;
+  /** Whether the action succeeded */
+  success: boolean;
+  /** Success result data */
+  result?: unknown;
+  /** Error message if failed */
+  error?: string | Record<string, unknown>;
 }

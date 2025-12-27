@@ -25,7 +25,7 @@ import { io, Socket } from 'socket.io-client';
 import { getToken } from '@/apis/user';
 import {
   ServerEvents,
-  ClientMermaidEvents,
+  ClientSkillEvents,
   ChatStartPayload,
   ChatChunkPayload,
   ChatDonePayload,
@@ -37,8 +37,8 @@ import {
   TaskCreatedPayload,
   TaskStatusPayload,
   TaskInvitedPayload,
-  MermaidRenderPayload,
-  MermaidResultPayload,
+  SkillRequestPayload,
+  SkillResponsePayload,
 } from '@/types/socket';
 
 import { fetchRuntimeConfig, getSocketUrl } from '@/lib/runtime-config';
@@ -89,10 +89,10 @@ interface SocketContextType {
   registerChatHandlers: (handlers: ChatEventHandlers) => () => void;
   /** Register task event handlers */
   registerTaskHandlers: (handlers: TaskEventHandlers) => () => void;
-  /** Register mermaid event handlers */
-  registerMermaidHandlers: (handlers: MermaidEventHandlers) => () => void;
-  /** Send mermaid render result back to server */
-  sendMermaidResult: (payload: MermaidResultPayload) => void;
+  /** Register skill event handlers */
+  registerSkillHandlers: (handlers: SkillEventHandlers) => () => void;
+  /** Send skill response back to server */
+  sendSkillResponse: (payload: SkillResponsePayload) => void;
 }
 
 /** Chat event handlers for streaming */
@@ -113,10 +113,10 @@ export interface TaskEventHandlers {
   onTaskStatus?: (data: TaskStatusPayload) => void;
 }
 
-/** Mermaid event handlers for diagram rendering */
-export interface MermaidEventHandlers {
-  /** Handler for mermaid:render event (server requests frontend to render a diagram) */
-  onMermaidRender?: (data: MermaidRenderPayload) => void;
+/** Skill event handlers for generic skill requests */
+export interface SkillEventHandlers {
+  /** Handler for skill:request event (server requests frontend to perform a skill action) */
+  onSkillRequest?: (data: SkillRequestPayload) => void;
 }
 
 const SocketContext = createContext<SocketContextType | undefined>(undefined);
@@ -508,49 +508,48 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   );
 
   /**
-   * Register mermaid event handlers for diagram rendering
+   * Register skill event handlers for generic skill requests
    * Returns a cleanup function to unregister handlers
    */
-  const registerMermaidHandlers = useCallback(
-    (handlers: MermaidEventHandlers): (() => void) => {
+  const registerSkillHandlers = useCallback(
+    (handlers: SkillEventHandlers): (() => void) => {
       if (!socket) {
         return () => {};
       }
 
-      const { onMermaidRender } = handlers;
+      const { onSkillRequest } = handlers;
 
-      if (onMermaidRender) socket.on(ServerEvents.MERMAID_RENDER, onMermaidRender);
+      if (onSkillRequest) socket.on(ServerEvents.SKILL_REQUEST, onSkillRequest);
 
       // Return cleanup function
       return () => {
-        if (onMermaidRender) socket.off(ServerEvents.MERMAID_RENDER, onMermaidRender);
+        if (onSkillRequest) socket.off(ServerEvents.SKILL_REQUEST, onSkillRequest);
       };
     },
     [socket]
   );
 
   /**
-   * Send mermaid render result back to server
+   * Send skill response back to server
    */
-  const sendMermaidResult = useCallback(
-    (payload: MermaidResultPayload): void => {
+  const sendSkillResponse = useCallback(
+    (payload: SkillResponsePayload): void => {
       const currentSocket = socketRef.current;
 
       if (!currentSocket?.connected) {
-        console.error('[Socket.IO] sendMermaidResult failed: not connected');
+        console.error('[Socket.IO] sendSkillResponse failed: not connected');
         return;
       }
 
-      console.log('[Socket.IO] Emitting mermaid:result event', {
+      console.log('[Socket.IO] Emitting skill:response event', {
         request_id: payload.request_id,
-        task_id: payload.task_id,
-        subtask_id: payload.subtask_id,
+        skill_name: payload.skill_name,
+        action: payload.action,
         success: payload.success,
         hasError: !!payload.error,
-        svgLength: payload.svg?.length || 0,
       });
 
-      currentSocket.emit(ClientMermaidEvents.MERMAID_RESULT, payload);
+      currentSocket.emit(ClientSkillEvents.SKILL_RESPONSE, payload);
     },
     [] // No dependencies - use socketRef
   );
@@ -625,8 +624,8 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         retryMessage,
         registerChatHandlers,
         registerTaskHandlers,
-        registerMermaidHandlers,
-        sendMermaidResult,
+        registerSkillHandlers,
+        sendSkillResponse,
       }}
     >
       {children}

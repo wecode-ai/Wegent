@@ -431,6 +431,37 @@ class BatchResponse(BaseModel):
 
 
 # Skill CRD schemas
+class SkillToolDeclaration(BaseModel):
+    """Tool declaration in skill configuration.
+
+    Defines a tool that should be dynamically loaded when the skill is active.
+    """
+
+    name: str = Field(..., description="Tool name")
+    provider: str = Field(..., description="Provider name")
+    config: Optional[Dict[str, Any]] = Field(
+        None, description="Tool-specific configuration"
+    )
+
+
+class SkillProviderConfig(BaseModel):
+    """Provider configuration for dynamic loading from skill
+
+    Specifies the module and class to load as the SkillToolProvider.
+    The provider.py file should be included in the skill ZIP package.
+    """
+
+    module: str = Field(
+        "provider",
+        description="Module name (without .py extension), e.g., 'provider'",
+    )
+    class_name: str = Field(
+        ...,
+        alias="class",
+        description="Provider class name",
+    )
+
+
 class SkillSpec(BaseModel):
     """Skill specification"""
 
@@ -442,6 +473,16 @@ class SkillSpec(BaseModel):
     version: Optional[str] = None  # Skill version
     author: Optional[str] = None  # Author
     tags: Optional[List[str]] = None  # Tags
+    tools: Optional[List[SkillToolDeclaration]] = Field(
+        None,
+        description="Tool declarations for skill-tool binding. "
+        "Each tool is dynamically loaded via SkillToolRegistry.",
+    )
+    provider: Optional[SkillProviderConfig] = Field(
+        None,
+        description="Provider configuration for dynamic loading. "
+        "If specified, the provider will be loaded from the skill ZIP package.",
+    )
 
 
 class SkillStatus(Status):

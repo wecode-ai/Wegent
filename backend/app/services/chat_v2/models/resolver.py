@@ -581,8 +581,7 @@ def get_bot_system_prompt(
     """
     Get the system prompt for a Bot.
 
-    Combines Ghost's system prompt with team member's additional prompt
-    and appends Mermaid diagram capability.
+    Combines Ghost's system prompt with team member's additional prompt.
 
     Args:
         db: Database session
@@ -591,7 +590,7 @@ def get_bot_system_prompt(
         team_member_prompt: Optional additional prompt from team member config
 
     Returns:
-        Combined system prompt string with Mermaid capability
+        Combined system prompt string
     """
     from app.schemas.kind import Ghost
 

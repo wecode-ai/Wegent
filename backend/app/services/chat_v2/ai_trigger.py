@@ -403,14 +403,15 @@ async def _stream_chat_response(
         if load_skill_tool:
             extra_tools.append(load_skill_tool)
 
-        # Prepare render_mermaid tool if mermaid-diagram skill is configured
-        render_mermaid_tool = _prepare_render_mermaid_tool(
+        # Prepare skill tools dynamically using SkillToolRegistry
+        skill_tools = _prepare_skill_tools(
             task_id=stream_data.task_id,
             subtask_id=stream_data.subtask_id,
-            skill_names=chat_config.skill_names,
+            user_id=stream_data.user_id,
+            db_session=db,
+            skill_configs=chat_config.skill_configs,
         )
-        if render_mermaid_tool:
-            extra_tools.append(render_mermaid_tool)
+        extra_tools.extend(skill_tools)
 
         # Create WebSocket stream config
         ws_config = WebSocketStreamConfig(
@@ -760,56 +761,131 @@ def _get_previously_used_skills(db: Any, task_id: int) -> list[str]:
     return list(used_skills)
 
 
-def _prepare_render_mermaid_tool(
+def _prepare_skill_tools(
     task_id: int,
     subtask_id: int,
-    skill_names: list[str],
-) -> Optional[Any]:
+    user_id: int,
+    db_session: Any,
+    skill_configs: list[dict[str, Any]],
+) -> list[Any]:
     """
-    Prepare RenderMermaidTool if mermaid-diagram skill is configured.
+    Prepare skill tools dynamically using SkillToolRegistry.
 
-    This function creates a RenderMermaidTool instance that allows the model
-    to render mermaid diagrams with frontend validation.
+    This function creates tool instances for all skills that have tool declarations
+    in their SKILL.md configuration. It uses the plugin-based SkillToolRegistry
+    to dynamically load and create tools.
 
     Args:
         task_id: Task ID for WebSocket room
         subtask_id: Subtask ID for correlation
-        skill_names: List of skill names available for this session
+        user_id: User ID for access control
+        db_session: Database session for data access
+        skill_configs: List of skill configurations from ChatConfig.skill_configs
+            Each config contains: {"name": "...", "description": "...", "tools": [...],
+                                   "provider": {...}, "skill_id": int}
 
     Returns:
-        RenderMermaidTool instance or None if mermaid skill not configured
+        List of tool instances created from skill configurations
     """
-    # Only create the tool if mermaid-diagram skill is available
-    if "mermaid-diagram" not in skill_names:
-        return None
-
-    logger.info(
-        "[ai_trigger] Creating RenderMermaidTool for task_id=%d, subtask_id=%d",
-        task_id,
-        subtask_id,
-    )
-
-    # Import RenderMermaidTool and ws_emitter
+    # Import SkillToolRegistry and context
+    from app.models.skill_binary import SkillBinary
     from app.services.chat.ws_emitter import get_ws_emitter
-    from app.services.chat_v2.tools.builtin import RenderMermaidTool
+    from app.services.chat_v2.skills import SkillToolContext, SkillToolRegistry
 
+    tools: list[Any] = []
+
+    # Get WebSocket emitter for tools that need real-time communication
     ws_emitter = get_ws_emitter()
     if not ws_emitter:
         logger.warning(
-            "[ai_trigger] WebSocket emitter not available, skipping RenderMermaidTool"
+            "[ai_trigger] WebSocket emitter not available, some skill tools may not work"
         )
-        return None
 
-    # Create RenderMermaidTool with the required dependencies
-    render_mermaid_tool = RenderMermaidTool(
-        task_id=task_id,
-        subtask_id=subtask_id,
-        ws_emitter=ws_emitter,
-    )
+    # Get the registry instance
+    registry = SkillToolRegistry.get_instance()
+
+    # Process each skill configuration
+    for skill_config in skill_configs:
+        skill_name = skill_config.get("name", "unknown")
+        tool_declarations = skill_config.get("tools", [])
+        provider_config = skill_config.get("provider")
+        skill_id = skill_config.get("skill_id")
+
+        if not tool_declarations:
+            # No tools declared for this skill, skip
+            continue
+
+        logger.info(
+            "[ai_trigger] Processing skill '%s' with %d tool declarations",
+            skill_name,
+            len(tool_declarations),
+        )
+
+        # Load provider from skill ge if provider config is present
+        if provider_config and skill_id:
+            try:
+                # Get skill binary from database
+                skill_binary = (
+                    db_session.query(SkillBinary)
+                    .filter(SkillBinary.kind_id == skill_id)
+                    .first()
+                )
+
+                if skill_binary and skill_binary.binary_data:
+                    # Load and register the provider
+                    loaded = registry.ensure_provider_loaded(
+                        skill_name=skill_name,
+                        provider_config=provider_config,
+                        zip_content=skill_binary.binary_data,
+                    )
+                    if loaded:
+                        logger.info(
+                            "[ai_trigger] ✅ Loaded provider for skill '%s'",
+                            skill_name,
+                        )
+                    else:
+                        logger.warning(
+                            "[ai_trigger] Failed to load provider for skill '%s'",
+                            skill_name,
+                        )
+                else:
+                    logger.warning(
+                        "[ai_trigger] No binary data found for skill '%s' (id=%d)",
+                        skill_name,
+                        skill_id,
+                    )
+            except Exception as e:
+                logger.error(
+                    "[ai_trigger] Error loading provider for skill '%s': %s",
+                    skill_name,
+                    str(e),
+                )
+
+        # Create context for this skill
+        context = SkillToolContext(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            user_id=user_id,
+            db_session=db_session,
+            ws_emitter=ws_emitter,
+            skill_config=skill_config,
+        )
+
+        # Create tools using the registry
+        skill_tools = registry.create_tools_for_skill(skill_config, context)
+        tools.extend(skill_tools)
+
+        if skill_tools:
+            logger.info(
+                "[ai_trigger] ✅ Created %d tools for skill '%s': %s",
+                len(skill_tools),
+                skill_name,
+                [t.name for t in skill_tools],
+            )
 
     logger.info(
-        "[ai_trigger] ✅ Created RenderMermaidTool for task_id=%d",
-        task_id,
+        "[ai_trigger] Total skill tools created: %d",
+        len(tools),
     )
 
-    return render_mermaid_tool
+    return tools

@@ -8,7 +8,6 @@ from .evaluation import SubmitEvaluationResultTool
 from .file_reader import FileListSkill, FileReaderSkill
 from .knowledge_base import KnowledgeBaseTool
 from .load_skill import LoadSkillTool
-from .render_mermaid import RenderMermaidTool
 from .web_search import WebSearchTool
 
 __all__ = [
@@ -18,5 +17,4 @@ __all__ = [
     "FileListSkill",
     "SubmitEvaluationResultTool",
     "LoadSkillTool",
-    "RenderMermaidTool",
 ]

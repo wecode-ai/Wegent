@@ -37,7 +37,7 @@ import React, {
   useEffect,
   ReactNode,
 } from 'react';
-import { useSocket, ChatEventHandlers, MermaidEventHandlers } from '@/contexts/SocketContext';
+import { useSocket, ChatEventHandlers, SkillEventHandlers } from '@/contexts/SocketContext';
 import {
   ChatSendPayload,
   ChatStartPayload,
@@ -46,8 +46,8 @@ import {
   ChatErrorPayload,
   ChatCancelledPayload,
   ChatMessagePayload,
-  MermaidRenderPayload,
-  MermaidResultPayload,
+  SkillRequestPayload,
+  SkillResponsePayload,
 } from '@/types/socket';
 import type { TaskDetailSubtask, Team } from '@/types/api';
 import DOMPurify from 'dompurify';
@@ -318,8 +318,8 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     sendChatMessage,
     cancelChatStream,
     registerChatHandlers,
-    registerMermaidHandlers,
-    sendMermaidResult,
+    registerSkillHandlers,
+    sendSkillResponse,
     joinTask,
   } = useSocket();
 
@@ -868,139 +868,161 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
   ]);
 
   /**
-   * Handle mermaid:render event from WebSocket
-   * Renders mermaid diagram code and sends result back to server
+   * Handle skill:request event from WebSocket
+   * Routes skill requests to appropriate handlers based on skill_name and action
    */
-  const handleMermaidRender = useCallback(
-    async (data: MermaidRenderPayload) => {
-      const { request_id, task_id, subtask_id, code, diagram_type, title } = data;
+  const handleSkillRequest = useCallback(
+    async (data: SkillRequestPayload) => {
+      const { request_id, skill_name, action } = data;
 
-      console.log('[ChatStreamContext][mermaid:render] Received render request:', {
+      console.log('[ChatStreamContext][skill:request] Received skill request:', {
         request_id,
-        task_id,
-        subtask_id,
-        diagram_type,
-        title,
-        code_length: code?.length,
+        skill_name,
+        action,
+        data: data.data,
       });
 
-      // Build result payload base
-      const basePayload: Omit<MermaidResultPayload, 'success' | 'svg' | 'error'> = {
+      // Build base response payload
+      const basePayload: Pick<SkillResponsePayload, 'request_id' | 'skill_name' | 'action'> = {
         request_id,
-        task_id,
-        subtask_id,
+        skill_name,
+        action,
       };
 
-      try {
-        // Dynamically import mermaid to avoid SSR issues
-        const mermaid = (await import('mermaid')).default;
-
-        // Initialize mermaid with configuration
-        mermaid.initialize({
-          startOnLoad: false,
-          theme: 'default',
-          securityLevel: 'loose',
-          fontFamily: 'inherit',
-          suppressErrorRendering: true,
-        });
-
-        // Generate unique ID for rendering
-        const renderElementId = `mermaid-render-${request_id}-${Date.now()}`;
-
-        // Render the diagram
-        const { svg } = await mermaid.render(renderElementId, code);
-
-        // Sanitize the SVG output
-        const sanitizedSvg = DOMPurify.sanitize(svg, {
-          USE_PROFILES: { svg: true, svgFilters: true },
-          ADD_TAGS: ['foreignObject'],
-        });
-
-        console.log('[ChatStreamContext][mermaid:render] Render successful:', {
-          request_id,
-          svg_length: sanitizedSvg.length,
-        });
-
-        // Send success result
-        const successPayload: MermaidResultPayload = {
-          ...basePayload,
-          success: true,
-          svg: sanitizedSvg,
+      // Route to appropriate handler based on skill_name and action
+      if (skill_name === 'mermaid-diagram' && action === 'render') {
+        // Handle mermaid diagram rendering
+        const { code, diagram_type, title } = data.data as {
+          code: string;
+          diagram_type?: string;
+          title?: string;
         };
-        sendMermaidResult(successPayload);
-      } catch (error) {
-        // Extract error details
-        const errorMessage = error instanceof Error ? error.message : String(error);
 
-        // Try to extract line number from mermaid error message
-        // Mermaid errors often contain patterns like "Parse error on line X"
-        let lineNumber: number | undefined;
-        let columnNumber: number | undefined;
-        let errorDetails: string | undefined;
+        try {
+          // Dynamically import mermaid to avoid SSR issues
+          const mermaid = (await import('mermaid')).default;
 
-        const lineMatch = errorMessage.match(/line\s+(\d+)/i);
-        if (lineMatch) {
-          lineNumber = parseInt(lineMatch[1], 10);
-        }
+          // Initialize mermaid with configuration
+          mermaid.initialize({
+            startOnLoad: false,
+            theme: 'default',
+            securityLevel: 'loose',
+            fontFamily: 'inherit',
+            suppressErrorRendering: true,
+          });
 
-        const columnMatch = errorMessage.match(/column\s+(\d+)/i);
-        if (columnMatch) {
-          columnNumber = parseInt(columnMatch[1], 10);
-        }
+          // Generate unique ID for rendering
+          const renderElementId = `mermaid-render-${request_id}-${Date.now()}`;
 
-        // Extract more detailed error info if available
-        if (error instanceof Error && 'hash' in error) {
-          const hashError = error as Error & {
-            hash?: { line?: number; loc?: { first_column?: number } };
+          // Render the diagram
+          const { svg } = await mermaid.render(renderElementId, code);
+
+          // Sanitize the SVG output
+          const sanitizedSvg = DOMPurify.sanitize(svg, {
+            USE_PROFILES: { svg: true, svgFilters: true },
+            ADD_TAGS: ['foreignObject'],
+          });
+
+          console.log('[ChatStreamContext][skill:request] Mermaid render successful:', {
+            request_id,
+            svg_length: sanitizedSvg.length,
+          });
+
+          // Send success result
+          const successPayload: SkillResponsePayload = {
+            ...basePayload,
+            success: true,
+            result: { svg: sanitizedSvg },
           };
-          if (hashError.hash?.line) {
-            lineNumber = hashError.hash.line;
-          }
-          if (hashError.hash?.loc?.first_column) {
-            columnNumber = hashError.hash.loc.first_column;
-          }
-        }
+          sendSkillResponse(successPayload);
+        } catch (error) {
+          // Extract error details
+          const errorMessage = error instanceof Error ? error.message : String(error);
 
-        // Build detailed error message for AI
-        errorDetails = `Diagram type: ${diagram_type || 'unknown'}`;
-        if (title) {
-          errorDetails += `\nTitle: ${title}`;
-        }
-        errorDetails += `\nCode:\n${code}`;
+          // Try to extract line number from mermaid error message
+          let lineNumber: number | undefined;
+          let columnNumber: number | undefined;
+          let errorDetails: string | undefined;
 
-        console.error('[ChatStreamContext][mermaid:render] Render failed:', {
-          request_id,
-          error: errorMessage,
-          line: lineNumber,
-          column: columnNumber,
+          const lineMatch = errorMessage.match(/line\s+(\d+)/i);
+          if (lineMatch) {
+            lineNumber = parseInt(lineMatch[1], 10);
+          }
+
+          const columnMatch = errorMessage.match(/column\s+(\d+)/i);
+          if (columnMatch) {
+            columnNumber = parseInt(columnMatch[1], 10);
+          }
+
+          // Extract more detailed error info if available
+          if (error instanceof Error && 'hash' in error) {
+            const hashError = error as Error & {
+              hash?: { line?: number; loc?: { first_column?: number } };
+            };
+            if (hashError.hash?.line) {
+              lineNumber = hashError.hash.line;
+            }
+            if (hashError.hash?.loc?.first_column) {
+              columnNumber = hashError.hash.loc.first_column;
+            }
+          }
+
+          // Build detailed error message for AI
+          errorDetails = `Diagram type: ${diagram_type || 'unknown'}`;
+          if (title) {
+            errorDetails += `\nTitle: ${title}`;
+          }
+          errorDetails += `\nCode:\n${code}`;
+
+          console.error('[ChatStreamContext][skill:request] Mermaid render failed:', {
+            request_id,
+            error: errorMessage,
+            line: lineNumber,
+            column: columnNumber,
+          });
+
+          // Send error result
+          const errorPayload: SkillResponsePayload = {
+            ...basePayload,
+            success: false,
+            error: {
+              message: errorMessage,
+              line: lineNumber,
+              column: columnNumber,
+              details: errorDetails,
+            },
+          };
+          sendSkillResponse(errorPayload);
+        }
+      } else {
+        // Unknown skill or action - send error response
+        console.warn('[ChatStreamContext][skill:request] Unknown skill or action:', {
+          skill_name,
+          action,
         });
 
-        // Send error result
-        const errorPayload: MermaidResultPayload = {
+        const errorPayload: SkillResponsePayload = {
           ...basePayload,
           success: false,
           error: {
-            message: errorMessage,
-            line: lineNumber,
-            column: columnNumber,
-            details: errorDetails,
+            message: `Unknown skill or action: ${skill_name}/${action}`,
           },
         };
-        sendMermaidResult(errorPayload);
+        sendSkillResponse(errorPayload);
       }
     },
-    [sendMermaidResult]
+    [sendSkillResponse]
   );
 
-  // Register mermaid event handlers
+  // Register skill event handlers
   useEffect(() => {
-    const handlers: MermaidEventHandlers = {
-      onMermaidRender: handleMermaidRender,
+    const handlers: SkillEventHandlers = {
+      onSkillRequest: handleSkillRequest,
     };
 
-    const cleanup = registerMermaidHandlers(handlers);
+    const cleanup = registerSkillHandlers(handlers);
     return cleanup;
-  }, [registerMermaidHandlers, handleMermaidRender]);
+  }, [registerSkillHandlers, handleSkillRequest]);
 
   /**
    * Send a chat message via WebSocket

@@ -33,10 +33,11 @@ class ClientEvents:
     TASK_LEAVE = "task:leave"
 
     # History sync
+    # History sync
     HISTORY_SYNC = "history:sync"
 
-    # Mermaid rendering events
-    MERMAID_RESULT = "mermaid:result"  # Client -> Server: render result
+    # Generic Skill Events
+    SKILL_RESPONSE = "skill:response"  # Client -> Server: skill response
 
 
 class ServerEvents:
@@ -63,8 +64,8 @@ class ServerEvents:
     TASK_INVITED = "task:invited"  # User invited to group chat
     UNREAD_COUNT = "unread:count"
 
-    # Mermaid rendering events
-    MERMAID_RENDER = "mermaid:render"  # Server -> Client: request render
+    # Generic Skill Events
+    SKILL_REQUEST = "skill:request"  # Server -> Client: skill request
 
 
 # ============================================================
@@ -339,52 +340,50 @@ class UnreadCountPayload(BaseModel):
 
 
 # ============================================================
-# Mermaid Rendering Payloads
+# Generic Skill Payloads
 # ============================================================
 
 
-class MermaidRenderPayload(BaseModel):
-    """Payload for mermaid:render event - Server to Client."""
+class SkillRequestPayload(BaseModel):
+    """
+    Generic payload for skill requests from server to frontend.
 
-    task_id: int = Field(..., description="Task ID")
-    subtask_id: int = Field(..., description="Subtask ID")
+    This is the unified payload format for all skills that require
+    frontend interaction (rendering, validation, etc.).
+    """
+
     request_id: str = Field(..., description="Unique request ID for correlation")
-    code: str = Field(..., description="Mermaid diagram code")
-    diagram_type: Optional[str] = Field(
-        None,
-        description="Diagram type hint: flowchart, sequence, class, etc.",
+    skill_name: str = Field(..., description="Name of the skill")
+    action: str = Field(
+        ..., description="Action to perform (e.g., 'render', 'validate')"
     )
-    title: Optional[str] = Field(None, description="Optional diagram title")
-    timeout_ms: int = Field(
-        default=30000,
-        description="Render timeout in milliseconds",
+    data: Dict[str, Any] = Field(
+        default_factory=dict, description="Skill-specific data payload"
     )
 
-
-class MermaidRenderError(BaseModel):
-    """Structured error details for mermaid rendering failures."""
-
-    message: str = Field(..., description="Error message")
-    line: Optional[int] = Field(None, description="Line number where error occurred")
-    column: Optional[int] = Field(
-        None, description="Column number where error occurred"
-    )
-    details: Optional[str] = Field(
-        None, description="Detailed error info from mermaid parser"
-    )
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for Socket.IO emission."""
+        return {
+            "request_id": self.request_id,
+            "skill_name": self.skill_name,
+            "action": self.action,
+            "data": self.data,
+        }
 
 
-class MermaidResultPayload(BaseModel):
-    """Payload for mermaid:result event - Client to Server."""
+class SkillResponsePayload(BaseModel):
+    """
+    Generic payload for skill responses from frontend to server.
 
-    task_id: int = Field(..., description="Task ID")
-    subtask_id: int = Field(..., description="Subtask ID")
+    This is the unified payload format for all skill responses.
+    """
+
     request_id: str = Field(..., description="Request ID for correlation")
-    success: bool = Field(..., description="Whether render succeeded")
-    svg: Optional[str] = Field(None, description="Rendered SVG content if success")
-    error: Optional[MermaidRenderError] = Field(
-        None, description="Structured error details if failed"
-    )
+    skill_name: str = Field(..., description="Name of the skill")
+    action: str = Field(..., description="Action that was performed")
+    success: bool = Field(..., description="Whether the action succeeded")
+    result: Optional[Any] = Field(None, description="Success result data")
+    error: Optional[str] = Field(None, description="Error message if failed")
 
 
 # ============================================================

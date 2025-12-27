@@ -117,6 +117,12 @@ class SkillValidator:
                     "version": metadata.get("version"),
                     "author": metadata.get("author"),
                     "tags": metadata.get("tags"),
+                    "tools": metadata.get(
+                        "tools"
+                    ),  # Tool declarations for skill-tool binding
+                    "provider": metadata.get(
+                        "provider"
+                    ),  # Provider config for dynamic loading
                     "file_size": file_size,
                     "file_hash": file_hash,
                 }

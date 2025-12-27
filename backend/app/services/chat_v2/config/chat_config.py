@@ -52,6 +52,10 @@ class ChatConfig:
     # Skill names for load_skill tool
     skill_names: list[str] = field(default_factory=list)
 
+    # Full skill configurations including tools declarations
+    # Used by SkillToolRegistry to dynamically create tool instances
+    skill_configs: list[dict[str, Any]] = field(default_factory=list)
+
 
 class ChatConfigBuilder:
     """Builder for chat configuration.
@@ -165,6 +169,7 @@ class ChatConfigBuilder:
             task_id=task_id,
             team_id=self.team.id,
             skill_names=skill_names,
+            skill_configs=skills,  # Full skill configs for SkillToolRegistry
         )
 
     def _get_first_bot(self) -> Kind | None:
@@ -411,7 +416,11 @@ class ChatConfigBuilder:
         """
         Get skills for the bot from Ghost.
 
-        Returns list of skill metadata: [{"name": "...", "description": "..."}]
+        Returns list of skill metadata including tools configuration:
+        [{"name": "...", "description": "...", "tools": [...]}]
+
+        The tools field contains tool declarations from SKILL.md frontmatter,
+        which are used by SkillToolRegistry to dynamically create tool instances.
         """
         from app.schemas.kind import Ghost, Skill
 
@@ -445,12 +454,25 @@ class ChatConfigBuilder:
             skill = self._find_skill(skill_name)
             if skill:
                 skill_crd = Skill.model_validate(skill.json)
-                skills.append(
-                    {
-                        "name": skill_crd.metadata.name,
-                        "description": skill_crd.spec.description,
+                skill_data = {
+                    "name": skill_crd.metadata.name,
+                    "description": skill_crd.spec.description,
+                    "skill_id": skill.id,  # Include skill ID for provider loading
+                }
+                # Include tools configuration if present in skill spec
+                # Convert SkillToolDeclaration objects to dicts for serialization
+                if skill_crd.spec.tools:
+                    skill_data["tools"] = [
+                        tool.model_dump(exclude_none=True)
+                        for tool in skill_crd.spec.tools
+                    ]
+                # Include provider configuration for dynamic loading
+                if skill_crd.spec.provider:
+                    skill_data["provider"] = {
+                        "module": skill_crd.spec.provider.module,
+                        "class": skill_crd.spec.provider.class_name,
                     }
-                )
+                skills.append(skill_data)
 
         return skills
 

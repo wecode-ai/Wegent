@@ -9,8 +9,13 @@ This tool implements session-level skill expansion caching:
 - Subsequent calls to the same skill in the same turn return a confirmation message
 - When the AI finishes responding to the user, the expansion state is cleared
 - The next user message starts a fresh conversation turn
+
+Additionally, this tool handles dynamic provider loading:
+- When a skill is loaded, its provider (if defined) is loaded from the skill ZIP package
+- Providers are cached in the SkillToolRegistry for reuse
 """
 
+import logging
 from typing import Set
 
 from langchain_core.callbacks import CallbackManagerForToolRun
@@ -19,7 +24,11 @@ from pydantic import BaseModel, Field, PrivateAttr
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
+from app.models.skill_binary import SkillBinary
 from app.schemas.kind import Skill
+from app.services.chat_v2.skills import SkillToolRegistry
+
+logger = logging.getLogger(__name__)
 
 
 class LoadSkillInput(BaseModel):
@@ -114,6 +123,9 @@ class LoadSkillTool(BaseTool):
 
         prompt = skill_crd.spec.prompt
 
+        # Load provider if defined in skill spec
+        self._load_skill_provider(skill.id, skill_name, skill_crd)
+
         # Mark skill as expanded for this turn and store the prompt
         self._expanded_skills.add(skill_name)
         self._loaded_skill_prompts[skill_name] = prompt
@@ -154,6 +166,69 @@ class LoadSkillTool(BaseTool):
             .first()
         )
 
+    def _load_skill_provider(
+        self, skill_id: int, skill_name: str, skill_crd: Skill
+    ) -> None:
+        """Load and register the skill's provider if defined.
+
+        This method checks if the skill has a provider configuration,
+        and if so, loads the provider from the skill's         and registers it with the SkillToolRegistry.
+
+        Args:
+            skill_id: Database ID of the skill
+            skill_name: Name of the skill
+            skill_crd: Parsed Skill CRD object
+        """
+        # Check if skill has provider configuration
+        if not skill_crd.spec.provider:
+            return
+
+        provider_config = skill_crd.spec.provider
+        class_name = getattr(provider_config, "class_name", None)
+        if not class_name:
+            return
+
+        # Get the registry
+        registry = SkillToolRegistry.get_instance()
+
+        # Convert provider config to dict for the registry
+        provider_config_dict = {
+            "module": provider_config.module,
+            "class": class_name,
+        }
+
+        # Check if we need to load the provider
+        # We'll try to load it and let the registry handle deduplication
+        try:
+            # Get skill binary from database
+            skill_binary = (
+                self.db.query(SkillBinary)
+                .filter(SkillBinary.kind_id == skill_id)
+                .first()
+            )
+
+            if not skill_binary or not skill_binary.binary_data:
+                logger.warning(
+                    "[LoadSkillTool] No binary data found for skill '%s' (id=%d)",
+                    skill_name,
+                    skill_id,
+                )
+                return
+
+            # Load and register the provider
+            registry.ensure_provider_loaded(
+                skill_name=skill_name,
+                provider_config=provider_config_dict,
+                zip_content=skill_binary.binary_data,
+            )
+
+        except Exception as e:
+            logger.error(
+                "[LoadSkillTool] Failed to load provider for skill '%s': %s",
+                skill_name,
+                str(e),
+            )
+
     def clear_expanded_skills(self) -> None:
         """Clear the expanded skills cache and loaded prompts.
 
@@ -189,7 +264,7 @@ class LoadSkillTool(BaseTool):
             skill_name: The technical name of the skill
 
         Returns:
-            The friendly display name (e.g., "Mermaid图表") or the skill_name if not found
+            The friendly display name or the skill_name if not found
         """
         import logging
 
@@ -298,6 +373,9 @@ class LoadSkillTool(BaseTool):
                 continue
 
             prompt = skill_crd.spec.prompt
+
+            # Load provider if defined in skill spec
+            self._load_skill_provider(skill.id, skill_name, skill_crd)
 
             # Mark skill as expanded and store the prompt
             self._expanded_skills.add(skill_name)

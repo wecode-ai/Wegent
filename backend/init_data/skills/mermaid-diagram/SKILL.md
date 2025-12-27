@@ -1,9 +1,19 @@
 ---
 description: "Use this skill when you need to draw diagrams. You MUST use this skill BEFORE outputting any mermaid code block."
 displayName: "绘制图表"
-version: "1.2.0"
+version: "2.0.0"
 author: "Wegent Team"
 tags: ["diagram", "visualization", "mermaid"]
+provider:
+  module: provider
+  class: MermaidToolProvider
+tools:
+  - name: render_mermaid
+    provider: mermaid
+    config:
+      timeout: 30
+dependencies:
+  - app.services.chat_v2.tools.pending_requests
 ---
 
 # Diagram Visualization with Mermaid

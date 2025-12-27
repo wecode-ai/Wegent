@@ -7,55 +7,22 @@
 This tool sends mermaid code to the frontend for validation and rendering.
 If the render fails, it returns the error message so the AI can fix the syntax.
 If successful, the diagram is displayed to the user.
+
+This module is part of the mermaid-diagram skill package and uses the
+generic skill request/response infrastructure.
 """
 
 import asyncio
 import json
 import logging
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
-
-# Global dictionary to store pending render requests
-# Key: request_id, Value: asyncio.Future
-_pending_mermaid_requests: Dict[str, asyncio.Future] = {}
-
-
-def get_pending_mermaid_requests() -> Dict[str, asyncio.Future]:
-    """Get the global pending mermaid requests dictionary.
-
-    Returns:
-        Dictionary mapping request_id to Future objects
-    """
-    return _pending_mermaid_requests
-
-
-def handle_mermaid_result(request_id: str, result: dict) -> bool:
-    """Handle render result from frontend.
-
-    Called by WebSocket handler when mermaid:result is received.
-
-    Args:
-        request_id: The unique request ID for correlation
-        result: The result dictionary from frontend
-
-    Returns:
-        True if the result was handled, False if no pending request found
-    """
-    future = _pending_mermaid_requests.get(request_id)
-    if future and not future.done():
-        future.set_result(result)
-        logger.debug(f"[MermaidTool] Result handled for request_id={request_id}")
-        return True
-    logger.warning(
-        f"[MermaidTool] No pending request found for request_id={request_id}"
-    )
-    return False
 
 
 class RenderMermaidInput(BaseModel):
@@ -77,6 +44,9 @@ class RenderMermaidTool(BaseTool):
     This tool sends mermaid code to the frontend for validation and rendering.
     If the render fails, it returns the error message so the AI can fix the syntax.
     If successful, the diagram is displayed to the user.
+
+    This implementation uses the generic PendingRequestRegistry and emit_skill_request
+    infrastructure instead of mermaid-specific code.
     """
 
     name: str = "render_mermaid"
@@ -149,6 +119,11 @@ IMPORTANT syntax rules:
         Returns:
             JSON string with render result
         """
+        # Import the generic pending request registry
+        from app.services.chat_v2.tools.pending_requests import (
+            get_pending_request_registry,
+        )
+
         logger.info(
             f"[MermaidTool] Rendering diagram: task_id={self.task_id}, "
             f"subtask_id={self.subtask_id}, code_length={len(code)}"
@@ -166,31 +141,44 @@ IMPORTANT syntax rules:
         # Generate unique request ID
         request_id = str(uuid.uuid4())
 
-        # Create future for result
-        result_future: asyncio.Future = asyncio.get_event_loop().create_future()
-        _pending_mermaid_requests[request_id] = result_future
+        # Get the global pending request registry
+        registry = get_pending_request_registry()
 
         try:
-            # Emit render request to frontend
+            # Register the pending request and get a future to await
+            future = await registry.register(
+                request_id=request_id,
+                skill_name="mermaid-diagram",
+                action="render",
+                payload={
+                    "code": code,
+                    "diagram_type": diagram_type,
+                    "title": title,
+                },
+                timeout_seconds=self.render_timeout,
+            )
+
+            # Emit skill request to frontend using the generic method
             logger.info(
-                f"[MermaidTool] Emitting mermaid:render event: "
+                f"[MermaidTool] Emitting skill:request event: "
                 f"request_id={request_id}, task_id={self.task_id}"
             )
-            await self.ws_emitter.emit_mermaid_render(
+            await self.ws_emitter.emit_skill_request(
                 task_id=self.task_id,
-                subtask_id=self.subtask_id,
                 request_id=request_id,
-                code=code,
-                diagram_type=diagram_type,
-                title=title,
-                timeout_ms=int(self.render_timeout * 1000),
+                skill_name="mermaid-diagram",
+                action="render",
+                data={
+                    "code": code,
+                    "diagram_type": diagram_type,
+                    "title": title,
+                    "timeout_ms": int(self.render_timeout * 1000),
+                },
             )
 
             # Wait for result with timeout
             try:
-                result = await asyncio.wait_for(
-                    result_future, timeout=self.render_timeout
-                )
+                response = await asyncio.wait_for(future, timeout=self.render_timeout)
             except asyncio.TimeoutError:
                 logger.warning(f"[MermaidTool] Render timeout: request_id={request_id}")
                 return json.dumps(
@@ -201,7 +189,13 @@ IMPORTANT syntax rules:
                     }
                 )
 
-            if result.get("success"):
+            # Response format: { success: bool, result: any, error: any }
+            # This is the complete response built by on_skill_response
+            success = response.get("success", False)
+            result_data = response.get("result")
+            error_data = response.get("error")
+
+            if success:
                 logger.info(f"[MermaidTool] Render success: request_id={request_id}")
                 # Build success message instructing AI to output mermaid code block
                 success_message = (
@@ -217,16 +211,23 @@ IMPORTANT syntax rules:
                 return json.dumps({"success": True, "message": success_message})
             else:
                 # Return error for AI to fix
-                error_info = self._format_error_for_ai(result, code)
+                # Build a result dict compatible with _format_error_for_ai
+                error_result = {"error": error_data}
+                error_info = self._format_error_for_ai(error_result, code)
                 logger.info(
                     f"[MermaidTool] Render failed: request_id={request_id}, "
-                    f"error={result.get('error')}"
+                    f"error={error_data}"
                 )
                 return json.dumps(error_info)
 
-        finally:
-            # Cleanup
-            _pending_mermaid_requests.pop(request_id, None)
+        except Exception as e:
+            logger.error(f"[MermaidTool] Unexpected error: {e}", exc_info=True)
+            return json.dumps(
+                {
+                    "success": False,
+                    "error": f"Unexpected error during rendering: {str(e)}",
+                }
+            )
 
     def _format_error_for_ai(self, result: dict, original_code: str) -> dict:
         """Format error message for AI to understand and fix.
