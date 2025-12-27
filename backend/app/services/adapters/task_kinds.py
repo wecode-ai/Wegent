@@ -588,6 +588,227 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
 
         return result, total
 
+    def get_user_group_tasks_lite(
+        self, db: Session, *, user_id: int, skip: int = 0, limit: int = 100
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """
+        Get user's group chat Task list with pagination (lightweight version).
+        Only returns tasks where is_group_chat=true OR has active members in task_members table.
+        Includes tasks owned by user AND tasks user is a member of.
+        """
+        from app.models.task_member import MemberStatus, TaskMember
+
+        # Count total group chat tasks for user
+        count_sql = text(
+            """
+            SELECT COUNT(DISTINCT k.id)
+            FROM tasks k
+            LEFT JOIN task_members tm ON k.id = tm.task_id AND tm.user_id = :user_id AND tm.status = 'ACTIVE'
+            WHERE k.kind = 'Task'
+            AND k.is_active = true
+            AND (k.user_id = :user_id OR tm.id IS NOT NULL)
+            AND (
+                JSON_EXTRACT(k.json, '$.spec.is_group_chat') = true
+                OR EXISTS (
+                    SELECT 1 FROM task_members tm2
+                    WHERE tm2.task_id = k.id AND tm2.status = 'ACTIVE'
+                )
+            )
+        """
+        )
+        total_result = db.execute(count_sql, {"user_id": user_id}).scalar()
+
+        # Get group chat task IDs sorted by created_at
+        ids_sql = text(
+            """
+            SELECT DISTINCT k.id, k.created_at
+            FROM tasks k
+            LEFT JOIN task_members tm ON k.id = tm.task_id AND tm.user_id = :user_id AND tm.status = 'ACTIVE'
+            WHERE k.kind = 'Task'
+            AND k.is_active = true
+            AND (k.user_id = :user_id OR tm.id IS NOT NULL)
+            AND (
+                JSON_EXTRACT(k.json, '$.spec.is_group_chat') = true
+                OR EXISTS (
+                    SELECT 1 FROM task_members tm2
+                    WHERE tm2.task_id = k.id AND tm2.status = 'ACTIVE'
+                )
+            )
+            ORDER BY k.created_at DESC
+            LIMIT :limit OFFSET :skip
+        """
+        )
+        task_id_rows = db.execute(
+            ids_sql, {"user_id": user_id, "limit": limit + 50, "skip": skip}
+        ).fetchall()
+        task_ids = [row[0] for row in task_id_rows]
+
+        if not task_ids:
+            return [], 0
+
+        # Load full task data for the selected IDs
+        tasks = db.query(TaskResource).filter(TaskResource.id.in_(task_ids)).all()
+
+        # Filter out DELETE status tasks in application layer and restore order
+        id_to_task = {}
+        for t in tasks:
+            task_crd = Task.model_validate(t.json)
+            status = task_crd.status.status if task_crd.status else "PENDING"
+            if status != "DELETE":
+                id_to_task[t.id] = t
+
+        # Restore the original order and apply limit
+        tasks = []
+        for tid in task_ids:
+            if tid in id_to_task:
+                tasks.append(id_to_task[tid])
+                if len(tasks) >= limit:
+                    break
+
+        total = total_result if total_result else 0
+
+        # Get task member counts in batch for is_group_chat detection
+        task_ids_for_members = [t.id for t in tasks]
+        member_counts = {}
+        if task_ids_for_members:
+            member_count_results = (
+                db.query(TaskMember.task_id, func.count(TaskMember.id).label("count"))
+                .filter(
+                    TaskMember.task_id.in_(task_ids_for_members),
+                    TaskMember.status == MemberStatus.ACTIVE,
+                )
+                .group_by(TaskMember.task_id)
+                .all()
+            )
+            member_counts = {row[0]: row[1] for row in member_count_results}
+
+        # Build lightweight result
+        result = []
+        for task in tasks:
+            task_crd = Task.model_validate(task.json)
+
+            # Extract basic fields from task JSON
+            task_type = (
+                task_crd.metadata.labels
+                and task_crd.metadata.labels.get("taskType")
+                or "chat"
+            )
+            type_value = (
+                task_crd.metadata.labels
+                and task_crd.metadata.labels.get("type")
+                or "online"
+            )
+            status = task_crd.status.status if task_crd.status else "PENDING"
+
+            # Parse timestamps
+            created_at = task.created_at
+            updated_at = task.updated_at
+            completed_at = None
+            if task_crd.status:
+                try:
+                    if task_crd.status.createdAt:
+                        created_at = task_crd.status.createdAt
+                    if task_crd.status.updatedAt:
+                        updated_at = task_crd.status.updatedAt
+                    if task_crd.status.completedAt:
+                        completed_at = task_crd.status.completedAt
+                except:
+                    pass
+
+            # Get team_id using direct SQL query
+            team_name = task_crd.spec.teamRef.name
+            team_namespace = task_crd.spec.teamRef.namespace
+            team_result = db.execute(
+                text(
+                    """
+                    SELECT id FROM kinds
+                    WHERE user_id = :user_id
+                    AND kind = 'Team'
+                    AND name = :name
+                    AND namespace = :namespace
+                    AND is_active = true
+                    LIMIT 1
+                """
+                ),
+                {"user_id": user_id, "name": team_name, "namespace": team_namespace},
+            ).fetchone()
+
+            # If not found in user's teams, check shared teams
+            team_id = team_result[0] if team_result else None
+            if not team_id:
+                shared_team_result = db.execute(
+                    text(
+                        """
+                        SELECT k.id FROM kinds k
+                        INNER JOIN shared_teams st ON k.user_id = st.original_user_id
+                        WHERE st.user_id = :user_id
+                        AND st.is_active = true
+                        AND k.kind = 'Team'
+                        AND k.name = :name
+                        AND k.namespace = :namespace
+                        AND k.is_active = true
+                        LIMIT 1
+                    """
+                    ),
+                    {
+                        "user_id": user_id,
+                        "name": team_name,
+                        "namespace": team_namespace,
+                    },
+                ).fetchone()
+                team_id = shared_team_result[0] if shared_team_result else None
+
+            # Get git_repo from workspace using direct SQL query
+            workspace_name = task_crd.spec.workspaceRef.name
+            workspace_namespace = task_crd.spec.workspaceRef.namespace
+            workspace_result = db.execute(
+                text(
+                    """
+                    SELECT JSON_EXTRACT(json, '$.spec.repository.gitRepo') as git_repo
+                    FROM tasks
+                    WHERE user_id = :user_id
+                    AND kind = 'Workspace'
+                    AND name = :name
+                    AND namespace = :namespace
+                    AND is_active = true
+                    LIMIT 1
+                """
+                ),
+                {
+                    "user_id": user_id,
+                    "name": workspace_name,
+                    "namespace": workspace_namespace,
+                },
+            ).fetchone()
+
+            git_repo = None
+            if workspace_result and workspace_result[0]:
+                # Remove JSON quotes from extracted value
+                git_repo = (
+                    workspace_result[0].strip('"')
+                    if isinstance(workspace_result[0], str)
+                    else workspace_result[0]
+                )
+
+            # For group chat list, is_group_chat is always True
+            result.append(
+                {
+                    "id": task.id,
+                    "title": task_crd.spec.title,
+                    "status": status,
+                    "task_type": task_type,
+                    "type": type_value,
+                    "created_at": created_at,
+                    "updated_at": updated_at,
+                    "completed_at": completed_at,
+                    "team_id": team_id,
+                    "git_repo": git_repo,
+                    "is_group_chat": True,  # Always True for this endpoint
+                }
+            )
+
+        return result, total
+
     def get_new_tasks_since_id(
         self, db: Session, *, user_id: int, since_id: int, limit: int = 50
     ) -> List[Dict[str, Any]]:

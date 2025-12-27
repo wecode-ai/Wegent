@@ -180,6 +180,13 @@ export const taskApis = {
     return apiClient.get(`/tasks/lite/new?${query}`);
   },
 
+  getGroupTasksLite: async (params?: PaginationParams): Promise<TaskListResponse> => {
+    const query = new URLSearchParams();
+    if (params?.limit) query.append('limit', params.limit.toString());
+    if (params?.page) query.append('page', params.page.toString());
+    return apiClient.get(`/tasks/lite/groups?${query}`);
+  },
+
   searchTasks: async (title: string, params?: PaginationParams): Promise<TaskListResponse> => {
     const query = new URLSearchParams();
     query.append('title', title);
