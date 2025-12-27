@@ -719,10 +719,12 @@ class ExecutorKindsService(
             previous_subtask_results = ""
 
             user_prompt = ""
+            user_subtask = None
             for i, related in enumerate(related_subtasks):
                 if related.role == SubtaskRole.USER:
                     user_prompt = related.prompt
                     previous_subtask_results = ""
+                    user_subtask = related
                     continue
                 if related.message_id < subtask.message_id:
                     previous_subtask_results = related.result
@@ -977,13 +979,15 @@ class ExecutorKindsService(
             subtask_attachments = (
                 db.query(SubtaskAttachment)
                 .filter(
-                    SubtaskAttachment.subtask_id == subtask.id,
+                    SubtaskAttachment.subtask_id == user_subtask.id,
                     SubtaskAttachment.status == AttachmentStatus.READY,
                 )
                 .all()
             )
 
-            api_base_url = settings.BACKEND_URL or "http://wegent-backend:8000"
+            # Note: We don't include download_url here.
+            # The executor will construct the download URL using TASK_API_DOMAIN env var,
+            # similar to how skill downloads work. This decouples backend from knowing its own URL.
             for att in subtask_attachments:
                 att_data = {
                     "id": att.id,
@@ -991,7 +995,6 @@ class ExecutorKindsService(
                     "file_extension": att.file_extension,
                     "file_size": att.file_size,
                     "mime_type": att.mime_type,
-                    "download_url": f"{api_base_url}/api/adapter/attachments/{att.id}/executor-download",
                 }
                 # Add base64 data for image attachments
                 if att.image_base64:

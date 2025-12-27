@@ -19,6 +19,10 @@ import requests
 
 logger = logging.getLogger(__name__)
 
+# Default API base URL for attachment downloads
+# This follows the same pattern as skill downloads
+DEFAULT_API_BASE_URL = "http://wegent-backend:8000"
+
 
 @dataclass
 class AttachmentDownloadResult:
@@ -55,6 +59,10 @@ class AttachmentDownloader:
         self.subtask_id = subtask_id
         self.auth_token = auth_token
         self.headers = {"Authorization": f"Bearer {auth_token}"}
+        # Get API base URL from environment, similar to skill downloads
+        self.api_base_url = os.getenv(
+            "TASK_API_DOMAIN", DEFAULT_API_BASE_URL
+        ).rstrip("/")
 
     def get_attachments_dir(self) -> str:
         """
@@ -117,6 +125,22 @@ class AttachmentDownloader:
         )
         return AttachmentDownloadResult(success=success, failed=failed)
 
+    def _build_download_url(self, att_id: int) -> str:
+        """
+        Build download URL for an attachment.
+
+        Similar to skill downloads, the executor constructs the URL using
+        TASK_API_DOMAIN environment variable instead of relying on backend
+        to provide the full URL.
+
+        Args:
+            att_id: Attachment ID
+
+        Returns:
+            Full download URL
+        """
+        return f"{self.api_base_url}/api/adapter/attachments/{att_id}/executor-download"
+
     def _download_single(self, att: Dict[str, Any]) -> Dict[str, Any]:
         """
         Download a single attachment.
@@ -129,13 +153,14 @@ class AttachmentDownloader:
         """
         att_id = att.get("id")
         filename = att.get("original_filename")
-        download_url = att.get("download_url")
 
-        if not all([att_id, filename, download_url]):
+        if not all([att_id, filename]):
             logger.warning(f"Attachment missing required fields: {att}")
-            return {**att, "error": "Missing required fields"}
+            return {**att, "error": "Missing required fields (id or original_filename)"}
 
-        logger.info(f"Downloading attachment: {filename} (id={att_id})")
+        # Build download URL using TASK_API_DOMAIN, similar to skill downloads
+        download_url = self._build_download_url(att_id)
+        logger.info(f"Downloading attachment: {filename} (id={att_id}) from {download_url}")
 
         try:
             # Download file with streaming for large files
