@@ -44,6 +44,7 @@ export function useMermaidInit(selectedContent: unknown) {
 
           mermaid.initialize({
             startOnLoad: true,
+            suppressErrorRendering: true,
             theme: 'base',
             themeVariables: {
               // General theme variables

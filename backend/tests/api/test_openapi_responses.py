@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
+from app.models.task import TaskResource
 from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
 from app.models.user import User
 
@@ -146,7 +147,7 @@ def test_model(test_db: Session, test_user: User) -> Kind:
 
 
 @pytest.fixture
-def test_task(test_db: Session, test_user: User, test_team: Kind) -> Kind:
+def test_task(test_db: Session, test_user: User, test_team: Kind) -> TaskResource:
     """Create a test Task Kind."""
     task_json = {
         "apiVersion": "agent.wecode.io/v1",
@@ -177,7 +178,7 @@ def test_task(test_db: Session, test_user: User, test_team: Kind) -> Kind:
         },
     }
     # Don't set explicit id, let the database assign it
-    task = Kind(
+    task = TaskResource(
         user_id=test_user.id,
         kind="Task",
         name="task-test",
@@ -193,7 +194,7 @@ def test_task(test_db: Session, test_user: User, test_team: Kind) -> Kind:
 
 @pytest.fixture
 def test_subtasks(
-    test_db: Session, test_user: User, test_task: Kind, test_team: Kind
+    test_db: Session, test_user: User, test_task: TaskResource, test_team: Kind
 ) -> list:
     """Create test subtasks for a task."""
     user_subtask = Subtask(
@@ -514,7 +515,7 @@ class TestOpenAPIResponsesGet:
         self,
         test_client: TestClient,
         test_token: str,
-        test_task: Kind,
+        test_task: TaskResource,
         test_subtasks: list,
     ):
         """Test successful response retrieval."""
@@ -533,7 +534,7 @@ class TestOpenAPIResponsesGet:
         self,
         test_client: TestClient,
         test_admin_token: str,
-        test_task: Kind,
+        test_task: TaskResource,
     ):
         """Test users cannot access other users' responses."""
         response = test_client.get(
@@ -623,7 +624,7 @@ class TestOpenAPIResponsesCancel:
                 "updatedAt": datetime.now().isoformat(),
             },
         }
-        task = Kind(
+        task = TaskResource(
             user_id=test_user.id,
             kind="Task",
             name="task-running",
@@ -752,7 +753,7 @@ class TestOpenAPIResponsesDelete:
                 "completedAt": datetime.now().isoformat(),
             },
         }
-        task = Kind(
+        task = TaskResource(
             user_id=test_user.id,
             kind="Task",
             name="task-to-delete",
@@ -787,7 +788,7 @@ class TestOpenAPIResponsesDelete:
         self,
         test_client: TestClient,
         test_admin_token: str,
-        test_task: Kind,
+        test_task: TaskResource,
     ):
         """Test user isolation on delete.
 

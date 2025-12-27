@@ -14,9 +14,10 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import NotFoundException
 from app.models.kind import Kind
 from app.models.subtask import Subtask
+from app.models.task import TaskResource
 from app.schemas.kind import Bot, Model, Retriever, Task, Team
 from app.services.adapters.task_kinds import task_kinds_service
-from app.services.kind_base import KindBaseService
+from app.services.kind_base import KindBaseService, TaskResourceBaseService
 
 logger = logging.getLogger(__name__)
 
@@ -340,8 +341,8 @@ class TeamKindService(KindBaseService):
                 )
 
 
-class WorkspaceKindService(KindBaseService):
-    """Service for Workspace resources"""
+class WorkspaceKindService(TaskResourceBaseService):
+    """Service for Workspace resources (uses tasks table)"""
 
     def __init__(self):
         super().__init__("Workspace")
@@ -353,8 +354,8 @@ class WorkspaceKindService(KindBaseService):
         pass
 
 
-class TaskKindService(KindBaseService):
-    """Service for Task resources"""
+class TaskKindService(TaskResourceBaseService):
+    """Service for Task resources (uses tasks table)"""
 
     def __init__(self):
         super().__init__("Task")
@@ -390,14 +391,16 @@ class TaskKindService(KindBaseService):
         workspace_name = task_crd.spec.workspaceRef.name
         workspace_namespace = task_crd.spec.workspaceRef.namespace or "default"
 
+        from app.models.task import TaskResource
+
         workspace = (
-            db.query(Kind)
+            db.query(TaskResource)
             .filter(
-                Kind.user_id == user_id,
-                Kind.kind == "Workspace",
-                Kind.namespace == workspace_namespace,
-                Kind.name == workspace_name,
-                Kind.is_active == True,
+                TaskResource.user_id == user_id,
+                TaskResource.kind == "Workspace",
+                TaskResource.namespace == workspace_namespace,
+                TaskResource.name == workspace_name,
+                TaskResource.is_active == True,
             )
             .first()
         )
@@ -409,13 +412,13 @@ class TaskKindService(KindBaseService):
 
         # Check the status of existing task, if not COMPLETED status, modification is not allowed
         existing_task = (
-            db.query(Kind)
+            db.query(TaskResource)
             .filter(
-                Kind.user_id == user_id,
-                Kind.kind == "Task",
-                Kind.namespace == resource["metadata"]["namespace"],
-                Kind.name == resource["metadata"]["name"],
-                Kind.is_active == True,
+                TaskResource.user_id == user_id,
+                TaskResource.kind == "Task",
+                TaskResource.namespace == resource["metadata"]["namespace"],
+                TaskResource.name == resource["metadata"]["name"],
+                TaskResource.is_active == True,
             )
             .first()
         )
@@ -432,7 +435,11 @@ class TaskKindService(KindBaseService):
                 )
 
     def _perform_side_effects(
-        self, db: Session, user_id: int, db_resource: Kind, resource: Dict[str, Any]
+        self,
+        db: Session,
+        user_id: int,
+        db_resource: TaskResource,
+        resource: Dict[str, Any],
     ) -> None:
         """Create subtasks for the new task"""
         try:
@@ -469,7 +476,11 @@ class TaskKindService(KindBaseService):
             logger.error(f"Error creating subtasks: {str(e)}")
 
     def _update_side_effects(
-        self, db: Session, user_id: int, db_resource: Kind, resource: Dict[str, Any]
+        self,
+        db: Session,
+        user_id: int,
+        db_resource: TaskResource,
+        resource: Dict[str, Any],
     ) -> None:
         """Update subtasks for the existing task"""
         try:
@@ -505,7 +516,7 @@ class TaskKindService(KindBaseService):
             # Log error but don't interrupt the process
             logger.error(f"Error updating subtasks: {str(e)}")
 
-    def _format_resource(self, resource: Kind) -> Dict[str, Any]:
+    def _format_resource(self, resource: TaskResource) -> Dict[str, Any]:
         """Format Task resource for API response with enhanced status information"""
         # Get the stored resource data
         stored_resource = resource.json
