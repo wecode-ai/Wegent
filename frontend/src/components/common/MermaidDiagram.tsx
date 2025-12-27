@@ -41,7 +41,7 @@ export interface MermaidDiagramProps {
  * - Error handling with fallback to raw code
  */
 export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
-  const { t } = useTranslation('chat');
+  const { t } = useTranslation();
   const { theme } = useTheme();
   const containerRef = useRef<HTMLDivElement>(null);
   const diagramRef = useRef<HTMLDivElement>(null);
@@ -626,7 +626,7 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
         <div className="flex items-center gap-2 px-4 py-2 bg-red-50 dark:bg-red-950/30 border-b border-red-200 dark:border-red-800 rounded-t-lg">
           <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400" />
           <span className="text-sm font-medium text-red-700 dark:text-red-300">
-            {t('mermaid.renderError') || 'Mermaid render failed'}: {error}
+            {t('chat:mermaid.renderError') || 'Mermaid render failed'}: {error}
           </span>
         </div>
         {/* Raw code display */}
@@ -637,7 +637,9 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
         <div className="flex justify-end px-4 py-2 border-t border-red-200 dark:border-red-800">
           <Button variant="ghost" size="sm" onClick={copyCode} className="text-text-secondary">
             {copied ? <Check className="w-4 h-4 mr-1" /> : <Copy className="w-4 h-4 mr-1" />}
-            {copied ? t('mermaid.copied') || 'Copied' : t('mermaid.copyCode') || 'Copy Code'}
+            {copied
+              ? t('chat:mermaid.copied') || 'Copied'
+              : t('chat:mermaid.copyCode') || 'Copy Code'}
           </Button>
         </div>
       </div>
@@ -673,7 +675,7 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
             <ZoomOut className="w-4 h-4" />
           </Button>
         </TooltipTrigger>
-        <TooltipContent>{t('mermaid.zoomOut') || 'Zoom Out'}</TooltipContent>
+        <TooltipContent>{t('chat:mermaid.zoomOut') || 'Zoom Out'}</TooltipContent>
       </Tooltip>
 
       <span
@@ -693,7 +695,7 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
             <ZoomIn className="w-4 h-4" />
           </Button>
         </TooltipTrigger>
-        <TooltipContent>{t('mermaid.zoomIn') || 'Zoom In'}</TooltipContent>
+        <TooltipContent>{t('chat:mermaid.zoomIn') || 'Zoom In'}</TooltipContent>
       </Tooltip>
 
       <Tooltip>
@@ -707,7 +709,7 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
             <RotateCcw className="w-4 h-4" />
           </Button>
         </TooltipTrigger>
-        <TooltipContent>{t('mermaid.resetZoom') || 'Reset Zoom'}</TooltipContent>
+        <TooltipContent>{t('chat:mermaid.resetZoom') || 'Reset Zoom'}</TooltipContent>
       </Tooltip>
 
       <div className={`w-px h-4 mx-1 ${inModal ? 'bg-white/20' : 'bg-border'}`} />
@@ -730,8 +732,8 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
         </TooltipTrigger>
         <TooltipContent>
           {exportedPng
-            ? t('mermaid.exportSuccess') || 'Exported'
-            : t('mermaid.exportPng') || 'Export PNG'}
+            ? t('chat:mermaid.exportSuccess') || 'Exported'
+            : t('chat:mermaid.exportPng') || 'Export PNG'}
         </TooltipContent>
       </Tooltip>
 
@@ -753,8 +755,8 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
         </TooltipTrigger>
         <TooltipContent>
           {exportedSvg
-            ? t('mermaid.exportSuccess') || 'Exported'
-            : t('mermaid.exportSvg') || 'Export SVG'}
+            ? t('chat:mermaid.exportSuccess') || 'Exported'
+            : t('chat:mermaid.exportSvg') || 'Export SVG'}
         </TooltipContent>
       </Tooltip>
 
@@ -771,7 +773,9 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
           </Button>
         </TooltipTrigger>
         <TooltipContent>
-          {copied ? t('mermaid.copied') || 'Copied' : t('mermaid.copyImage') || 'Copy Image'}
+          {copied
+            ? t('chat:mermaid.copied') || 'Copied'
+            : t('chat:mermaid.copyImage') || 'Copy Image'}
         </TooltipContent>
       </Tooltip>
 
@@ -787,7 +791,7 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
             <Code className="w-4 h-4" />
           </Button>
         </TooltipTrigger>
-        <TooltipContent>{t('mermaid.viewCode') || 'View Code'}</TooltipContent>
+        <TooltipContent>{t('chat:mermaid.viewCode') || 'View Code'}</TooltipContent>
       </Tooltip>
 
       {/* Fullscreen toggle (only in non-modal view) */}
@@ -951,7 +955,7 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
               <div className="flex items-center gap-2">
                 <Code className="w-4 h-4 text-primary" />
                 <span className="text-sm font-medium text-text-primary">
-                  {t('mermaid.sourceCode') || 'Mermaid Source Code'}
+                  {t('chat:mermaid.sourceCode') || 'Mermaid Source Code'}
                 </span>
               </div>
               <div className="flex items-center gap-2">
@@ -964,12 +968,12 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
                   {codeCopied ? (
                     <>
                       <Check className="w-4 h-4 mr-1 text-green-500" />
-                      {t('mermaid.copied') || 'Copied'}
+                      {t('chat:mermaid.copied') || 'Copied'}
                     </>
                   ) : (
                     <>
                       <Copy className="w-4 h-4 mr-1" />
-                      {t('mermaid.copyCode') || 'Copy Code'}
+                      {t('chat:mermaid.copyCode') || 'Copy Code'}
                     </>
                   )}
                 </Button>
@@ -994,7 +998,7 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
             {/* Footer hint */}
             <div className="px-4 py-2 border-t border-border text-center">
               <span className="text-xs text-text-muted">
-                {t('mermaid.escToClose') || 'Press ESC to close'}
+                {t('chat:mermaid.escToClose') || 'Press ESC to close'}
               </span>
             </div>
           </div>

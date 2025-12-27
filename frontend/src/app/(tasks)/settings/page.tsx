@@ -32,7 +32,7 @@ import '@/features/common/scrollbar.css';
 function SettingsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const isMobile = useIsMobile();
 
   // Refresh trigger for SettingsTabNav groups list
@@ -40,8 +40,8 @@ function SettingsContent() {
 
   // Get initial tab from URL with backward compatibility
   const getInitialTab = (): SettingsTabId => {
-    const tab = searchParams.get('tab');
-    const section = searchParams.get('section');
+    const tab = searchParams.get('common:tab');
+    const section = searchParams.get('common:section');
 
     // Backward compatibility: map old section+tab format to new tab IDs
     if (section && tab) {
@@ -67,7 +67,7 @@ function SettingsContent() {
 
   // Selected group state for group scope
   const [selectedGroup, setSelectedGroup] = useState<string | null>(() => {
-    return searchParams.get('group') || null;
+    return searchParams.get('common:group') || null;
   });
 
   // Mobile sidebar state
@@ -207,7 +207,7 @@ function SettingsContent() {
         <TopNavigation
           activePage="dashboard"
           variant="with-sidebar"
-          title={t('settings.title')}
+          title={t('common:settings.title')}
           onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
           isSidebarCollapsed={isCollapsed}
         >

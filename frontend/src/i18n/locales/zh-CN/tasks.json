@@ -1,4 +1,7 @@
 {
+  "access_denied_title": "无访问权限",
+  "access_denied_description": "您没有权限访问此任务。该任务可能已被删除或您没有必要的权限。",
+  "access_denied_go_home": "返回首页",
   "attachment": {
     "characters": "字符"
   },

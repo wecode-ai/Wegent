@@ -80,7 +80,7 @@ function StreamingMessageBubble({
     type: 'ai' as const,
     content: '${$$}$' + (message.content || ''),
     timestamp: message.timestamp,
-    botName: message.botName || selectedTeam?.name || t('messages.bot') || 'Bot',
+    botName: message.botName || selectedTeam?.name || t('common:messages.bot') || 'Bot',
     subtaskStatus: 'RUNNING',
     recoveredContent: isStreaming ? displayContent : hasContent ? message.content : undefined,
     isRecovered: false,
@@ -137,8 +137,7 @@ export default function MessagesArea({
   correctionModelId = null,
   enableCorrectionWebSearch = false,
 }: MessagesAreaProps) {
-  const { t } = useTranslation('chat');
-  const { t: tCommon } = useTranslation('common');
+  const { t } = useTranslation();
   const { toast } = useToast();
   const { selectedTaskDetail, refreshSelectedTaskDetail, refreshTasks, setSelectedTask } =
     useTaskContext();
@@ -327,8 +326,8 @@ export default function MessagesArea({
     if (!selectedTaskDetail?.id) {
       toast({
         variant: 'destructive',
-        title: tCommon('shared_task.no_task_selected'),
-        description: tCommon('shared_task.no_task_selected_desc'),
+        title: t('common:shared_task.no_task_selected'),
+        description: t('common:shared_task.no_task_selected_desc'),
       });
       return;
     }
@@ -350,8 +349,8 @@ export default function MessagesArea({
           console.error('Failed to share task:', err);
           toast({
             variant: 'destructive',
-            title: tCommon('shared_task.share_failed'),
-            description: (err as Error)?.message || tCommon('shared_task.share_failed_desc'),
+            title: t('common:shared_task.share_failed'),
+            description: (err as Error)?.message || t('common:shared_task.share_failed_desc'),
           });
           throw err;
         } finally {
@@ -364,7 +363,7 @@ export default function MessagesArea({
     selectedTaskDetail?.title,
     selectedTaskDetail?.status,
     toast,
-    tCommon,
+    t,
     traceAction,
   ]);
 
@@ -408,8 +407,8 @@ export default function MessagesArea({
     if (!selectedTaskDetail?.id) {
       toast({
         variant: 'destructive',
-        title: tCommon('shared_task.no_task_selected'),
-        description: tCommon('shared_task.no_task_selected_desc'),
+        title: t('common:shared_task.no_task_selected'),
+        description: t('common:shared_task.no_task_selected_desc'),
       });
       return;
     }
@@ -485,7 +484,7 @@ export default function MessagesArea({
           if (validMessages.length === 0) {
             toast({
               variant: 'destructive',
-              title: t('export.no_messages') || 'No messages to export',
+              title: t('common:export.no_messages') || 'No messages to export',
             });
             return;
           }
@@ -499,13 +498,13 @@ export default function MessagesArea({
           });
 
           toast({
-            title: t('export.success') || 'PDF exported successfully',
+            title: t('common:export.success') || 'PDF exported successfully',
           });
         } catch (error) {
           console.error('Failed to export PDF:', error);
           toast({
             variant: 'destructive',
-            title: t('export.failed') || 'Failed to export PDF',
+            title: t('common:export.failed') || 'Failed to export PDF',
             description: error instanceof Error ? error.message : 'Unknown error',
           });
           throw error;
@@ -514,15 +513,15 @@ export default function MessagesArea({
         }
       }
     );
-  }, [selectedTaskDetail, toast, t, tCommon, loadImageAsBase64, traceAction]);
+  }, [selectedTaskDetail, toast, t, loadImageAsBase64, traceAction]);
 
   // Handle DOCX export
   const handleExportDocx = useCallback(async () => {
     if (!selectedTaskDetail?.id) {
       toast({
         variant: 'destructive',
-        title: tCommon('shared_task.no_task_selected'),
-        description: tCommon('shared_task.no_task_selected_desc'),
+        title: t('common:shared_task.no_task_selected'),
+        description: t('common:shared_task.no_task_selected_desc'),
       });
       return;
     }
@@ -551,13 +550,13 @@ export default function MessagesArea({
           window.URL.revokeObjectURL(url);
 
           toast({
-            title: t('export.docx_success') || 'DOCX exported successfully',
+            title: t('common:export.docx_success') || 'DOCX exported successfully',
           });
         } catch (error) {
           console.error('Failed to export DOCX:', error);
           toast({
             variant: 'destructive',
-            title: t('export.docx_failed') || 'Failed to export DOCX',
+            title: t('common:export.docx_failed') || 'Failed to export DOCX',
             description: error instanceof Error ? error.message : 'Unknown error',
           });
           throw error;
@@ -566,7 +565,7 @@ export default function MessagesArea({
         }
       }
     );
-  }, [selectedTaskDetail, toast, t, tCommon, traceAction]);
+  }, [selectedTaskDetail, toast, t, traceAction]);
 
   // Removed polling - relying entirely on WebSocket real-time updates
   // Task details will be updated via WebSocket events in taskContext
@@ -611,7 +610,7 @@ export default function MessagesArea({
             className="flex items-center gap-1 h-8 pl-2 pr-3 rounded-[7px] text-sm"
           >
             <Users className="h-3.5 w-3.5" />
-            {t('groupChat.members.title') || 'Members'}
+            {t('common:groupChat.members.title') || 'Members'}
           </Button>
         )}
 
@@ -625,7 +624,7 @@ export default function MessagesArea({
             className="flex items-center gap-1 h-8 pl-2 pr-3 rounded-[7px] text-sm"
           >
             <Share2 className="h-3.5 w-3.5" />
-            {isSharing ? tCommon('shared_task.sharing') : tCommon('shared_task.share_link')}
+            {isSharing ? t('common:shared_task.sharing') : t('common:shared_task.share_link')}
           </Button>
         )}
 
@@ -638,7 +637,7 @@ export default function MessagesArea({
               className="flex items-center gap-1 h-8 pl-2 pr-3 rounded-[7px] text-sm"
             >
               <Download className="h-3.5 w-3.5" />
-              {t('export.export')}
+              {t('chat:export.export')}
               <ChevronDown className="h-3 w-3 ml-0.5" />
             </Button>
           </DropdownMenuTrigger>
@@ -651,8 +650,8 @@ export default function MessagesArea({
               <FileText className="h-4 w-4" />
               <span>
                 {isExportingPdf
-                  ? t('export.exporting') || 'Exporting...'
-                  : tCommon('shared_task.share_pdf')}
+                  ? t('common:export.exporting') || 'Exporting...'
+                  : t('common:shared_task.share_pdf')}
               </span>
             </DropdownMenuItem>
             <DropdownMenuItem
@@ -663,8 +662,8 @@ export default function MessagesArea({
               <FileText className="h-4 w-4" />
               <span>
                 {isExportingDocx
-                  ? t('export.exporting_docx') || 'Exporting DOCX...'
-                  : t('export.export_docx') || 'Export DOCX'}
+                  ? t('common:export.exporting_docx') || 'Exporting DOCX...'
+                  : t('chat:export.export_docx') || 'Export DOCX'}
               </span>
             </DropdownMenuItem>
           </DropdownMenuContent>
@@ -681,7 +680,7 @@ export default function MessagesArea({
             className="flex items-center gap-1 h-8 pl-2 pr-3 rounded-[7px] text-sm"
           >
             <MessageSquare className="h-3.5 w-3.5" />
-            {tCommon('navigation.feedback')}
+            {t('common:navigation.feedback')}
           </Button>
         </DropdownMenu>
       </div>
@@ -698,7 +697,6 @@ export default function MessagesArea({
     handleExportPdf,
     handleExportDocx,
     t,
-    tCommon,
   ]);
 
   // Pass share button to parent for rendering in TopNavigation

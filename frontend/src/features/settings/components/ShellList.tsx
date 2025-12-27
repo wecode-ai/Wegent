@@ -41,7 +41,7 @@ const ShellList: React.FC<ShellListProps> = ({
   groupRoleMap,
   onEditResource,
 }) => {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const { toast } = useToast();
   const [shells, setShells] = useState<UnifiedShell[]>([]);
   const [loading, setLoading] = useState(true);
@@ -59,7 +59,7 @@ const ShellList: React.FC<ShellListProps> = ({
       console.error('Failed to fetch shells:', error);
       toast({
         variant: 'destructive',
-        title: t('shells.errors.load_shells_failed'),
+        title: t('common:shells.errors.load_shells_failed'),
       });
     } finally {
       setLoading(false);
@@ -123,14 +123,14 @@ const ShellList: React.FC<ShellListProps> = ({
     try {
       await shellApis.deleteShell(deleteConfirmShell.name);
       toast({
-        title: t('shells.delete_success'),
+        title: t('common:shells.delete_success'),
       });
       setDeleteConfirmShell(null);
       fetchShells();
     } catch (error) {
       toast({
         variant: 'destructive',
-        title: t('shells.errors.delete_failed'),
+        title: t('common:shells.errors.delete_failed'),
         description: (error as Error).message,
       });
     } finally {
@@ -171,8 +171,8 @@ const ShellList: React.FC<ShellListProps> = ({
     <div className="space-y-3">
       {/* Header */}
       <div>
-        <h2 className="text-xl font-semibold text-text-primary mb-1">{t('shells.title')}</h2>
-        <p className="text-sm text-text-muted mb-1">{t('shells.description')}</p>
+        <h2 className="text-xl font-semibold text-text-primary mb-1">{t('common:shells.title')}</h2>
+        <p className="text-sm text-text-muted mb-1">{t('common:shells.description')}</p>
       </div>
 
       {/* Content Container */}
@@ -188,8 +188,8 @@ const ShellList: React.FC<ShellListProps> = ({
         {!loading && totalShells === 0 && (
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <CommandLineIcon className="w-12 h-12 text-text-muted mb-4" />
-            <p className="text-text-muted">{t('shells.no_shells')}</p>
-            <p className="text-sm text-text-muted mt-1">{t('shells.no_shells_hint')}</p>
+            <p className="text-text-muted">{t('common:shells.no_shells')}</p>
+            <p className="text-sm text-text-muted mt-1">{t('common:shells.no_shells_hint')}</p>
           </div>
         )}
 
@@ -201,7 +201,7 @@ const ShellList: React.FC<ShellListProps> = ({
               {userShells.length > 0 && (
                 <div className="space-y-2">
                   <h3 className="text-sm font-medium text-text-secondary px-2">
-                    {t('shells.my_shells')} ({userShells.length})
+                    {t('common:shells.my_shells')} ({userShells.length})
                   </h3>
                   <div className="space-y-3">
                     {userShells.map(shell => (
@@ -247,7 +247,7 @@ const ShellList: React.FC<ShellListProps> = ({
                               size="icon"
                               className="h-8 w-8"
                               onClick={() => handleEdit(shell)}
-                              title={t('shells.edit')}
+                              title={t('common:shells.edit')}
                             >
                               <PencilIcon className="w-4 h-4" />
                             </Button>
@@ -256,7 +256,7 @@ const ShellList: React.FC<ShellListProps> = ({
                               size="icon"
                               className="h-8 w-8 hover:text-error"
                               onClick={() => setDeleteConfirmShell(shell)}
-                              title={t('shells.delete')}
+                              title={t('common:shells.delete')}
                             >
                               <TrashIcon className="w-4 h-4" />
                             </Button>
@@ -272,7 +272,7 @@ const ShellList: React.FC<ShellListProps> = ({
               {groupShells.length > 0 && (
                 <div className="space-y-2">
                   <h3 className="text-sm font-medium text-text-secondary px-2">
-                    {t('shells.group_shells')} ({groupShells.length})
+                    {t('common:shells.group_shells')} ({groupShells.length})
                   </h3>
                   <div className="space-y-3">
                     {groupShells.map(shell => (
@@ -313,7 +313,7 @@ const ShellList: React.FC<ShellListProps> = ({
                             ]}
                           >
                             <Tag variant="success" className="text-xs">
-                              {t('shells.group')}
+                              {t('common:shells.group')}
                             </Tag>
                           </ResourceListItem>
                           {/* Action buttons for group resources */}
@@ -324,7 +324,7 @@ const ShellList: React.FC<ShellListProps> = ({
                                 size="icon"
                                 className="h-8 w-8"
                                 onClick={() => handleEdit(shell)}
-                                title={t('shells.edit')}
+                                title={t('common:shells.edit')}
                               >
                                 <PencilIcon className="w-4 h-4" />
                               </Button>
@@ -335,7 +335,7 @@ const ShellList: React.FC<ShellListProps> = ({
                                 size="icon"
                                 className="h-8 w-8 hover:text-error"
                                 onClick={() => setDeleteConfirmShell(shell)}
-                                title={t('shells.delete')}
+                                title={t('common:shells.delete')}
                               >
                                 <TrashIcon className="w-4 h-4" />
                               </Button>
@@ -352,7 +352,7 @@ const ShellList: React.FC<ShellListProps> = ({
               {publicShells.length > 0 && (
                 <div className="space-y-2">
                   <h3 className="text-sm font-medium text-text-secondary px-2">
-                    {t('shells.public_shells')} ({publicShells.length})
+                    {t('common:shells.public_shells')} ({publicShells.length})
                   </h3>
                   <div className="space-y-3">
                     {publicShells.map(shell => (
@@ -366,7 +366,7 @@ const ShellList: React.FC<ShellListProps> = ({
                             displayName={shell.displayName || undefined}
                             showId={true}
                             isPublic={true}
-                            publicLabel={t('shells.public')}
+                            publicLabel={t('common:shells.public')}
                             icon={<GlobeAltIcon className="w-5 h-5 text-primary" />}
                             tags={[
                               {
@@ -408,7 +408,9 @@ const ShellList: React.FC<ShellListProps> = ({
         {!loading && (scope === 'personal' || canCreateInCurrentGroup) && (
           <div className="border-t border-border pt-3 mt-3 bg-base">
             <div className="flex justify-center">
-              <UnifiedAddButton onClick={handleCreate}>{t('shells.create')}</UnifiedAddButton>
+              <UnifiedAddButton onClick={handleCreate}>
+                {t('common:shells.create')}
+              </UnifiedAddButton>
             </div>
           </div>
         )}
@@ -431,13 +433,15 @@ const ShellList: React.FC<ShellListProps> = ({
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t('shells.delete_confirm_title')}</AlertDialogTitle>
+            <AlertDialogTitle>{t('common:shells.delete_confirm_title')}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t('shells.delete_confirm_message', { name: deleteConfirmShell?.name })}
+              {t('common:shells.delete_confirm_message', { name: deleteConfirmShell?.name })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={isDeleting}>{t('actions.cancel')}</AlertDialogCancel>
+            <AlertDialogCancel disabled={isDeleting}>
+              {t('common:actions.cancel')}
+            </AlertDialogCancel>
             <AlertDialogAction
               onClick={handleDelete}
               disabled={isDeleting}
@@ -465,10 +469,10 @@ const ShellList: React.FC<ShellListProps> = ({
                       d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                     ></path>
                   </svg>
-                  {t('actions.deleting')}
+                  {t('common:actions.deleting')}
                 </div>
               ) : (
-                t('actions.delete')
+                t('common:actions.delete')
               )}
             </AlertDialogAction>
           </AlertDialogFooter>

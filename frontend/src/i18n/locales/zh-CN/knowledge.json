@@ -202,5 +202,6 @@
   "access_denied_description": "Wiki任务用户没有访问此仓库的权限。请将该用户添加到GitLab项目或配置其他用户。",
   "no_bound_model_warning": "Wiki生成功能暂不可用。默认Wiki智能体未配置模型，请联系管理员。",
   "regenerate": "重新生成",
-  "view_detail": "查看详情"
+  "view_detail": "查看详情",
+  "coming_soon": "即将推出"
 }

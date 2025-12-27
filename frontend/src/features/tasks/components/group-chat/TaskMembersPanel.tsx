@@ -41,7 +41,7 @@ export function TaskMembersPanel({
   onLeave,
   onMembersChanged,
 }: TaskMembersPanelProps) {
-  const { t } = useTranslation('chat');
+  const { t } = useTranslation();
   const { toast } = useToast();
   const [members, setMembers] = useState<TaskMember[]>([]);
   const [taskOwnerId, setTaskOwnerId] = useState<number>(0);
@@ -65,7 +65,7 @@ export function TaskMembersPanel({
       // Calling it here would trigger refresh every time the panel opens
     } catch (error: unknown) {
       toast({
-        title: t('groupChat.members.loadFailed'),
+        title: t('chat:groupChat.members.loadFailed'),
         description: error instanceof Error ? error.message : undefined,
         variant: 'destructive',
       });
@@ -96,7 +96,7 @@ export function TaskMembersPanel({
     try {
       await taskMemberApi.removeMember(taskId, userId);
       toast({
-        title: t('groupChat.members.removeSuccess', { name: username }),
+        title: t('chat:groupChat.members.removeSuccess', { name: username }),
       });
       // Refresh member list and trigger parent refresh
       // Use the same pattern as AddMembersDialog
@@ -104,7 +104,7 @@ export function TaskMembersPanel({
       onMembersChanged?.();
     } catch (error: unknown) {
       toast({
-        title: t('groupChat.members.removeFailed'),
+        title: t('chat:groupChat.members.removeFailed'),
         description: error instanceof Error ? error.message : undefined,
         variant: 'destructive',
       });
@@ -115,14 +115,14 @@ export function TaskMembersPanel({
     try {
       await taskMemberApi.leaveGroupChat(taskId);
       toast({
-        title: t('groupChat.members.leaveSuccess'),
+        title: t('chat:groupChat.members.leaveSuccess'),
       });
       handleClose();
       // Notify parent component that user has left
       onLeave?.();
     } catch (error: unknown) {
       toast({
-        title: t('groupChat.members.leaveFailed'),
+        title: t('chat:groupChat.members.leaveFailed'),
         description: error instanceof Error ? error.message : undefined,
         variant: 'destructive',
       });
@@ -152,7 +152,7 @@ export function TaskMembersPanel({
       }
     } catch (error: unknown) {
       toast({
-        title: t('groupChat.inviteLink.generateFailed'),
+        title: t('chat:groupChat.inviteLink.generateFailed'),
         description: error instanceof Error ? error.message : undefined,
         variant: 'destructive',
       });
@@ -170,7 +170,7 @@ export function TaskMembersPanel({
         await navigator.clipboard.writeText(inviteUrl);
         setCopied(true);
         toast({
-          title: t('groupChat.inviteLink.copied'),
+          title: t('chat:groupChat.inviteLink.copied'),
         });
         setTimeout(() => {
           setCopied(false);
@@ -193,7 +193,7 @@ export function TaskMembersPanel({
       document.body.removeChild(textarea);
       setCopied(true);
       toast({
-        title: t('groupChat.inviteLink.copied'),
+        title: t('chat:groupChat.inviteLink.copied'),
       });
       setTimeout(() => {
         setCopied(false);
@@ -202,7 +202,7 @@ export function TaskMembersPanel({
     } catch (err) {
       console.error('Fallback copy failed: ', err);
       toast({
-        title: t('groupChat.inviteLink.copyFailed'),
+        title: t('chat:groupChat.inviteLink.copyFailed'),
         variant: 'destructive',
       });
     }
@@ -220,8 +220,8 @@ export function TaskMembersPanel({
             <DialogTitle className="flex items-center gap-2">
               <Users className="w-5 h-5" />
               {inviteUrl
-                ? t('groupChat.members.inviteLink')
-                : `${t('groupChat.members.title')} (${members.length})`}
+                ? t('chat:groupChat.members.inviteLink')
+                : `${t('chat:groupChat.members.title')} (${members.length})`}
             </DialogTitle>
             <DialogDescription>{taskTitle}</DialogDescription>
           </DialogHeader>
@@ -237,7 +237,7 @@ export function TaskMembersPanel({
                     onClick={() => setShowAddMembersDialog(true)}
                   >
                     <UserPlus className="w-4 h-4 mr-2" />
-                    {t('groupChat.members.addMembers')}
+                    {t('chat:groupChat.members.addMembers')}
                   </Button>
                   <Button
                     variant="outline"
@@ -247,8 +247,8 @@ export function TaskMembersPanel({
                   >
                     <Link className="w-4 h-4 mr-2" />
                     {generatingLink
-                      ? t('groupChat.inviteLink.generating')
-                      : t('groupChat.members.inviteLink')}
+                      ? t('chat:groupChat.inviteLink.generating')
+                      : t('chat:groupChat.members.inviteLink')}
                   </Button>
                 </div>
 
@@ -281,13 +281,13 @@ export function TaskMembersPanel({
                               {member.is_owner && <Crown className="w-3 h-3 text-yellow-500" />}
                               {member.user_id === currentUserId && (
                                 <span className="text-xs text-text-muted">
-                                  ({t('groupChat.members.you')})
+                                  ({t('chat:groupChat.members.you')})
                                 </span>
                               )}
                             </div>
                             {!member.is_owner && (
                               <p className="text-xs text-text-muted">
-                                {t('groupChat.members.invitedBy', {
+                                {t('chat:groupChat.members.invitedBy', {
                                   name: member.inviter_name,
                                 })}
                               </p>
@@ -315,7 +315,7 @@ export function TaskMembersPanel({
                             className="text-text-muted hover:text-destructive"
                             onClick={handleLeaveGroupChat}
                           >
-                            {t('groupChat.members.leaveGroupChat')}
+                            {t('chat:groupChat.members.leaveGroupChat')}
                           </Button>
                         )}
                       </div>
@@ -325,7 +325,7 @@ export function TaskMembersPanel({
 
                 {/* Done button at bottom */}
                 <Button variant="outline" onClick={handleClose} className="w-full">
-                  {t('actions.done', { ns: 'common' })}
+                  {t('common:actions.done')}
                 </Button>
               </>
             ) : (
@@ -344,16 +344,16 @@ export function TaskMembersPanel({
                   </div>
 
                   <p className="text-sm text-foreground">
-                    {t('groupChat.members.inviteLinkDescription')}
+                    {t('chat:groupChat.members.inviteLinkDescription')}
                   </p>
 
                   <p className="text-xs text-text-muted">
-                    {t('groupChat.inviteLink.permanentNote')}
+                    {t('chat:groupChat.inviteLink.permanentNote')}
                   </p>
                 </div>
 
                 <Button variant="outline" onClick={handleClose} className="w-full">
-                  {t('actions.done', { ns: 'common' })}
+                  {t('common:actions.done')}
                 </Button>
               </>
             )}

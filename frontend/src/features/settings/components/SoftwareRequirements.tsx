@@ -70,7 +70,7 @@ interface SoftwareRequirementsProps {
 }
 
 const SoftwareRequirements: React.FC<SoftwareRequirementsProps> = ({ shellType }) => {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
 
   // Get requirements for the shell type
@@ -95,9 +95,11 @@ const SoftwareRequirements: React.FC<SoftwareRequirementsProps> = ({ shellType }
   return (
     <Card className="mt-4 p-4 bg-surface border-border">
       <h3 className="text-base font-medium mb-2 text-text-primary">
-        {t('shells.software_requirements_title')}
+        {t('common:shells.software_requirements_title')}
       </h3>
-      <p className="text-xs text-text-muted mb-3">{t('shells.software_requirements_hint')}</p>
+      <p className="text-xs text-text-muted mb-3">
+        {t('common:shells.software_requirements_hint')}
+      </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {requirements.map(req => (
           <div
@@ -108,11 +110,11 @@ const SoftwareRequirements: React.FC<SoftwareRequirementsProps> = ({ shellType }
               <div className="flex items-center gap-2 min-w-0 flex-1">
                 {req.required ? (
                   <Badge variant="error" className="text-xs shrink-0">
-                    {t('shells.required')}
+                    {t('common:shells.required')}
                   </Badge>
                 ) : (
                   <Badge variant="secondary" className="text-xs shrink-0">
-                    {t('shells.optional')}
+                    {t('common:shells.optional')}
                   </Badge>
                 )}
                 <span className="font-medium text-text-primary truncate">{req.name}</span>
@@ -129,7 +131,7 @@ const SoftwareRequirements: React.FC<SoftwareRequirementsProps> = ({ shellType }
                 size="sm"
                 onClick={() => copyCommand(req.command)}
                 className="shrink-0 h-7 px-2"
-                title={t('shells.copy_command')}
+                title={t('common:shells.copy_command')}
               >
                 {copiedCommand === req.command ? (
                   <CheckIcon className="w-4 h-4 text-green-600" />

@@ -20,7 +20,7 @@ const CollapsibleContent = memo(function CollapsibleContent({
   uniqueId,
   colorClass = 'text-blue-400 hover:text-blue-500 hover:font-semibold',
 }: CollapsibleContentProps) {
-  const { t } = useTranslation('chat');
+  const { t } = useTranslation();
   const [isExpanded, setIsExpanded] = useState(false);
 
   const isCollapsible = shouldCollapse(content, maxLines, maxLength);
@@ -38,12 +38,12 @@ const CollapsibleContent = memo(function CollapsibleContent({
             {isExpanded ? (
               <>
                 <Minimize2 className="h-3 w-3" />
-                <span className="text-xs">{t('thinking.collapse') || 'Collapse'}</span>
+                <span className="text-xs">{t('chat:thinking.collapse') || 'Collapse'}</span>
               </>
             ) : (
               <>
                 <Maximize2 className="h-3 w-3" />
-                <span className="text-xs">{t('thinking.expand') || 'Expand'}</span>
+                <span className="text-xs">{t('chat:thinking.expand') || 'Expand'}</span>
               </>
             )}
           </button>

@@ -17,23 +17,23 @@ import { useToast } from '@/hooks/use-toast';
  * This component is responsible for extracting these parameters and storing them in localStorage
  */
 export default function OidcTokenHandler() {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const { toast } = useToast();
   const router = useRouter();
   const searchParams = useSearchParams();
 
   useEffect(() => {
-    const accessToken = searchParams.get('access_token');
-    const error = searchParams.get('error');
-    const tokenType = searchParams.get('token_type');
-    const loginSuccess = searchParams.get('login_success');
-    const errorMessage = searchParams.get('message');
+    const accessToken = searchParams.get('common:access_token');
+    const error = searchParams.get('common:error');
+    const tokenType = searchParams.get('common:token_type');
+    const loginSuccess = searchParams.get('common:login_success');
+    const errorMessage = searchParams.get('common:message');
 
     if (error) {
       console.error('OIDC login failed:', error, errorMessage);
       toast({
         variant: 'destructive',
-        title: t('auth.oidc_login_failed'),
+        title: t('common:auth.oidc_login_failed'),
         description: errorMessage || error,
       });
 
@@ -49,7 +49,7 @@ export default function OidcTokenHandler() {
       localStorage.setItem('token_type', tokenType || 'bearer');
 
       toast({
-        title: t('auth.login_success'),
+        title: t('common:auth.login_success'),
       });
 
       const url = new URL(window.location.href);
@@ -61,7 +61,7 @@ export default function OidcTokenHandler() {
 
       setTimeout(() => {
         console.log('Trigger user status refresh');
-        window.dispatchEvent(new Event('oidc-login-success'));
+        window.dispatchEvent(new Event('common:oidc-login-success'));
       }, 100);
     }
   }, [router, searchParams, t, toast]);

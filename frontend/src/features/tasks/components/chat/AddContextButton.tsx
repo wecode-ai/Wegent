@@ -19,7 +19,7 @@ interface AddContextButtonProps {
  * Matches AttachmentButton's visual style (h-9 w-9 rounded-full)
  */
 export default function AddContextButton({ onClick }: AddContextButtonProps) {
-  const { t } = useTranslation('knowledge');
+  const { t } = useTranslation();
 
   return (
     <TooltipProvider>
@@ -31,13 +31,13 @@ export default function AddContextButton({ onClick }: AddContextButtonProps) {
             size="icon"
             onClick={onClick}
             className="h-9 w-9 rounded-full border-border bg-base text-text-primary hover:bg-hover"
-            aria-label={t('tooltip')}
+            aria-label={t('knowledge:tooltip')}
           >
             <span className="text-base font-medium text-text-primary">@</span>
           </Button>
         </TooltipTrigger>
         <TooltipContent side="top">
-          <p>{t('tooltip')}</p>
+          <p>{t('knowledge:tooltip')}</p>
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>

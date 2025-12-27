@@ -1,33 +1,20 @@
 const fs = require('fs');
 const path = require('path');
 
-// 支持的语言列表
-const supportedLanguages = [
-  'ca',
-  'de',
-  'en',
-  'es',
-  'fr',
-  'hi',
-  'id',
-  'it',
-  'ja',
-  'ko',
-  'nl',
-  'pl',
-  'pt-BR',
-  'ru',
-  'tr',
-  'vi',
-  'zh-CN',
-  'zh-TW',
-];
-
-// 命名空间列表
-const namespaces = ['common', 'chat', 'settings', 'history', 'prompts'];
-
 // 基础目录
 const localesDir = path.join(__dirname, '../src/i18n/locales');
+
+// 动态获取支持的语言列表
+const supportedLanguages = fs.readdirSync(localesDir).filter(file => {
+  return fs.statSync(path.join(localesDir, file)).isDirectory();
+});
+
+// 动态获取命名空间列表 (基于英文目录)
+const enDir = path.join(localesDir, 'en');
+const namespaces = fs
+  .readdirSync(enDir)
+  .filter(file => file.endsWith('.json'))
+  .map(file => file.replace('.json', ''));
 
 // 解析命令行参数
 const args = process.argv.slice(2);
@@ -138,8 +125,9 @@ function checkLanguage(targetLang, targetNs = null) {
     // 检查多余的键
     const extraKeys = targetKeys.filter(key => !enKeys.includes(key));
     if (extraKeys.length > 0) {
-      console.log(`⚠️  Extra keys in ${targetLang}/${ns}.json:`);
+      console.log(`❌ Extra keys in ${targetLang}/${ns}.json:`);
       extraKeys.forEach(key => console.log(`   + ${key}`));
+      hasIssues = true;
     }
 
     // 检查占位符一致性

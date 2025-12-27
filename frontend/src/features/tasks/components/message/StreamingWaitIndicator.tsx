@@ -62,7 +62,7 @@ export default function StreamingWaitIndicator({
   isWaiting,
   startTime: externalStartTime,
 }: StreamingWaitIndicatorProps) {
-  const { t } = useTranslation('chat');
+  const { t } = useTranslation();
   const [internalStartTime, setInternalStartTime] = useState<number | null>(null);
   const [elapsedTime, setElapsedTime] = useState(0);
 

@@ -20,7 +20,7 @@ interface TeamIconPickerProps {
  * Shows a grid of preset icons in a popover
  */
 export function TeamIconPicker({ value, onChange, disabled = false }: TeamIconPickerProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const [open, setOpen] = React.useState(false);
 
   const selectedIcon = getTeamIconById(value || DEFAULT_TEAM_ICON_ID);
@@ -42,14 +42,16 @@ export function TeamIconPicker({ value, onChange, disabled = false }: TeamIconPi
             bg-base hover:bg-hover transition-colors
             ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
           `}
-          title={t('teams.icon')}
+          title={t('common:teams.icon')}
         >
           <SelectedIconComponent className="w-5 h-5 text-primary" />
         </button>
       </PopoverTrigger>
       <PopoverContent className="w-[300px] p-3" align="start" side="bottom" sideOffset={4}>
         <div className="space-y-2">
-          <div className="text-sm font-medium text-text-primary">{t('teams.selectIcon')}</div>
+          <div className="text-sm font-medium text-text-primary">
+            {t('common:teams.selectIcon')}
+          </div>
           <div className="grid grid-cols-7 gap-1.5">
             {TEAM_ICONS.map(iconConfig => {
               const IconComponent = iconConfig.icon;
