@@ -259,3 +259,111 @@ export function formatFileSize(bytes?: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+// ============================================================================
+// Unified Skills API (User + Public)
+// ============================================================================
+
+/**
+ * Unified skill response type
+ */
+export interface UnifiedSkill {
+  id: number;
+  name: string;
+  namespace: string;
+  description: string;
+  prompt?: string;
+  version?: string;
+  author?: string;
+  tags?: string[];
+  is_active: boolean;
+  is_public: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+/**
+ * Fetch unified skills list (user's + public)
+ */
+export async function fetchUnifiedSkillsList(params?: {
+  skip?: number;
+  limit?: number;
+  namespace?: string;
+}): Promise<UnifiedSkill[]> {
+  const token = getToken();
+  if (!token) throw new Error('No authentication token');
+
+  const queryParams = new URLSearchParams();
+  if (params?.skip !== undefined) queryParams.append('skip', params.skip.toString());
+  if (params?.limit !== undefined) queryParams.append('limit', params.limit.toString());
+  if (params?.namespace) queryParams.append('namespace', params.namespace);
+
+  const url = `${API_BASE_URL}/v1/kinds/skills/unified?${queryParams.toString()}`;
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(error || 'Failed to fetch unified skills');
+  }
+
+  return response.json();
+}
+
+/**
+ * Fetch public skills list
+ */
+export async function fetchPublicSkillsList(params?: {
+  skip?: number;
+  limit?: number;
+}): Promise<UnifiedSkill[]> {
+  const token = getToken();
+  if (!token) throw new Error('No authentication token');
+
+  const queryParams = new URLSearchParams();
+  if (params?.skip !== undefined) queryParams.append('skip', params.skip.toString());
+  if (params?.limit !== undefined) queryParams.append('limit', params.limit.toString());
+
+  const url = `${API_BASE_URL}/v1/kinds/skills/public/list?${queryParams.toString()}`;
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(error || 'Failed to fetch public skills');
+  }
+
+  return response.json();
+}
+
+/**
+ * Invoke a skill to get its prompt content
+ */
+export async function invokeSkill(skillName: string): Promise<{ prompt: string }> {
+  const token = getToken();
+  if (!token) throw new Error('No authentication token');
+
+  const url = `${API_BASE_URL}/v1/kinds/skills/invoke`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ skill_name: skillName }),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    try {
+      const json = JSON.parse(error);
+      throw new Error(json.detail || 'Failed to invoke skill');
+    } catch {
+      throw new Error(error || 'Failed to invoke skill');
+    }
+  }
+
+  return response.json();
+}

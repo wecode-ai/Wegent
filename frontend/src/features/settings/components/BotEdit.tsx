@@ -35,7 +35,7 @@ import {
 } from '@/features/settings/services/bots';
 import { modelApis, UnifiedModel, ModelTypeEnum } from '@/apis/models';
 import { shellApis, UnifiedShell } from '@/apis/shells';
-import { fetchSkillsList } from '@/apis/skills';
+import { fetchUnifiedSkillsList } from '@/apis/skills';
 import { useTranslation } from 'react-i18next';
 import { adaptMcpConfigForAgent, isValidAgentType } from '../utils/mcpTypeAdapter';
 
@@ -338,9 +338,18 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
     fetchShells();
   }, [toast, t, allowedAgents, scope, groupName]);
+  // Check if current agent supports skills (ClaudeCode or Chat)
+  const supportsSkills = useMemo(() => {
+    // Get shell type from the selected shell
+    const selectedShell = shells.find(s => s.name === agentName);
+    const shellType = selectedShell?.shellType || agentName;
+    // Skills are supported for ClaudeCode and Chat shell types
+    return shellType === 'ClaudeCode' || shellType === 'Chat';
+  }, [agentName, shells]);
+
   useEffect(() => {
-    // Only fetch skills when agent is ClaudeCode
-    if (agentName !== 'ClaudeCode') {
+    // Only fetch skills when agent supports skills (ClaudeCode or Chat)
+    if (!supportsSkills) {
       setAvailableSkills([]);
       setLoadingSkills(false);
       return;
@@ -349,8 +358,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     const fetchSkills = async () => {
       setLoadingSkills(true);
       try {
-        const skillsData = await fetchSkillsList();
-        setAvailableSkills(skillsData.map(skill => skill.metadata.name));
+        const skillsData = await fetchUnifiedSkillsList();
+        setAvailableSkills(skillsData.map(skill => skill.name));
       } catch {
         toast({
           variant: 'destructive',
@@ -361,7 +370,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       }
     };
     fetchSkills();
-  }, [agentName, toast, t]);
+  }, [supportsSkills, toast, t]);
 
   // Fetch corresponding model list when agentName changes
   useEffect(() => {
@@ -1197,8 +1206,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                 )}
               </div>
 
-              {/* Skills Selection - Only show for ClaudeCode agent */}
-              {agentName === 'ClaudeCode' && (
+              {/* Skills Selection - Show for agents that support skills (ClaudeCode, Chat) */}
+              {supportsSkills && (
                 <div className="flex flex-col">
                   <div className="flex items-center justify-between mb-1">
                     <div className="flex items-center">
@@ -1400,8 +1409,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           // Reload skills list when skills are changed
           const fetchSkills = async () => {
             try {
-              const skillsData = await fetchSkillsList();
-              setAvailableSkills(skillsData.map(skill => skill.metadata.name));
+              const skillsData = await fetchUnifiedSkillsList();
+              setAvailableSkills(skillsData.map(skill => skill.name));
             } catch {
               toast({
                 variant: 'destructive',
