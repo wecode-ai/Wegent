@@ -1,22 +1,22 @@
 const fs = require('fs');
 const path = require('path');
 
-// 基础目录
+// Base directory
 const localesDir = path.join(__dirname, '../src/i18n/locales');
 
-// 动态获取支持的语言列表
+// Dynamically get supported languages list
 const supportedLanguages = fs.readdirSync(localesDir).filter(file => {
   return fs.statSync(path.join(localesDir, file)).isDirectory();
 });
 
-// 动态获取命名空间列表 (基于英文目录)
+// Dynamically get namespace list (based on English directory)
 const enDir = path.join(localesDir, 'en');
 const namespaces = fs
   .readdirSync(enDir)
   .filter(file => file.endsWith('.json'))
   .map(file => file.replace('.json', ''));
 
-// 解析命令行参数
+// Parse command line arguments
 const args = process.argv.slice(2);
 const options = {};
 
@@ -27,7 +27,7 @@ args.forEach(arg => {
   }
 });
 
-// 递归获取对象的所有键路径
+// Recursively get all key paths of object
 function getKeys(obj, prefix = '') {
   const keys = [];
 
@@ -46,7 +46,7 @@ function getKeys(obj, prefix = '') {
   return keys;
 }
 
-// 检查占位符一致性
+// Check placeholder consistency
 function checkPlaceholders(sourceText, targetText, key, sourceLang, targetLang) {
   const placeholderRegex = /\{\{(\w+)\}\}/g;
   const sourcePlaceholders = [...sourceText.matchAll(placeholderRegex)].map(match => match[1]);
@@ -69,7 +69,7 @@ function checkPlaceholders(sourceText, targetText, key, sourceLang, targetLang) 
   return true;
 }
 
-// 加载翻译文件
+// Load translation file
 function loadTranslation(lang, ns) {
   const filePath = path.join(localesDir, lang, `${ns}.json`);
 
@@ -86,7 +86,7 @@ function loadTranslation(lang, ns) {
   }
 }
 
-// 检查单个语言的翻译
+// Check translation for a single language
 function checkLanguage(targetLang, targetNs = null) {
   const namespacesToCheck = targetNs ? [targetNs] : namespaces;
   let hasIssues = false;
@@ -114,7 +114,7 @@ function checkLanguage(targetLang, targetNs = null) {
     const enKeys = getKeys(enTranslation);
     const targetKeys = getKeys(targetTranslation);
 
-    // 检查缺失的键
+    // Check missing keys
     const missingKeys = enKeys.filter(key => !targetKeys.includes(key));
     if (missingKeys.length > 0) {
       console.log(`❌ Missing keys in ${targetLang}/${ns}.json:`);
@@ -122,7 +122,7 @@ function checkLanguage(targetLang, targetNs = null) {
       hasIssues = true;
     }
 
-    // 检查多余的键
+    // Check extra keys
     const extraKeys = targetKeys.filter(key => !enKeys.includes(key));
     if (extraKeys.length > 0) {
       console.log(`❌ Extra keys in ${targetLang}/${ns}.json:`);
@@ -130,7 +130,7 @@ function checkLanguage(targetLang, targetNs = null) {
       hasIssues = true;
     }
 
-    // 检查占位符一致性
+    // Check placeholder consistency
     const commonKeys = enKeys.filter(key => targetKeys.includes(key));
     commonKeys.forEach(key => {
       const enValue = getValueByPath(enTranslation, key);
@@ -151,12 +151,12 @@ function checkLanguage(targetLang, targetNs = null) {
   return !hasIssues;
 }
 
-// 根据路径获取对象值
+// Get object value by path
 function getValueByPath(obj, path) {
   return path.split('.').reduce((current, key) => current && current[key], obj);
 }
 
-// 主函数
+// Main function
 function main() {
   console.log('🌍 Translation Checker');
   console.log('='.repeat(50));
@@ -180,14 +180,14 @@ function main() {
   let allPassed = true;
 
   if (targetLocale) {
-    // 检查特定语言
+    // Check specific language
     const ns = targetFile ? targetFile.replace('.json', '') : null;
     const passed = checkLanguage(targetLocale, ns);
     allPassed = allPassed && passed;
   } else {
-    // 检查所有语言
+    // Check all languages
     supportedLanguages.forEach(lang => {
-      if (lang === 'en') return; // 跳过英文参考
+      if (lang === 'en') return; // Skip English reference
 
       const ns = targetFile ? targetFile.replace('.json', '') : null;
       const passed = checkLanguage(lang, ns);
@@ -204,7 +204,7 @@ function main() {
   }
 }
 
-// 显示帮助信息
+// Show help message
 if (args.includes('--help') || args.includes('-h')) {
   console.log(`
 Translation Checker Usage:
