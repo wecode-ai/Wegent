@@ -157,6 +157,189 @@ def list_skills(
     return skills
 
 
+# ============================================================================
+# Public Skill Endpoints (System-level skills, admin only)
+# NOTE: Static routes must be defined BEFORE dynamic routes like /{skill_id}
+# ============================================================================
+
+
+@router.get("/public/list", response_model=List[Dict[str, Any]])
+def list_public_skills(
+    skip: int = Query(0, ge=0, description="Number of items to skip"),
+    limit: int = Query(100, ge=1, le=100, description="Number of items to return"),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List all public (system-level) skills."""
+    return public_skill_service.get_skills(db, skip=skip, limit=limit)
+
+
+@router.post("/public", response_model=Dict[str, Any], status_code=201)
+def create_public_skill(
+    skill_in: PublicSkillCreate,
+    current_user: User = Depends(security.get_admin_user),
+    db: Session = Depends(get_db),
+):
+    """Create a public skill (admin only)."""
+    return public_skill_service.create_skill(
+        db,
+        name=skill_in.name,
+        description=skill_in.description,
+        prompt=skill_in.prompt,
+        version=skill_in.version,
+        author=skill_in.author,
+        tags=skill_in.tags,
+    )
+
+
+@router.put("/public/{skill_id}", response_model=Dict[str, Any])
+def update_public_skill(
+    skill_id: int,
+    skill_in: PublicSkillUpdate,
+    current_user: User = Depends(security.get_admin_user),
+    db: Session = Depends(get_db),
+):
+    """Update a public skill (admin only)."""
+    return public_skill_service.update_skill(
+        db,
+        skill_id=skill_id,
+        description=skill_in.description,
+        prompt=skill_in.prompt,
+        version=skill_in.version,
+        author=skill_in.author,
+        tags=skill_in.tags,
+    )
+
+
+@router.delete("/public/{skill_id}", status_code=204)
+def delete_public_skill(
+    skill_id: int,
+    current_user: User = Depends(security.get_admin_user),
+    db: Session = Depends(get_db),
+):
+    """Delete a public skill (admin only)."""
+    public_skill_service.delete_skill(db, skill_id=skill_id)
+    return None
+
+
+# ============================================================================
+# Unified Skill Endpoints (User + Public)
+# NOTE: Static routes must be defined BEFORE dynamic routes like /{skill_id}
+# ============================================================================
+
+
+@router.get("/unified", response_model=List[UnifiedSkillResponse])
+def list_unified_skills(
+    skip: int = Query(0, ge=0, description="Number of items to skip"),
+    limit: int = Query(100, ge=1, le=100, description="Number of items to return"),
+    namespace: str = Query("default", description="Namespace filter"),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    List all skills (user's + public).
+
+    Returns combined list with user's skills first, then public skills.
+    User's skills with same name take precedence over public skills.
+    """
+    # Get user's skills
+    user_skills_list = skill_kinds_service.list_skills(
+        db=db, user_id=current_user.id, skip=0, limit=1000, namespace=namespace
+    )
+
+    # Convert to unified format
+    user_skills = []
+    user_skill_names = set()
+    for skill in user_skills_list.items:
+        user_skill_names.add(skill.metadata.name)
+        user_skills.append(
+            {
+                "id": int(skill.metadata.labels.get("id", 0)),
+                "name": skill.metadata.name,
+                "namespace": skill.metadata.namespace,
+                "description": skill.spec.description,
+                "prompt": skill.spec.prompt,
+                "version": skill.spec.version,
+                "author": skill.spec.author,
+                "tags": skill.spec.tags,
+                "is_active": True,
+                "is_public": False,
+                "created_at": None,
+                "updated_at": None,
+            }
+        )
+
+    # Get public skills
+    public_skills = public_skill_service.get_skills(db, skip=0, limit=1000)
+
+    # Merge: public skills that don't exist in user's skills
+    for skill in public_skills:
+        if skill["name"] not in user_skill_names:
+            user_skills.append(skill)
+
+    # Apply pagination
+    return user_skills[skip : skip + limit]
+
+
+# ============================================================================
+# Invoke Skill Endpoint
+# NOTE: Static routes must be defined BEFORE dynamic routes like /{skill_id}
+# ============================================================================
+
+
+@router.post("/invoke", response_model=InvokeSkillResponse)
+def invoke_skill(
+    request: InvokeSkillRequest,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get skill prompt content for runtime expansion.
+
+    Searches user's skills first, then public skills.
+    """
+    # Search user's skill first
+    skill = (
+        db.query(Kind)
+        .filter(
+            Kind.user_id == current_user.id,
+            Kind.kind == "Skill",
+            Kind.name == request.skill_name,
+            Kind.is_active == True,  # noqa: E712
+        )
+        .first()
+    )
+
+    # Then search public skill
+    if not skill:
+        skill = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == 0,
+                Kind.kind == "Skill",
+                Kind.name == request.skill_name,
+                Kind.is_active == True,  # noqa: E712
+            )
+            .first()
+        )
+
+    if not skill:
+        raise HTTPException(404, f"Skill '{request.skill_name}' not found")
+
+    skill_crd = Skill.model_validate(skill.json)
+    if not skill_crd.spec.prompt:
+        raise HTTPException(400, f"Skill '{request.skill_name}' has no prompt content")
+
+    return InvokeSkillResponse(prompt=skill_crd.spec.prompt)
+
+
+# ============================================================================
+# Dynamic Skill Endpoints (with path parameter)
+# NOTE: These routes MUST be defined AFTER all static routes to avoid
+# path parameter matching static route names like "unified", "public", "invoke"
+# ============================================================================
+
+
 @router.get("/{skill_id}", response_model=Skill)
 def get_skill(
     skill_id: int,
@@ -259,176 +442,3 @@ def delete_skill(
     """
     skill_kinds_service.delete_skill(db=db, skill_id=skill_id, user_id=current_user.id)
     return None
-
-
-# ============================================================================
-# Public Skill Endpoints (System-level skills, admin only)
-# ============================================================================
-
-
-@router.get("/public/list", response_model=List[Dict[str, Any]])
-def list_public_skills(
-    skip: int = Query(0, ge=0, description="Number of items to skip"),
-    limit: int = Query(100, ge=1, le=100, description="Number of items to return"),
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
-):
-    """List all public (system-level) skills."""
-    return public_skill_service.get_skills(db, skip=skip, limit=limit)
-
-
-@router.post("/public", response_model=Dict[str, Any], status_code=201)
-def create_public_skill(
-    skill_in: PublicSkillCreate,
-    current_user: User = Depends(security.get_admin_user),
-    db: Session = Depends(get_db),
-):
-    """Create a public skill (admin only)."""
-    return public_skill_service.create_skill(
-        db,
-        name=skill_in.name,
-        description=skill_in.description,
-        prompt=skill_in.prompt,
-        version=skill_in.version,
-        author=skill_in.author,
-        tags=skill_in.tags,
-    )
-
-
-@router.put("/public/{skill_id}", response_model=Dict[str, Any])
-def update_public_skill(
-    skill_id: int,
-    skill_in: PublicSkillUpdate,
-    current_user: User = Depends(security.get_admin_user),
-    db: Session = Depends(get_db),
-):
-    """Update a public skill (admin only)."""
-    return public_skill_service.update_skill(
-        db,
-        skill_id=skill_id,
-        description=skill_in.description,
-        prompt=skill_in.prompt,
-        version=skill_in.version,
-        author=skill_in.author,
-        tags=skill_in.tags,
-    )
-
-
-@router.delete("/public/{skill_id}", status_code=204)
-def delete_public_skill(
-    skill_id: int,
-    current_user: User = Depends(security.get_admin_user),
-    db: Session = Depends(get_db),
-):
-    """Delete a public skill (admin only)."""
-    public_skill_service.delete_skill(db, skill_id=skill_id)
-    return None
-
-
-# ============================================================================
-# Unified Skill Endpoints (User + Public)
-# ============================================================================
-
-
-@router.get("/unified", response_model=List[UnifiedSkillResponse])
-def list_unified_skills(
-    skip: int = Query(0, ge=0, description="Number of items to skip"),
-    limit: int = Query(100, ge=1, le=100, description="Number of items to return"),
-    namespace: str = Query("default", description="Namespace filter"),
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
-):
-    """
-    List all skills (user's + public).
-
-    Returns combined list with user's skills first, then public skills.
-    User's skills with same name take precedence over public skills.
-    """
-    # Get user's skills
-    user_skills_list = skill_kinds_service.list_skills(
-        db=db, user_id=current_user.id, skip=0, limit=1000, namespace=namespace
-    )
-
-    # Convert to unified format
-    user_skills = []
-    user_skill_names = set()
-    for skill in user_skills_list.items:
-        user_skill_names.add(skill.metadata.name)
-        user_skills.append(
-            {
-                "id": int(skill.metadata.labels.get("id", 0)),
-                "name": skill.metadata.name,
-                "namespace": skill.metadata.namespace,
-                "description": skill.spec.description,
-                "prompt": skill.spec.prompt,
-                "version": skill.spec.version,
-                "author": skill.spec.author,
-                "tags": skill.spec.tags,
-                "is_active": True,
-                "is_public": False,
-                "created_at": None,
-                "updated_at": None,
-            }
-        )
-
-    # Get public skills
-    public_skills = public_skill_service.get_skills(db, skip=0, limit=1000)
-
-    # Merge: public skills that don't exist in user's skills
-    for skill in public_skills:
-        if skill["name"] not in user_skill_names:
-            user_skills.append(skill)
-
-    # Apply pagination
-    return user_skills[skip : skip + limit]
-
-
-# ============================================================================
-# Invoke Skill Endpoint
-# ============================================================================
-
-
-@router.post("/invoke", response_model=InvokeSkillResponse)
-def invoke_skill(
-    request: InvokeSkillRequest,
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
-):
-    """
-    Get skill prompt content for runtime expansion.
-
-    Searches user's skills first, then public skills.
-    """
-    # Search user's skill first
-    skill = (
-        db.query(Kind)
-        .filter(
-            Kind.user_id == current_user.id,
-            Kind.kind == "Skill",
-            Kind.name == request.skill_name,
-            Kind.is_active == True,  # noqa: E712
-        )
-        .first()
-    )
-
-    # Then search public skill
-    if not skill:
-        skill = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == 0,
-                Kind.kind == "Skill",
-                Kind.name == request.skill_name,
-                Kind.is_active == True,  # noqa: E712
-            )
-            .first()
-        )
-
-    if not skill:
-        raise HTTPException(404, f"Skill '{request.skill_name}' not found")
-
-    skill_crd = Skill.model_validate(skill.json)
-    if not skill_crd.spec.prompt:
-        raise HTTPException(400, f"Skill '{request.skill_name}' has no prompt content")
-
-    return InvokeSkillResponse(prompt=skill_crd.spec.prompt)

@@ -19,8 +19,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Download, Trash2, Sparkles, Globe } from 'lucide-react';
+import { Download, Trash2, Sparkles, Globe, Plus } from 'lucide-react';
 import { toast } from 'sonner';
+import SkillUploadModal from './skills/SkillUploadModal';
 
 interface SkillListWithScopeProps {
   scope: 'personal' | 'group' | 'all';
@@ -36,6 +37,7 @@ export function SkillListWithScope({ scope }: SkillListWithScopeProps) {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [skillToDelete, setSkillToDelete] = useState<UnifiedSkill | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [uploadModalOpen, setUploadModalOpen] = useState(false);
 
   const loadSkills = useCallback(async () => {
     try {
@@ -114,6 +116,13 @@ export function SkillListWithScope({ scope }: SkillListWithScopeProps) {
     );
   }
 
+  const handleUploadModalClose = (saved: boolean) => {
+    setUploadModalOpen(false);
+    if (saved) {
+      loadSkills();
+    }
+  };
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -122,6 +131,10 @@ export function SkillListWithScope({ scope }: SkillListWithScopeProps) {
           <h2 className="text-lg font-semibold text-text-primary">{t('skills.title')}</h2>
           <p className="text-sm text-text-secondary">{t('skills.description')}</p>
         </div>
+        <Button onClick={() => setUploadModalOpen(true)} size="sm">
+          <Plus className="w-4 h-4 mr-1" />
+          {t('skills.upload_skill')}
+        </Button>
       </div>
 
       {/* Skills list */}
@@ -130,6 +143,10 @@ export function SkillListWithScope({ scope }: SkillListWithScopeProps) {
           <Sparkles className="w-12 h-12 mx-auto mb-4 opacity-50" />
           <p>{t('skills.no_skills')}</p>
           <p className="text-sm mt-2">{t('skills.no_skills_hint')}</p>
+          <Button onClick={() => setUploadModalOpen(true)} className="mt-4">
+            <Plus className="w-4 h-4 mr-1" />
+            {t('skills.upload_first_skill')}
+          </Button>
         </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -149,9 +166,7 @@ export function SkillListWithScope({ scope }: SkillListWithScopeProps) {
                     </Badge>
                   )}
                 </div>
-                {skill.version && (
-                  <span className="text-xs text-text-muted">v{skill.version}</span>
-                )}
+                {skill.version && <span className="text-xs text-text-muted">v{skill.version}</span>}
               </div>
 
               {/* Description */}
@@ -230,6 +245,9 @@ export function SkillListWithScope({ scope }: SkillListWithScopeProps) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Upload Modal */}
+      <SkillUploadModal open={uploadModalOpen} onClose={handleUploadModalClose} />
     </div>
   );
 }

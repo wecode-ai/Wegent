@@ -233,86 +233,18 @@ def append_deep_thinking_prompt(system_prompt: str, enable_deep_thinking: bool) 
     return system_prompt
 
 
-# Mermaid Diagram Prompt - Always appended to system prompt
-MERMAID_DIAGRAM_PROMPT = """
-
-## Diagram Visualization Capability
-
-When you need to visualize concepts, workflows, architectures, or relationships, you can use Mermaid diagram syntax. Wrap your diagram code in a ```mermaid code block. Result will be rendered as an interactive diagram.
-
-You could search detailed information about the diagram type and its syntax to avoid errors and ensure correct rendering.
-
-Supported diagram types include:
-- **flowchart**: Process flows, decision trees, workflows
-- **sequenceDiagram**: Interaction sequences between components/actors
-- **classDiagram**: Class structures and relationships
-- **stateDiagram-v2**: State machines and transitions
-- **journey**: User journeys and user flows
-- **erDiagram**: Entity-relationship diagrams
-- **quadrantChart**: Strategic planning and decision-making
-- **C4Context**: Context maps for system architecture
-- **xychart**: Data visualization
-- **block**: block diagrams
-- **packet**: packet diagrams
-- **kanban**: Kanban boards 
-- **architecture-beta**: Architecture diagrams
-- **radar-beta**: Radar charts
-- **treemap-beta**: Treemaps for data visualization
-- **gantt**: Project timelines and schedules
-- **pie**: Proportional data distribution
-- **mindmap**: Hierarchical idea organization
-- **timeline**: Chronological events
-- **gitGraph**: Git branch visualizations
-
-Example usage:
-```mermaid
-flowchart TD
-    A[Start] --> B{Decision}
-    B -->|Yes| C[Action 1]
-    B -->|No| D[Action 2]
-    C --> E[End]
-    D --> E
-```
-
-Use diagrams proactively when they would help clarify complex concepts or relationships.
-"""
-
-
-def get_mermaid_prompt() -> str:
-    """
-    Get the Mermaid diagram capability prompt.
-
-    Returns:
-        The Mermaid prompt string to append to system prompt.
-    """
-    return MERMAID_DIAGRAM_PROMPT
-
-
-def append_mermaid_prompt(system_prompt: str) -> str:
-    """
-    Append Mermaid diagram prompt to system prompt.
-
-    This is always appended to enable diagram generation capability.
-
-    Args:
-        system_prompt: The original system prompt.
-
-    Returns:
-        The system prompt with Mermaid diagram instructions appended.
-    """
-    return system_prompt + MERMAID_DIAGRAM_PROMPT
-
-
 # Skill Metadata Prompt Template
 SKILL_METADATA_PROMPT = """
 
 ## Available Skills
 
-The following skills provide specialized guidance for specific tasks. When your task matches a skill's description, use the `invoke_skill` tool to load the full instructions.
+The following skills provide specialized guidance for specific tasks. When your task matches a skill's description, use the `load_skill` tool to load the full instructions.
 
 {skill_list}
 
-**Usage**: Call `invoke_skill(skill_name="<skill-name>")` to load detailed instructions before performing the related task.
+### How to Use Skills
+
+**Load the skill**: Call `load_skill(skill_name="<skill-name>")` to load detailed instructions
 """
 
 
@@ -330,9 +262,7 @@ def append_skill_metadata_prompt(system_prompt: str, skills: list[dict]) -> str:
     if not skills:
         return system_prompt
 
-    skill_list = "\n".join(
-        [f"- **{s['name']}**: {s['description']}" for s in skills]
-    )
+    skill_list = "\n".join([f"- **{s['name']}**: {s['description']}" for s in skills])
 
     skill_section = SKILL_METADATA_PROMPT.format(skill_list=skill_list)
     return system_prompt + skill_section

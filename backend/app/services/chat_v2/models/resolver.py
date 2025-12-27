@@ -594,7 +594,6 @@ def get_bot_system_prompt(
         Combined system prompt string with Mermaid capability
     """
     from app.schemas.kind import Ghost
-    from app.services.chat_v2.utils.prompts import append_mermaid_prompt
 
     bot_crd = Bot.model_validate(bot.json)
     system_prompt = ""
@@ -622,8 +621,5 @@ def get_bot_system_prompt(
             system_prompt = f"{system_prompt}\n\n{team_member_prompt}"
         else:
             system_prompt = team_member_prompt
-
-    # Append Mermaid diagram capability to all system prompts
-    system_prompt = append_mermaid_prompt(system_prompt)
 
     return system_prompt

@@ -392,6 +392,15 @@ async def _stream_chat_response(
             base_system_prompt=chat_config.system_prompt,
         )
 
+        # Prepare load_skill tool if skills are configured
+        load_skill_tool = _prepare_load_skill_tool(
+            skill_names=chat_config.skill_names,
+            user_id=stream_data.user_id,
+            db=db,
+        )
+        if load_skill_tool:
+            extra_tools.append(load_skill_tool)
+
         # Create WebSocket stream config
         ws_config = WebSocketStreamConfig(
             task_id=stream_data.task_id,
@@ -601,3 +610,49 @@ The user expects answers based on the selected knowledge base content only."""
     )
 
     return extra_tools, enhanced_system_prompt
+
+
+def _prepare_load_skill_tool(
+    skill_names: list[str],
+    user_id: int,
+    db: Any,
+) -> Optional[Any]:
+    """
+    Prepare LoadSkillTool if skills are configured.
+
+    This function creates a LoadSkillTool instance that allows the model
+    to dynamically load skill prompts on demand.
+
+    Args:
+        skill_names: List of skill names available for this session
+        user_id: User ID for skill lookup
+        db: Database session
+
+    Returns:
+        LoadSkillTool instance or None if no skills configured
+    """
+    if not skill_names:
+        return None
+
+    logger.info(
+        "[ai_trigger] Creating LoadSkillTool for %d skills: %s",
+        len(skill_names),
+        skill_names,
+    )
+
+    # Import LoadSkillTool
+    from app.services.chat_v2.tools.builtin import LoadSkillTool
+
+    # Create LoadSkillTool with the available skills
+    load_skill_tool = LoadSkillTool(
+        db=db,
+        user_id=user_id,
+        skill_names=skill_names,
+    )
+
+    logger.info(
+        "[ai_trigger] ✅ Created LoadSkillTool with skills: %s",
+        skill_names,
+    )
+
+    return load_skill_tool

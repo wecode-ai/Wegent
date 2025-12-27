@@ -49,6 +49,9 @@ class ChatConfig:
     task_id: int = 0
     team_id: int = 0
 
+    # Skill names for load_skill tool
+    skill_names: list[str] = field(default_factory=list)
+
 
 class ChatConfigBuilder:
     """Builder for chat configuration.
@@ -125,12 +128,17 @@ class ChatConfigBuilder:
             task_id,
         )
 
-        # Get system prompt
+        # Get skills for the bot (needed for both system prompt and load_skill tool)
+        skills = self._get_bot_skills(bot)
+        skill_names = [s["name"] for s in skills]
+
+        # Get system prompt (pass skills to avoid duplicate query)
         system_prompt = self._get_system_prompt(
             bot,
             team_member_prompt,
             enable_clarification,
             enable_deep_thinking,
+            skills=skills,
         )
 
         # Get agent config
@@ -156,6 +164,7 @@ class ChatConfigBuilder:
             user_name=self.user_name,
             task_id=task_id,
             team_id=self.team.id,
+            skill_names=skill_names,
         )
 
     def _get_first_bot(self) -> Kind | None:
@@ -250,6 +259,7 @@ class ChatConfigBuilder:
         team_member_prompt: str | None,
         enable_clarification: bool,
         enable_deep_thinking: bool,
+        skills: list[dict] | None = None,
     ) -> str:
         """Get system prompt for the bot.
 
@@ -258,6 +268,7 @@ class ChatConfigBuilder:
             team_member_prompt: Optional additional prompt from team member
             enable_clarification: Whether to enable clarification mode
             enable_deep_thinking: Whether to enable deep thinking mode with search guidance
+            skills: Pre-fetched skills list to avoid duplicate query (optional)
 
         Returns:
             Combined system prompt
@@ -278,13 +289,6 @@ class ChatConfigBuilder:
             team_member_prompt,
         )
 
-        # Append current date/time information
-        now = datetime.now()
-        current_time_info = (
-            f"\n\nCurrent date and time: {now.strftime('%Y-%m-%d %H:%M:%S')}\n"
-        )
-        system_prompt += current_time_info
-
         # Append clarification mode instructions if enabled
         if enable_clarification:
             from app.services.chat_v2.utils.prompts import (
@@ -302,13 +306,21 @@ class ChatConfigBuilder:
             system_prompt = append_deep_thinking_prompt(system_prompt, True)
 
         # Inject skill metadata if bot has skills configured
-        skills = self._get_bot_skills(bot)
+        # Use pre-fetched skills if provided, otherwise query
+        if skills is None:
+            skills = self._get_bot_skills(bot)
         if skills:
             from app.services.chat_v2.utils.prompts import (
                 append_skill_metadata_prompt,
             )
 
             system_prompt = append_skill_metadata_prompt(system_prompt, skills)
+        # Append current date/time information
+        now = datetime.now()
+        current_time_info = (
+            f"\n\nCurrent date and time: {now.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        )
+        system_prompt += current_time_info
 
         # CRITICAL: Log the final system prompt being sent to the LLM
         logger.info(

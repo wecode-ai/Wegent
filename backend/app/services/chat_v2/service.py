@@ -173,6 +173,7 @@ class ChatService:
         max_iterations: int = settings.CHAT_TOOL_MAX_REQUESTS,
         extra_tools: list[BaseTool] | None = None,
         streaming: bool = True,
+        load_skill_tool: Any | None = None,
         **model_kwargs,
     ) -> LangGraphAgentBuilder:
         """Create a LangGraph agent with the given model config.
@@ -182,6 +183,7 @@ class ChatService:
             max_iterations: Max tool loop iterations
             extra_tools: Additional tools to include (e.g., MCP tools)
             streaming: Enable streaming mode for the model (default: True)
+            load_skill_tool: Optional LoadSkillTool for dynamic skill prompt injection
             **model_kwargs: Additional model parameters
 
         Returns:
@@ -204,12 +206,13 @@ class ChatService:
             for tool in extra_tools:
                 tool_registry.register(tool)
 
-        # Create agent builder
+        # Create agent builder with load_skill_tool for dynamic skill prompt injection
         return LangGraphAgentBuilder(
             llm=llm,
             tool_registry=tool_registry,
             max_iterations=max_iterations,
             enable_checkpointing=self.enable_checkpointing,
+            load_skill_tool=load_skill_tool,
         )
 
     def _process_tool_output(
@@ -733,9 +736,22 @@ class ChatService:
             # Log messages sent to model for debugging
             self._log_messages_for_debug(task_id, subtask_id, messages)
 
-            # Create agent with extra tools
+            # Find LoadSkillTool from extra_tools for dynamic skill prompt injection
+            load_skill_tool = None
+            for tool in extra_tools:
+                if tool.name == "load_skill":
+                    load_skill_tool = tool
+                    logger.info(
+                        "[WS_STREAM] Found LoadSkillTool for dynamic skill prompt injection"
+                    )
+                    break
+
+            # Create agent with extra tools and load_skill_tool for dynamic skill prompt injection
             agent = self._create_agent(
-                model_config, max_iterations, extra_tools=extra_tools
+                model_config,
+                max_iterations,
+                extra_tools=extra_tools,
+                load_skill_tool=load_skill_tool,
             )
 
             logger.info(

@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Invoke skill tool for on-demand skill prompt expansion.
+"""Load skill tool for on-demand skill prompt expansion.
 
 This tool implements session-level skill expansion caching:
 - Within a single user-AI conversation turn, a skill only needs to be expanded once
@@ -22,14 +22,14 @@ from app.models.kind import Kind
 from app.schemas.kind import Skill
 
 
-class InvokeSkillInput(BaseModel):
-    """Input schema for invoke_skill tool."""
+class LoadSkillInput(BaseModel):
+    """Input schema for load_skill tool."""
 
-    skill_name: str = Field(description="The name of the skill to invoke")
+    skill_name: str = Field(description="The name of the skill to load")
 
 
-class InvokeSkillTool(BaseTool):
-    """Tool to invoke a skill and get its full prompt content.
+class LoadSkillTool(BaseTool):
+    """Tool to load a skill and get its full prompt content.
 
     This tool enables on-demand skill expansion - instead of including
     all skill prompts in the system prompt, skills are loaded only
@@ -42,7 +42,7 @@ class InvokeSkillTool(BaseTool):
     - Cache is automatically fresh for each new tool instance (new conversation turn)
     """
 
-    name: str = "invoke_skill"
+    name: str = "load_skill"
     description: str = (
         "Load a skill's full instructions when you need specialized guidance. "
         "Call this tool when your task matches one of the available skills' descriptions. "
@@ -50,7 +50,7 @@ class InvokeSkillTool(BaseTool):
         "Note: Within the same response, if you've already loaded a skill, calling it again "
         "will confirm it's still active without repeating the full instructions."
     )
-    args_schema: type[BaseModel] = InvokeSkillInput
+    args_schema: type[BaseModel] = LoadSkillInput
 
     # Configuration - these are set when creating the tool instance
     db: Session
@@ -60,6 +60,9 @@ class InvokeSkillTool(BaseTool):
     # Private instance attribute for session-level cache (not shared between instances)
     # This tracks which skills have been expanded in the current conversation turn
     _expanded_skills: Set[str] = PrivateAttr(default_factory=set)
+    
+    # Store the actual skill prompts that have been loaded (for system prompt injection)
+    _loaded_skill_prompts: dict[str, str] = PrivateAttr(default_factory=dict)
 
     class Config:
         arbitrary_types_allowed = True
@@ -68,16 +71,19 @@ class InvokeSkillTool(BaseTool):
         """Initialize with a fresh expanded_skills cache."""
         super().__init__(**data)
         self._expanded_skills = set()
+        self._loaded_skill_prompts = {}
 
     def _run(
         self,
         skill_name: str,
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
-        """Invoke skill and return prompt content.
+        """Load skill and return prompt content.
 
         If the skill has already been expanded in this conversation turn,
         returns a short confirmation instead of the full prompt to save tokens.
+        
+        The skill prompt is stored in _loaded_skill_prompts for system prompt injection.
         """
         if skill_name not in self.skill_names:
             return (
@@ -89,7 +95,7 @@ class InvokeSkillTool(BaseTool):
         if skill_name in self._expanded_skills:
             return (
                 f"Skill '{skill_name}' is already active in this conversation turn. "
-                f"Continue using the instructions you received earlier."
+                f"The skill instructions have been added to the system prompt."
             )
 
         # Find skill (user's first, then public)
@@ -101,10 +107,14 @@ class InvokeSkillTool(BaseTool):
         if not skill_crd.spec.prompt:
             return f"Error: Skill '{skill_name}' has no prompt content."
 
-        # Mark skill as expanded for this turn
+        prompt = skill_crd.spec.prompt
+        
+        # Mark skill as expanded for this turn and store the prompt
         self._expanded_skills.add(skill_name)
+        self._loaded_skill_prompts[skill_name] = prompt
 
-        return skill_crd.spec.prompt
+        # Return a confirmation message (the actual prompt will be injected into system prompt)
+        return f"Skill '{skill_name}' has been loaded. The instructions have been added to the system prompt. Please follow them strictly."
 
     def _find_skill(self, skill_name: str) -> Kind | None:
         """Find skill by name (user's first, then public)."""
@@ -136,12 +146,13 @@ class InvokeSkillTool(BaseTool):
         )
 
     def clear_expanded_skills(self) -> None:
-        """Clear the expanded skills cache.
+        """Clear the expanded skills cache and loaded prompts.
 
         Call this method when starting a new conversation turn
         (after the AI has finished responding to the user).
         """
         self._expanded_skills.clear()
+        self._loaded_skill_prompts.clear()
 
     def get_expanded_skills(self) -> set[str]:
         """Get the set of skills that have been expanded in this turn.
@@ -150,6 +161,29 @@ class InvokeSkillTool(BaseTool):
             Set of skill names that have been expanded
         """
         return self._expanded_skills.copy()
+
+    def get_loaded_skill_prompts(self) -> dict[str, str]:
+        """Get all loaded skill prompts for system prompt injection.
+        
+        Returns:
+            Dictionary mapping skill names to their prompts
+        """
+        return self._loaded_skill_prompts.copy()
+
+    def get_combined_skill_prompt(self) -> str:
+        """Get combined skill prompts for system prompt injection.
+        
+        Returns:
+            Combined string of all loaded skill prompts, or empty string if none loaded
+        """
+        if not self._loaded_skill_prompts:
+            return ""
+        
+        parts = []
+        for skill_name, prompt in self._loaded_skill_prompts.items():
+            parts.append(f"\n\n## Skill: {skill_name}\n\n{prompt}")
+        
+        return "\n\n# Loaded Skill Instructions\n\nThe following skills have been loaded. " + "".join(parts)
 
     async def _arun(
         self,
