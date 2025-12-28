@@ -101,6 +101,69 @@ Suggestions:
 Please fix the error and try again.
 ```
 
+---
+
+## ⚠️ CRITICAL: Automatic Retry and Error Handling
+
+### Automatic Correction System
+
+The `render_mermaid` tool includes an **automatic correction system** that:
+1. Detects syntax errors in your Mermaid code
+2. Automatically attempts to fix common issues using AI
+3. Retries rendering up to **3 times**
+
+This means most syntax errors will be automatically corrected without your intervention. However, if all automatic retries fail, you will receive a special response.
+
+### When All Retries Fail
+
+If you receive a response containing `"final_instruction"`, this means:
+- All automatic correction attempts have **FAILED**
+- The syntax error is too complex for automatic fixing
+- The system has exhausted all retry attempts
+
+### ⛔ MANDATORY ACTIONS When Retries Fail
+
+**YOU MUST follow these rules when receiving a `final_instruction` response:**
+
+1. **NEVER** output any mermaid code block
+2. **NEVER** try to render the diagram again
+3. **MUST** explain to the user that the diagram could not be rendered
+4. **MUST** show the error details so the user can help fix it
+5. **MUST** provide actionable suggestions for the user
+
+### Example Response When All Retries Fail
+
+When you receive a response with `final_instruction`, respond to the user like this:
+
+```
+I apologize, but I was unable to render the Mermaid diagram after multiple attempts.
+The automatic correction system tried to fix the syntax errors but was unsuccessful.
+
+**Error Details:**
+- Error: [error message from response]
+- Line: [line number if available]
+
+**Original Code:**
+[show the original code for reference]
+
+**What you can do:**
+1. Check the Mermaid syntax documentation at https://mermaid.js.org/
+2. Simplify the diagram structure
+3. Provide a corrected version of the code
+4. Try a different diagram type that might better suit your needs
+
+Would you like me to help you troubleshoot the specific syntax issue?
+```
+
+### Why This Matters
+
+- The automatic retry system is designed to handle most common errors
+- If it fails after 3 attempts, the error is likely fundamental
+- Outputting broken mermaid code will result in rendering errors for the user
+- Following the `final_instruction` ensures a good user experience
+
+---
+
 ### Complete Workflow Summary
 
 1. **Generate** the mermaid code based on user requirements
