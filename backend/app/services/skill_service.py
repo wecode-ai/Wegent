@@ -117,6 +117,9 @@ class SkillValidator:
                     "version": metadata.get("version"),
                     "author": metadata.get("author"),
                     "tags": metadata.get("tags"),
+                    "bindShells": metadata.get(
+                        "bindShells"
+                    ),  # Shell types this skill is compatible with
                     "tools": metadata.get(
                         "tools"
                     ),  # Tool declarations for skill-tool binding

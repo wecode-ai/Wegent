@@ -242,11 +242,16 @@ class ChatService:
 
         try:
             # Parse output to dict if it's a JSON string
-            output_data = (
-                json.loads(serializable_output)
-                if isinstance(serializable_output, str)
-                else serializable_output
-            )
+            # Only attempt JSON parsing if the string looks like JSON (starts with { or [)
+            output_data = serializable_output
+            if isinstance(serializable_output, str):
+                stripped = serializable_output.strip()
+                if stripped.startswith("{") or stripped.startswith("["):
+                    try:
+                        output_data = json.loads(serializable_output)
+                    except json.JSONDecodeError:
+                        # Not valid JSON, keep as string
+                        pass
 
             if not isinstance(output_data, dict):
                 return title

@@ -81,6 +81,7 @@ class SkillKindsService:
                 "version": metadata.get("version"),
                 "author": metadata.get("author"),
                 "tags": metadata.get("tags"),
+                "bindShells": metadata.get("bindShells"),
                 "tools": metadata.get("tools"),
                 "provider": metadata.get("provider"),
             },
@@ -236,6 +237,7 @@ class SkillKindsService:
                 "version": metadata.get("version"),
                 "author": metadata.get("author"),
                 "tags": metadata.get("tags"),
+                "bindShells": metadata.get("bindShells"),
                 "tools": metadata.get("tools"),
                 "provider": metadata.get("provider"),
             }

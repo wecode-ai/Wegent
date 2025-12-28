@@ -69,6 +69,7 @@ class UnifiedSkillResponse(BaseModel):
     version: Optional[str] = None
     author: Optional[str] = None
     tags: Optional[List[str]] = None
+    bindShells: Optional[List[str]] = None  # Shell types this skill is compatible with
     is_active: bool
     is_public: bool
     created_at: Any
@@ -262,6 +263,7 @@ def list_unified_skills(
                 "version": skill.spec.version,
                 "author": skill.spec.author,
                 "tags": skill.spec.tags,
+                "bindShells": skill.spec.bindShells,
                 "is_active": True,
                 "is_public": False,
                 "created_at": None,

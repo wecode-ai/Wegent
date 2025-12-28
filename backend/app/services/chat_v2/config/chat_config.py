@@ -278,8 +278,6 @@ class ChatConfigBuilder:
         Returns:
             Combined system prompt
         """
-        from datetime import datetime
-
         from app.services.chat_v2.models.resolver import get_bot_system_prompt
 
         # Get team member prompt from first member if not provided
@@ -320,12 +318,9 @@ class ChatConfigBuilder:
             )
 
             system_prompt = append_skill_metadata_prompt(system_prompt, skills)
-        # Append current date/time information
-        now = datetime.now()
-        current_time_info = (
-            f"\n\nCurrent date and time: {now.strftime('%Y-%m-%d %H:%M:%S')}\n"
-        )
-        system_prompt += current_time_info
+
+        # NOTE: Current date/time is now injected into user messages (not system prompt)
+        # to enable prompt caching. See MessageConverter.build_messages() for details.
 
         # # CRITICAL: Log the final system prompt being sent to the LLM
         # logger.info(

@@ -4,6 +4,7 @@ displayName: "绘制图表"
 version: "2.0.0"
 author: "Wegent Team"
 tags: ["diagram", "visualization", "mermaid"]
+bindShells: ["Chat"]
 provider:
   module: provider
   class: MermaidToolProvider

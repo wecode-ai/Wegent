@@ -473,6 +473,13 @@ class SkillSpec(BaseModel):
     version: Optional[str] = None  # Skill version
     author: Optional[str] = None  # Author
     tags: Optional[List[str]] = None  # Tags
+    bindShells: Optional[List[str]] = Field(
+        None,
+        description="List of shell types this skill is compatible with. "
+        "Valid values: 'ClaudeCode', 'Agno', 'Dify', 'Chat'. "
+        "REQUIRED: Skills must explicitly specify bindShells to be available. "
+        "If not specified or empty, the skill will NOT be available for any shell type.",
+    )
     tools: Optional[List[SkillToolDeclaration]] = Field(
         None,
         description="Tool declarations for skill-tool binding. "
@@ -481,7 +488,7 @@ class SkillSpec(BaseModel):
     provider: Optional[SkillProviderConfig] = Field(
         None,
         description="Provider configuration for dynamic loading. "
-        "If specified, the provider will be loaded from the skill ZIP package.",
+        "If specified, the provider will be loaded from the skill .",
     )
 
 

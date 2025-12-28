@@ -33,6 +33,7 @@ class PublicSkillAdapter:
             "version": spec.get("version"),
             "author": spec.get("author"),
             "tags": spec.get("tags"),
+            "bindShells": spec.get("bindShells"),
             "is_active": kind.is_active,
             "is_public": True,
             "created_at": kind.created_at,
