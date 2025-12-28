@@ -18,8 +18,6 @@ import {
   getFileTypeLabel,
   formatFileSize,
   getImageFormat,
-  isCodeBlockDelimiter,
-  extractCodeLanguage,
   sanitizeContent,
 } from '../utils';
 import {
@@ -29,6 +27,136 @@ import {
   renderCodeBlock,
   renderTable,
 } from './base';
+import { renderMermaidDiagram, isMermaidLanguage } from './mermaid';
+/**
+ * Content part type for parsed message content
+ */
+interface ContentPart {
+  type: 'text' | 'code';
+  content: string;
+  language?: string;
+}
+
+/**
+ * Parse message content into text and code block parts using regex
+ * This handles cases where code block markers are on the same line as text
+ *
+ * @param content - Raw message content
+ * @returns Array of content parts (text and code blocks)
+ */
+function parseMessageContent(content: string): ContentPart[] {
+  const parts: ContentPart[] = [];
+
+  // Regex to match code blocks: ```language\ncontent``` or ```language content```
+  // The language is optional, and the content can span multiple lines
+  // This regex handles cases where ``` is not at the start of a line
+  const codeBlockRegex = /```(\w*)\n?([\s\S]*?)```/g;
+
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = codeBlockRegex.exec(content)) !== null) {
+    // Add text before this code block
+    if (match.index > lastIndex) {
+      const textBefore = content.substring(lastIndex, match.index);
+      if (textBefore.trim()) {
+        parts.push({
+          type: 'text',
+          content: textBefore,
+        });
+      }
+    }
+
+    // Add the code block
+    const language = match[1] || '';
+    const codeContent = match[2] || '';
+
+    parts.push({
+      type: 'code',
+      content: codeContent,
+      language,
+    });
+
+    lastIndex = match.index + match[0].length;
+  }
+
+  // Add remaining text after the last code block
+  if (lastIndex < content.length) {
+    const textAfter = content.substring(lastIndex);
+    if (textAfter.trim()) {
+      parts.push({
+        type: 'text',
+        content: textAfter,
+      });
+    }
+  }
+
+  // If no code blocks found, return the entire content as text
+  if (parts.length === 0 && content.trim()) {
+    parts.push({
+      type: 'text',
+      content,
+    });
+  }
+
+  return parts;
+}
+
+/**
+ * Render text content (non-code block) within a bubble
+ * Handles markdown parsing for tables, lists, headings, etc.
+ */
+async function renderTextContentInBubble(
+  ctx: RenderContext,
+  content: string,
+  startX: number,
+  maxWidth: number
+): Promise<void> {
+  const lines = content.split('\n');
+
+  // Table state
+  let inTable = false;
+  let tableHeaders: string[] = [];
+  let tableAlignments: TableAlignment[] = [];
+  let tableRows: string[][] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const parsedLine = parseLineType(line, { inTable });
+
+    if (parsedLine.type === 'tableRow' || parsedLine.type === 'tableSeparator') {
+      if (parsedLine.type === 'tableSeparator') {
+        if (!inTable && tableRows.length === 0 && i > 0) {
+          const prevLine = lines[i - 1];
+          const prevParsed = parseLineType(prevLine, { inTable: true });
+          if (prevParsed.type === 'tableRow' && prevParsed.tableCells) {
+            tableHeaders = prevParsed.tableCells;
+          }
+        }
+        tableAlignments = parsedLine.tableAlignments || [];
+        inTable = true;
+      } else if (parsedLine.type === 'tableRow' && parsedLine.tableCells) {
+        if (inTable) {
+          tableRows.push(parsedLine.tableCells);
+        }
+      }
+    } else {
+      if (inTable && tableHeaders.length > 0) {
+        renderTable(ctx, tableHeaders, tableAlignments, tableRows, startX, maxWidth);
+        inTable = false;
+        tableHeaders = [];
+        tableAlignments = [];
+        tableRows = [];
+      }
+      renderMarkdownLineInBubble(ctx, parsedLine, startX, maxWidth);
+    }
+  }
+
+  // Flush remaining table
+  if (inTable && tableHeaders.length > 0) {
+    renderTable(ctx, tableHeaders, tableAlignments, tableRows, startX, maxWidth);
+  }
+}
 
 /**
  * Draw a chat bubble icon (user or AI)
@@ -299,104 +427,121 @@ export function renderMarkdownLineInBubble(
     }
   }
 }
+/**
+ * Render a code block, with special handling for mermaid diagrams
+ * For mermaid code blocks, attempts to render as diagram image
+ * Falls back to regular code block on failure
+ *
+ * @param ctx - PDF render context
+ * @param code - Code block content
+ * @param language - Code language identifier
+ * @param startX - Starting X position
+ * @param maxWidth - Maximum width
+ */
+async function renderCodeBlockWithMermaidSupport(
+  ctx: RenderContext,
+  code: string,
+  language: string,
+  startX: number,
+  maxWidth: number
+): Promise<void> {
+  // Check if this is a mermaid code block by language identifier
+  let isMermaid = isMermaidLanguage(language);
+
+  // If language is empty or not recognized as mermaid, try to detect from content
+  if (!isMermaid && (!language || language === '')) {
+    isMermaid = detectMermaidFromContent(code);
+  }
+
+  if (isMermaid) {
+    try {
+      // Attempt to render mermaid diagram as image
+      await renderMermaidDiagram(ctx, code, startX, maxWidth);
+      return;
+    } catch (error) {
+      // Log warning and fall back to code block display
+      console.warn('Mermaid diagram rendering failed, falling back to code block:', error);
+      // Fall through to render as regular code block
+    }
+  }
+
+  // Render as regular code block
+  renderCodeBlock(ctx, code, language, startX, maxWidth);
+}
+
+/**
+ * Detect mermaid diagram type from code content
+ * Used as fallback when language is not explicitly specified
+ */
+function detectMermaidFromContent(content: string): boolean {
+  const firstLine = content.trim().split('\n')[0]?.trim() || '';
+  const mermaidDiagramTypes = [
+    'flowchart',
+    'graph',
+    'sequenceDiagram',
+    'classDiagram',
+    'stateDiagram',
+    'erDiagram',
+    'gantt',
+    'pie',
+    'journey',
+    'gitGraph',
+    'mindmap',
+    'timeline',
+    'quadrantChart',
+    'sankey-beta',
+    'radar-beta',
+    'xychart-beta',
+    'block-beta',
+    'packet-beta',
+    'architecture-beta',
+  ];
+
+  const isMermaid = mermaidDiagramTypes.some(
+    type =>
+      firstLine.toLowerCase().startsWith(type.toLowerCase()) ||
+      firstLine.toLowerCase().startsWith(type.toLowerCase().replace('-', ''))
+  );
+
+  return isMermaid;
+}
 
 /**
  * Render message content within a chat bubble
+ * Uses regex-based parsing to correctly handle code blocks that are inline with text
+ * Supports async rendering for mermaid diagrams
  */
-export function renderMessageContentInBubble(
+export async function renderMessageContentInBubble(
   ctx: RenderContext,
   content: string,
   startX: number,
   maxWidth: number
-): void {
-  const lines = content.split('\n');
-  let inCodeBlock = false;
-  let codeBlockContent = '';
-  let codeLanguage = '';
+): Promise<void> {
+  // Parse content into text and code block parts using regex
+  const parts = parseMessageContent(content);
 
-  // Table state
-  let inTable = false;
-  let tableHeaders: string[] = [];
-  let tableAlignments: TableAlignment[] = [];
-  let tableRows: string[][] = [];
+  // Render each part
+  for (const part of parts) {
+    if (part.type === 'text') {
+      // Render text content with markdown support
+      await renderTextContentInBubble(ctx, part.content, startX, maxWidth);
+    } else if (part.type === 'code') {
+      // Render code block with mermaid support
+      const language = part.language || '';
+      const codeContent = part.content;
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-
-    if (isCodeBlockDelimiter(line)) {
-      // Flush any pending table before code block
-      if (inTable && tableHeaders.length > 0) {
-        renderTable(ctx, tableHeaders, tableAlignments, tableRows, startX, maxWidth);
-        inTable = false;
-        tableHeaders = [];
-        tableAlignments = [];
-        tableRows = [];
-      }
-
-      if (!inCodeBlock) {
-        inCodeBlock = true;
-        codeLanguage = extractCodeLanguage(line);
-        codeBlockContent = '';
-      } else {
-        inCodeBlock = false;
-        if (codeBlockContent.trim()) {
-          renderCodeBlock(ctx, codeBlockContent, codeLanguage, startX, maxWidth);
-        }
-        codeBlockContent = '';
-        codeLanguage = '';
-      }
-      continue;
-    }
-
-    if (inCodeBlock) {
-      codeBlockContent += (codeBlockContent ? '\n' : '') + line;
-    } else {
-      const parsedLine = parseLineType(line, { inTable });
-
-      if (parsedLine.type === 'tableRow' || parsedLine.type === 'tableSeparator') {
-        if (parsedLine.type === 'tableSeparator') {
-          if (!inTable && tableRows.length === 0 && i > 0) {
-            const prevLine = lines[i - 1];
-            const prevParsed = parseLineType(prevLine, { inTable: true });
-            if (prevParsed.type === 'tableRow' && prevParsed.tableCells) {
-              tableHeaders = prevParsed.tableCells;
-            }
-          }
-          tableAlignments = parsedLine.tableAlignments || [];
-          inTable = true;
-        } else if (parsedLine.type === 'tableRow' && parsedLine.tableCells) {
-          if (inTable) {
-            tableRows.push(parsedLine.tableCells);
-          }
-        }
-      } else {
-        if (inTable && tableHeaders.length > 0) {
-          renderTable(ctx, tableHeaders, tableAlignments, tableRows, startX, maxWidth);
-          inTable = false;
-          tableHeaders = [];
-          tableAlignments = [];
-          tableRows = [];
-        }
-        renderMarkdownLineInBubble(ctx, parsedLine, startX, maxWidth);
+      if (codeContent.trim()) {
+        await renderCodeBlockWithMermaidSupport(ctx, codeContent, language, startX, maxWidth);
       }
     }
-  }
-
-  // Flush remaining table
-  if (inTable && tableHeaders.length > 0) {
-    renderTable(ctx, tableHeaders, tableAlignments, tableRows, startX, maxWidth);
-  }
-
-  // Handle unclosed code block
-  if (inCodeBlock && codeBlockContent.trim()) {
-    renderCodeBlock(ctx, codeBlockContent, codeLanguage, startX, maxWidth);
   }
 }
 
 /**
  * Render a complete message with bubble style
+ * Supports async rendering for mermaid diagrams
  */
-export function renderMessage(ctx: RenderContext, msg: ExportMessage): void {
+export async function renderMessage(ctx: RenderContext, msg: ExportMessage): Promise<void> {
   const { pdf, pageWidth, margin, contentWidth } = ctx;
   const isUser = msg.type === 'user';
   const label = isUser ? msg.userName || 'User' : msg.teamName || msg.botName || 'AI';
@@ -443,7 +588,7 @@ export function renderMessage(ctx: RenderContext, msg: ExportMessage): void {
       renderAttachmentsInBubble(ctx, msg.attachments, contentStartX, contentMaxWidth);
     }
 
-    renderMessageContentInBubble(ctx, content, contentStartX, contentMaxWidth);
+    await renderMessageContentInBubble(ctx, content, contentStartX, contentMaxWidth);
 
     const bubbleEndY = ctx.yPosition + padding;
     const actualBubbleHeight = bubbleEndY - bubbleStartY;
@@ -480,7 +625,7 @@ export function renderMessage(ctx: RenderContext, msg: ExportMessage): void {
       renderAttachmentsInBubble(ctx, msg.attachments, contentStartX, contentMaxWidth);
     }
 
-    renderMessageContentInBubble(ctx, content, contentStartX, contentMaxWidth);
+    await renderMessageContentInBubble(ctx, content, contentStartX, contentMaxWidth);
 
     ctx.yPosition = bubbleEndY + messagePadding;
   } else {
@@ -504,7 +649,7 @@ export function renderMessage(ctx: RenderContext, msg: ExportMessage): void {
     pdf.text(timestamp, pageWidth - margin, ctx.yPosition + 3, { align: 'right' });
     ctx.yPosition += iconSize + 6; // Increased spacing between header and content
 
-    renderMessageContentInBubble(ctx, content, margin, aiContentWidth);
+    await renderMessageContentInBubble(ctx, content, margin, aiContentWidth);
 
     ctx.yPosition += messagePadding;
   }
