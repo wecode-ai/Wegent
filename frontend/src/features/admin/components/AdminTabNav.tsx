@@ -15,9 +15,9 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
-import { Users, Cpu, Settings } from 'lucide-react';
+import { Users, Cpu, Settings, Sparkles } from 'lucide-react';
 
-export type AdminTabId = 'users' | 'public-models' | 'system-config';
+export type AdminTabId = 'users' | 'public-models' | 'public-skills' | 'system-config';
 
 interface AdminTabNavProps {
   activeTab: AdminTabId;
@@ -41,6 +41,7 @@ export function AdminTabNav({ activeTab, onTabChange }: AdminTabNavProps) {
   const tabs: TabItem[] = [
     { id: 'users', label: t('tabs.users'), icon: Users },
     { id: 'public-models', label: t('tabs.public_models'), icon: Cpu },
+    { id: 'public-skills', label: t('tabs.public_skills'), icon: Sparkles },
     { id: 'system-config', label: t('tabs.system_config'), icon: Settings },
   ];
 
