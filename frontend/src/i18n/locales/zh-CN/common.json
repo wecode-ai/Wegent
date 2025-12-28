@@ -409,6 +409,7 @@
     "team": "智能体",
     "models": "模型",
     "skills": "技能",
+    "skills": "技能",
     "retrievers": "检索引擎",
     "shells": "执行器",
     "personal": "个人",
