@@ -29,7 +29,7 @@ function SharedTaskContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { theme } = useTheme();
-  const { t } = useTranslation('common');
+  const { t } = useTranslation('shared-task');
 
   const [taskData, setTaskData] = useState<PublicSharedTaskResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -59,7 +59,7 @@ function SharedTaskContent() {
     const token = searchParams.get('token');
 
     if (!token) {
-      setError(t('shared_task.error_invalid_link'));
+      setError(t('error_invalid_link'));
       setIsLoading(false);
       return;
     }
@@ -77,14 +77,14 @@ function SharedTaskContent() {
           errorMessage.includes('Invalid share link format') ||
           errorMessage.includes('Invalid share token')
         ) {
-          setError(t('shared_task.error_invalid_link'));
+          setError(t('error_invalid_link'));
         } else if (
           errorMessage.includes('no longer available') ||
           errorMessage.includes('deleted')
         ) {
-          setError(t('shared_task.error_task_deleted'));
+          setError(t('error_task_deleted'));
         } else {
-          setError(t('shared_task.error_load_failed'));
+          setError(t('error_load_failed'));
         }
       } finally {
         setIsLoading(false);
@@ -211,18 +211,18 @@ function SharedTaskContent() {
 
   if (error || !taskData) {
     // Determine error title and description based on error type
-    let errorTitle = t('shared_task.error_load_failed');
-    let errorDesc = t('shared_task.error_load_failed_desc');
+    let errorTitle = t('error_load_failed');
+    let errorDesc = t('error_load_failed_desc');
     let errorIcon = '⚠️';
 
     if (error) {
-      if (error.includes(t('shared_task.error_invalid_link'))) {
-        errorTitle = t('shared_task.error_invalid_link');
-        errorDesc = t('shared_task.error_invalid_link_desc');
+      if (error.includes(t('error_invalid_link'))) {
+        errorTitle = t('error_invalid_link');
+        errorDesc = t('error_invalid_link_desc');
         errorIcon = '🔗';
-      } else if (error.includes(t('shared_task.error_task_deleted'))) {
-        errorTitle = t('shared_task.error_task_deleted');
-        errorDesc = t('shared_task.error_task_deleted_desc');
+      } else if (error.includes(t('error_task_deleted'))) {
+        errorTitle = t('error_task_deleted');
+        errorDesc = t('error_task_deleted_desc');
         errorIcon = '🗑️';
       }
     }
@@ -257,7 +257,7 @@ function SharedTaskContent() {
                 size="default"
                 className="min-w-[160px]"
               >
-                {t('shared_task.go_home')}
+                {t('go_home')}
               </Button>
             </div>
           </div>
@@ -297,8 +297,8 @@ function SharedTaskContent() {
               className="flex items-center gap-2"
             >
               <LogIn className="w-4 h-4" />
-              <span className="hidden sm:inline">{t('shared_task.login_to_continue')}</span>
-              <span className="sm:hidden">{t('shared_task.login')}</span>
+              <span className="hidden sm:inline">{t('login_to_continue')}</span>
+              <span className="sm:hidden">{t('login')}</span>
             </Button>
           )}
         </TopNavigation>
@@ -312,7 +312,7 @@ function SharedTaskContent() {
                 {taskData.task_title}
               </h1>
               <p className="text-sm text-text-muted">
-                {t('shared_task.shared_by')}{' '}
+                {t('shared_by')}{' '}
                 <span className="font-medium text-text-primary">{taskData.sharer_name}</span>
               </p>
             </div>
@@ -323,7 +323,7 @@ function SharedTaskContent() {
               className="mb-6 bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800"
             >
               <AlertDescription className="text-sm text-text-primary">
-                📖 {t('shared_task.read_only_notice')}
+                📖 {t('read_only_notice')}
               </AlertDescription>
             </Alert>
 
@@ -352,13 +352,13 @@ function SharedTaskContent() {
               <div className="flex items-center justify-between gap-4">
                 <div>
                   <p className="text-sm font-medium text-text-primary mb-1">
-                    {isLoggedIn ? t('shared_task.want_to_continue') : t('shared_task.login_prompt')}
+                    {isLoggedIn ? t('want_to_continue') : t('login_prompt')}
                   </p>
-                  <p className="text-xs text-text-muted">{t('shared_task.copy_and_chat')}</p>
+                  <p className="text-xs text-text-muted">{t('copy_and_chat')}</p>
                 </div>
                 <Button onClick={handleLoginAndCopy} size="sm" className="flex-shrink-0">
                   <LogIn className="w-4 h-4 mr-2" />
-                  {isLoggedIn ? t('shared_task.continue_chat') : t('shared_task.login_to_continue')}
+                  {isLoggedIn ? t('continue_chat') : t('login_to_continue')}
                 </Button>
               </div>
             </div>
