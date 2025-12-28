@@ -12,7 +12,10 @@ This module provides a LangGraph-based chat service that uses:
 - Redis session management
 
 Architecture:
-- streaming/: Core streaming logic and emitters
+- agent.py: ChatAgent for agent creation and execution (agent-only logic)
+- streaming_handler.py: ChatStreamingHandler for WebSocket/SSE streaming
+- service.py: ChatService facade that combines agent and streaming
+- streaming/: Streaming infrastructure (re-exports from app.services.streaming)
 - config/: Chat configuration builders
 - agents/: LangGraph agent builders
 - messages/: Message conversion utilities
@@ -22,10 +25,21 @@ Architecture:
 """
 
 from .ai_trigger import trigger_ai_response
-from .service import ChatService, chat_service
+from .agent import AgentConfig, ChatAgent, chat_agent
+from .service import ChatService, WebSocketStreamConfig, chat_service
+from .streaming_handler import ChatStreamingHandler
 
 __all__ = [
+    # Main service (facade)
     "ChatService",
     "chat_service",
+    # Agent (pure agent logic)
+    "ChatAgent",
+    "chat_agent",
+    "AgentConfig",
+    # Streaming handler (WebSocket/SSE logic)
+    "ChatStreamingHandler",
+    "WebSocketStreamConfig",
+    # AI trigger
     "trigger_ai_response",
 ]
