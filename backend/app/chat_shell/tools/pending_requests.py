@@ -332,7 +332,18 @@ class PendingRequestRegistry:
         result: Any,
         error: Optional[str] = None,
     ) -> bool:
-        """Resolve a request using the local future."""
+        """Resolve a request using the local future.
+
+        Args:
+            request_id: The request to resolve
+            result: The result data. If this is a dict with 'success', 'result', 'error' keys,
+                   it will be used directly as the response. Otherwise, a response object
+                   will be built using the result and error parameters.
+            error: Error message if failed (used when result is not a complete response)
+
+        Returns:
+            True if request was found and resolved, False otherwise
+        """
         async with self._lock:
             request = self._local_requests.pop(request_id, None)
 
@@ -348,12 +359,23 @@ class PendingRequestRegistry:
             )
             return False
 
-        # Build response object matching the expected format
-        response = {
-            "success": error is None,
-            "result": result,
-            "error": error,
-        }
+        # Check if result is already a complete response object (from on_skill_response)
+        # This happens when the caller has already built the response with success/result/error
+        if isinstance(result, dict) and "success" in result:
+            # Use the result directly as the response
+            response = result
+            logger.debug(
+                f"[PendingRequestRegistry] Using complete response object for {request_id}, "
+                f"success={response.get('success')}"
+            )
+        else:
+            # Build response object for legacy callers
+            response = {
+                "success": error is None,
+                "result": result,
+                "error": error,
+            }
+
         request.future.set_result(response)
 
         logger.debug(f"[PendingRequestRegistry] Resolved local request: {request_id}")

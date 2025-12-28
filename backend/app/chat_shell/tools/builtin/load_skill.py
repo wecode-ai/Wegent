@@ -23,10 +23,10 @@ from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field, PrivateAttr
 from sqlalchemy.orm import Session
 
+from app.chat_shell.skills import SkillToolRegistry
 from app.models.kind import Kind
 from app.models.skill_binary import SkillBinary
 from app.schemas.kind import Skill
-from app.chat_shell.skills import SkillToolRegistry
 
 logger = logging.getLogger(__name__)
 
