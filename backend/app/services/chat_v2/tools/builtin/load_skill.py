@@ -124,7 +124,8 @@ class LoadSkillTool(BaseTool):
         prompt = skill_crd.spec.prompt
 
         # Load provider if defined in skill spec
-        self._load_skill_provider(skill.id, skill_name, skill_crd)
+        # Pass skill.user_id for security check (only public skills can load code)
+        self._load_skill_provider(skill.id, skill_name, skill_crd, skill.user_id)
 
         # Mark skill as expanded for this turn and store the prompt
         self._expanded_skills.add(skill_name)
@@ -167,17 +168,22 @@ class LoadSkillTool(BaseTool):
         )
 
     def _load_skill_provider(
-        self, skill_id: int, skill_name: str, skill_crd: Skill
+        self, skill_id: int, skill_name: str, skill_crd: Skill, skill_user_id: int
     ) -> None:
         """Load and register the skill's provider if defined.
 
         This method checks if the skill has a provider configuration,
-        and if so, loads the provider from the skill's         and registers it with the SkillToolRegistry.
+        and if so, loads the provider from the skill's ZIP package
+        and registers it with the SkillToolRegistry.
+
+        SECURITY: Only public skills (user_id=0) are allowed to load code.
+        This prevents arbitrary code execution from user-uploaded skills.
 
         Args:
             skill_id: Database ID of the skill
             skill_name: Name of the skill
             skill_crd: Parsed Skill CRD object
+            skill_user_id: User ID of the skill owner (0 for public skills)
         """
         # Check if skill has provider configuration
         if not skill_crd.spec.provider:
@@ -186,6 +192,17 @@ class LoadSkillTool(BaseTool):
         provider_config = skill_crd.spec.provider
         class_name = getattr(provider_config, "class_name", None)
         if not class_name:
+            return
+
+        # SECURITY CHECK: Only allow code loading for public skills (user_id=0)
+        is_public = skill_user_id == 0
+        if not is_public:
+            logger.warning(
+                "[LoadSkillTool] SECURITY: Blocked code loading for non-public "
+                "skill '%s' (user_id=%d). Only public skills can load code.",
+                skill_name,
+                skill_user_id,
+            )
             return
 
         # Get the registry
@@ -220,6 +237,7 @@ class LoadSkillTool(BaseTool):
                 skill_name=skill_name,
                 provider_config=provider_config_dict,
                 zip_content=skill_binary.binary_data,
+                is_public=is_public,
             )
 
         except Exception as e:
@@ -375,7 +393,8 @@ class LoadSkillTool(BaseTool):
             prompt = skill_crd.spec.prompt
 
             # Load provider if defined in skill spec
-            self._load_skill_provider(skill.id, skill_name, skill_crd)
+            # Pass skill.user_id for security check (only public skills can load code)
+            self._load_skill_provider(skill.id, skill_name, skill_crd, skill.user_id)
 
             # Mark skill as expanded and store the prompt
             self._expanded_skills.add(skill_name)

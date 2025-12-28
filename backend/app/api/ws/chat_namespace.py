@@ -1822,6 +1822,7 @@ class ChatNamespace(socketio.AsyncNamespace):
         Handle generic skill response from frontend.
 
         This is the unified handler for all skill responses.
+        Uses Redis-backed PendingRequestRegistry for cross-worker support.
 
         Args:
             sid: Socket ID
@@ -1851,7 +1852,8 @@ class ChatNamespace(socketio.AsyncNamespace):
             f"for request {request_id}, success={success}"
         )
 
-        registry = get_pending_request_registry()
+        # Get registry (async to ensure Pub/Sub listener is started)
+        registry = await get_pending_request_registry()
 
         # Build a complete result object that includes the success flag
         # This is needed because tools like render_mermaid expect result.get("success")

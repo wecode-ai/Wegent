@@ -458,6 +458,7 @@ class ChatConfigBuilder:
                     "name": skill_crd.metadata.name,
                     "description": skill_crd.spec.description,
                     "skill_id": skill.id,  # Include skill ID for provider loading
+                    "skill_user_id": skill.user_id,  # Include user_id for security check
                 }
                 # Include tools configuration if present in skill spec
                 # Convert SkillToolDeclaration objects to dicts for serialization

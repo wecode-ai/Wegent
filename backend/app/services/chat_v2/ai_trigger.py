@@ -810,6 +810,7 @@ def _prepare_skill_tools(
         tool_declarations = skill_config.get("tools", [])
         provider_config = skill_config.get("provider")
         skill_id = skill_config.get("skill_id")
+        skill_user_id = skill_config.get("skill_user_id")
 
         if not tool_declarations:
             # No tools declared for this skill, skip
@@ -821,45 +822,58 @@ def _prepare_skill_tools(
             len(tool_declarations),
         )
 
-        # Load provider from skill ge if provider config is present
+        # Load provider from skill package if provider config is present
+        # SECURITY: Only public skills (user_id=0) can load code
         if provider_config and skill_id:
-            try:
-                # Get skill binary from database
-                skill_binary = (
-                    db_session.query(SkillBinary)
-                    .filter(SkillBinary.kind_id == skill_id)
-                    .first()
-                )
+            # Check if this is a public skill (user_id=0)
+            is_public = skill_user_id == 0
 
-                if skill_binary and skill_binary.binary_data:
-                    # Load and register the provider
-                    loaded = registry.ensure_provider_loaded(
-                        skill_name=skill_name,
-                        provider_config=provider_config,
-                        zip_content=skill_binary.binary_data,
+            if not is_public:
+                logger.warning(
+                    "[ai_trigger] SECURITY: Skipping code loading for non-public "
+                    "skill '%s' (user_id=%s). Only public skills can load code.",
+                    skill_name,
+                    skill_user_id,
+                )
+            else:
+                try:
+                    # Get skill binary from database
+                    skill_binary = (
+                        db_session.query(SkillBinary)
+                        .filter(SkillBinary.kind_id == skill_id)
+                        .first()
                     )
-                    if loaded:
-                        logger.info(
-                            "[ai_trigger] ✅ Loaded provider for skill '%s'",
-                            skill_name,
+
+                    if skill_binary and skill_binary.binary_data:
+                        # Load and register the provider
+                        loaded = registry.ensure_provider_loaded(
+                            skill_name=skill_name,
+                            provider_config=provider_config,
+                            zip_content=skill_binary.binary_data,
+                            is_public=is_public,
                         )
+                        if loaded:
+                            logger.info(
+                                "[ai_trigger] ✅ Loaded provider for skill '%s'",
+                                skill_name,
+                            )
+                        else:
+                            logger.warning(
+                                "[ai_trigger] Failed to load provider for skill '%s'",
+                                skill_name,
+                            )
                     else:
                         logger.warning(
-                            "[ai_trigger] Failed to load provider for skill '%s'",
+                            "[ai_trigger] No binary data found for skill '%s' (id=%d)",
                             skill_name,
+                            skill_id,
                         )
-                else:
-                    logger.warning(
-                        "[ai_trigger] No binary data found for skill '%s' (id=%d)",
+                except Exception as e:
+                    logger.error(
+                        "[ai_trigger] Error loading provider for skill '%s': %s",
                         skill_name,
-                        skill_id,
+                        str(e),
                     )
-            except Exception as e:
-                logger.error(
-                    "[ai_trigger] Error loading provider for skill '%s': %s",
-                    skill_name,
-                    str(e),
-                )
 
         # Create context for this skill
         context = SkillToolContext(

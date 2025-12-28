@@ -141,8 +141,8 @@ IMPORTANT syntax rules:
         # Generate unique request ID
         request_id = str(uuid.uuid4())
 
-        # Get the global pending request registry
-        registry = get_pending_request_registry()
+        # Get the global pending request registry (async to ensure Pub/Sub is started)
+        registry = await get_pending_request_registry()
 
         try:
             # Register the pending request and get a future to await

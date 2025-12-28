@@ -8,7 +8,7 @@ This module provides a configuration-driven, plugin-based architecture for
 skill-tool bindings. Skills declare their tool dependencies in SKILL.md,
 and tools are dynamically loaded at runtime based on skill configuration.
 
-Providers are loaded on-demand from skill ckages stored in the database,
+Providers are loaded on-demand from skill packages stored in the database,
 not from hardcoded built-in providers. This allows skills to bundle their
 own provider implementations.
 
@@ -42,7 +42,9 @@ Example usage:
     tools = registry.create_tools_for_skill(skill_config, context)
 """
 
-from .base import SkillToolContext, SkillToolProvider, SkillToolRegistry
+from .context import SkillToolContext
+from .provider import SkillToolProvider
+from .registry import SkillToolRegistry
 
 __all__ = [
     "SkillToolContext",
@@ -51,7 +53,7 @@ __all__ = [
 ]
 
 # Note: Providers are no longer auto-registered on module import.
-# They are loaded on-demand from skill ckages in the database
+# They are loaded on-demand from skill packages in the database
 # when load_skill is called. This ensures:
 # 1. No dependency on init_data directory at runtime
 # 2. Skills can bundle their own provider implementations
