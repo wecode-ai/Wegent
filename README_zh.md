@@ -14,8 +14,6 @@
 
 <div align="center">
 
-**YAML 驱动的智能体团队 | 4 种协作模式 | 实时群聊 | 沙箱隔离执行**
-
 <img src="./docs/assets/images/example.gif" width="75%" alt="演示"/>
 
 [快速开始](#-快速开始) · [文档](docs/zh/README.md) · [开发指南](docs/zh/guides/developer/setup.md)
@@ -24,60 +22,23 @@
 
 ---
 
-## ✨ 三大核心场景
+## ✨ 核心模式
 
-### 💬 对话模式
-
-| 类别 | 功能 |
-|------|------|
-| **LLM** | Claude / OpenAI / Gemini |
-| **多模态** | 图片输入 (Vision) |
-| **搜索** | Google / Bing / SearXNG |
-| **协作** | 4 种模式 / 群聊 / 任务分享 |
-| **扩展** | Skill 按需加载 / MCP 工具 |
-| **API** | OpenAI 兼容接口 |
-| **导出** | PDF / DOCX |
-
-### 💻 编码模式
-
-| 类别 | 功能 |
-|------|------|
-| **Git** | GitHub / GitLab / Gitea / Gitee / Gerrit |
-| **执行** | ClaudeCode / Agno 沙箱隔离 |
-| **工作流** | 分支 → 编码 → 提交 → PR |
-| **辅助** | 需求澄清 / Wiki 生成 / 纠错模式 |
-
-### 📚 知识模式 *(实验性)*
-
-| 类别 | 功能 |
-|------|------|
-| **RAG** | 向量 / 关键词 / 混合检索 |
-| **存储** | Elasticsearch / Qdrant |
-| **格式** | PDF / Markdown / DOCX / 代码文件 |
-| **Wiki** | 代码库文档自动生成 |
+| 💬 对话模式 | 💻 编码模式 | 📚 知识模式 *(实验性)* |
+|:------------|:------------|:-----------------------|
+| **LLM**: 支持Claude / OpenAI / Gemini 等主流模型<br>**多模态**: 支持图片 / PPT / Word / PDF / Excel 文件自动解析<br>**联网搜索**: 支持对接各类搜索引擎<br>**深度调研**: 支持深度调研模式，可自动搜索、整理、生成调研报告<br>**纠错模式**: 由多个AI自动检测并修正回答中的错误<br>**追问模式**: AI 主动追问澄清需求，确保理解准确<br>**扩展能力**: 支持 Skill 技能包 / MCP 工具 / 自定义工具 | **多平台集成**: 支持GitHub / GitLab / Gitea / Gitee / Gerrit平台<br>**自动化AI工作流**: 分支 → 编码 → 提交 → PR 流程自动化<br>**需求澄清**: AI 主动追问，确保理解准确<br>**Wiki 生成**: 自动生成代码库文档 | **RAG 检索**: 向量 / 关键词 / 混合检索<br>**存储后端**: Elasticsearch / Qdrant<br>**文档解析**: PDF / Markdown / DOCX / 代码文件<br>**Wiki**: 代码库文档自动生成 |
 
 ---
 
 ## 🔧 扩展能力
 
-| 功能 | 描述 |
-|------|------|
-| **智能体向导** | 4 步创建：描述需求 → AI 追问 → 实时测试 → 一键创建 |
-| **YAML 配置** | Kubernetes 风格 CRD，定义 Ghost / Bot / Team / Skill |
-| **MCP 工具** | Model Context Protocol，调用外部工具和服务 |
-| **执行引擎** | ClaudeCode (Docker) / Agno (Docker) / Dify (API) / Chat (Direct) |
-
----
-
-## 🔐 部署与运维
-
-| 类别 | 功能 |
-|------|------|
-| **认证** | OIDC / SSO |
-| **隔离** | 命名空间隔离 |
-| **管理** | API Key / 管理员面板 |
-| **可观测性** | OpenTelemetry |
-| **国际化** | 中文 / 英文 / 深色模式 |
+- **智能体生成向导**: 4 步创建: 描述需求 → AI 追问 → 实时微调 → 一键创建
+- **协作模式**: 支持开箱即用的 4 种多Agent协作模式（顺序/并行/路由/循环），灵活组合多个 Bot
+- **支持Skill**: 动态加载技能包，提升 Token 效率
+- **MCP 工具**: Model Context Protocol，调用外部工具和服务
+- **执行引擎**: 支持ClaudeCode / Agno 沙箱隔离执行，Dify API 代理，Chat 直连模式4个执行引擎
+- **YAML 配置**: Kubernetes 风格 CRD，定义 Ghost / Bot / Team / Skill
+- **API**: 对外提供 OpenAI 兼容接口，方便与其他系统集成
 
 ---
 
@@ -107,7 +68,7 @@ docker-compose up -d
 ## 🏗️ 架构
 
 ```
-Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (ClaudeCode/Agno/Dify/Chat)
+Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (ClaudeCode/Agno)
 ```
 
 **核心概念：**

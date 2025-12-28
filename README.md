@@ -14,8 +14,6 @@ English | [简体中文](README_zh.md)
 
 <div align="center">
 
-**YAML-driven agent teams | 4 collaboration modes | Real-time group chat | Sandboxed execution**
-
 <img src="./docs/assets/images/example.gif" width="75%" alt="Demo"/>
 
 [Quick Start](#-quick-start) · [Documentation](docs/en/README.md) · [Development Guide](docs/en/guides/developer/setup.md)
@@ -24,60 +22,23 @@ English | [简体中文](README_zh.md)
 
 ---
 
-## ✨ Core Scenarios
+## ✨ Core Modes
 
-### 💬 Chat Mode
-
-| Category | Features |
-|----------|----------|
-| **LLM** | Claude / OpenAI / Gemini |
-| **Multimodal** | Image input (Vision) |
-| **Search** | Google / Bing / SearXNG |
-| **Collaboration** | 4 modes / Group chat / Task sharing |
-| **Extension** | On-demand Skills / MCP tools |
-| **API** | OpenAI-compatible interface |
-| **Export** | PDF / DOCX |
-
-### 💻 Code Mode
-
-| Category | Features |
-|----------|----------|
-| **Git** | GitHub / GitLab / Gitea / Gitee / Gerrit |
-| **Execution** | ClaudeCode / Agno sandboxed isolation |
-| **Workflow** | Branch → Code → Commit → PR |
-| **Assist** | Requirement clarification / Wiki generation / Error correction |
-
-### 📚 Knowledge Mode *(Experimental)*
-
-| Category | Features |
-|----------|----------|
-| **RAG** | Vector / Keyword / Hybrid retrieval |
-| **Storage** | Elasticsearch / Qdrant |
-| **Formats** | PDF / Markdown / DOCX / Code files |
-| **Wiki** | Auto-generated codebase documentation |
+| 💬 Chat Mode | 💻 Code Mode | 📚 Knowledge Mode *(Experimental)* |
+|:-------------|:-------------|:-----------------------------------|
+| **LLM**: Supports Claude / OpenAI / Gemini and other mainstream models<br>**Multimodal**: Supports automatic parsing of images / PPT / Word / PDF / Excel files<br>**Web Search**: Supports integration with various search engines<br>**Deep Research**: Supports deep research mode with automatic search, organization, and report generation<br>**Error Correction**: Multiple AIs automatically detect and correct errors in responses<br>**Follow-up Mode**: AI proactively asks clarifying questions to ensure accurate understanding<br>**Extensions**: Supports Skill packages / MCP tools / Custom tools | **Multi-platform Integration**: Supports GitHub / GitLab / Gitea / Gitee / Gerrit platforms<br>**Automated AI Workflow**: Branch → Code → Commit → PR automation<br>**Requirement Clarification**: AI proactively asks questions to ensure accurate understanding<br>**Wiki Generation**: Automatic codebase documentation generation | **RAG Retrieval**: Vector / Keyword / Hybrid retrieval<br>**Storage Backends**: Elasticsearch / Qdrant<br>**Document Parsing**: PDF / Markdown / DOCX / Code files<br>**Wiki**: Automatic codebase documentation generation |
 
 ---
 
 ## 🔧 Extensibility
 
-| Feature | Description |
-|---------|-------------|
-| **Agent Wizard** | 4-step creation: Describe → AI clarifies → Live test → One-click create |
-| **YAML Config** | Kubernetes-style CRD for Ghost / Bot / Team / Skill |
-| **MCP Tools** | Model Context Protocol for external tools and services |
-| **Execution Engines** | ClaudeCode (Docker) / Agno (Docker) / Dify (API) / Chat (Direct) |
-
----
-
-## 🔐 Deployment & Operations
-
-| Category | Features |
-|----------|----------|
-| **Auth** | OIDC / SSO |
-| **Isolation** | Namespace separation |
-| **Management** | API Key / Admin panel |
-| **Observability** | OpenTelemetry |
-| **i18n** | English / Chinese / Dark Mode |
+- **Agent Creation Wizard**: 4-step creation: Describe requirements → AI asks questions → Real-time fine-tuning → One-click create
+- **Collaboration Modes**: 4 out-of-the-box multi-Agent collaboration modes (Sequential/Parallel/Router/Loop), flexible combination of multiple Bots
+- **Skill Support**: Dynamically load skill packages to improve Token efficiency
+- **MCP Tools**: Model Context Protocol for calling external tools and services
+- **Execution Engines**: Supports ClaudeCode / Agno sandboxed isolation, Dify API proxy, Chat direct mode - 4 execution engines
+- **YAML Config**: Kubernetes-style CRD for defining Ghost / Bot / Team / Skill
+- **API**: Provides OpenAI-compatible interface for easy integration with other systems
 
 ---
 
