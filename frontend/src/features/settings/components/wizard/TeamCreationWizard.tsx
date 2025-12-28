@@ -229,6 +229,12 @@ export default function TeamCreationWizard({
   const handleCreate = useCallback(async () => {
     if (!state.selectedShell || !state.agentName) return;
 
+    // Validate bind_mode is not empty
+    if (!state.bindMode || state.bindMode.length === 0) {
+      dispatch({ type: 'SET_ERROR', error: t('common:team.bind_mode_required') });
+      return;
+    }
+
     dispatch({ type: 'SET_LOADING', isLoading: true });
     dispatch({ type: 'SET_ERROR', error: null });
 
@@ -265,6 +271,7 @@ export default function TeamCreationWizard({
     groupName,
     onSuccess,
     handleClose,
+    t,
   ]);
 
   // Helper function to check if core answers have changed

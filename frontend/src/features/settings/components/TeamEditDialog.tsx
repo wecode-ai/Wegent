@@ -319,6 +319,15 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       return;
     }
 
+    // Validate bind_mode is not empty
+    if (bindMode.length === 0) {
+      toast({
+        variant: 'destructive',
+        title: t('team.bind_mode_required'),
+      });
+      return;
+    }
+
     // For solo mode, save bot first via BotEdit ref
     if (mode === 'solo') {
       if (botEditRef.current) {
