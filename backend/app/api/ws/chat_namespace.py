@@ -250,6 +250,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             "task:join": "on_task_join",
             "task:leave": "on_task_leave",
             "history:sync": "on_history_sync",
+            "skill:response": "on_skill_response",
         }
 
     @trace_websocket_event(
@@ -1811,6 +1812,71 @@ class ChatNamespace(socketio.AsyncNamespace):
 
         finally:
             db.close()
+
+    # ============================================================
+    # Generic Skill Events
+    # ============================================================
+
+    async def on_skill_response(self, sid: str, data: dict) -> dict:
+        """
+        Handle generic skill response from frontend.
+
+        This is the unified handler for all skill responses.
+        Uses Redis-backed PendingRequestRegistry for cross-worker support.
+
+        Args:
+            sid: Socket ID
+            data: SkillResponsePayload fields
+
+        Returns:
+            {"success": true} or {"error": "..."}
+        """
+        from app.api.ws.events import SkillResponsePayload
+        from app.services.chat_v2.tools.pending_requests import (
+            get_pending_request_registry,
+        )
+
+        request_id = data.get("request_id")
+        skill_name = data.get("skill_name")
+        action = data.get("action")
+        success = data.get("success", False)
+        result = data.get("result")
+        error = data.get("error")
+
+        if not request_id:
+            logger.warning("[WS] skill:response received without request_id")
+            return {"error": "Missing request_id"}
+
+        logger.info(
+            f"[WS] skill:response received: {skill_name}:{action} "
+            f"for request {request_id}, success={success}"
+        )
+
+        # Get registry (async to ensure Pub/Sub listener is started)
+        registry = await get_pending_request_registry()
+
+        # Build a complete result object that includes the success flag
+        # This is needed because tools like render_mermaid expect result.get("success")
+        complete_result = {
+            "success": success,
+            "result": result,
+            "error": error,
+        }
+
+        resolved = await registry.resolve(
+            request_id=request_id,
+            result=complete_result,
+            error=None,  # Error is now part of complete_result
+        )
+
+        if not resolved:
+            logger.warning(
+                f"[WS] skill:response could not resolve request {request_id}"
+            )
+            return {"error": "No pending request found"}
+
+        logger.info(f"[WS] skill:response resolved request {request_id}")
+        return {"success": True}
 
 
 def register_chat_namespace(sio: socketio.AsyncServer):

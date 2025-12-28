@@ -361,9 +361,12 @@ def apply_skills_from_directory(
     Apply skills from a directory containing skill folders.
     Each skill folder should contain a SKILL.md file and related scripts.
 
+    Skills from init_data are created as PUBLIC skills (user_id=0) so they
+    can be accessed by all users.
+
     Args:
         db: Database session
-        user_id: User ID to create skills for
+        user_id: User ID (not used for skill creation, kept for API compatibility)
         skills_dir: Directory containing skill folders
         force: If True, delete existing skills and recreate them
 
@@ -381,6 +384,9 @@ def apply_skills_from_directory(
     skipped_count = 0
     updated_count = 0
 
+    # Public skills use user_id=0 so they can be accessed by all users
+    public_user_id = 0
+
     # Find all skill folders (directories containing SKILL.md)
     for skill_folder in skills_dir.iterdir():
         if not skill_folder.is_dir():
@@ -395,9 +401,9 @@ def apply_skills_from_directory(
         namespace = "default"
 
         try:
-            # Check if skill already exists
+            # Check if public skill already exists (user_id=0)
             existing = skill_kinds_service.get_skill_by_name(
-                db, name=skill_name, namespace=namespace, user_id=user_id
+                db, name=skill_name, namespace=namespace, user_id=public_user_id
             )
 
             if existing:
@@ -406,13 +412,13 @@ def apply_skills_from_directory(
                     # Get skill ID from metadata.labels (Skill CRD stores ID in labels)
                     skill_id = int(existing.metadata.labels.get("id"))
                     skill_kinds_service.delete_skill(
-                        db, skill_id=skill_id, user_id=user_id
+                        db, skill_id=skill_id, user_id=public_user_id
                     )
                     logger.info(
-                        f"Deleted existing skill for force update: {skill_name}"
+                        f"Deleted existing public skill for force update: {skill_name}"
                     )
                 else:
-                    logger.info(f"Skipping existing skill: {skill_name}")
+                    logger.info(f"Skipping existing public skill: {skill_name}")
                     results.append(
                         {
                             "kind": "Skill",
@@ -438,18 +444,18 @@ def apply_skills_from_directory(
             zip_content = zip_buffer.getvalue()
             zip_filename = f"{skill_name}.zip"
 
-            # Create skill using skill_kinds_service
+            # Create skill as PUBLIC (user_id=0) using skill_kinds_service
             skill = skill_kinds_service.create_skill(
                 db,
                 name=skill_name,
                 namespace=namespace,
                 file_content=zip_content,
                 file_name=zip_filename,
-                user_id=user_id,
+                user_id=public_user_id,
             )
 
             operation = "updated" if existing and force else "created"
-            logger.info(f"{operation.capitalize()} skill: {skill_name}")
+            logger.info(f"{operation.capitalize()} public skill: {skill_name}")
             results.append(
                 {
                     "kind": "Skill",
@@ -465,7 +471,7 @@ def apply_skills_from_directory(
                 created_count += 1
 
         except Exception as e:
-            logger.error(f"Failed to create skill {skill_name}: {e}")
+            logger.error(f"Failed to create public skill {skill_name}: {e}")
             results.append(
                 {
                     "kind": "Skill",
@@ -478,7 +484,7 @@ def apply_skills_from_directory(
             )
 
     logger.info(
-        f"Skills initialization complete: {created_count} created, "
+        f"Public skills initialization complete: {created_count} created, "
         f"{updated_count} updated, {skipped_count} skipped"
     )
     return results

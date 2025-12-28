@@ -25,6 +25,7 @@ import { io, Socket } from 'socket.io-client';
 import { getToken } from '@/apis/user';
 import {
   ServerEvents,
+  ClientSkillEvents,
   ChatStartPayload,
   ChatChunkPayload,
   ChatDonePayload,
@@ -36,6 +37,8 @@ import {
   TaskCreatedPayload,
   TaskStatusPayload,
   TaskInvitedPayload,
+  SkillRequestPayload,
+  SkillResponsePayload,
 } from '@/types/socket';
 
 import { fetchRuntimeConfig, getSocketUrl } from '@/lib/runtime-config';
@@ -86,6 +89,10 @@ interface SocketContextType {
   registerChatHandlers: (handlers: ChatEventHandlers) => () => void;
   /** Register task event handlers */
   registerTaskHandlers: (handlers: TaskEventHandlers) => () => void;
+  /** Register skill event handlers */
+  registerSkillHandlers: (handlers: SkillEventHandlers) => () => void;
+  /** Send skill response back to server */
+  sendSkillResponse: (payload: SkillResponsePayload) => void;
 }
 
 /** Chat event handlers for streaming */
@@ -104,6 +111,12 @@ export interface TaskEventHandlers {
   onTaskCreated?: (data: TaskCreatedPayload) => void;
   onTaskInvited?: (data: TaskInvitedPayload) => void;
   onTaskStatus?: (data: TaskStatusPayload) => void;
+}
+
+/** Skill event handlers for generic skill requests */
+export interface SkillEventHandlers {
+  /** Handler for skill:request event (server requests frontend to perform a skill action) */
+  onSkillRequest?: (data: SkillRequestPayload) => void;
 }
 
 const SocketContext = createContext<SocketContextType | undefined>(undefined);
@@ -494,6 +507,53 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     [socket]
   );
 
+  /**
+   * Register skill event handlers for generic skill requests
+   * Returns a cleanup function to unregister handlers
+   */
+  const registerSkillHandlers = useCallback(
+    (handlers: SkillEventHandlers): (() => void) => {
+      if (!socket) {
+        return () => {};
+      }
+
+      const { onSkillRequest } = handlers;
+
+      if (onSkillRequest) socket.on(ServerEvents.SKILL_REQUEST, onSkillRequest);
+
+      // Return cleanup function
+      return () => {
+        if (onSkillRequest) socket.off(ServerEvents.SKILL_REQUEST, onSkillRequest);
+      };
+    },
+    [socket]
+  );
+
+  /**
+   * Send skill response back to server
+   */
+  const sendSkillResponse = useCallback(
+    (payload: SkillResponsePayload): void => {
+      const currentSocket = socketRef.current;
+
+      if (!currentSocket?.connected) {
+        console.error('[Socket.IO] sendSkillResponse failed: not connected');
+        return;
+      }
+
+      console.log('[Socket.IO] Emitting skill:response event', {
+        request_id: payload.request_id,
+        skill_name: payload.skill_name,
+        action: payload.action,
+        success: payload.success,
+        hasError: !!payload.error,
+      });
+
+      currentSocket.emit(ClientSkillEvents.SKILL_RESPONSE, payload);
+    },
+    [] // No dependencies - use socketRef
+  );
+
   // Auto-connect when component mounts if token is available
   useEffect(() => {
     // Only run on client side
@@ -564,6 +624,8 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         retryMessage,
         registerChatHandlers,
         registerTaskHandlers,
+        registerSkillHandlers,
+        sendSkillResponse,
       }}
     >
       {children}

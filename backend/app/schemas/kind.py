@@ -431,13 +431,65 @@ class BatchResponse(BaseModel):
 
 
 # Skill CRD schemas
+class SkillToolDeclaration(BaseModel):
+    """Tool declaration in skill configuration.
+
+    Defines a tool that should be dynamically loaded when the skill is active.
+    """
+
+    name: str = Field(..., description="Tool name")
+    provider: str = Field(..., description="Provider name")
+    config: Optional[Dict[str, Any]] = Field(
+        None, description="Tool-specific configuration"
+    )
+
+
+class SkillProviderConfig(BaseModel):
+    """Provider configuration for dynamic loading from skill
+
+    Specifies the module and class to load as the SkillToolProvider.
+    The provider.py file should be included in the skill ZIP package.
+    """
+
+    module: str = Field(
+        "provider",
+        description="Module name (without .py extension), e.g., 'provider'",
+    )
+    class_name: str = Field(
+        ...,
+        alias="class",
+        description="Provider class name",
+    )
+
+
 class SkillSpec(BaseModel):
     """Skill specification"""
 
-    description: str  # Extracted from SKILL.md YAML frontmatter
+    description: str  # Trigger condition description (from SKILL.md YAML frontmatter)
+    displayName: Optional[str] = (
+        None  # Friendly display name shown when tool is being used (e.g., "正在渲染图表")
+    )
+    prompt: Optional[str] = None  # Full prompt content (from SKILL.md body)
     version: Optional[str] = None  # Skill version
     author: Optional[str] = None  # Author
     tags: Optional[List[str]] = None  # Tags
+    bindShells: Optional[List[str]] = Field(
+        None,
+        description="List of shell types this skill is compatible with. "
+        "Valid values: 'ClaudeCode', 'Agno', 'Dify', 'Chat'. "
+        "REQUIRED: Skills must explicitly specify bindShells to be available. "
+        "If not specified or empty, the skill will NOT be available for any shell type.",
+    )
+    tools: Optional[List[SkillToolDeclaration]] = Field(
+        None,
+        description="Tool declarations for skill-tool binding. "
+        "Each tool is dynamically loaded via SkillToolRegistry.",
+    )
+    provider: Optional[SkillProviderConfig] = Field(
+        None,
+        description="Provider configuration for dynamic loading. "
+        "If specified, the provider will be loaded from the skill .",
+    )
 
 
 class SkillStatus(Status):

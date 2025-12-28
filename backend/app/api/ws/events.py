@@ -33,7 +33,11 @@ class ClientEvents:
     TASK_LEAVE = "task:leave"
 
     # History sync
+    # History sync
     HISTORY_SYNC = "history:sync"
+
+    # Generic Skill Events
+    SKILL_RESPONSE = "skill:response"  # Client -> Server: skill response
 
 
 class ServerEvents:
@@ -59,6 +63,9 @@ class ServerEvents:
     TASK_SHARED = "task:shared"
     TASK_INVITED = "task:invited"  # User invited to group chat
     UNREAD_COUNT = "unread:count"
+
+    # Generic Skill Events
+    SKILL_REQUEST = "skill:request"  # Server -> Client: skill request
 
 
 # ============================================================
@@ -330,6 +337,53 @@ class UnreadCountPayload(BaseModel):
     """Payload for unread:count event."""
 
     count: int
+
+
+# ============================================================
+# Generic Skill Payloads
+# ============================================================
+
+
+class SkillRequestPayload(BaseModel):
+    """
+    Generic payload for skill requests from server to frontend.
+
+    This is the unified payload format for all skills that require
+    frontend interaction (rendering, validation, etc.).
+    """
+
+    request_id: str = Field(..., description="Unique request ID for correlation")
+    skill_name: str = Field(..., description="Name of the skill")
+    action: str = Field(
+        ..., description="Action to perform (e.g., 'render', 'validate')"
+    )
+    data: Dict[str, Any] = Field(
+        default_factory=dict, description="Skill-specific data payload"
+    )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for Socket.IO emission."""
+        return {
+            "request_id": self.request_id,
+            "skill_name": self.skill_name,
+            "action": self.action,
+            "data": self.data,
+        }
+
+
+class SkillResponsePayload(BaseModel):
+    """
+    Generic payload for skill responses from frontend to server.
+
+    This is the unified payload format for all skill responses.
+    """
+
+    request_id: str = Field(..., description="Request ID for correlation")
+    skill_name: str = Field(..., description="Name of the skill")
+    action: str = Field(..., description="Action that was performed")
+    success: bool = Field(..., description="Whether the action succeeded")
+    result: Optional[Any] = Field(None, description="Success result data")
+    error: Optional[str] = Field(None, description="Error message if failed")
 
 
 # ============================================================

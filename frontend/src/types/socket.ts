@@ -45,6 +45,22 @@ export const ServerEvents = {
   TASK_SHARED: 'task:shared',
   TASK_INVITED: 'task:invited', // User invited to group chat
   UNREAD_COUNT: 'unread:count',
+
+  // Generic Skill Events
+  SKILL_REQUEST: 'skill:request', // Server -> Client: generic skill request
+
+  // Mermaid rendering events (deprecated, use SKILL_REQUEST instead)
+  MERMAID_RENDER: 'mermaid:render',
+} as const;
+
+// Client -> Server Skill events
+export const ClientSkillEvents = {
+  SKILL_RESPONSE: 'skill:response', // Client -> Server: generic skill response
+} as const;
+
+// Client -> Server Mermaid events (deprecated, use ClientSkillEvents instead)
+export const ClientMermaidEvents = {
+  MERMAID_RESULT: 'mermaid:result',
 } as const;
 
 // ============================================================
@@ -294,4 +310,100 @@ export interface HistorySyncAck {
 export interface GenericAck {
   success: boolean;
   error?: string;
+}
+
+// ============================================================
+// Mermaid Rendering Payloads
+// ============================================================
+
+/**
+ * Payload for mermaid:render event - Server to Client
+ * Backend requests frontend to render a mermaid diagram
+ */
+export interface MermaidRenderPayload {
+  /** Task ID */
+  task_id: number;
+  /** Subtask ID */
+  subtask_id: number;
+  /** Unique request ID for correlation */
+  request_id: string;
+  /** Mermaid diagram code to render */
+  code: string;
+  /** Diagram type hint: flowchart, sequence, class, etc. */
+  diagram_type?: string;
+  /** Optional title for the diagram */
+  title?: string;
+  /** Render timeout in milliseconds */
+  timeout_ms?: number;
+}
+
+/**
+ * Mermaid render error details
+ */
+export interface MermaidRenderError {
+  /** Error message */
+  message: string;
+  /** Line number where error occurred */
+  line?: number;
+  /** Column number where error occurred */
+  column?: number;
+  /** Detailed error info from mermaid parser */
+  details?: string;
+}
+
+/**
+ * Payload for mermaid:result event - Client to Server
+ * Frontend sends render result back to backend
+ */
+export interface MermaidResultPayload {
+  /** Task ID */
+  task_id: number;
+  /** Subtask ID */
+  subtask_id: number;
+  /** Request ID for correlation */
+  request_id: string;
+  /** Whether render succeeded */
+  success: boolean;
+  /** Rendered SVG content if success */
+  svg?: string;
+  /** Error details if failed */
+  error?: MermaidRenderError;
+}
+
+// ============================================================
+// Generic Skill Payloads
+// ============================================================
+
+/**
+ * Generic payload for skill:request event - Server to Client
+ * Backend requests frontend to perform a skill action
+ */
+export interface SkillRequestPayload {
+  /** Unique request ID for correlation */
+  request_id: string;
+  /** Name of the skill (e.g., 'mermaid-diagram') */
+  skill_name: string;
+  /** Action to perform (e.g., 'render') */
+  action: string;
+  /** Skill-specific data payload */
+  data: Record<string, unknown>;
+}
+
+/**
+ * Generic payload for skill:response event - Client to Server
+ * Frontend sends skill action result back to backend
+ */
+export interface SkillResponsePayload {
+  /** Request ID for correlation */
+  request_id: string;
+  /** Name of the skill */
+  skill_name: string;
+  /** Action that was performed */
+  action: string;
+  /** Whether the action succeeded */
+  success: boolean;
+  /** Success result data */
+  result?: unknown;
+  /** Error message if failed */
+  error?: string | Record<string, unknown>;
 }

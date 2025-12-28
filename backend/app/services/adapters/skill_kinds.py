@@ -76,9 +76,14 @@ class SkillKindsService:
             "metadata": {"name": name, "namespace": namespace},
             "spec": {
                 "description": metadata["description"],
+                "displayName": metadata.get("displayName"),
+                "prompt": metadata.get("prompt"),
                 "version": metadata.get("version"),
                 "author": metadata.get("author"),
                 "tags": metadata.get("tags"),
+                "bindShells": metadata.get("bindShells"),
+                "tools": metadata.get("tools"),
+                "provider": metadata.get("provider"),
             },
             "status": {
                 "state": "Available",
@@ -227,9 +232,14 @@ class SkillKindsService:
         skill_json["spec"].update(
             {
                 "description": metadata["description"],
+                "displayName": metadata.get("displayName"),
+                "prompt": metadata.get("prompt"),
                 "version": metadata.get("version"),
                 "author": metadata.get("author"),
                 "tags": metadata.get("tags"),
+                "bindShells": metadata.get("bindShells"),
+                "tools": metadata.get("tools"),
+                "provider": metadata.get("provider"),
             }
         )
         skill_json["status"].update(

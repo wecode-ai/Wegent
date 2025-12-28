@@ -108,11 +108,14 @@ class LangChainModelFactory:
                 "temperature": kw.get("temperature", 1.0),
                 "max_tokens": kw.get("max_tokens", 4096),
                 "streaming": kw.get("streaming", False),
-                "model_kwargs": (
-                    {"extra_headers": cfg.get("default_headers")}
-                    if cfg.get("default_headers")
-                    else None
-                ),
+                # Enable prompt caching for Anthropic models (90% cost reduction on cached tokens)
+                # Merge user-provided headers with the prompt-caching beta header
+                "model_kwargs": {
+                    "extra_headers": {
+                        **(cfg.get("default_headers") or {}),
+                        "anthropic-beta": "prompt-caching-2024-07-31",
+                    }
+                },
             },
         },
         "google": {

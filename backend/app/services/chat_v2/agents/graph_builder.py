@@ -17,7 +17,7 @@ from collections.abc import AsyncGenerator
 from typing import Any, Callable
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
 from langchain_core.messages.utils import convert_to_messages
 from langchain_core.tools.base import BaseTool
 from langgraph.checkpoint.memory import MemorySaver
@@ -37,6 +37,7 @@ class LangGraphAgentBuilder:
         tool_registry: ToolRegistry | None = None,
         max_iterations: int = 10,
         enable_checkpointing: bool = False,
+        load_skill_tool: Any | None = None,
     ):
         """Initialize agent builder.
 
@@ -45,17 +46,97 @@ class LangGraphAgentBuilder:
             tool_registry: Registry of available tools (optional)
             max_iterations: Maximum tool loop iterations
             enable_checkpointing: Enable state checkpointing for resumability
+            load_skill_tool: Optional LoadSkillTool instance for dynamic skill prompt injection
         """
         self.llm = llm
         self.tool_registry = tool_registry
         self.max_iterations = max_iterations
         self.enable_checkpointing = enable_checkpointing
         self._agent = None
+        self._load_skill_tool = load_skill_tool
 
         # Get all LangChain tools from registry
         self.tools: list[BaseTool] = []
         if self.tool_registry:
             self.tools = self.tool_registry.get_all()
+
+    def _create_prompt_modifier(self) -> Callable | None:
+        """Create a prompt modifier function for dynamic skill prompt injection.
+
+        This function is called before each model invocation to inject loaded skill
+        prompts into the messages.
+
+        Returns:
+            A callable that modifies the messages, or None if no load_skill_tool
+        """
+        if not self._load_skill_tool:
+            return None
+
+        load_skill_tool = self._load_skill_tool
+
+        def prompt_modifier(state: dict[str, Any]) -> list[BaseMessage]:
+            """Modify messages to inject loaded skill prompts into system message.
+
+            This function is called by LangGraph's create_react_agent before each
+            model invocation. It returns the modified messages list.
+            """
+            messages = state.get("messages", [])
+            if not messages:
+                logger.info("[prompt_modifier] Called with empty messages")
+                return messages
+
+            # Log all messages being sent to model (FULL content, no truncation)
+            logger.info("[prompt_modifier] ========== MODEL INPUT START ==========")
+            logger.info("[prompt_modifier] Total messages: %d", len(messages))
+            for i, msg in enumerate(messages):
+                msg_type = type(msg).__name__
+                content = msg.content if hasattr(msg, "content") else str(msg)
+                content_str = content if isinstance(content, str) else str(content)
+                # Print FULL content without truncation
+
+            logger.info("[prompt_modifier] ========== MODEL INPUT END ==========")
+
+            # Get combined skill prompt from the tool
+            skill_prompt = load_skill_tool.get_combined_skill_prompt()
+
+            if not skill_prompt:
+                # No skills loaded, return messages unchanged
+                logger.info(
+                    "[prompt_modifier] No skill prompt to inject, returning original messages"
+                )
+                return messages
+
+            # Find and update the system message
+            new_messages = []
+            system_updated = False
+
+            for msg in messages:
+                if isinstance(msg, SystemMessage) and not system_updated:
+                    # Append skill prompt to existing system message
+                    original_content = (
+                        msg.content
+                        if isinstance(msg.content, str)
+                        else str(msg.content)
+                    )
+                    updated_content = original_content + skill_prompt
+                    new_messages.append(SystemMessage(content=updated_content))
+                    system_updated = True
+
+                else:
+                    new_messages.append(msg)
+
+            # If no system message found, prepend one with skill prompt
+            if not system_updated:
+                new_messages.insert(0, SystemMessage(content=skill_prompt))
+                logger.info(
+                    "[prompt_modifier] Created new system message with skill prompts, len=%d, content:\n%s",
+                    len(skill_prompt),
+                    skill_prompt,
+                )
+
+            return new_messages
+
+        return prompt_modifier
 
     def _build_agent(self):
         """Build the LangGraph ReAct agent lazily."""
@@ -65,10 +146,15 @@ class LangGraphAgentBuilder:
         # Use LangGraph's prebuilt create_react_agent
         checkpointer = MemorySaver() if self.enable_checkpointing else None
 
+        # Create prompt modifier for dynamic skill prompt injection
+        prompt_modifier = self._create_prompt_modifier()
+
+        # Build agent with optional prompt modifier for dynamic system prompt updates
         self._agent = create_react_agent(
             model=self.llm,
             tools=self.tools,
             checkpointer=checkpointer,
+            prompt=prompt_modifier,
         )
 
         return self._agent
@@ -308,11 +394,27 @@ class LangGraphAgentBuilder:
                     tool_name = event.get("name", "unknown")
                     # Get run_id to match with tool_start
                     run_id = event.get("run_id", "")
-                    logger.info(
-                        "[stream_tokens] Tool completed: %s (run_id=%s)",
-                        tool_name,
-                        run_id,
-                    )
+                    # Get tool output for logging
+                    tool_data = event.get("data", {})
+                    tool_output = tool_data.get("output", "")
+                    # Log tool output, especially for load_skill
+                    if tool_name == "load_skill":
+                        logger.info(
+                            "[stream_tokens] load_skill completed (run_id=%s), output length=%d, output preview:\n---\n%s\n---",
+                            run_id,
+                            len(str(tool_output)),
+                            (
+                                str(tool_output)[:500] + "..."
+                                if len(str(tool_output)) > 500
+                                else str(tool_output)
+                            ),
+                        )
+                    else:
+                        logger.info(
+                            "[stream_tokens] Tool completed: %s (run_id=%s)",
+                            tool_name,
+                            run_id,
+                        )
                     # Notify callback if provided
                     if on_tool_event:
                         on_tool_event(
@@ -320,7 +422,7 @@ class LangGraphAgentBuilder:
                             {
                                 "name": tool_name,
                                 "run_id": run_id,
-                                "data": event.get("data", {}),
+                                "data": tool_data,
                             },
                         )
 

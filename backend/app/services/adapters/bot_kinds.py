@@ -1611,7 +1611,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         self, db: Session, skill_names: List[str], user_id: int
     ) -> None:
         """
-        Validate that all skill names exist for the user.
+        Validate that all skill names exist for the user or as system skills.
 
         Args:
             db: Database session
@@ -1625,10 +1625,11 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             return
 
         # Query all skills at once for efficiency
+        # Include both user's skills (user_id == user_id) and system skills (user_id == 0)
         existing_skills = (
             db.query(Kind)
             .filter(
-                Kind.user_id == user_id,
+                or_(Kind.user_id == user_id, Kind.user_id == 0),
                 Kind.kind == "Skill",
                 Kind.name.in_(skill_names),
                 Kind.namespace == "default",

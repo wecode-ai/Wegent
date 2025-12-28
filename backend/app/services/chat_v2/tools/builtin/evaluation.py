@@ -78,6 +78,7 @@ class SubmitEvaluationResultTool(BaseTool):
     """
 
     name: str = "submit_evaluation_result"
+    display_name: str = "正在提交评估结果"
     description: str = (
         "Submit the evaluation critique and correction for an AI response. "
         "This function MUST be called to return the final analysis."
