@@ -369,3 +369,198 @@ export async function invokeSkill(skillName: string): Promise<{ prompt: string }
 
   return response.json();
 }
+
+// ============================================================================
+// Public Skills Admin API (Admin only)
+// ============================================================================
+
+/**
+ * Upload a new public skill (Admin only)
+ */
+export async function uploadPublicSkill(
+  file: File,
+  name: string,
+  onProgress?: (progress: number) => void
+): Promise<UnifiedSkill> {
+  const token = getToken();
+  if (!token) throw new Error('No authentication token');
+
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('name', name);
+
+  const url = `${API_BASE_URL}/v1/kinds/skills/public/upload`;
+
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+
+    if (onProgress) {
+      xhr.upload.addEventListener('progress', e => {
+        if (e.lengthComputable) {
+          const progress = Math.round((e.loaded / e.total) * 100);
+          onProgress(progress);
+        }
+      });
+    }
+
+    xhr.addEventListener('load', () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const data = JSON.parse(xhr.responseText);
+          resolve(data);
+        } catch {
+          reject(new Error('Invalid response format'));
+        }
+      } else {
+        try {
+          const error = JSON.parse(xhr.responseText);
+          reject(new Error(error.detail || 'Failed to upload public skill'));
+        } catch {
+          reject(new Error(xhr.responseText || 'Failed to upload public skill'));
+        }
+      }
+    });
+
+    xhr.addEventListener('error', () => {
+      reject(new Error('Network error during upload'));
+    });
+
+    xhr.open('POST', url);
+    xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    xhr.send(formData);
+  });
+}
+
+/**
+ * Update an existing public skill with new ZIP (Admin only)
+ */
+export async function updatePublicSkillWithUpload(
+  skillId: number,
+  file: File,
+  onProgress?: (progress: number) => void
+): Promise<UnifiedSkill> {
+  const token = getToken();
+  if (!token) throw new Error('No authentication token');
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const url = `${API_BASE_URL}/v1/kinds/skills/public/${skillId}/upload`;
+
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+
+    if (onProgress) {
+      xhr.upload.addEventListener('progress', e => {
+        if (e.lengthComputable) {
+          const progress = Math.round((e.loaded / e.total) * 100);
+          onProgress(progress);
+        }
+      });
+    }
+
+    xhr.addEventListener('load', () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const data = JSON.parse(xhr.responseText);
+          resolve(data);
+        } catch {
+          reject(new Error('Invalid response format'));
+        }
+      } else {
+        try {
+          const error = JSON.parse(xhr.responseText);
+          reject(new Error(error.detail || 'Failed to update public skill'));
+        } catch {
+          reject(new Error(xhr.responseText || 'Failed to update public skill'));
+        }
+      }
+    });
+
+    xhr.addEventListener('error', () => {
+      reject(new Error('Network error during update'));
+    });
+
+    xhr.open('PUT', url);
+    xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    xhr.send(formData);
+  });
+}
+
+/**
+ * Delete a public skill (Admin only)
+ */
+export async function deletePublicSkill(skillId: number): Promise<void> {
+  const token = getToken();
+  if (!token) throw new Error('No authentication token');
+
+  const url = `${API_BASE_URL}/v1/kinds/skills/public/${skillId}`;
+  const response = await fetch(url, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    try {
+      const json = JSON.parse(error);
+      throw new Error(json.detail || 'Failed to delete public skill');
+    } catch {
+      throw new Error(error || 'Failed to delete public skill');
+    }
+  }
+}
+
+/**
+ * Download a public skill le
+ */
+export async function downloadPublicSkill(skillId: number, skillName: string): Promise<void> {
+  const token = getToken();
+  if (!token) throw new Error('No authentication token');
+
+  const url = `${API_BASE_URL}/v1/kinds/skills/public/${skillId}/download`;
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(error || 'Failed to download public skill');
+  }
+
+  // Create blob and trigger download
+  const blob = await response.blob();
+  const downloadUrl = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = downloadUrl;
+  link.download = `${skillName}.zip`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(downloadUrl);
+}
+
+/**
+ * Get the SKILL.md content from a public skill ZIP package
+ */
+export async function getPublicSkillContent(skillId: number): Promise<{ content: string }> {
+  const token = getToken();
+  if (!token) throw new Error('No authentication token');
+
+  const url = `${API_BASE_URL}/v1/kinds/skills/public/${skillId}/content`;
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    try {
+      const json = JSON.parse(error);
+      throw new Error(json.detail || 'Failed to get skill content');
+    } catch {
+      throw new Error(error || 'Failed to get skill content');
+    }
+  }
+
+  return response.json();
+}

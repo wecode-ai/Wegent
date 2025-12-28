@@ -4,6 +4,7 @@
   "tabs": {
     "users": "Users",
     "public_models": "Public Models",
+    "public_skills": "Public Skills",
     "system_config": "System Config"
   },
   "stats": {
@@ -154,6 +155,46 @@
       "name_required": "Model name is required",
       "config_required": "Model configuration is required",
       "config_invalid_json": "Model configuration must be valid JSON"
+    }
+  },
+  "public_skills": {
+    "title": "Public Skill Management",
+    "description": "Manage system-level public skills visible to all users",
+    "loading": "Loading skills...",
+    "no_skills": "No public skills found",
+    "upload_skill": "Upload Skill",
+    "update_skill": "Update Skill",
+    "download_skill": "Download Skill",
+    "delete_skill": "Delete Skill",
+    "view_content": "View Content",
+    "skill_content": "Skill Content",
+    "view_content_description": "Full content of the SKILL.md file",
+    "no_content": "Unable to load content",
+    "columns": {
+      "name": "Name",
+      "description": "Description",
+      "version": "Version",
+      "author": "Author",
+      "tags": "Tags",
+      "created_at": "Created At",
+      "actions": "Actions"
+    },
+    "confirm": {
+      "delete_title": "Delete Skill",
+      "delete_message": "Are you sure you want to delete public skill \"{{name}}\"? This action cannot be undone."
+    },
+    "success": {
+      "uploaded": "Public skill uploaded successfully",
+      "updated": "Public skill updated successfully",
+      "deleted": "Public skill deleted successfully"
+    },
+    "errors": {
+      "load_failed": "Failed to load public skills",
+      "upload_failed": "Failed to upload public skill",
+      "update_failed": "Failed to update public skill",
+      "delete_failed": "Failed to delete public skill",
+      "download_failed": "Failed to download public skill",
+      "view_content_failed": "Failed to get skill content"
     }
   },
   "access_denied": {
