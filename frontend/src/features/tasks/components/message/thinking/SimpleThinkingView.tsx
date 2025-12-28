@@ -22,6 +22,10 @@ interface ToolEntry {
   resultCount?: number;
   startIndex: number;
   endIndex?: number;
+  // Display name from backend (e.g., "正在渲染图表", "正在搜索网页")
+  displayTitle?: string;
+  // Completed display title from backend (e.g., "渲染图表完成", "搜索网页完成")
+  completedTitle?: string;
 }
 
 /**
@@ -63,12 +67,16 @@ const SimpleThinkingView = memo(function SimpleThinkingView({
             query = titleStr || toolName;
           }
 
+          // Get display title from backend (e.g., "正在渲染图表")
+          const displayTitle = typeof step.title === 'string' ? step.title : undefined;
+
           toolStartMap.set(runId, entries.length);
           entries.push({
             toolName,
             query,
             status: 'running',
             startIndex: index,
+            displayTitle,
           });
         }
         // Match tool_result with tool_use
@@ -98,10 +106,14 @@ const SimpleThinkingView = memo(function SimpleThinkingView({
             }
           }
 
+          // Get completed title from backend (e.g., "渲染图表完成")
+          const completedTitle = typeof step.title === 'string' ? step.title : undefined;
+
           if (startIdx !== undefined && entries[startIdx]) {
             entries[startIdx].status = 'completed';
             entries[startIdx].resultCount = resultCount;
             entries[startIdx].endIndex = index;
+            entries[startIdx].completedTitle = completedTitle;
           }
         }
       });
@@ -157,48 +169,33 @@ const SimpleThinkingView = memo(function SimpleThinkingView({
 
       {/* Expandable timeline */}
       {isExpanded && toolEntries.length > 0 && (
-        <div className="mt-2 ml-4 pl-4 space-y-3">
+        <div className="mt-2 ml-4 pl-4 space-y-2">
           {toolEntries.map((entry, index) => (
             <div key={index} className="relative">
-              {/* Tool start */}
+              {/* Tool entry - single line display */}
               <div className="relative">
                 <div
-                  className={`absolute -left-[19px] top-0.5 w-3 h-3 rounded-full border-2 bg-surface ${entry.status === 'running' ? 'border-blue-500 animate-pulse' : 'border-blue-500/40'}`}
+                  className={`absolute -left-[19px] top-0.5 w-3 h-3 rounded-full border-2 bg-surface ${
+                    entry.status === 'running'
+                      ? 'border-blue-500 animate-pulse'
+                      : 'border-green-500/60'
+                  }`}
                 />
-                <div className="text-xs space-y-1">
-                  <div className="font-medium text-blue-600 dark:text-blue-400">
+                <div className="text-xs">
+                  <div
+                    className={`font-medium ${
+                      entry.status === 'running'
+                        ? 'text-blue-600 dark:text-blue-400'
+                        : 'text-green-600 dark:text-green-400'
+                    }`}
+                  >
                     {entry.status === 'running'
-                      ? `${t('messages.using_tool') || 'Using tool'}: ${entry.toolName}`
-                      : `${t('messages.tool_completed') || 'Tool completed'}: ${entry.toolName}`}
+                      ? entry.displayTitle ||
+                        `${t('messages.using_tool') || 'Using tool'}: ${entry.toolName}`
+                      : entry.completedTitle || entry.displayTitle || entry.toolName}
                   </div>
-                  {entry.query && (
-                    <div className="text-text-secondary">
-                      {entry.toolName === 'web_search'
-                        ? `${t('messages.query') || 'Query'}: ${entry.query}`
-                        : entry.query}
-                    </div>
-                  )}
                 </div>
               </div>
-
-              {/* Tool result (only if completed) */}
-              {entry.status === 'completed' && (
-                <div className="relative mt-3">
-                  {/* Vertical line connecting the two dots */}
-                  <div
-                    className="absolute w-0.5 bg-blue-500/20"
-                    style={{ left: '-14px', top: '-2.125rem', height: '2.875rem' }}
-                  />
-                  <div className="absolute -left-[19px] top-0.5 w-3 h-3 rounded-full border-2 border-green-500/40 bg-surface" />
-                  <div className="text-xs">
-                    <div className="font-medium text-green-600 dark:text-green-400">
-                      {entry.toolName === 'web_search' && typeof entry.resultCount === 'number'
-                        ? `${t('messages.found') || 'Found'} ${entry.resultCount} ${t('messages.results') || 'results'}`
-                        : t('messages.tool_completed') || 'Tool completed'}
-                    </div>
-                  </div>
-                </div>
-              )}
             </div>
           ))}
         </div>
