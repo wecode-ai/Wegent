@@ -27,32 +27,57 @@ English | [简体中文](README_zh.md)
 ## ✨ Core Scenarios
 
 ### 💬 Chat Mode
-Multi-LLM (Claude/OpenAI/Gemini) · Multimodal · Web Search · Deep Thinking
-**Collaboration**: 4 modes · Group chat · Task sharing · On-demand Skills
-**Integration**: MCP tools · OpenAI-compatible API · Export PDF/DOCX
+
+| Category | Features |
+|----------|----------|
+| **LLM** | Claude / OpenAI / Gemini |
+| **Multimodal** | Image input (Vision) |
+| **Search** | Google / Bing / SearXNG |
+| **Collaboration** | 4 modes / Group chat / Task sharing |
+| **Extension** | On-demand Skills / MCP tools |
+| **API** | OpenAI-compatible interface |
+| **Export** | PDF / DOCX |
 
 ### 💻 Code Mode
-**Git Integration**: GitHub / GitLab / Gitea / Gitee / Gerrit
-**Execution**: ClaudeCode · Agno · Sandboxed isolation · Parallel execution
-**Assist**: Requirement clarification · Wiki generation · Error correction
+
+| Category | Features |
+|----------|----------|
+| **Git** | GitHub / GitLab / Gitea / Gitee / Gerrit |
+| **Execution** | ClaudeCode / Agno sandboxed isolation |
+| **Workflow** | Branch → Code → Commit → PR |
+| **Assist** | Requirement clarification / Wiki generation / Error correction |
 
 ### 📚 Knowledge Mode *(Experimental)*
-**RAG**: Vector/Keyword/Hybrid retrieval · Elasticsearch/Qdrant
-**Documents**: PDF · Markdown · DOCX · Code files
+
+| Category | Features |
+|----------|----------|
+| **RAG** | Vector / Keyword / Hybrid retrieval |
+| **Storage** | Elasticsearch / Qdrant |
+| **Formats** | PDF / Markdown / DOCX / Code files |
+| **Wiki** | Auto-generated codebase documentation |
 
 ---
 
 ## 🔧 Extensibility
 
-**Agent Wizard** - 4-step creation: Describe → AI clarifies → Live test → One-click create
-**YAML Config** - Kubernetes-style CRD, pure config for Ghost/Bot/Team/Skill
-**MCP Tools** - Model Context Protocol for external tools and services
-**Execution Engines** - ClaudeCode (Docker) · Agno (Docker) · Dify (API) · Chat (Direct)
+| Feature | Description |
+|---------|-------------|
+| **Agent Wizard** | 4-step creation: Describe → AI clarifies → Live test → One-click create |
+| **YAML Config** | Kubernetes-style CRD for Ghost / Bot / Team / Skill |
+| **MCP Tools** | Model Context Protocol for external tools and services |
+| **Execution Engines** | ClaudeCode (Docker) / Agno (Docker) / Dify (API) / Chat (Direct) |
 
 ---
 
 ## 🔐 Deployment & Operations
-OIDC/SSO · Namespace isolation · API Key management · OpenTelemetry · Admin panel · i18n (en/zh) · Dark Mode
+
+| Category | Features |
+|----------|----------|
+| **Auth** | OIDC / SSO |
+| **Isolation** | Namespace separation |
+| **Management** | API Key / Admin panel |
+| **Observability** | OpenTelemetry |
+| **i18n** | English / Chinese / Dark Mode |
 
 ---
 
@@ -81,9 +106,14 @@ docker-compose up -d
 
 ## 🏗️ Architecture
 
-`Frontend (Next.js)` → `Backend (FastAPI)` → `Executor Manager` → `Executors (ClaudeCode/Agno/Dify/Chat)`
+```
+Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (ClaudeCode/Agno/Dify/Chat)
+```
 
-> **Core Concepts**: Ghost (prompt) + Shell (environment) + Model = Bot → Multiple Bots + Collaboration = Team
+**Core Concepts:**
+- **Ghost** (prompt) + **Shell** (environment) + **Model** = **Bot**
+- Multiple **Bots** + **Collaboration Mode** = **Team**
+
 > See [Core Concepts](docs/en/concepts/core-concepts.md) | [YAML Spec](docs/en/reference/yaml-specification.md)
 
 ---

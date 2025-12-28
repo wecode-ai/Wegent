@@ -27,32 +27,57 @@
 ## ✨ 三大核心场景
 
 ### 💬 对话模式
-多 LLM (Claude/OpenAI/Gemini) · 多模态 · 联网搜索 · 深度思考
-**协作**: 4 种模式 · 群聊 · 任务分享 · Skill 按需加载
-**集成**: MCP 工具 · OpenAI 兼容 API · 导出 PDF/DOCX
+
+| 类别 | 功能 |
+|------|------|
+| **LLM** | Claude / OpenAI / Gemini |
+| **多模态** | 图片输入 (Vision) |
+| **搜索** | Google / Bing / SearXNG |
+| **协作** | 4 种模式 / 群聊 / 任务分享 |
+| **扩展** | Skill 按需加载 / MCP 工具 |
+| **API** | OpenAI 兼容接口 |
+| **导出** | PDF / DOCX |
 
 ### 💻 编码模式
-**Git 集成**: GitHub / GitLab / Gitea / Gitee / Gerrit
-**执行环境**: ClaudeCode · Agno · 沙箱隔离 · 并行执行
-**辅助**: 需求澄清 · Wiki 生成 · 纠错模式
+
+| 类别 | 功能 |
+|------|------|
+| **Git** | GitHub / GitLab / Gitea / Gitee / Gerrit |
+| **执行** | ClaudeCode / Agno 沙箱隔离 |
+| **工作流** | 分支 → 编码 → 提交 → PR |
+| **辅助** | 需求澄清 / Wiki 生成 / 纠错模式 |
 
 ### 📚 知识模式 *(实验性)*
-**RAG**: 向量/关键词/混合检索 · Elasticsearch/Qdrant
-**文档**: PDF · Markdown · DOCX · 代码文件
+
+| 类别 | 功能 |
+|------|------|
+| **RAG** | 向量 / 关键词 / 混合检索 |
+| **存储** | Elasticsearch / Qdrant |
+| **格式** | PDF / Markdown / DOCX / 代码文件 |
+| **Wiki** | 代码库文档自动生成 |
 
 ---
 
 ## 🔧 扩展能力
 
-**智能体向导** - 4 步创建：描述需求 → AI 追问 → 实时测试 → 一键创建
-**YAML 配置** - Kubernetes 风格 CRD，纯配置定义 Ghost/Bot/Team/Skill
-**MCP 工具** - Model Context Protocol，调用外部工具和服务
-**执行引擎** - ClaudeCode (Docker) · Agno (Docker) · Dify (API) · Chat (Direct)
+| 功能 | 描述 |
+|------|------|
+| **智能体向导** | 4 步创建：描述需求 → AI 追问 → 实时测试 → 一键创建 |
+| **YAML 配置** | Kubernetes 风格 CRD，定义 Ghost / Bot / Team / Skill |
+| **MCP 工具** | Model Context Protocol，调用外部工具和服务 |
+| **执行引擎** | ClaudeCode (Docker) / Agno (Docker) / Dify (API) / Chat (Direct) |
 
 ---
 
 ## 🔐 部署与运维
-OIDC/SSO · 命名空间隔离 · API Key 管理 · OpenTelemetry · 管理员面板 · i18n (en/zh) · Dark Mode
+
+| 类别 | 功能 |
+|------|------|
+| **认证** | OIDC / SSO |
+| **隔离** | 命名空间隔离 |
+| **管理** | API Key / 管理员面板 |
+| **可观测性** | OpenTelemetry |
+| **国际化** | 中文 / 英文 / 深色模式 |
 
 ---
 
@@ -71,7 +96,7 @@ docker-compose up -d
 ## 📦 预置智能体
 
 | 团队 | 用途 |
-|-----|------|
+|------|------|
 | chat-team | 通用 AI 助手 + Mermaid 图表 |
 | translator | 多语言翻译 |
 | dev-team | Git 工作流：分支 → 编码 → 提交 → PR |
@@ -81,9 +106,14 @@ docker-compose up -d
 
 ## 🏗️ 架构
 
-`Frontend (Next.js)` → `Backend (FastAPI)` → `Executor Manager` → `Executors (ClaudeCode/Agno/Dify/Chat)`
+```
+Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (ClaudeCode/Agno/Dify/Chat)
+```
 
-> **核心概念**: Ghost (提示词) + Shell (执行环境) + Model = Bot → 多 Bot + 协作模式 = Team
+**核心概念：**
+- **Ghost** (提示词) + **Shell** (执行环境) + **Model** = **Bot**
+- 多个 **Bot** + **协作模式** = **Team**
+
 > 详见 [核心概念](docs/zh/concepts/core-concepts.md) | [YAML 规范](docs/zh/reference/yaml-specification.md)
 
 ---
