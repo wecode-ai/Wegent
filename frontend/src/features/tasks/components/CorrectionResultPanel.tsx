@@ -4,7 +4,7 @@
 
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   CheckCircle,
   AlertCircle,
@@ -66,8 +66,14 @@ export default function CorrectionResultPanel({
   const { toast } = useToast();
   const { theme } = useTheme();
   const [isApplying, setIsApplying] = useState(false);
-  const [isApplied, setIsApplied] = useState(false);
+  // Initialize isApplied from result.applied (persisted state from backend)
+  const [isApplied, setIsApplied] = useState(result.applied ?? false);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+
+  // Sync isApplied state when result.applied changes (e.g., when data is reloaded or re-validated)
+  useEffect(() => {
+    setIsApplied(result.applied ?? false);
+  }, [result.applied]);
 
   // Handle apply correction
   const handleApply = async () => {

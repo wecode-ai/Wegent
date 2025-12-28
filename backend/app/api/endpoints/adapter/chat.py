@@ -1839,7 +1839,7 @@ async def correct_response(
 
     # Return cached result only if not forcing retry
     if existing_correction and not request.force_retry:
-        # Return cached result
+        # Return cached result including applied status
         return {
             "message_id": subtask.id,
             "scores": existing_correction.get("scores", {}),
@@ -1847,6 +1847,7 @@ async def correct_response(
             "summary": existing_correction.get("summary", ""),
             "improved_answer": existing_correction.get("improved_answer", ""),
             "is_correct": existing_correction.get("is_correct", False),
+            "applied": existing_correction.get("applied", False),
         }
 
     # Get the correction model config using chat_v2's unified model resolver

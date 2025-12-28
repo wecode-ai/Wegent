@@ -44,6 +44,7 @@ export interface CorrectionResponse {
   summary: string;
   improved_answer: string;
   is_correct: boolean;
+  applied?: boolean; // Whether the correction has been applied to the original message
 }
 
 /**
@@ -58,8 +59,10 @@ export interface CorrectionData {
   improved_answer: string;
   is_correct: boolean;
   corrected_at?: string;
+  applied?: boolean; // Whether the correction has been applied to the original message
+  applied_at?: string; // Timestamp when the correction was applied
+  original_value?: string; // Original message content before correction was applied
 }
-
 /**
  * Correction mode state stored in localStorage
  */
@@ -110,6 +113,7 @@ export function correctionDataToResponse(
     summary: data.summary,
     improved_answer: data.improved_answer,
     is_correct: data.is_correct,
+    applied: data.applied,
   };
 }
 
