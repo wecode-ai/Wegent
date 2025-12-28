@@ -18,6 +18,11 @@ Wegent is an open-source AI-native operating system for defining, organizing, an
 - High cohesion, low coupling - extract common logic, avoid duplication
 - Choose simplest working solution - prioritize code simplicity and extensibility
 
+**📚 Documentation Principle:**
+- **AGENTS.md**: Core concepts, coding principles, and quick reference only
+- **docs/**: Detailed architecture, design documents, and comprehensive guides
+- When adding new features, put detailed docs in `docs/en/` and `docs/zh/`, reference from AGENTS.md
+
 **📚 Detailed Documentation:** See `docs/en/` or `docs/zh/` for comprehensive guides on setup, testing, architecture, and user guides.
 
 ---
@@ -268,6 +273,7 @@ Task (Team + Workspace) → Subtasks
 | **Team** | User-facing agent | `members[]`, `collaborationModel` |
 | **Task** | Execution unit | `teamRef`, `workspaceRef` |
 | **Workspace** | Git repository | `repository{}` |
+| **Skill** | On-demand capabilities | `description`, `prompt`, `tools`, `provider` |
 
 ### Database Table Mapping
 
@@ -275,8 +281,9 @@ Task (Team + Workspace) → Subtasks
 
 | CRD Kind | Database Table | Model Class |
 |----------|----------------|-------------|
-| Ghost, Model, Shell, Bot, Team | `kinds` | `Kind` |
+| Ghost, Model, Shell, Bot, Team, Skill | `kinds` | `Kind` |
 | **Task, Workspace** | **`tasks`** | **`TaskResource`** |
+| **Skill Binary** | **`skill_binaries`** | **`SkillBinary`** |
 
 **Code Usage:**
 ```python
@@ -299,6 +306,20 @@ team = db.query(Kind).filter(Kind.kind == "Team", ...).first()
 | `Agno` | Agno framework in Docker |
 | `Dify` | External Dify API proxy |
 | `Chat` | Direct LLM API (no Docker) |
+
+---
+
+## 🎯 Skill System
+
+**Skill** is a CRD that provides on-demand capabilities and tools to AI Agents. Skills are loaded dynamically when the LLM determines they are needed, improving token efficiency.
+
+**Key Points:**
+- Skills are referenced by name in `Ghost.spec.skills[]`
+- Uploaded as ZIP packages with `SKILL.md` (metadata + prompt)
+- Can include custom tool providers (public skills only)
+- Loaded on-demand via `load_skill()` tool call
+
+**📖 For detailed documentation:** See [`docs/en/concepts/skill-system.md`](docs/en/concepts/skill-system.md) or [`docs/zh/concepts/skill-system.md`](docs/zh/concepts/skill-system.md)
 
 ---
 
