@@ -42,7 +42,7 @@ class GhostKindService(KindBaseService):
 
     def _validate_skills(self, db: Session, skill_names: list, user_id: int) -> None:
         """
-        Validate that all skill names exist for the user.
+        Validate that all skill names exist for the user or as system skills.
 
         Args:
             db: Database session
@@ -52,14 +52,17 @@ class GhostKindService(KindBaseService):
         Raises:
             NotFoundException: If any skill does not exist
         """
+        from sqlalchemy import or_
+
         if not skill_names:
             return
 
         # Query all skills at once for efficiency
+        # Include both user's skills (user_id == user_id) and system skills (user_id == 0)
         existing_skills = (
             db.query(Kind)
             .filter(
-                Kind.user_id == user_id,
+                or_(Kind.user_id == user_id, Kind.user_id == 0),
                 Kind.kind == "Skill",
                 Kind.name.in_(skill_names),
                 Kind.namespace == "default",

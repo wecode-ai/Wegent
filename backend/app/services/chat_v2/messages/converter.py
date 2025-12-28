@@ -7,6 +7,7 @@
 import base64
 import io
 import logging
+from datetime import datetime
 from typing import Any
 
 from PIL import Image
@@ -31,19 +32,27 @@ class MessageConverter:
         current_message: str | dict[str, Any],
         system_prompt: str = "",
         username: str | None = None,
+        inject_datetime: bool = True,
     ) -> list[dict[str, Any]]:
         """Build a complete message list from history, current message, and system prompt.
 
         Combines:
         - System prompt (if provided)
         - Chat history
-        - Current user message
+        - Current user message (with optional datetime context at the END)
+
+        The datetime is injected at the END of the user message (not system prompt) to enable
+        prompt caching. This allows:
+        1. System prompts to remain static and be cached
+        2. User message prefix to be cached (prefix matching)
+        3. Only the datetime suffix changes between requests
 
         Args:
             history: Previous messages in the conversation
             current_message: The current user message (string or vision dict)
             system_prompt: Optional system prompt to prepend
             username: Optional username to prefix the current message (for group chat)
+            inject_datetime: Whether to inject current datetime into user message (default: True)
 
         Returns:
             List of message dicts ready for LLM API
@@ -55,30 +64,40 @@ class MessageConverter:
 
         messages.extend(history)
 
+        # Build datetime context suffix for user message (at the END for better caching)
+        # Placing at the end allows the message prefix to be cached via prefix matching
+        time_suffix = ""
+        if inject_datetime:
+            now = datetime.now()
+            time_suffix = f"\n[Current time: {now.strftime('%Y-%m-%d %H:%M')}]"
+
         if isinstance(current_message, dict):
             if current_message.get("type") == "vision":
-                # For vision messages, add username prefix to text if provided
+                # For vision messages, add username prefix and time suffix to text
                 vision_data = current_message.copy()
-                if username and vision_data.get("text"):
-                    vision_data["text"] = f"User[{username}]: {vision_data['text']}"
+                text = vision_data.get("text", "")
+                if username:
+                    text = f"User[{username}]: {text}"
+                vision_data["text"] = text + time_suffix
                 messages.append(MessageConverter._build_vision_from_dict(vision_data))
             elif current_message.get("type") == "multi_vision":
-                # For multi-vision messages, add username prefix to text if provided
+                # For multi-vision messages, add username prefix and time suffix to text
                 multi_vision_data = current_message.copy()
-                if username and multi_vision_data.get("text"):
-                    multi_vision_data["text"] = (
-                        f"User[{username}]: {multi_vision_data['text']}"
-                    )
+                text = multi_vision_data.get("text", "")
+                if username:
+                    text = f"User[{username}]: {text}"
+                multi_vision_data["text"] = text + time_suffix
                 messages.append(
                     MessageConverter._build_multi_vision_from_dict(multi_vision_data)
                 )
             else:
                 messages.append(current_message)
         else:
-            # For plain text messages, add username prefix if provided (group chat)
+            # For plain text messages, add username prefix and time suffix
             content = (
                 f"User[{username}]: {current_message}" if username else current_message
             )
+            content = content + time_suffix
             messages.append({"role": "user", "content": content})
 
         return messages

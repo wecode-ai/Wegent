@@ -37,6 +37,7 @@ class KnowledgeBaseTool(BaseTool):
     """
 
     name: str = "knowledge_base_search"
+    display_name: str = "检索知识库"
     description: str = (
         "Search the knowledge base for relevant information. "
         "Use this tool when you need to find specific information from the knowledge base. "

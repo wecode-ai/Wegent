@@ -24,6 +24,7 @@ class WebSearchTool(BaseTool):
     """Web search tool that integrates with backend search service."""
 
     name: str = "web_search"
+    display_name: str = "搜索网页"
     description: str = (
         "Search the web for information. Returns a list of relevant web pages with titles, URLs, and snippets."
     )

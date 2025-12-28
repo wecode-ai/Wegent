@@ -49,6 +49,13 @@ class ChatConfig:
     task_id: int = 0
     team_id: int = 0
 
+    # Skill names for load_skill tool
+    skill_names: list[str] = field(default_factory=list)
+
+    # Full skill configurations including tools declarations
+    # Used by SkillToolRegistry to dynamically create tool instances
+    skill_configs: list[dict[str, Any]] = field(default_factory=list)
+
 
 class ChatConfigBuilder:
     """Builder for chat configuration.
@@ -125,12 +132,17 @@ class ChatConfigBuilder:
             task_id,
         )
 
-        # Get system prompt
+        # Get skills for the bot (needed for both system prompt and load_skill tool)
+        skills = self._get_bot_skills(bot)
+        skill_names = [s["name"] for s in skills]
+
+        # Get system prompt (pass skills to avoid duplicate query)
         system_prompt = self._get_system_prompt(
             bot,
             team_member_prompt,
             enable_clarification,
             enable_deep_thinking,
+            skills=skills,
         )
 
         # Get agent config
@@ -156,6 +168,8 @@ class ChatConfigBuilder:
             user_name=self.user_name,
             task_id=task_id,
             team_id=self.team.id,
+            skill_names=skill_names,
+            skill_configs=skills,  # Full skill configs for SkillToolRegistry
         )
 
     def _get_first_bot(self) -> Kind | None:
@@ -250,6 +264,7 @@ class ChatConfigBuilder:
         team_member_prompt: str | None,
         enable_clarification: bool,
         enable_deep_thinking: bool,
+        skills: list[dict] | None = None,
     ) -> str:
         """Get system prompt for the bot.
 
@@ -258,12 +273,11 @@ class ChatConfigBuilder:
             team_member_prompt: Optional additional prompt from team member
             enable_clarification: Whether to enable clarification mode
             enable_deep_thinking: Whether to enable deep thinking mode with search guidance
+            skills: Pre-fetched skills list to avoid duplicate query (optional)
 
         Returns:
             Combined system prompt
         """
-        from datetime import datetime
-
         from app.services.chat_v2.models.resolver import get_bot_system_prompt
 
         # Get team member prompt from first member if not provided
@@ -277,13 +291,6 @@ class ChatConfigBuilder:
             self.team.user_id,
             team_member_prompt,
         )
-
-        # Append current date/time information
-        now = datetime.now()
-        current_time_info = (
-            f"\n\nCurrent date and time: {now.strftime('%Y-%m-%d %H:%M:%S')}\n"
-        )
-        system_prompt += current_time_info
 
         # Append clarification mode instructions if enabled
         if enable_clarification:
@@ -301,14 +308,28 @@ class ChatConfigBuilder:
 
             system_prompt = append_deep_thinking_prompt(system_prompt, True)
 
-        # CRITICAL: Log the final system prompt being sent to the LLM
-        logger.info(
-            "[SYSTEM_PROMPT_DEBUG] Final system prompt for bot '%s' (user_id=%d, team_id=%d):\n---\n%s\n---",
-            bot.name if bot else "UNKNOWN_BOT",
-            self.user_id,
-            self.team.id,
-            system_prompt,
-        )
+        # Inject skill metadata if bot has skills configured
+        # Use pre-fetched skills if provided, otherwise query
+        if skills is None:
+            skills = self._get_bot_skills(bot)
+        if skills:
+            from app.services.chat_v2.utils.prompts import (
+                append_skill_metadata_prompt,
+            )
+
+            system_prompt = append_skill_metadata_prompt(system_prompt, skills)
+
+        # NOTE: Current date/time is now injected into user messages (not system prompt)
+        # to enable prompt caching. See MessageConverter.build_messages() for details.
+
+        # # CRITICAL: Log the final system prompt being sent to the LLM
+        # logger.info(
+        #     "[SYSTEM_PROMPT_DEBUG] Final system prompt for bot '%s' (user_id=%d, team_id=%d):\n---\n%s\n---",
+        #     bot.name if bot else "UNKNOWN_BOT",
+        #     self.user_id,
+        #     self.team.id,
+        #     system_prompt,
+        # )
 
         return system_prompt
 
@@ -385,3 +406,97 @@ class ChatConfigBuilder:
         )
 
         return shell_type
+
+    def _get_bot_skills(self, bot: Kind) -> list[dict]:
+        """
+        Get skills for the bot from Ghost.
+
+        Returns list of skill metadata including tools configuration:
+        [{"name": "...", "description": "...", "tools": [...]}]
+
+        The tools field contains tool declarations from SKILL.md frontmatter,
+        which are used by SkillToolRegistry to dynamically create tool instances.
+        """
+        from app.schemas.kind import Ghost, Skill
+
+        bot_crd = Bot.model_validate(bot.json)
+        if not bot_crd.spec or not bot_crd.spec.ghostRef:
+            return []
+
+        # Query Ghost
+        ghost = (
+            self.db.query(Kind)
+            .filter(
+                Kind.user_id == self.team.user_id,
+                Kind.kind == "Ghost",
+                Kind.name == bot_crd.spec.ghostRef.name,
+                Kind.namespace == bot_crd.spec.ghostRef.namespace,
+                Kind.is_active == True,  # noqa: E712
+            )
+            .first()
+        )
+
+        if not ghost or not ghost.json:
+            return []
+
+        ghost_crd = Ghost.model_validate(ghost.json)
+        if not ghost_crd.spec.skills:
+            return []
+
+        # Query each skill (user's first, then public)
+        skills = []
+        for skill_name in ghost_crd.spec.skills:
+            skill = self._find_skill(skill_name)
+            if skill:
+                skill_crd = Skill.model_validate(skill.json)
+                skill_data = {
+                    "name": skill_crd.metadata.name,
+                    "description": skill_crd.spec.description,
+                    "skill_id": skill.id,  # Include skill ID for provider loading
+                    "skill_user_id": skill.user_id,  # Include user_id for security check
+                }
+                # Include tools configuration if present in skill spec
+                # Convert SkillToolDeclaration objects to dicts for serialization
+                if skill_crd.spec.tools:
+                    skill_data["tools"] = [
+                        tool.model_dump(exclude_none=True)
+                        for tool in skill_crd.spec.tools
+                    ]
+                # Include provider configuration for dynamic loading
+                if skill_crd.spec.provider:
+                    skill_data["provider"] = {
+                        "module": skill_crd.spec.provider.module,
+                        "class": skill_crd.spec.provider.class_name,
+                    }
+                skills.append(skill_data)
+
+        return skills
+
+    def _find_skill(self, skill_name: str) -> Kind | None:
+        """Find skill by name (user's first, then public)."""
+        # User's skill
+        skill = (
+            self.db.query(Kind)
+            .filter(
+                Kind.user_id == self.team.user_id,
+                Kind.kind == "Skill",
+                Kind.name == skill_name,
+                Kind.is_active == True,  # noqa: E712
+            )
+            .first()
+        )
+
+        if skill:
+            return skill
+
+        # Public skill (user_id=0)
+        return (
+            self.db.query(Kind)
+            .filter(
+                Kind.user_id == 0,
+                Kind.kind == "Skill",
+                Kind.name == skill_name,
+                Kind.is_active == True,  # noqa: E712
+            )
+            .first()
+        )
