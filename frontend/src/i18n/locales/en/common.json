@@ -699,7 +699,9 @@
     "no_skills_hint": "Upload a skill ZIP package or use system skills",
     "delete_success": "Skill deleted successfully",
     "delete_failed": "Failed to delete skill",
-    "download_success": "Download started"
+    "download_success": "Download started",
+    "bind_shells": "Supported Shells",
+    "no_bind_shells": "No shell binding"
   },
   "models": {
     "label": "Model",

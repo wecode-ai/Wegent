@@ -80,6 +80,8 @@ export interface SkillSpec {
   version?: string;
   author?: string;
   tags?: string[];
+  /** List of shell types this skill is compatible with (e.g., 'ClaudeCode', 'Agno', 'Dify', 'Chat') */
+  bindShells?: string[];
 }
 
 export interface SkillStatus {
