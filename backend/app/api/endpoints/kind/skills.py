@@ -6,6 +6,7 @@
 Skills API endpoints for managing Claude Code Skills
 """
 import io
+import zipfile
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
@@ -221,6 +222,254 @@ def delete_public_skill(
     """Delete a public skill (admin only)."""
     public_skill_service.delete_skill(db, skill_id=skill_id)
     return None
+
+
+@router.post("/public/upload", response_model=Dict[str, Any], status_code=201)
+async def upload_public_skill(
+    file: UploadFile = File(..., description="Skill ZIP package (max 10MB)"),
+    name: str = Form(..., description="Skill name (unique)"),
+    current_user: User = Depends(security.get_admin_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Upload and create a new public Skill ZIP package (admin only).
+
+    Uses user_id=0 to indicate a public/system-level skill.
+    The ZIP package must contain a skill folder as root directory with the following structure:
+    ```
+    my-skill.zip
+      └── my-skill/
+          ├── SKILL.md
+          └── resources/
+    ```
+
+    The SKILL.md file must contain YAML frontmatter:
+    ```
+    ---
+    description: "Skill description"
+    version: "1.0.0"
+    author: "Author name"
+    tags: ["tag1", "tag2"]
+    ---
+    ```
+    """
+    # Validate file type
+    if not file.filename.endswith(".zip"):
+        raise HTTPException(status_code=400, detail="File must be a ZIP package (.zip)")
+
+    # Read file content
+    file_content = await file.read()
+
+    # Create public skill using service with user_id=0
+    skill = skill_kinds_service.create_skill(
+        db=db,
+        name=name.strip(),
+        namespace="default",
+        file_content=file_content,
+        file_name=file.filename,
+        user_id=0,  # Public skill
+    )
+
+    # Convert to dict format for consistency with other public skill endpoints
+    return {
+        "id": int(skill.metadata.labels.get("id", 0)),
+        "name": skill.metadata.name,
+        "namespace": skill.metadata.namespace,
+        "description": skill.spec.description,
+        "prompt": skill.spec.prompt,
+        "version": skill.spec.version,
+        "author": skill.spec.author,
+        "tags": skill.spec.tags,
+        "bindShells": skill.spec.bindShells,
+        "is_active": True,
+        "is_public": True,
+        "created_at": None,
+        "updated_at": None,
+    }
+
+
+@router.put("/public/{skill_id}/upload", response_model=Dict[str, Any])
+async def update_public_skill_with_upload(
+    skill_id: int,
+    file: UploadFile = File(..., description="New Skill ZIP package (max 10MB)"),
+    current_user: User = Depends(security.get_admin_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Update a public Skill by uploading a new ZIP package (admin only).
+
+    Validates that the skill_id corresponds to a public skill (user_id=0).
+    The ZIP package must contain a skill folder as root directory with the following structure:
+    ```
+    my-skill.zip
+      └── my-skill/
+          ├── SKILL.md
+          └── resources/
+    ```
+
+    The Skill name and namespace cannot be changed.
+    """
+    # Verify this is a public skill (user_id=0)
+    existing_skill = (
+        db.query(Kind)
+        .filter(
+            Kind.id == skill_id,
+            Kind.user_id == 0,
+            Kind.kind == "Skill",
+            Kind.is_active == True,  # noqa: E712
+        )
+        .first()
+    )
+
+    if not existing_skill:
+        raise HTTPException(status_code=404, detail="Public skill not found")
+
+    # Validate file type
+    if not file.filename.endswith(".zip"):
+        raise HTTPException(status_code=400, detail="File must be a ZIP package (.zip)")
+
+    # Read file content
+    file_content = await file.read()
+
+    # Update public skill using service with user_id=0
+    skill = skill_kinds_service.update_skill(
+        db=db,
+        skill_id=skill_id,
+        user_id=0,  # Public skill
+        file_content=file_content,
+        file_name=file.filename,
+    )
+
+    # Convert to dict format for consistency with other public skill endpoints
+    return {
+        "id": int(skill.metadata.labels.get("id", 0)),
+        "name": skill.metadata.name,
+        "namespace": skill.metadata.namespace,
+        "description": skill.spec.description,
+        "prompt": skill.spec.prompt,
+        "version": skill.spec.version,
+        "author": skill.spec.author,
+        "tags": skill.spec.tags,
+        "bindShells": skill.spec.bindShells,
+        "is_active": True,
+        "is_public": True,
+        "created_at": None,
+        "updated_at": None,
+    }
+
+
+@router.get("/public/{skill_id}/download")
+def download_public_skill(
+    skill_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Download a public Skill ckage.
+
+    Validates that the skill_id corresponds to a public skill (user_id=0).
+    Any authenticated user can download public skills.
+    """
+    # Verify this is a public skill (user_id=0)
+    skill = (
+        db.query(Kind)
+        .filter(
+            Kind.id == skill_id,
+            Kind.user_id == 0,
+            Kind.kind == "Skill",
+            Kind.is_active == True,  # noqa: E712
+        )
+        .first()
+    )
+
+    if not skill:
+        raise HTTPException(status_code=404, detail="Public skill not found")
+
+    # Get binary data using service with user_id=0
+    binary_data = skill_kinds_service.get_skill_binary(
+        db=db, skill_id=skill_id, user_id=0
+    )
+    if not binary_data:
+        raise HTTPException(status_code=404, detail="Public skill binary not found")
+
+    # Return as streaming response
+    return StreamingResponse(
+        io.BytesIO(binary_data),
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename={skill.name}.zip"},
+    )
+
+
+@router.get("/public/{skill_id}/content", response_model=Dict[str, str])
+def get_public_skill_content(
+    skill_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get the SKILL.md content from a public Skill ckage.
+
+    Validates that the skill_id corresponds to a public skill (user_id=0).
+    Any authenticated user can view public skill content.
+
+    Returns:
+        {"content": "SKILL.md raw content"}
+    """
+    # Verify this is a public skill (user_id=0)
+    skill = (
+        db.query(Kind)
+        .filter(
+            Kind.id == skill_id,
+            Kind.user_id == 0,
+            Kind.kind == "Skill",
+            Kind.is_active == True,  # noqa: E712
+        )
+        .first()
+    )
+
+    if not skill:
+        raise HTTPException(status_code=404, detail="Public skill not found")
+
+    # Get binary data using service with user_id=0
+    binary_data = skill_kinds_service.get_skill_binary(
+        db=db, skill_id=skill_id, user_id=0
+    )
+    if not binary_data:
+        raise HTTPException(status_code=404, detail="Public skill binary not found")
+
+    # Extract SKILL.md content from ZIP
+    try:
+        with zipfile.ZipFile(io.BytesIO(binary_data), "r") as zip_file:
+            # Find SKILL.md file
+            skill_md_content = None
+            for file_info in zip_file.filelist:
+                # Skip directory entries
+                if file_info.filename.endswith("/"):
+                    continue
+                # Check if this is SKILL.md (in format: skill-folder/SKILL.md)
+                if file_info.filename.endswith("SKILL.md"):
+                    path_parts = file_info.filename.split("/")
+                    # SKILL.md must be in a subdirectory (skill-folder/SKILL.md)
+                    if len(path_parts) == 2:
+                        with zip_file.open(file_info) as f:
+                            skill_md_content = f.read().decode("utf-8", errors="ignore")
+                        break
+
+            if not skill_md_content:
+                raise HTTPException(
+                    status_code=404, detail="SKILL.md not found in skill package"
+                )
+
+            return {"content": skill_md_content}
+
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=400, detail="Corrupted ZIP file")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to read SKILL.md: {str(e)}"
+        )
 
 
 # ============================================================================
