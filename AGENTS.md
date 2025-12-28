@@ -18,6 +18,11 @@ Wegent is an open-source AI-native operating system for defining, organizing, an
 - High cohesion, low coupling - extract common logic, avoid duplication
 - Choose simplest working solution - prioritize code simplicity and extensibility
 
+**📚 Documentation Principle:**
+- **AGENTS.md**: Core concepts, coding principles, and quick reference only
+- **docs/**: Detailed architecture, design documents, and comprehensive guides
+- When adding new features, put detailed docs in `docs/en/` and `docs/zh/`, reference from AGENTS.md
+
 **📚 Detailed Documentation:** See `docs/en/` or `docs/zh/` for comprehensive guides on setup, testing, architecture, and user guides.
 
 ---
@@ -304,152 +309,17 @@ team = db.query(Kind).filter(Kind.kind == "Team", ...).first()
 
 ---
 
-## 🎯 Skill System Architecture
+## 🎯 Skill System
 
-**Skill** is a CRD that provides on-demand capabilities and tools to AI Agents. Instead of loading all instructions into the system prompt, Skills are loaded dynamically when the LLM determines they are needed.
+**Skill** is a CRD that provides on-demand capabilities and tools to AI Agents. Skills are loaded dynamically when the LLM determines they are needed, improving token efficiency.
 
-### Core Concepts
+**Key Points:**
+- Skills are referenced by name in `Ghost.spec.skills[]`
+- Uploaded as ZIP packages with `SKILL.md` (metadata + prompt)
+- Can include custom tool providers (public skills only)
+- Loaded on-demand via `load_skill()` tool call
 
-**Why Skills?**
-- **Token Efficiency**: Only load detailed instructions when needed
-- **Modularity**: Package related prompts and tools together
-- **Extensibility**: Add new capabilities without modifying core agents
-
-**Skill Relationship with Other CRDs:**
-```
-Ghost.spec.skills[] → references Skill names
-     ↓
-Bot (ghostRef) → inherits skills from Ghost
-     ↓
-Team (members[]) → Bot skills available in tasks
-     ↓
-Task execution → LLM calls load_skill() on demand
-```
-
-### Skill Package Structure
-
-Skills are uploaded as ZIP packages containing:
-
-```
-skill-package.zip
-├── SKILL.md          # Required: Metadata + prompt content
-├── provider.py       # Optional: Tool provider implementation
-└── *.py              # Optional: Additional tool modules
-```
-
-**SKILL.md Format:**
-```markdown
----
-description: "Brief description - used by LLM to decide when to load"
-displayName: "Human-readable name"
-version: "1.0.0"
-author: "Author Name"
-tags: ["tag1", "tag2"]
-bindShells: ["Chat", "ClaudeCode"]  # Compatible shell types
-provider:
-  module: provider                   # Python module name
-  class: MyToolProvider              # Provider class name
-tools:
-  - name: tool_name
-    provider: provider_name
-    config:
-      timeout: 30
----
-
-# Skill Prompt Content
-
-Detailed instructions that will be injected into system prompt
-when the skill is loaded...
-```
-
-### Skill Loading Flow
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│ 1. Task Start - ChatConfigBuilder builds configuration          │
-│    → Extract skill metadata from Ghost.spec.skills              │
-│    → Inject skill summaries into system prompt                  │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│ 2. System Prompt Contains:                                      │
-│    "## Available Skills                                         │
-│    - **skill_name**: description (call load_skill to use)"      │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│ 3. LLM Decides to Load Skill                                    │
-│    → Calls load_skill(skill_name="xxx") tool                    │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│ 4. LoadSkillTool Executes                                       │
-│    a. Find Skill (user private first, then public)              │
-│    b. Extract full prompt from SKILL.md                         │
-│    c. Load Provider dynamically (public skills only)            │
-│    d. Register tools with SkillToolRegistry                     │
-│    e. Cache loaded skill for session                            │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### Skill Provider System
-
-Providers allow Skills to define custom tools that are dynamically loaded at runtime.
-
-**Provider Interface:**
-```python
-from app.services.chat_v2.skills.provider import SkillToolProvider
-
-class MyToolProvider(SkillToolProvider):
-    @property
-    def provider_name(self) -> str:
-        return "my_provider"
-
-    @property
-    def supported_tools(self) -> list[str]:
-        return ["my_tool"]
-
-    def create_tool(self, tool_name: str, context: SkillToolContext,
-                    tool_config: Optional[dict] = None) -> BaseTool:
-        return MyTool(task_id=context.task_id, ...)
-```
-
-**Security Note:** Only public Skills (user_id=0) can load dynamic code. User-uploaded Skills can only provide prompt content.
-
-### Skill API Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/skills/upload` | POST | Upload Skill ZIP package |
-| `/skills` | GET | List user's Skills |
-| `/skills/unified` | GET | List user + public Skills |
-| `/skills/public/list` | GET | List public Skills |
-| `/skills/invoke` | POST | Get Skill prompt content |
-| `/skills/{id}/download` | GET | Download Skill ZIP |
-
-### Key Files
-
-| File | Purpose |
-|------|---------|
-| `backend/app/schemas/kind.py` | Skill CRD schema definition |
-| `backend/app/models/skill_binary.py` | Binary storage model |
-| `backend/app/api/endpoints/kind/skills.py` | API routes |
-| `backend/app/services/skill_service.py` | Validation service |
-| `backend/app/services/adapters/skill_kinds.py` | CRUD operations |
-| `backend/app/services/chat_v2/tools/builtin/load_skill.py` | LoadSkill tool |
-| `backend/app/services/chat_v2/skills/registry.py` | Tool registry |
-| `backend/app/services/chat_v2/skills/provider.py` | Provider base class |
-| `frontend/src/apis/skills.ts` | Frontend API client |
-| `frontend/src/features/settings/components/skills/` | UI components |
-
-### Built-in Skills
-
-Located in `backend/init_data/skills/`:
-- **mermaid-diagram**: Diagram visualization with Mermaid
-- **wiki_submit**: Wiki submission capability
+**📖 For detailed documentation:** See [`docs/en/concepts/skill-system.md`](docs/en/concepts/skill-system.md) or [`docs/zh/concepts/skill-system.md`](docs/zh/concepts/skill-system.md)
 
 ---
 
