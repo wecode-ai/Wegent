@@ -29,6 +29,7 @@ class PublicSkillAdapter:
             "name": kind.name,
             "namespace": kind.namespace,
             "description": spec.get("description", ""),
+            "displayName": spec.get("displayName"),
             "prompt": spec.get("prompt"),
             "version": spec.get("version"),
             "author": spec.get("author"),

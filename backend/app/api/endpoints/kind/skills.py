@@ -66,6 +66,7 @@ class UnifiedSkillResponse(BaseModel):
     name: str
     namespace: str
     description: str
+    displayName: Optional[str] = None
     prompt: Optional[str] = None
     version: Optional[str] = None
     author: Optional[str] = None
@@ -508,6 +509,7 @@ def list_unified_skills(
                 "name": skill.metadata.name,
                 "namespace": skill.metadata.namespace,
                 "description": skill.spec.description,
+                "displayName": getattr(skill.spec, "displayName", None),
                 "prompt": skill.spec.prompt,
                 "version": skill.spec.version,
                 "author": skill.spec.author,

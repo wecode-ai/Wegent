@@ -272,6 +272,7 @@ export interface UnifiedSkill {
   name: string;
   namespace: string;
   description: string;
+  displayName?: string;
   prompt?: string;
   version?: string;
   author?: string;
