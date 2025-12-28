@@ -1,5 +1,6 @@
 # Wegent
-> 🚀 一个定义、组织和运行智能体 AI的开源平台
+
+> 🚀 一个开源的 AI 原生操作系统，用于定义、组织和运行智能体团队
 
 [English](README.md) | 简体中文
 
@@ -13,241 +14,74 @@
 
 <div align="center">
 
-### 🚀 **构建你的 AI 智能体工作团队**
+<img src="./docs/assets/images/example.gif" width="75%" alt="演示"/>
 
-*从编程助手到新闻分析 - 部署真正能干活的智能代理*
-
-[快速开始](docs/zh/getting-started/quick-start.md) · [应用场景](#-你能构建什么) · [文档](docs/zh/README.md) · [开发指南](docs/zh/guides/developer/setup.md)
+[快速开始](#-快速开始) · [文档](docs/zh/README.md) · [开发指南](docs/zh/guides/developer/setup.md)
 
 </div>
 
 ---
 
-## 💡 你能构建什么？
-<img src="./docs/assets/images/example.gif" width="75%" alt="演示视频"/>
-Wegent 让你通过智能体编排创建强大的 AI 应用：
+## ✨ 核心模式
 
-### 💬 **即开即用的 AI 对话**
-内置默认聊天团队，无需配置即可立即开始。支持多种 LLM 提供商，包括 Claude、OpenAI 和 Gemini。可选的联网搜索集成，实现实时信息检索。
+| 💬 对话模式 | 💻 编码模式 | 📚 知识模式 *(实验性)* |
+|:------------|:------------|:-----------------------|
+| **LLM**: 支持Claude / OpenAI / Gemini 等主流模型<br>**多模态**: 支持图片 / PPT / Word / PDF / Excel 文件自动解析<br>**联网搜索**: 支持对接各类搜索引擎<br>**深度调研**: 支持深度调研模式，可自动搜索、整理、生成调研报告<br>**纠错模式**: 由多个AI自动检测并修正回答中的错误<br>**追问模式**: AI 主动追问澄清需求，确保理解准确<br>**扩展能力**: 支持 Skill 技能包 / MCP 工具 / 自定义工具 | **多平台集成**: 支持GitHub / GitLab / Gitea / Gitee / Gerrit平台<br>**自动化AI工作流**: 分支 → 编码 → 提交 → PR 流程自动化<br>**需求澄清**: AI 主动追问，确保理解准确<br>**Wiki 生成**: 自动生成代码库文档 | **RAG 检索**: 向量 / 关键词 / 混合检索<br>**存储后端**: Elasticsearch / Qdrant<br>**文档解析**: PDF / Markdown / DOCX / 代码文件<br>**Wiki**: 代码库文档自动生成 |
 
-### 🖥️ **网页版编程助手**
-在浏览器中构建全功能开发环境，可与 GitHub 集成，支持本地或云端的独立开发空间，可运行多个 Coding Agent 同时编码。
+---
 
-### 📰 **新闻智能平台**
-创建智能新闻聚合和分析系统，支持多智能体协作模式。
+## 🔧 扩展能力
 
-### 🔧 **自定义智能体应用**
-可能性无限 - 为以下场景构建智能体：
-- **数据分析**：自动化报告生成和可视化
-- **内容创作**：博客文章、社交媒体和营销素材
-- **客户支持**：具有上下文理解的智能聊天机器人
-- **DevOps 自动化**：CI/CD 流水线管理和监控
-- **研究助手**：文献综述和知识合成
+- **智能体生成向导**: 4 步创建: 描述需求 → AI 追问 → 实时微调 → 一键创建
+- **协作模式**: 支持开箱即用的 4 种多Agent协作模式（顺序/并行/路由/循环），灵活组合多个 Bot
+- **支持Skill**: 动态加载技能包，提升 Token 效率
+- **MCP 工具**: Model Context Protocol，调用外部工具和服务
+- **执行引擎**: 支持ClaudeCode / Agno 沙箱隔离执行，Dify API 代理，Chat 直连模式4个执行引擎
+- **YAML 配置**: Kubernetes 风格 CRD，定义 Ghost / Bot / Team / Skill
+- **API**: 对外提供 OpenAI 兼容接口，方便与其他系统集成
 
 ---
 
 ## 🚀 快速开始
 
-### 前置要求
-
-- Docker 和 Docker Compose
-- Git
-
-1. **克隆仓库**
-   ```bash
-   git clone https://github.com/wecode-ai/wegent.git
-   cd wegent
-   ```
-
-2. **启动平台**
-   ```bash
-   docker-compose up -d
-   
-   # 可选：启用 RAG 功能（需要 Elasticsearch）
-   # docker compose --profile rag up -d
-   ```
-
-3. **访问 Web 界面**
-   - 在浏览器中打开 http://localhost:3000
-
-## 📖 什么是 Wegent？
-
-Wegent 是一个开源的 AI 原生操作系统，使您能够大规模定义、组织和运行智能代理。基于 Kubernetes 风格的声明式 API 和 CRD（自定义资源定义）设计模式，Wegent 为创建和管理 AI 智能体生态系统提供了标准化框架。
-
-### 🌟 核心能力
-
-1. **🎨 配置驱动的智能体团队**：通过 YAML 配置定义和运行个性化 Agent 团队，提供网页 UI，无需二次开发。内置默认聊天团队，开箱即用
-2. **⚙️ 多引擎架构**：底层支持 Agno 和 Claude Code 两个 Agent 执行引擎，Chat Shell 支持直接调用 LLM API（Claude、OpenAI、Gemini）
-3. **🔒 独立沙箱环境**：每个 Agent 团队运行在独立沙箱环境中，支持多个 Agent 团队同时运行
-4. **🤝 高级协作模式**：对话模式可以实现并行、Leader、Solo 等 Agent 协作模式，完成新闻洞察、内容检索等复杂工作流
-5. **💻 AI 编码集成**：编码模式可以与 GitHub/GitLab 等代码服务对接，实现代码开发、review 等 AI Coding 工作流
-6. **🔍 联网搜索集成**：Chat Shell 团队可选的联网搜索功能，通过通用 HTTP 适配器支持多种搜索引擎（SearXNG、Google Custom Search、Bing、Brave 等），支持用户自选搜索引擎。
-
-```mermaid
-graph LR
-    subgraph AIResource ["🌐 AI 原生资源"]
-        subgraph YAMLDef ["📄 YAML 定义"]
-            Ghost["👻 Ghost<br/>智能体灵魂"]
-            Model["🧠 Model<br/>模型配置"]
-            Shell["🐚 Shell<br/>智能体程序"]
-            Bot["🤖 Bot<br/>智能体实例"]
-            CollabModel["🤝 Collaboration<br/>协作模型"]
-            Team["👥 Team<br/>协作团队"]
-        end
-     end
-
-    subgraph Wegent ["🚀 Wegent"]
-        Workspace["💼 Workspace<br/>工作环境"]
-        TeamInstance["👥 智能体团队实例<br/>运行中的团队"]
-    end
-
-      User["👤 用户"]
-      Task["🎯 Task<br/>用户任务"]
-    %% CRD 资源关系
-    Ghost --> Bot
-    Model --> Bot
-    Shell --> Bot
-    Bot --> Team
-    CollabModel --> Team
-    Shell --> Team
-
-    %% 团队定义到实例
-    AIResource --> Wegent
-    Workspace --> TeamInstance
-
-    %% 用户交互流程
-    User --> Task
-    Task --> TeamInstance
-    TeamInstance --> Task
-
-    %% 样式
-    classDef yamlBox stroke-dasharray: 5 5
-    classDef runtimeBox stroke:#ff6b6b,stroke-width:2px
-    classDef resourceBox stroke:#4ecdc4,stroke-width:2px
-
-    class YAMLDef yamlBox
-    class Runtime runtimeBox
-    class AIResource resourceBox
-
+```bash
+git clone https://github.com/wecode-ai/wegent.git && cd wegent
+docker-compose up -d
+# 访问 http://localhost:3000
 ```
 
-### 🎯 核心概念
+> 可选：启用 RAG 功能 `docker compose --profile rag up -d`
 
-> **📖 术语说明**：代码中的 `Team` 对应用户界面的"**智能体**"，`Bot` 对应用户界面的"**机器人**"。用户通过创建"智能体"来执行任务，而"机器人"是组成智能体的基础组件。
+---
 
-- **👻 Ghost**：智能体的"灵魂" - 定义个性、能力和行为模式
-- **🧠 Model**：AI 模型配置 - 定义环境变量和模型参数
-- **🐚 Shell**："可执行程序" - 能够启动智能体的程序
-- **🤖 Bot (机器人)**：完整的智能体实例，结合了 Ghost + Shell + Model
-- **👥 Team (智能体)**：由多个 Bot + 协作模型组成，用户直接使用的 AI 助手
-- **🤝 Collaboration**：定义团队中 Bot 之间的交互模式（类似工作流）
-- **💼 Workspace**：用于任务和项目的隔离工作环境
-- **🎯 Task**：分配给智能体(Team)的可执行工作单元
+## 📦 预置智能体
 
-> 💡 **详细的 YAML 配置文档**:
-- [完整的 YAML 配置示例和字段说明](docs/zh/reference/yaml-specification.md)
+| 团队 | 用途 |
+|------|------|
+| chat-team | 通用 AI 助手 + Mermaid 图表 |
+| translator | 多语言翻译 |
+| dev-team | Git 工作流：分支 → 编码 → 提交 → PR |
+| wiki-team | 代码库 Wiki 文档生成 |
 
+---
 
 ## 🏗️ 架构
 
-```mermaid
-graph TB
-    subgraph "🖥️ 管理平台层"
-        Frontend["🌐 Next.js 前端"]
-        Backend["⚙️ FastAPI 后端"]
-        API["🚀 声明式 API"]
-    end
-
-    subgraph "📊 数据层"
-        MySQL[("💾 MySQL 数据库")]
-    end
-
-    subgraph "🔍 执行层"
-        ExecutorManager["💯 执行器管理器"]
-        Executor1["🚀 执行器 1"]
-        Executor2["🚀 执行器 2"]
-        ExecutorN["🚀 执行器 N"]
-    end
-
-    subgraph "🤖 智能体层"
-        Claude["🧠 Claude Code"]
-        Agno["💻 Agno"]
-        Dify["✨ Dify"]
-        Chat["💬 Chat<br/>(Claude/OpenAI/Gemini)"]
-    end
-
-
-    %% 系统交互
-    Frontend --> API
-    API --> Backend
-    Backend --> MySQL
-    Backend --> ExecutorManager
-    ExecutorManager --> Executor1
-    ExecutorManager --> Executor2
-    ExecutorManager --> ExecutorN
-
-    %% AI 程序集成
-    Executor1 --> Claude
-    Executor2 --> Agno
-    ExecutorN --> Dify
+```
+Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (ClaudeCode/Agno)
 ```
 
-## 🛠️ 开发
+**核心概念：**
+- **Ghost** (提示词) + **Shell** (执行环境) + **Model** = **Bot**
+- 多个 **Bot** + **协作模式** = **Team**
 
-详细的开发环境搭建说明请参阅 [开发指南](docs/zh/guides/developer/setup.md)。
+> 详见 [核心概念](docs/zh/concepts/core-concepts.md) | [YAML 规范](docs/zh/reference/yaml-specification.md)
 
-### 项目结构
-
-```
-wegent/
-├── backend/          # FastAPI 后端服务
-├── frontend/         # Next.js Web 界面
-├── executor/         # 任务执行引擎
-├── executor_manager/ # 执行编排
-├── shared/           # 通用工具和模型
-├── wegent-cli/       # kubectl 风格的 CLI 工具 (wectl)
-└── docker/           # 容器配置
-```
-
-### 快速开发环境设置
-
-1. **后端开发**
-   ```bash
-   cd backend
-   ./start.sh
-   # 或手动执行: uv sync && source .venv/bin/activate && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-   ```
-
-2. **前端开发**
-   ```bash
-   cd frontend
-   npm install
-   npm run dev
-   ```
-
-3. **运行测试**
-   ```bash
-   # 后端测试
-   cd backend && python -m pytest
-
-   # 前端测试
-   cd frontend && npm test
-   ```
-
-完整的开发环境搭建说明（包括数据库配置、环境变量设置和故障排查）请参阅 [开发指南](docs/zh/guides/developer/setup.md)。
-
+---
 
 ## 🤝 贡献
 
-我们欢迎贡献！详情请参阅我们的[贡献指南](CONTRIBUTING.md)。
-
-### 开发工作流
-
-1. Fork 仓库
-2. 创建功能分支
-3. 进行更改
-4. 添加测试
-5. 提交 Pull Request
+我们欢迎贡献！详情请参阅 [贡献指南](CONTRIBUTING.md)。
 
 ## 📞 支持
 
@@ -255,7 +89,7 @@ wegent/
 
 ## 👥 贡献者
 
-感谢以下开发者对本项目的贡献，为了让项目变得更好 💪
+感谢以下开发者的贡献，让这个项目变得更好 💪
 
 <!-- readme: contributors -start -->
 <table>
