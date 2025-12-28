@@ -1,5 +1,6 @@
 # Wegent
-> 🚀 An open-source platform to define, organize, and run Agentic AI
+
+> 🚀 An open-source AI-native operating system to define, organize, and run intelligent agent teams
 
 English | [简体中文](README_zh.md)
 
@@ -13,240 +14,83 @@ English | [简体中文](README_zh.md)
 
 <div align="center">
 
-### 🚀 **Build Your Own AI Agent Workforce**
+**YAML-driven agent teams | 4 collaboration modes | Real-time group chat | Sandboxed execution**
 
-*From coding assistants to news analysts - deploy intelligent agents that actually work*
+<img src="./docs/assets/images/example.gif" width="75%" alt="Demo"/>
 
-[Quick Start](docs/en/getting-started/quick-start.md) · [Use Cases](#-what-can-you-build) · [Documentation](docs/en/README.md) · [Development Guide](docs/en/guides/developer/setup.md)
+[Quick Start](#-quick-start) · [Documentation](docs/en/README.md) · [Development Guide](docs/en/guides/developer/setup.md)
 
 </div>
 
 ---
 
-## 💡 What Can You Build?
-<img src="./docs/assets/images/example.gif" width="75%" alt="Demo Video"/>
-Wegent empowers you to create powerful AI applications through intelligent agent orchestration:
+## ✨ Core Scenarios
 
-### 💬 **Instant AI Chat**
-Get started immediately with the built-in default chat team - no configuration required. Supports multiple LLM providers including Claude, OpenAI, and Gemini. Optional web search integration for real-time information retrieval.
+### 💬 Chat Mode
+Multi-LLM (Claude/OpenAI/Gemini) · Multimodal · Web Search · Deep Thinking
+**Collaboration**: 4 modes · Group chat · Task sharing · On-demand Skills
+**Integration**: MCP tools · OpenAI-compatible API · Export PDF/DOCX
 
-### 🖥️ **Web-Based Coding Assistant**
-Build a full-featured development environment in your browser with GitHub integration, supporting independent development spaces locally or in the cloud, capable of running multiple Coding Agents simultaneously.
+### 💻 Code Mode
+**Git Integration**: GitHub / GitLab / Gitea / Gitee / Gerrit
+**Execution**: ClaudeCode · Agno · Sandboxed isolation · Parallel execution
+**Assist**: Requirement clarification · Wiki generation · Error correction
 
-### 📰 **News Intelligence Platform**
-Create a smart news aggregation and analysis system with multi-agent collaboration patterns.
+### 📚 Knowledge Mode *(Experimental)*
+**RAG**: Vector/Keyword/Hybrid retrieval · Elasticsearch/Qdrant
+**Documents**: PDF · Markdown · DOCX · Code files
 
-### 🔧 **Custom Agent Applications**
-The possibilities are endless - build agents for:
-- **Data Analysis**: Automated report generation and visualization
-- **Content Creation**: Blog posts, social media, and marketing materials
-- **Customer Support**: Intelligent chatbots with contextual understanding
-- **DevOps Automation**: CI/CD pipeline management and monitoring
-- **Research Assistant**: Literature review and knowledge synthesis
+---
+
+## 🔧 Extensibility
+
+**Agent Wizard** - 4-step creation: Describe → AI clarifies → Live test → One-click create
+**YAML Config** - Kubernetes-style CRD, pure config for Ghost/Bot/Team/Skill
+**MCP Tools** - Model Context Protocol for external tools and services
+**Execution Engines** - ClaudeCode (Docker) · Agno (Docker) · Dify (API) · Chat (Direct)
+
+---
+
+## 🔐 Deployment & Operations
+OIDC/SSO · Namespace isolation · API Key management · OpenTelemetry · Admin panel · i18n (en/zh) · Dark Mode
 
 ---
 
 ## 🚀 Quick Start
 
-### Prerequisites
-
-- Docker and Docker Compose
-- Git
-
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/wecode-ai/wegent.git
-   cd wegent
-   ```
-
-2. **Start the platform**
-   ```bash
-   docker-compose up -d
-   
-   # Optional: Enable RAG features with Elasticsearch
-   # docker compose --profile rag up -d
-   ```
-
-3. **Access the web interface**
-   - Open http://localhost:3000 in your browser
-
-## 📖 What is Wegent?
-
-Wegent is an open-source AI native operating system that enables you to define, organize, and run intelligent agents at scale. Built on Kubernetes-style declarative API and CRD (Custom Resource Definition) design patterns, Wegent provides a standardized framework for creating and managing AI agent ecosystems.
-
-### 🌟 Core Capabilities
-
-1. **🎨 Configuration-Driven Agent Teams**: Define and run personalized agent teams through YAML configuration with web UI - no secondary development required. Includes built-in default chat team for instant start
-2. **⚙️ Multi Execution Engines**: Built on Agno and Claude Code agent engines, with Chat Shell supporting direct LLM API calls (Claude, OpenAI, Gemini)
-3. **🔒 Isolated Sandbox Environments**: Each agent team runs in an independent sandbox, enabling multiple teams to execute simultaneously
-4. **🤝 Advanced Collaboration Modes**: Dialogue mode supports parallel, leader-based, solo mode and other agent collaboration patterns for complex workflows like news insights and content retrieval
-5. **💻 AI Coding Integration**: Coding mode integrates with GitHub/GitLab and other code services to implement AI-driven development, code review, and other coding workflows
-6. **🔍 Web Search Integration**: Optional web search capability for Chat Shell teams, supporting multiple search engines through a generic HTTP adapter (SearXNG, Google Custom Search, Bing, Brave, etc.) with user-selectable engine preferences.
-
-```mermaid
-graph LR
-    subgraph AIResource ["🌐 AI Native Resource"]
-        subgraph YAMLDef ["📄 YAML Definitions"]
-            Ghost["👻 Ghost<br/>Agent Soul"]
-            Model["🧠 Model<br/>Model Configuration"]
-            Shell["🐚 Shell<br/>Agent Program"]
-            Bot["🤖 Bot<br/>Agent Instance"]
-            CollabModel["🤝 Collaboration<br/>Collaboration Model"]
-            Team["👥 Team<br/>Collaborative Team"]
-        end
-     end
-    
-    subgraph Wegent ["🚀 Wegent"]
-        Workspace["💼 Workspace<br/>Work Environment"]
-        TeamInstance["👥 Agent Team Instance<br/>Running Team"]
-    end
-   
-      User["👤 User"]
-      Task["🎯 Task<br/>User Task"]
-    %% CRD Resource Relationships
-    Ghost --> Bot
-    Model --> Bot
-    Shell --> Bot
-    Bot --> Team
-    CollabModel --> Team
-    Shell --> Team
-    
-    %% Team Definition to Instance
-    AIResource --> Wegent
-    Workspace --> TeamInstance
-    
-    %% User Interaction Flow
-    User --> Task
-    Task --> TeamInstance
-    TeamInstance --> Task
-    
-    %% Styling
-    classDef yamlBox stroke-dasharray: 5 5
-    classDef runtimeBox stroke:#ff6b6b,stroke-width:2px
-    classDef resourceBox stroke:#4ecdc4,stroke-width:2px
-    
-    class YAMLDef yamlBox
-    class Runtime runtimeBox
-    class AIResource resourceBox
-
+```bash
+git clone https://github.com/wecode-ai/wegent.git && cd wegent
+docker-compose up -d
+# Open http://localhost:3000
 ```
 
-### 🎯 Key Concepts
+> Optional: Enable RAG features with `docker compose --profile rag up -d`
 
-> **📖 Terminology Note**: In code, `Team` corresponds to "Agent" in the UI, and `Bot` corresponds to "Bot" in the UI. Users interact with Teams to execute tasks, while Bots are the building blocks that make up Teams.
+---
 
-- **👻 Ghost**: The "soul" of an agent - defines personality, capabilities, and behavior patterns
-- **🧠 Model**: AI model configuration - defines environment variables and model parameters
-- **🐚 Shell**: The "executable" - A program capable of launching an agent
-- **🤖 Bot**: A complete agent instance combining Ghost + Shell + Model
-- **👥 Team**: Composed of multiple Bots + Collaboration Model - the user-facing AI agent
-- **🤝 Collaboration**: Defines the interaction patterns between Bots in a Team (like Workflow)
-- **💼 Workspace**: Isolated work environments for tasks and projects
-- **🎯 Task**: Executable units of work assigned to Teams
+## 📦 Built-in Agents
 
-> 💡 **Detailed YAML Configuration Documentation**:
-- [Complete YAML configuration examples and field descriptions](docs/en/reference/yaml-specification.md)
+| Team | Purpose |
+|------|---------|
+| chat-team | General AI assistant + Mermaid diagrams |
+| translator | Multi-language translation |
+| dev-team | Git workflow: branch → code → commit → PR |
+| wiki-team | Codebase Wiki documentation generation |
+
+---
 
 ## 🏗️ Architecture
 
-```mermaid
-graph TB
-    subgraph "🖥️ Management Platform Layer"
-        Frontend["🌐 Next.js Frontend"]
-        Backend["⚙️ FastAPI Backend"]
-        API["🚀 Declarative API"]
-    end
-    
-    subgraph "📊 Data Layer"
-        MySQL[("💾 MySQL Database")]
-    end
-    
-    subgraph "🔍 Execution Layer"
-        ExecutorManager["💯 Executor Manager"]
-        Executor1["🚀 Executor 1"]
-        Executor2["🚀 Executor 2"]
-        ExecutorN["🚀 Executor N"]
-    end
-    
-    subgraph "🤖 Agent Layer"
-        Claude["🧠 Claude Code"]
-        Agno["💻 Agno"]
-        Dify["✨ Dify"]
-        Chat["💬 Chat<br/>(Claude/OpenAI/Gemini)"]
-    end
+`Frontend (Next.js)` → `Backend (FastAPI)` → `Executor Manager` → `Executors (ClaudeCode/Agno/Dify/Chat)`
 
+> **Core Concepts**: Ghost (prompt) + Shell (environment) + Model = Bot → Multiple Bots + Collaboration = Team
+> See [Core Concepts](docs/en/concepts/core-concepts.md) | [YAML Spec](docs/en/reference/yaml-specification.md)
 
-    %% System Interactions
-    Frontend --> API
-    API --> Backend
-    Backend --> MySQL
-    Backend --> ExecutorManager
-    ExecutorManager --> Executor1
-    ExecutorManager --> Executor2
-    ExecutorManager --> ExecutorN
-
-    %% AI Program Integration
-    Executor1 --> Claude
-    Executor2 --> Agno
-    ExecutorN --> Dify
-```
-
-## 🛠️ Development
-
-For detailed development setup instructions, please see the [Development Guide](docs/en/guides/developer/setup.md).
-
-### Project Structure
-
-```
-wegent/
-├── backend/          # FastAPI backend service
-├── frontend/         # Next.js web interface
-├── executor/         # Task execution engine
-├── executor_manager/ # Execution orchestration
-├── shared/           # Common utilities and models
-├── wegent-cli/       # kubectl-style CLI tool (wectl)
-└── docker/           # Container configurations
-```
-
-### Quick Development Setup
-
-1. **Backend Development**
-   ```bash
-   cd backend
-   ./start.sh
-   # Or manually: uv sync && source .venv/bin/activate && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-   ```
-
-2. **Frontend Development**
-   ```bash
-   cd frontend
-   npm install
-   npm run dev
-   ```
-
-3. **Run Tests**
-   ```bash
-   # Backend tests
-   cd backend && python -m pytest
-
-   # Frontend tests
-   cd frontend && npm test
-   ```
-
-For comprehensive setup instructions including database configuration, environment variables, and troubleshooting, refer to the [Development Guide](docs/en/guides/developer/setup.md).
-
+---
 
 ## 🤝 Contributing
 
 We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
-
-### Development Workflow
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests
-5. Submit a pull request
 
 ## 📞 Support
 
