@@ -159,7 +159,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   );
   const [selectedSkills, setSelectedSkills] = useState<string[]>(baseBot?.skills || []);
   const [allSkills, setAllSkills] = useState<UnifiedSkill[]>([]);
-  const [availableSkills, setAvailableSkills] = useState<string[]>([]);
+  const [availableSkills, setAvailableSkills] = useState<UnifiedSkill[]>([]);
   const [loadingSkills, setLoadingSkills] = useState(false);
   const [agentConfigError, setAgentConfigError] = useState(false);
   const [mcpConfigError, setMcpConfigError] = useState(false);
@@ -356,17 +356,15 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
   // Filter skills based on current shell type
   const filterSkillsByShellType = useCallback(
-    (skills: UnifiedSkill[]): string[] => {
-      return skills
-        .filter(skill => {
-          // If bindShells is not specified or empty, skill is NOT available (must explicitly bind to shells)
-          if (!skill.bindShells || skill.bindShells.length === 0) {
-            return false;
-          }
-          // Check if current shell type is in the bindShells list
-          return skill.bindShells.includes(currentShellType);
-        })
-        .map(skill => skill.name);
+    (skills: UnifiedSkill[]): UnifiedSkill[] => {
+      return skills.filter(skill => {
+        // If bindShells is not specified or empty, skill is NOT available (must explicitly bind to shells)
+        if (!skill.bindShells || skill.bindShells.length === 0) {
+          return false;
+        }
+        // Check if current shell type is in the bindShells list
+        return skill.bindShells.includes(currentShellType);
+      });
     },
     [currentShellType]
   );
@@ -1309,10 +1307,10 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                           </SelectTrigger>
                           <SelectContent>
                             {availableSkills
-                              .filter(skill => !selectedSkills.includes(skill))
+                              .filter(skill => !selectedSkills.includes(skill.name))
                               .map(skill => (
-                                <SelectItem key={skill} value={skill}>
-                                  {skill}
+                                <SelectItem key={skill.name} value={skill.name}>
+                                  {skill.displayName || skill.name}
                                 </SelectItem>
                               ))}
                           </SelectContent>
@@ -1320,24 +1318,29 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
                         {selectedSkills.length > 0 && (
                           <div className="flex flex-wrap gap-1.5">
-                            {selectedSkills.map(skill => (
-                              <div
-                                key={skill}
-                                className="inline-flex items-center gap-1 px-2 py-1 bg-muted rounded-md text-sm"
-                              >
-                                <span>{skill}</span>
-                                <button
-                                  onClick={() => {
-                                    if (readOnly) return;
-                                    setSelectedSkills(selectedSkills.filter(s => s !== skill));
-                                  }}
-                                  disabled={readOnly}
-                                  className={`text-text-muted hover:text-text-primary ${readOnly ? 'cursor-not-allowed opacity-50' : ''}`}
+                            {selectedSkills.map(skillName => {
+                              const skill = availableSkills.find(s => s.name === skillName);
+                              return (
+                                <div
+                                  key={skillName}
+                                  className="inline-flex items-center gap-1 px-2 py-1 bg-muted rounded-md text-sm"
                                 >
-                                  <XIcon className="w-3 h-3" />
-                                </button>
-                              </div>
-                            ))}
+                                  <span>{skill?.displayName || skillName}</span>
+                                  <button
+                                    onClick={() => {
+                                      if (readOnly) return;
+                                      setSelectedSkills(
+                                        selectedSkills.filter(s => s !== skillName)
+                                      );
+                                    }}
+                                    disabled={readOnly}
+                                    className={`text-text-muted hover:text-text-primary ${readOnly ? 'cursor-not-allowed opacity-50' : ''}`}
+                                  >
+                                    <XIcon className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              );
+                            })}
                           </div>
                         )}
                       </div>
