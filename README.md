@@ -302,10 +302,32 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/kissghosts">
+            <img src="https://avatars.githubusercontent.com/u/3409715?v=4" width="80;" alt="kissghosts"/>
+            <br />
+            <sub><b>Yanhe</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/2561056571">
             <img src="https://avatars.githubusercontent.com/u/112464849?v=4" width="80;" alt="2561056571"/>
             <br />
             <sub><b>Xuemin</b></sub>
+        </a>
+    </td></tr>
+<tr>
+    <td align="center">
+        <a href="https://github.com/junbaor">
+            <img src="https://avatars.githubusercontent.com/u/10198622?v=4" width="80;" alt="junbaor"/>
+            <br />
+            <sub><b>Junbaor</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/joyway1978">
+            <img src="https://avatars.githubusercontent.com/u/184585080?v=4" width="80;" alt="joyway1978"/>
+            <br />
+            <sub><b>Joyway78</b></sub>
         </a>
     </td>
     <td align="center">
@@ -314,8 +336,7 @@ Thanks to the following developers for their contributions and efforts to make t
             <br />
             <sub><b>Fengkuizhi</b></sub>
         </a>
-    </td></tr>
-<tr>
+    </td>
     <td align="center">
         <a href="https://github.com/jolestar">
             <img src="https://avatars.githubusercontent.com/u/77268?v=4" width="80;" alt="jolestar"/>
@@ -327,14 +348,14 @@ Thanks to the following developers for their contributions and efforts to make t
         <a href="https://github.com/andrewzq777">
             <img src="https://avatars.githubusercontent.com/u/223815624?v=4" width="80;" alt="andrewzq777"/>
             <br />
-            <sub><b>andrewzq777</b></sub>
+            <sub><b>Andrewzq777</b></sub>
         </a>
     </td>
     <td align="center">
         <a href="https://github.com/graindt">
             <img src="https://avatars.githubusercontent.com/u/3962041?v=4" width="80;" alt="graindt"/>
             <br />
-            <sub><b>graindt</b></sub>
+            <sub><b>Graindt</b></sub>
         </a>
     </td></tr>
 </table>
