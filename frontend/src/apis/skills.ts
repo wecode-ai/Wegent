@@ -276,6 +276,8 @@ export interface UnifiedSkill {
   version?: string;
   author?: string;
   tags?: string[];
+  /** List of shell types this skill is compatible with (e.g., 'ClaudeCode', 'Agno', 'Dify', 'Chat') */
+  bindShells?: string[];
   is_active: boolean;
   is_public: boolean;
   created_at?: string;

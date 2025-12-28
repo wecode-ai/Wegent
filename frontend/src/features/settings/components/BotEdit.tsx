@@ -35,7 +35,7 @@ import {
 } from '@/features/settings/services/bots';
 import { modelApis, UnifiedModel, ModelTypeEnum } from '@/apis/models';
 import { shellApis, UnifiedShell } from '@/apis/shells';
-import { fetchUnifiedSkillsList } from '@/apis/skills';
+import { fetchUnifiedSkillsList, UnifiedSkill } from '@/apis/skills';
 import { useTranslation } from 'react-i18next';
 import { adaptMcpConfigForAgent, isValidAgentType } from '../utils/mcpTypeAdapter';
 
@@ -158,6 +158,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     baseBot?.mcp_servers ? JSON.stringify(baseBot.mcp_servers, null, 2) : ''
   );
   const [selectedSkills, setSelectedSkills] = useState<string[]>(baseBot?.skills || []);
+  const [allSkills, setAllSkills] = useState<UnifiedSkill[]>([]);
   const [availableSkills, setAvailableSkills] = useState<string[]>([]);
   const [loadingSkills, setLoadingSkills] = useState(false);
   const [agentConfigError, setAgentConfigError] = useState(false);
@@ -347,9 +348,33 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     return shellType === 'ClaudeCode' || shellType === 'Chat';
   }, [agentName, shells]);
 
+  // Get current shell type for skill filtering
+  const currentShellType = useMemo(() => {
+    const selectedShell = shells.find(s => s.name === agentName);
+    return selectedShell?.shellType || agentName;
+  }, [agentName, shells]);
+
+  // Filter skills based on current shell type
+  const filterSkillsByShellType = useCallback(
+    (skills: UnifiedSkill[]): string[] => {
+      return skills
+        .filter(skill => {
+          // If bindShells is not specified or empty, skill is NOT available (must explicitly bind to shells)
+          if (!skill.bindShells || skill.bindShells.length === 0) {
+            return false;
+          }
+          // Check if current shell type is in the bindShells list
+          return skill.bindShells.includes(currentShellType);
+        })
+        .map(skill => skill.name);
+    },
+    [currentShellType]
+  );
+
   useEffect(() => {
     // Only fetch skills when agent supports skills (ClaudeCode or Chat)
     if (!supportsSkills) {
+      setAllSkills([]);
       setAvailableSkills([]);
       setLoadingSkills(false);
       return;
@@ -359,7 +384,9 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       setLoadingSkills(true);
       try {
         const skillsData = await fetchUnifiedSkillsList();
-        setAvailableSkills(skillsData.map(skill => skill.name));
+        setAllSkills(skillsData);
+        // Filter skills based on current shell type
+        setAvailableSkills(filterSkillsByShellType(skillsData));
       } catch {
         toast({
           variant: 'destructive',
@@ -370,7 +397,14 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       }
     };
     fetchSkills();
-  }, [supportsSkills, toast, t]);
+  }, [supportsSkills, toast, t, filterSkillsByShellType]);
+
+  // Re-filter available skills when shell type changes
+  useEffect(() => {
+    if (allSkills.length > 0) {
+      setAvailableSkills(filterSkillsByShellType(allSkills));
+    }
+  }, [allSkills, filterSkillsByShellType]);
 
   // Fetch corresponding model list when agentName changes
   useEffect(() => {
@@ -1410,7 +1444,9 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           const fetchSkills = async () => {
             try {
               const skillsData = await fetchUnifiedSkillsList();
-              setAvailableSkills(skillsData.map(skill => skill.name));
+              setAllSkills(skillsData);
+              // Filter skills based on current shell type
+              setAvailableSkills(filterSkillsByShellType(skillsData));
             } catch {
               toast({
                 variant: 'destructive',
