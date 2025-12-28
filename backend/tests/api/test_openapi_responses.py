@@ -14,8 +14,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
-from app.models.task import TaskResource
 from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
+from app.models.task import TaskResource
 from app.models.user import User
 
 
@@ -589,7 +589,7 @@ class TestOpenAPIResponsesCancel:
 
         assert response.status_code == 401
 
-    @patch("app.services.chat_v2.storage.session_manager")
+    @patch("app.services.chat.storage.session_manager")
     def test_cancel_response_chat_shell_success(
         self,
         mock_session_manager,

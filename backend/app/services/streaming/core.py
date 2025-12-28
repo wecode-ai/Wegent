@@ -210,7 +210,7 @@ class StreamingCore:
             state: Streaming state container
             config: Optional streaming configuration
             storage_handler: Storage handler for persistence operations.
-                           If None, uses the default chat_v2 storage handler.
+                           If None, uses the default chat storage handler.
         """
         self.emitter = emitter
         self.state = state
@@ -218,7 +218,7 @@ class StreamingCore:
 
         # Use provided storage handler or import default
         if storage_handler is None:
-            from app.services.chat_v2.storage import storage_handler as default_handler
+            from app.services.chat.storage import storage_handler as default_handler
 
             self._storage = default_handler
         else:

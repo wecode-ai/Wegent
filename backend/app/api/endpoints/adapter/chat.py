@@ -23,9 +23,7 @@ from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Bot, Shell, Task, Team
-from app.services.chat.base import ChatServiceBase
-from app.services.chat.chat_service import chat_service
-from app.services.chat.model_resolver import (
+from app.services.chat.models import (
     build_default_headers_with_placeholders,
     get_bot_system_prompt,
     get_model_config_for_bot,
@@ -34,6 +32,22 @@ from app.services.chat.model_resolver import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Shell types that support direct chat (bypass executor)
+DIRECT_CHAT_SHELL_TYPES = ["Chat"]
+
+
+def _is_direct_chat_shell(shell_type: str) -> bool:
+    """
+    Check if the shell type supports direct chat.
+
+    Args:
+        shell_type: The shell type to check
+
+    Returns:
+        bool: True if the shell type supports direct chat
+    """
+    return shell_type in DIRECT_CHAT_SHELL_TYPES
 
 
 class StreamChatRequest(BaseModel):
@@ -132,7 +146,7 @@ def _should_use_direct_chat(db: Session, team: Kind, user_id: int) -> bool:
             return False
 
         shell_type = _get_shell_type(db, bot, team.user_id)
-        is_direct_chat = ChatServiceBase.is_direct_chat_shell(shell_type)
+        is_direct_chat = _is_direct_chat_shell(shell_type)
 
         if not is_direct_chat:
             return False
@@ -485,7 +499,7 @@ async def _create_task_and_subtasks(
     # Initialize Redis chat history from existing subtasks if needed
     # This is crucial for shared tasks that were copied with historical messages
     if existing_subtasks:
-        from app.services.chat.session_manager import session_manager
+        from app.services.chat.storage import session_manager
 
         # Check if history exists in Redis
         redis_history = await session_manager.get_chat_history(task_id)
@@ -865,7 +879,7 @@ async def stream_chat(
     system_prompt = get_bot_system_prompt(db, bot, team.user_id, first_member.prompt)
 
     # Append clarification mode instructions if enabled
-    from app.services.chat.clarification_prompt import append_clarification_prompt
+    from app.services.chat.prompts import append_clarification_prompt
 
     system_prompt = append_clarification_prompt(
         system_prompt, request.enable_clarification
@@ -928,7 +942,7 @@ async def stream_chat(
     from fastapi.responses import StreamingResponse
 
     async def generate_with_ids():
-        from app.services.chat.session_manager import session_manager
+        from app.services.chat.storage import session_manager
 
         # Set task-level streaming status for group chat
         task_json = task.json or {}
@@ -951,14 +965,19 @@ async def stream_chat(
             }
             yield f"data: {json.dumps(first_msg)}\n\n"
 
-            # Get the actual stream from chat service (use final_message with attachment content)
-            stream_response = await chat_service.chat_stream(
-                subtask_id=assistant_subtask.id,
-                task_id=task.id,
+            # Get the actual stream using SSEStreamingHandler (use final_message with attachment content)
+            # Note: tools are handled internally by ChatAgent based on configuration
+            from app.services.chat_shell.agent import ChatAgent
+            from app.services.chat_shell.streaming import SSEStreamingHandler
+
+            agent = ChatAgent()
+            handler = SSEStreamingHandler(agent)
+            stream_response = await handler.stream_sse(
                 message=final_message,
                 model_config=model_config,
                 system_prompt=system_prompt,
-                tools=tools,
+                subtask_id=assistant_subtask.id,
+                task_id=task.id,
                 is_group_chat=is_group_chat,
             )
 
@@ -1014,7 +1033,7 @@ async def _handle_resume_stream(
     from fastapi.responses import StreamingResponse
 
     from app.models.task_member import MemberStatus, TaskMember
-    from app.services.chat.session_manager import session_manager
+    from app.services.chat.storage import session_manager
 
     # Verify subtask ownership first
     subtask = (
@@ -1368,7 +1387,7 @@ async def cancel_chat(
 
     # Signal the streaming loop to stop via Redis (cross-worker)
     # This will cause the LLM API call to be interrupted
-    from app.services.chat.session_manager import session_manager
+    from app.services.chat.storage import session_manager
 
     await session_manager.cancel_stream(request.subtask_id)
 
@@ -1481,7 +1500,7 @@ async def get_streaming_content(
         raise HTTPException(status_code=404, detail="Subtask not found")
 
     # 1. Try to get from Redis first (most recent)
-    from app.services.chat.session_manager import session_manager
+    from app.services.chat.storage import session_manager
 
     redis_content = await session_manager.get_streaming_content(subtask_id)
 
@@ -1587,7 +1606,7 @@ async def resume_stream(
     async def generate_resume():
         import asyncio
 
-        from app.services.chat.session_manager import session_manager
+        from app.services.chat.storage import session_manager
 
         try:
             # 1. Send cached content first (from Redis)
@@ -1844,9 +1863,9 @@ async def correct_response(
             "is_correct": existing_correction.get("is_correct", False),
         }
 
-    # Get the correction model config using chat_v2's unified model resolver
+    # Get the correction model config using chat's unified model resolver
     # This handles: env var placeholders, decryption, default_headers, etc.
-    from app.services.chat_v2.models.resolver import (
+    from app.services.chat.models.resolver import (
         _find_model,
         extract_and_process_model_config,
     )

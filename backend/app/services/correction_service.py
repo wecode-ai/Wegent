@@ -9,7 +9,7 @@ This service uses LangGraph agent workflow to obtain structured
 evaluation results instead of parsing JSON from free-form text.
 
 Key features:
-- LangGraph agent-based structured output (consistent with chat_v2)
+- LangGraph agent-based structured output (consistent with chat_shell)
 - Tool-based evaluation using SubmitEvaluationResultTool
 - Chat history context for better understanding
 - Web search tool for fact verification
@@ -23,11 +23,11 @@ from langchain_core.messages import AIMessage
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_async
 
 from app.services.chat.tools.base import Tool
-from app.services.chat_v2.agents import LangGraphAgentBuilder
-from app.services.chat_v2.messages import MessageConverter
-from app.services.chat_v2.models import LangChainModelFactory
-from app.services.chat_v2.tools import ToolRegistry
-from app.services.chat_v2.tools.builtin import SubmitEvaluationResultTool
+from app.services.chat_shell.agents import LangGraphAgentBuilder
+from app.services.chat_shell.messages import MessageConverter
+from app.services.chat_shell.models import LangChainModelFactory
+from app.services.chat_shell.tools import ToolRegistry
+from app.services.chat_shell.tools.builtin import SubmitEvaluationResultTool
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +135,7 @@ class CorrectionService:
         Evaluate an AI response and provide corrections if needed.
 
         Uses LangGraph agent workflow to obtain structured results,
-        consistent with chat_v2 service implementation.
+        consistent with chat_shell service implementation.
 
         Args:
             original_question: The user's original question
@@ -149,7 +149,7 @@ class CorrectionService:
         """
         try:
 
-            # Create LangChain model from config (consistent with chat_v2)
+            # Create LangChain model from config (consistent with chat_shell)
             llm = LangChainModelFactory.create_from_config(
                 model_config, streaming=False
             )
@@ -159,7 +159,7 @@ class CorrectionService:
             evaluation_tool = SubmitEvaluationResultTool()
             tool_registry.register(evaluation_tool)
 
-            # Create LangGraph agent builder (consistent with chat_v2)
+            # Create LangGraph agent builder (consistent with chat_shell)
             agent = LangGraphAgentBuilder(
                 llm=llm,
                 tool_registry=tool_registry,
@@ -167,7 +167,7 @@ class CorrectionService:
                 enable_checkpointing=False,
             )
 
-            # Build messages using MessageConverter (consistent with chat_v2)
+            # Build messages using MessageConverter (consistent with chat_shell)
             chat_history = self._build_history(history)
             user_prompt = self._build_user_prompt(
                 original_question, original_answer, has_history=bool(history)

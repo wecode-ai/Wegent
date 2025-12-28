@@ -504,7 +504,7 @@ async def cancel_response(
     """
     from sqlalchemy.orm.attributes import flag_modified
 
-    from app.services.chat_v2.storage import db_handler, session_manager
+    from app.services.chat.storage import db_handler, session_manager
 
     # Extract task_id from response_id
     if not response_id.startswith("resp_"):
@@ -691,7 +691,7 @@ async def delete_response(
     Returns:
         ResponseDeletedObject confirming deletion
     """
-    from app.services.chat_v2.storage import session_manager
+    from app.services.chat.storage import session_manager
 
     # Extract task_id from response_id
     if not response_id.startswith("resp_"):

@@ -48,7 +48,7 @@ from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Bot, Shell, Task, Team
 from app.services.chat.rag_integration import retrieve_and_assemble_rag_prompt
-from app.services.chat.session_manager import session_manager
+from app.services.chat.storage import session_manager
 
 logger = logging.getLogger(__name__)
 
@@ -607,9 +607,9 @@ class ChatNamespace(socketio.AsyncNamespace):
         """
         Process context metadata and RAG based on chat version.
 
-        This method handles RAG processing differently for chat v1 and chat_v2:
-        - chat_v2 (enable_deep_thinking=True): Only extracts context metadata for tool-based RAG
-        - chat v1 (enable_deep_thinking=False): Performs full RAG retrieval and prompt assembly
+        This method handles RAG processing differently based on enable_deep_thinking:
+        - enable_deep_thinking=True: Only extracts context metadata for tool-based RAG
+        - enable_deep_thinking=False: Performs full RAG retrieval and prompt assembly
 
         Args:
             payload: Chat send payload
@@ -622,7 +622,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             Tuple of (context_metadata dict, rag_prompt string or None)
         """
         if payload.enable_deep_thinking:
-            # For chat_v2: only extract context metadata, no RAG retrieval
+            # For tool-enabled mode: only extract context metadata, no RAG retrieval
             # KnowledgeBaseTool will handle retrieval dynamically
             if payload.contexts and should_trigger_ai:
                 context_metadata = {
@@ -636,7 +636,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                     "original_query": payload.message,
                 }
                 logger.info(
-                    f"[WS] chat:send chat_v2 mode: extracted context metadata with {len(payload.contexts)} contexts"
+                    f"[WS] chat:send tool-enabled mode: extracted context metadata with {len(payload.contexts)} contexts"
                 )
                 return context_metadata, None
             return None, None
@@ -981,50 +981,35 @@ class ChatNamespace(socketio.AsyncNamespace):
             # by _create_task_and_subtasks() or task_kinds_service.create_task_or_append()
             # No need to update it again here
 
-            # Trigger AI response if needed (decoupled logic in ai_trigger.py)
+            # Trigger AI response if needed
+            # Uses unified trigger from chat.trigger module
+            # enable_deep_thinking controls whether tools are enabled in chat_shell
             if should_trigger_ai and assistant_subtask:
-                # Choose AI trigger based on enable_deep_thinking flag
-                if payload.enable_deep_thinking:
-                    logger.info("enable_deep_thinking is true, using chat_v2")
-                    from app.services.chat_v2.ai_trigger import trigger_ai_response
+                from app.services.chat.trigger import trigger_ai_response
 
-                    # For chat_v2: extract knowledge base IDs for tool-based RAG
-                    kb_ids = self._extract_knowledge_base_ids(context_metadata)
-                    if kb_ids:
-                        logger.info(
-                            f"[WS] chat:send chat_v2 will use KnowledgeBaseTool with {len(kb_ids)} knowledge bases: {kb_ids}"
-                        )
-
-                    await trigger_ai_response(
-                        task=task,
-                        assistant_subtask=assistant_subtask,
-                        team=team,
-                        user=user,
-                        message=payload.message,  # Original message
-                        payload=payload,
-                        task_room=task_room,
-                        supports_direct_chat=supports_direct_chat,
-                        namespace=self,
-                        knowledge_base_ids=kb_ids,  # Pass KB IDs for tool-based RAG
+                # Extract knowledge base IDs for tool-based RAG (only used when tools enabled)
+                kb_ids = self._extract_knowledge_base_ids(context_metadata)
+                if kb_ids:
+                    logger.info(
+                        f"[WS] chat:send will use KnowledgeBaseTool with {len(kb_ids)} knowledge bases: {kb_ids}"
                     )
-                else:
-                    logger.info("enable_deep_thinking is false, using chat")
-                    from app.services.chat.ai_trigger import trigger_ai_response
 
-                    # For chat v1: use RAG prompt if available
-                    ai_message = rag_prompt or payload.message
+                logger.info(
+                    f"[WS] chat:send triggering AI response with enable_deep_thinking={payload.enable_deep_thinking} (controls tool usage)"
+                )
 
-                    await trigger_ai_response(
-                        task=task,
-                        assistant_subtask=assistant_subtask,
-                        team=team,
-                        user=user,
-                        message=ai_message,  # Use RAG prompt for v1
-                        payload=payload,
-                        task_room=task_room,
-                        supports_direct_chat=supports_direct_chat,
-                        namespace=self,
-                    )
+                await trigger_ai_response(
+                    task=task,
+                    assistant_subtask=assistant_subtask,
+                    team=team,
+                    user=user,
+                    message=payload.message,  # Original message
+                    payload=payload,
+                    task_room=task_room,
+                    supports_direct_chat=supports_direct_chat,
+                    namespace=self,
+                    knowledge_base_ids=kb_ids,  # Pass KB IDs for tool-based RAG
+                )
 
             # Return unified response - same structure for all modes
             return {
@@ -1193,11 +1178,11 @@ class ChatNamespace(socketio.AsyncNamespace):
                 stream_version = self._stream_versions.get(payload.subtask_id, "v1")
 
                 if stream_version == "v2":
-                    # Use chat_v2 session_manager
+                    # Use chat session_manager (v2)
                     logger.info(
-                        f"[WS] chat:cancel Using chat_v2 session_manager for subtask_id={payload.subtask_id}"
+                        f"[WS] chat:cancel Using chat session_manager (v2) for subtask_id={payload.subtask_id}"
                     )
-                    from app.services.chat_v2.storage import (
+                    from app.services.chat.storage import (
                         session_manager as session_manager_v2,
                     )
 
@@ -1543,10 +1528,10 @@ class ChatNamespace(socketio.AsyncNamespace):
             # Reset the failed AI subtask to PENDING status
             self._reset_subtask_for_retry(db, failed_ai_subtask)
 
-            # Trigger AI response
+            # Trigger AI response using unified trigger
             from app.api.endpoints.adapter.chat import _should_use_direct_chat
             from app.models.user import User
-            from app.services.chat.ai_trigger import trigger_ai_response
+            from app.services.chat.trigger import trigger_ai_response
 
             user = db.query(User).filter(User.id == user_id).first()
             if not user:
@@ -1832,7 +1817,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             {"success": true} or {"error": "..."}
         """
         from app.api.ws.events import SkillResponsePayload
-        from app.services.chat_v2.tools.pending_requests import (
+        from app.services.chat_shell.tools import (
             get_pending_request_registry,
         )
 
