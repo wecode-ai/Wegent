@@ -219,7 +219,8 @@
     "failed": "PDF 导出失败",
     "docx_failed": "DOCX 导出失败",
     "select_from_here": "从此处开始选择",
-    "select_below": "选择以下所有"
+    "select_below": "选择以下所有",
+    "attachments": "个附件"
   },
   "web_search": {
     "enable": "启用联网搜索",

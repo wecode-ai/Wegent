@@ -37,13 +37,16 @@ CODE_BG_COLOR = RGBColor(246, 248, 250)
 LINK_COLOR = RGBColor(85, 185, 247)
 
 
-def generate_task_docx(task: Kind, db: Session) -> io.BytesIO:
+def generate_task_docx(
+    task: Kind, db: Session, message_ids: Optional[List[int]] = None
+) -> io.BytesIO:
     """
     Generate a DOCX document from task data.
 
     Args:
         task: Task Kind instance
         db: Database session
+        message_ids: Optional list of subtask IDs to include. If None, includes all subtasks.
 
     Returns:
         BytesIO buffer containing the DOCX document
@@ -69,7 +72,7 @@ def generate_task_docx(task: Kind, db: Session) -> io.BytesIO:
     _add_document_header(doc, task_title)
 
     # Add content
-    _add_task_content(doc, task, db)
+    _add_task_content(doc, task, db, message_ids=message_ids)
 
     # Add footer
     _add_document_footer(doc)
@@ -143,15 +146,22 @@ def _add_horizontal_rule(doc: Document):
     pPr.append(pBdr)
 
 
-def _add_task_content(doc: Document, task: Kind, db: Session):
-    """Add task subtasks as messages"""
+def _add_task_content(
+    doc: Document, task: Kind, db: Session, message_ids: Optional[List[int]] = None
+):
+    """Add task subtasks as messages, optionally filtered by message_ids"""
     # Query subtasks with attachments
-    subtasks = (
+    query = (
         db.query(Subtask)
         .filter(Subtask.task_id == task.id)
-        .order_by(Subtask.id.asc())
-        .all()
     )
+
+    # Filter by message_ids if provided
+    if message_ids is not None and len(message_ids) > 0:
+        query = query.filter(Subtask.id.in_(message_ids))
+
+    # Order by id to maintain original message order
+    subtasks = query.order_by(Subtask.id.asc()).all()
 
     # Get user for display name
     user = db.query(User).filter(User.id == task.user_id).first()

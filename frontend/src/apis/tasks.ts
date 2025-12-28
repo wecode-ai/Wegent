@@ -293,10 +293,19 @@ export const taskApis = {
 
   /**
    * Export task to DOCX format
+   * @param taskId - Task ID to export
+   * @param messageIds - Optional array of message IDs to filter export (if not provided, exports all messages)
    */
-  exportTaskDocx: async (taskId: number): Promise<Blob> => {
+  exportTaskDocx: async (taskId: number, messageIds?: number[]): Promise<Blob> => {
     const token = getToken();
-    const response = await fetch(`/api/tasks/${taskId}/export/docx`, {
+    const url = new URL(`/api/tasks/${taskId}/export/docx`, window.location.origin);
+
+    // Add message_ids as query parameter if provided
+    if (messageIds && messageIds.length > 0) {
+      url.searchParams.set('message_ids', messageIds.join(','));
+    }
+
+    const response = await fetch(url.toString(), {
       method: 'GET',
       headers: {
         ...(token && { Authorization: `Bearer ${token}` }),
