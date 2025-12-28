@@ -101,10 +101,13 @@ export function isCodeBlockDelimiter(line: string): boolean {
 
 /**
  * Extract language from code block delimiter
- */
-export function extractCodeLanguage(line: string): string {
-  const match = line.trim().match(/^```(\w*)/);
-  return match?.[1] || '';
+ export function extractCodeLanguage(line: string): string {
+   const trimmedLine = line.trim();
+   const match = trimmedLine.match(/^```(\w*)/);
+   const language = match?.[1] || '';
+   
+   return language;
+ }
 }
 
 /**

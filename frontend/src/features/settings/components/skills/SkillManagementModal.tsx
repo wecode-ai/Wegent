@@ -206,6 +206,24 @@ export default function SkillManagementModal({
                                 ))}
                               </div>
 
+                              {/* Bind Shells */}
+                              <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                                <span className="text-xs text-text-muted">
+                                  {t('skills.bind_shells')}:
+                                </span>
+                                {skill.spec.bindShells && skill.spec.bindShells.length > 0 ? (
+                                  skill.spec.bindShells.map(shell => (
+                                    <Tag key={shell} variant="success">
+                                      {shell}
+                                    </Tag>
+                                  ))
+                                ) : (
+                                  <span className="text-xs text-text-muted italic">
+                                    {t('skills.no_bind_shells')}
+                                  </span>
+                                )}
+                              </div>
+
                               {/* File Info */}
                               <div className="flex items-center gap-4 mt-2 text-xs text-text-muted">
                                 {skill.status?.fileSize && (

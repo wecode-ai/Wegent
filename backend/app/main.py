@@ -238,6 +238,16 @@ async def lifespan(app: FastAPI):
     init_chat_v2_emitter(sio)
     logger.info("✓ Socket.IO initialized")
 
+    # Initialize PendingRequestRegistry for skill frontend interactions
+    # This starts the Redis Pub/Sub listener for cross-worker communication
+    logger.info("Initializing PendingRequestRegistry...")
+    from app.services.chat_v2.tools.pending_requests import (
+        get_pending_request_registry,
+    )
+
+    await get_pending_request_registry()
+    logger.info("✓ PendingRequestRegistry initialized")
+
     logger.info("=" * 60)
     logger.info("Application startup completed successfully!")
     logger.info("=" * 60)
@@ -293,7 +303,15 @@ async def lifespan(app: FastAPI):
     stop_background_jobs(app)
     logger.info("✓ Background jobs stopped")
 
-    # Step 5: Shutdown OpenTelemetry
+    # Step 5: Shutdown PendingRequestRegistry
+    from app.services.chat_v2.tools.pending_requests import (
+        shutdown_pending_request_registry,
+    )
+
+    await shutdown_pending_request_registry()
+    logger.info("✓ PendingRequestRegistry shutdown completed")
+
+    # Step 6: Shutdown OpenTelemetry
     from shared.telemetry.config import get_otel_config
     from shared.telemetry.core import is_telemetry_enabled, shutdown_telemetry
 

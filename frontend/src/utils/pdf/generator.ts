@@ -42,9 +42,9 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
   // Add header
   addHeader(ctx, taskName);
 
-  // Render all messages
+  // Render all messages (async for mermaid diagram support)
   for (const msg of messages) {
-    renderMessage(ctx, msg);
+    await renderMessage(ctx, msg);
   }
 
   // Add footer to last page

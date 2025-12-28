@@ -37,7 +37,7 @@ import React, {
   useEffect,
   ReactNode,
 } from 'react';
-import { useSocket, ChatEventHandlers } from '@/contexts/SocketContext';
+import { useSocket, ChatEventHandlers, SkillEventHandlers } from '@/contexts/SocketContext';
 import {
   ChatSendPayload,
   ChatStartPayload,
@@ -46,8 +46,11 @@ import {
   ChatErrorPayload,
   ChatCancelledPayload,
   ChatMessagePayload,
+  SkillRequestPayload,
+  SkillResponsePayload,
 } from '@/types/socket';
 import type { TaskDetailSubtask, Team } from '@/types/api';
+import DOMPurify from 'dompurify';
 
 /**
  * Message type enum
@@ -310,8 +313,15 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
   const [clearVersion, setClearVersion] = useState(0);
 
   // Get socket context
-  const { isConnected, sendChatMessage, cancelChatStream, registerChatHandlers, joinTask } =
-    useSocket();
+  const {
+    isConnected,
+    sendChatMessage,
+    cancelChatStream,
+    registerChatHandlers,
+    registerSkillHandlers,
+    sendSkillResponse,
+    joinTask,
+  } = useSocket();
 
   // Refs for callbacks (don't need to trigger re-renders)
   const callbacksRef = useRef<
@@ -856,6 +866,199 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     handleChatCancelled,
     handleChatMessage,
   ]);
+
+  /**
+   * Handle skill:request event from WebSocket
+   * Routes skill requests to appropriate handlers based on skill_name and action
+   */
+  const handleSkillRequest = useCallback(
+    async (data: SkillRequestPayload) => {
+      const { request_id, skill_name, action } = data;
+
+      // Build base response payload
+      const basePayload: Pick<SkillResponsePayload, 'request_id' | 'skill_name' | 'action'> = {
+        request_id,
+        skill_name,
+        action,
+      };
+
+      // Route to appropriate handler based on skill_name and action
+      if (skill_name === 'mermaid-diagram' && action === 'render') {
+        // Handle mermaid diagram rendering
+        const { code, diagram_type, title } = data.data as {
+          code: string;
+          diagram_type?: string;
+          title?: string;
+        };
+
+        try {
+          // Dynamically import mermaid to avoid SSR issues
+          const mermaid = (await import('mermaid')).default;
+
+          // Initialize mermaid with configuration matching MermaidDiagram.tsx
+          // Using 'base' theme with custom variables and 'strict' security level
+          // to ensure validation results match final rendering
+          mermaid.initialize({
+            startOnLoad: false,
+            suppressErrorRendering: true,
+            theme: 'base' as const,
+            themeVariables: {
+              // Light theme variables (validation uses light theme as default)
+              primaryColor: '#f8fafc',
+              primaryTextColor: '#0f172a',
+              primaryBorderColor: '#94a3b8',
+              lineColor: '#64748b',
+              secondaryColor: '#f1f5f9',
+              tertiaryColor: '#e2e8f0',
+              background: '#ffffff',
+              mainBkg: '#f8fafc',
+              secondBkg: '#f1f5f9',
+              mainContrastColor: '#0f172a',
+              darkTextColor: '#0f172a',
+              textColor: '#0f172a',
+              labelTextColor: '#0f172a',
+              signalTextColor: '#0f172a',
+              actorBkg: '#f8fafc',
+              actorBorder: '#14b8a6',
+              actorTextColor: '#0f172a',
+              actorLineColor: '#cbd5e1',
+              noteBkgColor: '#fef9c3',
+              noteBorderColor: '#fbbf24',
+              noteTextColor: '#1e293b',
+              activationBkgColor: '#e0f2fe',
+              activationBorderColor: '#0ea5e9',
+              sequenceNumberColor: '#ffffff',
+            },
+            securityLevel: 'strict' as const,
+            flowchart: {
+              useMaxWidth: true,
+              htmlLabels: true,
+              curve: 'basis' as const,
+              padding: 15,
+            },
+            sequence: {
+              diagramMarginX: 50,
+              diagramMarginY: 20,
+              actorMargin: 80,
+              width: 180,
+              height: 65,
+              boxMargin: 10,
+              boxTextMargin: 5,
+              noteMargin: 15,
+              messageMargin: 45,
+              mirrorActors: true,
+              useMaxWidth: true,
+              actorFontSize: 14,
+              actorFontWeight: 600,
+              noteFontSize: 13,
+              messageFontSize: 13,
+            },
+            fontSize: 14,
+            fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+          });
+
+          // Generate unique ID for rendering
+          const renderElementId = `mermaid-render-${request_id}-${Date.now()}`;
+
+          // Render the diagram
+          const { svg } = await mermaid.render(renderElementId, code);
+
+          // Sanitize the SVG output
+          const sanitizedSvg = DOMPurify.sanitize(svg, {
+            USE_PROFILES: { svg: true, svgFilters: true },
+            ADD_TAGS: ['foreignObject'],
+          });
+
+          // Send success result
+          const successPayload: SkillResponsePayload = {
+            ...basePayload,
+            success: true,
+            result: { svg: sanitizedSvg },
+          };
+
+          sendSkillResponse(successPayload);
+        } catch (error) {
+          // Extract error details
+          const errorMessage = error instanceof Error ? error.message : String(error);
+
+          // Try to extract line number from mermaid error message
+          let lineNumber: number | undefined;
+          let columnNumber: number | undefined;
+          let errorDetails: string | undefined;
+
+          const lineMatch = errorMessage.match(/line\s+(\d+)/i);
+          if (lineMatch) {
+            lineNumber = parseInt(lineMatch[1], 10);
+          }
+
+          const columnMatch = errorMessage.match(/column\s+(\d+)/i);
+          if (columnMatch) {
+            columnNumber = parseInt(columnMatch[1], 10);
+          }
+
+          // Extract more detailed error info if available
+          if (error instanceof Error && 'hash' in error) {
+            const hashError = error as Error & {
+              hash?: { line?: number; loc?: { first_column?: number } };
+            };
+            if (hashError.hash?.line) {
+              lineNumber = hashError.hash.line;
+            }
+            if (hashError.hash?.loc?.first_column) {
+              columnNumber = hashError.hash.loc.first_column;
+            }
+          }
+
+          // Build detailed error message for AI
+          errorDetails = `Diagram type: ${diagram_type || 'unknown'}`;
+          if (title) {
+            errorDetails += `\nTitle: ${title}`;
+          }
+          errorDetails += `\nCode:\n${code}`;
+
+          // Send error result
+          const errorPayload: SkillResponsePayload = {
+            ...basePayload,
+            success: false,
+            error: {
+              message: errorMessage,
+              line: lineNumber,
+              column: columnNumber,
+              details: errorDetails,
+            },
+          };
+
+          sendSkillResponse(errorPayload);
+        }
+      } else {
+        // Unknown skill or action - send error response
+        console.warn('[ChatStreamContext][skill:request] Unknown skill or action:', {
+          skill_name,
+          action,
+        });
+
+        const errorPayload: SkillResponsePayload = {
+          ...basePayload,
+          success: false,
+          error: {
+            message: `Unknown skill or action: ${skill_name}/${action}`,
+          },
+        };
+        sendSkillResponse(errorPayload);
+      }
+    },
+    [sendSkillResponse]
+  );
+
+  // Register skill event handlers
+  useEffect(() => {
+    const handlers: SkillEventHandlers = {
+      onSkillRequest: handleSkillRequest,
+    };
+
+    const cleanup = registerSkillHandlers(handlers);
+    return cleanup;
+  }, [registerSkillHandlers, handleSkillRequest]);
 
   /**
    * Send a chat message via WebSocket
