@@ -334,8 +334,9 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
           setIsLoading(false);
         }
       } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+
         if (isMounted) {
-          const errorMessage = err instanceof Error ? err.message : 'Unknown error';
           console.error('Mermaid render error:', errorMessage);
           setError(errorMessage);
           setIsLoading(false);

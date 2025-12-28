@@ -332,7 +332,19 @@ class PendingRequestRegistry:
         result: Any,
         error: Optional[str] = None,
     ) -> bool:
-        """Resolve a request using the local future."""
+        """Resolve a request using the local future.
+
+        Args:
+            request_id: The request ID to resolve
+            result: The result data. If this is a dict with 'success' key,
+                   it will be used directly. Otherwise, a response object
+                   will be built using the error parameter.
+            error: Optional error message (legacy parameter, used when result
+                   doesn't contain success info)
+
+        Returns:
+            True if resolved successfully, False otherwise
+        """
         async with self._lock:
             request = self._local_requests.pop(request_id, None)
 
@@ -348,12 +360,27 @@ class PendingRequestRegistry:
             )
             return False
 
-        # Build response object matching the expected format
-        response = {
-            "success": error is None,
-            "result": result,
-            "error": error,
-        }
+        # Check if result is already a complete response object (from on_skill_response)
+        # This handles the case where the caller passes a dict with 'success' key
+        if isinstance(result, dict) and "success" in result:
+            # Use the result directly as the response
+            response = result
+            logger.debug(
+                f"[PendingRequestRegistry] Using result directly as response: "
+                f"success={result.get('success')}, has_error={result.get('error') is not None}"
+            )
+        else:
+            # Legacy behavior: build response object from result and error
+            response = {
+                "success": error is None,
+                "result": result,
+                "error": error,
+            }
+            logger.debug(
+                f"[PendingRequestRegistry] Built response from result/error: "
+                f"success={error is None}"
+            )
+
         request.future.set_result(response)
 
         logger.debug(f"[PendingRequestRegistry] Resolved local request: {request_id}")
