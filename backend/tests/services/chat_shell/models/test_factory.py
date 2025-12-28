@@ -7,7 +7,7 @@ from langchain_anthropic import ChatAnthropic
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
 
-from app.services.chat_shell.models.factory import LangChainModelFactory
+from app.chat_shell.models.factory import LangChainModelFactory
 
 
 @pytest.mark.asyncio

@@ -13,7 +13,7 @@ Provides:
 """
 
 # Re-export LangChainModelFactory from chat_shell for backward compatibility
-from app.services.chat_shell.models import LangChainModelFactory
+from app.chat_shell.models import LangChainModelFactory
 
 from .resolver import (
     build_default_headers_with_placeholders,

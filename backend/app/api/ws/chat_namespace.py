@@ -1817,7 +1817,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             {"success": true} or {"error": "..."}
         """
         from app.api.ws.events import SkillResponsePayload
-        from app.services.chat_shell.tools import (
+        from app.chat_shell.tools import (
             get_pending_request_registry,
         )
 

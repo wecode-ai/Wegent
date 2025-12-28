@@ -120,7 +120,7 @@ IMPORTANT syntax rules:
             JSON string with render result
         """
         # Import the generic pending request registry
-        from app.services.chat_shell.tools.pending_requests import (
+        from app.chat_shell.tools.pending_requests import (
             get_pending_request_registry,
         )
 

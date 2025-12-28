@@ -22,12 +22,12 @@ from typing import Any
 from langchain_core.messages import AIMessage
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_async
 
+from app.chat_shell.agents import LangGraphAgentBuilder
+from app.chat_shell.messages import MessageConverter
+from app.chat_shell.models import LangChainModelFactory
+from app.chat_shell.tools import ToolRegistry
+from app.chat_shell.tools.builtin import SubmitEvaluationResultTool
 from app.services.chat.tools.base import Tool
-from app.services.chat_shell.agents import LangGraphAgentBuilder
-from app.services.chat_shell.messages import MessageConverter
-from app.services.chat_shell.models import LangChainModelFactory
-from app.services.chat_shell.tools import ToolRegistry
-from app.services.chat_shell.tools.builtin import SubmitEvaluationResultTool
 
 logger = logging.getLogger(__name__)
 

@@ -10,7 +10,7 @@ This module provides:
 """
 
 # Export streaming handlers
-from app.services.chat_shell.streaming import SSEStreamingHandler
+from app.chat_shell.streaming import SSEStreamingHandler
 
 # Re-export from the centralized streaming module
 from app.services.streaming import (

@@ -19,7 +19,7 @@ import pytest
 # chat_shell/__init__.py which has heavy dependencies (opentelemetry, etc.)
 # This is a unit test that only needs the registry module.
 sys.path.insert(0, ".")
-from app.services.chat_shell.skills.registry import SkillToolRegistry
+from app.chat_shell.skills.registry import SkillToolRegistry
 
 
 @pytest.fixture
@@ -37,8 +37,8 @@ def valid_zip_content():
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         # Create a simple provider module
         provider_code = """
-from app.services.chat_shell.skills.provider import SkillToolProvider
-from app.services.chat_shell.skills.context import SkillToolContext
+from app.chat_shell.skills.provider import SkillToolProvider
+from app.chat_shell.skills.context import SkillToolContext
 from langchain_core.tools import BaseTool
 from typing import Any, Optional
 
@@ -221,8 +221,8 @@ class TestLoadProviderFromZipSecurity:
 import sys
 sys.modules["__malicious_flag__"] = True
 
-from app.services.chat_shell.skills.provider import SkillToolProvider
-from app.services.chat_shell.skills.context import SkillToolContext
+from app.chat_shell.skills.provider import SkillToolProvider
+from app.chat_shell.skills.context import SkillToolContext
 from langchain_core.tools import BaseTool
 from typing import Any, Optional
 

@@ -677,9 +677,9 @@ local_stream_adapter = LocalStreamAdapter()
 
 ```python
 # app/api/ws/chat_namespace.py
-from app.services.chat_shell import chat_agent_service
-from app.services.chat_shell.api.schemas import ChatEvent, ChatEventType
-from app.services.chat_shell.streaming import local_stream_adapter
+from app.chat_shell import chat_agent_service
+from app.chat_shell.api.schemas import ChatEvent, ChatEventType
+from app.chat_shell.streaming import local_stream_adapter
 
 async def on_chat_send(self, sid, data):
     """处理用户发送消息。"""
@@ -713,8 +713,8 @@ from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from sse_starlette.sse import EventSourceResponse
 
-from app.services.chat_shell import chat_agent_service
-from app.services.chat_shell.api.schemas import ChatEvent
+from app.chat_shell import chat_agent_service
+from app.chat_shell.api.schemas import ChatEvent
 
 app = FastAPI(title="Chat Agent Service")
 
@@ -1399,7 +1399,7 @@ def get_bot_system_prompt(
 mv backend/app/services/chat_v2 backend/app/services/chat_shell
 
 # 全局替换导入路径
-find backend -name "*.py" -exec sed -i '' 's/app\.services\.chat_v2/app.services.chat_shell/g' {} \;
+find backend -name "*.py" -exec sed -i '' 's/app\.services\.chat_v2/app.chat_shell/g' {} \;
 ```
 
 ### 7.2 第二步：创建 api/ 子包

@@ -47,7 +47,7 @@ def prepare_knowledge_base_tools(
     )
 
     # Import KnowledgeBaseTool
-    from app.services.chat_shell.tools.builtin import KnowledgeBaseTool
+    from app.chat_shell.tools.builtin import KnowledgeBaseTool
 
     # Create KnowledgeBaseTool with the specified knowledge bases
     kb_tool = KnowledgeBaseTool(

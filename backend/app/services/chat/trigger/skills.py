@@ -50,7 +50,7 @@ def prepare_load_skill_tool(
     )
 
     # Import LoadSkillTool
-    from app.services.chat_shell.tools.builtin import LoadSkillTool
+    from app.chat_shell.tools.builtin import LoadSkillTool
 
     # Create LoadSkillTool with the available skills
     load_skill_tool = LoadSkillTool(
@@ -180,9 +180,9 @@ def prepare_skill_tools(
         List of tool instances created from skill configurations
     """
     # Import SkillToolRegistry and context
+    from app.chat_shell.skills import SkillToolContext, SkillToolRegistry
     from app.models.skill_binary import SkillBinary
     from app.services.chat.ws_emitter import get_ws_emitter
-    from app.services.chat_shell.skills import SkillToolContext, SkillToolRegistry
 
     tools: list[Any] = []
 

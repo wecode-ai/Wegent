@@ -277,9 +277,9 @@ async def _stream_chat_response(
     span_manager.create_span()
     span_manager.enter_span()
 
+    from app.chat_shell.agent import ChatAgent
     from app.services.chat.config import ChatConfigBuilder, WebSocketStreamConfig
     from app.services.chat.streaming import WebSocketStreamingHandler
-    from app.services.chat_shell.agent import ChatAgent
 
     db = SessionLocal()
 

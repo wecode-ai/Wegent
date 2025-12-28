@@ -38,7 +38,7 @@ async def load_mcp_tools(
         MCPClient instance or None if no MCP servers configured
     """
     try:
-        from app.services.chat_shell.tools.mcp import MCPClient
+        from app.chat_shell.tools.mcp import MCPClient
 
         # Step 1: Load backend MCP configuration
         backend_servers = {}

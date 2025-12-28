@@ -13,7 +13,7 @@ not from hardcoded built-in providers. This allows skills to bundle their
 own provider implementations.
 
 Example usage:
-    from app.services.chat_shell.skills import (
+    from app.chat_shell.skills import (
         SkillToolContext,
         SkillToolRegistry,
     )

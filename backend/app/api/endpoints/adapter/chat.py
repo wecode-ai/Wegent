@@ -967,8 +967,8 @@ async def stream_chat(
 
             # Get the actual stream using SSEStreamingHandler (use final_message with attachment content)
             # Note: tools are handled internally by ChatAgent based on configuration
-            from app.services.chat_shell.agent import ChatAgent
-            from app.services.chat_shell.streaming import SSEStreamingHandler
+            from app.chat_shell.agent import ChatAgent
+            from app.chat_shell.streaming import SSEStreamingHandler
 
             agent = ChatAgent()
             handler = SSEStreamingHandler(agent)

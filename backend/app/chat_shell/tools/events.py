@@ -103,7 +103,7 @@ def _handle_tool_end(
     event_data: dict,
 ) -> None:
     """Handle tool end event."""
-    from app.services.chat_shell.agent import ChatAgent
+    from app.chat_shell.agent import ChatAgent
 
     # Extract and serialize tool output
     tool_output = event_data.get("data", {}).get("output", "")
