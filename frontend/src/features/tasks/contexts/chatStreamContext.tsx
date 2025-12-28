@@ -875,13 +875,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     async (data: SkillRequestPayload) => {
       const { request_id, skill_name, action } = data;
 
-      console.log('[ChatStreamContext][skill:request] Received skill request:', {
-        request_id,
-        skill_name,
-        action,
-        data: data.data,
-      });
-
       // Build base response payload
       const basePayload: Pick<SkillResponsePayload, 'request_id' | 'skill_name' | 'action'> = {
         request_id,
@@ -902,13 +895,66 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           // Dynamically import mermaid to avoid SSR issues
           const mermaid = (await import('mermaid')).default;
 
-          // Initialize mermaid with configuration
+          // Initialize mermaid with configuration matching MermaidDiagram.tsx
+          // Using 'base' theme with custom variables and 'strict' security level
+          // to ensure validation results match final rendering
           mermaid.initialize({
             startOnLoad: false,
-            theme: 'default',
-            securityLevel: 'loose',
-            fontFamily: 'inherit',
             suppressErrorRendering: true,
+            theme: 'base' as const,
+            themeVariables: {
+              // Light theme variables (validation uses light theme as default)
+              primaryColor: '#f8fafc',
+              primaryTextColor: '#0f172a',
+              primaryBorderColor: '#94a3b8',
+              lineColor: '#64748b',
+              secondaryColor: '#f1f5f9',
+              tertiaryColor: '#e2e8f0',
+              background: '#ffffff',
+              mainBkg: '#f8fafc',
+              secondBkg: '#f1f5f9',
+              mainContrastColor: '#0f172a',
+              darkTextColor: '#0f172a',
+              textColor: '#0f172a',
+              labelTextColor: '#0f172a',
+              signalTextColor: '#0f172a',
+              actorBkg: '#f8fafc',
+              actorBorder: '#14b8a6',
+              actorTextColor: '#0f172a',
+              actorLineColor: '#cbd5e1',
+              noteBkgColor: '#fef9c3',
+              noteBorderColor: '#fbbf24',
+              noteTextColor: '#1e293b',
+              activationBkgColor: '#e0f2fe',
+              activationBorderColor: '#0ea5e9',
+              sequenceNumberColor: '#ffffff',
+            },
+            securityLevel: 'strict' as const,
+            flowchart: {
+              useMaxWidth: true,
+              htmlLabels: true,
+              curve: 'basis' as const,
+              padding: 15,
+            },
+            sequence: {
+              diagramMarginX: 50,
+              diagramMarginY: 20,
+              actorMargin: 80,
+              width: 180,
+              height: 65,
+              boxMargin: 10,
+              boxTextMargin: 5,
+              noteMargin: 15,
+              messageMargin: 45,
+              mirrorActors: true,
+              useMaxWidth: true,
+              actorFontSize: 14,
+              actorFontWeight: 600,
+              noteFontSize: 13,
+              messageFontSize: 13,
+            },
+            fontSize: 14,
+            fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
           });
 
           // Generate unique ID for rendering
@@ -923,17 +969,13 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
             ADD_TAGS: ['foreignObject'],
           });
 
-          console.log('[ChatStreamContext][skill:request] Mermaid render successful:', {
-            request_id,
-            svg_length: sanitizedSvg.length,
-          });
-
           // Send success result
           const successPayload: SkillResponsePayload = {
             ...basePayload,
             success: true,
             result: { svg: sanitizedSvg },
           };
+
           sendSkillResponse(successPayload);
         } catch (error) {
           // Extract error details
@@ -974,13 +1016,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           }
           errorDetails += `\nCode:\n${code}`;
 
-          console.error('[ChatStreamContext][skill:request] Mermaid render failed:', {
-            request_id,
-            error: errorMessage,
-            line: lineNumber,
-            column: columnNumber,
-          });
-
           // Send error result
           const errorPayload: SkillResponsePayload = {
             ...basePayload,
@@ -992,6 +1027,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
               details: errorDetails,
             },
           };
+
           sendSkillResponse(errorPayload);
         }
       } else {
