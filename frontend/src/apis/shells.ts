@@ -6,6 +6,12 @@ import { apiClient } from './client';
 
 // Shell Types
 export type ShellTypeEnum = 'public' | 'user' | 'group';
+export type WorkspaceType = 'ephemeral' | 'persistent';
+
+export interface ShellResources {
+  cpu: string; // e.g., '2', '4'
+  memory: string; // e.g., '2Gi', '4Gi', '8Gi'
+}
 
 export interface UnifiedShell {
   name: string;
@@ -16,6 +22,8 @@ export interface UnifiedShell {
   baseShellRef?: string | null;
   supportModel?: string[] | null;
   executionType?: 'local_engine' | 'external_api' | null; // Shell execution type
+  workspaceType?: WorkspaceType; // 'ephemeral' or 'persistent'
+  resources?: ShellResources | null; // Resource config for persistent containers
   namespace?: string; // Resource namespace (group name or 'default')
 }
 
@@ -28,11 +36,15 @@ export interface ShellCreateRequest {
   displayName?: string;
   baseShellRef: string; // Required: base public shell name (e.g., "ClaudeCode")
   baseImage: string; // Required: custom base image address
+  workspaceType?: WorkspaceType; // 'ephemeral' or 'persistent'
+  resources?: ShellResources; // Resource config for persistent containers
 }
 
 export interface ShellUpdateRequest {
   displayName?: string;
   baseImage?: string;
+  workspaceType?: WorkspaceType; // 'ephemeral' or 'persistent'
+  resources?: ShellResources; // Resource config for persistent containers
 }
 
 // Image Validation Types

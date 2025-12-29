@@ -190,6 +190,13 @@ class ModelRef(BaseModel):
     namespace: str = "default"
 
 
+class ShellResources(BaseModel):
+    """Resource configuration for persistent containers"""
+
+    cpu: str = Field("2", description="CPU cores (e.g., '2', '4')")
+    memory: str = Field("4Gi", description="Memory size (e.g., '2Gi', '4Gi', '8Gi')")
+
+
 class ShellSpec(BaseModel):
     """Shell specification"""
 
@@ -200,6 +207,13 @@ class ShellSpec(BaseModel):
     baseImage: Optional[str] = None  # Custom base image address for user-defined shells
     baseShellRef: Optional[str] = (
         None  # Reference to base public shell (e.g., "ClaudeCode")
+    )
+    workspaceType: Optional[str] = Field(
+        "ephemeral",
+        description="Workspace type: 'ephemeral' (default) or 'persistent'",
+    )
+    resources: Optional[ShellResources] = Field(
+        None, description="Resource configuration for persistent containers"
     )
 
 

@@ -585,3 +585,182 @@ async def cancel_task(request: CancelTaskRequest, http_request: Request):
     except Exception as e:
         logger.error(f"Error cancelling task {request.task_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Persistent Container Management APIs
+# ============================================================================
+
+
+class ContainerCreateRequest(BaseModel):
+    """Request to create a persistent container"""
+
+    instance_id: int
+    user_id: int
+    user_name: str
+    shell_name: str
+    shell_type: str
+    base_image: str
+    repo_url: Optional[str] = None
+    resources: Optional[Dict[str, Any]] = None
+
+
+@app.post("/executor-manager/containers/create")
+async def create_persistent_container(
+    request: ContainerCreateRequest, http_request: Request
+):
+    """
+    Create a new persistent container.
+
+    This endpoint is called by the backend to create a long-running
+    development container for a user.
+    """
+    from executor_manager.executors.docker.persistent_container import (
+        ContainerConfig,
+        persistent_container_manager,
+    )
+
+    try:
+        client_ip = http_request.client.host if http_request.client else "unknown"
+        logger.info(
+            f"Received request to create persistent container for user {request.user_name} from {client_ip}"
+        )
+
+        config = ContainerConfig(
+            instance_id=request.instance_id,
+            user_id=request.user_id,
+            user_name=request.user_name,
+            shell_name=request.shell_name,
+            shell_type=request.shell_type,
+            base_image=request.base_image,
+            repo_url=request.repo_url,
+            resources=request.resources,
+        )
+
+        state = await persistent_container_manager.create_container(config)
+
+        return {
+            "status": "creating",
+            "message": "Container creation started",
+            "instance_id": state.instance_id,
+            "container_id": state.container_id,
+        }
+
+    except Exception as e:
+        logger.error(f"Error creating persistent container: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/executor-manager/containers/{container_id}/stop")
+async def stop_persistent_container(container_id: str, http_request: Request):
+    """Stop a persistent container"""
+    from executor_manager.executors.docker.persistent_container import (
+        persistent_container_manager,
+    )
+
+    try:
+        client_ip = http_request.client.host if http_request.client else "unknown"
+        logger.info(
+            f"Received request to stop container {container_id} from {client_ip}"
+        )
+
+        success = await persistent_container_manager.stop_container(container_id)
+        if success:
+            return {"status": "success", "message": "Container stopped"}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to stop container")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error stopping container {container_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/executor-manager/containers/{container_id}/start")
+async def start_persistent_container(container_id: str, http_request: Request):
+    """Start a stopped persistent container"""
+    from executor_manager.executors.docker.persistent_container import (
+        persistent_container_manager,
+    )
+
+    try:
+        client_ip = http_request.client.host if http_request.client else "unknown"
+        logger.info(
+            f"Received request to start container {container_id} from {client_ip}"
+        )
+
+        success = await persistent_container_manager.start_container(container_id)
+        if success:
+            return {"status": "success", "message": "Container started"}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to start container")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error starting container {container_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/executor-manager/containers/{container_id}")
+async def delete_persistent_container(container_id: str, http_request: Request):
+    """Delete a persistent container"""
+    from executor_manager.executors.docker.persistent_container import (
+        persistent_container_manager,
+    )
+
+    try:
+        client_ip = http_request.client.host if http_request.client else "unknown"
+        logger.info(
+            f"Received request to delete container {container_id} from {client_ip}"
+        )
+
+        success = await persistent_container_manager.delete_container(container_id)
+        if success:
+            return {"status": "success", "message": "Container deleted"}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to delete container")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting container {container_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/executor-manager/containers/{container_id}/status")
+async def get_persistent_container_status(container_id: str, http_request: Request):
+    """Get the status of a persistent container"""
+    from executor_manager.executors.docker.persistent_container import (
+        persistent_container_manager,
+    )
+
+    try:
+        status = await persistent_container_manager.get_container_status(container_id)
+        if status:
+            return {"status": status, "container_id": container_id}
+        else:
+            raise HTTPException(status_code=404, detail="Container not found")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting container status {container_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/executor-manager/containers")
+async def list_persistent_containers(http_request: Request):
+    """List all persistent containers"""
+    from executor_manager.executors.docker.persistent_container import (
+        persistent_container_manager,
+    )
+
+    try:
+        containers = await persistent_container_manager.list_persistent_containers()
+        return {"containers": containers, "count": len(containers)}
+
+    except Exception as e:
+        logger.error(f"Error listing persistent containers: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

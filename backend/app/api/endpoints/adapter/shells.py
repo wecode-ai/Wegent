@@ -10,15 +10,17 @@ from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
 from app.core.cache import cache_manager
+from app.models.container_instance import ContainerInstance
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.kind import Shell as ShellCRD
+from app.schemas.kind import ShellResources
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -42,7 +44,18 @@ class UnifiedShell(BaseModel):
     executionType: Optional[str] = (
         None  # 'local_engine' or 'external_api' (from labels)
     )
+    workspaceType: Optional[str] = Field(
+        default="ephemeral"
+    )  # 'ephemeral' or 'persistent'
+    resources: Optional[dict] = None  # Resource config for persistent containers
     namespace: Optional[str] = None  # Resource namespace (group name or 'default')
+
+
+class ShellResourcesRequest(BaseModel):
+    """Resource configuration for persistent containers"""
+
+    cpu: str = "2"  # CPU cores
+    memory: str = "4Gi"  # Memory size (2Gi, 4Gi, 8Gi, 16Gi)
 
 
 class ShellCreateRequest(BaseModel):
@@ -52,6 +65,10 @@ class ShellCreateRequest(BaseModel):
     displayName: Optional[str] = None
     baseShellRef: str  # Required: base public shell name (e.g., "ClaudeCode")
     baseImage: str  # Required: custom base image address
+    workspaceType: Optional[str] = Field(
+        default="ephemeral"
+    )  # 'ephemeral' or 'persistent'
+    resources: Optional[ShellResourcesRequest] = None  # Resource config
 
 
 class ShellUpdateRequest(BaseModel):
@@ -59,6 +76,8 @@ class ShellUpdateRequest(BaseModel):
 
     displayName: Optional[str] = None
     baseImage: Optional[str] = None
+    workspaceType: Optional[str] = None  # 'ephemeral' or 'persistent'
+    resources: Optional[ShellResourcesRequest] = None  # Resource config
 
 
 class ImageValidationRequest(BaseModel):
@@ -121,6 +140,12 @@ def _public_shell_to_unified(shell: Kind) -> UnifiedShell:
     """Convert public shell (Kind) to UnifiedShell"""
     shell_crd = ShellCRD.model_validate(shell.json)
     labels = shell_crd.metadata.labels or {}
+    resources = None
+    if shell_crd.spec.resources:
+        resources = {
+            "cpu": shell_crd.spec.resources.cpu,
+            "memory": shell_crd.spec.resources.memory,
+        }
     return UnifiedShell(
         name=shell.name,
         type="public",
@@ -130,6 +155,8 @@ def _public_shell_to_unified(shell: Kind) -> UnifiedShell:
         baseShellRef=shell_crd.spec.baseShellRef,
         supportModel=shell_crd.spec.supportModel,
         executionType=labels.get("type"),
+        workspaceType=shell_crd.spec.workspaceType or "ephemeral",
+        resources=resources,
         namespace=shell.namespace,
     )
 
@@ -138,6 +165,12 @@ def _user_shell_to_unified(kind: Kind) -> UnifiedShell:
     """Convert Kind (user shell) to UnifiedShell"""
     shell_crd = ShellCRD.model_validate(kind.json)
     labels = shell_crd.metadata.labels or {}
+    resources = None
+    if shell_crd.spec.resources:
+        resources = {
+            "cpu": shell_crd.spec.resources.cpu,
+            "memory": shell_crd.spec.resources.memory,
+        }
 
     # Determine resource type based on namespace
     resource_type = "group" if kind.namespace != "default" else "user"
@@ -151,6 +184,8 @@ def _user_shell_to_unified(kind: Kind) -> UnifiedShell:
         baseShellRef=shell_crd.spec.baseShellRef,
         supportModel=shell_crd.spec.supportModel,
         executionType=labels.get("type"),
+        workspaceType=shell_crd.spec.workspaceType or "ephemeral",
+        resources=resources,
         namespace=kind.namespace,
     )
 
@@ -429,6 +464,25 @@ def create_shell(
             detail="Invalid base image format. Expected formats: image, image:tag, registry/image:tag, or registry:port/image:tag",
         )
 
+    # Validate workspaceType if provided
+    workspace_type = request.workspaceType or "ephemeral"
+    if workspace_type not in ("ephemeral", "persistent"):
+        raise HTTPException(
+            status_code=400,
+            detail="workspaceType must be 'ephemeral' or 'persistent'",
+        )
+
+    # Build resources config
+    resources_config = None
+    if request.resources:
+        resources_config = {
+            "cpu": request.resources.cpu,
+            "memory": request.resources.memory,
+        }
+    elif workspace_type == "persistent":
+        # Default resources for persistent containers
+        resources_config = {"cpu": "2", "memory": "4Gi"}
+
     # Create Shell CRD
     shell_crd = {
         "apiVersion": "agent.wecode.io/v1",
@@ -444,6 +498,8 @@ def create_shell(
             "supportModel": base_shell_crd.spec.supportModel or [],
             "baseImage": request.baseImage,
             "baseShellRef": request.baseShellRef,
+            "workspaceType": workspace_type,
+            "resources": resources_config,
         },
         "status": {"state": "Available"},
     }
@@ -558,6 +614,22 @@ def update_shell(
                 detail="Invalid base image format. Expected formats: image, image:tag, registry/image:tag, or registry:port/image:tag",
             )
         shell_crd.spec.baseImage = request.baseImage
+
+    # Update workspaceType if provided
+    if request.workspaceType is not None:
+        if request.workspaceType not in ("ephemeral", "persistent"):
+            raise HTTPException(
+                status_code=400,
+                detail="workspaceType must be 'ephemeral' or 'persistent'",
+            )
+        shell_crd.spec.workspaceType = request.workspaceType
+
+    # Update resources if provided
+    if request.resources is not None:
+        shell_crd.spec.resources = ShellResources(
+            cpu=request.resources.cpu,
+            memory=request.resources.memory,
+        )
 
     # Save changes
     shell.json = shell_crd.model_dump(mode="json")

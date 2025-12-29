@@ -25,6 +25,7 @@ from app.api.endpoints.adapter import (
     attachments,
     bots,
     chat,
+    containers,
     dify,
     executors,
     models,
@@ -48,6 +49,9 @@ api_router.include_router(api_keys.router, prefix="/api-keys", tags=["api-keys"]
 api_router.include_router(bots.router, prefix="/bots", tags=["bots"])
 api_router.include_router(models.router, prefix="/models", tags=["public-models"])
 api_router.include_router(shells.router, prefix="/shells", tags=["shells"])
+api_router.include_router(
+    containers.router, prefix="/containers", tags=["containers"]
+)
 api_router.include_router(agents.router, prefix="/agents", tags=["public-shell"])
 api_router.include_router(teams.router, prefix="/teams", tags=["teams"])
 api_router.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
