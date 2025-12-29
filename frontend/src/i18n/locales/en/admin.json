@@ -259,6 +259,7 @@
     "description_label": "Description",
     "description_placeholder": "Enter key description (optional)",
     "key": "Key",
+    "created_by": "Created By",
     "created_at": "Created At",
     "last_used": "Last Used",
     "expires_at": "Expires At",

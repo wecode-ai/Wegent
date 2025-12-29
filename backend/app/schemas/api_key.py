@@ -73,6 +73,7 @@ class ServiceKeyResponse(BaseModel):
     last_used_at: datetime
     created_at: datetime
     is_active: bool
+    created_by: Optional[str] = None  # Creator's username
 
     class Config:
         from_attributes = True

@@ -2,24 +2,29 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import hashlib
+from datetime import datetime, timedelta
+from typing import Generator, Tuple
+
 import pytest
-from typing import Generator
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
-from fastapi.testclient import TestClient
 
-from app.db.base import Base
 from app.core.config import Settings
-from app.core.security import get_password_hash, create_access_token
-from app.models.user import User
-# Import all models to ensure they are registered with Base
-from app.models.kind import Kind
-from app.models.subtask import Subtask
-from app.models.shared_team import SharedTeam
-from app.models.skill_binary import SkillBinary
+from app.core.security import create_access_token, get_password_hash
+from app.db.base import Base
+
 # Import all models to ensure they are registered with same Base instance
 from app.models import *
+from app.models.api_key import KEY_TYPE_PERSONAL, APIKey
 
+# Import all models to ensure they are registered with Base
+from app.models.kind import Kind
+from app.models.shared_team import SharedTeam
+from app.models.skill_binary import SkillBinary
+from app.models.subtask import Subtask
+from app.models.user import User
 
 # Test database URL (SQLite in-memory with shared cache for thread safety)
 TEST_DATABASE_URL = "sqlite:///file:testdb?mode=memory&cache=shared&uri=true"
@@ -32,16 +37,15 @@ def test_db() -> Generator[Session, None, None]:
     Each test function gets a clean database instance.
     """
     # Create test engine
-    engine = create_engine(
-        TEST_DATABASE_URL,
-        connect_args={"check_same_thread": False}
-    )
+    engine = create_engine(TEST_DATABASE_URL, connect_args={"check_same_thread": False})
 
     # Create all tables
     Base.metadata.create_all(bind=engine)
 
     # Create session factory with expire_on_commit=False to avoid lazy loading issues in tests
-    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine, expire_on_commit=False)
+    TestingSessionLocal = sessionmaker(
+        autocommit=False, autoflush=False, bind=engine, expire_on_commit=False
+    )
 
     # Create session
     db = TestingSessionLocal()
@@ -66,7 +70,7 @@ def test_settings() -> Settings:
         ALGORITHM="HS256",
         ACCESS_TOKEN_EXPIRE_MINUTES=30,
         ENABLE_API_DOCS=False,
-        REDIS_URL="redis://localhost:6379/1"
+        REDIS_URL="redis://localhost:6379/1",
     )
 
 
@@ -80,7 +84,7 @@ def test_user(test_db: Session) -> User:
         password_hash=get_password_hash("testpassword123"),
         email="test@example.com",
         is_active=True,
-        git_info=None
+        git_info=None,
     )
     test_db.add(user)
     test_db.commit()
@@ -99,7 +103,7 @@ def test_admin_user(test_db: Session) -> User:
         email="admin@example.com",
         is_active=True,
         git_info=None,
-        role="admin"
+        role="admin",
     )
     test_db.add(admin)
     test_db.commit()
@@ -117,7 +121,7 @@ def test_inactive_user(test_db: Session) -> User:
         password_hash=get_password_hash("inactive123"),
         email="inactive@example.com",
         is_active=False,
-        git_info=None
+        git_info=None,
     )
     test_db.add(user)
     test_db.commit()
@@ -146,8 +150,8 @@ def test_client(test_db: Session) -> TestClient:
     """
     Create a test client with database dependency override.
     """
-    from app.main import create_app
     from app.api.dependencies import get_db
+    from app.main import create_app
 
     app = create_app()
 
@@ -177,3 +181,51 @@ def mock_redis(mocker):
     mock_redis_client.delete.return_value = True
     mock_redis_client.exists.return_value = False
     return mock_redis_client
+
+
+@pytest.fixture(scope="function")
+def test_api_key(test_db: Session, test_user: User) -> Tuple[str, APIKey]:
+    """
+    Create a test API key for the test user.
+    Returns a tuple of (raw_key, api_key_record).
+    """
+    raw_key = "wg-test-api-key-12345"
+    key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+    api_key = APIKey(
+        user_id=test_user.id,
+        key_hash=key_hash,
+        key_prefix="wg-test...",
+        name="Test API Key",
+        key_type=KEY_TYPE_PERSONAL,
+        description="Test API key for unit tests",
+        expires_at=datetime.utcnow() + timedelta(days=365),
+        is_active=True,
+    )
+    test_db.add(api_key)
+    test_db.commit()
+    test_db.refresh(api_key)
+    return raw_key, api_key
+
+
+@pytest.fixture(scope="function")
+def test_admin_api_key(test_db: Session, test_admin_user: User) -> Tuple[str, APIKey]:
+    """
+    Create a test API key for the admin user.
+    Returns a tuple of (raw_key, api_key_record).
+    """
+    raw_key = "wg-admin-api-key-12345"
+    key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+    api_key = APIKey(
+        user_id=test_admin_user.id,
+        key_hash=key_hash,
+        key_prefix="wg-admin...",
+        name="Admin API Key",
+        key_type=KEY_TYPE_PERSONAL,
+        description="Admin API key for unit tests",
+        expires_at=datetime.utcnow() + timedelta(days=365),
+        is_active=True,
+    )
+    test_db.add(api_key)
+    test_db.commit()
+    test_db.refresh(api_key)
+    return raw_key, api_key

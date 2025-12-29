@@ -1262,18 +1262,34 @@ async def list_service_keys(
 
     Service keys are used for trusted service authentication.
     """
-    keys = (
-        db.query(APIKey)
+    # Query service keys with creator information
+    results = (
+        db.query(APIKey, User)
+        .outerjoin(User, APIKey.user_id == User.id)
         .filter(
             APIKey.key_type == KEY_TYPE_SERVICE,
         )
         .order_by(APIKey.created_at.desc())
         .all()
     )
-    return ServiceKeyListResponse(
-        items=[ServiceKeyResponse.model_validate(key) for key in keys],
-        total=len(keys),
-    )
+
+    items = []
+    for api_key, creator in results:
+        items.append(
+            ServiceKeyResponse(
+                id=api_key.id,
+                name=api_key.name,
+                key_prefix=api_key.key_prefix,
+                description=api_key.description,
+                expires_at=api_key.expires_at,
+                last_used_at=api_key.last_used_at,
+                created_at=api_key.created_at,
+                is_active=api_key.is_active,
+                created_by=creator.user_name if creator else None,
+            )
+        )
+
+    return ServiceKeyListResponse(items=items, total=len(items))
 
 
 @router.post(
@@ -1305,9 +1321,9 @@ async def create_service_key(
     # Create prefix for display (first 8 chars after "wg-")
     key_prefix = f"wg-{random_part[:8]}..."
 
-    # Create the service key record (user_id=0 for system-level keys)
+    # Create the service key record (user_id records the creator admin)
     service_key = APIKey(
-        user_id=0,
+        user_id=current_user.id,
         key_hash=key_hash,
         key_prefix=key_prefix,
         name=service_key_create.name,
@@ -1330,6 +1346,7 @@ async def create_service_key(
         last_used_at=service_key.last_used_at,
         created_at=service_key.created_at,
         is_active=service_key.is_active,
+        created_by=current_user.user_name,
     )
 
 
@@ -1344,8 +1361,9 @@ async def toggle_service_key_status(
 
     Enable or disable a service key without deleting it.
     """
-    service_key = (
-        db.query(APIKey)
+    result = (
+        db.query(APIKey, User)
+        .outerjoin(User, APIKey.user_id == User.id)
         .filter(
             APIKey.id == key_id,
             APIKey.key_type == KEY_TYPE_SERVICE,
@@ -1353,18 +1371,30 @@ async def toggle_service_key_status(
         .first()
     )
 
-    if not service_key:
+    if not result:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Service key not found",
         )
+
+    service_key, creator = result
 
     # Toggle is_active status
     service_key.is_active = not service_key.is_active
     db.commit()
     db.refresh(service_key)
 
-    return ServiceKeyResponse.model_validate(service_key)
+    return ServiceKeyResponse(
+        id=service_key.id,
+        name=service_key.name,
+        key_prefix=service_key.key_prefix,
+        description=service_key.description,
+        expires_at=service_key.expires_at,
+        last_used_at=service_key.last_used_at,
+        created_at=service_key.created_at,
+        is_active=service_key.is_active,
+        created_by=creator.user_name if creator else None,
+    )
 
 
 @router.delete("/service-keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT)

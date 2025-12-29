@@ -251,6 +251,11 @@ const ServiceKeyList: React.FC<{ showHeader?: boolean }> = ({ showHeader = true 
                         </p>
                       )}
                       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-muted mt-1">
+                        {serviceKey.created_by && (
+                          <span>
+                            {t('service_keys.created_by')}: {serviceKey.created_by}
+                          </span>
+                        )}
                         <span>
                           {t('service_keys.created_at')}: {formatDate(serviceKey.created_at)}
                         </span>

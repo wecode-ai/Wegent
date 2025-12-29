@@ -124,6 +124,7 @@ export interface ServiceKey {
   last_used_at: string;
   created_at: string;
   is_active: boolean;
+  created_by: string | null;
 }
 
 export interface ServiceKeyCreated extends ServiceKey {

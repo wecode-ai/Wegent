@@ -259,6 +259,7 @@
     "description_label": "描述",
     "description_placeholder": "请输入密钥描述（可选）",
     "key": "密钥",
+    "created_by": "创建者",
     "created_at": "创建时间",
     "last_used": "最后使用",
     "expires_at": "过期时间",
