@@ -28,7 +28,8 @@ import {
 import { userApis } from '@/apis/user';
 import { toast } from 'sonner';
 import type { Group, GroupMember, GroupRole } from '@/types/group';
-import { UserPlusIcon, LogOutIcon, Search } from 'lucide-react';
+import { UserPlusIcon, LogOutIcon, Search, X, Check } from 'lucide-react';
+
 // User type for search results
 interface SearchUser {
   id: number;
@@ -55,12 +56,13 @@ export function GroupMembersDialog({
   const [members, setMembers] = useState<GroupMember[]>([]);
   const [loading, setLoading] = useState(false);
   const [showAddMember, setShowAddMember] = useState(false);
-  const [newMemberUsername, setNewMemberUsername] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
   const [selectedRole, setSelectedRole] = useState<GroupRole>('Reporter');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [searchResults, setSearchResults] = useState<SearchUser[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [showSearchDropdown, setShowSearchDropdown] = useState(false);
+  const [selectedUsers, setSelectedUsers] = useState<SearchUser[]>([]);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -84,7 +86,7 @@ export function GroupMembersDialog({
 
   // Search users with 300ms debounce
   useEffect(() => {
-    if (!newMemberUsername.trim()) {
+    if (!searchQuery.trim()) {
       setSearchResults([]);
       setShowSearchDropdown(false);
       return;
@@ -93,7 +95,7 @@ export function GroupMembersDialog({
     const timeoutId = setTimeout(async () => {
       setIsSearching(true);
       try {
-        const response = await userApis.searchUsers(newMemberUsername);
+        const response = await userApis.searchUsers(searchQuery);
         setSearchResults(response.users || []);
         setShowSearchDropdown(true);
       } catch (error) {
@@ -105,7 +107,7 @@ export function GroupMembersDialog({
     }, 300);
 
     return () => clearTimeout(timeoutId);
-  }, [newMemberUsername]);
+  }, [searchQuery]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -145,46 +147,74 @@ export function GroupMembersDialog({
 
   // Handle selecting a user from search results
   const handleSelectUser = (user: SearchUser) => {
-    setNewMemberUsername(user.user_name);
+    // Check if already selected
+    if (!selectedUsers.find(u => u.id === user.id)) {
+      setSelectedUsers([...selectedUsers, user]);
+    }
+    setSearchQuery('');
     setSearchResults([]);
     setShowSearchDropdown(false);
   };
 
-  const handleAddMember = async () => {
-    if (!group || !newMemberUsername.trim()) return;
+  // Handle removing a selected user
+  const handleRemoveSelectedUser = (userId: number) => {
+    setSelectedUsers(selectedUsers.filter(u => u.id !== userId));
+  };
 
-    // Check if user already exists in members
-    const existingMember = members.find(m => m.user_name === newMemberUsername.trim());
-    if (existingMember) {
-      toast.error(t('groups:groupMembers.userAlreadyMember'));
-      return;
-    }
+  const handleAddMembers = async () => {
+    if (!group || selectedUsers.length === 0) return;
 
     setIsSubmitting(true);
-    try {
-      const result = await addGroupMemberByUsername(
-        group.name,
-        newMemberUsername.trim(),
-        selectedRole
-      );
+    let successCount = 0;
+    let alreadyMemberCount = 0;
+    const errors: string[] = [];
 
-      if (result.success) {
-        toast.success(result.message || t('groups:groups.messages.memberAdded'));
-        setShowAddMember(false);
-        setNewMemberUsername('');
-        setSelectedRole('Reporter');
-        setSearchResults([]);
-        setShowSearchDropdown(false);
-        loadMembers();
-        onSuccess();
-      } else {
-        toast.error(result.message || t('groups:groupMembers.addMemberFailed'));
+    try {
+      for (const user of selectedUsers) {
+        // Check if user already exists in members
+        const existingMember = members.find(m => m.user_name === user.user_name);
+        if (existingMember) {
+          alreadyMemberCount++;
+          continue;
+        }
+
+        try {
+          const result = await addGroupMemberByUsername(group.name, user.user_name, selectedRole);
+          if (result.success) {
+            successCount++;
+          } else {
+            errors.push(
+              `${user.user_name}: ${result.message || t('groups:groupMembers.addMemberFailed')}`
+            );
+          }
+        } catch (error: unknown) {
+          const err = error as { message?: string };
+          errors.push(
+            `${user.user_name}: ${err?.message || t('groups:groupMembers.addMemberFailed')}`
+          );
+        }
       }
-    } catch (error: unknown) {
-      console.error('Failed to add member:', error);
-      const err = error as { message?: string };
-      const errorMessage = err?.message || t('groups:groupMembers.addMemberFailed');
-      toast.error(errorMessage);
+
+      // Show results
+      if (successCount > 0) {
+        toast.success(t('groups:groupMembers.addMembersSuccess', { count: successCount }));
+      }
+      if (alreadyMemberCount > 0) {
+        toast.info(t('groups:groupMembers.alreadyMembers', { count: alreadyMemberCount }));
+      }
+      if (errors.length > 0) {
+        errors.forEach(err => toast.error(err));
+      }
+
+      // Reset form and reload members
+      setShowAddMember(false);
+      setSearchQuery('');
+      setSelectedRole('Reporter');
+      setSearchResults([]);
+      setShowSearchDropdown(false);
+      setSelectedUsers([]);
+      loadMembers();
+      onSuccess();
     } finally {
       setIsSubmitting(false);
     }
@@ -336,14 +366,14 @@ export function GroupMembersDialog({
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted" />
                   <Input
                     ref={searchInputRef}
-                    value={newMemberUsername}
-                    onChange={e => setNewMemberUsername(e.target.value)}
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
                     onFocus={() => {
                       if (searchResults.length > 0) {
                         setShowSearchDropdown(true);
                       }
                     }}
-                    placeholder={t('groups:groupMembers.enterUsername')}
+                    placeholder={t('groups:groupMembers.searchPlaceholder')}
                     disabled={isSubmitting}
                     className="pl-9"
                   />
@@ -359,20 +389,27 @@ export function GroupMembersDialog({
                         {t('common:actions.loading')}
                       </div>
                     ) : (
-                      searchResults.map(user => (
-                        <button
-                          key={user.id}
-                          onClick={() => handleSelectUser(user)}
-                          className="w-full flex flex-col items-start p-3 hover:bg-surface cursor-pointer text-left"
-                        >
-                          <span className="font-medium text-sm text-text-primary">
-                            {user.user_name}
-                          </span>
-                          {user.email && (
-                            <span className="text-xs text-text-muted">{user.email}</span>
-                          )}
-                        </button>
-                      ))
+                      searchResults.map(user => {
+                        const isSelected = selectedUsers.some(u => u.id === user.id);
+                        return (
+                          <button
+                            key={user.id}
+                            onClick={() => handleSelectUser(user)}
+                            disabled={isSelected}
+                            className="w-full flex items-center gap-3 p-3 hover:bg-surface cursor-pointer text-left disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            <div className="flex-1">
+                              <span className="font-medium text-sm text-text-primary">
+                                {user.user_name}
+                              </span>
+                              {user.email && (
+                                <div className="text-xs text-text-muted">{user.email}</div>
+                              )}
+                            </div>
+                            {isSelected && <Check className="h-4 w-4 text-green-500" />}
+                          </button>
+                        );
+                      })
                     )}
                   </div>
                 )}
@@ -396,6 +433,28 @@ export function GroupMembersDialog({
                 </Select>
               </div>
             </div>
+
+            {/* Selected Users */}
+            {selectedUsers.length > 0 && (
+              <div className="space-y-2">
+                <div className="text-sm font-medium">
+                  {t('groups:groupMembers.selectedUsers', { count: selectedUsers.length })}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {selectedUsers.map(user => (
+                    <Badge key={user.id} variant="secondary" className="pr-1">
+                      {user.user_name}
+                      <button
+                        onClick={() => handleRemoveSelectedUser(user.id)}
+                        className="ml-1 hover:bg-accent rounded-full p-0.5"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Role Permission Description */}
             <div className="p-3 bg-muted rounded-md">
@@ -460,19 +519,23 @@ export function GroupMembersDialog({
                 size="sm"
                 onClick={() => {
                   setShowAddMember(false);
-                  setNewMemberUsername('');
+                  setSearchQuery('');
                   setSearchResults([]);
                   setShowSearchDropdown(false);
+                  setSelectedUsers([]);
                 }}
               >
                 {t('common:actions.cancel')}
               </Button>
               <Button
                 size="sm"
-                onClick={handleAddMember}
-                disabled={!newMemberUsername.trim() || isSubmitting}
+                onClick={handleAddMembers}
+                disabled={selectedUsers.length === 0 || isSubmitting}
               >
-                {t('groups:groupMembers.add')}
+                <UserPlusIcon className="w-4 h-4 mr-2" />
+                {isSubmitting
+                  ? t('groups:groupMembers.adding')
+                  : t('groups:groupMembers.addCount', { count: selectedUsers.length })}
               </Button>
             </div>
           </div>

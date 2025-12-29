@@ -110,6 +110,12 @@
     "addMemberByUsername": "输入要添加的用户名。注意：此功能需要后端支持通过用户名添加成员。",
     "userAlreadyMember": "该用户已经是群组成员",
     "addByUsernameNotSupported": "暂不支持通过用户名添加成员，请联系管理员使用\"邀请所有用户\"功能",
+    "searchPlaceholder": "搜索用户名或邮箱...",
+    "selectedUsers": "已选择 {{count}} 个用户",
+    "addMembersSuccess": "成功添加 {{count}} 个成员",
+    "alreadyMembers": "{{count}} 个用户已是成员",
+    "adding": "添加中...",
+    "addCount": "添加 ({{count}})",
     "rolePermissions": "角色权限说明",
     "roleDescriptions": {
       "Reporter": "只能查看群组资源，无法进行任何修改操作，可离开群组",
