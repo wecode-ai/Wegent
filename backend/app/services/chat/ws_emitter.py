@@ -549,6 +549,154 @@ class WebSocketEmitter:
             f"action={action} request={request_id}"
         )
 
+    # ============================================================
+    # Correction Events (to task room)
+    # ============================================================
+
+    async def emit_correction_start(
+        self,
+        task_id: int,
+        subtask_id: int,
+        correction_model: str,
+    ) -> None:
+        """
+        Emit correction:start event to task room.
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID (AI message being corrected)
+            correction_model: Model ID used for correction
+        """
+        await self.sio.emit(
+            ServerEvents.CORRECTION_START,
+            {
+                "task_id": task_id,
+                "subtask_id": subtask_id,
+                "correction_model": correction_model,
+            },
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(
+            f"[WS] emit correction:start task={task_id} subtask={subtask_id} model={correction_model}"
+        )
+
+    async def emit_correction_progress(
+        self,
+        task_id: int,
+        subtask_id: int,
+        stage: str,
+        tool_name: Optional[str] = None,
+    ) -> None:
+        """
+        Emit correction:progress event to task room.
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+            stage: Current stage (verifying_facts, evaluating, generating_improvement)
+            tool_name: Optional tool name being used
+        """
+        await self.sio.emit(
+            ServerEvents.CORRECTION_PROGRESS,
+            {
+                "task_id": task_id,
+                "subtask_id": subtask_id,
+                "stage": stage,
+                "tool_name": tool_name,
+            },
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(
+            f"[WS] emit correction:progress task={task_id} subtask={subtask_id} stage={stage}"
+        )
+
+    async def emit_correction_chunk(
+        self,
+        task_id: int,
+        subtask_id: int,
+        field: str,
+        content: str,
+        offset: int,
+    ) -> None:
+        """
+        Emit correction:chunk event to task room for streaming content.
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+            field: Field being streamed (summary or improved_answer)
+            content: Content chunk
+            offset: Current offset
+        """
+        await self.sio.emit(
+            ServerEvents.CORRECTION_CHUNK,
+            {
+                "task_id": task_id,
+                "subtask_id": subtask_id,
+                "field": field,
+                "content": content,
+                "offset": offset,
+            },
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+
+    async def emit_correction_done(
+        self,
+        task_id: int,
+        subtask_id: int,
+        result: Dict[str, Any],
+    ) -> None:
+        """
+        Emit correction:done event to task room.
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+            result: Correction result data
+        """
+        await self.sio.emit(
+            ServerEvents.CORRECTION_DONE,
+            {
+                "task_id": task_id,
+                "subtask_id": subtask_id,
+                "result": result,
+            },
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(f"[WS] emit correction:done task={task_id} subtask={subtask_id}")
+
+    async def emit_correction_error(
+        self,
+        task_id: int,
+        subtask_id: int,
+        error: str,
+    ) -> None:
+        """
+        Emit correction:error event to task room.
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+            error: Error message
+        """
+        await self.sio.emit(
+            ServerEvents.CORRECTION_ERROR,
+            {
+                "task_id": task_id,
+                "subtask_id": subtask_id,
+                "error": error,
+            },
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+        logger.warning(
+            f"[WS] emit correction:error task={task_id} subtask={subtask_id} error={error}"
+        )
+
 
 # Global emitter instance (lazy initialized)
 _ws_emitter: Optional[WebSocketEmitter] = None

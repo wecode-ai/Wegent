@@ -28,6 +28,7 @@ interface CorrectionModeToggleProps {
   onToggle: (enabled: boolean, modelId?: string, modelName?: string) => void;
   disabled?: boolean;
   correctionModelName?: string | null;
+  taskId: number | null;
 }
 
 export default function CorrectionModeToggle({
@@ -35,6 +36,7 @@ export default function CorrectionModeToggle({
   onToggle,
   disabled = false,
   correctionModelName,
+  taskId,
 }: CorrectionModeToggleProps) {
   const { t } = useTranslation('chat');
   const [showModelSelector, setShowModelSelector] = useState(false);
@@ -49,14 +51,17 @@ export default function CorrectionModeToggle({
     }
   }, [showModelSelector]);
 
-  // Restore state from localStorage on mount
+  // Restore state from localStorage when taskId changes
   useEffect(() => {
-    const savedState = correctionApis.getCorrectionModeState();
+    const savedState = correctionApis.getCorrectionModeState(taskId);
     if (savedState.enabled && savedState.correctionModelId) {
       onToggle(true, savedState.correctionModelId, savedState.correctionModelName || undefined);
+    } else {
+      // Reset correction mode when switching to a task without saved state
+      onToggle(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [taskId]);
 
   const loadModels = async () => {
     setIsLoading(true);
@@ -78,7 +83,7 @@ export default function CorrectionModeToggle({
     } else {
       // Closing: disable correction mode
       onToggle(false);
-      correctionApis.clearCorrectionModeState();
+      correctionApis.clearCorrectionModeState(taskId);
     }
   };
 
@@ -93,7 +98,7 @@ export default function CorrectionModeToggle({
       correctionModelName: displayName,
       enableWebSearch: true, // Enable web search by default for fact verification
     };
-    correctionApis.saveCorrectionModeState(state);
+    correctionApis.saveCorrectionModeState(taskId, state);
 
     setShowModelSelector(false);
     setSearchQuery('');

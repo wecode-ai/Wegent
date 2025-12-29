@@ -23,7 +23,6 @@ export const ClientEvents = {
 // ============================================================
 // Server -> Client Events
 // ============================================================
-
 export const ServerEvents = {
   // Chat streaming events (to task room)
   CHAT_START: 'chat:start',
@@ -36,6 +35,13 @@ export const ServerEvents = {
   CHAT_MESSAGE: 'chat:message',
   CHAT_BOT_COMPLETE: 'chat:bot_complete',
   CHAT_SYSTEM: 'chat:system',
+
+  // Correction events (to task room)
+  CORRECTION_START: 'correction:start',
+  CORRECTION_PROGRESS: 'correction:progress',
+  CORRECTION_CHUNK: 'correction:chunk',
+  CORRECTION_DONE: 'correction:done',
+  CORRECTION_ERROR: 'correction:error',
 
   // Task list events (to user room)
   TASK_CREATED: 'task:created',
@@ -273,6 +279,63 @@ export interface TaskInvitedPayload {
 
 export interface UnreadCountPayload {
   count: number;
+}
+
+// ============================================================
+// Correction Event Payloads
+// ============================================================
+
+/** Correction stage types */
+export type CorrectionStage = 'verifying_facts' | 'evaluating' | 'generating_improvement';
+
+/** Correction field types for streaming */
+export type CorrectionField = 'summary' | 'improved_answer';
+
+export interface CorrectionStartPayload {
+  task_id: number;
+  subtask_id: number;
+  correction_model: string;
+}
+
+export interface CorrectionProgressPayload {
+  task_id: number;
+  subtask_id: number;
+  stage: CorrectionStage;
+  tool_name?: string;
+}
+
+export interface CorrectionChunkPayload {
+  task_id: number;
+  subtask_id: number;
+  field: CorrectionField;
+  content: string;
+  offset: number;
+}
+
+export interface CorrectionDonePayload {
+  task_id: number;
+  subtask_id: number;
+  result: {
+    scores: {
+      accuracy: number;
+      logic: number;
+      completeness: number;
+    };
+    corrections: Array<{
+      issue: string;
+      category: string;
+      suggestion: string;
+    }>;
+    summary: string;
+    improved_answer: string;
+    is_correct: boolean;
+  };
+}
+
+export interface CorrectionErrorPayload {
+  task_id: number;
+  subtask_id: number;
+  error: string;
 }
 
 // ============================================================
