@@ -368,9 +368,7 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
                     )}
                   >
                     <span className="truncate">
-                      {selectedTeam
-                        ? selectedTeam.name
-                        : t('handler_select_team_label')}
+                      {selectedTeam ? selectedTeam.name : t('handler_select_team_label')}
                     </span>
                     <svg
                       className="ml-2 h-4 w-4 shrink-0 opacity-50"
@@ -447,9 +445,7 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
                 </PopoverContent>
               </Popover>
               {teams.length === 0 && (
-                <p className="text-sm text-destructive">
-                  {t('handler_create_team_hint')}
-                </p>
+                <p className="text-sm text-destructive">{t('handler_create_team_hint')}</p>
               )}
             </div>
 

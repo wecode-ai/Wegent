@@ -14,8 +14,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
-from app.models.task import TaskResource
 from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
+from app.models.task import TaskResource
 from app.models.user import User
 
 

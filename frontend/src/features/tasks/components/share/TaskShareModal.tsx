@@ -60,12 +60,7 @@ export default function TaskShareModal({
   });
 
   return (
-    <Modal
-      isOpen={visible}
-      onClose={onClose}
-      title={t('share_success_title')}
-      maxWidth="lg"
-    >
+    <Modal isOpen={visible} onClose={onClose} title={t('share_success_title')} maxWidth="lg">
       <div>
         <div className="space-y-6">
           {/* Success message */}

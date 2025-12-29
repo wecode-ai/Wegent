@@ -151,10 +151,7 @@ def _add_task_content(
 ):
     """Add task subtasks as messages, optionally filtered by message_ids"""
     # Query subtasks with attachments
-    query = (
-        db.query(Subtask)
-        .filter(Subtask.task_id == task.id)
-    )
+    query = db.query(Subtask).filter(Subtask.task_id == task.id)
 
     # Filter by message_ids if provided
     if message_ids is not None and len(message_ids) > 0:

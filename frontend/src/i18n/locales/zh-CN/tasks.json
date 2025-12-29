@@ -67,5 +67,16 @@
       "WebFetch": "获取网页",
       "WebSearch": "搜索网络"
     }
+  },
+  "urlPreview": {
+    "loading": "正在加载链接预览...",
+    "loadFailed": "无法加载链接预览",
+    "openInNewTab": "在新标签页打开",
+    "imageLoadFailed": "图片加载失败",
+    "zoomIn": "放大",
+    "zoomOut": "缩小",
+    "rotate": "旋转",
+    "download": "下载",
+    "close": "关闭"
   }
 }

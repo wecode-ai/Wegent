@@ -872,9 +872,7 @@ export default function MessagesArea({
           messages={exportableMessages}
           taskId={selectedTaskDetail.id}
           taskName={
-            selectedTaskDetail?.title ||
-            selectedTaskDetail?.prompt?.slice(0, 50) ||
-            'Chat Export'
+            selectedTaskDetail?.title || selectedTaskDetail?.prompt?.slice(0, 50) || 'Chat Export'
           }
           exportFormat={exportFormat}
         />
