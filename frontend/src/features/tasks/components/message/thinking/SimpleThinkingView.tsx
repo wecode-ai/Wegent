@@ -36,7 +36,7 @@ const SimpleThinkingView = memo(function SimpleThinkingView({
   thinking,
   taskStatus,
 }: SimpleThinkingViewProps) {
-  const { t } = useTranslation('chat');
+  const { t } = useTranslation();
   const items = useMemo(() => thinking ?? [], [thinking]);
 
   // Process thinking steps into paired tool entries
@@ -144,10 +144,10 @@ const SimpleThinkingView = memo(function SimpleThinkingView({
   // Summary text
   const summaryText =
     isRunning && !isCompleted
-      ? `${t('messages.using_tools') || 'Using tools'}...`
+      ? `${t('chat:messages.using_tools') || 'Using tools'}...`
       : toolCount > 0
-        ? `${t('messages.used_tools') || 'Used tools'} · ${toolCount} ${t('messages.times') || 'times'}`
-        : `${t('messages.used_tools') || 'Used tools'}`;
+        ? `${t('chat:messages.used_tools') || 'Used tools'} · ${toolCount} ${t('chat:messages.times') || 'times'}`
+        : `${t('chat:messages.used_tools') || 'Used tools'}`;
 
   return (
     <div className="-mb-2">
@@ -191,7 +191,7 @@ const SimpleThinkingView = memo(function SimpleThinkingView({
                   >
                     {entry.status === 'running'
                       ? entry.displayTitle ||
-                        `${t('messages.using_tool') || 'Using tool'}: ${entry.toolName}`
+                        `${t('chat:messages.using_tool') || 'Using tool'}: ${entry.toolName}`
                       : entry.completedTitle || entry.displayTitle || entry.toolName}
                   </div>
                 </div>

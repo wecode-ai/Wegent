@@ -284,7 +284,7 @@ export function SettingsTabNav({
               {groupsLoading ? (
                 <DropdownMenuItem disabled>{t('actions.loading')}</DropdownMenuItem>
               ) : groups.length === 0 ? (
-                <DropdownMenuItem disabled>{t('groupManager.noGroups')}</DropdownMenuItem>
+                <DropdownMenuItem disabled>{t('groups:groupManager.noGroups')}</DropdownMenuItem>
               ) : (
                 groups.map(group => (
                   <DropdownMenuItem
@@ -393,7 +393,7 @@ export function SettingsTabNav({
             {groupsLoading ? (
               <DropdownMenuItem disabled>{t('actions.loading')}</DropdownMenuItem>
             ) : groups.length === 0 ? (
-              <DropdownMenuItem disabled>{t('groupManager.noGroups')}</DropdownMenuItem>
+              <DropdownMenuItem disabled>{t('groups:groupManager.noGroups')}</DropdownMenuItem>
             ) : (
               groups.map(group => (
                 <DropdownMenuItem

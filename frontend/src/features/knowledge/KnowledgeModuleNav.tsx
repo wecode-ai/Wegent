@@ -28,10 +28,10 @@ interface ModuleItem {
 const modules: ModuleItem[] = [
   {
     id: 'code',
-    labelKey: 'modules.code',
+    labelKey: 'knowledge:modules.code',
     icon: CodeBracketIcon,
     href: '/knowledge',
-    description: 'modules.code_desc',
+    description: 'knowledge:modules.code_desc',
   },
   // Future modules can be added here
   // {
@@ -49,7 +49,7 @@ const modules: ModuleItem[] = [
  * Layout matches TaskSidebar with logo at top
  */
 export function KnowledgeModuleNav({ activeModule }: KnowledgeModuleNavProps) {
-  const { t } = useTranslation('knowledge');
+  const { t } = useTranslation();
   const pathname = usePathname();
 
   // Determine active module from pathname if not provided
@@ -74,7 +74,7 @@ export function KnowledgeModuleNav({ activeModule }: KnowledgeModuleNavProps) {
       {/* Module navigation */}
       <div className="px-2 flex-1">
         <h2 className="text-sm font-semibold text-text-secondary uppercase tracking-wider mb-4 px-2">
-          {t('modules.title')}
+          {t('knowledge:modules.title')}
         </h2>
         <nav className="space-y-1">
           {modules.map(module => {

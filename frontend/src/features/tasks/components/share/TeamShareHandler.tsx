@@ -29,7 +29,7 @@ export default function TeamShareHandler({
   onTeamSelected,
   onRefreshTeams,
 }: TeamShareHandlerProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const { toast } = useToast();
   const { user } = useUser();
   const searchParams = useSearchParams();
@@ -67,7 +67,7 @@ export default function TeamShareHandler({
         console.error('Failed to fetch team share info:', error);
         toast({
           variant: 'destructive',
-          title: t('teams.share.fetch_info_failed'),
+          title: t('common:teams.share.fetch_info_failed'),
         });
         cleanupUrlParams();
       } finally {
@@ -102,7 +102,7 @@ export default function TeamShareHandler({
       await teamApis.joinSharedTeam({ share_token: searchParams.get('teamShare')! });
 
       toast({
-        title: t('teams.share.join_success', { teamName: shareInfo?.team_name || '' }),
+        title: t('common:teams.share.join_success', { teamName: shareInfo?.team_name || '' }),
       });
 
       // First refresh team list, wait for refresh to complete and get latest team list
@@ -117,7 +117,7 @@ export default function TeamShareHandler({
       handleCloseModal();
     } catch (err) {
       console.error('Failed to join shared team:', err);
-      const errorMessage = (err as Error)?.message || t('teams.share.join_failed');
+      const errorMessage = (err as Error)?.message || t('common:teams.share.join_failed');
       toast({
         variant: 'destructive',
         title: errorMessage,
@@ -146,30 +146,30 @@ export default function TeamShareHandler({
       'teams.share.self_share_message': () => (
         <span>
           <span className={highlightClass}> {teamName} </span>
-          {t('teams.share.self_share_suffix')}
+          {t('common:teams.share.self_share_suffix')}
         </span>
       ),
       'teams.share.already_joined_message': () => (
         <span>
           <span className={highlightClass}> {teamName} </span>
-          {t('teams.share.already_joined_suffix')}
+          {t('common:teams.share.already_joined_suffix')}
         </span>
       ),
       'teams.share.confirm_message': () =>
         userName ? (
           <span>
-            {t('teams.share.confirm_prefix')}
+            {t('common:teams.share.confirm_prefix')}
             <span className={highlightClass}> {userName} </span>
-            {t('teams.share.confirm_middle')}
+            {t('common:teams.share.confirm_middle')}
             <span className={highlightClass}> {teamName} </span>
-            {t('teams.share.confirm_suffix')}
+            {t('common:teams.share.confirm_suffix')}
           </span>
         ) : null,
       'teams.share.join_description': () => (
         <span>
-          {t('teams.share.join_description_prefix')}
+          {t('common:teams.share.join_description_prefix')}
           <span className="font-semibold"> {teamName} </span>
-          {t('teams.share.join_description_suffix')}
+          {t('common:teams.share.join_description_suffix')}
         </span>
       ),
     };
@@ -184,7 +184,7 @@ export default function TeamShareHandler({
     <Modal
       isOpen={isModalOpen}
       onClose={handleCloseModal}
-      title={t('teams.share.title')}
+      title={t('common:teams.share.title')}
       maxWidth="md"
     >
       <div className="space-y-4">
@@ -196,7 +196,10 @@ export default function TeamShareHandler({
         {isSelfShare ? (
           <Alert variant="warning">
             <AlertDescription>
-              {renderMessageWithHighlight('teams.share.self_share_message', shareInfo.team_name)}
+              {renderMessageWithHighlight(
+                'common:teams.share.self_share_message',
+                shareInfo.team_name
+              )}
             </AlertDescription>
           </Alert>
         ) : isTeamAlreadyJoined ? (
@@ -222,7 +225,10 @@ export default function TeamShareHandler({
 
             <Alert variant="default">
               <AlertDescription>
-                {renderMessageWithHighlight('teams.share.join_description', shareInfo.team_name)}
+                {renderMessageWithHighlight(
+                  'common:teams.share.join_description',
+                  shareInfo.team_name
+                )}
               </AlertDescription>
             </Alert>
           </>
@@ -237,7 +243,7 @@ export default function TeamShareHandler({
           style={{ flex: 1 }}
           disabled={isJoining}
         >
-          {t('actions.cancel')}
+          {t('common:actions.cancel')}
         </Button>
         <Button
           onClick={handleConfirmJoin}
@@ -246,7 +252,7 @@ export default function TeamShareHandler({
           disabled={!!isSelfShare || isJoining}
           style={{ flex: 1 }}
         >
-          {isJoining ? t('teams.share.joining') : t('teams.share.confirm_join')}
+          {isJoining ? t('common:teams.share.joining') : t('common:teams.share.confirm_join')}
         </Button>
       </div>
     </Modal>

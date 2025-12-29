@@ -57,7 +57,7 @@ export default function ExportPdfButton({
   disabled = false,
   className = '',
 }: ExportPdfButtonProps) {
-  const { t } = useTranslation('chat');
+  const { t } = useTranslation();
   const { toast } = useToast();
 
   // Selection mode state
@@ -75,7 +75,7 @@ export default function ExportPdfButton({
     if (!hasMessages) {
       toast({
         variant: 'destructive',
-        title: t('export.no_messages') || 'No messages to export',
+        title: t('chat:export.no_messages') || 'No messages to export',
       });
       return;
     }
@@ -161,7 +161,7 @@ export default function ExportPdfButton({
         reader.onloadend = () => {
           const base64 = reader.result as string;
           // Remove data URL prefix to get pure base64
-          const base64Data = base64.split(',')[1];
+          const base64Data = base64.split('chat:,')[1];
           resolve(base64Data);
         };
         reader.onerror = reject;
@@ -180,7 +180,7 @@ export default function ExportPdfButton({
     if (selectedIds.size === 0) {
       toast({
         variant: 'destructive',
-        title: t('export.select_at_least_one') || 'Please select at least one message',
+        title: t('chat:export.select_at_least_one') || 'Please select at least one message',
       });
       return;
     }
@@ -234,7 +234,7 @@ export default function ExportPdfButton({
       });
 
       toast({
-        title: t('export.success') || 'PDF exported successfully',
+        title: t('chat:export.success') || 'PDF exported successfully',
       });
 
       // Exit selection mode after successful export
@@ -244,7 +244,7 @@ export default function ExportPdfButton({
       console.error('Failed to export PDF:', error);
       toast({
         variant: 'destructive',
-        title: t('export.failed') || 'Failed to export PDF',
+        title: t('chat:export.failed') || 'Failed to export PDF',
         description: error instanceof Error ? error.message : 'Unknown error',
       });
     } finally {
@@ -272,7 +272,7 @@ export default function ExportPdfButton({
         <div className="flex items-center justify-between gap-3 p-3 bg-surface border border-border rounded-lg mb-3">
           <div className="flex items-center gap-3">
             <span className="text-sm text-text-secondary">
-              {t('export.selected_count', { count: selectionCount }) ||
+              {t('chat:export.selected_count', { count: selectionCount }) ||
                 `Selected: ${selectionCount} message(s)`}
             </span>
           </div>
@@ -284,12 +284,12 @@ export default function ExportPdfButton({
               className="text-xs"
             >
               {isAllSelected
-                ? t('export.deselect_all') || 'Deselect All'
-                : t('export.select_all') || 'Select All'}
+                ? t('chat:export.deselect_all') || 'Deselect All'
+                : t('chat:export.select_all') || 'Select All'}
             </Button>
             <Button variant="ghost" size="sm" onClick={handleCancelSelection} className="text-xs">
               <X className="w-4 h-4 mr-1" />
-              {t('export.cancel') || 'Cancel'}
+              {t('chat:export.cancel') || 'Cancel'}
             </Button>
             <Button
               variant="default"
@@ -300,8 +300,8 @@ export default function ExportPdfButton({
             >
               <Download className="w-4 h-4 mr-1" />
               {isExporting
-                ? t('export.exporting') || 'Exporting...'
-                : t('export.confirm') || 'Export PDF'}
+                ? t('chat:export.exporting') || 'Exporting...'
+                : t('chat:export.confirm') || 'Export PDF'}
             </Button>
           </div>
         </div>
@@ -320,7 +320,7 @@ export default function ExportPdfButton({
                 }`}
                 onClick={() => handleToggleMessage(msg.id)}
               >
-                <div className="flex-shrink-0 pt-0.5">
+                <div className="flex-shrink-0 pt-0.5" onClick={e => e.stopPropagation()}>
                   <Checkbox
                     checked={isSelected}
                     onCheckedChange={() => handleToggleMessage(msg.id)}
@@ -351,7 +351,7 @@ export default function ExportPdfButton({
                     <div className="flex items-center gap-1 mt-1 text-xs text-text-muted">
                       <Paperclip className="w-3 h-3" />
                       <span>
-                        {msg.attachments.length} {t('export.attachments') || 'attachment(s)'}
+                        {msg.attachments.length} {t('chat:export.attachments') || 'attachment(s)'}
                       </span>
                     </div>
                   )}
@@ -365,10 +365,10 @@ export default function ExportPdfButton({
                       handleSelectFromHere(index);
                     }}
                     className="text-xs text-text-muted hover:text-primary"
-                    title={t('export.select_from_here') || 'Select from here'}
+                    title={t('chat:export.select_from_here') || 'Select from here'}
                   >
                     <ChevronDown className="w-3 h-3 mr-1" />
-                    {t('export.select_below') || 'Select below'}
+                    {t('chat:export.select_below') || 'Select below'}
                   </Button>
                 </div>
               </div>
@@ -387,10 +387,10 @@ export default function ExportPdfButton({
       onClick={handleStartSelection}
       disabled={disabled || !hasMessages}
       className={`text-text-muted hover:text-primary ${className}`}
-      title={t('export.export_pdf') || 'Export PDF'}
+      title={t('chat:export.export_pdf') || 'Export PDF'}
     >
       <Download className="w-4 h-4 mr-1.5" />
-      <span className="text-xs">{t('export.export_pdf') || 'Export PDF'}</span>
+      <span className="text-xs">{t('chat:export.export_pdf') || 'Export PDF'}</span>
     </Button>
   );
 }

@@ -28,7 +28,7 @@ export default function ClarificationToggle({
   onToggle,
   disabled = false,
 }: ClarificationToggleProps) {
-  const { t } = useTranslation('chat');
+  const { t } = useTranslation();
 
   const handleToggle = () => {
     onToggle(!enabled);
@@ -54,7 +54,11 @@ export default function ClarificationToggle({
           </div>
         </TooltipTrigger>
         <TooltipContent side="top">
-          <p>{enabled ? t('clarification_toggle.disable') : t('clarification_toggle.enable')}</p>
+          <p>
+            {enabled
+              ? t('chat:clarification_toggle.disable')
+              : t('chat:clarification_toggle.enable')}
+          </p>
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>

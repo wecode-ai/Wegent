@@ -33,7 +33,7 @@ const sanitizeDomainInput = (value: string) => {
   const withoutProtocol = trimmed.replace(/^https?:\/\//i, '');
 
   // Get domain only (remove path)
-  const domainOnly = withoutProtocol.split('/')[0];
+  const domainOnly = withoutProtocol.split('common:/')[0];
 
   // Return with protocol if it was http://, otherwise return domain only
   return protocol === 'http://'
@@ -61,7 +61,7 @@ const isValidDomain = (value: string) => {
 
 const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo }) => {
   const { user, refresh } = useUser();
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const { toast } = useToast();
   const [platforms, setPlatforms] = useState<GitInfo[]>([]);
   const [domain, setDomain] = useState('');
@@ -124,7 +124,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
     if (!domainToSave || !tokenToSave) {
       toast({
         variant: 'destructive',
-        title: t('github.error.required'),
+        title: t('common:github.error.required'),
       });
       return;
     }
@@ -142,7 +142,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
     if (!isValidDomain(domainToSave)) {
       toast({
         variant: 'destructive',
-        title: t('github.error.invalid_domain'),
+        title: t('common:github.error.invalid_domain'),
       });
       setDomain(sanitizedDomain);
       return;
@@ -157,7 +157,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
     } catch (error) {
       toast({
         variant: 'destructive',
-        title: (error as Error)?.message || t('github.error.save_failed'),
+        title: (error as Error)?.message || t('common:github.error.save_failed'),
       });
     } finally {
       setTokenSaving(false);
@@ -167,14 +167,18 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={mode === 'edit' && domain ? t('github.modal.title_edit') : t('github.modal.title_add')}
+      title={
+        mode === 'edit' && domain
+          ? t('common:github.modal.title_edit')
+          : t('common:github.modal.title_add')
+      }
       maxWidth="md"
     >
       <div className="space-y-4">
         {/* Platform selection */}
         <div>
           <label className="block text-sm font-medium text-text-secondary mb-2">
-            {t('github.platform')}
+            {t('common:github.platform')}
           </label>
           <div className="flex gap-4">
             <label className="flex items-center gap-1 text-sm text-text-primary">
@@ -188,11 +192,11 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
                 }}
                 disabled={mode === 'edit' && editInfo?.type !== 'github' && hasGithubPlatform}
               />
-              {t('github.platform_github')}
+              {t('common:github.platform_github')}
             </label>
             <label
               className="flex items-center gap-1 text-sm text-text-primary"
-              title={t('github.platform_gitlab')}
+              title={t('common:github.platform_gitlab')}
             >
               <input
                 type="radio"
@@ -203,11 +207,11 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
                   setDomain('');
                 }}
               />
-              {t('github.platform_gitlab')}
+              {t('common:github.platform_gitlab')}
             </label>
             <label
               className="flex items-center gap-1 text-sm text-text-primary"
-              title={t('github.platform_gitea') || 'Gitea'}
+              title={t('common:github.platform_gitea') || 'Gitea'}
             >
               <input
                 type="radio"
@@ -218,11 +222,11 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
                   setDomain('gitea.com');
                 }}
               />
-              {t('github.platform_gitea') || 'Gitea'}
+              {t('common:github.platform_gitea') || 'Gitea'}
             </label>
             <label
               className="flex items-center gap-1 text-sm text-text-primary"
-              title={t('github.platform_gerrit') || 'Gerrit'}
+              title={t('common:github.platform_gerrit') || 'Gerrit'}
             >
               <input
                 type="radio"
@@ -233,14 +237,14 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
                   setDomain('');
                 }}
               />
-              {t('github.platform_gerrit') || 'Gerrit'}
+              {t('common:github.platform_gerrit') || 'Gerrit'}
             </label>
           </div>
         </div>
         {/* Domain input */}
         <div>
           <label className="block text-sm font-medium text-text-secondary mb-2">
-            {t('github.domain')}
+            {t('common:github.domain')}
           </label>
           <input
             type="text"
@@ -259,20 +263,20 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
             className="w-full px-3 py-2 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent"
           />
           {isDomainInvalid && (
-            <p className="mt-1 text-xs text-red-500">{t('github.error.invalid_domain')}</p>
+            <p className="mt-1 text-xs text-red-500">{t('common:github.error.invalid_domain')}</p>
           )}
         </div>
         {/* Username input (Gerrit and Gitea only) */}
         {(isGerrit || isGitea) && (
           <div>
             <label className="block text-sm font-medium text-text-secondary mb-2">
-              {t('github.username') || 'Username'}
+              {t('common:github.username') || 'Username'}
             </label>
             <input
               type="text"
               value={username}
               onChange={e => setUsername(e.target.value)}
-              placeholder={t('github.username') || 'Username'}
+              placeholder={t('common:github.username') || 'Username'}
               className="w-full px-3 py-2 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent"
             />
           </div>
@@ -280,7 +284,9 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
         {/* Token input */}
         <div>
           <label className="block text-sm font-medium text-text-secondary mb-2">
-            {isGerrit ? t('github.token.title_gerrit') || 'HTTP password' : t('github.token.title')}
+            {isGerrit
+              ? t('common:github.token.title_gerrit') || 'HTTP password'
+              : t('common:github.token.title')}
           </label>
           <input
             type="password"
@@ -288,12 +294,13 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
             onChange={e => setToken(e.target.value)}
             placeholder={
               type === 'github'
-                ? t('github.token.placeholder_github')
+                ? t('common:github.token.placeholder_github')
                 : isGerrit
-                  ? t('github.token.placeholder_gerrit') || 'HTTP password from Gerrit Settings'
+                  ? t('common:github.token.placeholder_gerrit') ||
+                    'HTTP password from Gerrit Settings'
                   : isGitea
-                    ? t('github.token.placeholder_gitea') || 'Gitea personal access token'
-                    : t('github.token.placeholder_gitlab')
+                    ? t('common:github.token.placeholder_gitea') || 'Gitea personal access token'
+                    : t('common:github.token.placeholder_gitlab')
             }
             className="w-full px-3 py-2 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent"
           />
@@ -303,18 +310,18 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
           <p className="text-xs text-text-muted mb-2">
             <strong>
               {type === 'github'
-                ? t('github.howto.github.title')
+                ? t('common:github.howto.github.title')
                 : isGitea
-                  ? t('github.howto.gitea.title') || 'How to get your Gitea token:'
+                  ? t('common:github.howto.gitea.title') || 'How to get your Gitea token:'
                   : isGerrit
-                    ? t('github.howto.gerrit.title') || 'How to get Gerrit HTTP password:'
-                    : t('github.howto.gitlab.title')}
+                    ? t('common:github.howto.gerrit.title') || 'How to get Gerrit HTTP password:'
+                    : t('common:github.howto.gitlab.title')}
             </strong>
           </p>
           {type === 'github' ? (
             <>
               <p className="text-xs text-text-muted mb-2 flex items-center gap-1">
-                {t('github.howto.step1_visit')}
+                {t('common:github.howto.step1_visit')}
                 <a
                   href="https://github.com/settings/tokens"
                   target="_blank"
@@ -325,13 +332,15 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
                   https://github.com/settings/tokens
                 </a>
               </p>
-              <p className="text-xs text-text-muted mb-2">{t('github.howto.github.step2')}</p>
-              <p className="text-xs text-text-muted">{t('github.howto.github.step3')}</p>
+              <p className="text-xs text-text-muted mb-2">
+                {t('common:github.howto.github.step2')}
+              </p>
+              <p className="text-xs text-text-muted">{t('common:github.howto.github.step3')}</p>
             </>
           ) : isGitea ? (
             <>
               <p className="text-xs text-text-muted mb-2 flex items-center gap-1">
-                {t('github.howto.step1_visit')}
+                {t('common:github.howto.step1_visit')}
                 <a
                   href={giteaSettingsLink || '#'}
                   target="_blank"
@@ -344,14 +353,14 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
                   {giteaSettingsLink || 'https://gitea.example.com/user/settings/applications'}
                 </a>
               </p>
-              <p className="text-xs text-text-muted mb-2">{t('github.howto.gitea.step2')}</p>
-              <p className="text-xs text-text-muted mb-2">{t('github.howto.gitea.step3')}</p>
-              <p className="text-xs text-warning">{t('github.howto.gitea.step4')}</p>
+              <p className="text-xs text-text-muted mb-2">{t('common:github.howto.gitea.step2')}</p>
+              <p className="text-xs text-text-muted mb-2">{t('common:github.howto.gitea.step3')}</p>
+              <p className="text-xs text-warning">{t('common:github.howto.gitea.step4')}</p>
             </>
           ) : isGerrit ? (
             <>
               <p className="text-xs text-text-muted mb-2 flex items-center gap-1">
-                {t('github.howto.step1_visit') || 'Visit: '}
+                {t('common:github.howto.step1_visit') || 'Visit: '}
                 <a
                   href={isGerrit && domain ? `https://${domain}/settings/#HTTPCredentials` : '#'}
                   target="_blank"
@@ -369,18 +378,18 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
                 </a>
               </p>
               <p className="text-xs text-text-muted mb-2">
-                {t('github.howto.gerrit.step2') ||
+                {t('common:github.howto.gerrit.step2') ||
                   'Generate a new HTTP password under "HTTP Credentials"'}
               </p>
               <p className="text-xs text-text-muted">
-                {t('github.howto.gerrit.step3') ||
+                {t('common:github.howto.gerrit.step3') ||
                   'Copy the username and password, and paste them here'}
               </p>
             </>
           ) : (
             <>
               <p className="text-xs text-text-muted mb-2 flex items-center gap-1">
-                {t('github.howto.step1_visit')}
+                {t('common:github.howto.step1_visit')}
                 <a
                   href={
                     isGitlabLike && domain
@@ -401,8 +410,10 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
                     : 'your-gitlab-domain/-/profile/personal_access_tokens'}
                 </a>
               </p>
-              <p className="text-xs text-text-muted mb-2">{t('github.howto.gitlab.step2')}</p>
-              <p className="text-xs text-text-muted">{t('github.howto.gitlab.step3')}</p>
+              <p className="text-xs text-text-muted mb-2">
+                {t('common:github.howto.gitlab.step2')}
+              </p>
+              <p className="text-xs text-text-muted">{t('common:github.howto.gitlab.step3')}</p>
             </>
           )}
         </div>
@@ -410,7 +421,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
       {/* Bottom button area */}
       <div className="flex space-x-3 mt-6">
         <Button onClick={onClose} variant="outline" size="sm" style={{ flex: 1 }}>
-          {t('common.cancel')}
+          {t('common:common.cancel')}
         </Button>
         <Button
           onClick={handleSave}
@@ -425,7 +436,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
           size="sm"
           style={{ flex: 1 }}
         >
-          {tokenSaving ? t('github.saving') : t('github.save_token')}
+          {tokenSaving ? t('common:github.saving') : t('common:github.save_token')}
         </Button>
       </div>
     </Modal>

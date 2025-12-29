@@ -31,7 +31,7 @@ const getContextIcon = (type: ContextItem['type']) => {
   }
 };
 export default function ContextBadge({ context, onRemove }: ContextBadgeProps) {
-  const { t } = useTranslation('knowledge');
+  const { t } = useTranslation();
   const Icon = getContextIcon(context.type);
 
   return (
@@ -43,7 +43,7 @@ export default function ContextBadge({ context, onRemove }: ContextBadgeProps) {
         </span>
         {context.type === 'knowledge_base' && context.document_count !== undefined && (
           <span className="text-xs text-primary/70">
-            {t('documents_count', { count: context.document_count })}
+            {t('knowledge:documents_count', { count: context.document_count })}
           </span>
         )}
       </div>

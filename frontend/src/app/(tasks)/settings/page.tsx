@@ -33,7 +33,7 @@ import '@/features/common/scrollbar.css';
 function SettingsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const isMobile = useIsMobile();
 
   // Refresh trigger for SettingsTabNav groups list
@@ -218,7 +218,7 @@ function SettingsContent() {
         <TopNavigation
           activePage="dashboard"
           variant="with-sidebar"
-          title={t('settings.title')}
+          title={t('common:settings.title')}
           onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
           isSidebarCollapsed={isCollapsed}
         >

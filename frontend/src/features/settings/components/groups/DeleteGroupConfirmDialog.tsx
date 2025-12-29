@@ -33,7 +33,7 @@ export function DeleteGroupConfirmDialog({
   onSuccess,
   group,
 }: DeleteGroupConfirmDialogProps) {
-  const { t } = useTranslation('groups');
+  const { t } = useTranslation();
   const [isDeleting, setIsDeleting] = useState(false);
 
   const handleConfirm = async () => {
@@ -41,21 +41,21 @@ export function DeleteGroupConfirmDialog({
 
     // Check for blocking conditions
     if ((group.resource_count || 0) > 0) {
-      toast.error(t('groups.messages.cannotDeleteWithResources'));
+      toast.error(t('groups:groups.messages.cannotDeleteWithResources'));
       return;
     }
 
     setIsDeleting(true);
     try {
       await deleteGroup(group.name);
-      toast.success(t('groups.messages.deleteSuccess'));
+      toast.success(t('groups:groups.messages.deleteSuccess'));
       onSuccess();
       onClose();
     } catch (error: unknown) {
       console.error('Failed to delete group:', error);
       const err = error as { response?: { data?: { detail?: string } }; message?: string };
       const errorMessage =
-        err?.response?.data?.detail || err?.message || t('groups.messages.deleteFailed');
+        err?.response?.data?.detail || err?.message || t('groups:groups.messages.deleteFailed');
       toast.error(errorMessage);
     } finally {
       setIsDeleting(false);
@@ -72,19 +72,21 @@ export function DeleteGroupConfirmDialog({
     <AlertDialog open={isOpen} onOpenChange={open => !open && !isDeleting && onClose()}>
       <AlertDialogContent className="max-w-md">
         <AlertDialogHeader>
-          <AlertDialogTitle>{t('groups.actions.delete')}</AlertDialogTitle>
+          <AlertDialogTitle>{t('groups:groups.actions.delete')}</AlertDialogTitle>
           <AlertDialogDescription className="space-y-3">
-            <p>{t('groups.messages.confirmDelete', { name: group.name })}</p>
+            <p>{t('groups:groups.messages.confirmDelete', { name: group.name })}</p>
 
             {hasBlockers && (
               <div className="bg-error/10 border border-error/20 text-error px-3 py-2 rounded-md text-sm">
-                <p className="font-medium">{t('groups.messages.cannotDelete')}</p>
+                <p className="font-medium">{t('groups:groups.messages.cannotDelete')}</p>
                 <ul className="list-disc list-inside mt-1 space-y-1">
                   {(group.resource_count || 0) > 0 && (
-                    <li>{t('groups.messages.hasResources', { count: group.resource_count })}</li>
+                    <li>
+                      {t('groups:groups.messages.hasResources', { count: group.resource_count })}
+                    </li>
                   )}
                 </ul>
-                <p className="mt-2">{t('groups.messages.removeResourcesFirst')}</p>
+                <p className="mt-2">{t('groups:groups.messages.removeResourcesFirst')}</p>
               </div>
             )}
 

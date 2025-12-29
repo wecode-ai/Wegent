@@ -31,7 +31,7 @@ export default function CancelConfirmDialog({
   onClose,
   onConfirm,
 }: CancelConfirmDialogProps) {
-  const { t } = useTranslation('knowledge');
+  const { t } = useTranslation();
 
   const handleConfirm = () => {
     onConfirm();
@@ -42,8 +42,10 @@ export default function CancelConfirmDialog({
     <AlertDialog open={isOpen} onOpenChange={open => !open && onClose()}>
       <AlertDialogContent className="max-w-sm">
         <AlertDialogHeader>
-          <AlertDialogTitle>{t('cancel_dialog_title')}</AlertDialogTitle>
-          <AlertDialogDescription>{t('cancel_dialog_description')}</AlertDialogDescription>
+          <AlertDialogTitle>{t('knowledge:cancel_dialog_title')}</AlertDialogTitle>
+          <AlertDialogDescription>
+            {t('knowledge:cancel_dialog_description')}
+          </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel onClick={onClose}>{t('common:actions.cancel')}</AlertDialogCancel>

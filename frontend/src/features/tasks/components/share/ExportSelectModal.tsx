@@ -237,7 +237,7 @@ export default function ExportSelectModal({
     if (selectedIds.size === 0) {
       toast({
         variant: 'destructive',
-        title: t('export.select_at_least_one') || 'Please select at least one message',
+        title: t('chat:export.select_at_least_one') || 'Please select at least one message',
       });
       return;
     }
@@ -251,12 +251,12 @@ export default function ExportSelectModal({
       if (exportFormat === 'pdf') {
         await exportPdf(selectedMessages);
         toast({
-          title: t('export.success') || 'PDF exported successfully',
+          title: t('chat:export.success') || 'PDF exported successfully',
         });
       } else {
         await exportDocx(selectedMessages);
         toast({
-          title: t('export.docx_success') || 'DOCX exported successfully',
+          title: t('chat:export.docx_success') || 'DOCX exported successfully',
         });
       }
 
@@ -267,8 +267,8 @@ export default function ExportSelectModal({
         variant: 'destructive',
         title:
           exportFormat === 'pdf'
-            ? t('export.failed') || 'Failed to export PDF'
-            : t('export.docx_failed') || 'Failed to export DOCX',
+            ? t('chat:export.failed') || 'Failed to export PDF'
+            : t('chat:export.docx_failed') || 'Failed to export DOCX',
         description: error instanceof Error ? error.message : 'Unknown error',
       });
     } finally {
@@ -292,7 +292,7 @@ export default function ExportSelectModal({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <FileText className="w-5 h-5" />
-            {t('export.export')} {formatLabel}
+            {t('chat:export.export')} {formatLabel}
           </DialogTitle>
         </DialogHeader>
 
@@ -300,7 +300,7 @@ export default function ExportSelectModal({
         <div className="flex items-center justify-between gap-3 p-3 bg-surface border border-border rounded-lg">
           <div className="flex items-center gap-3">
             <span className="text-sm text-text-secondary">
-              {t('export.selected_count', { count: selectionCount }) ||
+              {t('chat:export.selected_count', { count: selectionCount }) ||
                 `Selected: ${selectionCount} message(s)`}
             </span>
           </div>
@@ -312,8 +312,8 @@ export default function ExportSelectModal({
               className="text-xs"
             >
               {isAllSelected
-                ? t('export.deselect_all') || 'Deselect All'
-                : t('export.select_all') || 'Select All'}
+                ? t('chat:export.deselect_all') || 'Deselect All'
+                : t('chat:export.select_all') || 'Select All'}
             </Button>
           </div>
         </div>
@@ -332,7 +332,7 @@ export default function ExportSelectModal({
                 }`}
                 onClick={() => handleToggleMessage(msg.id)}
               >
-                <div className="flex-shrink-0 pt-0.5">
+                <div className="flex-shrink-0 pt-0.5" onClick={e => e.stopPropagation()}>
                   <Checkbox
                     checked={isSelected}
                     onCheckedChange={() => handleToggleMessage(msg.id)}
@@ -363,7 +363,7 @@ export default function ExportSelectModal({
                     <div className="flex items-center gap-1 mt-1 text-xs text-text-muted">
                       <Paperclip className="w-3 h-3" />
                       <span>
-                        {msg.attachments.length} {t('export.attachments') || 'attachment(s)'}
+                        {msg.attachments.length} {t('chat:export.attachments') || 'attachment(s)'}
                       </span>
                     </div>
                   )}
@@ -377,10 +377,10 @@ export default function ExportSelectModal({
                       handleSelectFromHere(index);
                     }}
                     className="text-xs text-text-muted hover:text-primary"
-                    title={t('export.select_from_here') || 'Select from here'}
+                    title={t('chat:export.select_from_here') || 'Select from here'}
                   >
                     <ChevronDown className="w-3 h-3 mr-1" />
-                    {t('export.select_below') || 'Select below'}
+                    {t('chat:export.select_below') || 'Select below'}
                   </Button>
                 </div>
               </div>
@@ -392,7 +392,7 @@ export default function ExportSelectModal({
         <div className="flex items-center justify-end gap-3 pt-4 border-t border-border">
           <Button variant="ghost" size="sm" onClick={onClose} className="text-sm">
             <X className="w-4 h-4 mr-1" />
-            {t('export.cancel') || 'Cancel'}
+            {t('chat:export.cancel') || 'Cancel'}
           </Button>
           <Button
             variant="default"
@@ -404,9 +404,9 @@ export default function ExportSelectModal({
             <FileText className="w-4 h-4 mr-1" />
             {isExporting
               ? exportFormat === 'pdf'
-                ? t('export.exporting') || 'Exporting...'
-                : t('export.exporting_docx') || 'Exporting DOCX...'
-              : t('export.confirm') || 'Export'}
+                ? t('chat:export.exporting') || 'Exporting...'
+                : t('chat:export.exporting_docx') || 'Exporting DOCX...'
+              : t('chat:export.confirm') || 'Export'}
           </Button>
         </div>
       </DialogContent>
