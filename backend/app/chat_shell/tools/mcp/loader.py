@@ -19,7 +19,10 @@ logger = logging.getLogger(__name__)
 
 
 async def load_mcp_tools(
-    task_id: int, bot_name: str = "", bot_namespace: str = "default"
+    task_id: int,
+    bot_name: str = "",
+    bot_namespace: str = "default",
+    task_data: dict[str, Any] | None = None,
 ) -> Any:
     """Load MCP tools for a task.
 
@@ -33,6 +36,7 @@ async def load_mcp_tools(
         task_id: Task ID for logging
         bot_name: Bot name for Ghost CRD lookup
         bot_namespace: Bot namespace
+        task_data: Task data containing MCP configuration
 
     Returns:
         MCPClient instance or None if no MCP servers configured
@@ -84,7 +88,7 @@ async def load_mcp_tools(
         )
 
         # Step 4: Create MCP client with merged configuration
-        client = MCPClient(merged_servers)
+        client = MCPClient(merged_servers, task_data=task_data)
         try:
             await asyncio.wait_for(client.connect(), timeout=30.0)
             logger.info(

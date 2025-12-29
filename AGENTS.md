@@ -348,6 +348,13 @@ alembic downgrade -1                               # Rollback
   - Can be overridden by per-engine `max_results` in `WEB_SEARCH_ENGINES` config
   - LLM can override by passing `max_results` parameter to the tool
 
+**MCP (Model Context Protocol) Configuration:**
+- `CHAT_MCP_ENABLED`: Enable/disable MCP tools in Chat Shell mode (default: `false`)
+- `CHAT_MCP_SERVERS`: JSON config for MCP servers (see config.py comments for format)
+  - Supports `${{path}}` variable substitution in config values (headers, urls, etc.)
+  - Available variables: `user.name`, `user.id`
+  - Example: `"headers": {"X-User": "${{user.name}}"}` will be replaced with actual username
+
 ### Frontend
 
 **Tech:** Next.js 15, React 19, TypeScript, Tailwind CSS, shadcn/ui, i18next
