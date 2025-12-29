@@ -9,30 +9,57 @@ import ImagePreview from '@/components/common/ImagePreview';
 import LinkCard from '@/components/common/LinkCard';
 import { isImageUrl, detectUrls } from '@/utils/url-detector';
 
+/**
+ * Check if a URL is an absolute HTTP(S) URL.
+ * Returns false for relative URLs, anchors, and non-HTTP protocols.
+ *
+ * @param url - The URL string to check
+ * @returns true if the URL is an absolute HTTP or HTTPS URL
+ */
+function isAbsoluteHttpUrl(url: string): boolean {
+  try {
+    const urlObj = new URL(url);
+    return urlObj.protocol === 'http:' || urlObj.protocol === 'https:';
+  } catch {
+    // URL construction fails for relative URLs or invalid URLs
+    return false;
+  }
+}
+
 interface SmartLinkProps {
   /** The URL to render */
   href: string;
   /** Link text/children from Markdown */
   children: React.ReactNode;
-  /** Whether to use compact mode */
+  /** @deprecated compact mode is no longer used - cards are disabled */
   compact?: boolean;
-  /**
-   * Whether to disable rich rendering (metadata fetching).
-   * When true, renders URLs as simple clickable links.
-   * Useful during streaming to avoid excessive API calls.
-   */
+  /** @deprecated disabled is no longer used - cards are disabled */
   disabled?: boolean;
 }
 
 /**
  * SmartLink component that renders URLs intelligently:
+ * - Relative URLs, anchors, and non-HTTP protocols: Rendered as plain links
  * - Image URLs: Rendered as inline image previews with Lightbox
- * - Web URLs: Rendered as rich link cards with metadata
+ * - Web URLs: Rendered as styled plain links (cards disabled to avoid layout issues)
  *
- * @param disabled - When true, skips metadata fetching and renders as simple link.
- *                   Use this during streaming to avoid excessive API calls.
+ * Note: LinkCard rendering is disabled to prevent layout issues in tables and
+ * other constrained containers. All links are rendered as simple styled links.
  */
-export function SmartLink({ href, children, compact = false, disabled = false }: SmartLinkProps) {
+export function SmartLink({
+  href,
+  children,
+}: SmartLinkProps) {
+  // For non-absolute HTTP(S) URLs (relative links, anchors, mailto:, tel:, etc.),
+  // render without target="_blank"
+  if (!isAbsoluteHttpUrl(href)) {
+    return (
+      <a href={href} className="text-primary hover:underline">
+        {children}
+      </a>
+    );
+  }
+
   // Check if it's an image URL
   if (isImageUrl(href)) {
     // Extract alt text from children if it's a simple string
@@ -40,20 +67,16 @@ export function SmartLink({ href, children, compact = false, disabled = false }:
     return <ImagePreview src={href} alt={alt} />;
   }
 
-  // For web URLs, render as LinkCard
-  const linkText = typeof children === 'string' ? children : undefined;
-
-  // If link text is the same as URL, use LinkCard
-  // If link text is different (e.g., "[Click here](url)"), show both text and card
-  if (!linkText || linkText === href) {
-    return <LinkCard url={href} compact={compact} disabled={disabled} />;
-  }
-
-  // For links with custom text, show the link text with a card below
+  // For web URLs, render as styled external link (no card to avoid layout issues)
   return (
-    <span className="inline-block [&_a]:!no-underline [&_a:hover]:!no-underline">
-      <LinkCard url={href} linkText={linkText} compact={compact} disabled={disabled} />
-    </span>
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-primary hover:underline"
+    >
+      {children}
+    </a>
   );
 }
 
@@ -75,44 +98,53 @@ export function SmartImage({ src, alt }: SmartImageProps) {
  * Create custom Markdown components for MarkdownEditor.Markdown
  * that support smart URL rendering.
  *
- * @param options.disabled - When true, skips metadata fetching for link cards.
- *                           Use this during streaming to avoid excessive API calls.
+ * Note: Link cards are disabled in markdown rendering to avoid layout issues
+ * (especially in tables). Links are rendered as styled plain links instead.
+ * Image preview with Lightbox is still supported.
  */
 export function createSmartMarkdownComponents(options?: {
-  enableLinkCards?: boolean;
   enableImagePreview?: boolean;
-  compact?: boolean;
-  /** When true, disables rich rendering (metadata fetching) for links */
-  disabled?: boolean;
 }) {
-  const {
-    enableLinkCards = true,
-    enableImagePreview = true,
-    compact = false,
-    disabled = false,
-  } = options || {};
+  const { enableImagePreview = true } = options || {};
 
   return {
-    // Custom link renderer
+    // Custom link renderer - always render as plain styled links
+    // Link cards are disabled in markdown to avoid layout issues in tables
     a: ({
       href,
       children,
       ...props
     }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { children?: React.ReactNode }) => {
-      // If link cards are disabled or no href, render as normal link
-      if (!enableLinkCards || !href) {
+      // If no href, render as normal element
+      if (!href) {
         return (
-          <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+          <a href={href} {...props}>
             {children}
           </a>
         );
       }
 
-      // Use SmartLink for intelligent rendering
+      // For non-absolute HTTP(S) URLs (anchors, relative paths, mailto, tel, etc.)
+      // render without target="_blank"
+      if (!isAbsoluteHttpUrl(href)) {
+        return (
+          <a href={href} className="text-primary hover:underline" {...props}>
+            {children}
+          </a>
+        );
+      }
+
+      // For absolute HTTP(S) URLs, render as external link
       return (
-        <SmartLink href={href} compact={compact} disabled={disabled}>
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-primary hover:underline"
+          {...props}
+        >
           {children}
-        </SmartLink>
+        </a>
       );
     },
 
@@ -146,6 +178,8 @@ interface SmartTextLineProps {
 /**
  * SmartTextLine component for rendering a single line of plain text
  * with intelligent URL detection and rendering.
+ *
+ * Used for user message rendering where LinkCard is appropriate.
  *
  * Detects URLs in the text and renders them appropriately:
  * - Image URLs: Rendered as inline image previews
@@ -192,6 +226,7 @@ export function SmartTextLine({ text, className = '', disabled = false }: SmartT
         />
       );
     } else {
+      // Render as LinkCard for user messages
       segments.push(
         <LinkCard
           key={`url-${index}`}
