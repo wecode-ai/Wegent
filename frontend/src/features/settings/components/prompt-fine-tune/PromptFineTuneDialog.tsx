@@ -19,7 +19,7 @@ import { Wand2 } from 'lucide-react'
 import { wizardApis } from '@/apis/wizard'
 import PromptTestPanel from './PromptTestPanel'
 import PromptComparePanel from './PromptComparePanel'
-import { useIsMobile } from '@/hooks/use-mobile'
+import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 
 interface PromptFineTuneDialogProps {
   open: boolean
