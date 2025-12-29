@@ -598,6 +598,7 @@ class ClaudeCodeAgent(Agent):
             "model",
             "permission_prompt_tool_name",
             "cwd",
+            "max_buffer_size",
         ]
 
         logger.info(
@@ -605,7 +606,11 @@ class ClaudeCodeAgent(Agent):
         )
 
         # Collect all non-None configuration parameters
-        options = {"setting_sources": ["user", "project", "local"]}
+        # Set max_buffer_size to 50MB to handle large file reads (default is 1MB)
+        options = {
+            "setting_sources": ["user", "project", "local"],
+            "max_buffer_size": 50 * 1024 * 1024,  # 50MB
+        }
         bots = task_data.get("bot", [])
         bot_config = bots[0]
         # Extract all non-None parameters from bot_config
@@ -668,6 +673,9 @@ class ClaudeCodeAgent(Agent):
                 except Exception as e:
                     logger.warning(f"Failed to process custom instructions: {e}")
                     # Continue execution with original systemPrompt
+
+            # Download attachments for this task
+            self._download_attachments()
 
             return TaskStatus.SUCCESS
         except Exception as e:
@@ -1288,6 +1296,93 @@ class ClaudeCodeAgent(Agent):
 
         except Exception as e:
             logger.warning(f"Failed to add '{pattern}' to .git/info/exclude: {e}")
+
+    def _download_attachments(self) -> None:
+        """
+        Download attachments from Backend API to workspace.
+
+        This method downloads all attachments associated with the current subtask
+        to a local directory, and updates the prompt to reference the local paths.
+        Similar to _download_and_deploy_skills() but for attachments.
+        """
+        try:
+            attachments = self.task_data.get("attachments", [])
+            if not attachments:
+                logger.debug("No attachments to download for this task")
+                return
+
+            logger.info(f"Found {len(attachments)} attachments to download")
+
+            # Get auth token for API calls
+            auth_token = self.task_data.get("auth_token")
+            if not auth_token:
+                logger.warning("No auth token available, cannot download attachments")
+                return
+
+            # Determine workspace path
+            workspace = self.project_path or os.path.join(
+                config.WORKSPACE_ROOT, str(self.task_id)
+            )
+
+            # Import and use attachment downloader
+            from executor.services.attachment_downloader import AttachmentDownloader
+            from executor.services.attachment_prompt_processor import (
+                AttachmentPromptProcessor,
+            )
+
+            downloader = AttachmentDownloader(
+                workspace=workspace,
+                task_id=str(self.task_id),
+                subtask_id=str(self.subtask_id),
+                auth_token=auth_token,
+            )
+
+            result = downloader.download_all(attachments)
+
+            # Store download result for potential future use
+            self._attachment_download_result = result
+
+            # Process prompt to replace attachment references and add context
+            if result.success or result.failed:
+                # Replace [attachment:id] references with local paths
+                self.prompt = AttachmentPromptProcessor.process_prompt(
+                    self.prompt, result.success, result.failed
+                )
+
+                # Add context about available attachments
+                attachment_context = AttachmentPromptProcessor.build_attachment_context(
+                    result.success
+                )
+                if attachment_context:
+                    self.prompt += attachment_context
+
+                logger.info(f"Processed prompt with {len(result.success)} attachments")
+
+                # Store image content blocks for potential vision support
+                self._image_content_blocks = (
+                    AttachmentPromptProcessor.build_image_content_blocks(result.success)
+                )
+                if self._image_content_blocks:
+                    logger.info(
+                        f"Built {len(self._image_content_blocks)} image content blocks"
+                    )
+
+            if result.success:
+                self.add_thinking_step_by_key(
+                    title_key="thinking.attachments_downloaded",
+                    report_immediately=False,
+                    details={"count": len(result.success)},
+                )
+
+            if result.failed:
+                logger.warning(
+                    f"Failed to download {len(result.failed)} attachments: "
+                    f"{[a.get('original_filename') for a in result.failed]}"
+                )
+
+        except Exception as e:
+            logger.error(f"Error downloading attachments: {e}")
+            # Don't raise - attachment download failure shouldn't block task execution
 
     def _download_and_deploy_skills(self, bot_config: Dict[str, Any]) -> None:
         """

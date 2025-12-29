@@ -12,7 +12,6 @@ import ExternalApiParamsInput from '../params/ExternalApiParamsInput';
 import { SelectedTeamBadge } from '../selector/SelectedTeamBadge';
 import ChatInputControls, { ChatInputControlsProps } from './ChatInputControls';
 import type { Team, ChatTipItem } from '@/types/api';
-import { isChatShell } from '../../service/messageService';
 
 export interface ChatInputCardProps extends Omit<ChatInputControlsProps, 'taskInputMessage'> {
   // Input message
@@ -180,7 +179,7 @@ export function ChatInputCard({
               badge={selectedTeam ? <SelectedTeamBadge team={selectedTeam} /> : undefined}
               isGroupChat={isGroupChat}
               team={selectedTeam}
-              onPasteFile={isChatShell(selectedTeam) ? onPasteFile : undefined}
+              onPasteFile={onPasteFile}
             />
           </div>
         )}

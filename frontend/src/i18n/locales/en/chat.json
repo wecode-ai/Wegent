@@ -142,7 +142,8 @@
     "execution_failed": "❌ Execution Failed",
     "error_message": "Error Message",
     "execution_type": "Execution Type",
-    "mcp_init_fail": "❌ MCP initialization failed. "
+    "mcp_init_fail": "❌ MCP initialization failed. ",
+    "attachments_downloaded": "📎 Attachments Downloaded"
   },
   "send_button": {
     "shortcut_title": "Send Shortcut",
