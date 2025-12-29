@@ -234,6 +234,7 @@ jobs:
         with:
           pattern: blob-report-*
           path: all-blob-reports
+          merge-multiple: true
 
       - name: Install frontend dependencies
         working-directory: ./frontend
@@ -241,14 +242,7 @@ jobs:
 
       - name: Merge reports
         working-directory: ./frontend
-        run: |
-          BLOB_DIRS=""
-          for dir in ../all-blob-reports/blob-report-*/; do
-            if [ -d "$dir" ]; then
-              BLOB_DIRS="$BLOB_DIRS $dir"
-            fi
-          done
-          npx playwright merge-reports --reporter html $BLOB_DIRS
+        run: npx playwright merge-reports --reporter html ../all-blob-reports
 
       - name: Upload merged report
         uses: actions/upload-artifact@v4
