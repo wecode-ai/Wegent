@@ -22,11 +22,9 @@ import { useToast } from '@/hooks/use-toast';
 import { taskMemberApi } from '@/apis/task-member';
 import { useTranslation } from '@/hooks/useTranslation';
 import { userApis } from '@/apis/user';
+import type { SearchUser } from '@/types/api';
 
-interface User {
-  id: number;
-  user_name: string;
-  email?: string;
+interface User extends SearchUser {
   isUnregistered?: boolean; // Mark user as not registered in platform
 }
 

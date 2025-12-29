@@ -28,14 +28,8 @@ import {
 import { userApis } from '@/apis/user';
 import { toast } from 'sonner';
 import type { Group, GroupMember, GroupRole } from '@/types/group';
+import type { SearchUser } from '@/types/api';
 import { UserPlusIcon, LogOutIcon, Search, X, Check } from 'lucide-react';
-
-// User type for search results
-interface SearchUser {
-  id: number;
-  user_name: string;
-  email?: string;
-}
 
 interface GroupMembersDialogProps {
   isOpen: boolean;
