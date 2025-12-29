@@ -3,6 +3,132 @@ import { ApiClient, createApiClient } from './api-client';
 import { APIRequestContext } from '@playwright/test';
 
 /**
+ * Smart wait utilities that replace hardcoded waitForTimeout calls
+ * These functions wait for specific conditions instead of fixed time
+ */
+
+/**
+ * Wait for page to be stable (no network activity and DOM stable)
+ * Use this instead of waitForTimeout after navigation or data loading
+ */
+export async function waitForPageStable(page: Page, timeout: number = 5000): Promise<void> {
+  await Promise.race([
+    page.waitForLoadState('networkidle', { timeout }),
+    page.waitForTimeout(timeout), // Fallback if networkidle never triggers
+  ]).catch(() => {
+    // Ignore timeout - page may already be stable
+  });
+}
+
+/**
+ * Wait for any loading indicators to disappear
+ * Use this after actions that trigger loading states
+ */
+export async function waitForLoadingComplete(page: Page, timeout: number = 5000): Promise<void> {
+  const loadingSelectors = [
+    '[data-loading="true"]',
+    '[data-testid="loading"]',
+    '.loading',
+    '.spinner',
+    '[class*="loading"]',
+    '[class*="spinner"]',
+  ];
+
+  for (const selector of loadingSelectors) {
+    try {
+      const loading = page.locator(selector).first();
+      if (await loading.isVisible({ timeout: 500 }).catch(() => false)) {
+        await loading.waitFor({ state: 'hidden', timeout });
+      }
+    } catch {
+      // Ignore - loading indicator may not exist
+    }
+  }
+}
+
+/**
+ * Wait for content to appear after an action
+ * Use this instead of waitForTimeout after clicking buttons that load content
+ */
+export async function waitForContentReady(
+  page: Page,
+  contentSelector: string,
+  timeout: number = 5000
+): Promise<boolean> {
+  try {
+    await page.waitForSelector(contentSelector, { state: 'visible', timeout });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Wait for API call to complete
+ * Use this when waiting for specific API responses
+ */
+export async function waitForApiCall(
+  page: Page,
+  urlPattern: string | RegExp,
+  timeout: number = 10000
+): Promise<void> {
+  await page.waitForResponse(
+    response => {
+      const url = response.url();
+      return typeof urlPattern === 'string' ? url.includes(urlPattern) : urlPattern.test(url);
+    },
+    { timeout }
+  );
+}
+
+/**
+ * Wait for dialog/modal to open
+ * Use this after clicking buttons that open dialogs
+ */
+export async function waitForDialogOpen(page: Page, timeout: number = 5000): Promise<boolean> {
+  try {
+    await page.waitForSelector('[role="dialog"], [role="alertdialog"]', {
+      state: 'visible',
+      timeout,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Wait for dialog/modal to close
+ * Use this after closing dialogs
+ */
+export async function waitForDialogClose(page: Page, timeout: number = 5000): Promise<void> {
+  try {
+    await page.waitForSelector('[role="dialog"], [role="alertdialog"]', {
+      state: 'hidden',
+      timeout,
+    });
+  } catch {
+    // Dialog may already be closed
+  }
+}
+
+/**
+ * Wait for toast notification
+ * Use this after actions that show toast messages
+ */
+export async function waitForToast(page: Page, timeout: number = 5000): Promise<boolean> {
+  try {
+    await page.waitForSelector('[data-sonner-toast], [role="alert"], .toast', {
+      state: 'visible',
+      timeout,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Wait for element to be visible
  */
 export async function waitForElement(
