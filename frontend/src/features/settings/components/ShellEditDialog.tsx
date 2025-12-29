@@ -32,6 +32,8 @@ import {
   ImageCheckResult,
   ValidationStage,
   ValidationStatusResponse,
+  WorkspaceType,
+  ShellResources,
 } from '@/apis/shells';
 import SoftwareRequirements from './SoftwareRequirements';
 
@@ -91,6 +93,10 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
   const [baseShells, setBaseShells] = useState<UnifiedShell[]>([]);
   const [loadingBaseShells, setLoadingBaseShells] = useState(true);
 
+  // Workspace type and resources state
+  const [workspaceType, setWorkspaceType] = useState<WorkspaceType>('ephemeral');
+  const [resources, setResources] = useState<ShellResources>({ cpu: '2', memory: '4Gi' });
+
   // Cleanup polling on unmount
   useEffect(() => {
     return () => {
@@ -109,6 +115,8 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
         setBaseShellRef(shell.baseShellRef || '');
         setBaseImage(shell.baseImage || '');
         setOriginalBaseImage(shell.baseImage || '');
+        setWorkspaceType(shell.workspaceType || 'ephemeral');
+        setResources(shell.resources || { cpu: '2', memory: '4Gi' });
       } else {
         // Reset for new shell
         setName('');
@@ -116,6 +124,8 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
         setBaseShellRef('');
         setBaseImage('');
         setOriginalBaseImage('');
+        setWorkspaceType('ephemeral');
+        setResources({ cpu: '2', memory: '4Gi' });
       }
       setValidationStatus(null);
       setValidationId(null);
@@ -397,6 +407,8 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
         await shellApis.updateShell(shell.name, {
           displayName: displayName.trim() || undefined,
           baseImage: baseImage.trim() || undefined,
+          workspaceType,
+          resources: workspaceType === 'persistent' ? resources : undefined,
         });
         toast({
           title: t('common:shells.update_success'),
@@ -408,6 +420,8 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
             displayName: displayName.trim() || undefined,
             baseShellRef,
             baseImage: baseImage.trim(),
+            workspaceType,
+            resources: workspaceType === 'persistent' ? resources : undefined,
           },
           groupName
         );
@@ -654,6 +668,84 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
               </p>
             )}
           </div>
+
+          {/* Workspace Type */}
+          <div className="space-y-2">
+            <Label htmlFor="workspaceType" className="text-sm font-medium">
+              {t('common:shells.workspace_type')}
+            </Label>
+            <Select value={workspaceType} onValueChange={(v: WorkspaceType) => setWorkspaceType(v)}>
+              <SelectTrigger className="bg-base">
+                <SelectValue placeholder={t('common:shells.select_workspace_type')} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ephemeral">
+                  <div className="flex flex-col">
+                    <span>{t('common:shells.workspace_ephemeral')}</span>
+                  </div>
+                </SelectItem>
+                <SelectItem value="persistent">
+                  <div className="flex flex-col">
+                    <span>{t('common:shells.workspace_persistent')}</span>
+                  </div>
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-text-muted">{t('common:shells.workspace_type_hint')}</p>
+          </div>
+
+          {/* Resource Configuration (only shown when persistent) */}
+          {workspaceType === 'persistent' && (
+            <div className="space-y-4 p-4 border rounded-md bg-surface/50">
+              <Label className="text-sm font-medium">{t('common:shells.resources')}</Label>
+
+              <div className="grid grid-cols-2 gap-4">
+                {/* CPU */}
+                <div className="space-y-2">
+                  <Label htmlFor="cpu" className="text-xs text-text-muted">
+                    {t('common:shells.cpu')}
+                  </Label>
+                  <Select
+                    value={resources.cpu}
+                    onValueChange={v => setResources({ ...resources, cpu: v })}
+                  >
+                    <SelectTrigger className="bg-base">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="1">1 Core</SelectItem>
+                      <SelectItem value="2">2 Cores</SelectItem>
+                      <SelectItem value="4">4 Cores</SelectItem>
+                      <SelectItem value="8">8 Cores</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Memory */}
+                <div className="space-y-2">
+                  <Label htmlFor="memory" className="text-xs text-text-muted">
+                    {t('common:shells.memory')}
+                  </Label>
+                  <Select
+                    value={resources.memory}
+                    onValueChange={v => setResources({ ...resources, memory: v })}
+                  >
+                    <SelectTrigger className="bg-base">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="2Gi">2 GB</SelectItem>
+                      <SelectItem value="4Gi">4 GB</SelectItem>
+                      <SelectItem value="8Gi">8 GB</SelectItem>
+                      <SelectItem value="16Gi">16 GB</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <p className="text-xs text-text-muted">{t('common:shells.resources_hint')}</p>
+            </div>
+          )}
         </div>
 
         <DialogFooter className="flex items-center justify-between sm:justify-between">

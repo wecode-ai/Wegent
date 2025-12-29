@@ -6,6 +6,7 @@
 Models package
 """
 from app.models.api_key import APIKey
+from app.models.container_instance import ContainerInstance
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
 from app.models.namespace import Namespace
@@ -28,6 +29,7 @@ __all__ = [
     "Subtask",
     "SharedTeam",
     "SkillBinary",
+    "ContainerInstance",
     "SystemConfig",
     "Namespace",
     "NamespaceMember",
