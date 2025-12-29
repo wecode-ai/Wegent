@@ -106,7 +106,7 @@ class PreviewManager:
             return None
 
         except subprocess.CalledProcessError as e:
-            logger.error(f"Error finding container for task {task_id}: {e}")
+            logger.exception(f"Error finding container for task {task_id}: {e}")
             return None
 
     async def get_preview_config(self, task_id: int) -> Tuple[Optional[Dict], Optional[str]]:
@@ -142,7 +142,7 @@ class PreviewManager:
             except subprocess.TimeoutExpired:
                 return None, "Timeout reading config file"
             except Exception as e:
-                logger.error(f"Error reading {filename}: {e}")
+                logger.exception(f"Error reading {filename}: {e}")
                 continue
 
         return None, "No .wegent.yaml or .wegent.yml found in project"
@@ -170,7 +170,7 @@ class PreviewManager:
             )
 
         except yaml.YAMLError as e:
-            logger.error(f"Error parsing YAML config: {e}")
+            logger.exception(f"Error parsing YAML config: {e}")
             return None
 
     async def get_preview_status(self, task_id: int) -> Dict:
@@ -321,7 +321,7 @@ class PreviewManager:
             except Exception as e:
                 state.status = PreviewStatus.ERROR
                 state.error = str(e)
-                logger.error(f"Error starting preview for task {task_id}: {e}")
+                logger.exception(f"Error starting preview for task {task_id}: {e}")
                 return {
                     "success": False,
                     "message": str(e),
@@ -373,7 +373,7 @@ class PreviewManager:
                 # Log file might not exist yet
                 pass
             except Exception as e:
-                logger.debug(f"Error checking readiness: {e}")
+                logger.exception(f"Error checking readiness for task {task_id}: {e}")
 
         # Timeout
         state = self._states.get(task_id)
@@ -428,7 +428,7 @@ class PreviewManager:
                 }
 
             except Exception as e:
-                logger.error(f"Error stopping preview for task {task_id}: {e}")
+                logger.exception(f"Error stopping preview for task {task_id}: {e}")
                 return {
                     "success": False,
                     "message": str(e),

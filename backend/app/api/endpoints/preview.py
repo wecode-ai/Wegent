@@ -9,8 +9,7 @@ Preview API endpoints for Workbench live preview functionality.
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db

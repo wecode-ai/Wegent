@@ -619,8 +619,8 @@ async def get_preview_config(task_id: int, http_request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting preview config for task {task_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"Error getting preview config for task {task_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.get("/executor-manager/preview/{task_id}/status")
@@ -637,8 +637,8 @@ async def get_preview_status(task_id: int, http_request: Request):
         return await preview_manager.get_preview_status(task_id)
 
     except Exception as e:
-        logger.error(f"Error getting preview status for task {task_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"Error getting preview status for task {task_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.post("/executor-manager/preview/{task_id}/start")
@@ -661,8 +661,8 @@ async def start_preview(
         return await preview_manager.start_preview(task_id, force=request.force)
 
     except Exception as e:
-        logger.error(f"Error starting preview for task {task_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"Error starting preview for task {task_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.post("/executor-manager/preview/{task_id}/stop")
@@ -679,5 +679,5 @@ async def stop_preview(task_id: int, http_request: Request):
         return await preview_manager.stop_preview(task_id)
 
     except Exception as e:
-        logger.error(f"Error stopping preview for task {task_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"Error stopping preview for task {task_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e

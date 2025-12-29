@@ -107,7 +107,7 @@ class PreviewService:
             )
 
         except Exception as e:
-            logger.error(f"Error getting preview config for task {task_id}: {e}")
+            logger.exception(f"Error getting preview config for task {task_id}")
             return PreviewConfigResponse(
                 enabled=False,
                 status=PreviewStatus.ERROR,
@@ -153,7 +153,7 @@ class PreviewService:
         except yaml.YAMLError as e:
             return None, f"Invalid YAML config: {e}"
         except Exception as e:
-            logger.error(f"Error fetching preview config: {e}")
+            logger.exception(f"Error fetching preview config")
             return None, str(e)
 
     async def _get_preview_status(
@@ -187,7 +187,7 @@ class PreviewService:
                 return status, url, error
 
         except Exception as e:
-            logger.error(f"Error checking preview status: {e}")
+            logger.exception(f"Error checking preview status")
             return PreviewStatus.ERROR, None, str(e)
 
     async def start_preview(
@@ -255,7 +255,7 @@ class PreviewService:
                 status=PreviewStatus.ERROR,
             )
         except Exception as e:
-            logger.error(f"Error starting preview for task {task_id}: {e}")
+            logger.exception(f"Error starting preview for task {task_id}")
             return PreviewStartResponse(
                 success=False,
                 message=str(e),
@@ -306,7 +306,7 @@ class PreviewService:
                 )
 
         except Exception as e:
-            logger.error(f"Error stopping preview for task {task_id}: {e}")
+            logger.exception(f"Error stopping preview for task {task_id}")
             return PreviewStopResponse(
                 success=False,
                 message=str(e),

@@ -53,7 +53,7 @@ class PreviewProxy:
             return None
 
         except subprocess.CalledProcessError as e:
-            logger.error(f"Error finding container for task {task_id}: {e}")
+            logger.exception(f"Error finding container for task {task_id}: {e}")
             return None
 
     def _get_container_ip(self, container_name: str) -> Optional[str]:
@@ -71,7 +71,7 @@ class PreviewProxy:
             return ip if ip else None
 
         except subprocess.CalledProcessError as e:
-            logger.error(f"Error getting container IP for {container_name}: {e}")
+            logger.exception(f"Error getting container IP for {container_name}: {e}")
             return None
 
     async def get_proxy_target(self, task_id: int, port: int) -> Tuple[Optional[str], Optional[str]]:
@@ -134,7 +134,7 @@ class PreviewProxy:
         except httpx.ConnectError:
             return None, "Could not connect to preview service"
         except Exception as e:
-            logger.error(f"Error proxying request: {e}")
+            logger.exception(f"Error proxying request: {e}")
             return None, str(e)
 
 

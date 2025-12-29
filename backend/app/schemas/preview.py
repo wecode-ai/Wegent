@@ -7,9 +7,9 @@ Preview feature schemas for Workbench live preview functionality.
 """
 
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 
 class PreviewStatus(str, Enum):
@@ -54,7 +54,7 @@ class PreviewConfig(BaseModel):
             return None
         try:
             return PreviewConfigSpec(**preview_data)
-        except Exception:
+        except ValidationError:
             return None
 
 
