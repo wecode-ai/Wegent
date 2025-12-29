@@ -8,7 +8,9 @@
     "original": "Original Prompt",
     "current": "Current Prompt",
     "modified": "Modified",
-    "click_to_expand": "Click to expand"
+    "click_to_expand": "Click to expand",
+    "diff": "Diff",
+    "no_changes": "No changes"
   },
   "actions": {
     "cancel": "Cancel",

@@ -2,47 +2,39 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import { useState, useRef, useEffect } from 'react'
-import { Button } from '@/components/ui/button'
-import { Textarea } from '@/components/ui/textarea'
-import { Spinner } from '@/components/ui/spinner'
+import { useState, useRef, useEffect } from 'react';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
+import { Spinner } from '@/components/ui/spinner';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
-import { useTranslation } from '@/hooks/useTranslation'
-import {
-  MessageSquare,
-  Send,
-  Wand2,
-  RefreshCw,
-  Cpu,
-} from 'lucide-react'
-import { modelApis, type UnifiedModel } from '@/apis/models'
-import {
-  MessageBubble,
-  type Message,
-} from '@/features/tasks/components/message'
-import { useTheme } from '@/features/theme/ThemeProvider'
+} from '@/components/ui/select';
+import { useTranslation } from '@/hooks/useTranslation';
+import { MessageSquare, Send, Wand2, RefreshCw, Cpu } from 'lucide-react';
+import { modelApis, type UnifiedModel } from '@/apis/models';
+import { MessageBubble, type Message } from '@/features/tasks/components/message';
+import { useTheme } from '@/features/theme/ThemeProvider';
 
 interface PromptTestPanelProps {
-  systemPrompt: string
-  testMessage: string
-  setTestMessage: (message: string) => void
-  aiResponse: string
-  isTestingPrompt: boolean
-  isIteratingPrompt: boolean
-  userFeedback: string
-  setUserFeedback: (feedback: string) => void
-  selectedModel: string
-  onModelChange: (model: string) => void
-  onTestPrompt: () => Promise<void>
-  onIteratePrompt: () => Promise<void>
+  systemPrompt: string;
+  testMessage: string;
+  setTestMessage: (message: string) => void;
+  aiResponse: string;
+  isTestingPrompt: boolean;
+  isIteratingPrompt: boolean;
+  userFeedback: string;
+  setUserFeedback: (feedback: string) => void;
+  selectedModel: string;
+  onModelChange: (model: string) => void;
+  onTestPrompt: () => Promise<void>;
+  onIteratePrompt: () => Promise<void>;
+  hideIterateSection?: boolean;
 }
 
 export default function PromptTestPanel({
@@ -57,60 +49,61 @@ export default function PromptTestPanel({
   onModelChange,
   onTestPrompt,
   onIteratePrompt,
+  hideIterateSection = false,
 }: PromptTestPanelProps) {
-  const { t } = useTranslation('wizard')
-  const { theme } = useTheme()
-  const [availableModels, setAvailableModels] = useState<UnifiedModel[]>([])
-  const [isLoadingModels, setIsLoadingModels] = useState(false)
-  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const { t } = useTranslation('wizard');
+  const { theme } = useTheme();
+  const [availableModels, setAvailableModels] = useState<UnifiedModel[]>([]);
+  const [isLoadingModels, setIsLoadingModels] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Load available models on mount
   useEffect(() => {
     const loadModels = async () => {
-      setIsLoadingModels(true)
+      setIsLoadingModels(true);
       try {
         // Get models compatible with Chat shell type, filtered to LLM category only
-        const response = await modelApis.getUnifiedModels('Chat', false, 'all', undefined, 'llm')
-        setAvailableModels(response.data || [])
+        const response = await modelApis.getUnifiedModels('Chat', false, 'all', undefined, 'llm');
+        setAvailableModels(response.data || []);
 
         // If no model is selected and we have models, select the first one
         if (!selectedModel && response.data && response.data.length > 0) {
-          onModelChange(response.data[0].name)
+          onModelChange(response.data[0].name);
         }
       } catch (error) {
-        console.error('Failed to load models:', error)
+        console.error('Failed to load models:', error);
       } finally {
-        setIsLoadingModels(false)
+        setIsLoadingModels(false);
       }
-    }
-    loadModels()
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+    };
+    loadModels();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Scroll to bottom when AI response updates
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [aiResponse])
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [aiResponse]);
 
   const handleTestSubmit = async () => {
-    if (!testMessage.trim() || isTestingPrompt) return
-    await onTestPrompt()
-  }
+    if (!testMessage.trim() || isTestingPrompt) return;
+    await onTestPrompt();
+  };
 
   const handleIterateSubmit = async () => {
-    if (!userFeedback.trim() || isIteratingPrompt) return
-    await onIteratePrompt()
-  }
+    if (!userFeedback.trim() || isIteratingPrompt) return;
+    await onIteratePrompt();
+  };
 
   // Convert conversation to Message format for MessageBubble
   const getMessages = (): Message[] => {
-    const messages: Message[] = []
+    const messages: Message[] = [];
 
     if (testMessage) {
       messages.push({
         type: 'user',
         content: testMessage,
         timestamp: Date.now(),
-      })
+      });
     }
 
     if (aiResponse || isTestingPrompt) {
@@ -120,27 +113,21 @@ export default function PromptTestPanel({
         timestamp: Date.now(),
         botName: selectedModel || 'AI',
         isWaiting: isTestingPrompt && !aiResponse,
-      })
+      });
     }
 
-    return messages
-  }
+    return messages;
+  };
 
-  const messages = getMessages()
+  const messages = getMessages();
 
   return (
     <div className="h-full flex flex-col">
       {/* Model selector */}
       <div className="flex items-center gap-3 p-3 border-b border-border flex-shrink-0">
         <Cpu className="w-4 h-4 text-text-secondary" />
-        <span className="text-sm font-medium text-text-primary">
-          {t('wizard:select_model')}
-        </span>
-        <Select
-          value={selectedModel}
-          onValueChange={onModelChange}
-          disabled={isLoadingModels}
-        >
+        <span className="text-sm font-medium text-text-primary">{t('wizard:select_model')}</span>
+        <Select value={selectedModel} onValueChange={onModelChange} disabled={isLoadingModels}>
           <SelectTrigger className="w-[200px]">
             <SelectValue
               placeholder={isLoadingModels ? t('common:models.loading') : t('wizard:select_model')}
@@ -195,17 +182,23 @@ export default function PromptTestPanel({
       </div>
 
       {/* Test input area */}
-      <div className="border-t border-border p-3 space-y-3 flex-shrink-0">
+      <div className="border-t border-border p-3 space-y-2 flex-shrink-0">
+        <div className="flex items-center gap-2">
+          <MessageSquare className="w-4 h-4 text-primary" />
+          <span className="text-sm font-medium text-text-primary">
+            {t('wizard:test_input_label')}
+          </span>
+        </div>
         <div className="flex gap-2">
           <Textarea
             value={testMessage}
             onChange={e => setTestMessage(e.target.value)}
             placeholder={t('wizard:preview_adjust_input_placeholder')}
-            className="min-h-[50px] max-h-[80px] flex-1 text-sm resize-none"
+            className="min-h-[60px] flex-1 text-sm resize-none"
             onKeyDown={e => {
               if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault()
-                handleTestSubmit()
+                e.preventDefault();
+                handleTestSubmit();
               }
             }}
           />
@@ -215,16 +208,12 @@ export default function PromptTestPanel({
             disabled={isTestingPrompt || !testMessage.trim() || !selectedModel}
             className="self-end"
           >
-            {isTestingPrompt ? (
-              <Spinner className="w-4 h-4" />
-            ) : (
-              <Send className="w-4 h-4" />
-            )}
+            {isTestingPrompt ? <Spinner className="w-4 h-4" /> : <Send className="w-4 h-4" />}
           </Button>
         </div>
 
-        {/* Iterate section - only show when we have a response */}
-        {aiResponse && (
+        {/* Iterate section - only show when we have a response and not hidden */}
+        {aiResponse && !hideIterateSection && (
           <div className="space-y-2 pt-2 border-t border-border">
             <div className="flex items-center gap-2">
               <Wand2 className="w-4 h-4 text-primary" />
@@ -232,9 +221,7 @@ export default function PromptTestPanel({
                 {t('wizard:iterate_label')}
               </span>
             </div>
-            <p className="text-xs text-text-muted">
-              {t('wizard:preview_adjust_iterate_hint')}
-            </p>
+            <p className="text-xs text-text-muted">{t('wizard:preview_adjust_iterate_hint')}</p>
             <Textarea
               value={userFeedback}
               onChange={e => setUserFeedback(e.target.value)}
@@ -242,8 +229,8 @@ export default function PromptTestPanel({
               className="min-h-[60px] text-sm resize-none"
               onKeyDown={e => {
                 if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault()
-                  handleIterateSubmit()
+                  e.preventDefault();
+                  handleIterateSubmit();
                 }
               }}
             />
@@ -268,5 +255,5 @@ export default function PromptTestPanel({
         )}
       </div>
     </div>
-  )
+  );
 }
