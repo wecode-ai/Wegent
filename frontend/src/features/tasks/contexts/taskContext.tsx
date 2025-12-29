@@ -34,7 +34,7 @@ type TaskContextType = {
   selectedTaskDetail: TaskDetail | null;
   setSelectedTask: (task: Task | null) => void;
   refreshTasks: () => void;
-  refreshSelectedTaskDetail: (isAutoRefresh?: boolean) => void;
+  refreshSelectedTaskDetail: (isAutoRefresh?: boolean) => Promise<TaskDetail | null>;
   loadMore: () => void;
   hasMore: boolean;
   loadingMore: boolean;
@@ -398,8 +398,10 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   // - task:invited - user invited to group chat
   // - task:status - task status/progress updates
 
-  const refreshSelectedTaskDetail = async (isAutoRefresh: boolean = false) => {
-    if (!selectedTask) return;
+  const refreshSelectedTaskDetail = async (
+    isAutoRefresh: boolean = false
+  ): Promise<TaskDetail | null> => {
+    if (!selectedTask) return null;
 
     // Only check task status during auto-refresh; manual trigger allows viewing completed tasks
     if (
@@ -410,7 +412,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
         selectedTaskDetail.status === 'CANCELLED' ||
         selectedTaskDetail.status === 'DELETE')
     ) {
-      return;
+      return selectedTaskDetail;
     }
 
     try {
@@ -449,6 +451,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
       };
 
       setSelectedTaskDetail(taskDetailWithWorkbench);
+      return taskDetailWithWorkbench;
     } catch (error) {
       // Check if it's a 403 Forbidden or 404 Not Found error (access denied or task not found)
       // Both cases should show the access denied UI to prevent information leakage
@@ -460,9 +463,10 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
         );
         setAccessDenied(true);
         setSelectedTaskDetail(null);
-        return;
+        return null;
       }
       console.error('Failed to refresh selected task detail:', error);
+      return null;
     }
   };
 
