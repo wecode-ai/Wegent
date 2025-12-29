@@ -1256,7 +1256,7 @@ async def list_service_keys(
     current_user: User = Depends(get_admin_user),
 ):
     """
-    Get list of all service keys (admin only).
+    Get list of all service keys (admin only), including disabled ones.
 
     Service keys are used for trusted service authentication.
     """
@@ -1264,7 +1264,6 @@ async def list_service_keys(
         db.query(APIKey)
         .filter(
             APIKey.key_type == KEY_TYPE_SERVICE,
-            APIKey.is_active == True,
         )
         .order_by(APIKey.created_at.desc())
         .all()
@@ -1330,6 +1329,40 @@ async def create_service_key(
         created_at=service_key.created_at,
         is_active=service_key.is_active,
     )
+
+
+@router.post("/service-keys/{key_id}/toggle-status", response_model=ServiceKeyResponse)
+async def toggle_service_key_status(
+    key_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Toggle a service key's active status (admin only).
+
+    Enable or disable a service key without deleting it.
+    """
+    service_key = (
+        db.query(APIKey)
+        .filter(
+            APIKey.id == key_id,
+            APIKey.key_type == KEY_TYPE_SERVICE,
+        )
+        .first()
+    )
+
+    if not service_key:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Service key not found",
+        )
+
+    # Toggle is_active status
+    service_key.is_active = not service_key.is_active
+    db.commit()
+    db.refresh(service_key)
+
+    return ServiceKeyResponse.model_validate(service_key)
 
 
 @router.delete("/service-keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT)

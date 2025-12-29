@@ -9,6 +9,7 @@ export interface ApiKey {
   id: number;
   name: string;
   key_prefix: string;
+  description?: string | null;
   expires_at: string;
   last_used_at: string;
   created_at: string;
@@ -21,6 +22,7 @@ export interface ApiKeyCreated extends ApiKey {
 
 export interface ApiKeyCreateRequest {
   name: string;
+  description?: string;
 }
 
 export interface ApiKeyListResponse {
@@ -43,6 +45,13 @@ export const apiKeyApis = {
    */
   async createApiKey(data: ApiKeyCreateRequest): Promise<ApiKeyCreated> {
     return apiClient.post('/api-keys', data);
+  },
+
+  /**
+   * Toggle API key active status
+   */
+  async toggleApiKeyStatus(keyId: number): Promise<ApiKey> {
+    return apiClient.post(`/api-keys/${keyId}/toggle-status`);
   },
 
   /**

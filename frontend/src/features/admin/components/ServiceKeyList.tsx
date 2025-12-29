@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { Switch } from '@/components/ui/switch'
 import { KeyIcon, TrashIcon, ClipboardDocumentIcon, CheckIcon } from '@heroicons/react/24/outline'
 import { Loader2 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
@@ -42,6 +43,7 @@ const ServiceKeyList: React.FC = () => {
   const [loading, setLoading] = useState(true)
   const [deleteConfirmKey, setDeleteConfirmKey] = useState<ServiceKey | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [togglingKeyId, setTogglingKeyId] = useState<number | null>(null)
 
   // Create dialog state
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
@@ -125,6 +127,27 @@ const ServiceKeyList: React.FC = () => {
     }
   }
 
+  const handleToggleStatus = async (serviceKey: ServiceKey) => {
+    setTogglingKeyId(serviceKey.id)
+    try {
+      const updated = await adminApis.toggleServiceKeyStatus(serviceKey.id)
+      setServiceKeys(prev => prev.map(k => (k.id === updated.id ? updated : k)))
+      toast({
+        title: updated.is_active
+          ? t('service_keys.enabled_success')
+          : t('service_keys.disabled_success'),
+      })
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: t('service_keys.errors.toggle_failed'),
+        description: (error as Error).message,
+      })
+    } finally {
+      setTogglingKeyId(null)
+    }
+  }
+
   const handleDelete = async () => {
     if (!deleteConfirmKey) return
 
@@ -197,10 +220,15 @@ const ServiceKeyList: React.FC = () => {
         {!loading && serviceKeys.length > 0 && (
           <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 p-1">
             {serviceKeys.map(serviceKey => (
-              <Card key={serviceKey.id} className="p-4 bg-base hover:bg-hover transition-colors">
+              <Card
+                key={serviceKey.id}
+                className={`p-4 bg-base hover:bg-hover transition-colors ${!serviceKey.is_active ? 'opacity-60' : ''}`}
+              >
                 <div className="flex items-center justify-between min-w-0">
                   <div className="flex items-center gap-3 min-w-0 flex-1">
-                    <KeyIcon className="w-5 h-5 text-primary flex-shrink-0" />
+                    <KeyIcon
+                      className={`w-5 h-5 flex-shrink-0 ${serviceKey.is_active ? 'text-primary' : 'text-text-muted'}`}
+                    />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="font-medium text-text-primary truncate">
@@ -209,6 +237,11 @@ const ServiceKeyList: React.FC = () => {
                         <code className="text-xs bg-muted px-1.5 py-0.5 rounded text-text-secondary">
                           {serviceKey.key_prefix}
                         </code>
+                        {!serviceKey.is_active && (
+                          <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-text-muted">
+                            {t('service_keys.status_disabled')}
+                          </span>
+                        )}
                       </div>
                       {serviceKey.description && (
                         <p className="text-sm text-text-muted mt-0.5 truncate">
@@ -231,7 +264,17 @@ const ServiceKeyList: React.FC = () => {
                       </div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-1 flex-shrink-0 ml-3">
+                  <div className="flex items-center gap-2 flex-shrink-0 ml-3">
+                    <Switch
+                      checked={serviceKey.is_active}
+                      onCheckedChange={() => handleToggleStatus(serviceKey)}
+                      disabled={togglingKeyId === serviceKey.id}
+                      title={
+                        serviceKey.is_active
+                          ? t('service_keys.disable')
+                          : t('service_keys.enable')
+                      }
+                    />
                     <Button
                       variant="ghost"
                       size="icon"

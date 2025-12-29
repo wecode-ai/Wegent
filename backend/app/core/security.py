@@ -388,7 +388,7 @@ def get_wegent_source_header(
     if not wegent_source:
         return None
 
-    # First, check database for service keys
+    # Check database for service keys
     from app.models.api_key import APIKey, KEY_TYPE_SERVICE
 
     key_hash = hashlib.sha256(wegent_source.encode()).hexdigest()
@@ -407,15 +407,6 @@ def get_wegent_source_header(
         if service_key.expires_at < datetime.utcnow():
             return None
         return wegent_source
-
-    # Fallback: check configuration-based trusted sources for backward compatibility
-    trusted_sources_str = settings.API_TRUSTED_SOURCES
-    if trusted_sources_str:
-        trusted_sources = [
-            s.strip() for s in trusted_sources_str.split(",") if s.strip()
-        ]
-        if wegent_source in trusted_sources:
-            return wegent_source
 
     return None
 
@@ -446,7 +437,7 @@ def get_current_user_from_trusted_source(
     # Import here to avoid circular imports
     from app.models.api_key import APIKey, KEY_TYPE_SERVICE
 
-    # First, verify the service key in database
+    # Verify the service key in database
     key_hash = hashlib.sha256(wegent_source.encode()).hexdigest()
     service_key = (
         db.query(APIKey)
@@ -458,40 +449,20 @@ def get_current_user_from_trusted_source(
         .first()
     )
 
-    if service_key:
-        # Check expiration
-        if service_key.expires_at < datetime.utcnow():
-            return None
-
-        # Update last_used_at
-        service_key.last_used_at = datetime.utcnow()
-        db.commit()
-
-        # Look up the user by username
-        user = user_service.get_user_by_name(db=db, user_name=wegent_username)
-        if user and user.is_active:
-            return user
+    if not service_key:
         return None
 
-    # Fallback: check configuration-based trusted sources for backward compatibility
-    trusted_sources_str = settings.API_TRUSTED_SOURCES
-    if not trusted_sources_str:
+    # Check expiration
+    if service_key.expires_at < datetime.utcnow():
         return None
 
-    # Parse trusted sources (comma-separated list)
-    trusted_sources = [s.strip() for s in trusted_sources_str.split(",") if s.strip()]
-
-    # Verify the source is in the whitelist
-    if wegent_source not in trusted_sources:
-        return None
+    # Update last_used_at
+    service_key.last_used_at = datetime.utcnow()
+    db.commit()
 
     # Look up the user by username
     user = user_service.get_user_by_name(db=db, user_name=wegent_username)
-    if not user:
-        return None
+    if user and user.is_active:
+        return user
 
-    # Verify user is active
-    if not user.is_active:
-        return None
-
-    return user
+    return None

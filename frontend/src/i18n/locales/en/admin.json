@@ -259,13 +259,19 @@
     "never_expires": "Never expires",
     "create_success": "Service key created successfully",
     "delete_success": "Service key deleted successfully",
+    "enabled_success": "Service key enabled",
+    "disabled_success": "Service key disabled",
     "warning_save_key": "Please save this key securely. It will only be shown once!",
     "delete_confirm_title": "Confirm Deletion",
     "delete_confirm_message": "Are you sure you want to delete service key \"{{name}}\"? Related services will no longer be able to use this key.",
+    "status_disabled": "Disabled",
+    "enable": "Enable",
+    "disable": "Disable",
     "errors": {
       "load_failed": "Failed to load service keys",
       "create_failed": "Failed to create service key",
       "delete_failed": "Failed to delete service key",
+      "toggle_failed": "Failed to toggle service key status",
       "name_required": "Key name is required"
     }
   }

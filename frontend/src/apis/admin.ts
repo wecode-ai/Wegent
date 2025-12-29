@@ -309,6 +309,13 @@ export const adminApis = {
   },
 
   /**
+   * Toggle service key active status
+   */
+  async toggleServiceKeyStatus(keyId: number): Promise<ServiceKey> {
+    return apiClient.post(`/admin/service-keys/${keyId}/toggle-status`);
+  },
+
+  /**
    * Delete a service key
    */
   async deleteServiceKey(keyId: number): Promise<void> {

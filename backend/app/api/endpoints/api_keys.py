@@ -31,12 +31,11 @@ async def list_api_keys(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
-    """Get all personal API keys for the current user."""
+    """Get all personal API keys for the current user (including disabled ones)."""
     keys = (
         db.query(APIKey)
         .filter(
             APIKey.user_id == current_user.id,
-            APIKey.is_active == True,
             APIKey.key_type == KEY_TYPE_PERSONAL,
         )
         .order_by(APIKey.created_at.desc())
@@ -97,6 +96,37 @@ async def create_api_key(
         created_at=api_key.created_at,
         is_active=api_key.is_active,
     )
+
+
+@router.post("/{key_id}/toggle-status", response_model=APIKeyResponse)
+async def toggle_api_key_status(
+    key_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Toggle a personal API key's active status (enable/disable)."""
+    api_key = (
+        db.query(APIKey)
+        .filter(
+            APIKey.id == key_id,
+            APIKey.user_id == current_user.id,
+            APIKey.key_type == KEY_TYPE_PERSONAL,
+        )
+        .first()
+    )
+
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="API key not found",
+        )
+
+    # Toggle is_active status
+    api_key.is_active = not api_key.is_active
+    db.commit()
+    db.refresh(api_key)
+
+    return APIKeyResponse.model_validate(api_key)
 
 
 @router.delete("/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
