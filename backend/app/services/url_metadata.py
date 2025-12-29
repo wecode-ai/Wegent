@@ -111,19 +111,25 @@ def _is_host_blocked(hostname: str) -> bool:
     # Check against blocked hostnames
     hostname_lower = hostname.lower()
     for blocked_host in BLOCKED_HOSTS:
-        if hostname_lower == blocked_host or hostname_lower.endswith("." + blocked_host):
+        if hostname_lower == blocked_host or hostname_lower.endswith(
+            "." + blocked_host
+        ):
             logger.warning(f"Blocked request to known internal hostname: {hostname}")
             return True
 
     # Try to resolve the hostname
     try:
         # Get all IP addresses for the hostname
-        addr_info = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        addr_info = socket.getaddrinfo(
+            hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM
+        )
 
         for family, type_, proto, canonname, sockaddr in addr_info:
             ip_str = sockaddr[0]
             if _is_ip_blocked(ip_str):
-                logger.warning(f"Blocked request to internal IP: {hostname} -> {ip_str}")
+                logger.warning(
+                    f"Blocked request to internal IP: {hostname} -> {ip_str}"
+                )
                 return True
 
         return False
@@ -172,7 +178,9 @@ def _validate_url_for_ssrf(url: str) -> bool:
         return False
 
 
-def _extract_meta_content(html: str, property_name: str, attr: str = "property") -> Optional[str]:
+def _extract_meta_content(
+    html: str, property_name: str, attr: str = "property"
+) -> Optional[str]:
     """Extract content from meta tag"""
     # Try different patterns
     patterns = [
@@ -275,6 +283,7 @@ async def fetch_url_metadata(url: str) -> UrlMetadataResult:
             cached = redis_client.get(cache_key)
             if cached:
                 import json
+
                 data = json.loads(cached)
                 return UrlMetadataResult(**data)
         except Exception as e:
@@ -304,12 +313,17 @@ async def fetch_url_metadata(url: str) -> UrlMetadataResult:
                 # Re-validate the final URL after redirects for SSRF protection
                 final_url = str(response.url)
                 if final_url != url and not _validate_url_for_ssrf(final_url):
-                    logger.warning(f"Blocked redirect to internal URL: {url} -> {final_url}")
+                    logger.warning(
+                        f"Blocked redirect to internal URL: {url} -> {final_url}"
+                    )
                     return UrlMetadataResult(url=url, success=False)
 
                 # Check content type
                 content_type = response.headers.get("content-type", "")
-                if "text/html" not in content_type and "application/xhtml" not in content_type:
+                if (
+                    "text/html" not in content_type
+                    and "application/xhtml" not in content_type
+                ):
                     # Not an HTML page, return minimal result
                     result = UrlMetadataResult(url=url, success=True)
                     _cache_result(redis_client, url, result)
@@ -364,6 +378,7 @@ def _cache_result(redis_client, url: str, result: UrlMetadataResult):
 
     try:
         import json
+
         cache_key = _get_cache_key(url)
         redis_client.setex(
             cache_key,
