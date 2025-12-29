@@ -326,6 +326,10 @@ def sanitize_filename(name: str) -> str:
 @router.get("/{task_id}/export/docx", summary="Export task as DOCX")
 async def export_task_docx(
     task_id: int,
+    message_ids: Optional[str] = Query(
+        None,
+        description="Comma-separated list of message IDs to export. If not provided, exports all messages.",
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
@@ -334,11 +338,11 @@ async def export_task_docx(
 
     Returns a downloadable DOCX file containing:
     - Task title and metadata
-    - All subtask messages (user prompts and AI responses)
+    - All subtask messages (user prompts and AI responses), or filtered by message_ids
     - Formatted markdown content
     - Embedded images and attachment info
     """
-    from app.models.kind import Kind
+    from app.models.task import TaskResource
     from app.services.task_member_service import task_member_service
 
     # Check if user has access to the task (owner or group chat member)
@@ -347,11 +351,11 @@ async def export_task_docx(
 
     # Query task without user_id filter since we already validated access
     task = (
-        db.query(Kind)
+        db.query(TaskResource)
         .filter(
-            Kind.id == task_id,
-            Kind.kind == "Task",
-            Kind.is_active == True,
+            TaskResource.id == task_id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active == True,
         )
         .first()
     )
@@ -359,9 +363,22 @@ async def export_task_docx(
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
+    # Parse message_ids if provided
+    filter_message_ids: Optional[list[int]] = None
+    if message_ids:
+        try:
+            filter_message_ids = [
+                int(id.strip()) for id in message_ids.split(",") if id.strip()
+            ]
+        except ValueError as e:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid message_ids format. Must be comma-separated integers.",
+            ) from e
+
     try:
-        # Generate DOCX document
-        docx_buffer = generate_task_docx(task, db)
+        # Generate DOCX document with optional message filter
+        docx_buffer = generate_task_docx(task, db, message_ids=filter_message_ids)
 
         # Get task title for filename
         task_data = task.json.get("spec", {})

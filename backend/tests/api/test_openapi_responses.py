@@ -6,15 +6,17 @@
 API integration tests for OpenAPI v1/responses endpoints.
 """
 
-import pytest
 from datetime import datetime
 from unittest.mock import AsyncMock, patch
+
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.models.user import User
 from app.models.kind import Kind
-from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus, SenderType
+from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
+from app.models.task import TaskResource
+from app.models.user import User
 
 
 @pytest.fixture
@@ -31,7 +33,7 @@ def test_team(test_db: Session, test_user: User) -> Kind:
                     "botRef": {"name": "test-bot", "namespace": "default"},
                     "role": "worker",
                 }
-            ]
+            ],
         },
     }
     team = Kind(
@@ -145,7 +147,7 @@ def test_model(test_db: Session, test_user: User) -> Kind:
 
 
 @pytest.fixture
-def test_task(test_db: Session, test_user: User, test_team: Kind) -> Kind:
+def test_task(test_db: Session, test_user: User, test_team: Kind) -> TaskResource:
     """Create a test Task Kind."""
     task_json = {
         "apiVersion": "agent.wecode.io/v1",
@@ -176,7 +178,7 @@ def test_task(test_db: Session, test_user: User, test_team: Kind) -> Kind:
         },
     }
     # Don't set explicit id, let the database assign it
-    task = Kind(
+    task = TaskResource(
         user_id=test_user.id,
         kind="Task",
         name="task-test",
@@ -191,7 +193,9 @@ def test_task(test_db: Session, test_user: User, test_team: Kind) -> Kind:
 
 
 @pytest.fixture
-def test_subtasks(test_db: Session, test_user: User, test_task: Kind, test_team: Kind) -> list:
+def test_subtasks(
+    test_db: Session, test_user: User, test_task: TaskResource, test_team: Kind
+) -> list:
     """Create test subtasks for a task."""
     user_subtask = Subtask(
         user_id=test_user.id,
@@ -355,7 +359,11 @@ class TestOpenAPIResponsesCreate:
         test_public_shell: Kind,
     ):
         """Test successful synchronous response creation."""
-        from app.schemas.openapi_response import ResponseObject, OutputMessage, OutputTextContent
+        from app.schemas.openapi_response import (
+            OutputMessage,
+            OutputTextContent,
+            ResponseObject,
+        )
 
         mock_check_direct_chat.return_value = True
         mock_response = ResponseObject(
@@ -487,9 +495,7 @@ class TestOpenAPIResponsesGet:
         assert response.status_code == 400
         assert "Invalid response_id format" in response.json()["detail"]
 
-    def test_get_response_not_found(
-        self, test_client: TestClient, test_token: str
-    ):
+    def test_get_response_not_found(self, test_client: TestClient, test_token: str):
         """Test get response fails when response not found."""
         response = test_client.get(
             "/api/v1/responses/resp_99999",
@@ -509,7 +515,7 @@ class TestOpenAPIResponsesGet:
         self,
         test_client: TestClient,
         test_token: str,
-        test_task: Kind,
+        test_task: TaskResource,
         test_subtasks: list,
     ):
         """Test successful response retrieval."""
@@ -528,7 +534,7 @@ class TestOpenAPIResponsesGet:
         self,
         test_client: TestClient,
         test_admin_token: str,
-        test_task: Kind,
+        test_task: TaskResource,
     ):
         """Test users cannot access other users' responses."""
         response = test_client.get(
@@ -567,9 +573,7 @@ class TestOpenAPIResponsesCancel:
         assert response.status_code == 400
         assert "Invalid response_id format" in response.json()["detail"]
 
-    def test_cancel_response_not_found(
-        self, test_client: TestClient, test_token: str
-    ):
+    def test_cancel_response_not_found(self, test_client: TestClient, test_token: str):
         """Test cancel response fails when response not found."""
         response = test_client.post(
             "/api/v1/responses/resp_99999/cancel",
@@ -585,7 +589,7 @@ class TestOpenAPIResponsesCancel:
 
         assert response.status_code == 401
 
-    @patch("app.services.chat_v2.storage.session_manager")
+    @patch("app.services.chat.storage.session_manager")
     def test_cancel_response_chat_shell_success(
         self,
         mock_session_manager,
@@ -620,7 +624,7 @@ class TestOpenAPIResponsesCancel:
                 "updatedAt": datetime.now().isoformat(),
             },
         }
-        task = Kind(
+        task = TaskResource(
             user_id=test_user.id,
             kind="Task",
             name="task-running",
@@ -657,7 +661,9 @@ class TestOpenAPIResponsesCancel:
         test_db.refresh(running_subtask)
 
         # Mock session_manager methods
-        mock_session_manager.get_streaming_content = AsyncMock(return_value="Partial content")
+        mock_session_manager.get_streaming_content = AsyncMock(
+            return_value="Partial content"
+        )
         mock_session_manager.cancel_stream = AsyncMock()
 
         response = test_client.post(
@@ -698,9 +704,7 @@ class TestOpenAPIResponsesDelete:
         assert response.status_code == 400
         assert "Invalid response_id format" in response.json()["detail"]
 
-    def test_delete_response_not_found(
-        self, test_client: TestClient, test_token: str
-    ):
+    def test_delete_response_not_found(self, test_client: TestClient, test_token: str):
         """Test delete response fails when response not found."""
         response = test_client.delete(
             "/api/v1/responses/resp_99999",
@@ -749,7 +753,7 @@ class TestOpenAPIResponsesDelete:
                 "completedAt": datetime.now().isoformat(),
             },
         }
-        task = Kind(
+        task = TaskResource(
             user_id=test_user.id,
             kind="Task",
             name="task-to-delete",
@@ -784,7 +788,7 @@ class TestOpenAPIResponsesDelete:
         self,
         test_client: TestClient,
         test_admin_token: str,
-        test_task: Kind,
+        test_task: TaskResource,
     ):
         """Test user isolation on delete.
 
@@ -843,8 +847,8 @@ class TestOpenAPIResponsesHelpers:
 
     def test_extract_input_text_list(self):
         """Test extracting input text from list."""
-        from app.services.openapi.helpers import extract_input_text
         from app.schemas.openapi_response import InputItem
+        from app.services.openapi.helpers import extract_input_text
 
         input_list = [
             InputItem(role="user", content="First message"),
@@ -863,8 +867,8 @@ class TestOpenAPIResponsesHelpers:
 
     def test_parse_wegent_tools_deep_thinking(self):
         """Test parsing tools with deep thinking enabled."""
-        from app.services.openapi.helpers import parse_wegent_tools
         from app.schemas.openapi_response import WegentTool
+        from app.services.openapi.helpers import parse_wegent_tools
 
         tools = [WegentTool(type="wegent_deep_thinking")]
         result = parse_wegent_tools(tools)

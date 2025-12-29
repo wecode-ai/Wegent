@@ -18,6 +18,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.core.config import settings
 from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Bot, Ghost, Model, Shell, Task, Team, Workspace
 from app.schemas.subtask import SubtaskExecutorUpdate
@@ -31,7 +32,7 @@ class ExecutorKindsService(
     BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecutorUpdate]
 ):
     """
-    Executor service class using kinds table for Task operations
+    Executor service class using tasks table for Task operations
     """
 
     async def dispatch_tasks(
@@ -44,7 +45,7 @@ class ExecutorKindsService(
         type: str = "online",
     ) -> Dict[str, List[Dict]]:
         """
-        Task dispatch logic with subtask support using kinds table
+        Task dispatch logic with subtask support using tasks table
 
         Args:
             status: Subtask status to filter by
@@ -58,11 +59,13 @@ class ExecutorKindsService(
             subtasks = []
 
             for task_id in task_ids:
-                # First query kinds table to check task status
+                # First query tasks table to check task status
                 task = (
-                    db.query(Kind)
+                    db.query(TaskResource)
                     .filter(
-                        Kind.id == task_id, Kind.kind == "Task", Kind.is_active == True
+                        TaskResource.id == task_id,
+                        TaskResource.kind == "Task",
+                        TaskResource.is_active == True,
                     )
                     .params(type=type)
                     .first()
@@ -128,15 +131,15 @@ class ExecutorKindsService(
     def _get_first_subtasks_for_tasks(
         self, db: Session, status: str, limit: int, type: str
     ) -> List[Subtask]:
-        """Get first subtask for multiple tasks using kinds table"""
-        # Step 1: First query kinds table to get limit tasks
+        """Get first subtask for multiple tasks using tasks table"""
+        # Step 1: First query tasks table to get limit tasks
         tasks = None
         if type == "offline":
             tasks = (
-                db.query(Kind)
+                db.query(TaskResource)
                 .filter(
-                    Kind.kind == "Task",
-                    Kind.is_active == True,
+                    TaskResource.kind == "Task",
+                    TaskResource.is_active == True,
                     text(
                         "JSON_EXTRACT(json, '$.metadata.labels.type') = 'offline' "
                         "and JSON_EXTRACT(json, '$.status.status') = :status "
@@ -144,16 +147,16 @@ class ExecutorKindsService(
                     ),
                 )
                 .params(status=status)
-                .order_by(Kind.created_at.desc())
+                .order_by(TaskResource.created_at.desc())
                 .limit(limit)
                 .all()
             )
         else:
             tasks = (
-                db.query(Kind)
+                db.query(TaskResource)
                 .filter(
-                    Kind.kind == "Task",
-                    Kind.is_active == True,
+                    TaskResource.kind == "Task",
+                    TaskResource.is_active == True,
                     text(
                         "(JSON_EXTRACT(json, '$.metadata.labels.type') IS NULL OR JSON_EXTRACT(json, '$.metadata.labels.type') = 'online') "
                         "and JSON_EXTRACT(json, '$.status.status') = :status "
@@ -161,7 +164,7 @@ class ExecutorKindsService(
                     ),
                 )
                 .params(status=status)
-                .order_by(Kind.created_at.desc())
+                .order_by(TaskResource.created_at.desc())
                 .limit(limit)
                 .all()
             )
@@ -230,10 +233,14 @@ class ExecutorKindsService(
         return updated_subtasks
 
     def _update_task_to_running(self, db: Session, task_id: int) -> None:
-        """Update task status to RUNNING (only when task is PENDING) using kinds table"""
+        """Update task status to RUNNING (only when task is PENDING) using tasks table"""
         task = (
-            db.query(Kind)
-            .filter(Kind.id == task_id, Kind.kind == "Task", Kind.is_active == True)
+            db.query(TaskResource)
+            .filter(
+                TaskResource.id == task_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active == True,
+            )
             .first()
         )
 
@@ -734,13 +741,13 @@ class ExecutorKindsService(
                 aggregated_prompt += (
                     f"\nPrevious execution result: {previous_subtask_results}"
                 )
-            # Get task information from kinds table
+            # Get task information from tasks table
             task = (
-                db.query(Kind)
+                db.query(TaskResource)
                 .filter(
-                    Kind.id == subtask.task_id,
-                    Kind.kind == "Task",
-                    Kind.is_active == True,
+                    TaskResource.id == subtask.task_id,
+                    TaskResource.kind == "Task",
+                    TaskResource.is_active == True,
                 )
                 .first()
             )
@@ -752,13 +759,13 @@ class ExecutorKindsService(
 
             # Get workspace information
             workspace = (
-                db.query(Kind)
+                db.query(TaskResource)
                 .filter(
-                    Kind.user_id == task.user_id,
-                    Kind.kind == "Workspace",
-                    Kind.name == task_crd.spec.workspaceRef.name,
-                    Kind.namespace == task_crd.spec.workspaceRef.namespace,
-                    Kind.is_active == True,
+                    TaskResource.user_id == task.user_id,
+                    TaskResource.kind == "Workspace",
+                    TaskResource.name == task_crd.spec.workspaceRef.name,
+                    TaskResource.namespace == task_crd.spec.workspaceRef.namespace,
+                    TaskResource.is_active == True,
                 )
                 .first()
             )
@@ -1034,14 +1041,14 @@ class ExecutorKindsService(
         if subtask_update.subtask_title:
             subtask.title = subtask_update.subtask_title
 
-        # Update task title (if provided) using kinds table
+        # Update task title (if provided) using tasks table
         if subtask_update.task_title:
             task = (
-                db.query(Kind)
+                db.query(TaskResource)
                 .filter(
-                    Kind.id == subtask.task_id,
-                    Kind.kind == "Task",
-                    Kind.is_active == True,
+                    TaskResource.id == subtask.task_id,
+                    TaskResource.kind == "Task",
+                    TaskResource.is_active == True,
                 )
                 .first()
             )
@@ -1123,11 +1130,15 @@ class ExecutorKindsService(
         }
 
     def _update_task_status_based_on_subtasks(self, db: Session, task_id: int) -> None:
-        """Update task status based on subtask status using kinds table"""
-        # Get task from kinds table
+        """Update task status based on subtask status using tasks table"""
+        # Get task from tasks table
         task = (
-            db.query(Kind)
-            .filter(Kind.id == task_id, Kind.kind == "Task", Kind.is_active == True)
+            db.query(TaskResource)
+            .filter(
+                TaskResource.id == task_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active == True,
+            )
             .first()
         )
         if not task:

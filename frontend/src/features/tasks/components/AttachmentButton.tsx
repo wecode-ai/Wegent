@@ -6,9 +6,11 @@
 
 import React, { useRef, useCallback } from 'react';
 import { Paperclip } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { ActionButton } from '@/components/ui/action-button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { SUPPORTED_EXTENSIONS, MAX_FILE_SIZE } from '@/apis/attachments';
+
+import { useTranslation } from '@/hooks/useTranslation';
 
 interface AttachmentButtonProps {
   /** Callback when files are selected */
@@ -20,11 +22,13 @@ interface AttachmentButtonProps {
 /**
  * Attachment upload button component
  * Only responsible for showing the upload button and handling file selection
+ * Uses ActionButton for consistent 36px size with other control buttons
  */
 export default function AttachmentButton({
   onFileSelect,
   disabled = false,
 }: AttachmentButtonProps) {
+  const { t } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [tooltipOpen, setTooltipOpen] = React.useState(false);
 
@@ -74,7 +78,9 @@ export default function AttachmentButton({
   const acceptString = SUPPORTED_EXTENSIONS.join(',');
 
   // Tooltip content
-  const tooltipContent = `支持的文件类型: PDF, Word, PPT, Excel, TXT, Markdown, 图片(JPG, PNG, GIF, BMP, WebP)\n最大文件大小: ${MAX_FILE_SIZE / (1024 * 1024)} MB\n支持多文件同时上传`;
+  const tooltipContent = t('chat:upload.tooltip', {
+    maxSize: MAX_FILE_SIZE / (1024 * 1024),
+  });
 
   return (
     <div onDragOver={handleDragOver} onDrop={handleDrop}>
@@ -93,16 +99,15 @@ export default function AttachmentButton({
       <TooltipProvider delayDuration={300}>
         <Tooltip open={tooltipOpen} onOpenChange={setTooltipOpen}>
           <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-              onClick={handleClick}
-              disabled={disabled}
-              className="h-9 w-9 rounded-full border-border bg-base text-text-primary hover:bg-hover"
-            >
-              <Paperclip className="h-4 w-4" />
-            </Button>
+            <div>
+              <ActionButton
+                variant="outline"
+                onClick={handleClick}
+                disabled={disabled}
+                icon={<Paperclip className="h-4 w-4" />}
+                className="border-border bg-base text-text-primary hover:bg-hover"
+              />
+            </div>
           </TooltipTrigger>
           <TooltipContent side="top" className="max-w-xs whitespace-pre-line">
             <p>{tooltipContent}</p>

@@ -131,6 +131,23 @@ def extract_input_text(input_data: Union[str, List[InputItem]]) -> str:
     return ""
 
 
+# Shell types that support direct chat (bypass executor)
+DIRECT_CHAT_SHELL_TYPES = ["Chat"]
+
+
+def is_direct_chat_shell(shell_type: str) -> bool:
+    """
+    Check if the shell type supports direct chat.
+
+    Args:
+        shell_type: The shell type to check
+
+    Returns:
+        bool: True if the shell type supports direct chat
+    """
+    return shell_type in DIRECT_CHAT_SHELL_TYPES
+
+
 def check_team_supports_direct_chat(db: Session, team: Kind, user_id: int) -> bool:
     """
     Check if the team supports direct chat mode.
@@ -146,8 +163,6 @@ def check_team_supports_direct_chat(db: Session, team: Kind, user_id: int) -> bo
     Returns:
         True if team supports direct chat
     """
-    from app.services.chat_v2.utils.http import ChatServiceBase
-
     team_crd = Team.model_validate(team.json)
 
     for member in team_crd.spec.members:
@@ -203,7 +218,7 @@ def check_team_supports_direct_chat(db: Session, team: Kind, user_id: int) -> bo
         shell_crd = Shell.model_validate(shell.json)
         shell_type = shell_crd.spec.shellType
 
-        if not ChatServiceBase.is_direct_chat_shell(shell_type):
+        if not is_direct_chat_shell(shell_type):
             return False
 
     return True

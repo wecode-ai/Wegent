@@ -31,7 +31,7 @@ export function DeleteKnowledgeBaseDialog({
   onConfirm,
   loading,
 }: DeleteKnowledgeBaseDialogProps) {
-  const { t } = useTranslation('knowledge');
+  const { t } = useTranslation();
 
   // Check if knowledge base has documents
   const hasDocuments = !!(knowledgeBase && knowledgeBase.document_count > 0);
@@ -52,11 +52,11 @@ export function DeleteKnowledgeBaseDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{t('document.knowledgeBase.delete')}</DialogTitle>
+          <DialogTitle>{t('knowledge:document.knowledgeBase.delete')}</DialogTitle>
           <DialogDescription>
             {hasDocuments
-              ? t('document.knowledgeBase.cannotDeleteWithDocuments')
-              : t('document.knowledgeBase.confirmDelete')}
+              ? t('knowledge:document.knowledgeBase.cannotDeleteWithDocuments')
+              : t('knowledge:document.knowledgeBase.confirmDelete')}
           </DialogDescription>
         </DialogHeader>
         {knowledgeBase && (
@@ -64,7 +64,7 @@ export function DeleteKnowledgeBaseDialog({
             <p className="text-text-primary font-medium">{knowledgeBase.name}</p>
             {hasDocuments && (
               <p className="text-sm text-error mt-2">
-                {t('document.knowledgeBase.deleteWarning', {
+                {t('knowledge:document.knowledgeBase.deleteWarning', {
                   count: knowledgeBase.document_count,
                 })}
               </p>

@@ -69,7 +69,14 @@ async def create_streaming_response(
 
     # Set up chat session (config, task, subtasks)
     setup = setup_chat_session(
-        db, user, team, model_info, input_text, tool_settings, task_id, api_trusted_source
+        db,
+        user,
+        team,
+        model_info,
+        input_text,
+        tool_settings,
+        task_id,
+        api_trusted_source,
     )
 
     response_id = f"resp_{setup.task_id}"
@@ -89,10 +96,10 @@ async def create_streaming_response(
         from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
         from app.api.dependencies import get_db as get_db_session
+        from app.chat_shell.messages import MessageConverter
+        from app.chat_shell.models import LangChainModelFactory
         from app.core.config import settings
-        from app.services.chat_v2.messages import MessageConverter
-        from app.services.chat_v2.models import LangChainModelFactory
-        from app.services.chat_v2.storage import db_handler, session_manager
+        from app.services.chat.storage import db_handler, session_manager
 
         accumulated_content = ""
         db_gen = next(get_db_session())
@@ -130,7 +137,7 @@ async def create_streaming_response(
             # Add web search tool if deep thinking enabled and system config allows
             if enable_deep_thinking and settings.WEB_SEARCH_ENABLED:
                 try:
-                    from app.services.chat_v2.tools import WebSearchTool
+                    from app.chat_shell.tools import WebSearchTool
 
                     extra_tools.append(WebSearchTool())
                     logger.info(
@@ -144,8 +151,8 @@ async def create_streaming_response(
 
             if use_agent:
                 # Use LangGraph agent for tool support
-                from app.services.chat_v2.agents import LangGraphAgentBuilder
-                from app.services.chat_v2.tools import ToolRegistry
+                from app.chat_shell.agents import LangGraphAgentBuilder
+                from app.chat_shell.tools import ToolRegistry
 
                 llm = LangChainModelFactory.create_from_config(
                     setup.model_config, streaming=True
@@ -212,7 +219,9 @@ async def create_streaming_response(
                 except Exception as e:
                     logger.error(f"Failed to create LLM from model config: {e}")
                     await db_handler.update_subtask_status(
-                        assistant_subtask_id, "FAILED", error=f"Failed to create LLM: {e}"
+                        assistant_subtask_id,
+                        "FAILED",
+                        error=f"Failed to create LLM: {e}",
                     )
                     return
 
@@ -374,14 +383,21 @@ async def create_sync_response(
     from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
     from sqlalchemy.orm.attributes import flag_modified
 
+    from app.chat_shell.messages import MessageConverter
+    from app.chat_shell.models import LangChainModelFactory
     from app.core.config import settings
-    from app.services.chat_v2.messages import MessageConverter
-    from app.services.chat_v2.models import LangChainModelFactory
-    from app.services.chat_v2.storage import db_handler, session_manager
+    from app.services.chat.storage import db_handler, session_manager
 
     # Set up chat session (config, task, subtasks)
     setup = setup_chat_session(
-        db, user, team, model_info, input_text, tool_settings, task_id, api_trusted_source
+        db,
+        user,
+        team,
+        model_info,
+        input_text,
+        tool_settings,
+        task_id,
+        api_trusted_source,
     )
 
     response_id = f"resp_{setup.task_id}"
@@ -426,7 +442,7 @@ async def create_sync_response(
         # Add web search tool if deep thinking enabled and system config allows
         if enable_deep_thinking and settings.WEB_SEARCH_ENABLED:
             try:
-                from app.services.chat_v2.tools import WebSearchTool
+                from app.chat_shell.tools import WebSearchTool
 
                 extra_tools.append(WebSearchTool())
                 logger.info(
@@ -440,8 +456,8 @@ async def create_sync_response(
 
         if use_agent:
             # Use LangGraph agent for tool support
-            from app.services.chat_v2.agents import LangGraphAgentBuilder
-            from app.services.chat_v2.tools import ToolRegistry
+            from app.chat_shell.agents import LangGraphAgentBuilder
+            from app.chat_shell.tools import ToolRegistry
 
             llm = LangChainModelFactory.create_from_config(
                 setup.model_config, streaming=True

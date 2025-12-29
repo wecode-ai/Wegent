@@ -5,8 +5,9 @@
 'use client';
 
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
-import { Check, FileText } from 'lucide-react';
+import { Check, FileText, ArrowRight } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import Link from 'next/link';
 import {
   Command,
   CommandEmpty,
@@ -67,7 +68,7 @@ function KnowledgeBaseItem({ kb, isSelected, onSelect, t }: KnowledgeBaseItemPro
             </span>
           )}
           <span className="text-xs text-text-muted mt-0.5">
-            {kb.document_count || 0} {t('documents')}
+            {kb.document_count || 0} {t('knowledge:documents')}
           </span>
         </div>
       </div>
@@ -94,7 +95,7 @@ export default function ContextSelector({
   onDeselect,
   children,
 }: ContextSelectorProps) {
-  const { t } = useTranslation('knowledge');
+  const { t } = useTranslation();
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -108,7 +109,7 @@ export default function ContextSelector({
       setKnowledgeBases(response.items);
     } catch (error) {
       console.error('Failed to fetch knowledge bases:', error);
-      setError(t('fetch_error'));
+      setError(t('knowledge:fetch_error'));
     } finally {
       setLoading(false);
     }
@@ -142,6 +143,7 @@ export default function ContextSelector({
         description: kb.description ?? undefined,
         retriever_name: kb.retrieval_config?.retriever_name,
         retriever_namespace: kb.retrieval_config?.retriever_namespace,
+        document_count: kb.document_count,
       };
       onSelect(context);
     }
@@ -171,7 +173,7 @@ export default function ContextSelector({
       >
         <Command className="border-0 flex flex-col flex-1 min-h-0 overflow-hidden">
           <CommandInput
-            placeholder={t('search_placeholder')}
+            placeholder={t('knowledge:search_placeholder')}
             value={searchValue}
             onValueChange={setSearchValue}
             className={cn(
@@ -195,9 +197,17 @@ export default function ContextSelector({
                 </button>
               </div>
             ) : sortedKnowledgeBases.length === 0 ? (
-              <CommandEmpty className="py-4 text-center text-sm text-text-muted">
-                {t('no_knowledge_bases')}
-              </CommandEmpty>
+              <div className="py-6 px-4 text-center">
+                <p className="text-sm text-text-muted mb-3">{t('knowledge:no_knowledge_bases')}</p>
+                <Link
+                  href="/knowledge"
+                  onClick={() => onOpenChange(false)}
+                  className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 font-medium transition-colors"
+                >
+                  {t('knowledge:go_to_create')}
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </Link>
+              </div>
             ) : (
               <>
                 <CommandEmpty className="py-4 text-center text-sm text-text-muted">

@@ -22,8 +22,8 @@ import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import MarkdownEditor from '@uiw/react-markdown-editor';
-import ThinkingComponent from './ThinkingComponent';
-import InlineToolStatus from './InlineToolStatus';
+import MarkdownWithMermaid from '@/components/common/MarkdownWithMermaid';
+import { ThinkingDisplay } from './thinking';
 import ClarificationForm from '../clarification/ClarificationForm';
 import FinalPromptMessage from './FinalPromptMessage';
 import ClarificationAnswerSummary from '../clarification/ClarificationAnswerSummary';
@@ -35,6 +35,7 @@ import type { ClarificationData, FinalPromptData, ClarificationAnswer } from '@/
 import type { SourceReference } from '@/types/socket';
 import { useTraceAction } from '@/hooks/useTraceAction';
 import { useMessageFeedback } from '@/hooks/useMessageFeedback';
+import { SmartLink, SmartImage, SmartTextLine } from '@/components/common/SmartUrlRenderer';
 export interface Message {
   type: 'user' | 'ai';
   content: string;
@@ -121,6 +122,8 @@ export interface MessageBubbleProps {
   isCurrentUserMessage?: boolean;
   /** Callback when user clicks retry button for failed messages */
   onRetry?: (message: Message) => void;
+  /** Message type for feedback storage key differentiation */
+  feedbackMessageType?: 'original' | 'correction';
 }
 
 // Component for rendering a paragraph with hover action button
@@ -231,6 +234,7 @@ const MessageBubble = memo(
     paragraphAction,
     isCurrentUserMessage,
     onRetry,
+    feedbackMessageType,
   }: MessageBubbleProps) {
     // Use trace hook for telemetry (auto-includes user and task context)
     const { trace } = useTraceAction();
@@ -239,10 +243,12 @@ const MessageBubble = memo(
     const { feedback, handleLike, handleDislike } = useMessageFeedback({
       subtaskId: msg.subtaskId,
       timestamp: msg.timestamp,
+      messageType: feedbackMessageType,
       onFeedbackChange: fb =>
         trace.event('message-feedback', {
           'feedback.type': fb ?? 'cancelled',
           'feedback.message_type': msg.type,
+          'feedback.category': feedbackMessageType || 'original',
           ...(msg.subtaskId && { 'subtask.id': msg.subtaskId }),
         }),
     });
@@ -273,8 +279,36 @@ const MessageBubble = memo(
     };
 
     const timestampLabel = formatTimestamp(msg.timestamp);
-    const headerIcon = isUserTypeMessage ? null : <Bot className="w-4 h-4" />;
+    const headerIcon = isUserTypeMessage ? null : msg.botName === t('correction.result_title') ? (
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="24"
+        height="24"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="lucide lucide-circle-check-big h-4 w-4 text-primary"
+        aria-hidden="true"
+      >
+        <path d="M21.801 10A10 10 0 1 1 17 3.335"></path>
+        <path d="m9 11 3 3L22 4"></path>
+      </svg>
+    ) : (
+      <Bot className="w-4 h-4" />
+    );
     const headerLabel = isUserTypeMessage ? '' : msg.botName || t('messages.bot') || 'Bot';
+
+    // Determine if message is currently streaming (to disable URL metadata fetching)
+    // During streaming, we show simple links to avoid excessive API calls
+    const isStreaming =
+      msg.subtaskStatus === 'RUNNING' ||
+      msg.subtaskStatus === 'PENDING' ||
+      msg.subtaskStatus === 'PROCESSING' ||
+      isWaiting ||
+      msg.isWaiting;
 
     const renderProgressBar = (status: string, progress: number) => {
       const normalizedStatus = (status ?? '').toUpperCase();
@@ -425,18 +459,26 @@ const MessageBubble = memo(
 
       return (
         <>
-          <MarkdownEditor.Markdown
+          <MarkdownWithMermaid
             source={normalizedResult}
-            style={{ background: 'transparent' }}
-            wrapperElement={{ 'data-color-mode': theme }}
+            theme={theme}
             components={
               paragraphAction
                 ? {
-                    a: ({ href, children, ...props }) => (
-                      <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                        {children}
-                      </a>
-                    ),
+                    a: ({ href, children }) => {
+                      if (!href) {
+                        return <span>{children}</span>;
+                      }
+                      return (
+                        <SmartLink href={href} disabled={isStreaming}>
+                          {children}
+                        </SmartLink>
+                      );
+                    },
+                    img: ({ src, alt }) => {
+                      if (!src || typeof src !== 'string') return null;
+                      return <SmartImage src={src} alt={alt} />;
+                    },
                     p: ({ children }) => {
                       const text = extractText(children);
                       return wrapWithAction(<p>{children}</p>, text);
@@ -475,11 +517,20 @@ const MessageBubble = memo(
                     },
                   }
                 : {
-                    a: ({ href, children, ...props }) => (
-                      <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                        {children}
-                      </a>
-                    ),
+                    a: ({ href, children }) => {
+                      if (!href) {
+                        return <span>{children}</span>;
+                      }
+                      return (
+                        <SmartLink href={href} disabled={isStreaming}>
+                          {children}
+                        </SmartLink>
+                      );
+                    },
+                    img: ({ src, alt }) => {
+                      if (!src || typeof src !== 'string') return null;
+                      return <SmartImage src={src} alt={alt} />;
+                    },
                   }
             }
           />
@@ -510,8 +561,8 @@ const MessageBubble = memo(
             onLike={handleLike}
             onDislike={handleDislike}
             feedbackLabels={{
-              like: t('messages.like') || 'Like',
-              dislike: t('messages.dislike') || 'Dislike',
+              like: t('chat:messages.like') || 'Like',
+              dislike: t('chat:messages.dislike') || 'Dislike',
             }}
           />
         </>
@@ -644,12 +695,9 @@ const MessageBubble = memo(
           return <React.Fragment key={idx}>{renderProgressBar(status, progress)}</React.Fragment>;
         }
 
-        // Use non-breaking space for empty lines to preserve line height
-        return (
-          <div key={idx} className="text-sm break-all min-h-[1.25em]">
-            {line || '\u00A0'}
-          </div>
-        );
+        // Use SmartTextLine to detect and render URLs (images and links) in plain text
+        // Pass disabled={isStreaming} to avoid metadata fetching during streaming
+        return <SmartTextLine key={idx} text={line} disabled={isStreaming} />;
       });
     };
     // Helper function to parse Markdown clarification questions
@@ -955,11 +1003,20 @@ const MessageBubble = memo(
                   style={{ background: 'transparent' }}
                   wrapperElement={{ 'data-color-mode': theme }}
                   components={{
-                    a: ({ href, children, ...props }) => (
-                      <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                        {children}
-                      </a>
-                    ),
+                    a: ({ href, children }) => {
+                      if (!href) {
+                        return <span>{children}</span>;
+                      }
+                      return (
+                        <SmartLink href={href} disabled={isStreaming}>
+                          {children}
+                        </SmartLink>
+                      );
+                    },
+                    img: ({ src, alt }) => {
+                      if (!src || typeof src !== 'string') return null;
+                      return <SmartImage src={src} alt={alt} />;
+                    },
                   }}
                 />
               )}
@@ -979,11 +1036,20 @@ const MessageBubble = memo(
                     style={{ background: 'transparent' }}
                     wrapperElement={{ 'data-color-mode': theme }}
                     components={{
-                      a: ({ href, children, ...props }) => (
-                        <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                          {children}
-                        </a>
-                      ),
+                      a: ({ href, children }) => {
+                        if (!href) {
+                          return <span>{children}</span>;
+                        }
+                        return (
+                          <SmartLink href={href} disabled={isStreaming}>
+                            {children}
+                          </SmartLink>
+                        );
+                      },
+                      img: ({ src, alt }) => {
+                        if (!src || typeof src !== 'string') return null;
+                        return <SmartImage src={src} alt={alt} />;
+                      },
                     }}
                   />
                 </div>
@@ -1089,11 +1155,20 @@ const MessageBubble = memo(
                 style={{ background: 'transparent' }}
                 wrapperElement={{ 'data-color-mode': theme }}
                 components={{
-                  a: ({ href, children, ...props }) => (
-                    <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                      {children}
-                    </a>
-                  ),
+                  a: ({ href, children }) => {
+                    if (!href) {
+                      return <span>{children}</span>;
+                    }
+                    return (
+                      <SmartLink href={href} disabled={isStreaming}>
+                        {children}
+                      </SmartLink>
+                    );
+                  },
+                  img: ({ src, alt }) => {
+                    if (!src || typeof src !== 'string') return null;
+                    return <SmartImage src={src} alt={alt} />;
+                  },
                 }}
               />
             )}
@@ -1113,11 +1188,20 @@ const MessageBubble = memo(
                   style={{ background: 'transparent' }}
                   wrapperElement={{ 'data-color-mode': theme }}
                   components={{
-                    a: ({ href, children, ...props }) => (
-                      <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                        {children}
-                      </a>
-                    ),
+                    a: ({ href, children }) => {
+                      if (!href) {
+                        return <span>{children}</span>;
+                      }
+                      return (
+                        <SmartLink href={href} disabled={isStreaming}>
+                          {children}
+                        </SmartLink>
+                      );
+                    },
+                    img: ({ src, alt }) => {
+                      if (!src || typeof src !== 'string') return null;
+                      return <SmartImage src={src} alt={alt} />;
+                    },
                   }}
                 />
               </div>
@@ -1176,16 +1260,24 @@ const MessageBubble = memo(
         <div className="space-y-2">
           {contentToRender ? (
             <>
-              <MarkdownEditor.Markdown
+              <MarkdownWithMermaid
                 source={contentToRender}
-                style={{ background: 'transparent' }}
-                wrapperElement={{ 'data-color-mode': theme }}
+                theme={theme}
                 components={{
-                  a: ({ href, children, ...props }) => (
-                    <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                      {children}
-                    </a>
-                  ),
+                  a: ({ href, children }) => {
+                    if (!href) {
+                      return <span>{children}</span>;
+                    }
+                    return (
+                      <SmartLink href={href} disabled={isStreaming}>
+                        {children}
+                      </SmartLink>
+                    );
+                  },
+                  img: ({ src, alt }) => {
+                    if (!src || typeof src !== 'string') return null;
+                    return <SmartImage src={src} alt={alt} />;
+                  },
                 }}
               />
               {/* Show copy and download buttons during streaming */}
@@ -1255,15 +1347,15 @@ const MessageBubble = memo(
     return (
       <div className={`flex ${shouldAlignRight ? 'justify-end' : 'justify-start'}`} translate="no">
         <div
-          className={`flex ${shouldAlignRight ? 'max-w-[75%] w-auto' : isUserTypeMessage ? 'max-w-[75%] w-auto' : 'w-full'} flex-col gap-3 ${shouldAlignRight ? 'items-end' : 'items-start'}`}
+          className={`flex ${shouldAlignRight ? 'max-w-[75%] w-auto' : isUserTypeMessage ? 'max-w-[75%] w-auto' : 'w-full'} flex-col ${shouldAlignRight ? 'items-end' : 'items-start'}`}
         >
-          {/* Show inline tool status for Chat shell type only */}
-          {!isUserTypeMessage && msg.thinking && msg.result?.shell_type === 'Chat' && (
-            <InlineToolStatus thinking={msg.thinking} taskStatus={msg.subtaskStatus} />
-          )}
-          {/* Show thinking component for all other cases (non-Chat shell types or legacy data without shell_type) */}
-          {msg.type === 'ai' && msg.thinking && msg.result?.shell_type !== 'Chat' && (
-            <ThinkingComponent thinking={msg.thinking} taskStatus={msg.subtaskStatus} />
+          {/* Show thinking display for AI messages */}
+          {!isUserTypeMessage && msg.thinking && (
+            <ThinkingDisplay
+              thinking={msg.thinking}
+              taskStatus={msg.subtaskStatus}
+              shellType={msg.result?.shell_type}
+            />
           )}
           <div
             className={`${bubbleBaseClasses} ${bubbleTypeClasses}`}
@@ -1313,7 +1405,9 @@ const MessageBubble = memo(
                   <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
                   <div className="flex-1">
                     <p className="text-sm text-red-800 dark:text-red-200">
-                      {onRetry ? t('errors.request_failed_retry') : t('errors.model_unsupported')}
+                      {onRetry
+                        ? t('chat:errors.request_failed_retry')
+                        : t('chat:errors.model_unsupported')}
                     </p>
                   </div>
                 </div>

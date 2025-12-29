@@ -9,14 +9,14 @@ import { CircleStop } from 'lucide-react';
 import ModelSelector, { Model } from '../selector/ModelSelector';
 import RepositorySelector from '../selector/RepositorySelector';
 import BranchSelector from '../selector/BranchSelector';
-import DeepThinkingToggle from './DeepThinkingToggle';
 import ClarificationToggle from '../clarification/ClarificationToggle';
+import CorrectionModeToggle from '../CorrectionModeToggle';
 import ChatContextInput from '../chat/ChatContextInput';
 import AttachmentButton from '../AttachmentButton';
 import SendButton from './SendButton';
 import LoadingDots from '../message/LoadingDots';
 import QuotaUsage from '../params/QuotaUsage';
-import { Button } from '@/components/ui/button';
+import { ActionButton } from '@/components/ui/action-button';
 import type {
   Team,
   GitRepoInfo,
@@ -48,6 +48,11 @@ export interface ChatInputControlsProps {
   setEnableDeepThinking: (value: boolean) => void;
   enableClarification: boolean;
   setEnableClarification: (value: boolean) => void;
+
+  // Correction mode
+  enableCorrectionMode?: boolean;
+  correctionModelName?: string | null;
+  onCorrectionModeToggle?: (enabled: boolean, modelId?: string, modelName?: string) => void;
 
   // Context selection (knowledge bases)
   selectedContexts: ContextItem[];
@@ -104,10 +109,11 @@ export function ChatInputControls({
   selectedBranch,
   setSelectedBranch,
   selectedTaskDetail,
-  enableDeepThinking,
-  setEnableDeepThinking,
   enableClarification,
   setEnableClarification,
+  enableCorrectionMode = false,
+  correctionModelName,
+  onCorrectionModeToggle,
   selectedContexts,
   setSelectedContexts,
   attachmentState: _attachmentState,
@@ -142,22 +148,24 @@ export function ChatInputControls({
     if (isStreaming || isStopping) {
       if (isStopping) {
         return (
-          <div className="relative h-6 w-6 flex items-center justify-center flex-shrink-0 translate-y-0.5">
-            <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
-            <CircleStop className="h-4 w-4 text-orange-500" />
-          </div>
+          <ActionButton
+            variant="loading"
+            icon={
+              <>
+                <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
+                <CircleStop className="h-4 w-4 text-orange-500" />
+              </>
+            }
+          />
         );
       }
       return (
-        <Button
-          variant="ghost"
-          size="icon"
+        <ActionButton
           onClick={onStopStream}
-          className="h-6 w-6 rounded-full hover:bg-orange-100 flex-shrink-0 translate-y-0.5"
           title="Stop generating"
-        >
-          <CircleStop className="h-5 w-5 text-orange-500" />
-        </Button>
+          icon={<CircleStop className="h-4 w-4 text-orange-500" />}
+          className="hover:bg-orange-100"
+        />
       );
     }
 
@@ -173,25 +181,21 @@ export function ChatInputControls({
 
     // For non-group-chat tasks with PENDING status, show loading animation
     if (selectedTaskDetail?.status === 'PENDING') {
-      return (
-        <Button
-          variant="ghost"
-          size="icon"
-          disabled
-          className="h-6 w-6 rounded-full flex-shrink-0 translate-y-0.5"
-        >
-          <LoadingDots />
-        </Button>
-      );
+      return <ActionButton disabled variant="loading" icon={<LoadingDots />} />;
     }
 
     // CANCELLING status
     if (selectedTaskDetail?.status === 'CANCELLING') {
       return (
-        <div className="relative h-6 w-6 flex items-center justify-center flex-shrink-0 translate-y-0.5">
-          <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
-          <CircleStop className="h-5 w-5 text-orange-500" />
-        </div>
+        <ActionButton
+          variant="loading"
+          icon={
+            <>
+              <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
+              <CircleStop className="h-4 w-4 text-orange-500" />
+            </>
+          }
+        />
       );
     }
 
@@ -226,6 +230,17 @@ export function ChatInputControls({
             enabled={enableClarification}
             onToggle={setEnableClarification}
             disabled={isLoading || isStreaming}
+          />
+        )}
+
+        {/* Correction Mode Toggle Button - only show for chat shell */}
+        {isChatShell(selectedTeam) && onCorrectionModeToggle && (
+          <CorrectionModeToggle
+            enabled={enableCorrectionMode}
+            onToggle={onCorrectionModeToggle}
+            disabled={isLoading || isStreaming}
+            correctionModelName={correctionModelName}
+            taskId={selectedTaskDetail?.id ?? null}
           />
         )}
 
@@ -272,14 +287,14 @@ export function ChatInputControls({
           <QuotaUsage className="flex-shrink-0" compact={shouldUseCompactQuota} />
         )}
 
-        {/* Deep Thinking Toggle Button - only show for chat shell */}
-        {isChatShell(selectedTeam) && (
+        {/* Deep Thinking Toggle Button - hidden for now */}
+        {/* {isChatShell(selectedTeam) && (
           <DeepThinkingToggle
             enabled={enableDeepThinking}
             onToggle={setEnableDeepThinking}
             disabled={isLoading || isStreaming}
           />
-        )}
+        )} */}
 
         {/* Send/Stop Button */}
         {renderSendButton()}

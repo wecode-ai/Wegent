@@ -31,7 +31,7 @@ export function DocumentItem({
   selected = false,
   onSelect,
 }: DocumentItemProps) {
-  const { t } = useTranslation('knowledge');
+  const { t } = useTranslation();
 
   const formatFileSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`;
@@ -123,12 +123,21 @@ export function DocumentItem({
         <span className="text-xs text-text-muted">{formatDateTime(document.created_at)}</span>
       </div>
 
+      {/* Index status (is_active) */}
+      <div className="w-16 flex-shrink-0 text-center">
+        <Badge variant={document.is_active ? 'success' : 'warning'} size="sm">
+          {document.is_active
+            ? t('knowledge:document.document.indexStatus.available')
+            : t('knowledge:document.document.indexStatus.unavailable')}
+        </Badge>
+      </div>
+
       {/* Status badge */}
       <div className="w-16 flex-shrink-0 text-center">
         <Badge variant={document.status === 'enabled' ? 'success' : 'secondary'} size="sm">
           {document.status === 'enabled'
-            ? t('document.document.status.enabled')
-            : t('document.document.status.disabled')}
+            ? t('knowledge:document.document.status.enabled')
+            : t('knowledge:document.document.status.disabled')}
         </Badge>
       </div>
 
@@ -140,8 +149,8 @@ export function DocumentItem({
             onClick={handleToggleStatus}
             title={
               document.status === 'enabled'
-                ? t('document.document.disable')
-                : t('document.document.enable')
+                ? t('knowledge:document.document.disable')
+                : t('knowledge:document.document.enable')
             }
           >
             {document.status === 'enabled' ? (

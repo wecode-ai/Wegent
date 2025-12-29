@@ -48,10 +48,10 @@ export function RetrievalSettingsSection({
   scope,
   groupName,
 }: RetrievalSettingsSectionProps) {
-  const { t } = useTranslation('knowledge');
+  const { t } = useTranslation();
   const { retrievers, loading: loadingRetrievers } = useRetrievers(scope, groupName);
-  const { models: embeddingModels, loading: loadingModels } = useEmbeddingModels();
-  const { methods: retrievalMethods } = useRetrievalMethods();
+  const { models: embeddingModels, loading: loadingModels } = useEmbeddingModels(scope, groupName);
+  const { methods: retrievalMethods, loading: loadingMethods } = useRetrievalMethods();
 
   const [topK, setTopK] = useState(config.top_k ?? 5);
   const [scoreThreshold, setScoreThreshold] = useState(config.score_threshold ?? 0.7);
@@ -66,11 +66,18 @@ export function RetrievalSettingsSection({
   }, [selectedRetriever, retrievalMethods]);
 
   // Ensure vector mode is selected if current mode is not available
+  // Only reset if retrievers AND retrieval methods are loaded and we have a valid selection
   useEffect(() => {
-    if (config.retrieval_mode && !availableModes.includes(config.retrieval_mode)) {
+    if (
+      !loadingRetrievers &&
+      !loadingMethods &&
+      selectedRetriever &&
+      config.retrieval_mode &&
+      !availableModes.includes(config.retrieval_mode)
+    ) {
       onChange({ ...config, retrieval_mode: 'vector' });
     }
-  }, [availableModes, config, onChange]);
+  }, [availableModes, config, onChange, loadingRetrievers, loadingMethods, selectedRetriever]);
 
   // Auto-select first retriever if data exists and no selection
   useEffect(() => {
@@ -173,14 +180,17 @@ export function RetrievalSettingsSection({
     <div className="space-y-4">
       {/* Retriever Selection */}
       <div className="space-y-2">
-        <Label htmlFor="retriever">{t('document.retrieval.retriever')}</Label>
+        <Label htmlFor="retriever">{t('knowledge:document.retrieval.retriever')}</Label>
         {loadingRetrievers ? (
           <div className="text-sm text-text-secondary">{t('common:actions.loading')}</div>
         ) : retrievers.length === 0 ? (
           <div className="space-y-2">
-            <p className="text-sm text-warning">{t('document.retrieval.noRetriever')}</p>
-            <Link href="/settings" className="text-sm text-primary hover:underline">
-              {t('document.goToSettings')}
+            <p className="text-sm text-warning">{t('knowledge:document.retrieval.noRetriever')}</p>
+            <Link
+              href="/settings?section=personal&tab=personal-retrievers"
+              className="text-sm text-primary hover:underline"
+            >
+              {t('knowledge:document.goToSettings')}
             </Link>
           </div>
         ) : (
@@ -188,7 +198,7 @@ export function RetrievalSettingsSection({
             <SearchableSelect
               value={config.retriever_name || ''}
               onValueChange={handleRetrieverChange}
-              placeholder={t('document.retrieval.retrieverSelect')}
+              placeholder={t('knowledge:document.retrieval.retrieverSelect')}
               disabled={isRetrieverDisabled}
               items={retrievers.map(retriever => ({
                 value: retriever.name,
@@ -196,7 +206,7 @@ export function RetrievalSettingsSection({
               }))}
             />
             <p className="text-xs text-text-muted">
-              {t('document.retrieval.retrieverHint')}
+              {t('knowledge:document.retrieval.retrieverHint')}
             </p>
           </>
         )}
@@ -204,16 +214,19 @@ export function RetrievalSettingsSection({
 
       {/* Embedding Model Selection */}
       <div className="space-y-2">
-        <Label htmlFor="embedding-model">{t('document.retrieval.embeddingModel')}</Label>
+        <Label htmlFor="embedding-model">{t('knowledge:document.retrieval.embeddingModel')}</Label>
         {loadingModels ? (
           <div className="text-sm text-text-secondary">{t('common:actions.loading')}</div>
         ) : embeddingModels.length === 0 ? (
           <div className="space-y-2">
             <p className="text-sm text-warning">
-              {t('document.retrieval.noEmbeddingModel')}
+              {t('knowledge:document.retrieval.noEmbeddingModel')}
             </p>
-            <Link href="/settings" className="text-sm text-primary hover:underline">
-              {t('document.goToSettings')}
+            <Link
+              href="/settings?section=personal&tab=personal-models"
+              className="text-sm text-primary hover:underline"
+            >
+              {t('knowledge:document.goToSettings')}
             </Link>
           </div>
         ) : (
@@ -221,7 +234,7 @@ export function RetrievalSettingsSection({
             <SearchableSelect
               value={config.embedding_config?.model_name || ''}
               onValueChange={handleEmbeddingModelChange}
-              placeholder={t('document.retrieval.embeddingModelSelect')}
+              placeholder={t('knowledge:document.retrieval.embeddingModelSelect')}
               disabled={isEmbeddingDisabled}
               items={embeddingModels.map(model => ({
                 value: model.name,
@@ -229,7 +242,7 @@ export function RetrievalSettingsSection({
               }))}
             />
             <p className="text-xs text-text-muted">
-              {t('document.retrieval.embeddingModelHint')}
+              {t('knowledge:document.retrieval.embeddingModelHint')}
             </p>
           </>
         )}
@@ -237,7 +250,7 @@ export function RetrievalSettingsSection({
 
       {/* Retrieval Mode */}
       <div className="space-y-2">
-        <Label>{t('document.retrieval.retrievalMode')}</Label>
+        <Label>{t('knowledge:document.retrieval.retrievalMode')}</Label>
         <RadioGroup
           value={config.retrieval_mode || 'vector'}
           onValueChange={handleRetrievalModeChange}
@@ -247,7 +260,7 @@ export function RetrievalSettingsSection({
             <div className="flex items-center space-x-2">
               <RadioGroupItem value="vector" id="mode-vector" />
               <Label htmlFor="mode-vector" className="font-normal cursor-pointer">
-                {t('document.retrieval.vector')}
+                {t('knowledge:document.retrieval.vector')}
               </Label>
             </div>
           )}
@@ -255,7 +268,7 @@ export function RetrievalSettingsSection({
             <div className="flex items-center space-x-2">
               <RadioGroupItem value="keyword" id="mode-keyword" />
               <Label htmlFor="mode-keyword" className="font-normal cursor-pointer">
-                {t('document.retrieval.keyword')}
+                {t('knowledge:document.retrieval.keyword')}
               </Label>
             </div>
           )}
@@ -263,7 +276,7 @@ export function RetrievalSettingsSection({
             <div className="flex items-center space-x-2">
               <RadioGroupItem value="hybrid" id="mode-hybrid" />
               <Label htmlFor="mode-hybrid" className="font-normal cursor-pointer">
-                {t('document.retrieval.hybrid')}
+                {t('knowledge:document.retrieval.hybrid')}
               </Label>
             </div>
           )}
@@ -285,14 +298,14 @@ export function RetrievalSettingsSection({
           step={1}
           disabled={isOtherSettingsDisabled}
         />
-        <p className="text-xs text-text-muted">{t('document.retrieval.topKHint')}</p>
+        <p className="text-xs text-text-muted">{t('knowledge:document.retrieval.topKHint')}</p>
       </div>
 
       {/* Score Threshold Slider */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <Label htmlFor="score-threshold">
-            Score {t('document.retrieval.threshold')}
+            Score {t('knowledge:document.retrieval.threshold')}
           </Label>
           <span className="text-sm text-text-secondary font-medium">
             {scoreThreshold.toFixed(2)}
@@ -308,22 +321,22 @@ export function RetrievalSettingsSection({
           disabled={isOtherSettingsDisabled}
         />
         <p className="text-xs text-text-muted">
-          {t('document.retrieval.scoreThresholdHint')}
+          {t('knowledge:document.retrieval.scoreThresholdHint')}
         </p>
       </div>
 
       {/* Hybrid Weights (only when hybrid mode is selected) */}
       {config.retrieval_mode === 'hybrid' && (
         <div className="space-y-3 p-4 border border-border rounded-lg bg-bg-muted">
-          <Label>{t('document.retrieval.hybridWeights')}</Label>
+          <Label>{t('knowledge:document.retrieval.hybridWeights')}</Label>
           <DualWeightSlider
             value={vectorWeight}
             onChange={handleWeightChange}
-            leftLabel={t('document.retrieval.semanticWeight')}
-            rightLabel={t('document.retrieval.keywordWeight')}
+            leftLabel={t('knowledge:document.retrieval.semanticWeight')}
+            rightLabel={t('knowledge:document.retrieval.keywordWeight')}
             disabled={isOtherSettingsDisabled}
           />
-          <p className="text-xs text-text-muted">{t('document.retrieval.weightSum')}</p>
+          <p className="text-xs text-text-muted">{t('knowledge:document.retrieval.weightSum')}</p>
         </div>
       )}
     </div>

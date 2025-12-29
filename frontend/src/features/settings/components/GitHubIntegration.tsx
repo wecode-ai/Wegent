@@ -20,7 +20,7 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { useToast } from '@/hooks/use-toast';
 
 export default function GitHubIntegration() {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const { toast } = useToast();
   const { user, refresh } = useUser();
   const [gitInfo, setGitInfo] = useState<GitInfo[]>([]);
@@ -43,7 +43,7 @@ export default function GitHubIntegration() {
       } catch {
         toast({
           variant: 'destructive',
-          title: t('integrations.loading'),
+          title: t('common:integrations.loading'),
         });
         setGitInfo([]);
       } finally {
@@ -89,7 +89,7 @@ export default function GitHubIntegration() {
       if (!success) {
         toast({
           variant: 'destructive',
-          title: t('integrations.delete'),
+          title: t('common:integrations.delete'),
         });
         return;
       }
@@ -97,7 +97,7 @@ export default function GitHubIntegration() {
     } catch {
       toast({
         variant: 'destructive',
-        title: t('integrations.delete'),
+        title: t('common:integrations.delete'),
       });
     }
   };
@@ -105,12 +105,14 @@ export default function GitHubIntegration() {
   return (
     <div className="space-y-3">
       <div>
-        <h2 className="text-xl font-semibold text-text-primary mb-1">{t('integrations.title')}</h2>
-        <p className="text-sm text-text-muted mb-1">{t('integrations.description')}</p>
+        <h2 className="text-xl font-semibold text-text-primary mb-1">
+          {t('common:integrations.title')}
+        </h2>
+        <p className="text-sm text-text-muted mb-1">{t('common:integrations.description')}</p>
       </div>
       <div className="bg-base border border-border rounded-md p-2 space-y-1 max-h-[70vh] overflow-y-auto custom-scrollbar w-full">
         {isLoading ? (
-          <LoadingState fullScreen={false} message={t('integrations.loading')} />
+          <LoadingState fullScreen={false} message={t('common:integrations.loading')} />
         ) : (
           <>
             {platforms.length > 0 ? (
@@ -151,7 +153,7 @@ export default function GitHubIntegration() {
                         variant="ghost"
                         size="icon"
                         onClick={() => handleEdit(info)}
-                        title={t('integrations.edit_token')}
+                        title={t('common:integrations.edit_token')}
                         className="h-8 w-8"
                       >
                         <PencilIcon className="w-4 h-4" />
@@ -160,7 +162,7 @@ export default function GitHubIntegration() {
                         variant="ghost"
                         size="icon"
                         onClick={() => handleDelete(info)}
-                        title={t('integrations.delete')}
+                        title={t('common:integrations.delete')}
                         className="h-8 w-8 hover:text-error"
                       >
                         <TrashIcon className="w-4 h-4" />
@@ -174,12 +176,14 @@ export default function GitHubIntegration() {
               ))
             ) : (
               <div className="text-center text-text-muted py-4">
-                <p className="text-sm">{t('integrations.no_tokens')}</p>
+                <p className="text-sm">{t('common:integrations.no_tokens')}</p>
               </div>
             )}
             <div className="border-t border-border"></div>
             <div className="flex justify-center">
-              <UnifiedAddButton onClick={handleAdd}>{t('integrations.new_token')}</UnifiedAddButton>
+              <UnifiedAddButton onClick={handleAdd}>
+                {t('common:integrations.new_token')}
+              </UnifiedAddButton>
             </div>
           </>
         )}

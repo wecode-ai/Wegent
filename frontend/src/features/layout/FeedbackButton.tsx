@@ -16,7 +16,7 @@ export function FeedbackButton({
   onClick?: () => void;
   showLabel?: boolean;
 }) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
 
   const navigateToFeedback = () => {
     // Get feedback URL from environment variable or use default
@@ -38,10 +38,10 @@ export function FeedbackButton({
       type="button"
       onClick={navigateToFeedback}
       className={mergedClassName}
-      aria-label={t('navigation.feedback')}
+      aria-label={t('common:navigation.feedback')}
     >
       <MessageSquare className="h-4 w-4 text-text-muted" />
-      {showLabel && <span>{t('navigation.feedback')}</span>}
+      {showLabel && <span>{t('common:navigation.feedback')}</span>}
     </button>
   );
 }

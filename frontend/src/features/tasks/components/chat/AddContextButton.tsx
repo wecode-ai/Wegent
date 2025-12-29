@@ -5,40 +5,40 @@
 'use client';
 
 import React from 'react';
-import { ChevronDown } from 'lucide-react';
+import { ActionButton } from '@/components/ui/action-button';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useTranslation } from '@/hooks/useTranslation';
-import { cn } from '@/lib/utils';
 
 interface AddContextButtonProps {
-  hasSelection: boolean;
   onClick: () => void;
 }
 
 /**
- * Add Context Button - matches ModelSelector style
- * Shows "@ Add Context" when no selection, shows "@" only when has selection
+ * Add Context Button - Icon-only button that opens knowledge base selector
+ * Always displays "@" symbol with tooltip on hover
+ * Uses ActionButton for consistent 36px size with other control buttons
  */
-export default function AddContextButton({ hasSelection, onClick }: AddContextButtonProps) {
-  const { t } = useTranslation('knowledge');
+export default function AddContextButton({ onClick }: AddContextButtonProps) {
+  const { t } = useTranslation();
 
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        'flex items-center gap-1 min-w-0 rounded-full pl-2.5 pr-3 py-2.5 h-9',
-        'border transition-colors',
-        'border-border bg-base hover:bg-hover',
-        'focus:outline-none focus:ring-0'
-      )}
-    >
-      <span className="text-base font-medium text-text-primary flex-shrink-0">@</span>
-      {!hasSelection && (
-        <span className="truncate text-xs text-text-primary min-w-0">
-          {t('add_context')}
-        </span>
-      )}
-      <ChevronDown className="h-2.5 w-2.5 text-text-primary flex-shrink-0 opacity-60" />
-    </button>
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div>
+            <ActionButton
+              variant="outline"
+              onClick={onClick}
+              icon={<span className="text-base font-medium text-text-primary">@</span>}
+              title={t('knowledge:tooltip')}
+              className="border-border bg-base text-text-primary hover:bg-hover"
+            />
+          </div>
+        </TooltipTrigger>
+        <TooltipContent side="top">
+          <p>{t('knowledge:tooltip')}</p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }

@@ -18,6 +18,7 @@ from app.api.dependencies import get_db
 from app.core import security
 from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Bot, Task, Team
 from app.schemas.openapi_response import (
@@ -176,11 +177,11 @@ async def create_response(
 
             # Verify previous task exists and belongs to the current user
             existing_task = (
-                db.query(Kind)
+                db.query(TaskResource)
                 .filter(
-                    Kind.id == previous_task_id,
-                    Kind.kind == "Task",
-                    Kind.is_active == True,
+                    TaskResource.id == previous_task_id,
+                    TaskResource.kind == "Task",
+                    TaskResource.is_active == True,
                 )
                 .first()
             )
@@ -453,11 +454,11 @@ async def get_response(
 
     # Reconstruct model string from task team reference
     task_kind = (
-        db.query(Kind)
+        db.query(TaskResource)
         .filter(
-            Kind.id == task_id,
-            Kind.kind == "Task",
-            Kind.is_active == True,
+            TaskResource.id == task_id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active == True,
         )
         .first()
     )
@@ -503,7 +504,7 @@ async def cancel_response(
     """
     from sqlalchemy.orm.attributes import flag_modified
 
-    from app.services.chat_v2.storage import db_handler, session_manager
+    from app.services.chat.storage import db_handler, session_manager
 
     # Extract task_id from response_id
     if not response_id.startswith("resp_"):
@@ -522,11 +523,11 @@ async def cancel_response(
 
     # Get task to check if it's a Chat Shell type
     task_kind = (
-        db.query(Kind)
+        db.query(TaskResource)
         .filter(
-            Kind.id == task_id,
-            Kind.kind == "Task",
-            Kind.is_active == True,
+            TaskResource.id == task_id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active == True,
         )
         .first()
     )
@@ -598,7 +599,7 @@ async def cancel_response(
                 task_crd.status.errorMessage = ""
                 task_crd.status.updatedAt = datetime.now()
                 task_crd.status.completedAt = datetime.now()
-                task_crd.status.result =  {"value": partial_content or ""}
+                task_crd.status.result = {"value": partial_content or ""}
 
             task_kind.json = task_crd.model_dump(mode="json")
             task_kind.updated_at = datetime.now()
@@ -690,7 +691,7 @@ async def delete_response(
     Returns:
         ResponseDeletedObject confirming deletion
     """
-    from app.services.chat_v2.storage import session_manager
+    from app.services.chat.storage import session_manager
 
     # Extract task_id from response_id
     if not response_id.startswith("resp_"):
@@ -709,11 +710,11 @@ async def delete_response(
 
     # Get task to check if it's a Chat Shell type with running stream
     task_kind = (
-        db.query(Kind)
+        db.query(TaskResource)
         .filter(
-            Kind.id == task_id,
-            Kind.kind == "Task",
-            Kind.is_active == True,
+            TaskResource.id == task_id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active == True,
         )
         .first()
     )
@@ -754,9 +755,7 @@ async def delete_response(
                 # Clean up streaming content from Redis
                 await session_manager.delete_streaming_content(running_subtask.id)
                 await session_manager.unregister_stream(running_subtask.id)
-                logger.info(
-                    f"[DELETE] Stream stopped for subtask {running_subtask.id}"
-                )
+                logger.info(f"[DELETE] Stream stopped for subtask {running_subtask.id}")
 
     try:
         task_kinds_service.delete_task(db, task_id=task_id, user_id=current_user.id)

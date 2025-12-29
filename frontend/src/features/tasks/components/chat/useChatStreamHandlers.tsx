@@ -133,7 +133,7 @@ export function useChatStreamHandlers({
   selectedContexts = [],
 }: UseChatStreamHandlersOptions): ChatStreamHandlers {
   const { toast } = useToast();
-  const { t } = useTranslation('chat');
+  const { t } = useTranslation();
   const { user } = useUser();
   const { traceAction } = useTraceAction();
   const router = useRouter();
@@ -333,7 +333,7 @@ export function useChatStreamHandlers({
   const createRetryButton = useCallback(
     (onRetryClick: () => void) => (
       <Button variant="outline" size="sm" onClick={onRetryClick}>
-        {t('actions.retry') || '重试'}
+        {t('chat:actions.retry') || '重试'}
       </Button>
     ),
     [t]
@@ -349,8 +349,8 @@ export function useChatStreamHandlers({
       toast({
         variant: 'destructive',
         title: parsedError.retryable
-          ? t('errors.request_failed_retry')
-          : t('errors.model_unsupported'),
+          ? t('chat:errors.request_failed_retry')
+          : t('chat:errors.model_unsupported'),
         action: parsedError.retryable
           ? createRetryButton(() => {
               if (lastFailedMessageRef.current && handleSendMessageRef.current) {
@@ -561,7 +561,7 @@ export function useChatStreamHandlers({
       if (!message.subtaskId) {
         toast({
           variant: 'destructive',
-          title: t('errors.request_failed_retry'),
+          title: t('chat:errors.request_failed_retry'),
           description: 'Subtask ID not found',
         });
         return;
@@ -570,7 +570,7 @@ export function useChatStreamHandlers({
       if (!selectedTaskDetail?.id) {
         toast({
           variant: 'destructive',
-          title: t('errors.request_failed_retry'),
+          title: t('chat:errors.request_failed_retry'),
           description: 'Task ID not found',
         });
         return;
@@ -601,14 +601,14 @@ export function useChatStreamHandlers({
             if (result.error) {
               toast({
                 variant: 'destructive',
-                title: t('errors.request_failed_retry'),
+                title: t('chat:errors.request_failed_retry'),
               });
             }
           } catch (error) {
             console.error('[ChatStreamHandlers] Retry failed:', error);
             toast({
               variant: 'destructive',
-              title: t('errors.request_failed_retry'),
+              title: t('chat:errors.request_failed_retry'),
             });
             throw error;
           }

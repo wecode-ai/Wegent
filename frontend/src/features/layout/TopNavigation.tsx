@@ -36,7 +36,7 @@ export default function TopNavigation({
   onMembersChanged,
   isSidebarCollapsed = false,
 }: TopNavigationProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const isMobile = useIsMobile();
   const isDesktop = useIsDesktop();
 
@@ -59,7 +59,7 @@ export default function TopNavigation({
             type="button"
             className="lg:hidden p-2 rounded-md text-text-muted hover:text-text-primary hover:bg-muted focus:outline-none focus:ring-2 focus:ring-primary/40 bg-surface border border-border"
             onClick={onMobileSidebarToggle}
-            aria-label={t('common.open_sidebar')}
+            aria-label={t('common:common.open_sidebar')}
           >
             <Bars3Icon className={isMobile ? 'h-4 w-4' : 'h-5 w-5'} aria-hidden="true" />
           </button>
@@ -81,7 +81,12 @@ export default function TopNavigation({
 
         {/* Show task title dropdown when in with-sidebar variant */}
         {variant === 'with-sidebar' && (
-          <TaskTitleDropdown title={title} taskDetail={taskDetail} onTaskDeleted={onTaskDeleted} onMembersChanged={onMembersChanged} />
+          <TaskTitleDropdown
+            title={title}
+            taskDetail={taskDetail}
+            onTaskDeleted={onTaskDeleted}
+            onMembersChanged={onMembersChanged}
+          />
         )}
 
         {/* Show title as heading when explicitly provided and not in with-sidebar variant */}

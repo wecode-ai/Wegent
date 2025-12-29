@@ -52,11 +52,6 @@ async def lifespan(app: FastAPI):
     logger = _logger
 
     # ==================== STARTUP ====================
-    # Initialize chat service HTTP client
-    from app.services.chat.base import get_http_client
-
-    await get_http_client()
-    logger.info("✓ Chat service HTTP client initialized")
 
     # Try to get Redis client for distributed locking
     redis_client = None
@@ -230,13 +225,21 @@ async def lifespan(app: FastAPI):
     # Note: Chat namespace is already registered in create_socketio_asgi_app()
     logger.info("Initializing Socket.IO...")
     from app.core.socketio import get_sio
-    from app.services.chat.ws_emitter import init_ws_emitter as init_chat_emitter
-    from app.services.chat_v2.streaming import init_ws_emitter as init_chat_v2_emitter
+    from app.services.chat.ws_emitter import init_ws_emitter
 
     sio = get_sio()
-    init_chat_emitter(sio)
-    init_chat_v2_emitter(sio)
+    init_ws_emitter(sio)
     logger.info("✓ Socket.IO initialized")
+
+    # Initialize PendingRequestRegistry for skill frontend interactions
+    # This starts the Redis Pub/Sub listener for cross-worker communication
+    logger.info("Initializing PendingRequestRegistry...")
+    from app.chat_shell.tools import (
+        get_pending_request_registry,
+    )
+
+    await get_pending_request_registry()
+    logger.info("✓ PendingRequestRegistry initialized")
 
     logger.info("=" * 60)
     logger.info("Application startup completed successfully!")
@@ -283,15 +286,17 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("No active streams, proceeding with shutdown")
 
-    # Step 3: Close chat service HTTP client
-    from app.services.chat.base import close_http_client
-
-    await close_http_client()
-    logger.info("✓ Chat service HTTP client closed")
-
-    # Step 4: Stop background jobs
+    # Step 3: Stop background jobs
     stop_background_jobs(app)
     logger.info("✓ Background jobs stopped")
+
+    # Step 4: Shutdown PendingRequestRegistry
+    from app.chat_shell.tools import (
+        shutdown_pending_request_registry,
+    )
+
+    await shutdown_pending_request_registry()
+    logger.info("✓ PendingRequestRegistry shutdown completed")
 
     # Step 5: Shutdown OpenTelemetry
     from shared.telemetry.config import get_otel_config

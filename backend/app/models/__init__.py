@@ -14,6 +14,7 @@ from app.models.shared_team import SharedTeam
 from app.models.skill_binary import SkillBinary
 from app.models.subtask import Subtask
 from app.models.system_config import SystemConfig
+from app.models.task import TaskResource
 from app.models.task_member import TaskMember
 
 # Do NOT import Base here to avoid conflicts with app.db.base.Base
@@ -23,6 +24,7 @@ from app.models.user import User
 __all__ = [
     "User",
     "Kind",
+    "TaskResource",
     "Subtask",
     "SharedTeam",
     "SkillBinary",

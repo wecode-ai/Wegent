@@ -32,7 +32,7 @@ export function EditDocumentDialog({
   document,
   onSuccess,
 }: EditDocumentDialogProps) {
-  const { t } = useTranslation('knowledge');
+  const { t } = useTranslation();
   const [name, setName] = useState('');
   const [splitterConfig, setSplitterConfig] = useState<Partial<SplitterConfig>>({
     type: 'sentence',
@@ -50,12 +50,22 @@ export function EditDocumentDialog({
       setName(document.name);
       // Load existing splitter_config or use defaults
       if (document.splitter_config) {
-        setSplitterConfig({
-          type: document.splitter_config.type || 'sentence',
-          separator: document.splitter_config.separator ?? '\n\n',
-          chunk_size: document.splitter_config.chunk_size ?? 1024,
-          chunk_overlap: document.splitter_config.chunk_overlap ?? 50,
-        });
+        const config = document.splitter_config;
+        if (config.type === 'semantic') {
+          setSplitterConfig({
+            type: 'semantic',
+            buffer_size: config.buffer_size ?? 1,
+            breakpoint_percentile_threshold: config.breakpoint_percentile_threshold ?? 95,
+          });
+        } else {
+          // Default to sentence splitter
+          setSplitterConfig({
+            type: 'sentence',
+            separator: config.type === 'sentence' ? (config.separator ?? '\n\n') : '\n\n',
+            chunk_size: config.type === 'sentence' ? (config.chunk_size ?? 1024) : 1024,
+            chunk_overlap: config.type === 'sentence' ? (config.chunk_overlap ?? 50) : 50,
+          });
+        }
       } else {
         setSplitterConfig({
           type: 'sentence',
@@ -76,7 +86,7 @@ export function EditDocumentDialog({
 
     const trimmedName = name.trim();
     if (!trimmedName) {
-      setError(t('document.document.nameRequired'));
+      setError(t('knowledge:document.document.nameRequired'));
       return;
     }
 
@@ -90,7 +100,7 @@ export function EditDocumentDialog({
       });
       onSuccess();
     } catch (err) {
-      setError(t('document.document.updateFailed'));
+      setError(t('knowledge:document.document.updateFailed'));
       console.error('Failed to update document:', err);
     } finally {
       setLoading(false);
@@ -101,21 +111,21 @@ export function EditDocumentDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{t('document.document.edit')}</DialogTitle>
+          <DialogTitle>{t('knowledge:document.document.edit')}</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit}>
           <div className="py-4 space-y-6">
             {/* Document Name */}
             <div>
               <label className="block text-sm font-medium text-text-primary mb-1.5">
-                {t('document.document.columns.name')}
+                {t('knowledge:document.document.columns.name')}
               </label>
               <input
                 type="text"
                 value={name}
                 onChange={e => setName(e.target.value)}
                 className="w-full h-9 px-3 text-sm bg-surface border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
-                placeholder={t('document.document.namePlaceholder')}
+                placeholder={t('knowledge:document.document.namePlaceholder')}
                 autoFocus
               />
             </div>
@@ -132,9 +142,9 @@ export function EditDocumentDialog({
                 ) : (
                   <ChevronRight className="w-4 h-4" />
                 )}
-                {t('document.splitter.title')}
+                {t('knowledge:document.splitter.title')}
                 <span className="text-xs text-text-muted font-normal ml-auto">
-                  {t('document.advancedSettings.readOnly')}
+                  {t('knowledge:document.advancedSettings.readOnly')}
                 </span>
               </button>
 

@@ -30,7 +30,7 @@ interface EditGroupDialogProps {
 }
 
 export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroupDialogProps) {
-  const { t } = useTranslation('groups');
+  const { t } = useTranslation();
   const [formData, setFormData] = useState<GroupUpdate>({
     display_name: '',
     visibility: 'private',
@@ -76,7 +76,7 @@ export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroup
       };
 
       await updateGroup(group.name, payload);
-      toast.success(t('groups.messages.updateSuccess'));
+      toast.success(t('groups:groups.messages.updateSuccess'));
 
       onSuccess();
       onClose();
@@ -111,14 +111,14 @@ export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroup
       <form onSubmit={handleSubmit} className="space-y-4">
         {/* Name (read-only) */}
         <div>
-          <Label htmlFor="name">{t('groups.name')}</Label>
+          <Label htmlFor="name">{t('groups:groups.name')}</Label>
           <Input id="name" value={group.name} disabled className="bg-muted" />
-          <p className="text-xs text-text-muted mt-1">{t('groupCreate.nameImmutable')}</p>
+          <p className="text-xs text-text-muted mt-1">{t('groups:groupCreate.nameImmutable')}</p>
         </div>
 
         {/* Display Name */}
         <div>
-          <Label htmlFor="display_name">{t('groups.displayName')}</Label>
+          <Label htmlFor="display_name">{t('groups:groups.displayName')}</Label>
           <Input
             id="display_name"
             value={formData.display_name}
@@ -138,7 +138,7 @@ export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroup
 
         {/* Visibility */}
         <div>
-          <Label htmlFor="visibility">{t('groups.visibility')}</Label>
+          <Label htmlFor="visibility">{t('groups:groups.visibility')}</Label>
           <Select
             value={formData.visibility}
             onValueChange={(value: GroupVisibility) => {
@@ -155,30 +155,30 @@ export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroup
             <SelectContent>
               <SelectItem value="internal">
                 <div className="flex flex-col">
-                  <span>{t('groups.internal')}</span>
+                  <span>{t('groups:groups.internal')}</span>
                 </div>
               </SelectItem>
               <SelectItem value="public">
                 <div className="flex flex-col">
-                  <span>{t('groups.public')}</span>
+                  <span>{t('groups:groups.public')}</span>
                 </div>
               </SelectItem>
             </SelectContent>
           </Select>
           <p className="text-xs text-text-muted mt-1">
-            {formData.visibility === 'public' && t('groupCreate.visibilityPublicHint')}
-            {formData.visibility === 'internal' && t('groupCreate.visibilityInternalHint')}
+            {formData.visibility === 'public' && t('groups:groupCreate.visibilityPublicHint')}
+            {formData.visibility === 'internal' && t('groups:groupCreate.visibilityInternalHint')}
           </p>
         </div>
 
         {/* Description */}
         <div>
-          <Label htmlFor="description">{t('groups.description')}</Label>
+          <Label htmlFor="description">{t('groups:groups.description')}</Label>
           <Textarea
             id="description"
             value={formData.description}
             onChange={e => setFormData(prev => ({ ...prev, description: e.target.value }))}
-            placeholder={t('groupCreate.descriptionPlaceholder')}
+            placeholder={t('groups:groupCreate.descriptionPlaceholder')}
             rows={3}
             disabled={isSubmitting}
           />

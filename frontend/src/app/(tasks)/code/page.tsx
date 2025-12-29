@@ -47,7 +47,8 @@ export default function CodePage() {
   const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams();
 
   // Task context for workbench data
-  const { selectedTaskDetail, setSelectedTask, refreshTasks, refreshSelectedTaskDetail } = useTaskContext();
+  const { selectedTaskDetail, setSelectedTask, refreshTasks, refreshSelectedTaskDetail } =
+    useTaskContext();
 
   // Chat stream context for real-time workbench and thinking data
   const { getStreamState, clearAllStreams } = useChatStreamContext();

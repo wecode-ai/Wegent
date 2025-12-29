@@ -30,11 +30,13 @@ import type { Group } from '@/types/group';
 export type SettingsTabId =
   | 'personal-models'
   | 'personal-shells'
+  | 'personal-skills'
   | 'personal-team'
   | 'personal-retrievers'
   | 'group-manager'
   | 'group-models'
   | 'group-shells'
+  | 'group-skills'
   | 'group-team'
   | 'group-retrievers'
   | 'general'
@@ -121,6 +123,12 @@ export function SettingsTabNav({
         personalId: 'personal-shells',
         groupId: 'group-shells',
         label: t('settings.shells'),
+      },
+      {
+        key: 'skills',
+        personalId: 'personal-skills',
+        groupId: 'group-skills',
+        label: t('settings.skills'),
       },
       {
         key: 'retrievers',
@@ -276,7 +284,7 @@ export function SettingsTabNav({
               {groupsLoading ? (
                 <DropdownMenuItem disabled>{t('actions.loading')}</DropdownMenuItem>
               ) : groups.length === 0 ? (
-                <DropdownMenuItem disabled>{t('groupManager.noGroups')}</DropdownMenuItem>
+                <DropdownMenuItem disabled>{t('groups:groupManager.noGroups')}</DropdownMenuItem>
               ) : (
                 groups.map(group => (
                   <DropdownMenuItem
@@ -385,7 +393,7 @@ export function SettingsTabNav({
             {groupsLoading ? (
               <DropdownMenuItem disabled>{t('actions.loading')}</DropdownMenuItem>
             ) : groups.length === 0 ? (
-              <DropdownMenuItem disabled>{t('groupManager.noGroups')}</DropdownMenuItem>
+              <DropdownMenuItem disabled>{t('groups:groupManager.noGroups')}</DropdownMenuItem>
             ) : (
               groups.map(group => (
                 <DropdownMenuItem

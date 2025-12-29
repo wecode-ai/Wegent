@@ -938,27 +938,52 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         Returns:
             List of running task info dictionaries
         """
-        # Get all active tasks
-        all_tasks = (
-            db.query(Kind).filter(Kind.kind == "Task", Kind.is_active == True).all()
+        from sqlalchemy import func, or_
+
+        from app.models.task import TaskResource
+
+        # Use JSON queries to filter at database level instead of loading all tasks into memory
+        # This is much faster when there are many tasks
+        tasks = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.kind == "Task",
+                TaskResource.is_active == True,
+                # Filter by team reference using JSON path
+                func.json_unquote(
+                    func.json_extract(TaskResource.json, "$.spec.teamRef.name")
+                )
+                == team_name,
+                func.json_unquote(
+                    func.json_extract(TaskResource.json, "$.spec.teamRef.namespace")
+                )
+                == team_namespace,
+                # Filter by status using JSON path - only get PENDING or RUNNING tasks
+                or_(
+                    func.json_unquote(
+                        func.json_extract(TaskResource.json, "$.status.status")
+                    )
+                    == "PENDING",
+                    func.json_unquote(
+                        func.json_extract(TaskResource.json, "$.status.status")
+                    )
+                    == "RUNNING",
+                ),
+            )
+            .all()
         )
 
         running_tasks = []
-        for task in all_tasks:
+        for task in tasks:
             task_crd = Task.model_validate(task.json)
-            if (
-                task_crd.spec.teamRef.name == team_name
-                and task_crd.spec.teamRef.namespace == team_namespace
-            ):
-                if task_crd.status and task_crd.status.status in ["PENDING", "RUNNING"]:
-                    running_tasks.append(
-                        {
-                            "task_id": task.id,
-                            "task_name": task.name,
-                            "task_title": task_crd.spec.title,
-                            "status": task_crd.status.status,
-                        }
-                    )
+            running_tasks.append(
+                {
+                    "task_id": task.id,
+                    "task_name": task.name,
+                    "task_title": task_crd.spec.title,
+                    "status": task_crd.status.status if task_crd.status else "UNKNOWN",
+                }
+            )
 
         return running_tasks
 
@@ -1390,7 +1415,9 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             Team Kind if found, None otherwise
         """
         # First, try standard lookup (user's own teams and shared teams)
-        team = self.get_team_by_name_and_namespace(db, team_name, team_namespace, user_id)
+        team = self.get_team_by_name_and_namespace(
+            db, team_name, team_namespace, user_id
+        )
         if team:
             return team
 
@@ -2104,11 +2131,15 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         """
         Update all references to this team in tasks when team name/namespace changes
         """
+        from app.models.task import TaskResource
+
         # Find all tasks that reference this team
         tasks = (
-            db.query(Kind)
+            db.query(TaskResource)
             .filter(
-                Kind.user_id == user_id, Kind.kind == "Task", Kind.is_active == True
+                TaskResource.user_id == user_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active == True,
             )
             .all()
         )

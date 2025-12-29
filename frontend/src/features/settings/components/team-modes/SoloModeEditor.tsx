@@ -61,13 +61,13 @@ export default function SoloModeEditor({
   scope,
   groupName,
 }: SoloModeEditorProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
 
   // Calculate prompt summary (similar to BotTransfer)
   const promptSummary = React.useMemo<{ label: string; variant: PromptBadgeVariant }>(() => {
     if (selectedBotId === null) {
       return {
-        label: t('team.prompts_tag_none'),
+        label: t('common:team.prompts_tag_none'),
         variant: 'none',
       };
     }
@@ -80,22 +80,24 @@ export default function SoloModeEditor({
     const hasConfigured = teamPromptMap ? teamPromptMap.get(selectedBotId) || false : false;
 
     if (hasUnsavedContent) {
-      const countText = hasConfigured ? ` - ${t('team.prompts_tag_configured', { count: 1 })}` : '';
+      const countText = hasConfigured
+        ? ` - ${t('common:team.prompts_tag_configured', { count: 1 })}`
+        : '';
       return {
-        label: `${t('team.prompts_tag_pending')}${countText}`,
+        label: `${t('common:team.prompts_tag_pending')}${countText}`,
         variant: 'pending',
       };
     }
 
     if (hasConfigured) {
       return {
-        label: t('team.prompts_tag_configured', { count: 1 }),
+        label: t('common:team.prompts_tag_configured', { count: 1 }),
         variant: 'configured',
       };
     }
 
     return {
-      label: t('team.prompts_tag_none'),
+      label: t('common:team.prompts_tag_none'),
       variant: 'none',
     };
   }, [selectedBotId, unsavedPrompts, teamPromptMap, t]);
@@ -187,12 +189,12 @@ export default function SoloModeEditor({
   // Determine the current mode label
   const currentModeLabel = useMemo(() => {
     if (isCreatingBot) {
-      return t('bots.new_bot');
+      return t('common:bots.new_bot');
     }
     if (selectedBot) {
       return selectedBot.name;
     }
-    return t('team.select_bot_placeholder');
+    return t('common:team.select_bot_placeholder');
   }, [isCreatingBot, selectedBot, t]);
 
   return (
@@ -202,7 +204,7 @@ export default function SoloModeEditor({
         <div className="flex items-center gap-2">
           <RiRobot2Line className="w-5 h-5 text-primary" />
           <span className="text-base font-medium text-text-primary">
-            {isCreatingBot ? t('bots.new_bot') : t('team.current_bot')}
+            {isCreatingBot ? t('common:bots.new_bot') : t('common:team.current_bot')}
           </span>
           {!isCreatingBot && selectedBot && (
             <span className="text-sm text-text-muted">({selectedBot.shell_type})</span>
@@ -222,11 +224,11 @@ export default function SoloModeEditor({
                     onClick={onOpenPromptDrawer}
                   >
                     <RiMagicLine className="mr-1 h-4 w-4" />
-                    {t('team.prompts_link')}
+                    {t('common:team.prompts_link')}
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>
-                  <p>{t('team.prompts_tooltip')}</p>
+                  <p>{t('common:team.prompts_tooltip')}</p>
                 </TooltipContent>
               </Tooltip>
               <Tag
@@ -251,7 +253,7 @@ export default function SoloModeEditor({
               {/* Create new bot option */}
               <DropdownMenuItem onClick={handleCreateBot} className="gap-2">
                 <Plus className="h-4 w-4" />
-                <span>{t('bots.new_bot')}</span>
+                <span>{t('common:bots.new_bot')}</span>
                 {isCreatingBot && <Check className="h-4 w-4 ml-auto" />}
               </DropdownMenuItem>
 
@@ -277,7 +279,7 @@ export default function SoloModeEditor({
 
               {bots.length === 0 && (
                 <div className="px-2 py-1.5 text-sm text-text-muted text-center">
-                  {t('team.no_bots_available')}
+                  {t('common:team.no_bots_available')}
                 </div>
               )}
             </DropdownMenuContent>
@@ -331,10 +333,10 @@ export default function SoloModeEditor({
           <div className="flex items-center justify-center h-full text-text-muted p-4">
             <div className="text-center">
               <RiRobot2Line className="w-12 h-12 mx-auto mb-2 opacity-50" />
-              <p className="mb-4">{t('team.no_bot_selected')}</p>
+              <p className="mb-4">{t('common:team.no_bot_selected')}</p>
               <Button variant="outline" size="sm" onClick={handleCreateBot}>
                 <Plus className="h-4 w-4 mr-1" />
-                {t('bots.new_bot')}
+                {t('common:bots.new_bot')}
               </Button>
             </div>
           </div>

@@ -124,7 +124,7 @@ class Settings(BaseSettings):
 
     # File upload configuration
     MAX_UPLOAD_FILE_SIZE_MB: int = 100  # Maximum file size in MB
-    MAX_EXTRACTED_TEXT_LENGTH: int = 1500000  # Maximum extracted text length
+    MAX_EXTRACTED_TEXT_LENGTH: int = 500000  # Maximum extracted text length
 
     # Attachment storage backend configuration
     # Supported backends: "mysql" (default), "s3", "minio"
@@ -145,7 +145,7 @@ class Settings(BaseSettings):
     WEB_SEARCH_ENABLED: bool = False  # Enable/disable web search feature
     WEB_SEARCH_ENGINES: str = "{}"  # JSON configuration for search API adapter
     WEB_SEARCH_DEFAULT_MAX_RESULTS: int = (
-        100  # Default max results when not specified by LLM or engine config
+        50  # Default max results when not specified by LLM or engine config
     )
 
     # Wizard configuration
