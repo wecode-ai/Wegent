@@ -538,7 +538,7 @@ export default function PreviewAdjustStep({
             >
               <SelectTrigger className="w-[200px]">
                 <SelectValue
-                  placeholder={isLoadingModels ? t('models.loading') : t('wizard:select_model')}
+                  placeholder={isLoadingModels ? t('models:loading') : t('wizard:select_model')}
                 />
               </SelectTrigger>
               <SelectContent>
@@ -548,7 +548,7 @@ export default function PreviewAdjustStep({
                       <span>{model.displayName || model.name}</span>
                       {model.type === 'public' && (
                         <span className="text-xs text-text-muted bg-muted px-1.5 py-0.5 rounded">
-                          {t('models.public')}
+                          {t('models:public')}
                         </span>
                       )}
                     </div>

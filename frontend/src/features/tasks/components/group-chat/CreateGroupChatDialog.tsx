@@ -38,7 +38,7 @@ interface CreateGroupChatDialogProps {
 }
 
 export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDialogProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation('common');
   const { toast } = useToast();
   const router = useRouter();
   const [title, setTitle] = useState('');
@@ -223,7 +223,7 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
           {/* Model Selector - only show when a team is selected */}
           {selectedTeam && (
             <div className="space-y-2">
-              <Label>{t('models.label')}</Label>
+              <Label>{t('models:label')}</Label>
               <ModelSelector
                 selectedModel={selectedModel}
                 setSelectedModel={setSelectedModel}
