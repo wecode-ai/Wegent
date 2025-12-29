@@ -572,6 +572,11 @@
     "cannotUndo": "此操作无法撤销",
     "coming_soon": "即将推出"
   },
+  "userSearch": {
+    "placeholder": "搜索用户名或邮箱...",
+    "selectedUsers": "已选择 {{count}} 个用户",
+    "noResults": "未找到用户"
+  },
   "quota": {
     "load_failed": "用量信息获取失败",
     "brief": "{{quota_source}}配额 {{monthly_usage}} / {{monthly_quota}} (+{{permanent_quota}})",
