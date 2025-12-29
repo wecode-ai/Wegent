@@ -54,20 +54,6 @@ export function useMultiAttachment(): UseMultiAttachmentReturn {
       for (const file of fileList) {
         const fileId = `${file.name}-${file.size}-${Date.now()}`;
 
-        // Check if a file with the same name already exists
-        const existingAttachment = state.attachments.find(att => att.filename === file.name);
-        if (existingAttachment) {
-          // File with same name already exists, show toast and skip upload
-          toast({
-            title: t('attachment.errors.file_exists') || '文件已存在',
-            description:
-              t('attachment.errors.file_exists_hint', { filename: file.name }) ||
-              `文件 "${file.name}" 已存在，请先删除后再上传`,
-            variant: 'destructive',
-          });
-          continue;
-        }
-
         // Validate file type
         if (!isSupportedExtension(file.name)) {
           setState(prev => {
