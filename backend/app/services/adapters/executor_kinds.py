@@ -600,15 +600,17 @@ class ExecutorKindsService(
         agent_config: Dict[str, Any],
         task_crd: Task,
         bot_user_id: int,
+        subtask: Optional[Subtask] = None,
     ) -> Dict[str, Any]:
         """
-        Resolve model configuration with support for bind_model and task-level override.
+        Resolve model configuration with support for bind_model, task-level override, and subtask-level override.
 
         Args:
             db: Database session
             agent_config: Current agent configuration
             task_crd: Task CRD for task-level model info
             bot_user_id: Bot's user_id for model lookup
+            subtask: Optional subtask for subtask-level model info
 
         Returns:
             Resolved agent configuration
@@ -619,37 +621,54 @@ class ExecutorKindsService(
         agent_config_data = agent_config
 
         try:
-            # 1. Get Task-level model information
+            # 1. Get Subtask-level model information (highest priority)
+            subtask_model_name = None
+            subtask_force_override = False
+
+            if subtask and subtask.metadata:
+                subtask_model_name = subtask.metadata.get("modelId")
+                subtask_force_override = (
+                    subtask.metadata.get("forceOverrideBotModel") == "true"
+                )
+
+            # 2. Get Task-level model information
             task_model_name = None
-            force_override = False
+            task_force_override = False
 
             if task_crd.metadata.labels:
                 task_model_name = task_crd.metadata.labels.get("modelId")
-                force_override = (
+                task_force_override = (
                     task_crd.metadata.labels.get("forceOverrideBotModel") == "true"
                 )
 
-            # 2. Determine which model name to use
+            # 3. Determine which model name to use (priority: subtask > task)
             model_name_to_use = None
+            force_override = False
 
-            if force_override and task_model_name:
-                # Force override: use Task-specified model
+            # Subtask-level override (highest priority)
+            if subtask_force_override and subtask_model_name:
+                model_name_to_use = subtask_model_name
+                force_override = True
+                logger.info(f"Using subtask model (force override): {model_name_to_use}")
+            elif subtask_model_name:
+                model_name_to_use = subtask_model_name
+                logger.info(f"Using subtask model: {model_name_to_use}")
+            # Task-level override (medium priority)
+            elif task_force_override and task_model_name:
                 model_name_to_use = task_model_name
+                force_override = True
                 logger.info(f"Using task model (force override): {model_name_to_use}")
+            elif task_model_name:
+                model_name_to_use = task_model_name
+                logger.info(f"Using task model (no subtask override): {model_name_to_use}")
+            # Bot-level bind_model (lowest priority)
             else:
-                # Check for bind_model in agent_config
                 bind_model_name = agent_config.get("bind_model")
                 if isinstance(bind_model_name, str) and bind_model_name.strip():
                     model_name_to_use = bind_model_name.strip()
                     logger.info(f"Using bot bound model: {model_name_to_use}")
-                # Fallback to task-specified model
-                if not model_name_to_use and task_model_name:
-                    model_name_to_use = task_model_name
-                    logger.info(
-                        f"Using task model (no bot binding): {model_name_to_use}"
-                    )
 
-            # 3. Query kinds table for Model CRD and replace config
+            # 4. Query kinds table for Model CRD and replace config
             if model_name_to_use:
                 bind_model_type = agent_config.get("bind_model_type")
                 bind_model_namespace = agent_config.get(
@@ -679,7 +698,7 @@ class ExecutorKindsService(
                                 )
                             agent_config_data = model_config
                             logger.info(
-                                f"Successfully loaded model config from kinds: {model_name_to_use} (type={bind_model_type})"
+                                f"Successfully loaded model config from kinds: {model_name_to_use} (type={bind_model_type}, source=subtask)"
                             )
                     except Exception as e:
                         logger.warning(
@@ -922,7 +941,7 @@ class ExecutorKindsService(
 
                 # Resolve model config using helper method
                 agent_config_data = self._resolve_model_config(
-                    db, agent_config, task_crd, bot.user_id
+                    db, agent_config, task_crd, bot.user_id, subtask
                 )
 
                 bots.append(
