@@ -16,6 +16,7 @@ from app.api.endpoints import (
     repository,
     subtasks,
     users,
+    utils,
     wiki,
     wizard,
 )
@@ -76,4 +77,5 @@ api_router.include_router(
     knowledge.document_router, prefix="/knowledge-documents", tags=["knowledge"]
 )
 api_router.include_router(rag.router, prefix="/rag", tags=["rag"])
+api_router.include_router(utils.router, prefix="/utils", tags=["utils"])
 api_router.include_router(k_router)
