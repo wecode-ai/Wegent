@@ -13,7 +13,7 @@
  * - Viewport size selector
  */
 
-import { useState, useCallback, KeyboardEvent } from 'react'
+import { useState, useCallback, useEffect, KeyboardEvent } from 'react'
 import {
   ArrowPathIcon,
   ComputerDesktopIcon,
@@ -43,7 +43,7 @@ interface PreviewToolbarProps {
  * Viewport size button component
  */
 function ViewportButton({
-  size,
+  size: _size,
   isActive,
   onClick,
   icon: Icon,
@@ -84,9 +84,9 @@ export default function PreviewToolbar({
   const [inputPath, setInputPath] = useState(currentPath)
 
   // Update input when currentPath changes externally
-  useState(() => {
+  useEffect(() => {
     setInputPath(currentPath)
-  })
+  }, [currentPath])
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLInputElement>) => {

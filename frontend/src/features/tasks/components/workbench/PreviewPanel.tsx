@@ -15,7 +15,7 @@
  * - Responsive viewport switching
  */
 
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import {
   XMarkIcon,
   PlayIcon,
@@ -208,7 +208,7 @@ export default function PreviewPanel({
   currentPath,
   error,
   isLoading = false,
-  taskId,
+  taskId: _taskId,
   onClose,
   onStart,
   onStop,
