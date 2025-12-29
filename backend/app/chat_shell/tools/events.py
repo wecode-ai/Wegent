@@ -88,7 +88,7 @@ def _handle_tool_start(
             content="",
             offset=state.offset,
             subtask_id=state.subtask_id,
-            result=state.get_current_result(include_value=False, slim_thinking=False),
+            result=state.get_current_result(include_value=False, slim_thinking=True),
         )
     )
 
@@ -148,7 +148,6 @@ def _handle_tool_end(
         state.add_thinking_step(result_step)
 
     # Immediately emit thinking step (exclude value to reduce data size)
-    # For Chat mode, use slim_thinking to reduce payload size
     asyncio.create_task(
         emitter.emit_chunk(
             content="",
