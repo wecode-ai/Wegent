@@ -18,6 +18,7 @@ import NotificationSettings from '@/features/settings/components/NotificationSet
 import { GroupManager } from '@/features/settings/components/groups/GroupManager';
 import { ModelListWithScope } from '@/features/settings/components/ModelListWithScope';
 import { ShellListWithScope } from '@/features/settings/components/ShellListWithScope';
+import { SkillListWithScope } from '@/features/settings/components/SkillListWithScope';
 import { TeamListWithScope } from '@/features/settings/components/TeamListWithScope';
 import ApiKeyList from '@/features/settings/components/ApiKeyList';
 import { RetrieverListWithScope } from '@/features/settings/components/RetrieverListWithScope';
@@ -134,6 +135,8 @@ function SettingsContent() {
         return <ModelListWithScope scope="personal" />;
       case 'personal-shells':
         return <ShellListWithScope scope="personal" />;
+      case 'personal-skills':
+        return <SkillListWithScope scope="personal" />;
       case 'personal-team':
         return <TeamListWithScope scope="personal" />;
       case 'personal-retrievers':
@@ -151,6 +154,14 @@ function SettingsContent() {
       case 'group-shells':
         return (
           <ShellListWithScope
+            scope="group"
+            selectedGroup={selectedGroup}
+            onGroupChange={setSelectedGroup}
+          />
+        );
+      case 'group-skills':
+        return (
+          <SkillListWithScope
             scope="group"
             selectedGroup={selectedGroup}
             onGroupChange={setSelectedGroup}

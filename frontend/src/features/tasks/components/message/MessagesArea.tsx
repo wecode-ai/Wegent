@@ -21,11 +21,11 @@ import { useTheme } from '@/features/theme/ThemeProvider';
 import { useTypewriter } from '@/hooks/useTypewriter';
 import MessageBubble, { type Message } from './MessageBubble';
 import TaskShareModal from '../share/TaskShareModal';
+import ExportSelectModal, {
+  type SelectableMessage,
+  type ExportFormat,
+} from '../share/ExportSelectModal';
 import { taskApis } from '@/apis/tasks';
-import { type SelectableMessage } from '../share/ExportPdfButton';
-import { generateChatPdf } from '@/utils/pdf';
-import { getAttachmentPreviewUrl, isImageExtension } from '@/apis/attachments';
-import { getToken } from '@/apis/user';
 import { TaskMembersPanel } from '../group-chat';
 import { useUser } from '@/features/common/UserContext';
 import { useUnifiedMessages, type DisplayMessage } from '../../hooks/useUnifiedMessages';
@@ -155,8 +155,11 @@ export default function MessagesArea({
   const [showShareModal, setShowShareModal] = useState(false);
   const [shareUrl, setShareUrl] = useState('');
   const [isSharing, setIsSharing] = useState(false);
-  const [isExportingPdf, setIsExportingPdf] = useState(false);
-  const [isExportingDocx, setIsExportingDocx] = useState(false);
+
+  // Export modal state
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportFormat, setExportFormat] = useState<ExportFormat>('pdf');
+  const [exportableMessages, setExportableMessages] = useState<SelectableMessage[]>([]);
 
   // Group chat members panel state
   const [showMembersPanel, setShowMembersPanel] = useState(false);
@@ -326,8 +329,8 @@ export default function MessagesArea({
     if (!selectedTaskDetail?.id) {
       toast({
         variant: 'destructive',
-        title: t('common:shared_task.no_task_selected'),
-        description: t('common:shared_task.no_task_selected_desc'),
+        title: t('shared_task.no_task_selected'),
+        description: t('shared_task.no_task_selected_desc'),
       });
       return;
     }
@@ -349,8 +352,8 @@ export default function MessagesArea({
           console.error('Failed to share task:', err);
           toast({
             variant: 'destructive',
-            title: t('common:shared_task.share_failed'),
-            description: (err as Error)?.message || t('common:shared_task.share_failed_desc'),
+            title: t('shared_task.share_failed'),
+            description: (err as Error)?.message || t('shared_task.share_failed_desc'),
           });
           throw err;
         } finally {
@@ -367,205 +370,81 @@ export default function MessagesArea({
     traceAction,
   ]);
 
-  // Load image data as base64 for embedding in PDF
-  const loadImageAsBase64 = useCallback(
-    async (attachmentId: number): Promise<string | undefined> => {
-      try {
-        const token = getToken();
-        const response = await fetch(getAttachmentPreviewUrl(attachmentId), {
-          headers: {
-            ...(token && { Authorization: `Bearer ${token}` }),
-          },
+  // Prepare exportable messages and open export modal
+  const prepareExport = useCallback(
+    (format: ExportFormat) => {
+      if (!selectedTaskDetail?.id) {
+        toast({
+          variant: 'destructive',
+          title: t('shared_task.no_task_selected'),
+          description: t('shared_task.no_task_selected_desc'),
         });
-
-        if (!response.ok) {
-          console.warn(`Failed to load image ${attachmentId}: ${response.status}`);
-          return undefined;
-        }
-
-        const blob = await response.blob();
-        return new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            const base64 = reader.result as string;
-            const base64Data = base64.split(',')[1];
-            resolve(base64Data);
-          };
-          reader.onerror = reject;
-          reader.readAsDataURL(blob);
-        });
-      } catch (error) {
-        console.warn(`Failed to load image ${attachmentId}:`, error);
-        return undefined;
+        return;
       }
+
+      // Convert subtasks to selectable messages
+      const messages: SelectableMessage[] = selectedTaskDetail.subtasks
+        ? selectedTaskDetail.subtasks.map((sub: TaskDetailSubtask) => {
+            const isUser = sub.role === 'USER';
+            let content = sub.prompt || '';
+
+            if (!isUser && sub.result) {
+              if (typeof sub.result === 'object' && 'value' in sub.result) {
+                const value = (sub.result as { value?: unknown }).value;
+                if (typeof value === 'string') {
+                  content = value;
+                } else if (value !== null && value !== undefined) {
+                  content = JSON.stringify(value);
+                }
+              } else if (typeof sub.result === 'string') {
+                content = sub.result;
+              }
+            }
+
+            return {
+              id: sub.id,
+              type: isUser ? ('user' as const) : ('ai' as const),
+              content,
+              timestamp: new Date(sub.updated_at).getTime(),
+              botName: sub.bots?.[0]?.name || 'Bot',
+              userName: sub.sender_user_name || selectedTaskDetail?.user?.user_name,
+              teamName: selectedTaskDetail?.team?.name,
+              attachments: sub.attachments?.map(att => ({
+                id: att.id,
+                filename: att.filename,
+                file_size: att.file_size,
+                file_extension: att.file_extension,
+              })),
+            };
+          })
+        : [];
+
+      const validMessages = messages.filter(msg => msg.content.trim() !== '');
+
+      if (validMessages.length === 0) {
+        toast({
+          variant: 'destructive',
+          title: t('export.no_messages') || 'No messages to export',
+        });
+        return;
+      }
+
+      setExportableMessages(validMessages);
+      setExportFormat(format);
+      setShowExportModal(true);
     },
-    []
+    [selectedTaskDetail, toast, t]
   );
 
-  // Handle PDF export
-  const handleExportPdf = useCallback(async () => {
-    if (!selectedTaskDetail?.id) {
-      toast({
-        variant: 'destructive',
-        title: t('common:shared_task.no_task_selected'),
-        description: t('common:shared_task.no_task_selected_desc'),
-      });
-      return;
-    }
+  // Handle PDF export - open modal
+  const handleExportPdf = useCallback(() => {
+    prepareExport('pdf');
+  }, [prepareExport]);
 
-    setIsExportingPdf(true);
-    await traceAction(
-      'export-pdf',
-      {
-        'action.type': 'export',
-        'export.format': 'pdf',
-        'task.title': selectedTaskDetail?.title || '',
-        'task.status': selectedTaskDetail?.status || '',
-        'export.message_count': selectedTaskDetail?.subtasks?.length || 0,
-      },
-      async () => {
-        try {
-          const exportableMessages: SelectableMessage[] = selectedTaskDetail.subtasks
-            ? await Promise.all(
-                selectedTaskDetail.subtasks.map(async (sub: TaskDetailSubtask) => {
-                  const isUser = sub.role === 'USER';
-                  let content = sub.prompt || '';
-
-                  if (!isUser && sub.result) {
-                    if (typeof sub.result === 'object' && 'value' in sub.result) {
-                      const value = (sub.result as { value?: unknown }).value;
-                      if (typeof value === 'string') {
-                        content = value;
-                      } else if (value !== null && value !== undefined) {
-                        content = JSON.stringify(value);
-                      }
-                    } else if (typeof sub.result === 'string') {
-                      content = sub.result;
-                    }
-                  }
-
-                  let attachmentsWithImages;
-                  if (sub.attachments && sub.attachments.length > 0) {
-                    attachmentsWithImages = await Promise.all(
-                      sub.attachments.map(async att => {
-                        const exportAtt = {
-                          id: att.id,
-                          filename: att.filename,
-                          file_size: att.file_size,
-                          file_extension: att.file_extension,
-                          imageData: undefined as string | undefined,
-                        };
-
-                        if (isImageExtension(att.file_extension)) {
-                          exportAtt.imageData = await loadImageAsBase64(att.id);
-                        }
-
-                        return exportAtt;
-                      })
-                    );
-                  }
-
-                  return {
-                    id: sub.id,
-                    type: isUser ? ('user' as const) : ('ai' as const),
-                    content,
-                    timestamp: new Date(sub.updated_at).getTime(),
-                    botName: sub.bots?.[0]?.name || 'Bot',
-                    userName: sub.sender_user_name || selectedTaskDetail?.user?.user_name,
-                    teamName: selectedTaskDetail?.team?.name,
-                    attachments: attachmentsWithImages,
-                  };
-                })
-              )
-            : [];
-
-          const validMessages = exportableMessages.filter(msg => msg.content.trim() !== '');
-
-          if (validMessages.length === 0) {
-            toast({
-              variant: 'destructive',
-              title: t('common:export.no_messages') || 'No messages to export',
-            });
-            return;
-          }
-
-          await generateChatPdf({
-            taskName:
-              selectedTaskDetail?.title ||
-              selectedTaskDetail?.prompt?.slice(0, 50) ||
-              'Chat Export',
-            messages: validMessages,
-          });
-
-          toast({
-            title: t('common:export.success') || 'PDF exported successfully',
-          });
-        } catch (error) {
-          console.error('Failed to export PDF:', error);
-          toast({
-            variant: 'destructive',
-            title: t('common:export.failed') || 'Failed to export PDF',
-            description: error instanceof Error ? error.message : 'Unknown error',
-          });
-          throw error;
-        } finally {
-          setIsExportingPdf(false);
-        }
-      }
-    );
-  }, [selectedTaskDetail, toast, t, loadImageAsBase64, traceAction]);
-
-  // Handle DOCX export
-  const handleExportDocx = useCallback(async () => {
-    if (!selectedTaskDetail?.id) {
-      toast({
-        variant: 'destructive',
-        title: t('common:shared_task.no_task_selected'),
-        description: t('common:shared_task.no_task_selected_desc'),
-      });
-      return;
-    }
-
-    setIsExportingDocx(true);
-    await traceAction(
-      'export-docx',
-      {
-        'action.type': 'export',
-        'export.format': 'docx',
-        'task.title': selectedTaskDetail?.title || '',
-        'task.status': selectedTaskDetail?.status || '',
-        'export.message_count': selectedTaskDetail?.subtasks?.length || 0,
-      },
-      async () => {
-        try {
-          const blob = await taskApis.exportTaskDocx(selectedTaskDetail.id);
-
-          const url = window.URL.createObjectURL(blob);
-          const link = document.createElement('a');
-          link.href = url;
-          link.download = `${selectedTaskDetail.title || selectedTaskDetail.prompt?.slice(0, 50) || 'Chat_Export'}_${new Date().toISOString().split('T')[0]}.docx`;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-          window.URL.revokeObjectURL(url);
-
-          toast({
-            title: t('common:export.docx_success') || 'DOCX exported successfully',
-          });
-        } catch (error) {
-          console.error('Failed to export DOCX:', error);
-          toast({
-            variant: 'destructive',
-            title: t('common:export.docx_failed') || 'Failed to export DOCX',
-            description: error instanceof Error ? error.message : 'Unknown error',
-          });
-          throw error;
-        } finally {
-          setIsExportingDocx(false);
-        }
-      }
-    );
-  }, [selectedTaskDetail, toast, t, traceAction]);
+  // Handle DOCX export - open modal
+  const handleExportDocx = useCallback(() => {
+    prepareExport('docx');
+  }, [prepareExport]);
 
   // Removed polling - relying entirely on WebSocket real-time updates
   // Task details will be updated via WebSocket events in taskContext
@@ -624,7 +503,7 @@ export default function MessagesArea({
             className="flex items-center gap-1 h-8 pl-2 pr-3 rounded-[7px] text-sm"
           >
             <Share2 className="h-3.5 w-3.5" />
-            {isSharing ? t('common:shared_task.sharing') : t('common:shared_task.share_link')}
+            {isSharing ? t('shared_task.sharing') : t('shared_task.share_link')}
           </Button>
         )}
 
@@ -633,38 +512,27 @@ export default function MessagesArea({
             <Button
               variant="outline"
               size="sm"
-              disabled={isExportingPdf || isExportingDocx}
               className="flex items-center gap-1 h-8 pl-2 pr-3 rounded-[7px] text-sm"
             >
               <Download className="h-3.5 w-3.5" />
-              {t('chat:export.export')}
+              {t('export.export')}
               <ChevronDown className="h-3 w-3 ml-0.5" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-30">
             <DropdownMenuItem
               onClick={handleExportPdf}
-              disabled={isExportingPdf}
               className="flex items-center gap-2 cursor-pointer"
             >
               <FileText className="h-4 w-4" />
-              <span>
-                {isExportingPdf
-                  ? t('common:export.exporting') || 'Exporting...'
-                  : t('common:shared_task.share_pdf')}
-              </span>
+              <span>{t('shared_task.share_pdf')}</span>
             </DropdownMenuItem>
             <DropdownMenuItem
               onClick={handleExportDocx}
-              disabled={isExportingDocx}
               className="flex items-center gap-2 cursor-pointer"
             >
               <FileText className="h-4 w-4" />
-              <span>
-                {isExportingDocx
-                  ? t('common:export.exporting_docx') || 'Exporting DOCX...'
-                  : t('chat:export.export_docx') || 'Export DOCX'}
-              </span>
+              <span>{t('export.export_docx') || 'Export DOCX'}</span>
             </DropdownMenuItem>
           </DropdownMenuContent>
 
@@ -691,8 +559,6 @@ export default function MessagesArea({
     selectedTaskDetail?.team?.agent_type,
     messages.length,
     isSharing,
-    isExportingPdf,
-    isExportingDocx,
     handleShareTask,
     handleExportPdf,
     handleExportDocx,
@@ -876,6 +742,20 @@ export default function MessagesArea({
         taskTitle={selectedTaskDetail?.title || 'Untitled Task'}
         shareUrl={shareUrl}
       />
+
+      {/* Export Select Modal */}
+      {selectedTaskDetail?.id && (
+        <ExportSelectModal
+          open={showExportModal}
+          onClose={() => setShowExportModal(false)}
+          messages={exportableMessages}
+          taskId={selectedTaskDetail.id}
+          taskName={
+            selectedTaskDetail?.title || selectedTaskDetail?.prompt?.slice(0, 50) || 'Chat Export'
+          }
+          exportFormat={exportFormat}
+        />
+      )}
 
       {/* Group Chat Members Panel */}
       {selectedTaskDetail?.id && user?.id && (

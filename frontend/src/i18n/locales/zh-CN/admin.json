@@ -4,6 +4,7 @@
   "tabs": {
     "users": "用户管理",
     "public_models": "公共模型",
+    "public_skills": "公共技能",
     "system_config": "系统配置"
   },
   "stats": {
@@ -154,6 +155,46 @@
       "name_required": "模型名称不能为空",
       "config_required": "模型配置不能为空",
       "config_invalid_json": "模型配置必须是有效的 JSON 格式"
+    }
+  },
+  "public_skills": {
+    "title": "公共技能管理",
+    "description": "管理系统级公共技能，所有用户可见",
+    "loading": "加载技能中...",
+    "no_skills": "暂无公共技能",
+    "upload_skill": "上传技能",
+    "update_skill": "更新技能",
+    "download_skill": "下载技能",
+    "delete_skill": "删除技能",
+    "view_content": "查看内容",
+    "skill_content": "技能内容",
+    "view_content_description": "SKILL.md 文件的完整内容",
+    "no_content": "无法加载内容",
+    "columns": {
+      "name": "名称",
+      "description": "描述",
+      "version": "版本",
+      "author": "作者",
+      "tags": "标签",
+      "created_at": "创建时间",
+      "actions": "操作"
+    },
+    "confirm": {
+      "delete_title": "删除技能",
+      "delete_message": "确定要删除公共技能 \"{{name}}\" 吗？此操作无法撤销。"
+    },
+    "success": {
+      "uploaded": "公共技能上传成功",
+      "updated": "公共技能更新成功",
+      "deleted": "公共技能删除成功"
+    },
+    "errors": {
+      "load_failed": "加载公共技能失败",
+      "upload_failed": "上传公共技能失败",
+      "update_failed": "更新公共技能失败",
+      "delete_failed": "删除公共技能失败",
+      "download_failed": "下载公共技能失败",
+      "view_content_failed": "获取技能内容失败"
     }
   },
   "access_denied": {

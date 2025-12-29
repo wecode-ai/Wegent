@@ -211,7 +211,7 @@
     "select_all": "Select All",
     "deselect_all": "Deselect All",
     "cancel": "Cancel",
-    "confirm": "Export PDF",
+    "confirm": "Confirm Export",
     "exporting": "Exporting...",
     "exporting_docx": "Exporting DOCX...",
     "success": "PDF exported successfully",
@@ -219,7 +219,8 @@
     "failed": "Failed to export PDF",
     "docx_failed": "Failed to export DOCX",
     "select_from_here": "Select from here",
-    "select_below": "Select below"
+    "select_below": "Select below",
+    "attachments": "attachment(s)"
   },
   "web_search": {
     "enable": "Enable web search",

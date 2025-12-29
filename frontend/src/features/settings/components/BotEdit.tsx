@@ -35,7 +35,7 @@ import {
 } from '@/features/settings/services/bots';
 import { modelApis, UnifiedModel, ModelTypeEnum } from '@/apis/models';
 import { shellApis, UnifiedShell } from '@/apis/shells';
-import { fetchSkillsList } from '@/apis/skills';
+import { fetchUnifiedSkillsList, UnifiedSkill } from '@/apis/skills';
 import { useTranslation } from 'react-i18next';
 import { adaptMcpConfigForAgent, isValidAgentType } from '../utils/mcpTypeAdapter';
 
@@ -158,7 +158,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     baseBot?.mcp_servers ? JSON.stringify(baseBot.mcp_servers, null, 2) : ''
   );
   const [selectedSkills, setSelectedSkills] = useState<string[]>(baseBot?.skills || []);
-  const [availableSkills, setAvailableSkills] = useState<string[]>([]);
+  const [allSkills, setAllSkills] = useState<UnifiedSkill[]>([]);
+  const [availableSkills, setAvailableSkills] = useState<UnifiedSkill[]>([]);
   const [loadingSkills, setLoadingSkills] = useState(false);
   const [agentConfigError, setAgentConfigError] = useState(false);
   const [mcpConfigError, setMcpConfigError] = useState(false);
@@ -338,9 +339,40 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
     fetchShells();
   }, [toast, t, allowedAgents, scope, groupName]);
+  // Check if current agent supports skills (ClaudeCode or Chat)
+  const supportsSkills = useMemo(() => {
+    // Get shell type from the selected shell
+    const selectedShell = shells.find(s => s.name === agentName);
+    const shellType = selectedShell?.shellType || agentName;
+    // Skills are supported for ClaudeCode and Chat shell types
+    return shellType === 'ClaudeCode' || shellType === 'Chat';
+  }, [agentName, shells]);
+
+  // Get current shell type for skill filtering
+  const currentShellType = useMemo(() => {
+    const selectedShell = shells.find(s => s.name === agentName);
+    return selectedShell?.shellType || agentName;
+  }, [agentName, shells]);
+
+  // Filter skills based on current shell type
+  const filterSkillsByShellType = useCallback(
+    (skills: UnifiedSkill[]): UnifiedSkill[] => {
+      return skills.filter(skill => {
+        // If bindShells is not specified or empty, skill is NOT available (must explicitly bind to shells)
+        if (!skill.bindShells || skill.bindShells.length === 0) {
+          return false;
+        }
+        // Check if current shell type is in the bindShells list
+        return skill.bindShells.includes(currentShellType);
+      });
+    },
+    [currentShellType]
+  );
+
   useEffect(() => {
-    // Only fetch skills when agent is ClaudeCode
-    if (agentName !== 'ClaudeCode') {
+    // Only fetch skills when agent supports skills (ClaudeCode or Chat)
+    if (!supportsSkills) {
+      setAllSkills([]);
       setAvailableSkills([]);
       setLoadingSkills(false);
       return;
@@ -349,8 +381,10 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     const fetchSkills = async () => {
       setLoadingSkills(true);
       try {
-        const skillsData = await fetchSkillsList();
-        setAvailableSkills(skillsData.map(skill => skill.metadata.name));
+        const skillsData = await fetchUnifiedSkillsList();
+        setAllSkills(skillsData);
+        // Filter skills based on current shell type
+        setAvailableSkills(filterSkillsByShellType(skillsData));
       } catch {
         toast({
           variant: 'destructive',
@@ -361,7 +395,14 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       }
     };
     fetchSkills();
-  }, [agentName, toast, t]);
+  }, [supportsSkills, toast, t, filterSkillsByShellType]);
+
+  // Re-filter available skills when shell type changes
+  useEffect(() => {
+    if (allSkills.length > 0) {
+      setAvailableSkills(filterSkillsByShellType(allSkills));
+    }
+  }, [allSkills, filterSkillsByShellType]);
 
   // Fetch corresponding model list when agentName changes
   useEffect(() => {
@@ -1199,8 +1240,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                 )}
               </div>
 
-              {/* Skills Selection - Only show for ClaudeCode agent */}
-              {agentName === 'ClaudeCode' && (
+              {/* Skills Selection - Show for agents that support skills (ClaudeCode, Chat) */}
+              {supportsSkills && (
                 <div className="flex flex-col">
                   <div className="flex items-center justify-between mb-1">
                     <div className="flex items-center">
@@ -1270,10 +1311,10 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                           </SelectTrigger>
                           <SelectContent>
                             {availableSkills
-                              .filter(skill => !selectedSkills.includes(skill))
+                              .filter(skill => !selectedSkills.includes(skill.name))
                               .map(skill => (
-                                <SelectItem key={skill} value={skill}>
-                                  {skill}
+                                <SelectItem key={skill.name} value={skill.name}>
+                                  {skill.displayName || skill.name}
                                 </SelectItem>
                               ))}
                           </SelectContent>
@@ -1281,24 +1322,29 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
                         {selectedSkills.length > 0 && (
                           <div className="flex flex-wrap gap-1.5">
-                            {selectedSkills.map(skill => (
-                              <div
-                                key={skill}
-                                className="inline-flex items-center gap-1 px-2 py-1 bg-muted rounded-md text-sm"
-                              >
-                                <span>{skill}</span>
-                                <button
-                                  onClick={() => {
-                                    if (readOnly) return;
-                                    setSelectedSkills(selectedSkills.filter(s => s !== skill));
-                                  }}
-                                  disabled={readOnly}
-                                  className={`text-text-muted hover:text-text-primary ${readOnly ? 'cursor-not-allowed opacity-50' : ''}`}
+                            {selectedSkills.map(skillName => {
+                              const skill = availableSkills.find(s => s.name === skillName);
+                              return (
+                                <div
+                                  key={skillName}
+                                  className="inline-flex items-center gap-1 px-2 py-1 bg-muted rounded-md text-sm"
                                 >
-                                  <XIcon className="w-3 h-3" />
-                                </button>
-                              </div>
-                            ))}
+                                  <span>{skill?.displayName || skillName}</span>
+                                  <button
+                                    onClick={() => {
+                                      if (readOnly) return;
+                                      setSelectedSkills(
+                                        selectedSkills.filter(s => s !== skillName)
+                                      );
+                                    }}
+                                    disabled={readOnly}
+                                    className={`text-text-muted hover:text-text-primary ${readOnly ? 'cursor-not-allowed opacity-50' : ''}`}
+                                  >
+                                    <XIcon className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              );
+                            })}
                           </div>
                         )}
                       </div>
@@ -1404,8 +1450,10 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           // Reload skills list when skills are changed
           const fetchSkills = async () => {
             try {
-              const skillsData = await fetchSkillsList();
-              setAvailableSkills(skillsData.map(skill => skill.metadata.name));
+              const skillsData = await fetchUnifiedSkillsList();
+              setAllSkills(skillsData);
+              // Filter skills based on current shell type
+              setAvailableSkills(filterSkillsByShellType(skillsData));
             } catch {
               toast({
                 variant: 'destructive',
