@@ -4,13 +4,14 @@
 
 'use client';
 
-import React, { useState, useCallback, useMemo } from 'react';
-import { X, ChevronDown, Paperclip, FileText } from 'lucide-react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import { X, ChevronDown, Paperclip, FileText, RefreshCw, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import { generateChatPdf, type ExportMessage, type ExportAttachment } from '@/utils/pdf';
+import { loadUnicodeFont } from '@/utils/pdf/font';
 import { useTranslation } from '@/hooks/useTranslation';
 import { getAttachmentPreviewUrl, isImageExtension } from '@/apis/attachments';
 import { getToken } from '@/apis/user';
@@ -74,12 +75,56 @@ export default function ExportSelectModal({
   const [selectedIds, setSelectedIds] = useState<Set<string | number>>(new Set());
   const [isExporting, setIsExporting] = useState(false);
 
+  // Font loading state for PDF export
+  const [isFontLoading, setIsFontLoading] = useState(false);
+  const [fontLoadError, setFontLoadError] = useState(false);
+
   // Select all messages by default when modal opens
   React.useEffect(() => {
     if (open && messages.length > 0) {
       setSelectedIds(new Set(messages.map(msg => msg.id)));
     }
   }, [open, messages]);
+
+  // Preload font when modal opens for PDF export
+  useEffect(() => {
+    if (open && exportFormat === 'pdf') {
+      setIsFontLoading(true);
+      setFontLoadError(false);
+      loadUnicodeFont()
+        .then(() => {
+          setIsFontLoading(false);
+        })
+        .catch(() => {
+          setIsFontLoading(false);
+          setFontLoadError(true);
+          toast({
+            variant: 'destructive',
+            title: t('export.font_load_failed'),
+          });
+        });
+    }
+  }, [open, exportFormat, toast, t]);
+
+  /**
+   * Retry loading font if it failed
+   */
+  const handleRetryFontLoad = useCallback(() => {
+    setIsFontLoading(true);
+    setFontLoadError(false);
+    loadUnicodeFont()
+      .then(() => {
+        setIsFontLoading(false);
+      })
+      .catch(() => {
+        setIsFontLoading(false);
+        setFontLoadError(true);
+        toast({
+          variant: 'destructive',
+          title: t('export.font_load_failed'),
+        });
+      });
+  }, [toast, t]);
 
   /**
    * Toggle single message selection
@@ -231,19 +276,9 @@ export default function ExportSelectModal({
   };
 
   /**
-   * Confirm selection and export
+   * Perform the actual export operation
    */
-  const handleConfirmExport = useCallback(async () => {
-    if (selectedIds.size === 0) {
-      toast({
-        variant: 'destructive',
-        title: t('chat:export.select_at_least_one') || 'Please select at least one message',
-      });
-      return;
-    }
-
-    setIsExporting(true);
-
+  const performExport = useCallback(async () => {
     try {
       // Filter selected messages and maintain order
       const selectedMessages = messages.filter(msg => selectedIds.has(msg.id));
@@ -275,6 +310,31 @@ export default function ExportSelectModal({
       setIsExporting(false);
     }
   }, [selectedIds, messages, exportFormat, taskId, taskName, toast, t, onClose]);
+
+  /**
+   * Confirm selection and export
+   */
+  const handleConfirmExport = useCallback(() => {
+    if (selectedIds.size === 0) {
+      toast({
+        variant: 'destructive',
+        title: t('chat:export.select_at_least_one') || 'Please select at least one message',
+      });
+      return;
+    }
+
+    // Set exporting state first
+    setIsExporting(true);
+
+    // Use requestAnimationFrame to ensure UI updates before starting export
+    // This allows the browser to repaint and show "exporting" state immediately
+    requestAnimationFrame(() => {
+      // Use setTimeout to ensure the state update is rendered
+      setTimeout(() => {
+        performExport();
+      }, 0);
+    });
+  }, [selectedIds, toast, t, performExport]);
 
   /**
    * Check if all messages are selected
@@ -397,16 +457,28 @@ export default function ExportSelectModal({
           <Button
             variant="default"
             size="sm"
-            onClick={handleConfirmExport}
-            disabled={selectionCount === 0 || isExporting}
+            onClick={fontLoadError ? handleRetryFontLoad : handleConfirmExport}
+            disabled={
+              (exportFormat === 'pdf' && isFontLoading) || selectionCount === 0 || isExporting
+            }
             className="text-sm bg-primary hover:bg-primary/90"
           >
-            <FileText className="w-4 h-4 mr-1" />
-            {isExporting
-              ? exportFormat === 'pdf'
-                ? t('chat:export.exporting') || 'Exporting...'
-                : t('chat:export.exporting_docx') || 'Exporting DOCX...'
-              : t('chat:export.confirm') || 'Export'}
+            {fontLoadError ? (
+              <RefreshCw className="w-4 h-4 mr-1" />
+            ) : isExporting ? (
+              <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+            ) : (
+              <FileText className="w-4 h-4 mr-1" />
+            )}
+            {fontLoadError
+              ? t('export.retry')
+              : exportFormat === 'pdf' && isFontLoading
+                ? t('export.preparing')
+                : isExporting
+                  ? exportFormat === 'pdf'
+                    ? t('export.exporting')
+                    : t('export.exporting_docx')
+                  : t('export.confirm')}
           </Button>
         </div>
       </DialogContent>
