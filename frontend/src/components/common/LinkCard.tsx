@@ -59,14 +59,13 @@ export default function LinkCard({
       href={url}
       target="_blank"
       rel="noopener noreferrer"
-      className="inline-flex items-center gap-1.5 text-primary hover:underline text-sm break-all"
+      className="inline-flex items-center gap-1.5 text-primary hover:underline hover:!decoration-current text-sm break-all"
     >
       <Globe className="h-4 w-4 flex-shrink-0" />
       <span>{linkText || url}</span>
       <ExternalLink className="h-3 w-3 flex-shrink-0" />
     </a>
   );
-
   // When disabled, just render as simple link
   if (disabled) {
     return <SimpleLinkFallback />;
@@ -83,17 +82,18 @@ export default function LinkCard({
       );
     }
 
+    // Use span-based layout to avoid HTML nesting issues (div inside p)
     return (
-      <div className="my-2 p-3 rounded-lg border border-border bg-surface animate-pulse">
-        <div className="flex items-start gap-3">
-          <div className="w-5 h-5 rounded bg-muted" />
-          <div className="flex-1 space-y-2">
-            <div className="h-4 bg-muted rounded w-3/4" />
-            <div className="h-3 bg-muted rounded w-full" />
-            <div className="h-3 bg-muted rounded w-1/2" />
-          </div>
-        </div>
-      </div>
+      <span className="block my-2 p-3 rounded-lg border border-border bg-surface animate-pulse">
+        <span className="flex items-start gap-3">
+          <span className="w-5 h-5 rounded bg-muted inline-block" />
+          <span className="flex-1 space-y-2 inline-block">
+            <span className="block h-4 bg-muted rounded w-3/4" />
+            <span className="block h-3 bg-muted rounded w-full" />
+            <span className="block h-3 bg-muted rounded w-1/2" />
+          </span>
+        </span>
+      </span>
     );
   }
 
@@ -109,7 +109,7 @@ export default function LinkCard({
         href={url}
         target="_blank"
         rel="noopener noreferrer"
-        className="inline-flex items-center gap-1.5 text-primary hover:underline text-sm"
+        className="inline-flex items-center gap-1.5 text-primary hover:underline hover:!decoration-current text-sm"
       >
         {metadata.favicon ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -130,17 +130,17 @@ export default function LinkCard({
     );
   }
 
-  // Full card display
+  // Full card display - use span-based layout to avoid HTML nesting issues (div/h4 inside p)
   return (
     <a
       href={url}
       target="_blank"
       rel="noopener noreferrer"
-      className="block my-2 p-3 rounded-lg border border-border bg-surface hover:bg-muted/50 hover:border-primary/50 transition-all group"
+      className="block my-2 p-3 rounded-lg border border-border bg-surface hover:bg-muted/50 hover:border-primary/50 hover:!no-underline transition-all group"
     >
-      <div className="flex items-start gap-3">
+      <span className="flex items-start gap-3">
         {/* Favicon */}
-        <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-muted flex items-center justify-center overflow-hidden">
+        <span className="flex-shrink-0 w-10 h-10 rounded-lg bg-muted flex items-center justify-center overflow-hidden">
           {metadata.favicon ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
@@ -162,27 +162,29 @@ export default function LinkCard({
           ) : (
             <Globe className="w-5 h-5 text-text-muted" />
           )}
-        </div>
+        </span>
 
         {/* Content */}
-        <div className="flex-1 min-w-0 space-y-1">
-          {/* Title */}
-          <h4 className="text-sm font-medium text-text-primary truncate group-hover:text-primary transition-colors">
+        <span className="flex-1 min-w-0 space-y-1 inline-block">
+          {/* Title - use span instead of h4 to avoid nesting issues */}
+          <span className="block text-sm font-medium text-text-primary truncate group-hover:text-primary transition-colors">
             {metadata.title || linkText || domain}
-          </h4>
+          </span>
 
-          {/* Description */}
+          {/* Description - use span instead of p to avoid nesting issues */}
           {metadata.description && (
-            <p className="text-xs text-text-muted line-clamp-2">{metadata.description}</p>
+            <span className="block text-xs text-text-muted line-clamp-2">
+              {metadata.description}
+            </span>
           )}
 
           {/* Domain */}
-          <div className="flex items-center gap-1 text-xs text-text-muted">
+          <span className="flex items-center gap-1 text-xs text-text-muted">
             <span className="truncate">{domain}</span>
             <ExternalLink className="h-3 w-3 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
-          </div>
-        </div>
-      </div>
+          </span>
+        </span>
+      </span>
     </a>
   );
 }

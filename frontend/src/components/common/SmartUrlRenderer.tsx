@@ -51,7 +51,7 @@ export function SmartLink({ href, children, compact = false, disabled = false }:
 
   // For links with custom text, show the link text with a card below
   return (
-    <span className="inline-block">
+    <span className="inline-block [&_a]:!no-underline [&_a:hover]:!no-underline">
       <LinkCard url={href} linkText={linkText} compact={compact} disabled={disabled} />
     </span>
   );

@@ -5,6 +5,7 @@
 'use client';
 
 import React, { useState, useCallback, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Download, X, ZoomIn, ZoomOut, RotateCw, ExternalLink, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
@@ -266,11 +267,13 @@ export default function ImagePreview({
           />
         </span>
       </span>
-
-      {/* Lightbox modal */}
-      {showLightbox && (
-        <ImageLightbox src={src} alt={alt || 'Image'} onClose={handleCloseLightbox} />
-      )}
+      {/* Lightbox modal - rendered via Portal to avoid HTML nesting issues */}
+      {showLightbox &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <ImageLightbox src={src} alt={alt || 'Image'} onClose={handleCloseLightbox} />,
+          document.body
+        )}
     </>
   );
 }
