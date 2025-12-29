@@ -175,19 +175,29 @@ Would you like me to help you troubleshoot the specific syntax issue?
 
 ## Supported Diagram Types
 
-- **flowchart**: Process flows, decision trees, workflows
-  - Use `flowchart TD` (top-down) or `flowchart LR` (left-right)
-- **sequenceDiagram**: Interaction sequences between components/actors
+- **architecture-beta**: Architecture diagrams
+- **block**: Block diagrams
+- **C4Context**: C4 System Context diagrams (and other C4 types)
 - **classDiagram**: Class structures and relationships
-- **stateDiagram-v2**: State machines and transitions
 - **erDiagram**: Entity-relationship diagrams
+- **flowchart**: Process flows, decision trees, workflows
 - **gantt**: Project timelines and schedules
-- **pie**: Proportional data distribution
-- **mindmap**: Hierarchical idea organization
-- **timeline**: Chronological events
 - **gitGraph**: Git branch visualizations
+- **kanban**: Kanban boards
+- **mindmap**: Hierarchical idea organization
+- **packet-beta**: Network packet structure
+- **pie**: Proportional data distribution
+- **quadrantChart**: Strategic planning matrices
+- **radar-beta**: Radar charts
+- **requirementDiagram**: Requirement visualization
+- **sankey-beta**: Flow visualizations
+- **sequenceDiagram**: Interaction sequences
+- **stateDiagram-v2**: State machines
+- **timeline**: Chronological events
+- **treemap-beta**: Hierarchical data treemaps
 - **journey**: User journeys and user flows
-- **quadrantChart**: Strategic planning and decision-making
+- **xychart-beta**: Bar and line charts
+- **zenuml**: ZenUML sequence diagrams
 
 ## Syntax Guidelines
 
@@ -202,271 +212,193 @@ Would you like me to help you troubleshoot the specific syntax issue?
 
 ## Examples
 
-### Flowchart
+### Architecture (`architecture-beta`)
 ```mermaid
-flowchart TD
-    A[Start] --> B{Decision}
-    B -->|Yes| C[Action 1]
-    B -->|No| D[Action 2]
-    C --> E[End]
-    D --> E
+architecture-beta
+    group api(cloud)[API]
+    service db(database)[Database] in api
+    service server(server)[Server] in api
+    db:L -- R:server
 ```
 
-### Sequence Diagram
+### Block (`block-beta`)
 ```mermaid
-sequenceDiagram
-    participant U as User
-    participant S as Server
-    participant D as Database
-    U->>S: Request
-    S->>D: Query
-    D-->>S: Result
-    S-->>U: Response
+block-beta
+    columns 3
+    A["Block A"] B["Block B"] C["Block C"]
+    A --> B
 ```
 
-### Class Diagram
+### C4 (`C4Context`)
+```mermaid
+C4Context
+    Person(user, "User")
+    System(sys, "System")
+    Rel(user, sys, "Uses")
+```
+
+### Class (`classDiagram`)
 ```mermaid
 classDiagram
     class Animal {
         +String name
-        +int age
-        +makeSound()
-    }
-    class Dog {
-        +fetch()
+        +eat()
     }
     Animal <|-- Dog
 ```
 
-### State Diagram
-```mermaid
-stateDiagram-v2
-    [*] --> Idle
-    Idle --> Processing: Start
-    Processing --> Completed: Success
-    Processing --> Error: Failure
-    Completed --> [*]
-    Error --> Idle: Retry
-```
-
-### Entity-Relationship Diagram
+### Entity Relationship (`erDiagram`)
 ```mermaid
 erDiagram
     CUSTOMER ||--o{ ORDER : places
     ORDER ||--|{ LINE-ITEM : contains
-    PRODUCT ||--o{ LINE-ITEM : "ordered in"
 ```
 
-### Gantt Chart
+### Flowchart (`flowchart`)
+```mermaid
+flowchart TD
+    Start --> Decision{Is it?}
+    Decision -->|Yes| End
+    Decision -->|No| Start
+```
+
+### Gantt (`gantt`)
 ```mermaid
 gantt
-    title Project Timeline
-    dateFormat  YYYY-MM-DD
-    section Phase 1
-    Task A           :a1, 2024-01-01, 30d
-    Task B           :after a1, 20d
-    section Phase 2
-    Task C           :2024-02-01, 15d
+    title Project Schedule
+    section Dev
+    Task A :a1, 2024-01-01, 30d
+    Task B :after a1, 20d
 ```
 
-### Pie Chart
+### GitGraph (`gitGraph`)
 ```mermaid
-pie title Distribution
-    "Category A" : 45
-    "Category B" : 30
-    "Category C" : 25
+gitGraph
+    commit
+    branch develop
+    commit
+    checkout main
+    merge develop
 ```
 
-### Mind Map
+### Kanban (`kanban`)
+```mermaid
+kanban
+    Todo
+        [Task 1]
+    Done
+        [Task 2]
+```
+
+### Mindmap (`mindmap`)
 ```mermaid
 mindmap
-  root((Main Topic))
-    Branch 1
-      Leaf 1.1
-      Leaf 1.2
-    Branch 2
-      Leaf 2.1
-    Branch 3
+  root((Main))
+    Topic A
+    Topic B
 ```
 
-### Radar Diagram (radar-beta)
+### Packet (`packet-beta`)
+```mermaid
+packet-beta
+    0-15: "Source Port"
+    16-31: "Dest Port"
+    32-63: "Sequence Number"
+```
 
-> **⚠️ Note**: `radar-beta` is an experimental feature and may not be supported by all Mermaid renderers. Use with caution.
+### Pie (`pie`)
+```mermaid
+pie
+    "Category A" : 40
+    "Category B" : 60
+```
 
-#### Usage
+### Quadrant (`quadrantChart`)
+```mermaid
+quadrantChart
+    x-axis Low --> High
+    y-axis Bad --> Good
+    Item A: [0.3, 0.6]
+    Item B: [0.8, 0.2]
+```
 
-This diagram type is particularly useful for developers, data scientists, and engineers who require a clear and concise way to represent data in a **circular format**.
-
-It is commonly used to **graphically summarize and compare the performance of multiple entities across multiple dimensions**.
-
-#### Basic Syntax
-
+### Radar (`radar-beta`)
 ```mermaid
 radar-beta
-  axis A, B, C, D, E
-  curve c1{1, 2, 3, 4, 5}
-  curve c2{5, 4, 3, 2, 1}
+    axis A, B, C, D
+    curve Item1 [50, 60, 90, 80]
 ```
 
-#### Example 1: Grades
-
+### Requirement (`requirementDiagram`)
 ```mermaid
----
-title: "Grades"
----
-radar-beta
-  axis m["Math"], s["Science"], e["English"]
-  axis h["History"], g["Geography"], a["Art"]
-  curve alice["Alice"]{85, 90, 80, 70, 75, 90}
-  curve bob["Bob"]{70, 75, 85, 80, 90, 85}
-  max 100
-  min 0
+requirementDiagram
+    requirement test_req {
+        id: 1
+        text: "Must pass tests"
+        risk: high
+    }
 ```
 
-#### Example 2: Restaurant Comparison
-
+### Sankey (`sankey-beta`)
 ```mermaid
-radar-beta
-  title Restaurant Comparison
-  axis food["Food Quality"], service["Service"], price["Price"]
-  axis ambiance["Ambiance"]
-  curve a["Restaurant A"]{4, 3, 2, 4}
-  curve b["Restaurant B"]{3, 4, 3, 3}
-  curve c["Restaurant C"]{2, 3, 4, 2}
-  curve d["Restaurant D"]{2, 2, 4, 3}
-  graticule polygon
-  max 5
+sankey-beta
+    Source, Target, 10
+    Source, Other, 5
 ```
 
-#### Syntax Details
-
-**Title**: Optional field that renders a title at the top of the radar diagram.
-
-```
-radar-beta
-  title Title of the Radar Diagram
-```
-
-**Axis**: Defines the axes of the radar diagram. Each axis has an ID and an optional label. Multiple axes can be defined on one line.
-
-```
-radar-beta
-  axis id1["Label1"]
-  axis id2["Label2"], id3["Label3"]
-```
-
-**Curve**: Defines a dataset in the radar diagram. Each curve consists of an ID, an optional label, and a list of values. Values can be positional (based on axis order) or key-value pairs (axisId: value).
-
-```
-radar-beta
-  axis axis1, axis2, axis3
-  curve id1["Label1"]{1, 2, 3}
-  curve id2["Label2"]{4, 5, 6}, id3{7, 8, 9}
-  curve id4{ axis3: 30, axis1: 20, axis2: 10 }
-```
-
-#### Options
-
-| Option | Description |
-|--------|-------------|
-| `showLegend` | Show or hide legend (default: true) |
-| `max` | Maximum value (auto-calculated if omitted) |
-| `min` | Minimum value (default: 0) |
-| `graticule` | `circle` or `polygon` (default: circle) |
-| `ticks` | Number of grid ticks (default: 5) |
-
-```
-radar-beta
-  showLegend true
-  max 100
-  min 0
-  graticule circle
-  ticks 5
-```
-
-#### Configuration
-
-**Layout Parameters**:
-
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `width` | Diagram width | 600 |
-| `height` | Diagram height | 600 |
-| `marginTop` | Top margin | 50 |
-| `marginBottom` | Bottom margin | 50 |
-| `marginLeft` | Left margin | 50 |
-| `marginRight` | Right margin | 50 |
-| `axisScaleFactor` | Axis scale | 1 |
-| `axisLabelFactor` | Axis label offset | 1.05 |
-| `curveTension` | Curve smoothness | 0.17 |
-
-#### Theme Variables
-
-**Global Theme Variables** (default values depend on the selected theme):
-
-Override example:
-
-```yaml
-config:
-  themeVariables:
-    cScale0: "#FF0000"
-    cScale1: "#00FF00"
-```
-
-Radar charts support `cScale${i}` (usually up to 12 colors).
-
-| Property | Description |
-|----------|-------------|
-| `fontSize` | Title font size |
-| `titleColor` | Title color |
-| `cScale$i` | Color of i-th curve |
-
-**Radar Style Options** (defined under `radar`):
-
-```yaml
-config:
-  themeVariables:
-    radar:
-      axisColor: "#FF0000"
-```
-
-| Property | Description | Default |
-|----------|-------------|---------|
-| `axisColor` | Axis line color | black |
-| `axisStrokeWidth` | Axis width | 1 |
-| `axisLabelFontSize` | Axis label size | 12px |
-| `curveOpacity` | Curve opacity | 0.7 |
-| `curveStrokeWidth` | Curve width | 2 |
-| `graticuleColor` | Grid color | black |
-| `graticuleOpacity` | Grid opacity | 0.5 |
-| `graticuleStrokeWidth` | Grid width | 1 |
-| `legendBoxSize` | Legend box size | 10 |
-| `legendFontSize` | Legend font size | 14px |
-
-#### Example: Config + Theme
-
+### Sequence (`sequenceDiagram`)
 ```mermaid
----
-config:
-  radar:
-    axisScaleFactor: 0.25
-    curveTension: 0.1
-  theme: base
-  themeVariables:
-    cScale0: "#FF0000"
-    cScale1: "#00FF00"
-    cScale2: "#0000FF"
-    radar:
-      curveOpacity: 0
----
-radar-beta
-  axis A, B, C, D, E
-  curve c1{1, 2, 3, 4, 5}
-  curve c2{5, 4, 3, 2, 1}
-  curve c3{3, 3, 3, 3, 3}
+sequenceDiagram
+    Alice->>John: Hello
+    John-->>Alice: Hi
 ```
 
+### State (`stateDiagram-v2`)
+```mermaid
+stateDiagram-v2
+    [*] --> Active
+    Active --> Inactive
+    Inactive --> [*]
+```
 
+### Timeline (`timeline`)
+```mermaid
+timeline
+    2023 : Event A
+    2024 : Event B : Event C
+```
+
+### Treemap (`treemap-beta`)
+```mermaid
+treemap-beta
+    "Root"
+        "Branch 1": 10
+        "Branch 2": 20
+```
+
+### User Journey (`journey`)
+```mermaid
+journey
+    title My Day
+    section Morning
+      Wake up: 5: Me
+      Breakfast: 4: Me, Cat
+```
+
+### XY Chart (`xychart-beta`)
+```mermaid
+xychart-beta
+    x-axis [Jan, Feb, Mar]
+    bar [10, 20, 15]
+    line [10, 20, 15]
+```
+
+### ZenUML (`zenuml`)
+```mermaid
+zenuml
+    Alice->Bob: Hi
+    Bob->Alice: Hello
+```
 
 ## Best Practices
 
