@@ -36,12 +36,12 @@ export default function PromptFineTuneDialog({
   onSave,
   modelName,
 }: PromptFineTuneDialogProps) {
-  const { t } = useTranslation('wizard')
+  const { t } = useTranslation('promptTune')
   const isMobile = useIsMobile()
 
   // State
   const [currentPrompt, setCurrentPrompt] = useState(initialPrompt)
-  const [originalPrompt] = useState(initialPrompt)
+  const [originalPrompt, setOriginalPrompt] = useState(initialPrompt)
   const [testMessage, setTestMessage] = useState('')
   const [aiResponse, setAiResponse] = useState('')
   const [isTestingPrompt, setIsTestingPrompt] = useState(false)
@@ -54,6 +54,7 @@ export default function PromptFineTuneDialog({
   const handleOpenChange = useCallback((newOpen: boolean) => {
     if (newOpen) {
       setCurrentPrompt(initialPrompt)
+      setOriginalPrompt(initialPrompt)
       setTestMessage('')
       setAiResponse('')
       setUserFeedback('')
@@ -119,10 +120,11 @@ export default function PromptFineTuneDialog({
       setTestMessage(lastTestMessage) // Pre-fill with last test message for convenience
     } catch (error) {
       console.error('Failed to iterate prompt:', error)
+      setAiResponse(t('common:errors.request_failed'))
     } finally {
       setIsIteratingPrompt(false)
     }
-  }, [userFeedback, currentPrompt, lastTestMessage, aiResponse, selectedModel])
+  }, [userFeedback, currentPrompt, lastTestMessage, aiResponse, selectedModel, t])
 
   // Reset to original prompt
   const handleReset = useCallback(() => {
@@ -148,10 +150,10 @@ export default function PromptFineTuneDialog({
         <DialogHeader className="px-4 py-3 border-b border-border flex-shrink-0">
           <DialogTitle className="flex items-center gap-2 text-lg">
             <Wand2 className="w-5 h-5 text-primary" />
-            {t('promptTune:dialog.title')}
+            {t('dialog.title')}
           </DialogTitle>
           <DialogDescription className="text-sm text-text-muted">
-            {t('promptTune:dialog.description')}
+            {t('dialog.description')}
           </DialogDescription>
         </DialogHeader>
 
@@ -190,14 +192,14 @@ export default function PromptFineTuneDialog({
         <DialogFooter className="px-4 py-3 border-t border-border flex-shrink-0">
           <div className="flex items-center justify-between w-full">
             <div className="text-xs text-text-muted">
-              {isModified ? t('promptTune:dialog.unsaved_changes') : ''}
+              {isModified ? t('dialog.unsaved_changes') : ''}
             </div>
             <div className="flex gap-2">
               <Button variant="outline" onClick={() => onOpenChange(false)}>
-                {t('promptTune:actions.cancel')}
+                {t('actions.cancel')}
               </Button>
               <Button variant="primary" onClick={handleSave}>
-                {t('promptTune:actions.save')}
+                {t('actions.save')}
               </Button>
             </div>
           </div>
