@@ -364,6 +364,16 @@
     "apply_failed": "应用改进回答失败",
     "no_improvement_needed": "未提供改进后的回答",
     "show_details": "显示评估详情",
-    "hide_details": "隐藏评估详情"
+    "hide_details": "隐藏评估详情",
+    "progress": {
+      "starting": "正在启动交叉验证",
+      "verifying_facts": "正在验证事实",
+      "evaluating": "正在评估回答质量",
+      "generating_improvement": "正在生成改进建议"
+    },
+    "streaming": {
+      "summary": "总结评价",
+      "improved_answer": "改进后的回答"
+    }
   }
 }

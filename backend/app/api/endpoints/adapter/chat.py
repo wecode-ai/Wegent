@@ -1767,8 +1767,9 @@ async def correct_response(
     1. Validates the correction model exists and is accessible
     2. Checks if correction already exists in subtask.result (returns cached)
     3. If not cached, sends the original Q&A to the correction model for evaluation
-    4. Saves correction result to subtask.result.correction for persistence
-    5. Returns scores, corrections, summary, and improved answer
+    4. Broadcasts real-time progress updates via WebSocket
+    5. Saves correction result to subtask.result.correction for persistence
+    6. Returns scores, corrections, summary, and improved answer
 
     Returns:
         {
@@ -1783,7 +1784,11 @@ async def correct_response(
     from datetime import datetime
 
     from app.models.subtask import Subtask, SubtaskRole
+    from app.services.chat.ws_emitter import get_ws_emitter
     from app.services.correction_service import correction_service
+
+    # Get WebSocket emitter for progress broadcasting
+    ws_emitter = get_ws_emitter()
 
     # Validate that the task belongs to the current user
     task = (
@@ -1834,7 +1839,7 @@ async def correct_response(
 
     # Return cached result only if not forcing retry
     if existing_correction and not request.force_retry:
-        # Return cached result
+        # Return cached result including applied status
         return {
             "message_id": subtask.id,
             "scores": existing_correction.get("scores", {}),
@@ -1842,6 +1847,7 @@ async def correct_response(
             "summary": existing_correction.get("summary", ""),
             "improved_answer": existing_correction.get("improved_answer", ""),
             "is_correct": existing_correction.get("is_correct", False),
+            "applied": existing_correction.get("applied", False),
         }
 
     # Get the correction model config using chat_v2's unified model resolver
@@ -1897,28 +1903,62 @@ async def correct_response(
             f"Built chat history with {len(history)} messages for correction of subtask {subtask.id}"
         )
 
-    # Get search tool if enabled
+    # Get search tool if enabled (use LangChain-compatible WebSearchTool for LangGraph)
     tools = None
     if request.enable_web_search:
-        from app.services.chat.tools import get_web_search_tool
+        from app.services.chat_v2.tools import WebSearchTool
 
-        search_tool = get_web_search_tool(engine_name=request.search_engine)
-        if search_tool:
-            tools = [search_tool]
-            logger.info(
-                f"Enabled web search tool for correction (engine: {request.search_engine or 'default'})"
+        # Use a reasonable default for correction (API limit is 50)
+        search_tool = WebSearchTool(
+            engine_name=request.search_engine,
+            default_max_results=10,  # Correction only needs a few results for fact-checking
+        )
+        tools = [search_tool]
+        logger.info(
+            f"Enabled web search tool for correction (engine: {request.search_engine or 'default'})"
+        )
+
+    # Emit correction:start event
+    if ws_emitter:
+        await ws_emitter.emit_correction_start(
+            task_id=request.task_id,
+            subtask_id=request.message_id,
+            correction_model=request.correction_model_id,
+        )
+
+    # Define progress callback for WebSocket broadcasting
+    async def on_progress(stage: str, tool_name: str | None) -> None:
+        """Broadcast correction progress via WebSocket."""
+        if ws_emitter:
+            await ws_emitter.emit_correction_progress(
+                task_id=request.task_id,
+                subtask_id=request.message_id,
+                stage=stage,
+                tool_name=tool_name,
             )
-        else:
-            logger.warning("Web search requested but search service not available")
+
+    # Define chunk callback for streaming content (future use)
+    async def on_chunk(field: str, content: str, offset: int) -> None:
+        """Broadcast correction content chunks via WebSocket."""
+        if ws_emitter:
+            await ws_emitter.emit_correction_chunk(
+                task_id=request.task_id,
+                subtask_id=request.message_id,
+                field=field,
+                content=content,
+                offset=offset,
+            )
 
     try:
-        # Call correction service with history and tools
-        llm_result = await correction_service.evaluate_response(
+        # Call correction service with progress callbacks
+        llm_result = await correction_service.evaluate_response_with_progress(
             original_question=request.original_question,
             original_answer=request.original_answer,
             model_config=model_config,
             history=history if history else None,
             tools=tools,
+            on_progress=on_progress,
+            on_chunk=on_chunk,
         )
 
         # Get model display name for persistence (from processed model_config)
@@ -1948,6 +1988,14 @@ async def correct_response(
 
         logger.info(f"Saved correction result for subtask {subtask.id} to database")
 
+        # Emit correction:done event
+        if ws_emitter:
+            await ws_emitter.emit_correction_done(
+                task_id=request.task_id,
+                subtask_id=request.message_id,
+                result=llm_result,
+            )
+
         return {
             "message_id": request.message_id,
             "scores": llm_result["scores"],
@@ -1959,6 +2007,15 @@ async def correct_response(
 
     except Exception as e:
         logger.error(f"Correction evaluation failed: {e}", exc_info=True)
+
+        # Emit correction:error event
+        if ws_emitter:
+            await ws_emitter.emit_correction_error(
+                task_id=request.task_id,
+                subtask_id=request.message_id,
+                error=str(e),
+            )
+
         raise HTTPException(
             status_code=500,
             detail=f"Correction evaluation failed: {str(e)}",

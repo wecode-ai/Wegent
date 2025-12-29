@@ -243,6 +243,7 @@ export function ChatInputControls({
             onToggle={onCorrectionModeToggle}
             disabled={isLoading || isStreaming}
             correctionModelName={correctionModelName}
+            taskId={selectedTaskDetail?.id ?? null}
           />
         )}
 

@@ -55,6 +55,13 @@ class ServerEvents:
     CHAT_BOT_COMPLETE = "chat:bot_complete"
     CHAT_SYSTEM = "chat:system"
 
+    # Correction events (to task room)
+    CORRECTION_START = "correction:start"
+    CORRECTION_PROGRESS = "correction:progress"
+    CORRECTION_CHUNK = "correction:chunk"
+    CORRECTION_DONE = "correction:done"
+    CORRECTION_ERROR = "correction:error"
+
     # Task list events (to user room)
     TASK_CREATED = "task:created"
     TASK_DELETED = "task:deleted"
@@ -384,6 +391,60 @@ class SkillResponsePayload(BaseModel):
     success: bool = Field(..., description="Whether the action succeeded")
     result: Optional[Any] = Field(None, description="Success result data")
     error: Optional[str] = Field(None, description="Error message if failed")
+
+
+# ============================================================
+# Correction Event Payloads
+# ============================================================
+
+
+class CorrectionStartPayload(BaseModel):
+    """Payload for correction:start event."""
+
+    task_id: int
+    subtask_id: int
+    correction_model: str
+
+
+class CorrectionProgressPayload(BaseModel):
+    """Payload for correction:progress event.
+
+    Stages:
+    - verifying_facts: Using search tools to verify facts
+    - evaluating: Evaluating the AI response quality
+    - generating_improvement: Generating improved answer
+    """
+
+    task_id: int
+    subtask_id: int
+    stage: Literal["verifying_facts", "evaluating", "generating_improvement"]
+    tool_name: Optional[str] = None
+
+
+class CorrectionChunkPayload(BaseModel):
+    """Payload for correction:chunk event (streaming content)."""
+
+    task_id: int
+    subtask_id: int
+    field: Literal["summary", "improved_answer"]
+    content: str
+    offset: int
+
+
+class CorrectionDonePayload(BaseModel):
+    """Payload for correction:done event."""
+
+    task_id: int
+    subtask_id: int
+    result: Dict[str, Any] = Field(default_factory=dict)
+
+
+class CorrectionErrorPayload(BaseModel):
+    """Payload for correction:error event."""
+
+    task_id: int
+    subtask_id: int
+    error: str
 
 
 # ============================================================

@@ -5,106 +5,83 @@
 """
 AI Correction Service - Evaluates and corrects AI responses using tool calling.
 
-This service uses LangGraph agent workflow to obtain structured
-evaluation results instead of parsing JSON from free-form text.
-
-Key features:
-- LangGraph agent-based structured output (consistent with chat_v2)
-- Tool-based evaluation using SubmitEvaluationResultTool
-- Chat history context for better understanding
-- Web search tool for fact verification
-- Fallback to default response on errors
+This service uses LangGraph agent workflow to conduct an impartial audit
+of AI responses. It leverages:
+- LangGraph for multi-step reasoning (Search -> Evaluate).
+- Structured Output via `submit_evaluation_result` tool.
+- Grounding via external tools (e.g., Web Search) if provided.
+- Real-time progress updates via WebSocket callbacks.
 """
 
+import json
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from langchain_core.messages import AIMessage
+from langchain_core.tools import BaseTool
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_async
 
-from app.services.chat.tools.base import Tool
 from app.services.chat_v2.agents import LangGraphAgentBuilder
 from app.services.chat_v2.messages import MessageConverter
 from app.services.chat_v2.models import LangChainModelFactory
 from app.services.chat_v2.tools import ToolRegistry
 from app.services.chat_v2.tools.builtin import SubmitEvaluationResultTool
 
+# Type aliases for progress callbacks
+ProgressCallback = Callable[[str, str | None], Awaitable[None]]
+ChunkCallback = Callable[[str, str, int], Awaitable[None]]
+
 logger = logging.getLogger(__name__)
 
 
-# System prompt for evaluation using tool calling
+# -------------------------------------------------------------------------
+# PROMPTS (Industrial Standard v2.0)
+# -------------------------------------------------------------------------
+
 CORRECTION_SYSTEM_PROMPT = """# Role
-You are an expert AI Evaluator using the `submit_evaluation_result` tool.
+You are an impartial, expert AI Quality Auditor. Your job is to verify the quality of an AI response based on provided context and ground truth.
 
-# Task
-Analyze the User Question and AI Response based on the provided Context/References.
+# Context & Input
+You will receive:
+1. **User Context**: Information about the user (if available).
+2. **Conversation History**: Previous turns for context resolution.
+3. **Current Turn**: The specific User Question and AI Response to evaluate.
+4. **Tools**: You may have access to search tools. Use them to verify facts if the response contains claims that need grounding.
 
-# Workflow
-1. **Analyze**: Check for factual errors, missing information, and logic flaws.
-2. **Language Check**: Identify the language of the User Question. You MUST use this language for all text fields in the tool (description, suggestion, summary, improved_answer).
-3. **Construct Output**:
-   - If the original response is >90% good, do not invent issues.
-   - For `improved_answer`: Apply the **Superset Rule**. Keep all good parts of the original text, only fix errors and add missing info. Do NOT output a shortened summary.
-4. **Call Tool**: Execute `submit_evaluation_result` with your analysis.
+# Evaluation Protocol (Step-by-Step)
 
-# Important
-- You MUST call the `submit_evaluation_result` tool to submit your evaluation.
-- All text fields must be in the same language as the User Question.
-- Focus on CRITICAL missing information or factual errors, not minor style issues.
+## Step 1: Fact Verification (CRITICAL)
+- If you have search tools, USE THEM to verify specific claims (dates, versions, events).
+- Compare the AI Response against your internal knowledge or search results.
+- If the AI claims X, and reality is Y -> This is a **Critical Fact Error**.
+
+## Step 2: Intent & Context Check
+- Does the response address the specific user intent found in the History?
+- Did it miss a follow-up constraint? (e.g., User asked for "Python code" previously).
+
+## Step 3: The "Objective Audit" (Anti-Bias Rule)
+**Users sometimes flag good responses incorrectly.**
+- **Do NOT** assume the response is bad.
+- If the response is accurate (>90% correct) and helpful, rate it highly (Score 9-10) and return an EMPTY `issues` list.
+- **Do NOT** nitpick on style/tone unless it violates the User Context (e.g., using jargon for a child).
+
+## Step 4: Constructing the Output
+Call the `submit_evaluation_result` tool to finalize your report.
+- **Language Constraint**: Detect the language of the **User Question**. ALL text fields in the tool (`description`, `suggestion`, `summary`, `improved_answer`) **MUST** use this language.
+- **Superset Rule**: When generating `improved_answer`:
+    1. You represent the "Perfect Version".
+    2. You MUST RETAIN all correct, detailed, and relevant information from the original response.
+    3. **Do NOT summarize** or shorten the content.
+    4. Surgical-fix the errors and add missing critical info only.
+
+# Tone
+Objective, Professional, Analytical.
 """
 
-
-# User prompt template with context
-CORRECTION_USER_PROMPT_WITH_CONTEXT = """The user is not satisfied with the following AI response. Please analyze the reasons.
-
-## Conversation Context
-The above messages show the conversation history leading up to this response.
-
-## User Question (Current)
-{original_question}
-
-## AI Response (User Not Satisfied)
-{original_answer}
-
-## Analysis Requirements
-Please analyze from the following perspectives:
-
-1. **Context Relevance**: Does the response properly address the conversation context?
-
-2. **Why might the user be dissatisfied?** - Focus on **missing CRITICAL information** (key concepts, specific details) or **factual errors**.
-   - **DO NOT** criticize the structure if it is already clear (e.g., bullet points are usually good).
-   - **DO NOT** be overly pedantic. If the original answer is 90% good, only flag the 10% missing.
-
-3. **Fact verification**: Verify all factual claims. **Use the search tool if available** to verify facts.
-
-4. **Logic errors**: Check for fallacies or contradictions.
-
-5. **Missing considerations**: Identify truly important missing perspectives.
-"""
-
-
-# User prompt template without context
-CORRECTION_USER_PROMPT_NO_CONTEXT = """The user is not satisfied with the following AI response. Please analyze the reasons.
-
-## User Question
-{original_question}
-
-## AI Response (User Not Satisfied)
-{original_answer}
-
-## Analysis Requirements
-Please analyze from the following perspectives:
-
-1. **Why might the user be dissatisfied?** - Focus on **missing CRITICAL information** (key concepts, specific details) or **factual errors**.
-   - **DO NOT** criticize the structure if it is already clear (e.g., bullet points are usually good).
-   - **DO NOT** be overly pedantic. If the original answer is 90% good, only flag the 10% missing.
-
-2. **Fact verification**: Verify all factual claims. **Use the search tool if available** to verify facts.
-
-3. **Logic errors**: Check for fallacies or contradictions.
-
-4. **Missing considerations**: Identify truly important missing perspectives.
-"""
+# -------------------------------------------------------------------------
+# SERVICE IMPLEMENTATION
+# -------------------------------------------------------------------------
 
 
 class CorrectionService:
@@ -116,11 +93,10 @@ class CorrectionService:
         extract_attributes=lambda self, original_question, original_answer, model_config, history=None, tools=None: {
             "correction.model_id": model_config.get("model_id", "unknown"),
             "correction.provider": model_config.get("provider", "unknown"),
-            "correction.has_history": history is not None and len(history) > 0,
+            "correction.has_history": bool(history),
             "correction.history_length": len(history) if history else 0,
-            "correction.has_tools": tools is not None and len(tools) > 0,
+            "correction.tool_count": len(tools) if tools else 0,
             "correction.question_length": len(original_question),
-            "correction.answer_length": len(original_answer),
         },
     )
     async def evaluate_response(
@@ -129,57 +105,67 @@ class CorrectionService:
         original_answer: str,
         model_config: dict[str, Any],
         history: list[dict[str, str]] | None = None,
-        tools: list[Tool] | None = None,
+        tools: list[BaseTool] | None = None,
+        user_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         Evaluate an AI response and provide corrections if needed.
-
-        Uses LangGraph agent workflow to obtain structured results,
-        consistent with chat_v2 service implementation.
 
         Args:
             original_question: The user's original question
             original_answer: The AI's original answer
             model_config: Model configuration for the correction model
-            history: Optional chat history (list of {"role": str, "content": str})
-            tools: Optional list of Tool instances (e.g., web search) - NOT USED YET
+            history: Optional chat history
+            tools: Optional list of Tool instances (e.g., Web Search) for fact-checking
+            user_context: Optional dictionary containing user profile/settings
 
         Returns:
             Dictionary with scores, corrections, summary, improved_answer, and is_correct
         """
         try:
-
-            # Create LangChain model from config (consistent with chat_v2)
+            # 1. Initialize Model
             llm = LangChainModelFactory.create_from_config(
                 model_config, streaming=False
             )
 
-            # Create tool registry and register evaluation tool
+            # 2. Register Tools
             tool_registry = ToolRegistry()
+
+            # Register the mandatory output tool
             evaluation_tool = SubmitEvaluationResultTool()
             tool_registry.register(evaluation_tool)
 
-            # Create LangGraph agent builder (consistent with chat_v2)
+            # Register optional fact-checking tools (e.g., Search)
+            # This enables the agent to search BEFORE evaluating
+            if tools:
+                for tool in tools:
+                    tool_registry.register(tool)
+
+            # 3. Build Agent
             agent = LangGraphAgentBuilder(
                 llm=llm,
                 tool_registry=tool_registry,
-                max_iterations=10,  # Allow more iterations for tool calls (search + evaluation)
+                # Increase iterations to allow: Search -> Read -> Search -> Evaluate
+                max_iterations=12,
                 enable_checkpointing=False,
             )
 
-            # Build messages using MessageConverter (consistent with chat_v2)
+            # 4. Construct Payload (Structured Input)
             chat_history = self._build_history(history)
-            user_prompt = self._build_user_prompt(
-                original_question, original_answer, has_history=bool(history)
+            user_prompt = self._build_audit_payload(
+                original_question,
+                original_answer,
+                history=history,
+                user_context=user_context,
             )
 
             messages = MessageConverter.build_messages(
-                history=chat_history,
+                history=[],  # History is embedded in the prompt payload for the Auditor context
                 current_message=user_prompt,
                 system_prompt=CORRECTION_SYSTEM_PROMPT,
             )
 
-            # Execute agent
+            # 5. Execute
             set_span_attribute("correction.message_count", len(messages))
             add_span_event("correction.invoking_agent")
 
@@ -187,8 +173,146 @@ class CorrectionService:
 
             add_span_event("correction.agent_completed")
 
-            # Extract tool call arguments from agent result
+            # 6. Extract Result
             return self._extract_evaluation_result(result)
+
+        except Exception as e:
+            logger.exception("Correction evaluation error: %s", e)
+            add_span_event("correction.error", {"error": str(e)})
+            return self._default_result()
+
+    async def evaluate_response_with_progress(
+        self,
+        original_question: str,
+        original_answer: str,
+        model_config: dict[str, Any],
+        history: list[dict[str, str]] | None = None,
+        tools: list[BaseTool] | None = None,
+        user_context: dict[str, Any] | None = None,
+        on_progress: ProgressCallback | None = None,
+        on_chunk: ChunkCallback | None = None,
+    ) -> dict[str, Any]:
+        """
+        Evaluate an AI response with real-time progress updates and streaming output.
+
+        This method uses astream_events to:
+        1. Capture tool events for progress updates (search, evaluation)
+        2. Stream the evaluation result fields (summary, improved_answer) in real-time
+        3. Return the final structured result
+
+        Args:
+            original_question: The user's original question
+            original_answer: The AI's original answer
+            model_config: Model configuration for the correction model
+            history: Optional chat history
+            tools: Optional list of Tool instances (e.g., Web Search) for fact-checking
+            user_context: Optional dictionary containing user profile/settings
+            on_progress: Callback for progress updates (stage, tool_name)
+                        Stages: "evaluating", "verifying_facts", "generating_improvement"
+            on_chunk: Callback for streaming content (field, content, offset)
+                     Fields: "summary", "improved_answer"
+
+        Returns:
+            Dictionary with scores, corrections, summary, improved_answer, and is_correct
+        """
+        import asyncio
+
+        try:
+            # 1. Initialize Model (enable streaming for progress tracking)
+            llm = LangChainModelFactory.create_from_config(model_config, streaming=True)
+
+            # 2. Register Tools
+            tool_registry = ToolRegistry()
+
+            # Register the mandatory output tool
+            evaluation_tool = SubmitEvaluationResultTool()
+            tool_registry.register(evaluation_tool)
+
+            # Register optional fact-checking tools (e.g., Search)
+            if tools:
+                for tool in tools:
+                    tool_registry.register(tool)
+
+            # 3. Build Agent
+            agent = LangGraphAgentBuilder(
+                llm=llm,
+                tool_registry=tool_registry,
+                max_iterations=12,
+                enable_checkpointing=False,
+            )
+
+            # 4. Construct Payload
+            user_prompt = self._build_audit_payload(
+                original_question,
+                original_answer,
+                history=history,
+                user_context=user_context,
+            )
+
+            messages = MessageConverter.build_messages(
+                history=[],
+                current_message=user_prompt,
+                system_prompt=CORRECTION_SYSTEM_PROMPT,
+            )
+
+            # 5. Emit initial progress
+            if on_progress:
+                await on_progress("evaluating", None)
+
+            # 6. Define tool event handler for progress updates
+            def handle_tool_event(kind: str, data: dict) -> None:
+                """Handle tool events for progress updates."""
+                tool_name = data.get("name", "unknown")
+
+                if kind == "tool_start":
+                    # Determine stage based on tool name
+                    if "search" in tool_name.lower():
+                        # Schedule progress callback (non-blocking)
+                        if on_progress:
+                            asyncio.create_task(
+                                on_progress("verifying_facts", tool_name)
+                            )
+                    elif tool_name == "submit_evaluation_result":
+                        if on_progress:
+                            asyncio.create_task(
+                                on_progress("generating_improvement", tool_name)
+                            )
+
+            # 7. Execute with streaming events to capture tool events and final state
+            final_state, all_events = await agent.stream_events_with_state(
+                messages, on_tool_event=handle_tool_event
+            )
+
+            add_span_event("correction.agent_completed")
+
+            # 8. Extract Result from final state
+            if not final_state:
+                logger.warning("No final state from stream_events_with_state")
+                return self._default_result()
+
+            final_result = self._extract_evaluation_result(final_state)
+
+            # 9. Stream the result fields if on_chunk callback is provided
+            if on_chunk and final_result:
+                # Stream summary field
+                summary = final_result.get("summary", "")
+                if summary:
+                    chunk_size = 20  # Characters per chunk
+                    for i in range(0, len(summary), chunk_size):
+                        chunk = summary[i : i + chunk_size]
+                        await on_chunk("summary", chunk, i)
+                        await asyncio.sleep(0.02)  # 20ms delay for typing effect
+
+                # Stream improved_answer field
+                improved_answer = final_result.get("improved_answer", "")
+                if improved_answer:
+                    chunk_size = 30  # Slightly larger chunks for longer content
+                    for i in range(0, len(improved_answer), chunk_size):
+                        chunk = improved_answer[i : i + chunk_size]
+                        await on_chunk("improved_answer", chunk, i)
+                        await asyncio.sleep(0.02)  # 20ms delay for typing effect
+
+            return final_result
 
         except Exception as e:
             logger.exception("Correction evaluation error: %s", e)
@@ -199,97 +323,96 @@ class CorrectionService:
         self,
         history: list[dict[str, str]] | None = None,
     ) -> list[dict[str, str]]:
-        """Build chat history in OpenAI format for MessageConverter.
-
-        Args:
-            history: Optional chat history
-
-        Returns:
-            List of messages in OpenAI format
-        """
+        """Build chat history in OpenAI format."""
         if not history:
             return []
+        return [
+            {"role": m.get("role", "user"), "content": m.get("content", "")}
+            for m in history
+        ]
 
-        result = []
-        for msg in history:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-            result.append({"role": role, "content": content})
-
-        return result
-
-    def _build_user_prompt(
+    def _build_audit_payload(
         self,
         original_question: str,
         original_answer: str,
-        has_history: bool = False,
+        history: list[dict[str, str]] | None = None,
+        user_context: dict[str, Any] | None = None,
     ) -> str:
-        """Build user prompt for evaluation.
-
-        Args:
-            original_question: User's question
-            original_answer: AI's answer
-            has_history: Whether chat history is provided
-
-        Returns:
-            Formatted user prompt string
         """
-        if has_history:
-            return CORRECTION_USER_PROMPT_WITH_CONTEXT.format(
-                original_question=original_question, original_answer=original_answer
+        Constructs a structured audit payload.
+        Instead of a simple string, we dump sections to help the model separate
+        Context from Current Turn.
+        """
+        payload_sections = []
+
+        # Section 1: User Context (if any)
+        if user_context:
+            payload_sections.append(
+                f"--- USER PROFILE/CONTEXT ---\n{json.dumps(user_context, ensure_ascii=False, indent=2)}"
             )
-        else:
-            return CORRECTION_USER_PROMPT_NO_CONTEXT.format(
-                original_question=original_question, original_answer=original_answer
-            )
+
+        # Section 2: History (for resolving references)
+        if history:
+            # Limit history length to prevent token overflow if needed, or rely on model window
+            history_text = json.dumps(history[-10:], ensure_ascii=False, indent=2)
+            payload_sections.append(f"--- CONVERSATION HISTORY ---\n{history_text}")
+
+        # Section 3: The Target (What to evaluate)
+        target_content = (
+            f"""User Question: {original_question}\nAI Response: {original_answer}"""
+        )
+        payload_sections.append(f"--- CURRENT TURN TO EVALUATE ---\n{target_content}")
+
+        # Section 4: Trigger
+        payload_sections.append(
+            "\nINSTRUCTIONS: Please perform the impartial audit now. Use search tools if facts need verification."
+        )
+
+        return "\n\n".join(payload_sections)
 
     def _extract_evaluation_result(self, result: dict[str, Any]) -> dict[str, Any]:
-        """Extract evaluation result from agent execution result.
-
-        Args:
-            result: Agent execution result containing messages
-
-        Returns:
-            Formatted evaluation result dictionary
-        """
+        """Extract evaluation result from agent execution result."""
         messages = result.get("messages", [])
 
-        # Find tool calls in AI messages
+        # Iterate backwards to find the last successful submission
         for msg in reversed(messages):
             if isinstance(msg, AIMessage) and hasattr(msg, "tool_calls"):
                 tool_calls = msg.tool_calls
                 if tool_calls:
-                    # Find submit_evaluation_result tool call
                     for tool_call in tool_calls:
                         if tool_call.get("name") == "submit_evaluation_result":
                             args = tool_call.get("args", {})
 
+                            # Telemetry
                             set_span_attribute("correction.tool_called", True)
+                            meta = args.get("meta", {})
                             set_span_attribute(
                                 "correction.detected_language",
-                                args.get("meta", {}).get(
-                                    "detected_language", "unknown"
-                                ),
+                                meta.get("detected_language", "unknown"),
+                            )
+                            set_span_attribute(
+                                "correction.eval_status",
+                                meta.get("evaluation_status", "unknown"),
                             )
 
                             return self._format_result(args)
 
-        # Fallback: no tool call found
         logger.warning("Agent did not call evaluation tool in any message")
         set_span_attribute("correction.tool_called", False)
         return self._default_result()
 
     def _format_result(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Format tool call arguments into API response format.
-
-        Args:
-            args: Tool call arguments from model
-
-        Returns:
-            Formatted result dictionary
-        """
+        """Format tool call arguments into API response format."""
         scores = args.get("scores", {})
         issues = args.get("issues", [])
+
+        # Determine is_correct/is_pass
+        # Prioritize explicit boolean if available, otherwise check issues list or status
+        is_pass = args.get("is_pass")
+        if is_pass is None:
+            # Fallback logic if tool schema uses 'evaluation_status'
+            status = args.get("meta", {}).get("evaluation_status", "")
+            is_pass = status in ["perfect", "acceptable"] and not issues
 
         return {
             "scores": {
@@ -300,42 +423,28 @@ class CorrectionService:
             "corrections": [
                 {
                     "issue": issue.get("description", ""),
-                    "category": issue.get("category", ""),
+                    "category": issue.get("category", "other"),
                     "suggestion": issue.get("suggestion", ""),
                 }
                 for issue in issues
             ],
             "summary": args.get("summary", ""),
             "improved_answer": args.get("improved_answer", ""),
-            "is_correct": args.get("is_pass", False),
+            "is_correct": bool(is_pass),
         }
 
     def _default_result(self) -> dict[str, Any]:
-        """Return default result when evaluation fails.
-
-        Returns:
-            Default evaluation result
-        """
         return {
             "scores": {"accuracy": 5, "logic": 5, "completeness": 5},
             "corrections": [],
-            "summary": "Unable to evaluate response",
+            "summary": "Unable to evaluate response due to an internal error.",
             "improved_answer": "",
-            "is_correct": True,
+            "is_correct": True,  # Fail open (assume correct) to avoid disrupting user flow
         }
 
     def _clamp_score(self, score: Any) -> int:
-        """Clamp score to valid range 1-10.
-
-        Args:
-            score: Score value to clamp
-
-        Returns:
-            Clamped score between 1 and 10
-        """
         try:
-            score_int = int(score)
-            return max(1, min(10, score_int))
+            return max(1, min(10, int(score)))
         except (ValueError, TypeError):
             return 5
 

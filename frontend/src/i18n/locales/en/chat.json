@@ -365,6 +365,16 @@
     "apply_failed": "Failed to apply the improved answer",
     "no_improvement_needed": "No improved answer provided",
     "show_details": "Show Evaluation Details",
-    "hide_details": "Hide Evaluation Details"
+    "hide_details": "Hide Evaluation Details",
+    "progress": {
+      "starting": "Starting cross-validation",
+      "verifying_facts": "Verifying facts",
+      "evaluating": "Evaluating response quality",
+      "generating_improvement": "Generating improvement suggestions"
+    },
+    "streaming": {
+      "summary": "Summary",
+      "improved_answer": "Improved Answer"
+    }
   }
 }
