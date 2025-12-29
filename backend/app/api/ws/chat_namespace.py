@@ -488,7 +488,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 task = result.task
                 user_subtask = result.user_subtask
                 assistant_subtask = result.assistant_subtask
-                user_subtask_for_attachment = user_subtask
+                user_subtask_for_context = user_subtask
 
             else:
                 # Use task_kinds_service.create_task_or_append for non-direct chat
@@ -566,15 +566,15 @@ class ChatNamespace(socketio.AsyncNamespace):
                         .first()
                     )
 
-                user_subtask_for_attachment = user_subtask
+                user_subtask_for_context = user_subtask
 
             # Update user subtask with context metadata
-            if context_metadata and user_subtask_for_attachment:
+            if context_metadata and user_subtask_for_context:
                 try:
-                    user_subtask_for_attachment.metadata = context_metadata
+                    user_subtask_for_context.metadata = context_metadata
                     db.commit()
                     logger.info(
-                        f"[WS] chat:send stored context metadata in subtask {user_subtask_for_attachment.id}"
+                        f"[WS] chat:send stored context metadata in subtask {user_subtask_for_context.id}"
                     )
                 except Exception as e:
                     logger.exception(
@@ -582,28 +582,32 @@ class ChatNamespace(socketio.AsyncNamespace):
                     )
                     db.rollback()
 
-            # Link attachment to user subtask if provided
-            # This is important for group chat history to include attachment content
-            # Support both legacy attachment_id and new attachment_ids
-            attachment_ids_to_link = []
-            if payload.attachment_ids:
-                attachment_ids_to_link = payload.attachment_ids
-            elif payload.attachment_id:
-                # Backward compatibility: convert single attachment_id to list
-                attachment_ids_to_link = [payload.attachment_id]
+            # Link attachments and create knowledge base contexts for the user subtask
+            # This handles both pre-uploaded attachments and knowledge bases selected at send time
+            if user_subtask_for_context:
+                from app.services.chat.preprocessing import link_contexts_to_subtask
 
-            if attachment_ids_to_link and user_subtask_for_attachment:
-                from app.services.attachment import attachment_service
+                # Build attachment_ids list (support both legacy and new format)
+                attachment_ids_to_link = []
+                if payload.attachment_ids:
+                    attachment_ids_to_link = payload.attachment_ids
+                elif payload.attachment_id:
+                    # Backward compatibility: convert single attachment_id to list
+                    attachment_ids_to_link = [payload.attachment_id]
 
-                for attachment_id in attachment_ids_to_link:
-                    attachment_service.link_attachment_to_subtask(
-                        db=db,
-                        attachment_id=attachment_id,
-                        subtask_id=user_subtask_for_attachment.id,
-                        user_id=user_id,
-                    )
+                linked_context_ids = link_contexts_to_subtask(
+                    db=db,
+                    subtask_id=user_subtask_for_context.id,
+                    user_id=user_id,
+                    attachment_ids=(
+                        attachment_ids_to_link if attachment_ids_to_link else None
+                    ),
+                    contexts=payload.contexts,
+                )
+                if linked_context_ids:
                     logger.info(
-                        f"[WS] chat:send linked attachment {attachment_id} to subtask {user_subtask_for_attachment.id}"
+                        f"[WS] chat:send linked/created {len(linked_context_ids)} contexts "
+                        f"for subtask {user_subtask_for_context.id}"
                     )
 
             # Join task room
@@ -717,7 +721,7 @@ class ChatNamespace(socketio.AsyncNamespace):
         """
         Broadcast user message to task room (exclude sender).
 
-        This helper method builds attachment info and emits the chat:message event
+        This helper method builds context info and emits the chat:message event
         to notify other group members about the new message.
 
         Args:
@@ -727,39 +731,57 @@ class ChatNamespace(socketio.AsyncNamespace):
             message: Message content
             user_id: Sender's user ID
             user_name: Sender's user name
-            attachment_id: Optional attachment ID
+            attachment_id: Optional attachment/context ID
             task_room: Task room name
             skip_sid: Socket ID to skip (sender)
         """
         from app.api.ws.events import ServerEvents
+        from app.services.context import context_service
 
-        # Build attachment info if present
+        # Build contexts list for the subtask
+        contexts_briefs = context_service.get_briefs_by_subtask(db, user_subtask.id)
+        contexts_list = [
+            {
+                "id": ctx.id,
+                "context_type": ctx.context_type,
+                "name": ctx.name,
+                "status": ctx.status,
+                "file_extension": ctx.file_extension,
+                "file_size": ctx.file_size,
+                "mime_type": ctx.mime_type,
+                "document_count": ctx.document_count,
+            }
+            for ctx in contexts_briefs
+        ]
+
+        # Build legacy attachment info for backward compatibility
         attachment_info = None
+        attachments_list = None
         if attachment_id:
-            from app.services.attachment import attachment_service
-
-            attachment = attachment_service.get_attachment(
+            context = context_service.get_context_optional(
                 db=db,
-                attachment_id=attachment_id,
-                user_id=user_id,
+                context_id=attachment_id,
             )
-            if attachment:
+            if context and context.context_type == "attachment":
                 attachment_info = {
-                    "id": attachment.id,
-                    "original_filename": attachment.original_filename,
-                    "file_extension": attachment.file_extension,
-                    "file_size": attachment.file_size,
-                    "mime_type": attachment.mime_type,
-                    "status": attachment.status.value if attachment.status else None,
+                    "id": context.id,
+                    "original_filename": context.original_filename,
+                    "file_extension": context.file_extension,
+                    "file_size": context.file_size,
+                    "mime_type": context.mime_type,
+                    "status": (
+                        context.status
+                        if isinstance(context.status, str)
+                        else context.status.value
+                    ),
                 }
-
-        # Build attachments array (supports multiple attachments in the future)
-        attachments_list = [attachment_info] if attachment_info else None
+                attachments_list = [attachment_info]
 
         logger.info(
             f"[WS] Broadcasting user message to room: room={task_room}, "
             f"skip_sid={skip_sid}, message_id={user_subtask.message_id}, "
-            f"sender_user_id={user_id}, sender_user_name={user_name}"
+            f"sender_user_id={user_id}, sender_user_name={user_name}, "
+            f"contexts_count={len(contexts_list)}"
         )
 
         await self.emit(
@@ -776,7 +798,8 @@ class ChatNamespace(socketio.AsyncNamespace):
                 },
                 "created_at": user_subtask.created_at.isoformat(),
                 "attachment": attachment_info,  # Keep for backward compatibility
-                "attachments": attachments_list,  # New array format
+                "attachments": attachments_list,  # Legacy array format
+                "contexts": contexts_list,  # New contexts format
             },
             room=task_room,
             skip_sid=skip_sid,
@@ -1111,15 +1134,18 @@ class ChatNamespace(socketio.AsyncNamespace):
             # If model_id exists, use it; otherwise, use None to let the bot use its default model
             from app.api.ws.events import ChatSendPayload
 
-            # Get attachment from user_subtask if exists
+            # Get context (attachment) from user_subtask if exists
             attachment_id = None
-            if user_subtask.attachments:
-                # Use the first attachment (chat messages typically have one attachment)
-                attachment_id = user_subtask.attachments[0].id
-                logger.info(
-                    f"[WS] chat:retry found attachment: id={attachment_id}, "
-                    f"filename={user_subtask.attachments[0].original_filename}"
-                )
+            if user_subtask.contexts:
+                # Use the first attachment context (chat messages typically have one attachment)
+                for ctx in user_subtask.contexts:
+                    if ctx.context_type == "attachment":
+                        attachment_id = ctx.id
+                        logger.info(
+                            f"[WS] chat:retry found context: id={attachment_id}, "
+                            f"name={ctx.name}"
+                        )
+                        break
 
             retry_payload = ChatSendPayload(
                 task_id=payload.task_id,

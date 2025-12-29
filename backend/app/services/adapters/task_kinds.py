@@ -1425,23 +1425,50 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         # Convert subtasks to dict and replace bot_ids with bot objects
         subtasks_dict = []
         for subtask in subtasks:
-            # Convert attachments to dict format
+            # Convert contexts to dict format (new unified context system)
+            contexts_list = []
+            if hasattr(subtask, "contexts") and subtask.contexts:
+                for ctx in subtask.contexts:
+                    ctx_dict = {
+                        "id": ctx.id,
+                        "context_type": ctx.context_type,
+                        "name": ctx.name,
+                        "status": (
+                            ctx.status.value
+                            if hasattr(ctx.status, "value")
+                            else ctx.status
+                        ),
+                    }
+                    # Add type-specific fields from type_data
+                    if ctx.context_type == "attachment":
+                        ctx_dict.update(
+                            {
+                                "file_extension": ctx.file_extension,
+                                "file_size": ctx.file_size,
+                                "mime_type": ctx.mime_type,
+                            }
+                        )
+                    elif ctx.context_type == "knowledge_base":
+                        ctx_dict.update(
+                            {
+                                "document_count": ctx.document_count,
+                            }
+                        )
+                    contexts_list.append(ctx_dict)
+
+            # Build legacy attachments list for backward compatibility
             attachments_list = []
-            if hasattr(subtask, "attachments") and subtask.attachments:
-                for attachment in subtask.attachments:
+            for ctx in contexts_list:
+                if ctx.get("context_type") == "attachment":
                     attachments_list.append(
                         {
-                            "id": attachment.id,
-                            "filename": attachment.original_filename,
-                            "file_size": attachment.file_size,
-                            "mime_type": attachment.mime_type,
-                            "status": (
-                                attachment.status.value
-                                if hasattr(attachment.status, "value")
-                                else attachment.status
-                            ),
-                            "file_extension": attachment.file_extension,
-                            "created_at": attachment.created_at,
+                            "id": ctx["id"],
+                            "filename": ctx["name"],
+                            "file_size": ctx.get("file_size", 0),
+                            "mime_type": ctx.get("mime_type", ""),
+                            "status": ctx["status"],
+                            "file_extension": ctx.get("file_extension", ""),
+                            "created_at": None,  # Not available in context brief
                         }
                     )
 
@@ -1471,7 +1498,9 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 "bots": [
                     bots.get(bot_id) for bot_id in subtask.bot_ids if bot_id in bots
                 ],
-                # Add attachments
+                # Add contexts (new unified context system)
+                "contexts": contexts_list,
+                # Add attachments (backward compatibility)
                 "attachments": attachments_list,
                 # Group chat fields
                 "sender_type": subtask.sender_type,  # Already a string value, not enum
