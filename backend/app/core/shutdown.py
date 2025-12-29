@@ -200,7 +200,7 @@ class ShutdownManager:
         Returns:
             int: Number of streams that were cancelled
         """
-        from app.services.chat.session_manager import session_manager
+        from app.services.chat.storage import session_manager
 
         cancelled_count = 0
         streams_to_cancel = self._active_streams.copy()

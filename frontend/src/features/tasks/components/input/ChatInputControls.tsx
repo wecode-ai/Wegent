@@ -9,7 +9,6 @@ import { CircleStop } from 'lucide-react';
 import ModelSelector, { Model } from '../selector/ModelSelector';
 import RepositorySelector from '../selector/RepositorySelector';
 import BranchSelector from '../selector/BranchSelector';
-import DeepThinkingToggle from './DeepThinkingToggle';
 import ClarificationToggle from '../clarification/ClarificationToggle';
 import CorrectionModeToggle from '../CorrectionModeToggle';
 import ChatContextInput from '../chat/ChatContextInput';
@@ -110,8 +109,6 @@ export function ChatInputControls({
   selectedBranch,
   setSelectedBranch,
   selectedTaskDetail,
-  enableDeepThinking,
-  setEnableDeepThinking,
   enableClarification,
   setEnableClarification,
   enableCorrectionMode = false,
@@ -290,14 +287,14 @@ export function ChatInputControls({
           <QuotaUsage className="flex-shrink-0" compact={shouldUseCompactQuota} />
         )}
 
-        {/* Deep Thinking Toggle Button - only show for chat shell */}
-        {isChatShell(selectedTeam) && (
+        {/* Deep Thinking Toggle Button - hidden for now */}
+        {/* {isChatShell(selectedTeam) && (
           <DeepThinkingToggle
             enabled={enableDeepThinking}
             onToggle={setEnableDeepThinking}
             disabled={isLoading || isStreaming}
           />
-        )}
+        )} */}
 
         {/* Send/Stop Button */}
         {renderSendButton()}

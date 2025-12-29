@@ -14,7 +14,7 @@ tools:
     config:
       timeout: 30
 dependencies:
-  - app.services.chat_v2.tools.pending_requests
+  - app.chat_shell.tools.pending_requests
 ---
 
 # Diagram Visualization with Mermaid
