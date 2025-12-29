@@ -5,7 +5,7 @@
 'use client';
 
 import React from 'react';
-import { Button } from '@/components/ui/button';
+import { ActionButton } from '@/components/ui/action-button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useTranslation } from '@/hooks/useTranslation';
 
@@ -16,7 +16,7 @@ interface AddContextButtonProps {
 /**
  * Add Context Button - Icon-only button that opens knowledge base selector
  * Always displays "@" symbol with tooltip on hover
- * Matches AttachmentButton's visual style (h-9 w-9 rounded-full)
+ * Uses ActionButton for consistent 36px size with other control buttons
  */
 export default function AddContextButton({ onClick }: AddContextButtonProps) {
   const { t } = useTranslation('knowledge');
@@ -25,16 +25,15 @@ export default function AddContextButton({ onClick }: AddContextButtonProps) {
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            onClick={onClick}
-            className="h-9 w-9 rounded-full border-border bg-base text-text-primary hover:bg-hover"
-            aria-label={t('tooltip')}
-          >
-            <span className="text-base font-medium text-text-primary">@</span>
-          </Button>
+          <div>
+            <ActionButton
+              variant="outline"
+              onClick={onClick}
+              icon={<span className="text-base font-medium text-text-primary">@</span>}
+              title={t('tooltip')}
+              className="border-border bg-base text-text-primary hover:bg-hover"
+            />
+          </div>
         </TooltipTrigger>
         <TooltipContent side="top">
           <p>{t('tooltip')}</p>
