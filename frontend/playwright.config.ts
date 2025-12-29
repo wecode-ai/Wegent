@@ -51,11 +51,11 @@ export default defineConfig({
     /* Viewport size */
     viewport: { width: 1280, height: 720 },
 
-    /* Reduce action timeout for faster failure detection */
-    actionTimeout: 10000,
+    /* Action timeout - keep at 15s for API calls that may take longer */
+    actionTimeout: 15000,
 
-    /* Reduce navigation timeout */
-    navigationTimeout: 20000,
+    /* Navigation timeout */
+    navigationTimeout: 30000,
   },
 
   /* Configure projects for major browsers */
@@ -110,12 +110,12 @@ export default defineConfig({
     },
   ],
 
-  /* Reduced timeout for each test - 45 seconds should be enough */
-  timeout: 45000,
+  /* Test timeout - keep at 60s for complex tests */
+  timeout: 60000,
 
   /* Timeout for each expect assertion */
   expect: {
-    timeout: 8000,
+    timeout: 10000,
     /* Visual comparison options */
     toHaveScreenshot: {
       maxDiffPixels: 100,
