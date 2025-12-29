@@ -197,3 +197,78 @@ def get_context_ids_for_attachment_ids(
         need to be extracted via extract_knowledge_base_ids
     """
     return context_ids, []
+
+
+def link_contexts_to_subtask(
+    db: Session,
+    subtask_id: int,
+    user_id: int,
+    attachment_ids: List[int] | None = None,
+    contexts: List[Any] | None = None,
+) -> List[int]:
+    """
+    Link attachments and create knowledge base contexts for a subtask.
+
+    This function handles two types of contexts:
+    1. Attachments: Pre-uploaded files with existing context IDs, just need to link
+    2. Knowledge bases: Selected at send time, need to create SubtaskContext records
+
+    Args:
+        db: Database session
+        subtask_id: Subtask ID to link contexts to
+        user_id: User ID
+        attachment_ids: List of pre-uploaded attachment context IDs to link
+        contexts: List of ContextItem objects from payload (for knowledge bases)
+
+    Returns:
+        List of all linked/created context IDs
+    """
+    from app.schemas.subtask_context import KnowledgeBaseContextCreate
+
+    linked_context_ids = []
+
+    # 1. Link pre-uploaded attachments
+    if attachment_ids:
+        context_service.link_many_to_subtask(
+            db=db,
+            context_ids=attachment_ids,
+            subtask_id=subtask_id,
+        )
+        linked_context_ids.extend(attachment_ids)
+        logger.info(
+            f"Linked {len(attachment_ids)} attachment contexts to subtask {subtask_id}"
+        )
+
+    # 2. Create and link knowledge base contexts
+    if contexts:
+        for ctx in contexts:
+            if ctx.type == "knowledge_base":
+                try:
+                    kb_data = ctx.data
+                    knowledge_id = kb_data.get("knowledge_id")
+                    kb_name = kb_data.get("name", f"Knowledge Base {knowledge_id}")
+                    document_count = kb_data.get("document_count")
+
+                    # Create knowledge base context
+                    kb_context_create = KnowledgeBaseContextCreate(
+                        knowledge_id=int(knowledge_id) if knowledge_id else 0,
+                        name=kb_name,
+                        document_count=document_count,
+                    )
+                    kb_context = context_service.create_knowledge_base_context(
+                        db=db,
+                        user_id=user_id,
+                        data=kb_context_create,
+                        subtask_id=subtask_id,
+                    )
+                    linked_context_ids.append(kb_context.id)
+                    logger.info(
+                        f"Created knowledge base context: id={kb_context.id}, "
+                        f"knowledge_id={knowledge_id}, name={kb_name}, "
+                        f"subtask_id={subtask_id}"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to create knowledge base context: {e}")
+                    continue
+
+    return linked_context_ids

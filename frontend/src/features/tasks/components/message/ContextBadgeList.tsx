@@ -23,15 +23,18 @@ interface ContextBadgeListProps {
  * - knowledge_base: Displays KB name with document count
  */
 export function ContextBadgeList({ contexts }: ContextBadgeListProps) {
-  if (!contexts || contexts.length === 0) return null;
+  // DEBUG: Log contexts to help diagnose display issues
+  console.log('[ContextBadgeList] Rendering with contexts:', contexts);
+
+  if (!contexts || contexts.length === 0) {
+    console.log('[ContextBadgeList] No contexts to display');
+    return null;
+  }
 
   return (
     <div className="flex flex-wrap gap-2 mb-3">
       {contexts.map(context => (
-        <ContextBadgeItem
-          key={`${context.context_type}-${context.id}`}
-          context={context}
-        />
+        <ContextBadgeItem key={`${context.context_type}-${context.id}`} context={context} />
       ))}
     </div>
   );
@@ -89,9 +92,7 @@ function AttachmentContextBadge({ context }: { context: SubtaskContextBrief }) {
     created_at: '',
   };
 
-  return (
-    <AttachmentPreview attachment={attachment} compact={true} showDownload={true} />
-  );
+  return <AttachmentPreview attachment={attachment} compact={false} showDownload={true} />;
 }
 
 /**

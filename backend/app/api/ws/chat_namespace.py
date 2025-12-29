@@ -488,7 +488,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 task = result.task
                 user_subtask = result.user_subtask
                 assistant_subtask = result.assistant_subtask
-                user_subtask_for_attachment = user_subtask
+                user_subtask_for_context = user_subtask
 
             else:
                 # Use task_kinds_service.create_task_or_append for non-direct chat
@@ -566,15 +566,15 @@ class ChatNamespace(socketio.AsyncNamespace):
                         .first()
                     )
 
-                user_subtask_for_attachment = user_subtask
+                user_subtask_for_context = user_subtask
 
             # Update user subtask with context metadata
-            if context_metadata and user_subtask_for_attachment:
+            if context_metadata and user_subtask_for_context:
                 try:
-                    user_subtask_for_attachment.metadata = context_metadata
+                    user_subtask_for_context.metadata = context_metadata
                     db.commit()
                     logger.info(
-                        f"[WS] chat:send stored context metadata in subtask {user_subtask_for_attachment.id}"
+                        f"[WS] chat:send stored context metadata in subtask {user_subtask_for_context.id}"
                     )
                 except Exception as e:
                     logger.exception(
@@ -582,27 +582,33 @@ class ChatNamespace(socketio.AsyncNamespace):
                     )
                     db.rollback()
 
-            # Link attachment to user subtask if provided
-            # This is important for group chat history to include attachment content
-            # Support both legacy attachment_id and new attachment_ids
-            attachment_ids_to_link = []
-            if payload.attachment_ids:
-                attachment_ids_to_link = payload.attachment_ids
-            elif payload.attachment_id:
-                # Backward compatibility: convert single attachment_id to list
-                attachment_ids_to_link = [payload.attachment_id]
+            # Link attachments and create knowledge base contexts for the user subtask
+            # This handles both pre-uploaded attachments and knowledge bases selected at send time
+            if user_subtask_for_context:
+                from app.services.chat.preprocessing import link_contexts_to_subtask
 
-            if attachment_ids_to_link and user_subtask_for_attachment:
-                from app.services.context import context_service
+                # Build attachment_ids list (support both legacy and new format)
+                attachment_ids_to_link = []
+                if payload.attachment_ids:
+                    attachment_ids_to_link = payload.attachment_ids
+                elif payload.attachment_id:
+                    # Backward compatibility: convert single attachment_id to list
+                    attachment_ids_to_link = [payload.attachment_id]
 
-                context_service.link_many_to_subtask(
+                linked_context_ids = link_contexts_to_subtask(
                     db=db,
-                    context_ids=attachment_ids_to_link,
-                    subtask_id=user_subtask_for_attachment.id,
+                    subtask_id=user_subtask_for_context.id,
+                    user_id=user_id,
+                    attachment_ids=(
+                        attachment_ids_to_link if attachment_ids_to_link else None
+                    ),
+                    contexts=payload.contexts,
                 )
-                logger.info(
-                    f"[WS] chat:send linked {len(attachment_ids_to_link)} contexts to subtask {user_subtask_for_attachment.id}"
-                )
+                if linked_context_ids:
+                    logger.info(
+                        f"[WS] chat:send linked/created {len(linked_context_ids)} contexts "
+                        f"for subtask {user_subtask_for_context.id}"
+                    )
 
             # Join task room
             task_room = f"task:{task.id}"

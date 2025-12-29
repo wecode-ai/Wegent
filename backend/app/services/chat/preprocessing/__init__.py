@@ -14,6 +14,7 @@ replacing the original attachments-only approach.
 
 from .contexts import (
     extract_knowledge_base_ids,
+    link_contexts_to_subtask,
     process_attachments,
     process_contexts,
 )
@@ -22,4 +23,5 @@ __all__ = [
     "process_attachments",
     "process_contexts",
     "extract_knowledge_base_ids",
+    "link_contexts_to_subtask",
 ]

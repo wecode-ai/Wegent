@@ -212,5 +212,3 @@ class KnowledgeBaseContextCreate(BaseModel):
     knowledge_id: int
     name: str
     document_count: Optional[int] = None
-    retriever_name: Optional[str] = None
-    retriever_namespace: Optional[str] = None

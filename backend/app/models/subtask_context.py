@@ -163,17 +163,3 @@ class SubtaskContext(Base):
         if self.type_data and isinstance(self.type_data, dict):
             return self.type_data.get("document_count", 0)
         return 0
-
-    @property
-    def retriever_name(self) -> str:
-        """Get retriever name from type_data (knowledge_base type)."""
-        if self.type_data and isinstance(self.type_data, dict):
-            return self.type_data.get("retriever_name", "")
-        return ""
-
-    @property
-    def retriever_namespace(self) -> str:
-        """Get retriever namespace from type_data (knowledge_base type)."""
-        if self.type_data and isinstance(self.type_data, dict):
-            return self.type_data.get("retriever_namespace", "")
-        return ""

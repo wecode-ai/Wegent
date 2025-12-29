@@ -103,22 +103,41 @@ class SubtaskContextBrief(BaseModel):
 
     @classmethod
     def from_model(cls, context) -> "SubtaskContextBrief":
-        """Create brief from SubtaskContext model"""
+        """
+        Create brief from SubtaskContext model.
+        Only includes type-specific fields based on context_type.
+        """
         type_data = context.type_data or {}
-        return cls(
-            id=context.id,
-            context_type=context.context_type,
-            name=context.name,
-            status=(
+
+        # Base fields for all context types
+        base_data = {
+            "id": context.id,
+            "context_type": context.context_type,
+            "name": context.name,
+            "status": (
                 context.status
                 if isinstance(context.status, str)
                 else context.status.value
             ),
-            file_extension=type_data.get("file_extension"),
-            file_size=type_data.get("file_size"),
-            mime_type=type_data.get("mime_type"),
-            document_count=type_data.get("document_count"),
-        )
+        }
+
+        # Add type-specific fields
+        if context.context_type == "attachment":
+            base_data.update(
+                {
+                    "file_extension": type_data.get("file_extension"),
+                    "file_size": type_data.get("file_size"),
+                    "mime_type": type_data.get("mime_type"),
+                }
+            )
+        elif context.context_type == "knowledge_base":
+            base_data.update(
+                {
+                    "document_count": type_data.get("document_count"),
+                }
+            )
+
+        return cls(**base_data)
 
 
 class SubtaskUpdate(BaseModel):

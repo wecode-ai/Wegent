@@ -800,8 +800,17 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
    * Adds the message to the unified messages Map for real-time display
    */
   const handleChatMessage = useCallback((data: ChatMessagePayload) => {
-    const { task_id, subtask_id, message_id, role, content, sender, created_at, attachments } =
-      data;
+    const {
+      task_id,
+      subtask_id,
+      message_id,
+      role,
+      content,
+      sender,
+      created_at,
+      attachments,
+      contexts,
+    } = data;
 
     // Generate message ID based on role
     const isUserMessage = role === 'user' || role?.toUpperCase() === 'USER';
@@ -834,6 +843,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         senderUserId: sender?.user_id,
         shouldShowSender: isUserMessage, // Show sender for user messages in group chat
         attachments: attachments,
+        contexts: contexts,
       };
 
       newMessages.set(msgId, newMessage);

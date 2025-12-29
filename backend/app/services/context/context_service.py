@@ -398,8 +398,6 @@ class ContextService:
             type_data={
                 "knowledge_id": data.knowledge_id,
                 "document_count": data.document_count,
-                "retriever_name": data.retriever_name,
-                "retriever_namespace": data.retriever_namespace,
             },
         )
         db.add(context)

@@ -429,17 +429,16 @@ export function useChatStreamHandlers({
         // Each context item contains type and data fields
         const contextItems = selectedContexts.map(ctx => {
           if (ctx.type === 'knowledge_base') {
-            // Type assertion for knowledge base context with retriever info
+            // Type assertion for knowledge base context with document_count
             const kbContext = ctx as ContextItem & {
-              retriever_name?: string;
-              retriever_namespace?: string;
+              document_count?: number;
             };
             return {
               type: 'knowledge_base',
               data: {
                 knowledge_id: ctx.id,
-                retriever_name: kbContext.retriever_name || '',
-                retriever_namespace: kbContext.retriever_namespace || 'default',
+                name: ctx.name,
+                document_count: kbContext.document_count,
               },
             };
           }
