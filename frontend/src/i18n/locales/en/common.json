@@ -571,6 +571,11 @@
     "cannotUndo": "This action cannot be undone",
     "coming_soon": "Coming Soon"
   },
+  "userSearch": {
+    "placeholder": "Search username or email...",
+    "selectedUsers": "{{count}} user(s) selected",
+    "noResults": "No users found"
+  },
   "quota": {
     "load_failed": "Failed to fetch credits info",
     "brief": "WeCredits {{monthly_usage}} / {{monthly_quota}} (+{{permanent_quota}})",

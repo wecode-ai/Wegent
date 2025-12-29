@@ -11,7 +11,7 @@ import { useUrlMetadata } from '@/hooks/useUrlMetadata';
 interface LinkCardProps {
   /** The URL to display as a card */
   url: string;
-  /** Optional link text (from Markdown syntax) */
+  /** Optional link text (from Markdown syntax) - now deprecated, original text shown separately */
   linkText?: string;
   /** Whether to show a compact version */
   compact?: boolean;
@@ -83,14 +83,15 @@ export default function LinkCard({
     }
 
     // Use span-based layout to avoid HTML nesting issues (div inside p)
+    // Full width with max-width constraint for consistent sizing
     return (
-      <span className="block my-2 p-3 rounded-lg border border-border bg-surface animate-pulse">
+      <span className="block my-2 p-3 rounded-lg border border-border bg-surface animate-pulse w-full max-w-full">
         <span className="flex items-start gap-3">
-          <span className="w-5 h-5 rounded bg-muted inline-block" />
-          <span className="flex-1 space-y-2 inline-block">
+          <span className="w-10 h-10 rounded-lg bg-muted inline-block flex-shrink-0" />
+          <span className="flex-1 min-w-0 space-y-2 inline-block">
             <span className="block h-4 bg-muted rounded w-3/4" />
             <span className="block h-3 bg-muted rounded w-full" />
-            <span className="block h-3 bg-muted rounded w-1/2" />
+            <span className="block h-3 bg-muted rounded w-1/3" />
           </span>
         </span>
       </span>
@@ -131,12 +132,13 @@ export default function LinkCard({
   }
 
   // Full card display - use span-based layout to avoid HTML nesting issues (div/h4 inside p)
+  // Full width with consistent styling, adapts to container (works well in tables)
   return (
     <a
       href={url}
       target="_blank"
       rel="noopener noreferrer"
-      className="block my-2 p-3 rounded-lg border border-border bg-surface hover:bg-muted/50 hover:border-primary/50 hover:!no-underline transition-all group"
+      className="block my-2 p-3 rounded-lg border border-border bg-surface hover:bg-muted/50 hover:border-primary/50 hover:!no-underline transition-all group w-full max-w-full"
     >
       <span className="flex items-start gap-3">
         {/* Favicon */}
