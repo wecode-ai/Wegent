@@ -332,7 +332,10 @@ export default function ExportSelectModal({
                 }`}
                 onClick={() => handleToggleMessage(msg.id)}
               >
-                <div className="flex-shrink-0 pt-0.5">
+                <div
+                  className="flex-shrink-0 pt-0.5"
+                  onClick={e => e.stopPropagation()}
+                >
                   <Checkbox
                     checked={isSelected}
                     onCheckedChange={() => handleToggleMessage(msg.id)}
