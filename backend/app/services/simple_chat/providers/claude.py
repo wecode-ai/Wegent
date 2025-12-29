@@ -127,7 +127,7 @@ class ClaudeProvider(LLMProvider):
         cancel_event: asyncio.Event,
     ) -> AsyncGenerator[StreamChunk, None]:
         """Stream chat completion from Claude API."""
-        url = f"{self.config.base_url.rstrip('/')}/messages"
+        url = f"{self.config.base_url.rstrip('/')}/v1/messages"
         formatted_messages = self.format_messages(messages)
         system_prompt = self._extract_system_prompt(messages)
 
