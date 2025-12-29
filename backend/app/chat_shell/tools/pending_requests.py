@@ -375,6 +375,10 @@ class PendingRequestRegistry:
                 "result": result,
                 "error": error,
             }
+            logger.debug(
+                f"[PendingRequestRegistry] Built response from result/error: "
+                f"success={error is None}"
+            )
 
         request.future.set_result(response)
 

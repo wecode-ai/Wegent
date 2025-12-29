@@ -39,6 +39,11 @@ import {
   TaskInvitedPayload,
   SkillRequestPayload,
   SkillResponsePayload,
+  CorrectionStartPayload,
+  CorrectionProgressPayload,
+  CorrectionChunkPayload,
+  CorrectionDonePayload,
+  CorrectionErrorPayload,
 } from '@/types/socket';
 
 import { fetchRuntimeConfig, getSocketUrl } from '@/lib/runtime-config';
@@ -93,6 +98,8 @@ interface SocketContextType {
   registerSkillHandlers: (handlers: SkillEventHandlers) => () => void;
   /** Send skill response back to server */
   sendSkillResponse: (payload: SkillResponsePayload) => void;
+  /** Register correction event handlers */
+  registerCorrectionHandlers: (handlers: CorrectionEventHandlers) => () => void;
 }
 
 /** Chat event handlers for streaming */
@@ -117,6 +124,15 @@ export interface TaskEventHandlers {
 export interface SkillEventHandlers {
   /** Handler for skill:request event (server requests frontend to perform a skill action) */
   onSkillRequest?: (data: SkillRequestPayload) => void;
+}
+
+/** Correction event handlers for cross-validation progress */
+export interface CorrectionEventHandlers {
+  onCorrectionStart?: (data: CorrectionStartPayload) => void;
+  onCorrectionProgress?: (data: CorrectionProgressPayload) => void;
+  onCorrectionChunk?: (data: CorrectionChunkPayload) => void;
+  onCorrectionDone?: (data: CorrectionDonePayload) => void;
+  onCorrectionError?: (data: CorrectionErrorPayload) => void;
 }
 
 const SocketContext = createContext<SocketContextType | undefined>(undefined);
@@ -508,6 +524,43 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   );
 
   /**
+   * Register correction event handlers for cross-validation progress
+   * Returns a cleanup function to unregister handlers
+   */
+  const registerCorrectionHandlers = useCallback(
+    (handlers: CorrectionEventHandlers): (() => void) => {
+      if (!socket) {
+        return () => {};
+      }
+
+      const {
+        onCorrectionStart,
+        onCorrectionProgress,
+        onCorrectionChunk,
+        onCorrectionDone,
+        onCorrectionError,
+      } = handlers;
+
+      if (onCorrectionStart) socket.on(ServerEvents.CORRECTION_START, onCorrectionStart);
+      if (onCorrectionProgress) socket.on(ServerEvents.CORRECTION_PROGRESS, onCorrectionProgress);
+      if (onCorrectionChunk) socket.on(ServerEvents.CORRECTION_CHUNK, onCorrectionChunk);
+      if (onCorrectionDone) socket.on(ServerEvents.CORRECTION_DONE, onCorrectionDone);
+      if (onCorrectionError) socket.on(ServerEvents.CORRECTION_ERROR, onCorrectionError);
+
+      // Return cleanup function
+      return () => {
+        if (onCorrectionStart) socket.off(ServerEvents.CORRECTION_START, onCorrectionStart);
+        if (onCorrectionProgress)
+          socket.off(ServerEvents.CORRECTION_PROGRESS, onCorrectionProgress);
+        if (onCorrectionChunk) socket.off(ServerEvents.CORRECTION_CHUNK, onCorrectionChunk);
+        if (onCorrectionDone) socket.off(ServerEvents.CORRECTION_DONE, onCorrectionDone);
+        if (onCorrectionError) socket.off(ServerEvents.CORRECTION_ERROR, onCorrectionError);
+      };
+    },
+    [socket]
+  );
+
+  /**
    * Register skill event handlers for generic skill requests
    * Returns a cleanup function to unregister handlers
    */
@@ -626,6 +679,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         registerTaskHandlers,
         registerSkillHandlers,
         sendSkillResponse,
+        registerCorrectionHandlers,
       }}
     >
       {children}
