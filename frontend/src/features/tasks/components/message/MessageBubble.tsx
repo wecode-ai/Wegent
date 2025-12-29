@@ -5,7 +5,7 @@
 'use client';
 
 import React, { memo, useState } from 'react';
-import type { TaskDetail, Team, GitRepoInfo, GitBranch, Attachment } from '@/types/api';
+import type { TaskDetail, Team, GitRepoInfo, GitBranch, Attachment, SubtaskContextBrief } from '@/types/api';
 import {
   Bot,
   Download,
@@ -28,6 +28,7 @@ import ClarificationForm from '../clarification/ClarificationForm';
 import FinalPromptMessage from './FinalPromptMessage';
 import ClarificationAnswerSummary from '../clarification/ClarificationAnswerSummary';
 import AttachmentPreview from '../input/AttachmentPreview';
+import ContextBadgeList from './ContextBadgeList';
 import StreamingWaitIndicator from './StreamingWaitIndicator';
 import BubbleTools, { CopyButton } from './BubbleTools';
 import { SourceReferences } from '../chat/SourceReferences';
@@ -61,6 +62,9 @@ export interface Message {
     shell_type?: string; // Shell type (Chat, ClaudeCode, Agno, etc.)
     sources?: SourceReference[]; // RAG knowledge base sources
   };
+  /** Unified contexts (attachments, knowledge bases, etc.) */
+  contexts?: SubtaskContextBrief[];
+  /** @deprecated Use contexts instead */
   attachments?: Attachment[];
   /** Recovered content from Redis/DB when user refreshes during streaming */
   recoveredContent?: string;
@@ -1382,7 +1386,10 @@ const MessageBubble = memo(
                 {timestampLabel && <span>{timestampLabel}</span>}
               </div>
             )}
-            {isUserTypeMessage && renderAttachments(msg.attachments)}
+            {/* Show contexts (attachments, knowledge bases) for user messages */}
+            {isUserTypeMessage && <ContextBadgeList contexts={msg.contexts} />}
+            {/* Fallback: show attachments if contexts not available (backward compatibility) */}
+            {isUserTypeMessage && !msg.contexts && renderAttachments(msg.attachments)}
             {/* Show waiting indicator when streaming but no content yet */}
             {isWaiting || msg.isWaiting ? (
               <StreamingWaitIndicator isWaiting={true} />

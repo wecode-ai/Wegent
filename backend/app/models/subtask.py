@@ -70,10 +70,10 @@ class Subtask(Base):
     )  # 0 for non-user senders
     reply_to_subtask_id = Column(Integer, nullable=False, default=0)  # 0 for no reply
 
-    # Relationship to SubtaskAttachment (no foreign key constraint, use primaryjoin)
-    attachments = relationship(
-        "SubtaskAttachment",
-        primaryjoin="Subtask.id == foreign(SubtaskAttachment.subtask_id)",
+    # Relationship to SubtaskContext (no foreign key constraint, use primaryjoin)
+    contexts = relationship(
+        "SubtaskContext",
+        primaryjoin="Subtask.id == foreign(SubtaskContext.subtask_id)",
         backref="subtask",
         viewonly=True,  # Read-only since no FK constraint
     )

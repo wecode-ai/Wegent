@@ -310,6 +310,9 @@ export interface TaskDetailSubtask {
   updated_at: string;
   completed_at: string;
   bots: Bot[];
+  /** Unified contexts (attachments, knowledge bases, etc.) */
+  contexts?: SubtaskContextBrief[];
+  /** @deprecated Use contexts instead */
   attachments?: Attachment[];
   // Group chat fields
   sender_type?: 'USER' | 'TEAM';
@@ -473,6 +476,23 @@ export interface Attachment {
   file_extension: string;
   created_at: string;
   truncation_info?: TruncationInfo | null;
+}
+
+// Context Types (unified context for attachments, knowledge bases, etc.)
+export type ContextType = 'attachment' | 'knowledge_base';
+export type ContextStatus = 'pending' | 'uploading' | 'parsing' | 'ready' | 'failed';
+
+export interface SubtaskContextBrief {
+  id: number;
+  context_type: ContextType;
+  name: string;
+  status: ContextStatus;
+  // Attachment fields (from type_data)
+  file_extension?: string | null;
+  file_size?: number | null;
+  mime_type?: string | null;
+  // Knowledge base fields (from type_data)
+  document_count?: number | null;
 }
 
 export interface AttachmentUploadState {

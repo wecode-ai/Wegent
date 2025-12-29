@@ -30,7 +30,7 @@ import { useMemo, useEffect, useRef } from 'react';
 import { useChatStreamContext, computeIsStreaming } from '../contexts/chatStreamContext';
 import { useUser } from '@/features/common/UserContext';
 import { useTaskContext } from '../contexts/taskContext';
-import type { Team, Attachment } from '@/types/api';
+import type { Team, Attachment, SubtaskContextBrief } from '@/types/api';
 
 /**
  * Message for display - extends UnifiedMessage with additional rendering info
@@ -52,7 +52,9 @@ export interface DisplayMessage {
   messageId?: number;
   /** Error message if status is 'error' */
   error?: string;
-  /** Attachments array */
+  /** Unified contexts (attachments, knowledge bases, etc.) */
+  contexts?: SubtaskContextBrief[];
+  /** @deprecated Use contexts instead */
   attachments?: Attachment[];
   /** Bot name for AI messages */
   botName?: string;
@@ -207,9 +209,13 @@ export function useUnifiedMessages({
     const messages: DisplayMessage[] = [];
 
     for (const [, msg] of streamState.messages) {
+      // Handle contexts (new unified format)
+      // When synced from backend, contexts array contains all context types (attachments, knowledge bases)
+      const contexts = msg.contexts as SubtaskContextBrief[] | undefined;
+
       // Handle both singular 'attachment' (from pending messages) and plural 'attachments' (from backend)
       // When user sends a message with attachment, it's stored in 'attachment' field
-      // When synced from backend, it's in 'attachments' array
+      // When synced from backend, it's in 'attachments' array (for backward compatibility)
       let attachments: Attachment[] | undefined;
       if (msg.attachments && Array.isArray(msg.attachments) && msg.attachments.length > 0) {
         attachments = msg.attachments as Attachment[];
@@ -227,6 +233,7 @@ export function useUnifiedMessages({
         subtaskId: msg.subtaskId,
         messageId: msg.messageId,
         error: msg.error,
+        contexts,
         attachments,
         botName: msg.botName || team?.name,
         senderUserName: msg.senderUserName,

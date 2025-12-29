@@ -12,6 +12,8 @@ from typing import Any, List, Optional
 
 from pydantic import BaseModel, Field, field_serializer
 
+from app.schemas.subtask_context import SubtaskContextBrief
+
 # Add the project root to sys.path if not already there
 project_root = os.path.dirname(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -68,22 +70,6 @@ class SubtaskCreate(SubtaskBase):
     pass
 
 
-class SubtaskAttachment(BaseModel):
-    """Subtask attachment schema"""
-
-    id: int
-    filename: str = Field(validation_alias="original_filename")
-    file_size: int
-    mime_type: str
-    status: str
-    file_extension: str
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
-        populate_by_name = True
-
-
 class SubtaskUpdate(BaseModel):
     """Subtask update model"""
 
@@ -108,7 +94,7 @@ class SubtaskInDB(SubtaskBase):
     updated_at: datetime
     completed_at: Optional[datetime] = None
     executor_deleted_at: Optional[bool] = False
-    attachments: List[SubtaskAttachment] = []
+    contexts: List[SubtaskContextBrief] = []
     # Group chat fields
     sender_type: Optional[SenderType] = None  # USER or TEAM
     sender_user_id: Optional[int] = None  # User ID when sender_type=USER
