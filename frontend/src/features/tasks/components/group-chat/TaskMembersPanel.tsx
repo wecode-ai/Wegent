@@ -21,6 +21,7 @@ import { taskMemberApi, TaskMember } from '@/apis/task-member';
 import { useTranslation } from '@/hooks/useTranslation';
 import { AddMembersDialog } from './AddMembersDialog';
 import { cn } from '@/lib/utils';
+import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 
 interface TaskMembersPanelProps {
   open: boolean;
@@ -43,6 +44,7 @@ export function TaskMembersPanel({
 }: TaskMembersPanelProps) {
   const { t } = useTranslation('chat');
   const { toast } = useToast();
+  const { markAsNewlyCreated } = useTaskContext();
   const [members, setMembers] = useState<TaskMember[]>([]);
   const [taskOwnerId, setTaskOwnerId] = useState<number>(0);
   const [loading, setLoading] = useState(false);
@@ -137,6 +139,8 @@ export function TaskMembersPanel({
       try {
         await taskMemberApi.convertToGroupChat(taskId);
         wasConverted = true;
+        // Mark as newly created for pinning to top
+        markAsNewlyCreated(taskId);
       } catch (conversionError: unknown) {
         // Ignore conversion errors - task might already be a group chat
         console.log('Task conversion:', conversionError);

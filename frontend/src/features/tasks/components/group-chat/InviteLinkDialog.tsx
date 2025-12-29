@@ -25,6 +25,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { taskMemberApi } from '@/apis/task-member';
 import { useTranslation } from '@/hooks/useTranslation';
+import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 
 interface InviteLinkDialogProps {
   open: boolean;
@@ -43,6 +44,7 @@ export function InviteLinkDialog({
 }: InviteLinkDialogProps) {
   const { t } = useTranslation('chat');
   const { toast } = useToast();
+  const { markAsNewlyCreated } = useTaskContext();
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
   const [expiresHours, setExpiresHours] = useState('0'); // 0 = permanent (no expiration)
   const [loading, setLoading] = useState(false);
@@ -63,6 +65,8 @@ export function InviteLinkDialog({
       try {
         await taskMemberApi.convertToGroupChat(taskId);
         wasConverted = true;
+        // Mark as newly created for pinning to top
+        markAsNewlyCreated(taskId);
       } catch (conversionError: unknown) {
         // Ignore conversion errors - task might already be a group chat or user might not be owner
         // The important part is the generateInviteLink call below

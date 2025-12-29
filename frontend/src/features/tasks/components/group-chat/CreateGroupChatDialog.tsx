@@ -49,7 +49,7 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
 
   const { teams, isTeamsLoading } = teamService.useTeams();
   const { sendMessage } = useChatStreamContext();
-  const { refreshTasks, setSelectedTask } = useTaskContext();
+  const { refreshTasks, setSelectedTask, markAsNewlyCreated } = useTaskContext();
   const { user } = useUser();
 
   // Filter teams to only show chat-type teams (agent_type === 'chat')
@@ -131,6 +131,9 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
             setSelectedModel(null);
             setForceOverride(false);
             setIsCreating(false);
+
+            // Mark the new group chat as newly created for pinning to top
+            markAsNewlyCreated(realTaskId);
 
             // Refresh task list to show the new group chat
             refreshTasks();

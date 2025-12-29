@@ -68,6 +68,7 @@ export default function TaskSidebar({
     markAllTasksAsViewed,
     viewStatusVersion,
     setSelectedTask,
+    newlyCreatedGroupChatIds,
   } = useTaskContext();
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -343,12 +344,19 @@ export default function TaskSidebar({
               .filter(task => !task.is_group_chat)
               .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
-            // Separate unread and read group chats, both sorted by updated_at desc
-            const unreadGroupChats = allGroupChats.filter(isTaskUnread);
-            const readGroupChats = allGroupChats.filter(task => !isTaskUnread(task));
+            // Separate newly created (pinned), unread, and read group chats
+            const pinnedGroupChats = newlyCreatedGroupChatIds
+              .map(id => allGroupChats.find(chat => chat.id === id))
+              .filter((chat): chat is typeof allGroupChats[number] => chat !== undefined);
+            const pinnedIds = new Set(newlyCreatedGroupChatIds);
+            const nonPinnedGroupChats = allGroupChats.filter(chat => !pinnedIds.has(chat.id));
 
-            // Merge: unread first, then read
-            const orderedGroupChats = [...unreadGroupChats, ...readGroupChats];
+            // Separate unread and read from non-pinned group chats, both sorted by updated_at desc
+            const unreadGroupChats = nonPinnedGroupChats.filter(isTaskUnread);
+            const readGroupChats = nonPinnedGroupChats.filter(task => !isTaskUnread(task));
+
+            // Merge: pinned first (by creation order, newest first), then unread, then read
+            const orderedGroupChats = [...pinnedGroupChats, ...unreadGroupChats, ...readGroupChats];
 
             // Calculate visible group chats based on collapse state
             let visibleGroupChats: typeof orderedGroupChats;

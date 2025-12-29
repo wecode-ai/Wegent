@@ -50,6 +50,9 @@ type TaskContextType = {
   // Access denied state for 403 errors when accessing shared tasks
   accessDenied: boolean;
   clearAccessDenied: () => void;
+  // Newly created group chat IDs for pinning to top (stored in memory only)
+  newlyCreatedGroupChatIds: number[];
+  markAsNewlyCreated: (taskId: number) => void;
 };
 
 const TaskContext = createContext<TaskContextType | undefined>(undefined);
@@ -68,6 +71,8 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   const [viewStatusVersion, setViewStatusVersion] = useState<number>(0);
   // Access denied state for 403 errors when accessing shared tasks
   const [accessDenied, setAccessDenied] = useState<boolean>(false);
+  // Newly created group chat IDs for pinning to top (stored in memory only, cleared on page refresh)
+  const [newlyCreatedGroupChatIds, setNewlyCreatedGroupChatIds] = useState<number[]>([]);
 
   // Track task status for notification
   const taskStatusMapRef = useRef<Map<number, TaskStatus>>(new Map());
@@ -573,6 +578,16 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     setAccessDenied(false);
   }, []);
 
+  // Mark a task as newly created to pin it to the top of the group chat list
+  // New tasks are added to the beginning of the array (most recent first)
+  const markAsNewlyCreated = useCallback((taskId: number) => {
+    setNewlyCreatedGroupChatIds(prev => {
+      // Avoid duplicates - if taskId already exists, move it to the front
+      const filtered = prev.filter(id => id !== taskId);
+      return [taskId, ...filtered];
+    });
+  }, []);
+
   return (
     <TaskContext.Provider
       value={{
@@ -597,6 +612,8 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
         viewStatusVersion,
         accessDenied,
         clearAccessDenied,
+        newlyCreatedGroupChatIds,
+        markAsNewlyCreated,
       }}
     >
       {children}

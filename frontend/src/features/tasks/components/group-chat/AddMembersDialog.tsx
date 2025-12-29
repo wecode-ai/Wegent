@@ -22,6 +22,7 @@ import { useToast } from '@/hooks/use-toast';
 import { taskMemberApi } from '@/apis/task-member';
 import { useTranslation } from '@/hooks/useTranslation';
 import { userApis } from '@/apis/user';
+import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 
 interface User {
   id: number;
@@ -49,6 +50,7 @@ export function AddMembersDialog({
 }: AddMembersDialogProps) {
   const { t } = useTranslation('chat');
   const { toast } = useToast();
+  const { markAsNewlyCreated } = useTaskContext();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<User[]>([]);
@@ -134,6 +136,8 @@ export function AddMembersDialog({
         // Ensure task is converted to group chat before generating link
         try {
           await taskMemberApi.convertToGroupChat(taskId);
+          // Mark as newly created for pinning to top
+          markAsNewlyCreated(taskId);
           // Trigger callback immediately after conversion to update UI
           onMembersAdded?.();
         } catch (conversionError) {
@@ -174,6 +178,8 @@ export function AddMembersDialog({
       try {
         await taskMemberApi.convertToGroupChat(taskId);
         wasConverted = true;
+        // Mark as newly created for pinning to top
+        markAsNewlyCreated(taskId);
         // Note: Don't call onMembersAdded here yet - wait until members are added
         // to avoid race condition where UI refreshes before additions complete
       } catch (conversionError) {
@@ -229,6 +235,8 @@ export function AddMembersDialog({
           // Ensure task is converted to group chat before generating link
           try {
             await taskMemberApi.convertToGroupChat(taskId);
+            // Mark as newly created for pinning to top (if not already marked above)
+            markAsNewlyCreated(taskId);
           } catch (conversionError) {
             // Ignore conversion errors - task might already be a group chat
             console.log('Task conversion for invite link:', conversionError);
