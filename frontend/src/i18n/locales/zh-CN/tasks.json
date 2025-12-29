@@ -87,5 +87,27 @@
     "analyzing": "正在深入分析",
     "generating_response": "请稍候，正在生成回复",
     "longer_than_usual": "响应时间较长，请耐心等待"
+  },
+  "preview": {
+    "title": "预览",
+    "refresh": "刷新",
+    "close": "关闭预览",
+    "start": "启动预览",
+    "stop": "停止预览",
+    "retry": "重试",
+    "not_configured": "预览未配置",
+    "not_configured_desc": "在项目根目录添加 .wegent.yaml 文件以启用实时预览。配置 startCommand、port 和 readyPattern。",
+    "error_title": "预览错误",
+    "start_server": "启动开发服务器",
+    "start_server_desc": "点击下方按钮启动开发服务器并预览您的应用。",
+    "starting": "正在启动服务器...",
+    "starting_desc": "开发服务器正在启动中，请稍候。",
+    "status": {
+      "disabled": "已禁用",
+      "starting": "启动中",
+      "ready": "就绪",
+      "error": "错误",
+      "stopped": "已停止"
+    }
   }
 }

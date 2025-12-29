@@ -585,3 +585,99 @@ async def cancel_task(request: CancelTaskRequest, http_request: Request):
     except Exception as e:
         logger.error(f"Error cancelling task {request.task_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Preview Service Endpoints
+# ============================================================================
+
+class PreviewStartRequest(BaseModel):
+    """Request body for starting preview service"""
+
+    force: bool = False
+
+
+@app.get("/executor-manager/preview/{task_id}/config")
+async def get_preview_config(task_id: int, http_request: Request):
+    """
+    Get preview configuration from task's container.
+
+    Reads .wegent.yaml or .wegent.yml from the workspace.
+    """
+    from executor_manager.preview.manager import preview_manager
+
+    try:
+        client_ip = http_request.client.host if http_request.client else "unknown"
+        logger.info(f"Getting preview config for task {task_id} from {client_ip}")
+
+        result, error = await preview_manager.get_preview_config(task_id)
+        if error:
+            raise HTTPException(status_code=404, detail=error)
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting preview config for task {task_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/executor-manager/preview/{task_id}/status")
+async def get_preview_status(task_id: int, http_request: Request):
+    """
+    Get current preview service status for a task.
+    """
+    from executor_manager.preview.manager import preview_manager
+
+    try:
+        client_ip = http_request.client.host if http_request.client else "unknown"
+        logger.info(f"Getting preview status for task {task_id} from {client_ip}")
+
+        return await preview_manager.get_preview_status(task_id)
+
+    except Exception as e:
+        logger.error(f"Error getting preview status for task {task_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/executor-manager/preview/{task_id}/start")
+async def start_preview(
+    task_id: int, request: PreviewStartRequest, http_request: Request
+):
+    """
+    Start preview service for a task.
+
+    Starts the dev server inside the task's container based on .wegent.yaml config.
+    """
+    from executor_manager.preview.manager import preview_manager
+
+    try:
+        client_ip = http_request.client.host if http_request.client else "unknown"
+        logger.info(
+            f"Starting preview for task {task_id}, force={request.force} from {client_ip}"
+        )
+
+        return await preview_manager.start_preview(task_id, force=request.force)
+
+    except Exception as e:
+        logger.error(f"Error starting preview for task {task_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/executor-manager/preview/{task_id}/stop")
+async def stop_preview(task_id: int, http_request: Request):
+    """
+    Stop preview service for a task.
+    """
+    from executor_manager.preview.manager import preview_manager
+
+    try:
+        client_ip = http_request.client.host if http_request.client else "unknown"
+        logger.info(f"Stopping preview for task {task_id} from {client_ip}")
+
+        return await preview_manager.stop_preview(task_id)
+
+    except Exception as e:
+        logger.error(f"Error stopping preview for task {task_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
