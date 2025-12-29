@@ -359,13 +359,86 @@ alembic downgrade -1                               # Rollback
 - `SocketContext` - Socket.IO connection
 - `ThemeContext` - Theme (light/dark)
 
+**Message Data Flow (Chat/Task Messages):**
+
+⚠️ **CRITICAL: Single Source of Truth for Messages**
+
+When working with chat messages, always use `messages` from `useUnifiedMessages` - this is the **ONLY** source of truth for displayed messages.
+
+```typescript
+// ✅ CORRECT - Use messages from useUnifiedMessages
+const { messages } = useUnifiedMessages({ team, isGroupChat });
+
+// ❌ WRONG - Do NOT use selectedTaskDetail.subtasks for display/export
+// This is stale backend data that doesn't include WebSocket updates
+```
+
+**Message Data Sources:**
+
+| Source | Contains | Use Case |
+|--------|----------|----------|
+| `messages` (from `useUnifiedMessages`) | Real-time messages via WebSocket | ✅ Display, export, UI rendering |
+| `selectedTaskDetail.subtasks` | Backend cached data | ❌ NEVER use for display/export |
+
+**Message Flow:**
+
+```
+1. Initial Load:
+   selectedTaskDetail.subtasks → syncBackendMessages() → streamState.messages
+
+2. New Message (Self):
+   sendMessage() → streamState.messages (pending)
+   WebSocket chat:start → Add AI message
+   WebSocket chat:chunk → Update AI content
+   WebSocket chat:done → Mark complete
+
+3. New Message (Other User in Group Chat):
+   WebSocket chat:message → streamState.messages (completed)
+
+4. Page Refresh / Task Switch:
+   selectedTaskDetail.subtasks → Re-sync to streamState.messages
+```
+
+**Key Points:**
+- `streamState.messages` is updated by WebSocket events in real-time
+- `selectedTaskDetail.subtasks` is only updated when explicitly refreshing task detail
+- When exporting/displaying messages, ALWAYS use `messages` from `useUnifiedMessages`
+- This ensures all real-time updates (self, other users, AI) are included
+
+**Common Pitfall:**
+```typescript
+// ❌ BAD - Missing latest WebSocket messages
+const exportMessages = selectedTaskDetail.subtasks.map(...)
+
+// ✅ GOOD - Includes all real-time updates
+const { messages } = useUnifiedMessages(...)
+const exportMessages = messages
+  .filter(msg => msg.status === 'completed')
+  .map(...)
+```
+
 **i18n Rules:**
 
 1. **Always import from `@/hooks/useTranslation`**, not from `react-i18next`
 2. **Use single namespace** matching your feature (e.g., `useTranslation('groups')` for groups feature)
-3. **Always add namespace prefix** when accessing keys from other namespaces (e.g., `t('common:actions.save')`)
+3. **Translation key format:**
+   - Within current namespace: `t('key.subkey')` (e.g., `t('title')`, `t('actions.save')`)
+   - From other namespace: `t('namespace:key.subkey')` (e.g., `t('common:actions.save')`, `t('chat:export.title')`)
 4. **Never use array with `common` first** - `useTranslation(['common', 'groups'])` will break feature-specific keys
 5. **Add new translation keys** to the appropriate namespace file in `src/i18n/locales/{lang}/`
+
+**Examples:**
+```typescript
+// ✅ CORRECT
+const { t } = useTranslation('groups');
+t('title')                    // Access current namespace key
+t('common:actions.save')      // Access common namespace key
+t('chat:export.no_messages')  // Access chat namespace key
+
+// ❌ WRONG
+const { t } = useTranslation(['common', 'groups']); // Breaks feature keys
+t('actions.save')             // Ambiguous - which namespace?
+```
 
 ### Executor
 
