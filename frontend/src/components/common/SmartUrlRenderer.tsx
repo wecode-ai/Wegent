@@ -9,6 +9,23 @@ import ImagePreview from '@/components/common/ImagePreview';
 import LinkCard from '@/components/common/LinkCard';
 import { isImageUrl, detectUrls } from '@/utils/url-detector';
 
+/**
+ * Check if a URL is an absolute HTTP(S) URL.
+ * Returns false for relative URLs, anchors, and non-HTTP protocols.
+ *
+ * @param url - The URL string to check
+ * @returns true if the URL is an absolute HTTP or HTTPS URL
+ */
+function isAbsoluteHttpUrl(url: string): boolean {
+  try {
+    const urlObj = new URL(url);
+    return urlObj.protocol === 'http:' || urlObj.protocol === 'https:';
+  } catch {
+    // URL construction fails for relative URLs or invalid URLs
+    return false;
+  }
+}
+
 interface SmartLinkProps {
   /** The URL to render */
   href: string;
@@ -26,6 +43,7 @@ interface SmartLinkProps {
 
 /**
  * SmartLink component that renders URLs intelligently:
+ * - Relative URLs, anchors, and non-HTTP protocols: Rendered as plain links
  * - Image URLs: Rendered as inline image previews with Lightbox
  * - Web URLs: Rendered as rich link cards with metadata
  *
@@ -33,6 +51,16 @@ interface SmartLinkProps {
  *                   Use this during streaming to avoid excessive API calls.
  */
 export function SmartLink({ href, children, compact = false, disabled = false }: SmartLinkProps) {
+  // For non-absolute HTTP(S) URLs (relative links, anchors, mailto:, tel:, etc.),
+  // render as a plain link to avoid incorrect card rendering
+  if (!isAbsoluteHttpUrl(href)) {
+    return (
+      <a href={href} className="text-primary hover:underline">
+        {children}
+      </a>
+    );
+  }
+
   // Check if it's an image URL
   if (isImageUrl(href)) {
     // Extract alt text from children if it's a simple string
@@ -99,8 +127,28 @@ export function createSmartMarkdownComponents(options?: {
       children,
       ...props
     }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { children?: React.ReactNode }) => {
-      // If link cards are disabled or no href, render as normal link
-      if (!enableLinkCards || !href) {
+      // If no href, render as normal element
+      if (!href) {
+        return (
+          <a href={href} {...props}>
+            {children}
+          </a>
+        );
+      }
+
+      // For non-absolute HTTP(S) URLs, render as plain link
+      // This handles anchors (#section), relative paths (./path, ../path, /path),
+      // and non-HTTP protocols (mailto:, tel:, etc.)
+      if (!isAbsoluteHttpUrl(href)) {
+        return (
+          <a href={href} className="text-primary hover:underline" {...props}>
+            {children}
+          </a>
+        );
+      }
+
+      // If link cards are disabled, render as normal external link
+      if (!enableLinkCards) {
         return (
           <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
             {children}
@@ -108,7 +156,7 @@ export function createSmartMarkdownComponents(options?: {
         );
       }
 
-      // Use SmartLink for intelligent rendering
+      // Use SmartLink for intelligent rendering of absolute HTTP(S) URLs
       return (
         <SmartLink href={href} compact={compact} disabled={disabled}>
           {children}
