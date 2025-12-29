@@ -6,6 +6,7 @@
 
 import React from 'react';
 import ImagePreview from '@/components/common/ImagePreview';
+import LinkCard from '@/components/common/LinkCard';
 import { isImageUrl, detectUrls } from '@/utils/url-detector';
 
 /**
@@ -166,7 +167,11 @@ interface SmartTextLineProps {
   text: string;
   /** CSS class name for the container */
   className?: string;
-  /** @deprecated disabled is no longer used - cards are disabled */
+  /**
+   * Whether to disable rich rendering (metadata fetching).
+   * When true, renders URLs as simple clickable links.
+   * Useful during streaming to avoid excessive API calls.
+   */
   disabled?: boolean;
 }
 
@@ -174,12 +179,17 @@ interface SmartTextLineProps {
  * SmartTextLine component for rendering a single line of plain text
  * with intelligent URL detection and rendering.
  *
+ * Used for user message rendering where LinkCard is appropriate.
+ *
  * Detects URLs in the text and renders them appropriately:
  * - Image URLs: Rendered as inline image previews
- * - Web URLs: Rendered as styled plain links (cards disabled to avoid layout issues)
+ * - Web URLs: Rendered as rich link cards (unless disabled)
  * - Other text: Rendered as plain text
+ *
+ * @param disabled - When true, skips metadata fetching and renders URLs as simple links.
+ *                   Use this during streaming to avoid excessive API calls.
  */
-export function SmartTextLine({ text, className = '' }: SmartTextLineProps) {
+export function SmartTextLine({ text, className = '', disabled = false }: SmartTextLineProps) {
   // If empty line, return non-breaking space to preserve line height
   if (!text) {
     return <div className={`text-sm break-all min-h-[1.25em] ${className}`}>{'\u00A0'}</div>;
@@ -216,17 +226,15 @@ export function SmartTextLine({ text, className = '' }: SmartTextLineProps) {
         />
       );
     } else {
-      // Render as styled plain link (no card to avoid layout issues)
+      // Render as LinkCard for user messages
       segments.push(
-        <a
+        <LinkCard
           key={`url-${index}`}
-          href={urlInfo.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-primary hover:underline"
-        >
-          {urlInfo.linkText || urlInfo.url}
-        </a>
+          url={urlInfo.url}
+          linkText={urlInfo.linkText}
+          compact={false}
+          disabled={disabled}
+        />
       );
     }
 
