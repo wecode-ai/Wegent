@@ -1241,8 +1241,10 @@ async def update_slogan_tips_config(
 import hashlib
 import secrets
 
-from app.models.api_key import APIKey, KEY_TYPE_SERVICE
+from app.models.api_key import KEY_TYPE_PERSONAL, KEY_TYPE_SERVICE, APIKey
 from app.schemas.api_key import (
+    AdminPersonalKeyListResponse,
+    AdminPersonalKeyResponse,
     ServiceKeyCreate,
     ServiceKeyCreatedResponse,
     ServiceKeyListResponse,
@@ -1310,7 +1312,7 @@ async def create_service_key(
         key_prefix=key_prefix,
         name=service_key_create.name,
         key_type=KEY_TYPE_SERVICE,
-        description=service_key_create.description,
+        description=service_key_create.description or "",
     )
 
     db.add(service_key)
@@ -1393,6 +1395,146 @@ async def delete_service_key(
 
     # Hard delete - permanently remove the record
     db.delete(service_key)
+    db.commit()
+
+    return None
+
+
+# ==================== Personal Key Management Endpoints (Admin) ====================
+
+
+@router.get("/personal-keys", response_model=AdminPersonalKeyListResponse)
+async def list_all_personal_keys(
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=100),
+    search: Optional[str] = Query(None, description="Search by username or key name"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Get list of all personal keys with their owners (admin only).
+
+    Personal keys are user-created API keys for programmatic access.
+    """
+    query = (
+        db.query(APIKey, User)
+        .join(User, APIKey.user_id == User.id)
+        .filter(APIKey.key_type == KEY_TYPE_PERSONAL)
+    )
+
+    # Apply search filter
+    if search:
+        search_pattern = f"%{search}%"
+        query = query.filter(
+            (User.user_name.ilike(search_pattern)) | (APIKey.name.ilike(search_pattern))
+        )
+
+    total = query.count()
+    results = (
+        query.order_by(APIKey.created_at.desc())
+        .offset((page - 1) * limit)
+        .limit(limit)
+        .all()
+    )
+
+    items = []
+    for api_key, user in results:
+        items.append(
+            AdminPersonalKeyResponse(
+                id=api_key.id,
+                user_id=api_key.user_id,
+                user_name=user.user_name,
+                name=api_key.name,
+                key_prefix=api_key.key_prefix,
+                description=api_key.description,
+                expires_at=api_key.expires_at,
+                last_used_at=api_key.last_used_at,
+                created_at=api_key.created_at,
+                is_active=api_key.is_active,
+            )
+        )
+
+    return AdminPersonalKeyListResponse(items=items, total=total)
+
+
+@router.post(
+    "/personal-keys/{key_id}/toggle-status", response_model=AdminPersonalKeyResponse
+)
+async def toggle_personal_key_status(
+    key_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Toggle a personal key's active status (admin only).
+
+    Enable or disable a personal key without deleting it.
+    """
+    result = (
+        db.query(APIKey, User)
+        .join(User, APIKey.user_id == User.id)
+        .filter(
+            APIKey.id == key_id,
+            APIKey.key_type == KEY_TYPE_PERSONAL,
+        )
+        .first()
+    )
+
+    if not result:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Personal key not found",
+        )
+
+    api_key, user = result
+
+    # Toggle is_active status
+    api_key.is_active = not api_key.is_active
+    db.commit()
+    db.refresh(api_key)
+
+    return AdminPersonalKeyResponse(
+        id=api_key.id,
+        user_id=api_key.user_id,
+        user_name=user.user_name,
+        name=api_key.name,
+        key_prefix=api_key.key_prefix,
+        description=api_key.description,
+        expires_at=api_key.expires_at,
+        last_used_at=api_key.last_used_at,
+        created_at=api_key.created_at,
+        is_active=api_key.is_active,
+    )
+
+
+@router.delete("/personal-keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_personal_key(
+    key_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Delete a personal key (admin only).
+
+    This is a hard delete - the key will be permanently removed.
+    """
+    api_key = (
+        db.query(APIKey)
+        .filter(
+            APIKey.id == key_id,
+            APIKey.key_type == KEY_TYPE_PERSONAL,
+        )
+        .first()
+    )
+
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Personal key not found",
+        )
+
+    # Hard delete - permanently remove the record
+    db.delete(api_key)
     db.commit()
 
     return None

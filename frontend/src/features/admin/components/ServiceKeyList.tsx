@@ -2,19 +2,19 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
-import '@/features/common/scrollbar.css'
+'use client';
+import '@/features/common/scrollbar.css';
 
-import React, { useEffect, useState, useCallback } from 'react'
-import { Button } from '@/components/ui/button'
-import { Card } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
-import { Switch } from '@/components/ui/switch'
-import { KeyIcon, TrashIcon, ClipboardDocumentIcon, CheckIcon } from '@heroicons/react/24/outline'
-import { Loader2 } from 'lucide-react'
-import { useToast } from '@/hooks/use-toast'
-import { useTranslation } from '@/hooks/useTranslation'
+import React, { useEffect, useState, useCallback } from 'react';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Switch } from '@/components/ui/switch';
+import { KeyIcon, TrashIcon, ClipboardDocumentIcon, CheckIcon } from '@heroicons/react/24/outline';
+import { Loader2 } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
+import { useTranslation } from '@/hooks/useTranslation';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,7 +24,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+} from '@/components/ui/alert-dialog';
 import {
   Dialog,
   DialogContent,
@@ -32,173 +32,175 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog'
-import { adminApis, ServiceKey, ServiceKeyCreated } from '@/apis/admin'
-import UnifiedAddButton from '@/components/common/UnifiedAddButton'
+} from '@/components/ui/dialog';
+import { adminApis, ServiceKey, ServiceKeyCreated } from '@/apis/admin';
+import UnifiedAddButton from '@/components/common/UnifiedAddButton';
 
-const ServiceKeyList: React.FC = () => {
-  const { t } = useTranslation('admin')
-  const { toast } = useToast()
-  const [serviceKeys, setServiceKeys] = useState<ServiceKey[]>([])
-  const [loading, setLoading] = useState(true)
-  const [deleteConfirmKey, setDeleteConfirmKey] = useState<ServiceKey | null>(null)
-  const [isDeleting, setIsDeleting] = useState(false)
-  const [togglingKeyId, setTogglingKeyId] = useState<number | null>(null)
+const ServiceKeyList: React.FC<{ showHeader?: boolean }> = ({ showHeader = true }) => {
+  const { t } = useTranslation('admin');
+  const { toast } = useToast();
+  const [serviceKeys, setServiceKeys] = useState<ServiceKey[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [deleteConfirmKey, setDeleteConfirmKey] = useState<ServiceKey | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [togglingKeyId, setTogglingKeyId] = useState<number | null>(null);
 
   // Create dialog state
-  const [createDialogOpen, setCreateDialogOpen] = useState(false)
-  const [keyName, setKeyName] = useState('')
-  const [keyDescription, setKeyDescription] = useState('')
-  const [isCreating, setIsCreating] = useState(false)
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [keyName, setKeyName] = useState('');
+  const [keyDescription, setKeyDescription] = useState('');
+  const [isCreating, setIsCreating] = useState(false);
 
   // Created key display state
-  const [createdKey, setCreatedKey] = useState<ServiceKeyCreated | null>(null)
-  const [showCreatedDialog, setShowCreatedDialog] = useState(false)
-  const [copied, setCopied] = useState(false)
+  const [createdKey, setCreatedKey] = useState<ServiceKeyCreated | null>(null);
+  const [showCreatedDialog, setShowCreatedDialog] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const fetchServiceKeys = useCallback(async () => {
-    setLoading(true)
+    setLoading(true);
     try {
-      const response = await adminApis.getServiceKeys()
-      setServiceKeys(response.items || [])
+      const response = await adminApis.getServiceKeys();
+      setServiceKeys(response.items || []);
     } catch (error) {
-      console.error('Failed to fetch service keys:', error)
+      console.error('Failed to fetch service keys:', error);
       toast({
         variant: 'destructive',
         title: t('service_keys.errors.load_failed'),
-      })
+      });
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }, [toast, t])
+  }, [toast, t]);
 
   useEffect(() => {
-    fetchServiceKeys()
-  }, [fetchServiceKeys])
+    fetchServiceKeys();
+  }, [fetchServiceKeys]);
 
   const formatDate = (dateString: string) => {
-    const date = new Date(dateString)
+    const date = new Date(dateString);
     return date.toLocaleDateString(undefined, {
       year: 'numeric',
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
       minute: '2-digit',
-    })
-  }
+    });
+  };
 
   const isNeverExpires = (dateString: string) => {
-    const date = new Date(dateString)
-    return date.getFullYear() >= 9999
-  }
+    const date = new Date(dateString);
+    return date.getFullYear() >= 9999;
+  };
 
   const handleCreate = async () => {
     if (!keyName.trim()) {
       toast({
         variant: 'destructive',
         title: t('service_keys.errors.name_required'),
-      })
-      return
+      });
+      return;
     }
 
-    setIsCreating(true)
+    setIsCreating(true);
     try {
       const created = await adminApis.createServiceKey({
         name: keyName.trim(),
         description: keyDescription.trim() || undefined,
-      })
-      setCreatedKey(created)
-      setCreateDialogOpen(false)
-      setKeyName('')
-      setKeyDescription('')
-      setShowCreatedDialog(true)
+      });
+      setCreatedKey(created);
+      setCreateDialogOpen(false);
+      setKeyName('');
+      setKeyDescription('');
+      setShowCreatedDialog(true);
       toast({
         title: t('service_keys.create_success'),
-      })
-      fetchServiceKeys()
+      });
+      fetchServiceKeys();
     } catch (error) {
       toast({
         variant: 'destructive',
         title: t('service_keys.errors.create_failed'),
         description: (error as Error).message,
-      })
+      });
     } finally {
-      setIsCreating(false)
+      setIsCreating(false);
     }
-  }
+  };
 
   const handleToggleStatus = async (serviceKey: ServiceKey) => {
-    setTogglingKeyId(serviceKey.id)
+    setTogglingKeyId(serviceKey.id);
     try {
-      const updated = await adminApis.toggleServiceKeyStatus(serviceKey.id)
-      setServiceKeys(prev => prev.map(k => (k.id === updated.id ? updated : k)))
+      const updated = await adminApis.toggleServiceKeyStatus(serviceKey.id);
+      setServiceKeys(prev => prev.map(k => (k.id === updated.id ? updated : k)));
       toast({
         title: updated.is_active
           ? t('service_keys.enabled_success')
           : t('service_keys.disabled_success'),
-      })
+      });
     } catch (error) {
       toast({
         variant: 'destructive',
         title: t('service_keys.errors.toggle_failed'),
         description: (error as Error).message,
-      })
+      });
     } finally {
-      setTogglingKeyId(null)
+      setTogglingKeyId(null);
     }
-  }
+  };
 
   const handleDelete = async () => {
-    if (!deleteConfirmKey) return
+    if (!deleteConfirmKey) return;
 
-    setIsDeleting(true)
+    setIsDeleting(true);
     try {
-      await adminApis.deleteServiceKey(deleteConfirmKey.id)
+      await adminApis.deleteServiceKey(deleteConfirmKey.id);
       toast({
         title: t('service_keys.delete_success'),
-      })
-      setDeleteConfirmKey(null)
-      fetchServiceKeys()
+      });
+      setDeleteConfirmKey(null);
+      fetchServiceKeys();
     } catch (error) {
       toast({
         variant: 'destructive',
         title: t('service_keys.errors.delete_failed'),
         description: (error as Error).message,
-      })
+      });
     } finally {
-      setIsDeleting(false)
+      setIsDeleting(false);
     }
-  }
+  };
 
   const handleCopyKey = async () => {
-    if (!createdKey) return
+    if (!createdKey) return;
     try {
-      await navigator.clipboard.writeText(createdKey.key)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
+      await navigator.clipboard.writeText(createdKey.key);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
     } catch {
       toast({
         variant: 'destructive',
         title: 'Failed to copy',
-      })
+      });
     }
-  }
+  };
 
   const handleCloseCreatedDialog = () => {
-    setShowCreatedDialog(false)
-    setCreatedKey(null)
-    setCopied(false)
-  }
+    setShowCreatedDialog(false);
+    setCreatedKey(null);
+    setCopied(false);
+  };
 
   return (
     <div className="space-y-3">
       {/* Header */}
-      <div>
-        <h2 className="text-xl font-semibold text-text-primary mb-1">
-          {t('service_keys.title')}
-        </h2>
-        <p className="text-sm text-text-muted mb-1">{t('service_keys.description')}</p>
-      </div>
+      {showHeader && (
+        <div>
+          <h2 className="text-xl font-semibold text-text-primary mb-1">
+            {t('service_keys.title')}
+          </h2>
+          <p className="text-sm text-text-muted mb-1">{t('service_keys.description')}</p>
+        </div>
+      )}
 
       {/* Content Container */}
       <div className="bg-base border border-border rounded-md p-2 w-full max-h-[70vh] flex flex-col overflow-y-auto custom-scrollbar">
@@ -270,9 +272,7 @@ const ServiceKeyList: React.FC = () => {
                       onCheckedChange={() => handleToggleStatus(serviceKey)}
                       disabled={togglingKeyId === serviceKey.id}
                       title={
-                        serviceKey.is_active
-                          ? t('service_keys.disable')
-                          : t('service_keys.enable')
+                        serviceKey.is_active ? t('service_keys.disable') : t('service_keys.enable')
                       }
                     />
                     <Button
@@ -367,9 +367,7 @@ const ServiceKeyList: React.FC = () => {
             </DialogDescription>
           </DialogHeader>
           <div className="py-4">
-            <label className="text-sm font-medium text-text-primary">
-              {t('service_keys.key')}
-            </label>
+            <label className="text-sm font-medium text-text-primary">{t('service_keys.key')}</label>
             <div className="mt-2 flex items-center gap-2">
               <code className="flex-1 bg-muted p-3 rounded text-sm font-mono break-all">
                 {createdKey?.key}
@@ -428,7 +426,7 @@ const ServiceKeyList: React.FC = () => {
         </AlertDialogContent>
       </AlertDialog>
     </div>
-  )
-}
+  );
+};
 
-export default ServiceKeyList
+export default ServiceKeyList;

@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import hashlib
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional, Union
 
@@ -252,41 +253,70 @@ def get_current_user_from_token(token: str, db: Session) -> Optional[User]:
 def get_api_key_from_header(
     authorization: str = Header(default=""),
     x_api_key: str = Header(default="", alias="X-API-Key"),
+    wegent_source: str = Header(default="", alias="wegent-source"),
 ) -> str:
     """
-    Extract API key from Authorization header or X-API-Key header.
+    Extract API key from Authorization header, X-API-Key header, or wegent-source header.
 
     Args:
         authorization: Authorization header value
         x_api_key: X-API-Key header value
+        wegent_source: wegent-source header value (service key)
 
     Returns:
         API key string or empty string if not found
     """
-    # Priority: X-API-Key > Authorization Bearer
+    # Priority: X-API-Key > Authorization Bearer > wegent-source
     if x_api_key and x_api_key.startswith("wg-"):
         return x_api_key
     if authorization.startswith("Bearer wg-"):
         return authorization[7:]  # Remove "Bearer " prefix
+    if wegent_source and wegent_source.startswith("wg-"):
+        return wegent_source
     return ""
 
 
-def get_current_user_from_api_key(
+@dataclass
+class AuthContext:
+    """Authentication context containing user and optional service key info."""
+
+    user: User
+    api_source_name: Optional[str] = (
+        None  # Service key name if authenticated via service key
+    )
+
+
+def get_auth_context(
     db: Session = Depends(get_db),
     api_key: str = Depends(get_api_key_from_header),
-) -> Optional[User]:
+    wegent_username: Optional[str] = Header(default=None, alias="wegent-username"),
+) -> AuthContext:
     """
-    Authenticate user via API key.
+    Flexible authentication: supports personal API key and service key.
+
+    Authentication logic:
+    - Personal key: returns the key owner directly, ignores wegent-username
+    - Service key: requires wegent-username header to specify the user
 
     Args:
         db: Database session
-        api_key: API key string
+        api_key: API key string (from X-API-Key, Authorization, or wegent-source header)
+        wegent_username: Username to impersonate (from wegent-username header, required for service keys)
 
     Returns:
-        User object if API key is valid, None otherwise
+        AuthContext containing authenticated User and optional api_source_name
+
+    Raises:
+        HTTPException: If no authentication method succeeds
     """
+    from app.models.api_key import KEY_TYPE_PERSONAL, KEY_TYPE_SERVICE
+
     if not api_key:
-        return None
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API key is required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     key_hash = hashlib.sha256(api_key.encode()).hexdigest()
     api_key_record = (
@@ -299,170 +329,63 @@ def get_current_user_from_api_key(
     )
 
     if not api_key_record:
-        return None
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key",
+        )
 
     # Check expiration
     if api_key_record.expires_at < datetime.utcnow():
-        return None
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API key has expired",
+        )
 
     # Update last_used_at
     api_key_record.last_used_at = datetime.utcnow()
     db.commit()
 
-    return db.query(User).filter(User.id == api_key_record.user_id).first()
+    # Personal key: return the key owner directly
+    if api_key_record.key_type == KEY_TYPE_PERSONAL:
+        user = db.query(User).filter(User.id == api_key_record.user_id).first()
+        if user and user.is_active:
+            return AuthContext(user=user, api_source_name=None)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found or inactive",
+        )
 
-
-def get_current_user_flexible(
-    token: Optional[str] = Depends(oauth2_scheme_optional),
-    db: Session = Depends(get_db),
-    api_key: str = Depends(get_api_key_from_header),
-    wegent_source: Optional[str] = Header(default=None, alias="wegent-source"),
-    wegent_username: Optional[str] = Header(default=None, alias="wegent-username"),
-) -> User:
-    """
-    Flexible authentication: supports JWT token, API key, and trusted source.
-
-    This function tries authentication in the following order:
-    1. JWT token
-    2. API key
-    3. Trusted source (via wegent-source and wegent-username headers)
-
-    Use this for endpoints that need to support multiple authentication methods.
-
-    Args:
-        token: Optional JWT token
-        db: Database session
-        api_key: API key string
-        wegent_source: Trusted source identifier (from wegent-source header)
-        wegent_username: Username to impersonate (from wegent-username header)
-
-    Returns:
-        Authenticated User object
-
-    Raises:
-        HTTPException: If no authentication method succeeds
-    """
-    # Try JWT first
-    if token:
-        try:
-            user = get_current_user_from_token(token, db)
-            if user and user.is_active:
-                return user
-        except Exception:
-            pass
-
-    # Try API key
-    user = get_current_user_from_api_key(db, api_key)
-    if user and user.is_active:
-        return user
-
-    # Try trusted source authentication
-    user = get_current_user_from_trusted_source(db, wegent_source, wegent_username)
-    if user:
-        return user
+    # Service key: require wegent-username header
+    if api_key_record.key_type == KEY_TYPE_SERVICE:
+        if not wegent_username:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="wegent-username header is required for service key authentication",
+            )
+        user = user_service.get_user_by_name(db=db, user_name=wegent_username)
+        if user and user.is_active:
+            return AuthContext(user=user, api_source_name=api_key_record.name)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"User '{wegent_username}' not found or inactive",
+        )
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid authentication credentials",
-        headers={"WWW-Authenticate": "Bearer"},
     )
 
 
-def get_wegent_source_header(
-    wegent_source: Optional[str] = Header(default=None, alias="wegent-source"),
-    db: Session = Depends(get_db),
-) -> Optional[str]:
+def get_current_user_flexible(
+    auth_context: AuthContext = Depends(get_auth_context),
+) -> User:
     """
-    Extract and validate wegent-source header value.
-
-    This is used to identify the trusted source that is making the request.
-    Returns the source key if it's a valid service key in the database, None otherwise.
+    Get current user from auth context (for backward compatibility).
 
     Args:
-        wegent_source: Service key identifier (from wegent-source header)
-        db: Database session
+        auth_context: Authentication context
 
     Returns:
-        Service key if valid, None otherwise
+        Authenticated User object
     """
-    if not wegent_source:
-        return None
-
-    # Check database for service keys
-    from app.models.api_key import APIKey, KEY_TYPE_SERVICE
-
-    key_hash = hashlib.sha256(wegent_source.encode()).hexdigest()
-    service_key = (
-        db.query(APIKey)
-        .filter(
-            APIKey.key_hash == key_hash,
-            APIKey.key_type == KEY_TYPE_SERVICE,
-            APIKey.is_active == True,
-        )
-        .first()
-    )
-
-    if service_key:
-        # Check expiration
-        if service_key.expires_at < datetime.utcnow():
-            return None
-        return wegent_source
-
-    return None
-
-
-def get_current_user_from_trusted_source(
-    db: Session,
-    wegent_source: Optional[str],
-    wegent_username: Optional[str],
-) -> Optional[User]:
-    """
-    Authenticate user via service key headers.
-
-    Allows trusted services to proxy requests on behalf of users.
-    The service key must be a valid service key in the database.
-
-    Args:
-        db: Database session
-        wegent_source: Service key (from wegent-source header)
-        wegent_username: Username to impersonate (from wegent-username header)
-
-    Returns:
-        User object if authentication succeeds, None otherwise
-    """
-    # Check if both headers are provided
-    if not wegent_source or not wegent_username:
-        return None
-
-    # Import here to avoid circular imports
-    from app.models.api_key import APIKey, KEY_TYPE_SERVICE
-
-    # Verify the service key in database
-    key_hash = hashlib.sha256(wegent_source.encode()).hexdigest()
-    service_key = (
-        db.query(APIKey)
-        .filter(
-            APIKey.key_hash == key_hash,
-            APIKey.key_type == KEY_TYPE_SERVICE,
-            APIKey.is_active == True,
-        )
-        .first()
-    )
-
-    if not service_key:
-        return None
-
-    # Check expiration
-    if service_key.expires_at < datetime.utcnow():
-        return None
-
-    # Update last_used_at
-    service_key.last_used_at = datetime.utcnow()
-    db.commit()
-
-    # Look up the user by username
-    user = user_service.get_user_by_name(db=db, user_name=wegent_username)
-    if user and user.is_active:
-        return user
-
-    return None
+    return auth_context.user

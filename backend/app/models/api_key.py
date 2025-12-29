@@ -13,7 +13,6 @@ from sqlalchemy.sql import func
 
 from app.db.base import Base
 
-
 # Key type constants
 KEY_TYPE_PERSONAL = "personal"
 KEY_TYPE_SERVICE = "service"
@@ -34,7 +33,7 @@ class APIKey(Base):
     key_type = Column(
         String(20), nullable=False, default=KEY_TYPE_PERSONAL, index=True
     )  # Key type: personal or service
-    description = Column(String(500), nullable=True)  # Key description
+    description = Column(String(500), nullable=False, default="")  # Key description
     expires_at = Column(
         DateTime, nullable=False, default=datetime(9999, 12, 31, 23, 59, 59)
     )  # Default: never expires (far future date)

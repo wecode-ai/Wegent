@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
-from app.models.api_key import APIKey, KEY_TYPE_PERSONAL
+from app.models.api_key import KEY_TYPE_PERSONAL, APIKey
 from app.models.user import User
 from app.schemas.api_key import (
     APIKeyCreate,
@@ -77,7 +77,7 @@ async def create_api_key(
         key_prefix=key_prefix,
         name=api_key_create.name,
         key_type=KEY_TYPE_PERSONAL,
-        description=api_key_create.description,
+        description=api_key_create.description or "",
     )
 
     db.add(api_key)

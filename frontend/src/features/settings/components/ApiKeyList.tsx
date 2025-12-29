@@ -9,7 +9,6 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Switch } from '@/components/ui/switch';
 import { KeyIcon, TrashIcon, ClipboardDocumentIcon, CheckIcon } from '@heroicons/react/24/outline';
 import { Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
@@ -42,7 +41,6 @@ const ApiKeyList: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [deleteConfirmKey, setDeleteConfirmKey] = useState<ApiKey | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [togglingKeyId, setTogglingKeyId] = useState<number | null>(null);
 
   // Create dialog state
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -121,27 +119,6 @@ const ApiKeyList: React.FC = () => {
     }
   };
 
-  const handleToggleStatus = async (apiKey: ApiKey) => {
-    setTogglingKeyId(apiKey.id);
-    try {
-      const updated = await apiKeyApis.toggleApiKeyStatus(apiKey.id);
-      setApiKeys(prev => prev.map(k => (k.id === updated.id ? updated : k)));
-      toast({
-        title: updated.is_active
-          ? t('common:api_keys.enabled_success')
-          : t('common:api_keys.disabled_success'),
-      });
-    } catch (error) {
-      toast({
-        variant: 'destructive',
-        title: t('common:api_keys.errors.toggle_failed'),
-        description: (error as Error).message,
-      });
-    } finally {
-      setTogglingKeyId(null);
-    }
-  };
-
   const handleDelete = async () => {
     if (!deleteConfirmKey) return;
 
@@ -217,25 +194,22 @@ const ApiKeyList: React.FC = () => {
         {!loading && apiKeys.length > 0 && (
           <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 p-1">
             {apiKeys.map(apiKey => (
-              <Card
-                key={apiKey.id}
-                className={`p-4 bg-base hover:bg-hover transition-colors ${!apiKey.is_active ? 'opacity-60' : ''}`}
-              >
+              <Card key={apiKey.id} className="p-4 bg-base hover:bg-hover transition-colors">
                 <div className="flex items-center justify-between min-w-0">
                   <div className="flex items-center gap-3 min-w-0 flex-1">
-                    <KeyIcon
-                      className={`w-5 h-5 flex-shrink-0 ${apiKey.is_active ? 'text-primary' : 'text-text-muted'}`}
-                    />
+                    <KeyIcon className="w-5 h-5 flex-shrink-0 text-primary" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="font-medium text-text-primary truncate">
+                        <span
+                          className={`font-medium truncate ${apiKey.is_active ? 'text-text-primary' : 'text-text-muted'}`}
+                        >
                           {apiKey.name}
                         </span>
                         <code className="text-xs bg-muted px-1.5 py-0.5 rounded text-text-secondary">
                           {apiKey.key_prefix}
                         </code>
                         {!apiKey.is_active && (
-                          <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-text-muted">
+                          <span className="text-xs px-1.5 py-0.5 rounded bg-error/10 text-error">
                             {t('common:api_keys.status_disabled')}
                           </span>
                         )}
@@ -257,16 +231,6 @@ const ApiKeyList: React.FC = () => {
                     </div>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0 ml-3">
-                    <Switch
-                      checked={apiKey.is_active}
-                      onCheckedChange={() => handleToggleStatus(apiKey)}
-                      disabled={togglingKeyId === apiKey.id}
-                      title={
-                        apiKey.is_active
-                          ? t('common:api_keys.disable')
-                          : t('common:api_keys.enable')
-                      }
-                    />
                     <Button
                       variant="ghost"
                       size="icon"

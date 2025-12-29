@@ -89,3 +89,31 @@ class ServiceKeyListResponse(BaseModel):
 
     items: List[ServiceKeyResponse]
     total: int
+
+
+# Admin Personal Key Schemas (for admin management of user's personal keys)
+
+
+class AdminPersonalKeyResponse(BaseModel):
+    """Response schema for admin personal key management."""
+
+    id: int
+    user_id: int
+    user_name: str  # Username for display
+    name: str
+    key_prefix: str
+    description: Optional[str] = None
+    expires_at: datetime
+    last_used_at: datetime
+    created_at: datetime
+    is_active: bool
+
+    class Config:
+        from_attributes = True
+
+
+class AdminPersonalKeyListResponse(BaseModel):
+    """Response schema for admin listing personal keys."""
+
+    items: List[AdminPersonalKeyResponse]
+    total: int
