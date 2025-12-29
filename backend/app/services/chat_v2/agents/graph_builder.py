@@ -490,3 +490,106 @@ class LangGraphAgentBuilder:
 
         last_message = messages[-1]
         return hasattr(last_message, "tool_calls") and bool(last_message.tool_calls)
+
+    async def stream_events_with_state(
+        self,
+        messages: list[dict[str, Any]],
+        config: dict[str, Any] | None = None,
+        cancel_event: asyncio.Event | None = None,
+        on_tool_event: Callable[[str, dict], None] | None = None,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Stream events and return final state with all events.
+
+        This method is designed for scenarios like correction evaluation where:
+        1. We need to capture tool events for progress updates
+        2. We need the final state to extract structured results
+        3. We want to avoid executing the agent twice
+
+        Args:
+            messages: Initial conversation messages
+            config: Optional configuration
+            cancel_event: Optional cancellation event
+            on_tool_event: Optional async callback for tool events (kind, event_data)
+
+        Returns:
+            Tuple of (final_state, all_events)
+        """
+        agent = self._build_agent()
+        lc_messages = convert_to_messages(messages)
+
+        exec_config = {"configurable": config} if config else None
+
+        all_events: list[dict[str, Any]] = []
+        final_state: dict[str, Any] = {}
+
+        try:
+            async for event in agent.astream_events(
+                {"messages": lc_messages},
+                config={
+                    **(exec_config or {}),
+                    "recursion_limit": self.max_iterations * 2 + 1,
+                },
+                version="v2",
+            ):
+                # Check cancellation
+                if cancel_event and cancel_event.is_set():
+                    logger.info("Streaming cancelled by user")
+                    break
+
+                all_events.append(event)
+                kind = event.get("event", "")
+
+                # Handle tool events
+                if kind == "on_tool_start":
+                    tool_name = event.get("name", "unknown")
+                    run_id = event.get("run_id", "")
+                    logger.info(
+                        "[stream_events_with_state] Tool started: %s (run_id=%s)",
+                        tool_name,
+                        run_id,
+                    )
+                    if on_tool_event:
+                        on_tool_event(
+                            "tool_start",
+                            {
+                                "name": tool_name,
+                                "run_id": run_id,
+                                "data": event.get("data", {}),
+                            },
+                        )
+
+                elif kind == "on_tool_end":
+                    tool_name = event.get("name", "unknown")
+                    run_id = event.get("run_id", "")
+                    logger.info(
+                        "[stream_events_with_state] Tool completed: %s (run_id=%s)",
+                        tool_name,
+                        run_id,
+                    )
+                    if on_tool_event:
+                        on_tool_event(
+                            "tool_end",
+                            {
+                                "name": tool_name,
+                                "run_id": run_id,
+                                "data": event.get("data", {}),
+                            },
+                        )
+
+                # Capture final state from LangGraph chain end
+                elif kind == "on_chain_end" and event.get("name") == "LangGraph":
+                    data = event.get("data", {})
+                    output = data.get("output", {})
+                    if output:
+                        final_state = output
+
+            logger.info(
+                "[stream_events_with_state] Completed: total_events=%d",
+                len(all_events),
+            )
+
+            return final_state, all_events
+
+        except Exception:
+            logger.exception("Error in stream_events_with_state")
+            raise
