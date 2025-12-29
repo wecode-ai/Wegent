@@ -98,7 +98,7 @@ export default function TaskListSection({
 
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams();
-      params.set('common:taskId', String(task.id));
+      params.set('taskId', String(task.id));
 
       // Navigate to the appropriate page based on task task_type
       // If task_type is not set, infer from git information

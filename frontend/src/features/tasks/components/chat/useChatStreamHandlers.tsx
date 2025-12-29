@@ -488,7 +488,7 @@ export function useChatStreamHandlers({
 
               if (completedTaskId && !selectedTaskDetail?.id) {
                 const params = new URLSearchParams(Array.from(searchParams.entries()));
-                params.set('chat:taskId', String(completedTaskId));
+                params.set('taskId', String(completedTaskId));
                 router.push(`?${params.toString()}`);
                 refreshTasks();
               }
