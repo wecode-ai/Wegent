@@ -33,6 +33,7 @@ from langchain_mcp_adapters.sessions import (
     StreamableHttpConnection,
 )
 from shared.utils.mcp_utils import replace_mcp_server_variables
+from shared.utils.sensitive_data_masker import mask_sensitive_data
 
 logger = logging.getLogger(__name__)
 
@@ -194,7 +195,7 @@ def build_connections(
         config = replace_mcp_server_variables(config, task_data)
         logger.info(
             "[MCP] Applied variable substitution to MCP config with task_data keys: %s",
-            list(task_data.keys()),
+            task_data,
         )
 
     connections = {}
@@ -210,10 +211,11 @@ def build_connections(
                 timeout=cfg.get("timeout", 30.0),
             )
             if headers:
+                masked_headers = mask_sensitive_data(headers)
                 logger.info(
                     "[MCP] Built SSE connection '%s' with headers: %s",
                     name,
-                    list(headers.keys()),
+                    masked_headers,
                 )
         elif server_type == "stdio":
             connections[name] = StdioConnection(
@@ -229,10 +231,11 @@ def build_connections(
                 headers=headers,
             )
             if headers:
+                masked_headers = mask_sensitive_data(headers)
                 logger.info(
                     "[MCP] Built streamable-http connection '%s' with headers: %s",
                     name,
-                    list(headers.keys()),
+                    masked_headers,
                 )
         else:
             raise ValueError(f"Unknown MCP server type: {server_type}")

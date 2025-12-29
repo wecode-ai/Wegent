@@ -126,7 +126,7 @@ class WebSocketStreamingHandler:
                     # Build task_data for MCP variable substitution
                     mcp_task_data = {
                         "user": {
-                            "name": config.user_name,
+                            "name": str(config.user_name or ""),
                             "id": config.user_id,
                         }
                     }
