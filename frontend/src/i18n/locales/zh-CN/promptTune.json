@@ -1,0 +1,20 @@
+{
+  "dialog": {
+    "title": "提示词微调",
+    "description": "测试并迭代优化您的提示词效果",
+    "unsaved_changes": "有未保存的更改"
+  },
+  "compare": {
+    "original": "原始提示词",
+    "current": "当前提示词",
+    "modified": "已修改",
+    "click_to_expand": "点击展开",
+    "diff": "对比",
+    "no_changes": "无变更"
+  },
+  "actions": {
+    "cancel": "取消",
+    "save": "保存",
+    "reset": "重置"
+  }
+}
