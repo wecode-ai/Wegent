@@ -104,7 +104,8 @@ export function PreviewProvider({ children }: { children: ReactNode }) {
   const [viewportSize, setViewportSize] = useState<ViewportSize>('desktop')
   const [isPanelOpen, setIsPanelOpen] = useState(false)
   const [currentPath, setCurrentPath] = useState('/')
-  const [refreshKey, setRefreshKey] = useState(0)
+  // refreshKey is used to force iframe refresh via key prop changes
+  const [, setRefreshKey] = useState(0)
 
   /**
    * Load preview configuration for a task
