@@ -153,6 +153,7 @@ class StreamingState:
         self,
         include_value: bool = True,
         include_thinking: bool = True,
+        slim_thinking: bool = False,
     ) -> dict[str, Any]:
         """Get current result with thinking steps and sources for WebSocket emission.
 
@@ -163,6 +164,9 @@ class StreamingState:
             include_thinking: Whether to include thinking steps and sources.
                              Set to False for Chat mode chunk events (only need token).
                              Set to True for Code mode or done events.
+            slim_thinking: Whether to slim down thinking data for Chat mode.
+                          When True, removes large fields like input/output details
+                          that frontend doesn't need for simple display.
 
         Returns:
             Result dictionary with shell_type, and optionally value, thinking, sources.
@@ -174,10 +178,76 @@ class StreamingState:
             result["value"] = self.full_response
         if include_thinking:
             if self.thinking:
-                result["thinking"] = self.thinking
+                if slim_thinking:
+                    # For Chat mode: slim down thinking data to reduce payload size
+                    # Frontend SimpleThinkingView only needs: title, run_id, details.type,
+                    # details.status, details.tool_name, and optionally count for web_search
+                    result["thinking"] = self._slim_thinking_data(self.thinking)
+                else:
+                    result["thinking"] = self.thinking
             if self.sources:
                 result["sources"] = self.sources  # Include sources for citation display
         return result
+
+    def _slim_thinking_data(
+        self, thinking: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Slim down thinking data for Chat mode to reduce payload size.
+
+        Frontend SimpleThinkingView only needs minimal fields for display.
+        This removes large fields like full input/output that aren't displayed.
+        """
+        slimmed = []
+        for step in thinking:
+            slim_step: dict[str, Any] = {
+                "title": step.get("title", ""),
+                "next_action": step.get("next_action", "continue"),
+            }
+            # Include run_id for matching start/end pairs
+            if "run_id" in step:
+                slim_step["run_id"] = step["run_id"]
+
+            # Slim down details
+            details = step.get("details", {})
+            if details:
+                slim_details: dict[str, Any] = {
+                    "type": details.get("type"),
+                    "status": details.get("status"),
+                    "tool_name": details.get("tool_name") or details.get("name"),
+                }
+
+                # For web_search tool_use, keep only query from input
+                if (
+                    details.get("type") == "tool_use"
+                    and slim_details["tool_name"] == "web_search"
+                ):
+                    input_data = details.get("input", {})
+                    if isinstance(input_data, dict) and "query" in input_data:
+                        slim_details["input"] = {"query": input_data["query"]}
+
+                # For web_search tool_result, keep only count from output
+                if (
+                    details.get("type") == "tool_result"
+                    and slim_details["tool_name"] == "web_search"
+                ):
+                    output = details.get("output") or details.get("content")
+                    if output:
+                        try:
+                            import json
+
+                            if isinstance(output, str):
+                                output_data = json.loads(output)
+                            else:
+                                output_data = output
+                            if isinstance(output_data, dict) and "count" in output_data:
+                                slim_details["output"] = {"count": output_data["count"]}
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+
+                slim_step["details"] = slim_details
+
+            slimmed.append(slim_step)
+        return slimmed
 
 
 @dataclass
@@ -387,8 +457,13 @@ class StreamingCore:
 
         # Save to DB with thinking data
         if current_time - self.state.last_db_save >= self.config.db_save_interval:
-            # Get current result with thinking steps (same as finalize)
-            result = self.state.get_current_result()
+            # For Chat mode with tools, use slim_thinking to reduce payload size
+            is_chat_mode = self.state.shell_type == "Chat"
+            result = self.state.get_current_result(
+                include_value=True,
+                include_thinking=True,  # Always include thinking (may have tool calls)
+                slim_thinking=is_chat_mode,  # Slim down for Chat mode
+            )
             result["streaming"] = True
             # Use update_subtask_status to save the complete result
             await self._storage.update_subtask_status(
@@ -404,7 +479,14 @@ class StreamingCore:
         Returns:
             Result dictionary with the full response and thinking steps
         """
-        result = self.state.get_current_result()
+        # For Chat mode with tools, use slim_thinking to reduce payload size
+        # For Chat mode without tools, thinking will be empty anyway
+        is_chat_mode = self.state.shell_type == "Chat"
+        result = self.state.get_current_result(
+            include_value=True,
+            include_thinking=True,  # Always include thinking (may have tool calls)
+            slim_thinking=is_chat_mode,  # Slim down for Chat mode
+        )
 
         # Save final content to Redis for streaming recovery
         await self._storage.save_streaming_content(
