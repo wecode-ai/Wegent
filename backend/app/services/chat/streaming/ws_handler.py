@@ -123,8 +123,18 @@ class WebSocketStreamingHandler:
 
                 # Load MCP tools if enabled
                 if settings.CHAT_MCP_ENABLED:
+                    # Build task_data for MCP variable substitution
+                    mcp_task_data = {
+                        "user": {
+                            "name": str(config.user_name or ""),
+                            "id": config.user_id,
+                        }
+                    }
                     mcp_client = await load_mcp_tools(
-                        task_id, config.bot_name, config.bot_namespace
+                        task_id,
+                        config.bot_name,
+                        config.bot_namespace,
+                        task_data=mcp_task_data,
                     )
                     if mcp_client:
                         extra_tools.extend(mcp_client.get_tools())
