@@ -329,8 +329,8 @@ export default function MessagesArea({
     if (!selectedTaskDetail?.id) {
       toast({
         variant: 'destructive',
-        title: t('shared_task.no_task_selected'),
-        description: t('shared_task.no_task_selected_desc'),
+        title: t('shared-task:no_task_selected'),
+        description: t('shared-task:no_task_selected_desc'),
       });
       return;
     }
@@ -352,8 +352,8 @@ export default function MessagesArea({
           console.error('Failed to share task:', err);
           toast({
             variant: 'destructive',
-            title: t('shared_task.share_failed'),
-            description: (err as Error)?.message || t('shared_task.share_failed_desc'),
+            title: t('shared-task:share_failed'),
+            description: (err as Error)?.message || t('shared-task:share_failed_desc'),
           });
           throw err;
         } finally {
@@ -376,8 +376,8 @@ export default function MessagesArea({
       if (!selectedTaskDetail?.id) {
         toast({
           variant: 'destructive',
-          title: t('shared_task.no_task_selected'),
-          description: t('shared_task.no_task_selected_desc'),
+          title: t('shared-task:no_task_selected'),
+          description: t('shared-task:no_task_selected_desc'),
         });
         return;
       }
@@ -503,7 +503,7 @@ export default function MessagesArea({
             className="flex items-center gap-1 h-8 pl-2 pr-3 rounded-[7px] text-sm"
           >
             <Share2 className="h-3.5 w-3.5" />
-            {isSharing ? t('shared_task.sharing') : t('shared_task.share_link')}
+            {isSharing ? t('shared-task:sharing') : t('shared-task:share_link')}
           </Button>
         )}
 
@@ -525,7 +525,7 @@ export default function MessagesArea({
               className="flex items-center gap-2 cursor-pointer"
             >
               <FileText className="h-4 w-4" />
-              <span>{t('shared_task.share_pdf')}</span>
+              <span>{t('shared-task:share_pdf')}</span>
             </DropdownMenuItem>
             <DropdownMenuItem
               onClick={handleExportDocx}
