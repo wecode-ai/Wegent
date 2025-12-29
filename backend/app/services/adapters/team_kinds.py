@@ -939,30 +939,38 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             List of running task info dictionaries
         """
         from app.models.task import TaskResource
+        from sqlalchemy import func, or_
 
-        # Get all active tasks
-        all_tasks = (
+        # Use JSON queries to filter at database level instead of loading all tasks into memory
+        # This is much faster when there are many tasks
+        tasks = (
             db.query(TaskResource)
-            .filter(TaskResource.kind == "Task", TaskResource.is_active == True)
+            .filter(
+                TaskResource.kind == "Task",
+                TaskResource.is_active == True,
+                # Filter by team reference using JSON path
+                func.json_unquote(func.json_extract(TaskResource.json, "$.spec.teamRef.name")) == team_name,
+                func.json_unquote(func.json_extract(TaskResource.json, "$.spec.teamRef.namespace")) == team_namespace,
+                # Filter by status using JSON path - only get PENDING or RUNNING tasks
+                or_(
+                    func.json_unquote(func.json_extract(TaskResource.json, "$.status.status")) == "PENDING",
+                    func.json_unquote(func.json_extract(TaskResource.json, "$.status.status")) == "RUNNING"
+                )
+            )
             .all()
         )
 
         running_tasks = []
-        for task in all_tasks:
+        for task in tasks:
             task_crd = Task.model_validate(task.json)
-            if (
-                task_crd.spec.teamRef.name == team_name
-                and task_crd.spec.teamRef.namespace == team_namespace
-            ):
-                if task_crd.status and task_crd.status.status in ["PENDING", "RUNNING"]:
-                    running_tasks.append(
-                        {
-                            "task_id": task.id,
-                            "task_name": task.name,
-                            "task_title": task_crd.spec.title,
-                            "status": task_crd.status.status,
-                        }
-                    )
+            running_tasks.append(
+                {
+                    "task_id": task.id,
+                    "task_name": task.name,
+                    "task_title": task_crd.spec.title,
+                    "status": task_crd.status.status if task_crd.status else "UNKNOWN",
+                }
+            )
 
         return running_tasks
 
