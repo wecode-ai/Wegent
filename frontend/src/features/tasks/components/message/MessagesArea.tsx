@@ -532,7 +532,7 @@ export default function MessagesArea({
       if (validMessages.length === 0) {
         toast({
           variant: 'destructive',
-          title: t('export.no_messages') || 'No messages to export',
+          title: t('chat:export.no_messages') || 'No messages to export',
         });
         return;
       }
@@ -623,7 +623,7 @@ export default function MessagesArea({
               className="flex items-center gap-1 h-8 pl-2 pr-3 rounded-[7px] text-sm"
             >
               <Download className="h-3.5 w-3.5" />
-              {t('export.export')}
+              {t('chat:export.export')}
               <ChevronDown className="h-3 w-3 ml-0.5" />
             </Button>
           </DropdownMenuTrigger>
@@ -633,14 +633,14 @@ export default function MessagesArea({
               className="flex items-center gap-2 cursor-pointer"
             >
               <FileText className="h-4 w-4" />
-              <span>{t('shared-task:share_pdf')}</span>
+              <span>{t('chat:export.export_pdf')}</span>
             </DropdownMenuItem>
             <DropdownMenuItem
               onClick={handleExportDocx}
               className="flex items-center gap-2 cursor-pointer"
             >
               <FileText className="h-4 w-4" />
-              <span>{t('export.export_docx') || 'Export DOCX'}</span>
+              <span>{t('chat:export.export_docx') || 'Export DOCX'}</span>
             </DropdownMenuItem>
           </DropdownMenuContent>
 
