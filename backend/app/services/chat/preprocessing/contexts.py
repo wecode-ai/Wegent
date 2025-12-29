@@ -209,9 +209,10 @@ def link_contexts_to_subtask(
     """
     Link attachments and create knowledge base contexts for a subtask.
 
-    This function handles two types of contexts:
-    1. Attachments: Pre-uploaded files with existing context IDs, just need to link
-    2. Knowledge bases: Selected at send time, need to create SubtaskContext records
+    This function handles two types of contexts in a single database transaction:
+    1. Attachments: Pre-uploaded files with existing context IDs, batch update subtask_id
+    2. Knowledge bases: Selected at send time, batch create SubtaskContext records
+       (without extracted_text - RAG retrieval is done later via tools/Service)
 
     Args:
         db: Database session
@@ -223,23 +224,14 @@ def link_contexts_to_subtask(
     Returns:
         List of all linked/created context IDs
     """
-    from app.schemas.subtask_context import KnowledgeBaseContextCreate
-
     linked_context_ids = []
+    kb_contexts_to_create: List[SubtaskContext] = []
 
-    # 1. Link pre-uploaded attachments
+    # 1. Collect attachment IDs to link
     if attachment_ids:
-        context_service.link_many_to_subtask(
-            db=db,
-            context_ids=attachment_ids,
-            subtask_id=subtask_id,
-        )
         linked_context_ids.extend(attachment_ids)
-        logger.info(
-            f"Linked {len(attachment_ids)} attachment contexts to subtask {subtask_id}"
-        )
 
-    # 2. Create and link knowledge base contexts
+    # 2. Prepare knowledge base contexts for batch creation
     if contexts:
         for ctx in contexts:
             if ctx.type == "knowledge_base":
@@ -249,26 +241,64 @@ def link_contexts_to_subtask(
                     kb_name = kb_data.get("name", f"Knowledge Base {knowledge_id}")
                     document_count = kb_data.get("document_count")
 
-                    # Create knowledge base context
-                    kb_context_create = KnowledgeBaseContextCreate(
-                        knowledge_id=int(knowledge_id) if knowledge_id else 0,
-                        name=kb_name,
-                        document_count=document_count,
-                    )
-                    kb_context = context_service.create_knowledge_base_context(
-                        db=db,
-                        user_id=user_id,
-                        data=kb_context_create,
+                    # Create SubtaskContext object (not yet committed)
+                    kb_context = SubtaskContext(
                         subtask_id=subtask_id,
+                        user_id=user_id,
+                        context_type=ContextType.KNOWLEDGE_BASE.value,
+                        name=kb_name,
+                        status=ContextStatus.READY.value,
+                        type_data={
+                            "knowledge_id": int(knowledge_id) if knowledge_id else 0,
+                            "document_count": document_count,
+                        },
                     )
-                    linked_context_ids.append(kb_context.id)
-                    logger.info(
-                        f"Created knowledge base context: id={kb_context.id}, "
-                        f"knowledge_id={knowledge_id}, name={kb_name}, "
-                        f"subtask_id={subtask_id}"
-                    )
+                    kb_contexts_to_create.append(kb_context)
                 except Exception as e:
-                    logger.warning(f"Failed to create knowledge base context: {e}")
+                    logger.warning(f"Failed to prepare knowledge base context: {e}")
                     continue
+
+    # 3. Execute all database operations in a single transaction
+    try:
+        # Batch update existing attachments' subtask_id
+        if attachment_ids:
+            db.query(SubtaskContext).filter(
+                SubtaskContext.id.in_(attachment_ids)
+            ).update(
+                {"subtask_id": subtask_id},
+                synchronize_session=False,
+            )
+
+        # Batch add new knowledge base contexts
+        if kb_contexts_to_create:
+            db.add_all(kb_contexts_to_create)
+
+        # Single commit for all operations
+        db.commit()
+
+        # Refresh KB contexts to get their IDs and add to linked_context_ids
+        for kb_context in kb_contexts_to_create:
+            db.refresh(kb_context)
+            linked_context_ids.append(kb_context.id)
+            logger.debug(
+                f"Created knowledge base context: id={kb_context.id}, "
+                f"knowledge_id={kb_context.type_data.get('knowledge_id')}, "
+                f"name={kb_context.name}, subtask_id={subtask_id}"
+            )
+
+        if attachment_ids:
+            logger.info(
+                f"Linked {len(attachment_ids)} attachment contexts to subtask {subtask_id}"
+            )
+        if kb_contexts_to_create:
+            logger.info(
+                f"Created {len(kb_contexts_to_create)} knowledge base contexts "
+                f"for subtask {subtask_id}"
+            )
+
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to link contexts to subtask {subtask_id}: {e}")
+        raise
 
     return linked_context_ids

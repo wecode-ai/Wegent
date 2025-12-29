@@ -391,6 +391,7 @@ async def _stream_chat_response(
             user_id=stream_data.user_id,
             db=db,
             base_system_prompt=chat_config.system_prompt,
+            task_id=stream_data.task_id,
         )
 
         # Prepare load_skill tool if skills are configured

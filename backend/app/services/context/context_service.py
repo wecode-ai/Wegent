@@ -411,6 +411,206 @@ class ContextService:
 
         return context
 
+    def update_knowledge_base_retrieval_result(
+        self,
+        db: Session,
+        context_id: int,
+        extracted_text: str,
+        sources: List[Dict[str, Any]],
+    ) -> Optional[SubtaskContext]:
+        """
+        Update knowledge base context with RAG retrieval results.
+
+        Args:
+            db: Database session
+            context_id: Context ID to update
+            extracted_text: Concatenated retrieval text from RAG
+            sources: List of source info dicts with document_name, chunk_id, score
+
+        Returns:
+            Updated SubtaskContext or None if not found
+        """
+        context = self.get_context_optional(db, context_id)
+        if context is None:
+            logger.warning(f"Context {context_id} not found for RAG result update")
+            return None
+
+        if context.context_type != ContextType.KNOWLEDGE_BASE.value:
+            logger.warning(
+                f"Context {context_id} is not a knowledge_base type, skipping RAG update"
+            )
+            return None
+
+        # Update extracted_text and text_length
+        context.extracted_text = extracted_text
+        context.text_length = len(extracted_text) if extracted_text else 0
+
+        # Update type_data with sources info
+        current_type_data = context.type_data or {}
+        context.type_data = {
+            **current_type_data,
+            "sources": sources,
+        }
+
+        db.commit()
+        db.refresh(context)
+
+        logger.info(
+            f"Knowledge base context {context_id} updated with RAG results: "
+            f"text_length={context.text_length}, sources_count={len(sources)}"
+        )
+
+        return context
+
+    def mark_knowledge_base_context_failed(
+        self,
+        db: Session,
+        context_id: int,
+        error_message: str,
+    ) -> Optional[SubtaskContext]:
+        """
+        Mark knowledge base context as failed when RAG retrieval fails.
+
+        Args:
+            db: Database session
+            context_id: Context ID to mark as failed
+            error_message: Error message describing the failure
+
+        Returns:
+            Updated SubtaskContext or None if not found
+        """
+        context = self.get_context_optional(db, context_id)
+        if context is None:
+            logger.warning(f"Context {context_id} not found for failure marking")
+            return None
+
+        context.status = ContextStatus.FAILED.value
+        context.error_message = error_message
+        db.commit()
+        db.refresh(context)
+
+        logger.warning(
+            f"Knowledge base context {context_id} marked as failed: {error_message}"
+        )
+
+        return context
+
+    def build_knowledge_base_text_prefix(
+        self,
+        context: SubtaskContext,
+    ) -> Optional[str]:
+        """
+        Build a text prefix containing knowledge base retrieval content.
+
+        Args:
+            context: SubtaskContext record with extracted_text from RAG
+
+        Returns:
+            Formatted text prefix, or None if no extracted text
+        """
+        if not context.extracted_text:
+            return None
+
+        if context.context_type != ContextType.KNOWLEDGE_BASE.value:
+            return None
+
+        # Get knowledge base name and sources info
+        kb_name = context.name or "Knowledge Base"
+        sources = []
+        if context.type_data and isinstance(context.type_data, dict):
+            sources = context.type_data.get("sources", [])
+
+        # Build source names list (up to 5 for brevity)
+        source_names = [s.get("document_name", "Unknown") for s in sources[:5]]
+        if len(sources) > 5:
+            source_names.append(f"... and {len(sources) - 5} more")
+        sources_str = ", ".join(source_names) if source_names else "N/A"
+
+        # Build the prefix
+        prefix = f"[Knowledge Base - {kb_name}]:\n"
+        prefix += f"(Sources: {sources_str})\n"
+        prefix += f"{context.extracted_text}\n\n"
+
+        return prefix
+
+    def get_knowledge_base_contexts_by_subtask(
+        self,
+        db: Session,
+        subtask_id: int,
+    ) -> List[SubtaskContext]:
+        """
+        Get only knowledge base contexts for a subtask.
+
+        Args:
+            db: Database session
+            subtask_id: Subtask ID
+
+        Returns:
+            List of knowledge_base SubtaskContext records
+        """
+        return (
+            db.query(SubtaskContext)
+            .filter(
+                SubtaskContext.subtask_id == subtask_id,
+                SubtaskContext.context_type == ContextType.KNOWLEDGE_BASE.value,
+                SubtaskContext.status == ContextStatus.READY.value,
+            )
+            .order_by(SubtaskContext.created_at)
+            .all()
+        )
+
+    def get_knowledge_base_meta_for_task(
+        self,
+        db: Session,
+        task_id: int,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get knowledge base meta information for all messages in a task.
+
+        Collects unique knowledge bases from all subtasks in the task.
+
+        Args:
+            db: Database session
+            task_id: Task ID
+
+        Returns:
+            List of dicts with kb_name and kb_id
+        """
+        from app.models.subtask import Subtask
+
+        # Get all subtask IDs for the task
+        subtask_ids = db.query(Subtask.id).filter(Subtask.task_id == task_id).all()
+        subtask_ids = [s[0] for s in subtask_ids]
+
+        if not subtask_ids:
+            return []
+
+        # Get unique knowledge base contexts
+        kb_contexts = (
+            db.query(SubtaskContext)
+            .filter(
+                SubtaskContext.subtask_id.in_(subtask_ids),
+                SubtaskContext.context_type == ContextType.KNOWLEDGE_BASE.value,
+            )
+            .all()
+        )
+
+        # Deduplicate by knowledge_id
+        seen_kb_ids = set()
+        kb_meta_list = []
+        for ctx in kb_contexts:
+            kb_id = ctx.knowledge_id
+            if kb_id and kb_id not in seen_kb_ids:
+                seen_kb_ids.add(kb_id)
+                kb_meta_list.append(
+                    {
+                        "kb_name": ctx.name,
+                        "kb_id": kb_id,
+                    }
+                )
+
+        return kb_meta_list
+
     # ==================== Common Operations ====================
 
     def get_context(

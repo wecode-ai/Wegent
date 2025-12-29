@@ -568,22 +568,9 @@ class ChatNamespace(socketio.AsyncNamespace):
 
                 user_subtask_for_context = user_subtask
 
-            # Update user subtask with context metadata
-            if context_metadata and user_subtask_for_context:
-                try:
-                    user_subtask_for_context.metadata = context_metadata
-                    db.commit()
-                    logger.info(
-                        f"[WS] chat:send stored context metadata in subtask {user_subtask_for_context.id}"
-                    )
-                except Exception as e:
-                    logger.exception(
-                        f"[WS] chat:send failed to store context metadata: {e}"
-                    )
-                    db.rollback()
-
             # Link attachments and create knowledge base contexts for the user subtask
             # This handles both pre-uploaded attachments and knowledge bases selected at send time
+            # Note: RAG retrieval for knowledge bases is done later via tools/Service
             if user_subtask_for_context:
                 from app.services.chat.preprocessing import link_contexts_to_subtask
 
