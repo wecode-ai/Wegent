@@ -80,7 +80,7 @@ const ToolCallItem = memo(function ToolCallItem({ toolName, input, itemIndex }: 
   };
 
   return (
-    <div>
+    <div className="mt-1">
       <div className="text-xs font-medium text-blue-400 mb-1">
         {t('thinking.tool_use') || 'Tool Use'}: {toolName}
       </div>

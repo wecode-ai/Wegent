@@ -18,6 +18,7 @@ import {
   getContentPreview,
 } from './utils/thinkingUtils';
 import { MAX_CONTENT_HEIGHT } from './utils/constants';
+import { getStepTypeConfig } from './utils/stepTypeConfig';
 import ThinkingHeader from './components/ThinkingHeader';
 import ToolCallItem from './components/ToolCallItem';
 import ToolResultItem from './components/ToolResultItem';
@@ -359,71 +360,97 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
           >
             {items.map((item, index) => {
               const confidenceText = formatConfidence(item.confidence);
-              const hasLegacyFields = item.action || item.result || item.reasoning;
+              const hasLegacyFields = !!(item.action || item.result || item.reasoning);
+
+              // Get step type configuration for styling
+              const stepConfig = getStepTypeConfig(item.details, hasLegacyFields);
+
+              // Determine if this step is currently running
+              const isStepRunning = index === items.length - 1 && isRunning;
 
               return (
-                <div key={index} className="relative py-0.5 mb-1">
-                  {/* Title */}
-                  <div className="mb-0.5 font-medium text-blue-400 text-xs">
-                    {getThinkingText(item.title, tChat)}
-                  </div>
-
-                  {/* Legacy fields for backward compatibility */}
-                  {hasLegacyFields && (
-                    <>
-                      {item.action && (
-                        <div className="mb-1 text-xs text-text-secondary">
-                          <span className="font-medium">
-                            {tChat('messages.action') || 'Action'}:{' '}
-                          </span>
-                          {getThinkingText(item.action, tChat)}
-                        </div>
-                      )}
-                      {item.result && (
-                        <div className="mb-1 text-xs text-text-tertiary">
-                          <span className="font-medium">
-                            {tChat('messages.result') || 'Result'}:{' '}
-                          </span>
-                          {renderTextContent(
-                            getThinkingText(item.result, tChat),
-                            `item-${index}-legacy-result`
-                          )}
-                        </div>
-                      )}
-                      {item.reasoning && (
-                        <div className="mb-1 text-xs text-text-tertiary">
-                          <span className="font-medium">
-                            {tChat('messages.reasoning') || 'Reasoning'}:{' '}
-                          </span>
-                          {renderTextContent(
-                            getThinkingText(item.reasoning, tChat),
-                            `item-${index}-legacy-reasoning`
-                          )}
-                        </div>
-                      )}
-                    </>
+                <div key={index} className="relative pl-4 py-1.5 mb-1">
+                  {/* Timeline vertical line */}
+                  {index < items.length - 1 && (
+                    <div
+                      className="absolute left-[7px] top-[1.25rem] w-0.5 bg-border/30"
+                      style={{ height: 'calc(100% - 0.5rem)' }}
+                    />
                   )}
 
-                  {/* New details field */}
-                  {renderDetailsContent(item, index)}
+                  {/* Timeline dot with color coding */}
+                  <div
+                    className={`absolute left-[3px] top-[0.5rem] w-2.5 h-2.5 rounded-full border-2 ${
+                      isStepRunning
+                        ? `${stepConfig.iconClass.replace('text-', 'border-')} ${stepConfig.iconClass.replace('text-', 'bg-')} animate-pulse`
+                        : `${stepConfig.iconClass.replace('text-', 'border-')} bg-surface`
+                    }`}
+                  />
 
-                  {/* Footer with confidence and next_action */}
-                  <div className="flex flex-wrap items-center justify-between gap-2 mt-1.5">
-                    {confidenceText && (
-                      <div className="text-xs text-text-tertiary">
-                        <span className="font-medium">
-                          {tChat('messages.confidence') || 'Confidence'}:{' '}
-                        </span>
-                        {confidenceText}
-                      </div>
+                  {/* Content */}
+                  <div className="flex-1 min-w-0">
+                    {/* Title with color coding */}
+                    <div className={`mb-0.5 font-medium text-xs ${stepConfig.titleClass}`}>
+                      {getThinkingText(item.title, tChat)}
+                    </div>
+
+                    {/* Legacy fields for backward compatibility */}
+                    {hasLegacyFields && (
+                      <>
+                        {item.action && (
+                          <div className="mb-1 text-xs text-text-secondary">
+                            <span className="font-medium">
+                              {tChat('messages.action') || 'Action'}:{' '}
+                            </span>
+                            {getThinkingText(item.action, tChat)}
+                          </div>
+                        )}
+                        {item.result && (
+                          <div className="mb-1 text-xs text-text-tertiary">
+                            <span className="font-medium">
+                              {tChat('messages.result') || 'Result'}:{' '}
+                            </span>
+                            {renderTextContent(
+                              getThinkingText(item.result, tChat),
+                              `item-${index}-legacy-result`
+                            )}
+                          </div>
+                        )}
+                        {item.reasoning && (
+                          <div className="mb-1 text-xs text-text-tertiary">
+                            <span className="font-medium">
+                              {tChat('messages.reasoning') || 'Reasoning'}:{' '}
+                            </span>
+                            {renderTextContent(
+                              getThinkingText(item.reasoning, tChat),
+                              `item-${index}-legacy-reasoning`
+                            )}
+                          </div>
+                        )}
+                      </>
                     )}
-                    {item.next_action &&
-                      item.next_action !== 'continue' &&
-                      item.next_action !== 'thinking.continue' && (
-                        <div className="rounded bg-blue-500/10 px-2.5 py-1 text-xs text-blue-400 shadow-sm">
-                          {getThinkingText(item.next_action, tChat)}
+
+                    {/* New details field */}
+                    {renderDetailsContent(item, index)}
+
+                    {/* Footer with confidence and next_action */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 mt-1.5">
+                      {confidenceText && (
+                        <div className="text-xs text-text-tertiary">
+                          <span className="font-medium">
+                            {tChat('messages.confidence') || 'Confidence'}:{' '}
+                          </span>
+                          {confidenceText}
                         </div>
                       )}
+                      {item.next_action &&
+                        item.next_action !== 'continue' &&
+                        item.next_action !== 'thinking.continue' && (
+                          <div className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-blue-500/10 text-blue-400 text-xs border border-blue-500/20">
+                            {getThinkingText(item.next_action, tChat)}
+                          </div>
+                        )}
+                    </div>
                   </div>
                 </div>
               );

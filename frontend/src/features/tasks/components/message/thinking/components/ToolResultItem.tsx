@@ -30,13 +30,14 @@ const ToolResultItem = memo(function ToolResultItem({
   const buttonClass = isError
     ? 'text-red-400 hover:text-red-500 hover:font-semibold'
     : 'text-green-400 hover:text-green-500 hover:font-semibold';
-  const icon = isError ? '❌' : '✅';
 
   return (
-    <div>
+    <div className="mt-1">
       <div className="flex items-center justify-between mb-1">
         <div className={`text-xs font-medium ${textClass}`}>
-          {icon} {t('thinking.tool_result') || 'Tool Result'}
+          {isError
+            ? t('thinking.tool_error') || 'Tool Error'
+            : t('thinking.tool_result') || 'Tool Result'}
         </div>
         {isCollapsible && (
           <button
@@ -58,7 +59,9 @@ const ToolResultItem = memo(function ToolResultItem({
         )}
       </div>
       <pre
-        className="text-xs text-text-tertiary whitespace-pre-wrap break-words"
+        className={`text-xs whitespace-pre-wrap break-words ${
+          isError ? 'text-red-400/90' : 'text-text-tertiary'
+        }`}
         data-result-index={itemIndex}
       >
         {displayContent}
