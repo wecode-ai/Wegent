@@ -56,6 +56,13 @@ class WebSocketStreamConfig:
     enable_web_search: bool = False
     search_engine: str | None = None
 
+    # Prompt enhancement options
+    enable_clarification: bool = False
+    enable_deep_thinking: bool = True
+    skills: list[dict] = field(
+        default_factory=list
+    )  # Skill metadata for prompt injection
+
     # Bot configuration
     bot_name: str = ""
     bot_namespace: str = "default"

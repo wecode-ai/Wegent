@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Knowledge base tools preparation module.
+"""Knowledge base tools factory module.
 
 Responsible for creating knowledge base search tools and enhancing system prompts.
 """
@@ -41,7 +41,7 @@ def prepare_knowledge_base_tools(
         return extra_tools, enhanced_system_prompt
 
     logger.info(
-        "[ai_trigger] Creating KnowledgeBaseTool for %d knowledge bases: %s",
+        "[knowledge_factory] Creating KnowledgeBaseTool for %d knowledge bases: %s",
         len(knowledge_base_ids),
         knowledge_base_ids,
     )
@@ -82,7 +82,7 @@ The user expects answers based on the selected knowledge base content only."""
     enhanced_system_prompt = f"{base_system_prompt}{kb_instruction}"
 
     logger.info(
-        "[ai_trigger] Enhanced system prompt with REQUIRED knowledge base usage instructions"
+        "[knowledge_factory] Enhanced system prompt with REQUIRED knowledge base usage instructions"
     )
 
     return extra_tools, enhanced_system_prompt

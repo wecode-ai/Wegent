@@ -68,7 +68,7 @@ tools:
     config:
       timeout: 30
 dependencies:
-  - app.services.chat_v2.tools.pending_requests
+  - app.chat_shell.tools.pending_requests
 ---
 
 # Skill Prompt Content
@@ -128,15 +128,15 @@ when the skill is loaded by the LLM...
 
 ### Implementation Details
 
-1. **ChatConfigBuilder** (`backend/app/services/chat_v2/config/chat_config.py`)
+1. **ChatConfigBuilder** (`backend/app/chat_shell/config/chat_config.py`)
    - Extracts skill metadata from Ghost configuration
    - Builds skill_names and skill_configs for the session
 
-2. **System Prompt Injection** (`backend/app/services/chat_v2/utils/prompts.py`)
+2. **System Prompt Injection** (`backend/app/chat_shell/utils/prompts.py`)
    - `append_skill_metadata_prompt()` injects skill summaries
    - Format: `- **{skill_name}**: {description}`
 
-3. **LoadSkillTool** (`backend/app/services/chat_v2/tools/builtin/load_skill.py`)
+3. **LoadSkillTool** (`backend/app/chat_shell/tools/builtin/load_skill.py`)
    - Built-in tool called by LLM
    - Session-level caching prevents duplicate loading
    - Dynamic Provider loading for public skills only
@@ -183,8 +183,8 @@ class SkillToolProvider(ABC):
 ### Example Provider Implementation
 
 ```python
-from app.services.chat_v2.skills.provider import SkillToolProvider
-from app.services.chat_v2.skills.context import SkillToolContext
+from app.chat_shell.skills.provider import SkillToolProvider
+from app.chat_shell.skills.context import SkillToolContext
 
 class MermaidToolProvider(SkillToolProvider):
     @property

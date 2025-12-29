@@ -10,6 +10,7 @@ This module provides the tool execution framework for Chat Shell:
 - Built-in tools (knowledge base, file reader, web search, etc.)
 - MCP protocol tools support
 - Pending request registry for frontend interactions
+- Tool factory functions for preparing tools
 """
 
 from .base import ToolRegistry, global_registry
@@ -19,6 +20,7 @@ from .builtin import (
     KnowledgeBaseTool,
     WebSearchTool,
 )
+from .knowledge_factory import prepare_knowledge_base_tools
 from .pending_requests import (
     PendingRequest,
     PendingRequestRegistry,
@@ -26,6 +28,8 @@ from .pending_requests import (
     get_pending_request_registry_sync,
     shutdown_pending_request_registry,
 )
+from .rag_integration import retrieve_and_assemble_rag_prompt
+from .skill_factory import prepare_load_skill_tool, prepare_skill_tools
 
 __all__ = [
     "ToolRegistry",
@@ -40,4 +44,10 @@ __all__ = [
     "get_pending_request_registry",
     "get_pending_request_registry_sync",
     "shutdown_pending_request_registry",
+    # Tool factories
+    "prepare_knowledge_base_tools",
+    "prepare_load_skill_tool",
+    "prepare_skill_tools",
+    # RAG integration
+    "retrieve_and_assemble_rag_prompt",
 ]

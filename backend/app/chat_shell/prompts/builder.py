@@ -266,3 +266,42 @@ def append_skill_metadata_prompt(system_prompt: str, skills: list[dict]) -> str:
 
     skill_section = SKILL_METADATA_PROMPT.format(skill_list=skill_list)
     return system_prompt + skill_section
+
+
+def build_system_prompt(
+    base_prompt: str,
+    enable_clarification: bool = False,
+    enable_deep_thinking: bool = True,
+    skills: list[dict] | None = None,
+) -> str:
+    """
+    Build the final system prompt with optional enhancements.
+
+    This function centralizes all prompt building logic within chat_shell,
+    applying clarification mode, deep thinking mode, and skill metadata
+    based on the provided configuration.
+
+    Args:
+        base_prompt: The base system prompt from Ghost
+        enable_clarification: Whether to enable clarification mode
+        enable_deep_thinking: Whether to enable deep thinking mode
+        skills: List of skill metadata [{"name": "...", "description": "..."}]
+
+    Returns:
+        The final system prompt with all enhancements applied
+    """
+    system_prompt = base_prompt
+
+    # Append clarification mode instructions if enabled
+    if enable_clarification:
+        system_prompt = append_clarification_prompt(system_prompt, True)
+
+    # Append deep thinking mode instructions if enabled
+    if enable_deep_thinking:
+        system_prompt = append_deep_thinking_prompt(system_prompt, True)
+
+    # Inject skill metadata if skills are configured
+    if skills:
+        system_prompt = append_skill_metadata_prompt(system_prompt, skills)
+
+    return system_prompt

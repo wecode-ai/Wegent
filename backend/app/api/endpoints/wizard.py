@@ -44,7 +44,7 @@ from app.schemas.wizard import (
     TestPromptRequest,
     TestPromptResponse,
 )
-from app.services.chat.models import extract_and_process_model_config
+from app.services.chat.config import extract_and_process_model_config
 from app.services.simple_chat import simple_chat_service
 
 logger = logging.getLogger(__name__)

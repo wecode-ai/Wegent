@@ -1384,9 +1384,9 @@ def get_bot_system_prompt(
 
 | 文件 | 旧导入 | 新导入 |
 |------|--------|--------|
-| `chat_shell/streaming/ws_handler.py` | `from app.services.chat_v2.streaming import get_ws_emitter` | `from app.services.chat.ws_emitter import get_ws_emitter` |
-| `chat_shell/storage/db.py` | `from app.services.chat_v2.streaming import get_ws_emitter, get_main_event_loop` | `from app.services.chat.ws_emitter import get_ws_emitter, get_main_event_loop` |
-| `app/main.py` | `from app.services.chat_v2.streaming import init_ws_emitter as init_chat_v2_emitter` | 删除此导入，只保留 `init_chat_emitter` |
+| `chat_shell/streaming/ws_handler.py` | `from app.chat_shell.streaming import get_ws_emitter` | `from app.services.chat.ws_emitter import get_ws_emitter` |
+| `chat_shell/storage/db.py` | `from app.chat_shell.streaming import get_ws_emitter, get_main_event_loop` | `from app.services.chat.ws_emitter import get_ws_emitter, get_main_event_loop` |
+| `app/main.py` | `from app.chat_shell.streaming import init_ws_emitter as init_chat_v2_emitter` | 删除此导入，只保留 `init_chat_emitter` |
 
 ---
 

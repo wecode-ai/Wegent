@@ -7,26 +7,29 @@
 This module is responsible for triggering AI responses:
 - Extract data from ORM objects
 - Start background streaming tasks
-- Coordinate sub-modules (attachments, knowledge base, skills)
 - Prepare ChatEvent and send to Chat Shell
 
 This is Backend's responsibility, not Chat Shell's.
+
+Note: Tool preparation functions have been moved to their appropriate locations:
+- Knowledge base tools: app.chat_shell.tools.knowledge_factory
+- Skill tools: app.chat_shell.tools.skill_factory
+- Attachment processing: app.services.chat.preprocessing
 """
 
-from .attachments import process_attachments
 from .core import StreamTaskData, trigger_ai_response
-from .knowledge import prepare_knowledge_base_tools
-from .skills import prepare_load_skill_tool, prepare_skill_tools
+from .group_chat import (
+    is_task_group_chat,
+    notify_group_members_task_updated,
+    should_trigger_ai_response,
+)
 
 __all__ = [
     # Core
     "trigger_ai_response",
     "StreamTaskData",
-    # Attachments
-    "process_attachments",
-    # Knowledge base
-    "prepare_knowledge_base_tools",
-    # Skills
-    "prepare_load_skill_tool",
-    "prepare_skill_tools",
+    # Group chat
+    "should_trigger_ai_response",
+    "notify_group_members_task_updated",
+    "is_task_group_chat",
 ]

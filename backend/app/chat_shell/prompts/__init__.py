@@ -1,13 +1,14 @@
-# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+# SPDX-FileCopyrightText: 2025 WeCode, Inc.
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Prompts module for Chat Service.
+"""Prompts module for Chat Shell.
 
 This module provides system prompt building utilities:
 - Clarification mode prompt
 - Deep thinking mode prompt
 - Skill metadata prompt
+- Unified system prompt builder
 """
 
 from .builder import (
@@ -17,6 +18,7 @@ from .builder import (
     append_clarification_prompt,
     append_deep_thinking_prompt,
     append_skill_metadata_prompt,
+    build_system_prompt,
     get_clarification_prompt,
     get_deep_thinking_prompt,
 )
@@ -32,4 +34,5 @@ __all__ = [
     "get_deep_thinking_prompt",
     "append_deep_thinking_prompt",
     "append_skill_metadata_prompt",
+    "build_system_prompt",
 ]

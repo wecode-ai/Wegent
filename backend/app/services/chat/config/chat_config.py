@@ -25,12 +25,15 @@ class ChatConfig:
     """Complete configuration for a chat session.
 
     Contains all resolved configuration needed to start a chat stream.
+    The system prompt is the base prompt from Ghost + team member prompt.
+    Prompt enhancements (clarification, deep thinking, skills) are handled
+    internally by chat_shell based on the enable_* flags.
     """
 
     # Model configuration
     model_config: dict[str, Any] = field(default_factory=dict)
 
-    # System prompt (combined from Ghost + team member prompt + clarification)
+    # Base system prompt (from Ghost + team member prompt, without enhancements)
     system_prompt: str = ""
 
     # Bot information
@@ -55,6 +58,10 @@ class ChatConfig:
     # Full skill configurations including tools declarations
     # Used by SkillToolRegistry to dynamically create tool instances
     skill_configs: list[dict[str, Any]] = field(default_factory=list)
+
+    # Prompt enhancement options (handled internally by chat_shell)
+    enable_clarification: bool = False
+    enable_deep_thinking: bool = True
 
 
 class ChatConfigBuilder:
@@ -103,7 +110,7 @@ class ChatConfigBuilder:
         force_override: bool = False,
         team_member_prompt: str | None = None,
         enable_clarification: bool = False,
-        enable_deep_thinking: bool = False,
+        enable_deep_thinking: bool = True,
         task_id: int = 0,
     ) -> ChatConfig:
         """Build complete chat configuration.
@@ -132,18 +139,12 @@ class ChatConfigBuilder:
             task_id,
         )
 
-        # Get skills for the bot (needed for both system prompt and load_skill tool)
+        # Get skills for the bot (needed for load_skill tool and prompt enhancement)
         skills = self._get_bot_skills(bot)
         skill_names = [s["name"] for s in skills]
 
-        # Get system prompt (pass skills to avoid duplicate query)
-        system_prompt = self._get_system_prompt(
-            bot,
-            team_member_prompt,
-            enable_clarification,
-            enable_deep_thinking,
-            skills=skills,
-        )
+        # Get base system prompt (without enhancements - those are handled by chat_shell)
+        system_prompt = self._get_base_system_prompt(bot, team_member_prompt)
 
         # Get agent config
         bot_spec = bot.json.get("spec", {}) if bot.json else {}
@@ -170,6 +171,8 @@ class ChatConfigBuilder:
             team_id=self.team.id,
             skill_names=skill_names,
             skill_configs=skills,  # Full skill configs for SkillToolRegistry
+            enable_clarification=enable_clarification,
+            enable_deep_thinking=enable_deep_thinking,
         )
 
     def _get_first_bot(self) -> Kind | None:
@@ -223,7 +226,7 @@ class ChatConfigBuilder:
         Returns:
             Model configuration dictionary
         """
-        from app.services.chat.models.resolver import (
+        from app.services.chat.config.model_resolver import (
             _process_model_config_placeholders,
             get_model_config_for_bot,
         )
@@ -258,80 +261,37 @@ class ChatConfigBuilder:
 
         return model_config
 
-    def _get_system_prompt(
+    def _get_base_system_prompt(
         self,
         bot: Kind,
         team_member_prompt: str | None,
-        enable_clarification: bool,
-        enable_deep_thinking: bool,
-        skills: list[dict] | None = None,
     ) -> str:
-        """Get system prompt for the bot.
+        """Get base system prompt for the bot (without enhancements).
+
+        This method returns only the base system prompt from Ghost + team member prompt.
+        Prompt enhancements (clarification, deep thinking, skills) are handled
+        internally by chat_shell based on the enable_* flags in ChatConfig.
 
         Args:
             bot: Bot Kind object
             team_member_prompt: Optional additional prompt from team member
-            enable_clarification: Whether to enable clarification mode
-            enable_deep_thinking: Whether to enable deep thinking mode with search guidance
-            skills: Pre-fetched skills list to avoid duplicate query (optional)
 
         Returns:
-            Combined system prompt
+            Base system prompt (Ghost prompt + team member prompt)
         """
-        from app.services.chat.models.resolver import get_bot_system_prompt
+        from app.services.chat.config.model_resolver import get_bot_system_prompt
 
         # Get team member prompt from first member if not provided
         if team_member_prompt is None and self._team_crd.spec.members:
             team_member_prompt = self._team_crd.spec.members[0].prompt
 
-        # Get base system prompt
-        system_prompt = get_bot_system_prompt(
+        # Get base system prompt (no enhancements applied here)
+        return get_bot_system_prompt(
             self.db,
             bot,
             self.team.user_id,
             team_member_prompt,
         )
-
-        # Append clarification mode instructions if enabled
-        # Append clarification mode instructions if enabled
-        if enable_clarification:
-            from app.services.chat.prompts import (
-                append_clarification_prompt,
-            )
-
-            system_prompt = append_clarification_prompt(system_prompt, True)
-
-        # Append deep thinking mode instructions if enabled
-        if enable_deep_thinking:
-            from app.services.chat.prompts import (
-                append_deep_thinking_prompt,
-            )
-
-            system_prompt = append_deep_thinking_prompt(system_prompt, True)
-
-        # Inject skill metadata if bot has skills configured
-        # Use pre-fetched skills if provided, otherwise query
-        if skills is None:
-            skills = self._get_bot_skills(bot)
-        if skills:
-            from app.services.chat.prompts import (
-                append_skill_metadata_prompt,
-            )
-
-            system_prompt = append_skill_metadata_prompt(system_prompt, skills)
-        # NOTE: Current date/time is now injected into user messages (not system prompt)
-        # to enable prompt caching. See MessageConverter.build_messages() for details.
-
-        # # CRITICAL: Log the final system prompt being sent to the LLM
-        # logger.info(
-        #     "[SYSTEM_PROMPT_DEBUG] Final system prompt for bot '%s' (user_id=%d, team_id=%d):\n---\n%s\n---",
-        #     bot.name if bot else "UNKNOWN_BOT",
-        #     self.user_id,
-        #     self.team.id,
-        #     system_prompt,
-        # )
-
-        return system_prompt
 
     def get_first_member_prompt(self) -> str | None:
         """Get the prompt from the first team member.

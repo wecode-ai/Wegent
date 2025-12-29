@@ -329,7 +329,7 @@ async def _stream_chat_response(
                 override_model_name=payload.force_override_bot_model,
                 force_override=payload.force_override_bot_model is not None,
                 enable_clarification=payload.enable_clarification,
-                enable_deep_thinking=payload.enable_deep_thinking,
+                enable_deep_thinking=True,
                 task_id=stream_data.task_id,
             )
         except ValueError as e:
@@ -361,7 +361,7 @@ async def _stream_chat_response(
 
         final_message = message
         if attachment_ids_to_process:
-            from .attachments import process_attachments
+            from app.services.chat.preprocessing import process_attachments
 
             final_message = await process_attachments(
                 db, attachment_ids_to_process, stream_data.user_id, message
@@ -384,7 +384,7 @@ async def _stream_chat_response(
         logger.info("[ai_trigger] chat:start emitted")
 
         # Prepare knowledge base tools and enhanced system prompt
-        from .knowledge import prepare_knowledge_base_tools
+        from app.chat_shell.tools.knowledge_factory import prepare_knowledge_base_tools
 
         extra_tools, enhanced_system_prompt = prepare_knowledge_base_tools(
             knowledge_base_ids=knowledge_base_ids,
@@ -395,7 +395,10 @@ async def _stream_chat_response(
 
         # Prepare load_skill tool if skills are configured
         # Pass task_id to preload previously used skills for follow-up messages
-        from .skills import prepare_load_skill_tool, prepare_skill_tools
+        from app.chat_shell.tools.skill_factory import (
+            prepare_load_skill_tool,
+            prepare_skill_tools,
+        )
 
         load_skill_tool = prepare_load_skill_tool(
             skill_names=chat_config.skill_names,
@@ -416,8 +419,15 @@ async def _stream_chat_response(
         )
         extra_tools.extend(skill_tools)
 
+        # Build skill metadata for prompt injection
+        # Extract name and description from skill_configs for prompt enhancement
+        skill_metadata = [
+            {"name": s["name"], "description": s["description"]}
+            for s in chat_config.skill_configs
+            if "name" in s and "description" in s
+        ]
+
         # Create WebSocket stream config
-        # enable_deep_thinking controls whether tools are enabled
         ws_config = WebSocketStreamConfig(
             task_id=stream_data.task_id,
             subtask_id=stream_data.subtask_id,
@@ -425,7 +435,7 @@ async def _stream_chat_response(
             user_id=stream_data.user_id,
             user_name=stream_data.user_name,
             is_group_chat=payload.is_group_chat,
-            enable_tools=payload.enable_deep_thinking,  # Deep thinking enables tools
+            enable_tools=True,  # Deep thinking enables tools
             enable_web_search=payload.enable_web_search,
             search_engine=payload.search_engine,
             message_id=stream_data.assistant_message_id,
@@ -434,6 +444,10 @@ async def _stream_chat_response(
             bot_namespace=chat_config.bot_namespace,
             shell_type=chat_config.shell_type,  # Pass shell_type from chat_config
             extra_tools=extra_tools,  # Pass extra tools including KnowledgeBaseTool
+            # Prompt enhancement options
+            enable_clarification=chat_config.enable_clarification,
+            enable_deep_thinking=chat_config.enable_deep_thinking,
+            skills=skill_metadata,  # Skill metadata for prompt injection
         )
 
         # Create ChatAgent and WebSocketStreamingHandler for streaming

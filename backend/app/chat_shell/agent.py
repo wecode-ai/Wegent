@@ -46,6 +46,10 @@ class AgentConfig:
     extra_tools: list[BaseTool] | None = None
     load_skill_tool: Any = None
     streaming: bool = True
+    # Prompt enhancement options (handled internally by ChatAgent)
+    enable_clarification: bool = False
+    enable_deep_thinking: bool = True
+    skills: list[dict[str, Any]] | None = None  # Skill metadata for prompt injection
 
 
 class ChatAgent:
@@ -285,20 +289,34 @@ class ChatAgent:
         current_message: str | dict[str, Any],
         system_prompt: str,
         username: str | None = None,
+        config: AgentConfig | None = None,
     ) -> list[dict[str, Any]]:
         """Build messages for agent execution.
 
         Args:
             history: Chat history
             current_message: Current user message
-            system_prompt: System prompt
+            system_prompt: Base system prompt (will be enhanced if config is provided)
             username: Optional username for group chat
+            config: Optional AgentConfig for prompt enhancements
 
         Returns:
             List of message dictionaries ready for agent
         """
+        # Build final system prompt with enhancements if config is provided
+        final_prompt = system_prompt
+        if config:
+            from .prompts import build_system_prompt
+
+            final_prompt = build_system_prompt(
+                base_prompt=system_prompt,
+                enable_clarification=config.enable_clarification,
+                enable_deep_thinking=config.enable_deep_thinking,
+                skills=config.skills,
+            )
+
         return MessageConverter.build_messages(
-            history, current_message, system_prompt, username=username
+            history, current_message, final_prompt, username=username
         )
 
     def list_tools(self) -> list[dict[str, Any]]:

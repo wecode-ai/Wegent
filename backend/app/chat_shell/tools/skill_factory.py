@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Skill tools preparation module.
+"""Skill tools factory module.
 
 Responsible for:
 - Creating LoadSkillTool
@@ -44,7 +44,7 @@ def prepare_load_skill_tool(
         return None
 
     logger.info(
-        "[ai_trigger] Creating LoadSkillTool for %d skills: %s",
+        "[skill_factory] Creating LoadSkillTool for %d skills: %s",
         len(skill_names),
         skill_names,
     )
@@ -69,13 +69,13 @@ def prepare_load_skill_tool(
             if skills_to_preload:
                 preloaded = load_skill_tool.preload_skills(skills_to_preload)
                 logger.info(
-                    "[ai_trigger] Preloaded %d previously used skills: %s",
+                    "[skill_factory] Preloaded %d previously used skills: %s",
                     len(preloaded),
                     preloaded,
                 )
 
     logger.info(
-        "[ai_trigger] Created LoadSkillTool with skills: %s",
+        "[skill_factory] Created LoadSkillTool with skills: %s",
         skill_names,
     )
 
@@ -137,7 +137,7 @@ def _get_previously_used_skills(db: Any, task_id: int) -> list[str]:
                             used_skills.add(skill_name)
 
         logger.info(
-            "[ai_trigger] Found %d previously used skills for task %d: %s",
+            "[skill_factory] Found %d previously used skills for task %d: %s",
             len(used_skills),
             task_id,
             list(used_skills),
@@ -145,7 +145,7 @@ def _get_previously_used_skills(db: Any, task_id: int) -> list[str]:
 
     except Exception as e:
         logger.warning(
-            "[ai_trigger] Failed to get previously used skills for task %d: %s",
+            "[skill_factory] Failed to get previously used skills for task %d: %s",
             task_id,
             str(e),
         )
@@ -190,7 +190,7 @@ def prepare_skill_tools(
     ws_emitter = get_ws_emitter()
     if not ws_emitter:
         logger.warning(
-            "[ai_trigger] WebSocket emitter not available, some skill tools may not work"
+            "[skill_factory] WebSocket emitter not available, some skill tools may not work"
         )
 
     # Get the registry instance
@@ -209,7 +209,7 @@ def prepare_skill_tools(
             continue
 
         logger.info(
-            "[ai_trigger] Processing skill '%s' with %d tool declarations",
+            "[skill_factory] Processing skill '%s' with %d tool declarations",
             skill_name,
             len(tool_declarations),
         )
@@ -222,7 +222,7 @@ def prepare_skill_tools(
 
             if not is_public:
                 logger.warning(
-                    "[ai_trigger] SECURITY: Skipping code loading for non-public "
+                    "[skill_factory] SECURITY: Skipping code loading for non-public "
                     "skill '%s' (user_id=%s). Only public skills can load code.",
                     skill_name,
                     skill_user_id,
@@ -246,23 +246,23 @@ def prepare_skill_tools(
                         )
                         if loaded:
                             logger.info(
-                                "[ai_trigger] Loaded provider for skill '%s'",
+                                "[skill_factory] Loaded provider for skill '%s'",
                                 skill_name,
                             )
                         else:
                             logger.warning(
-                                "[ai_trigger] Failed to load provider for skill '%s'",
+                                "[skill_factory] Failed to load provider for skill '%s'",
                                 skill_name,
                             )
                     else:
                         logger.warning(
-                            "[ai_trigger] No binary data found for skill '%s' (id=%d)",
+                            "[skill_factory] No binary data found for skill '%s' (id=%d)",
                             skill_name,
                             skill_id,
                         )
                 except Exception as e:
                     logger.error(
-                        "[ai_trigger] Error loading provider for skill '%s': %s",
+                        "[skill_factory] Error loading provider for skill '%s': %s",
                         skill_name,
                         str(e),
                     )
@@ -283,14 +283,14 @@ def prepare_skill_tools(
 
         if skill_tools:
             logger.info(
-                "[ai_trigger] Created %d tools for skill '%s': %s",
+                "[skill_factory] Created %d tools for skill '%s': %s",
                 len(skill_tools),
                 skill_name,
                 [t.name for t in skill_tools],
             )
 
     logger.info(
-        "[ai_trigger] Total skill tools created: %d",
+        "[skill_factory] Total skill tools created: %d",
         len(tools),
     )
 

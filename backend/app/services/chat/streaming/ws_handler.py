@@ -156,15 +156,6 @@ class WebSocketStreamingHandler:
                 exclude_after_message_id=config.user_message_id,
             )
 
-            # Build messages
-            username = config.get_username_for_message()
-            messages = self.agent.build_messages(
-                history, message, system_prompt, username=username
-            )
-
-            # Log messages sent to model for debugging
-            self._log_messages_for_debug(task_id, subtask_id, messages)
-
             # Find LoadSkillTool from extra_tools for dynamic skill prompt injection
             load_skill_tool = None
             for tool in extra_tools:
@@ -175,14 +166,26 @@ class WebSocketStreamingHandler:
                     )
                     break
 
-            # Create agent config
+            # Create agent config with prompt enhancement options
             agent_config = AgentConfig(
                 model_config=model_config,
                 system_prompt=system_prompt,
                 max_iterations=max_iterations,
                 extra_tools=extra_tools,
                 load_skill_tool=load_skill_tool,
+                enable_clarification=config.enable_clarification,
+                enable_deep_thinking=config.enable_deep_thinking,
+                skills=config.skills,
             )
+
+            # Build messages (prompt enhancements applied internally based on config)
+            username = config.get_username_for_message()
+            messages = self.agent.build_messages(
+                history, message, system_prompt, username=username, config=agent_config
+            )
+
+            # Log messages sent to model for debugging
+            self._log_messages_for_debug(task_id, subtask_id, messages)
 
             # Create agent builder for tool event handler
             agent_builder = self.agent.create_agent_builder(agent_config)
