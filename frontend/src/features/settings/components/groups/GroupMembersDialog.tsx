@@ -9,7 +9,6 @@ import { useTranslation } from '@/hooks/useTranslation';
 import Modal from '@/features/common/Modal';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -27,7 +26,10 @@ import {
 } from '@/apis/groups';
 import { toast } from 'sonner';
 import type { Group, GroupMember, GroupRole } from '@/types/group';
+import type { SearchUser } from '@/types/api';
 import { UserPlusIcon, LogOutIcon } from 'lucide-react';
+import { UserSearchSelect } from '@/components/common/UserSearchSelect';
+
 interface GroupMembersDialogProps {
   isOpen: boolean;
   onClose: () => void;
@@ -47,9 +49,9 @@ export function GroupMembersDialog({
   const [members, setMembers] = useState<GroupMember[]>([]);
   const [loading, setLoading] = useState(false);
   const [showAddMember, setShowAddMember] = useState(false);
-  const [newMemberUsername, setNewMemberUsername] = useState('');
   const [selectedRole, setSelectedRole] = useState<GroupRole>('Reporter');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [selectedUsers, setSelectedUsers] = useState<SearchUser[]>([]);
 
   const myRole = group?.my_role;
   const isPrivateGroup = group?.visibility === 'private';
@@ -86,39 +88,57 @@ export function GroupMembersDialog({
     }
   };
 
-  const handleAddMember = async () => {
-    if (!group || !newMemberUsername.trim()) return;
-
-    // Check if user already exists in members
-    const existingMember = members.find(m => m.user_name === newMemberUsername.trim());
-    if (existingMember) {
-      toast.error(t('groups:groupMembers.userAlreadyMember'));
-      return;
-    }
+  const handleAddMembers = async () => {
+    if (!group || selectedUsers.length === 0) return;
 
     setIsSubmitting(true);
-    try {
-      const result = await addGroupMemberByUsername(
-        group.name,
-        newMemberUsername.trim(),
-        selectedRole
-      );
+    let successCount = 0;
+    let alreadyMemberCount = 0;
+    const errors: string[] = [];
 
-      if (result.success) {
-        toast.success(result.message || t('groups:groups.messages.memberAdded'));
-        setShowAddMember(false);
-        setNewMemberUsername('');
-        setSelectedRole('Reporter');
-        loadMembers();
-        onSuccess();
-      } else {
-        toast.error(result.message || t('groups:groupMembers.addMemberFailed'));
+    try {
+      for (const user of selectedUsers) {
+        // Check if user already exists in members
+        const existingMember = members.find(m => m.user_name === user.user_name);
+        if (existingMember) {
+          alreadyMemberCount++;
+          continue;
+        }
+
+        try {
+          const result = await addGroupMemberByUsername(group.name, user.user_name, selectedRole);
+          if (result.success) {
+            successCount++;
+          } else {
+            errors.push(
+              `${user.user_name}: ${result.message || t('groups:groupMembers.addMemberFailed')}`
+            );
+          }
+        } catch (error: unknown) {
+          const err = error as { message?: string };
+          errors.push(
+            `${user.user_name}: ${err?.message || t('groups:groupMembers.addMemberFailed')}`
+          );
+        }
       }
-    } catch (error: unknown) {
-      console.error('Failed to add member:', error);
-      const err = error as { message?: string };
-      const errorMessage = err?.message || t('groups:groupMembers.addMemberFailed');
-      toast.error(errorMessage);
+
+      // Show results
+      if (successCount > 0) {
+        toast.success(t('groups:groupMembers.addMembersSuccess', { count: successCount }));
+      }
+      if (alreadyMemberCount > 0) {
+        toast.info(t('groups:groupMembers.alreadyMembers', { count: alreadyMemberCount }));
+      }
+      if (errors.length > 0) {
+        errors.forEach(err => toast.error(err));
+      }
+
+      // Reset form and reload members
+      setShowAddMember(false);
+      setSelectedRole('Reporter');
+      setSelectedUsers([]);
+      loadMembers();
+      onSuccess();
     } finally {
       setIsSubmitting(false);
     }
@@ -266,11 +286,11 @@ export function GroupMembersDialog({
             <h3 className="text-sm font-medium">{t('groups:groups.actions.addMember')}</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div className="md:col-span-2">
-                <Input
-                  value={newMemberUsername}
-                  onChange={e => setNewMemberUsername(e.target.value)}
-                  placeholder={t('groups:groupMembers.enterUsername')}
+                <UserSearchSelect
+                  selectedUsers={selectedUsers}
+                  onSelectedUsersChange={setSelectedUsers}
                   disabled={isSubmitting}
+                  placeholder={t('groups:groupMembers.searchPlaceholder')}
                 />
               </div>
               <div>
@@ -356,17 +376,20 @@ export function GroupMembersDialog({
                 size="sm"
                 onClick={() => {
                   setShowAddMember(false);
-                  setNewMemberUsername('');
+                  setSelectedUsers([]);
                 }}
               >
                 {t('common:actions.cancel')}
               </Button>
               <Button
                 size="sm"
-                onClick={handleAddMember}
-                disabled={!newMemberUsername.trim() || isSubmitting}
+                onClick={handleAddMembers}
+                disabled={selectedUsers.length === 0 || isSubmitting}
               >
-                {t('groups:groupMembers.add')}
+                <UserPlusIcon className="w-4 h-4 mr-2" />
+                {isSubmitting
+                  ? t('groups:groupMembers.adding')
+                  : t('groups:groupMembers.addCount', { count: selectedUsers.length })}
               </Button>
             </div>
           </div>

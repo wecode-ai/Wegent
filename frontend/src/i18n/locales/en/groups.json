@@ -110,6 +110,12 @@
     "addMemberByUsername": "Enter the username to add. Note: This feature requires backend support for adding members by username.",
     "userAlreadyMember": "This user is already a member of the group",
     "addByUsernameNotSupported": "Adding members by username is not yet supported. Please contact admin to use 'Invite All Users' feature",
+    "searchPlaceholder": "Search username or email...",
+    "selectedUsers": "{{count}} user(s) selected",
+    "addMembersSuccess": "Successfully added {{count}} member(s)",
+    "alreadyMembers": "{{count}} user(s) already members",
+    "adding": "Adding...",
+    "addCount": "Add ({{count}})",
     "rolePermissions": "Role Permissions",
     "roleDescriptions": {
       "Reporter": "Can only view group resources, cannot make any modifications, can leave group",
