@@ -37,6 +37,11 @@ import {
   correctionDataToResponse,
 } from '@/apis/correction';
 import CorrectionResultPanel from '../CorrectionResultPanel';
+import CorrectionProgressIndicator, {
+  type CorrectionStreamingContent,
+} from '../CorrectionProgressIndicator';
+import { useSocket } from '@/contexts/SocketContext';
+import type { CorrectionStage, CorrectionField } from '@/types/socket';
 
 /**
  * Component to render a streaming message with typewriter effect.
@@ -145,6 +150,7 @@ export default function MessagesArea({
   const { theme } = useTheme();
   const { user } = useUser();
   const { traceAction } = useTraceAction();
+  const { registerCorrectionHandlers } = useSocket();
 
   // Use unified messages hook - SINGLE SOURCE OF TRUTH
   const { messages, streamingSubtaskIds } = useUnifiedMessages({
@@ -174,6 +180,14 @@ export default function MessagesArea({
   const [correctionAttempted, setCorrectionAttempted] = useState<Set<number>>(new Set());
   // Track applied corrections - maps subtaskId to the improved answer content
   const [appliedCorrections, setAppliedCorrections] = useState<Map<number, string>>(new Map());
+  // Track correction progress for real-time UI updates
+  const [correctionProgress, setCorrectionProgress] = useState<
+    Map<number, { stage: CorrectionStage | 'starting'; toolName?: string }>
+  >(new Map());
+  // Track streaming content for correction fields
+  const [correctionStreamingContent, setCorrectionStreamingContent] = useState<
+    Map<number, CorrectionStreamingContent>
+  >(new Map());
 
   // Handle retry correction for a specific message
   const handleRetryCorrection = useCallback(
@@ -324,6 +338,100 @@ export default function MessagesArea({
     toast,
     correctionAttempted, // Add this dependency so useEffect re-runs when retry button is clicked
   ]);
+
+  // Register correction WebSocket event handlers for real-time progress updates
+  useEffect(() => {
+    if (!enableCorrectionMode || !selectedTaskDetail?.id) return;
+
+    const cleanup = registerCorrectionHandlers({
+      onCorrectionStart: data => {
+        // Only handle events for the current task
+        if (data.task_id !== selectedTaskDetail.id) return;
+
+        // Set initial progress state and clear any previous streaming content
+        setCorrectionProgress(prev => new Map(prev).set(data.subtask_id, { stage: 'starting' }));
+        setCorrectionStreamingContent(prev => {
+          const next = new Map(prev);
+          next.set(data.subtask_id, { summary: '', improved_answer: '' });
+          return next;
+        });
+      },
+      onCorrectionProgress: data => {
+        // Only handle events for the current task
+        if (data.task_id !== selectedTaskDetail.id) return;
+
+        // Update progress state with current stage
+        setCorrectionProgress(prev =>
+          new Map(prev).set(data.subtask_id, {
+            stage: data.stage as CorrectionStage,
+            toolName: data.tool_name,
+          })
+        );
+      },
+      onCorrectionChunk: data => {
+        // Only handle events for the current task
+        if (data.task_id !== selectedTaskDetail.id) return;
+
+        // Append streaming content to the appropriate field
+        setCorrectionStreamingContent(prev => {
+          const current = prev.get(data.subtask_id) || { summary: '', improved_answer: '' };
+          const field = data.field as CorrectionField;
+
+          // Build the new content by appending the chunk at the correct offset
+          let newFieldContent = current[field];
+          if (data.offset === newFieldContent.length) {
+            // Append at the end (normal case)
+            newFieldContent += data.content;
+          } else if (data.offset < newFieldContent.length) {
+            // Replace from offset (retry/resend case)
+            newFieldContent = newFieldContent.slice(0, data.offset) + data.content;
+          } else {
+            // Gap in content, just append (shouldn't happen normally)
+            newFieldContent += data.content;
+          }
+
+          return new Map(prev).set(data.subtask_id, {
+            ...current,
+            [field]: newFieldContent,
+          });
+        });
+      },
+      onCorrectionDone: data => {
+        // Only handle events for the current task
+        if (data.task_id !== selectedTaskDetail.id) return;
+
+        // Clear progress state and streaming content when done
+        setCorrectionProgress(prev => {
+          const next = new Map(prev);
+          next.delete(data.subtask_id);
+          return next;
+        });
+        setCorrectionStreamingContent(prev => {
+          const next = new Map(prev);
+          next.delete(data.subtask_id);
+          return next;
+        });
+      },
+      onCorrectionError: data => {
+        // Only handle events for the current task
+        if (data.task_id !== selectedTaskDetail.id) return;
+
+        // Clear progress state and streaming content on error
+        setCorrectionProgress(prev => {
+          const next = new Map(prev);
+          next.delete(data.subtask_id);
+          return next;
+        });
+        setCorrectionStreamingContent(prev => {
+          const next = new Map(prev);
+          next.delete(data.subtask_id);
+          return next;
+        });
+      },
+    });
+
+    return cleanup;
+  }, [enableCorrectionMode, selectedTaskDetail?.id, registerCorrectionHandlers]);
 
   // Handle task share
   const handleShareTask = useCallback(async () => {
@@ -685,33 +793,44 @@ export default function MessagesArea({
                     onSendMessage={onSendMessage}
                     isCurrentUserMessage={isCurrentUserMessage}
                   />
-                  <CorrectionResultPanel
-                    result={
-                      correctionResult || {
-                        message_id: 0,
-                        scores: { accuracy: 0, logic: 0, completeness: 0 },
-                        corrections: [],
-                        summary: '',
-                        improved_answer: '',
-                        is_correct: false,
+                  <div className="flex flex-col gap-2">
+                    {/* Show progress indicator when correction is in progress */}
+                    {isCorrecting && msg.subtaskId && correctionProgress.has(msg.subtaskId) && (
+                      <CorrectionProgressIndicator
+                        stage={correctionProgress.get(msg.subtaskId)!.stage}
+                        toolName={correctionProgress.get(msg.subtaskId)!.toolName}
+                        streamingContent={correctionStreamingContent.get(msg.subtaskId)}
+                      />
+                    )}
+                    <CorrectionResultPanel
+                      result={
+                        correctionResult || {
+                          message_id: 0,
+                          scores: { accuracy: 0, logic: 0, completeness: 0 },
+                          corrections: [],
+                          summary: '',
+                          improved_answer: '',
+                          is_correct: false,
+                        }
                       }
-                    }
-                    isLoading={isCorrecting}
-                    onRetry={
-                      msg.subtaskId && originalQuestion && msg.content
-                        ? () => handleRetryCorrection(msg.subtaskId!, originalQuestion, msg.content)
-                        : undefined
-                    }
-                    subtaskId={msg.subtaskId}
-                    onApply={(improvedAnswer: string) => {
-                      // Update the local state to immediately show the improved answer
-                      if (msg.subtaskId) {
-                        setAppliedCorrections(prev =>
-                          new Map(prev).set(msg.subtaskId!, improvedAnswer)
-                        );
+                      isLoading={isCorrecting}
+                      onRetry={
+                        msg.subtaskId && originalQuestion && msg.content
+                          ? () =>
+                              handleRetryCorrection(msg.subtaskId!, originalQuestion, msg.content)
+                          : undefined
                       }
-                    }}
-                  />
+                      subtaskId={msg.subtaskId}
+                      onApply={(improvedAnswer: string) => {
+                        // Update the local state to immediately show the improved answer
+                        if (msg.subtaskId) {
+                          setAppliedCorrections(prev =>
+                            new Map(prev).set(msg.subtaskId!, improvedAnswer)
+                          );
+                        }
+                      }}
+                    />
+                  </div>
                 </div>
               );
             }
