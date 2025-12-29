@@ -85,8 +85,7 @@ export default function CorrectionProgressIndicator({
   const Icon = config.icon;
 
   // Check if we have streaming content to display
-  const hasStreamingContent =
-    streamingContent && (streamingContent.summary || streamingContent.improved_answer);
+  const hasStreamingContent = streamingContent && streamingContent.improved_answer;
 
   return (
     <div
@@ -125,38 +124,23 @@ export default function CorrectionProgressIndicator({
         </span>
       </div>
 
-      {/* Streaming content display */}
+      {/* Streaming content display - only show improved_answer, summary is in collapsible */}
       {hasStreamingContent && stage === 'generating_improvement' && (
-        <div className="mt-2 space-y-2 text-text-primary">
-          {/* Summary streaming */}
-          {streamingContent.summary && (
-            <div className="border-l-2 border-primary/50 pl-3">
-              <div className="text-xs text-text-muted mb-1">
-                {t('correction.streaming.summary')}
-              </div>
-              <div className="text-sm whitespace-pre-wrap">
-                {streamingContent.summary}
-                <span className="inline-block w-0.5 h-4 bg-primary animate-pulse ml-0.5" />
-              </div>
-            </div>
-          )}
-
+        <div className="mt-2 text-text-primary">
           {/* Improved answer streaming - use MarkdownWithMermaid for consistent rendering */}
-          {streamingContent.improved_answer && (
-            <div className="border-l-2 border-primary/50 pl-3">
-              <div className="text-xs text-text-muted mb-1">
-                {t('correction.streaming.improved_answer')}
-              </div>
-              <div className="text-sm max-h-60 overflow-y-auto relative">
-                <MarkdownWithMermaid
-                  source={streamingContent.improved_answer}
-                  theme={theme as 'light' | 'dark'}
-                />
-                {/* Streaming cursor indicator */}
-                <span className="inline-block w-0.5 h-4 bg-primary animate-pulse ml-0.5 align-middle" />
-              </div>
+          <div className="border-l-2 border-primary/50 pl-3">
+            <div className="text-xs text-text-muted mb-1">
+              {t('correction.streaming.improved_answer')}
             </div>
-          )}
+            <div className="text-sm max-h-60 overflow-y-auto relative">
+              <MarkdownWithMermaid
+                source={streamingContent.improved_answer}
+                theme={theme as 'light' | 'dark'}
+              />
+              {/* Streaming cursor indicator */}
+              <span className="inline-block w-0.5 h-4 bg-primary animate-pulse ml-0.5 align-middle" />
+            </div>
+          </div>
         </div>
       )}
     </div>
