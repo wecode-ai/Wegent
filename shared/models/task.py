@@ -14,6 +14,21 @@ class User(BaseModel):
     git_token: Optional[str] = None
 
 
+class Attachment(BaseModel):
+    """Attachment model for executor.
+
+    Note: download_url and image_base64 are intentionally not included.
+    The executor constructs download URLs using TASK_API_DOMAIN env var,
+    and reads image data from downloaded files to avoid large task payloads.
+    """
+
+    id: int
+    original_filename: str
+    file_extension: str
+    file_size: int
+    mime_type: str
+
+
 class Bot(BaseModel):
     id: int
     name: str
@@ -40,6 +55,8 @@ class Task(BaseModel):
     prompt: str
     status: str
     progress: int
+    attachments: List[Attachment] = []  # Attachments for this subtask
+    auth_token: Optional[str] = None  # JWT token for authenticated API calls
 
 
 class ThinkingStep(BaseModel):

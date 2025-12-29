@@ -142,7 +142,8 @@
     "execution_failed": "❌ 执行失败",
     "error_message": "错误信息",
     "execution_type": "执行类型",
-    "mcp_init_fail": "❌ MCP 初始化失败。"
+    "mcp_init_fail": "❌ MCP 初始化失败。",
+    "attachments_downloaded": "📎 已下载附件"
   },
   "send_button": {
     "shortcut_title": "发送快捷键",
