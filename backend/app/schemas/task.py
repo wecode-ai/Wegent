@@ -62,8 +62,8 @@ class TaskCreate(BaseModel):
     # Model selection fields
     model_id: Optional[str] = None  # Model name (not database ID)
     force_override_bot_model: Optional[bool] = False
-    # API source name field
-    api_source_name: Optional[str] = None  # Service key name (from service key)
+    # API key name field
+    api_key_name: Optional[str] = None  # API key name used for this request
 
 
 class TaskUpdate(BaseModel):

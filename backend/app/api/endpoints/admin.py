@@ -302,8 +302,15 @@ async def reset_user_password(
             detail=f"User with id {user_id} not found",
         )
 
-    # Only allow password reset for password-authenticated users
-    if user.auth_source not in ["password", "unknown"]:
+    # Only allow password reset for non-OIDC users
+    # - "password": user registered with password
+    # - "unknown": legacy users before auth_source was added
+    # - "api:*": users auto-created via API service key
+    can_reset = user.auth_source in [
+        "password",
+        "unknown",
+    ] or user.auth_source.startswith("api:")
+    if not can_reset:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot reset password for OIDC-authenticated users",

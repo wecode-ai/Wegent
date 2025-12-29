@@ -42,7 +42,7 @@ def setup_chat_session(
     input_text: str,
     tool_settings: Dict[str, Any],
     task_id: Optional[int] = None,
-    api_source_name: Optional[str] = None,
+    api_key_name: Optional[str] = None,
 ) -> ChatSessionSetup:
     """
     Set up chat session: build config, create task and subtasks.
@@ -55,7 +55,7 @@ def setup_chat_session(
         input_text: User input text
         tool_settings: Tool settings
         task_id: Optional existing task ID
-        api_source_name: Optional service key name
+        api_key_name: Optional API key name
 
     Returns:
         ChatSessionSetup with task, subtasks, and config
@@ -208,7 +208,7 @@ def setup_chat_session(
                         if model_info.get("model_id")
                         else {}
                     ),
-                    **({"api_source_name": api_source_name} if api_source_name else {}),
+                    **({"api_key_name": api_key_name} if api_key_name else {}),
                 },
             },
             "apiVersion": "agent.wecode.io/v1",

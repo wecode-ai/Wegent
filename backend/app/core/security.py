@@ -281,9 +281,7 @@ class AuthContext:
     """Authentication context containing user and optional service key info."""
 
     user: User
-    api_source_name: Optional[str] = (
-        None  # Service key name if authenticated via service key
-    )
+    api_key_name: Optional[str] = None  # API key name used for authentication
 
 
 def get_auth_context(
@@ -304,7 +302,7 @@ def get_auth_context(
         wegent_username: Username to impersonate (from wegent-username header, required for service keys)
 
     Returns:
-        AuthContext containing authenticated User and optional api_source_name
+        AuthContext containing authenticated User and optional api_key_name
 
     Raises:
         HTTPException: If no authentication method succeeds
@@ -349,7 +347,7 @@ def get_auth_context(
     if api_key_record.key_type == KEY_TYPE_PERSONAL:
         user = db.query(User).filter(User.id == api_key_record.user_id).first()
         if user and user.is_active:
-            return AuthContext(user=user, api_source_name=None)
+            return AuthContext(user=user, api_key_name=api_key_record.name)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found or inactive",
@@ -362,13 +360,58 @@ def get_auth_context(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="wegent-username header is required for service key authentication",
             )
-        user = user_service.get_user_by_name(db=db, user_name=wegent_username)
-        if user and user.is_active:
-            return AuthContext(user=user, api_source_name=api_key_record.name)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"User '{wegent_username}' not found or inactive",
+
+        # Try to find existing user
+        user = db.query(User).filter(User.user_name == wegent_username).first()
+
+        if user:
+            if not user.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail=f"User '{wegent_username}' is inactive",
+                )
+            return AuthContext(user=user, api_key_name=api_key_record.name)
+
+        # User not found, auto-create for service key authentication
+        import json
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.info(
+            f"Auto-creating user '{wegent_username}' via service key '{api_key_record.name}'"
         )
+
+        # Create new user with minimal info
+        # auth_source uses "api:{service_key_name}" to track which service key created this user
+        new_user = User(
+            user_name=wegent_username,
+            email=f"{wegent_username}@api.auto",  # Placeholder email
+            password_hash=get_password_hash(
+                wegent_username
+            ),  # Use username as default password
+            git_info=[],
+            is_active=True,
+            preferences=json.dumps({}),
+            auth_source=f"api:{api_key_record.name}",  # Track which service key created this user
+        )
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+
+        # Apply default resources in background (async)
+        try:
+            import asyncio
+
+            from app.services.k_batch import apply_default_resources_async
+
+            # Schedule async task
+            asyncio.create_task(apply_default_resources_async(new_user.id))
+        except Exception as e:
+            logger.warning(
+                f"Failed to schedule default resources for user {new_user.id}: {e}"
+            )
+
+        return AuthContext(user=new_user, api_key_name=api_key_record.name)
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,

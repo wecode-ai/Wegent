@@ -256,10 +256,10 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                             if obj_in.force_override_bot_model
                             else {}
                         ),
-                        # API source name field
+                        # API key name field
                         **(
-                            {"api_source_name": obj_in.api_source_name}
-                            if obj_in.api_source_name
+                            {"api_key_name": obj_in.api_key_name}
+                            if obj_in.api_key_name
                             else {}
                         ),
                     },

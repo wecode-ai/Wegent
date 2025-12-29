@@ -150,9 +150,9 @@ async def create_response(
         or StreamingResponse with SSE events (Chat Shell + stream=true)
         or ResponseObject with status 'queued' (non-Chat Shell)
     """
-    # Extract user and api_source_name from auth context
+    # Extract user and api_key_name from auth context
     current_user = auth_context.user
-    api_source_name = auth_context.api_source_name
+    api_key_name = auth_context.api_key_name
 
     # Parse model string
     model_info = parse_model_string(request_body.model)
@@ -332,7 +332,7 @@ async def create_response(
                 input_text=input_text,
                 tool_settings=tool_settings,
                 task_id=task_id,
-                api_source_name=api_source_name,
+                api_key_name=api_key_name,
             )
         else:
             return await create_sync_response(
@@ -344,7 +344,7 @@ async def create_response(
                 input_text=input_text,
                 tool_settings=tool_settings,
                 task_id=task_id,
-                api_source_name=api_source_name,
+                api_key_name=api_key_name,
             )
 
     # Non-Chat Shell type (Executor-based): streaming not supported
@@ -365,7 +365,7 @@ async def create_response(
         source="api",
         model_id=model_info.get("model_id"),
         force_override_bot_model=model_info.get("model_id") is not None,
-        api_source_name=api_source_name,
+        api_key_name=api_key_name,
     )
 
     try:
