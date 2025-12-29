@@ -10,24 +10,47 @@ import AttachmentPreview from '../input/AttachmentPreview';
 import type { SubtaskContextBrief, Attachment } from '@/types/api';
 
 interface ContextBadgeListProps {
+  /** Unified contexts (new format) */
   contexts?: SubtaskContextBrief[];
+  /** Legacy attachments (for backward compatibility) */
+  attachments?: Attachment[];
 }
 
 /**
  * ContextBadgeList - Displays all context types (attachments, knowledge bases) as badges
  *
  * Used in message history to show contexts attached to user messages.
+ * Supports both new unified contexts and legacy attachments for backward compatibility.
  */
-export function ContextBadgeList({ contexts }: ContextBadgeListProps) {
-  if (!contexts || contexts.length === 0) return null;
+export function ContextBadgeList({ contexts, attachments }: ContextBadgeListProps) {
+  // If we have contexts, use them (new format)
+  if (contexts && contexts.length > 0) {
+    return (
+      <div className="flex flex-wrap gap-2 mb-3">
+        {contexts.map(context => (
+          <ContextBadgeItem key={`${context.context_type}-${context.id}`} context={context} />
+        ))}
+      </div>
+    );
+  }
 
-  return (
-    <div className="flex flex-wrap gap-2 mb-3">
-      {contexts.map(context => (
-        <ContextBadgeItem key={`${context.context_type}-${context.id}`} context={context} />
-      ))}
-    </div>
-  );
+  // Fallback to legacy attachments if no contexts
+  if (attachments && attachments.length > 0) {
+    return (
+      <div className="flex flex-wrap gap-2 mb-3">
+        {attachments.map((attachment, idx) => (
+          <AttachmentPreview
+            key={`attachment-${attachment.id}-${idx}`}
+            attachment={attachment}
+            compact={false}
+            showDownload={true}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  return null;
 }
 
 function ContextBadgeItem({ context }: { context: SubtaskContextBrief }) {

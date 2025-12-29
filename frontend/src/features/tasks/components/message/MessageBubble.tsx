@@ -27,7 +27,6 @@ import { ThinkingDisplay } from './thinking';
 import ClarificationForm from '../clarification/ClarificationForm';
 import FinalPromptMessage from './FinalPromptMessage';
 import ClarificationAnswerSummary from '../clarification/ClarificationAnswerSummary';
-import AttachmentPreview from '../input/AttachmentPreview';
 import ContextBadgeList from './ContextBadgeList';
 import StreamingWaitIndicator from './StreamingWaitIndicator';
 import BubbleTools, { CopyButton } from './BubbleTools';
@@ -1094,23 +1093,6 @@ const MessageBubble = memo(
     const renderMessageBody = (message: Message, messageIndex: number) =>
       message.type === 'ai' ? renderAiMessage(message, messageIndex) : renderPlainMessage(message);
 
-    const renderAttachments = (attachments?: Attachment[]) => {
-      if (!attachments || attachments.length === 0) return null;
-
-      return (
-        <div className="flex flex-wrap gap-2 mb-3">
-          {attachments.map((attachment, idx) => (
-            <AttachmentPreview
-              key={`attachment-${attachment.id}-${idx}`}
-              attachment={attachment}
-              compact={false}
-              showDownload={true}
-            />
-          ))}
-        </div>
-      );
-    };
-
     // Render recovered content notice
     const renderRecoveryNotice = () => {
       if (!msg.isRecovered) return null;
@@ -1386,10 +1368,10 @@ const MessageBubble = memo(
                 {timestampLabel && <span>{timestampLabel}</span>}
               </div>
             )}
-            {/* Show contexts (attachments, knowledge bases) for user messages */}
-            {isUserTypeMessage && <ContextBadgeList contexts={msg.contexts} />}
-            {/* Fallback: show attachments if contexts not available (backward compatibility) */}
-            {isUserTypeMessage && !msg.contexts && renderAttachments(msg.attachments)}
+            {/* Show contexts (attachments, knowledge bases) for user messages - with fallback to legacy attachments */}
+            {isUserTypeMessage && (
+              <ContextBadgeList contexts={msg.contexts} attachments={msg.attachments} />
+            )}
             {/* Show waiting indicator when streaming but no content yet */}
             {isWaiting || msg.isWaiting ? (
               <StreamingWaitIndicator isWaiting={true} />
