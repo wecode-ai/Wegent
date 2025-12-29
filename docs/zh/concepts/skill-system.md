@@ -68,7 +68,7 @@ tools:
     config:
       timeout: 30
 dependencies:
-  - app.services.chat_v2.tools.pending_requests
+  - app.chat_shell.tools.pending_requests
 ---
 
 # Skill 提示词内容
@@ -182,8 +182,8 @@ class SkillToolProvider(ABC):
 ### Provider 实现示例
 
 ```python
-from app.services.chat_v2.skills.provider import SkillToolProvider
-from app.services.chat_v2.skills.context import SkillToolContext
+from app.chat_shell.skills.provider import SkillToolProvider
+from app.chat_shell.skills.context import SkillToolContext
 
 class MermaidToolProvider(SkillToolProvider):
     @property

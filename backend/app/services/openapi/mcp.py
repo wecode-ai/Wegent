@@ -34,7 +34,7 @@ async def load_mcp_tools(
     from app.core.config import settings
 
     try:
-        from app.services.chat_v2.tools.mcp import MCPClient
+        from app.chat_shell.tools.mcp import MCPClient
 
         # Step 1: Load backend MCP configuration
         backend_servers = {}

@@ -4,7 +4,7 @@
 
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { CheckCircle } from 'lucide-react';
 import { ActionButton } from '@/components/ui/action-button';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -44,6 +44,9 @@ export default function CorrectionModeToggle({
   const [isLoading, setIsLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
+  // Track previous taskId to detect transitions from null to real taskId
+  const prevTaskIdRef = useRef<number | null | undefined>(undefined);
+
   // Load models when dialog opens
   useEffect(() => {
     if (showModelSelector) {
@@ -52,7 +55,28 @@ export default function CorrectionModeToggle({
   }, [showModelSelector]);
 
   // Restore state from localStorage when taskId changes
+  // Also handle migration from "new" task to real taskId
   useEffect(() => {
+    const prevTaskId = prevTaskIdRef.current;
+
+    // Check if this is a transition from null (new task) to a real taskId
+    // This happens when a new task is created after sending a message
+    if (prevTaskId === null && taskId !== null && taskId > 0) {
+      // Try to migrate state from "new" task to real taskId
+      const migratedState = correctionApis.migrateCorrectionModeState(null, taskId);
+      if (migratedState && migratedState.enabled && migratedState.correctionModelId) {
+        // State was migrated, apply it
+        onToggle(
+          true,
+          migratedState.correctionModelId,
+          migratedState.correctionModelName || undefined
+        );
+        prevTaskIdRef.current = taskId;
+        return;
+      }
+    }
+
+    // Normal case: restore state from localStorage for the current taskId
     const savedState = correctionApis.getCorrectionModeState(taskId);
     if (savedState.enabled && savedState.correctionModelId) {
       onToggle(true, savedState.correctionModelId, savedState.correctionModelName || undefined);
@@ -60,6 +84,9 @@ export default function CorrectionModeToggle({
       // Reset correction mode when switching to a task without saved state
       onToggle(false);
     }
+
+    // Update previous taskId ref
+    prevTaskIdRef.current = taskId;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskId]);
 

@@ -16,7 +16,7 @@ from typing import Any, Optional
 
 from langchain_core.tools import BaseTool
 
-from app.services.chat_v2.skills.base import SkillToolContext, SkillToolProvider
+from app.chat_shell.skills import SkillToolContext, SkillToolProvider
 
 
 class MermaidToolProvider(SkillToolProvider):

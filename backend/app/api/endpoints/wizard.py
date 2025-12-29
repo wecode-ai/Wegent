@@ -44,8 +44,8 @@ from app.schemas.wizard import (
     TestPromptRequest,
     TestPromptResponse,
 )
-from app.services.chat.chat_service import chat_service
-from app.services.chat.model_resolver import extract_and_process_model_config
+from app.services.chat.config import extract_and_process_model_config
+from app.services.simple_chat import simple_chat_service
 
 logger = logging.getLogger(__name__)
 
@@ -213,7 +213,7 @@ async def _call_llm_for_wizard(
 
     # Use non-streaming chat
     try:
-        response = await chat_service.chat_completion(
+        response = await simple_chat_service.chat_completion(
             message=user_message,
             model_config=model_config,
             system_prompt=system_prompt,
@@ -1079,7 +1079,7 @@ async def test_system_prompt(
         )
 
         # Call the model with the user's system prompt and test message
-        response = await chat_service.chat_completion(
+        response = await simple_chat_service.chat_completion(
             message=request.test_message,
             model_config=model_config,
             system_prompt=request.system_prompt,
@@ -1200,8 +1200,8 @@ async def test_system_prompt_stream(
         user_name=current_user.user_name or "",
     )
 
-    # Use chat_service.chat_stream in simple mode (no subtask_id/task_id)
-    return await chat_service.chat_stream(
+    # Use simple_chat_service.chat_stream in simple mode (no subtask_id/task_id)
+    return await simple_chat_service.chat_stream(
         message=request.test_message,
         model_config=model_config,
         system_prompt=request.system_prompt,

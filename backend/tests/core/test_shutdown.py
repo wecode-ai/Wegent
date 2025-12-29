@@ -143,7 +143,7 @@ class TestShutdownManager:
     async def test_cancel_all_streams(self, shutdown_manager):
         """Test cancelling all active streams."""
         # Import the session_manager instance and patch its cancel_stream method
-        from app.services.chat.session_manager import session_manager
+        from app.services.chat.storage import session_manager
 
         with patch.object(
             session_manager, "cancel_stream", new_callable=AsyncMock

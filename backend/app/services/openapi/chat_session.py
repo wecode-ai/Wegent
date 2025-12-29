@@ -60,7 +60,7 @@ def setup_chat_session(
     Returns:
         ChatSessionSetup with task, subtasks, and config
     """
-    from app.services.chat_v2.config import ChatConfigBuilder
+    from app.services.chat.config import ChatConfigBuilder
 
     # Build chat configuration
     config_builder = ChatConfigBuilder(

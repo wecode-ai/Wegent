@@ -122,6 +122,11 @@ IMPORTANT syntax rules:
         Returns:
             JSON string with render result
         """
+        # Import the generic pending request registry
+        from app.chat_shell.tools.pending_requests import (
+            get_pending_request_registry,
+        )
+
         logger.info(
             f"[MermaidTool] Rendering diagram: task_id={self.task_id}, "
             f"subtask_id={self.subtask_id}, code_length={len(code)}"
@@ -212,7 +217,7 @@ IMPORTANT syntax rules:
             Response dict with success status and result/error
         """
         # Import the generic pending request registry
-        from app.services.chat_v2.tools.pending_requests import (
+        from app.chat_shell.tools.pending_requests import (
             get_pending_request_registry,
         )
 
@@ -390,7 +395,7 @@ IMPORTANT syntax rules:
                 return None
 
             # Create LangChain model and invoke
-            from app.services.chat_v2.models import LangChainModelFactory
+            from app.chat_shell.models import LangChainModelFactory
 
             llm = LangChainModelFactory.create_from_config(
                 model_config, streaming=False, temperature=0.3
@@ -506,7 +511,7 @@ IMPORTANT syntax rules:
                     return None
 
                 # Get model config for bot
-                from app.services.chat_v2.models import get_model_config_for_bot
+                from app.chat_shell.models import get_model_config_for_bot
 
                 model_config = get_model_config_for_bot(
                     db,

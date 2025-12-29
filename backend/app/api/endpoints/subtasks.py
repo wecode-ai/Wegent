@@ -21,7 +21,7 @@ from app.schemas.subtask import (
     SubtaskListResponse,
     SubtaskUpdate,
 )
-from app.services.chat.session_manager import session_manager
+from app.services.chat.storage import session_manager
 from app.services.subtask import subtask_service
 
 router = APIRouter()
