@@ -6,7 +6,7 @@
  * Preview API client for Workbench live preview functionality.
  */
 
-import { apiClient } from '@/lib/api-client'
+import { apiClient } from './client'
 import type {
   PreviewConfigResponse,
   PreviewStartRequest,
