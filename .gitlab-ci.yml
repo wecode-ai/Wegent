@@ -41,6 +41,18 @@ wegent-runtime:
   rules:
     - when: manual
 
+wgent-shell:
+  stage: package
+  retry: 1
+  variables:
+    SERVICE: wgent-shell
+    DOCKERFILE_PATH: wecode/docker/wgent_shell
+  script:
+    - build_image
+  when: manual
+  rules:
+    - when: manual
+
 wegent-executor-manager:
   stage: package
   retry: 1
