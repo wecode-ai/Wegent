@@ -12,7 +12,7 @@ import React, {
 } from 'react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
-import { Loader2, XIcon, SettingsIcon, Edit } from 'lucide-react';
+import { Loader2, XIcon, SettingsIcon, Edit, Wand2 } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -23,6 +23,7 @@ import {
 import McpConfigImportModal from './McpConfigImportModal';
 import SkillManagementModal from './skills/SkillManagementModal';
 import DifyBotConfig from './DifyBotConfig';
+import { PromptFineTuneDialog } from './prompt-fine-tune';
 
 import { Bot } from '@/types/api';
 import { botApis, CreateBotRequest, UpdateBotRequest } from '@/apis/bots';
@@ -166,6 +167,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const [importModalVisible, setImportModalVisible] = useState(false);
   const [templateSectionExpanded, setTemplateSectionExpanded] = useState(false);
   const [skillManagementModalOpen, setSkillManagementModalOpen] = useState(false);
+  const [promptFineTuneOpen, setPromptFineTuneOpen] = useState(false);
 
   // Check if current agent is Dify
   const isDifyAgent = useMemo(() => agentName === 'Dify', [agentName]);
@@ -1410,11 +1412,25 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         {!isDifyAgent && (
           <div className="w-full flex flex-col min-h-0">
             <div className="mb-1 flex-shrink-0">
-              <div className="flex items-center">
-                <label className="block text-base font-medium text-text-primary">
-                  {t('common:bot.prompt')}
-                </label>
-                <span className="text-xs text-text-muted ml-2">AI prompt</span>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center">
+                  <label className="block text-base font-medium text-text-primary">
+                    {t('common:bot.prompt')}
+                  </label>
+                  <span className="text-xs text-text-muted ml-2">AI prompt</span>
+                </div>
+                {/* Fine-tune button */}
+                {!readOnly && prompt.trim() && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setPromptFineTuneOpen(true)}
+                    className="text-xs gap-1.5"
+                  >
+                    <Wand2 className="w-3.5 h-3.5" />
+                    {t('common:bot.fine_tune_prompt')}
+                  </Button>
+                )}
               </div>
             </div>
 
@@ -1463,6 +1479,17 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           };
           fetchSkills();
         }}
+      />
+
+      {/* Prompt Fine-tune Dialog */}
+      <PromptFineTuneDialog
+        open={promptFineTuneOpen}
+        onOpenChange={setPromptFineTuneOpen}
+        initialPrompt={prompt}
+        onSave={newPrompt => {
+          setPrompt(newPrompt);
+        }}
+        modelName={selectedModel}
       />
 
       {/* Mobile responsive styles */}

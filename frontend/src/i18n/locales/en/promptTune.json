@@ -1,0 +1,20 @@
+{
+  "dialog": {
+    "title": "Prompt Fine-tuning",
+    "description": "Test and iteratively optimize your prompt",
+    "unsaved_changes": "Unsaved changes"
+  },
+  "compare": {
+    "original": "Original Prompt",
+    "current": "Current Prompt",
+    "modified": "Modified",
+    "click_to_expand": "Click to expand",
+    "diff": "Diff",
+    "no_changes": "No changes"
+  },
+  "actions": {
+    "cancel": "Cancel",
+    "save": "Save",
+    "reset": "Reset"
+  }
+}

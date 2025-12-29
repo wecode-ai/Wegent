@@ -83,6 +83,7 @@
   "iterate_hint": "如果对回复不满意，告诉我你想怎么改，我会帮你优化提示词",
   "iterate_placeholder": "例如：回复太长了，希望更简洁一些...",
   "iterate_button": "优化",
+  "iterate_need_test_first": "请先测试提示词效果后再进行优化",
   "preview_adjust_title": "测试助手效果",
   "preview_adjust_hint": "发送一个实际任务，看看助手会怎么回复。如果不满意，可以告诉我如何改进。",
   "preview_adjust_empty_hint": "点击发送按钮查看AI回复效果，或者使用实际任务来测试。",

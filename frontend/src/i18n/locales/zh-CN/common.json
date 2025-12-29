@@ -172,7 +172,8 @@
     "dify_parameters_refresh": "刷新参数",
     "dify_no_parameters": "此应用未配置输入参数。",
     "custom_shell": "自定义",
-    "public_model": "公共"
+    "public_model": "公共",
+    "fine_tune_prompt": "微调提示词"
   },
   "messages": {
     "copy_markdown": "复制 Markdown 内容",
