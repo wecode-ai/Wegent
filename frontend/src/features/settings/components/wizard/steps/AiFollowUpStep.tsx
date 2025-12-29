@@ -258,7 +258,7 @@ function QuestionInput({ question, value, onChange }: QuestionInputProps) {
   }
 
   if (question.input_type === 'multiple_choice' && question.options) {
-    const selected = value ? value.split('wizard:,').filter(Boolean) : [];
+    const selected = value ? value.split(',').filter(Boolean) : [];
     return (
       <div className="space-y-2">
         {question.options.map(option => {
