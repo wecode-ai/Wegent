@@ -10,6 +10,8 @@ import { ActionButton } from '@/components/ui/action-button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { SUPPORTED_EXTENSIONS, MAX_FILE_SIZE } from '@/apis/attachments';
 
+import { useTranslation } from '@/hooks/useTranslation';
+
 interface AttachmentButtonProps {
   /** Callback when files are selected */
   onFileSelect: (files: File | File[]) => void;
@@ -26,6 +28,7 @@ export default function AttachmentButton({
   onFileSelect,
   disabled = false,
 }: AttachmentButtonProps) {
+  const { t } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [tooltipOpen, setTooltipOpen] = React.useState(false);
 
@@ -75,7 +78,9 @@ export default function AttachmentButton({
   const acceptString = SUPPORTED_EXTENSIONS.join(',');
 
   // Tooltip content
-  const tooltipContent = `支持的文件类型: PDF, Word, PPT, Excel, TXT, Markdown, 图片(JPG, PNG, GIF, BMP, WebP)\n最大文件大小: ${MAX_FILE_SIZE / (1024 * 1024)} MB\n支持多文件同时上传`;
+  const tooltipContent = t('chat:upload.tooltip', {
+    maxSize: MAX_FILE_SIZE / (1024 * 1024),
+  });
 
   return (
     <div onDragOver={handleDragOver} onDrop={handleDrop}>

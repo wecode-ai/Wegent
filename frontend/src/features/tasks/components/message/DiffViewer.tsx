@@ -100,7 +100,7 @@ function normalizeGitFiles(files: GitDiffFile[]): DiffFile[] {
 function renderDiffContent(diff: string) {
   if (!diff) return null;
 
-  const lines = diff.split('\n');
+  const lines = diff.split('tasks:\n');
   return lines.map((line, index) => {
     let lineClass = 'text-gray-700';
     let prefix = '';
@@ -138,20 +138,20 @@ export default function DiffViewer({
   showDiffContent = true,
 }: DiffViewerProps) {
   const [diffFiles, setDiffFiles] = useState<DiffFile[]>([]);
-  const { t } = useTranslation('tasks');
+  const { t } = useTranslation();
 
   const _getStatusText = (status: string) => {
     switch (status) {
       case 'added':
-        return t('workbench.file_status.added');
+        return t('tasks:workbench.file_status.added');
       case 'removed':
-        return t('workbench.file_status.removed');
+        return t('tasks:workbench.file_status.removed');
       case 'modified':
-        return t('workbench.file_status.modified');
+        return t('tasks:workbench.file_status.modified');
       case 'renamed':
-        return t('workbench.file_status.renamed');
+        return t('tasks:workbench.file_status.renamed');
       default:
-        return t('workbench.file_status.modified');
+        return t('tasks:workbench.file_status.modified');
     }
   };
 
@@ -181,7 +181,7 @@ export default function DiffViewer({
     return (
       <div className="flex items-center justify-center h-64">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-        <span className="ml-3 text-text-muted">{t('workbench.loading_diff_message')}</span>
+        <span className="ml-3 text-text-muted">{t('tasks:workbench.loading_diff_message')}</span>
       </div>
     );
   }
@@ -189,7 +189,7 @@ export default function DiffViewer({
   if ((!diffData && !fileChanges) || diffFiles.length === 0) {
     return (
       <div className="rounded-lg border border-border bg-surface p-8 text-center">
-        <p className="text-text-muted">{t('workbench.no_changes_found')}</p>
+        <p className="text-text-muted">{t('tasks:workbench.no_changes_found')}</p>
       </div>
     );
   }
@@ -209,14 +209,14 @@ export default function DiffViewer({
             <div className="flex items-center gap-6">
               <div className="flex items-center gap-2">
                 <span className="text-sm font-medium text-text-muted">
-                  {t('workbench.changes')}:
+                  {t('tasks:workbench.changes')}:
                 </span>
                 <span className="text-sm font-semibold text-text-primary">{totalChanges}</span>
               </div>
               {totalAdditions > 0 && (
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium text-green-600">
-                    {t('workbench.additions')}:
+                    {t('tasks:workbench.additions')}:
                   </span>
                   <span className="text-sm font-semibold text-green-600">+{totalAdditions}</span>
                 </div>
@@ -224,7 +224,7 @@ export default function DiffViewer({
               {totalDeletions > 0 && (
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium text-red-600">
-                    {t('workbench.deletions')}:
+                    {t('tasks:workbench.deletions')}:
                   </span>
                   <span className="text-sm font-semibold text-red-600">-{totalDeletions}</span>
                 </div>
@@ -234,7 +234,7 @@ export default function DiffViewer({
               onClick={() => toggleAllFiles(!allExpanded)}
               className="text-sm text-primary hover:text-primary/80 transition-colors"
             >
-              {allExpanded ? t('workbench.collapse_all') : t('workbench.expand_all')}
+              {allExpanded ? t('tasks:workbench.collapse_all') : t('tasks:workbench.expand_all')}
             </button>
           </div>
         </div>
@@ -266,17 +266,17 @@ export default function DiffViewer({
                       </span>
                       {file.status === 'added' && (
                         <span className="inline-flex items-center rounded-md bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-600/20">
-                          {t('workbench.file_status.new')}
+                          {t('tasks:workbench.file_status.new')}
                         </span>
                       )}
                       {file.status === 'removed' && (
                         <span className="inline-flex items-center rounded-md bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700 ring-1 ring-inset ring-red-600/20">
-                          {t('workbench.file_status.deleted')}
+                          {t('tasks:workbench.file_status.deleted')}
                         </span>
                       )}
                       {file.status === 'renamed' && (
                         <span className="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-600/20">
-                          {t('workbench.file_status.renamed')}
+                          {t('tasks:workbench.file_status.renamed')}
                         </span>
                       )}
                     </div>

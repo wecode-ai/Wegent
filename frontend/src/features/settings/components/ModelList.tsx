@@ -90,7 +90,7 @@ const ModelList: React.FC<ModelListProps> = ({
   groupRoleMap,
   onEditResource,
 }) => {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const { toast } = useToast();
   const [unifiedModels, setUnifiedModels] = useState<UnifiedModel[]>([]);
   const [loading, setLoading] = useState(true);
@@ -120,7 +120,7 @@ const ModelList: React.FC<ModelListProps> = ({
       console.error('Failed to fetch models:', error);
       toast({
         variant: 'destructive',
-        title: t('models.errors.load_models_failed'),
+        title: t('common:models.errors.load_models_failed'),
       });
     } finally {
       setLoading(false);
@@ -257,20 +257,20 @@ const ModelList: React.FC<ModelListProps> = ({
 
       if (result.success) {
         toast({
-          title: t('models.test_success'),
+          title: t('common:models.test_success'),
           description: result.message,
         });
       } else {
         toast({
           variant: 'destructive',
-          title: t('models.test_failed'),
+          title: t('common:models.test_failed'),
           description: result.message,
         });
       }
     } catch (error) {
       toast({
         variant: 'destructive',
-        title: t('models.test_failed'),
+        title: t('common:models.test_failed'),
         description: (error as Error).message,
       });
     } finally {
@@ -286,14 +286,14 @@ const ModelList: React.FC<ModelListProps> = ({
       // Use the model's actual namespace for deletion
       await modelApis.deleteModel(deleteConfirmModel.name, deleteConfirmModel.namespace);
       toast({
-        title: t('models.delete_success'),
+        title: t('common:models.delete_success'),
       });
       setDeleteConfirmModel(null);
       fetchModels();
     } catch (error) {
       toast({
         variant: 'destructive',
-        title: t('models.errors.delete_failed'),
+        title: t('common:models.errors.delete_failed'),
         description: (error as Error).message,
       });
     } finally {
@@ -352,12 +352,16 @@ const ModelList: React.FC<ModelListProps> = ({
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
-          <h2 className="text-xl font-semibold text-text-primary mb-1">{t('models.title')}</h2>
-          <p className="text-sm text-text-muted mb-1">{t('models.description')}</p>
+          <h2 className="text-xl font-semibold text-text-primary mb-1">
+            {t('common:models.title')}
+          </h2>
+          <p className="text-sm text-text-muted mb-1">{t('common:models.description')}</p>
         </div>
         {/* Category Filter */}
         <div className="flex items-center gap-2">
-          <span className="text-sm text-text-muted">{t('models.filter_by_category_type')}:</span>
+          <span className="text-sm text-text-muted">
+            {t('common:models.filter_by_category_type')}:
+          </span>
           <Select
             value={categoryFilter}
             onValueChange={(value: ModelCategoryType | 'all') => setCategoryFilter(value)}
@@ -388,8 +392,8 @@ const ModelList: React.FC<ModelListProps> = ({
         {!loading && totalModels === 0 && (
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <CpuChipIcon className="w-12 h-12 text-text-muted mb-4" />
-            <p className="text-text-muted">{t('models.no_models')}</p>
-            <p className="text-sm text-text-muted mt-1">{t('models.no_models_hint')}</p>
+            <p className="text-text-muted">{t('common:models.no_models')}</p>
+            <p className="text-sm text-text-muted mt-1">{t('common:models.no_models_hint')}</p>
           </div>
         )}
 
@@ -401,7 +405,7 @@ const ModelList: React.FC<ModelListProps> = ({
               {userModels.length > 0 && (
                 <div className="space-y-2">
                   <h3 className="text-sm font-medium text-text-secondary px-2">
-                    {t('models.my_models')} ({userModels.length})
+                    {t('common:models.my_models')} ({userModels.length})
                   </h3>
                   <div className="space-y-3">
                     {userModels.map(displayModel => (
@@ -446,7 +450,7 @@ const ModelList: React.FC<ModelListProps> = ({
                               className="h-8 w-8"
                               onClick={() => handleTestConnection(displayModel)}
                               disabled={testingModelName === displayModel.name}
-                              title={t('models.test_connection')}
+                              title={t('common:models.test_connection')}
                             >
                               {testingModelName === displayModel.name ? (
                                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -460,7 +464,7 @@ const ModelList: React.FC<ModelListProps> = ({
                               className="h-8 w-8"
                               onClick={() => handleEdit(displayModel)}
                               disabled={loadingModelName === displayModel.name}
-                              title={t('models.edit')}
+                              title={t('common:models.edit')}
                             >
                               {loadingModelName === displayModel.name ? (
                                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -473,7 +477,7 @@ const ModelList: React.FC<ModelListProps> = ({
                               size="icon"
                               className="h-8 w-8 hover:text-error"
                               onClick={() => setDeleteConfirmModel(displayModel)}
-                              title={t('models.delete')}
+                              title={t('common:models.delete')}
                             >
                               <TrashIcon className="w-4 h-4" />
                             </Button>
@@ -489,7 +493,7 @@ const ModelList: React.FC<ModelListProps> = ({
               {groupModels.length > 0 && (
                 <div className="space-y-2">
                   <h3 className="text-sm font-medium text-text-secondary px-2">
-                    {t('models.group_models')} ({groupModels.length})
+                    {t('common:models.group_models')} ({groupModels.length})
                   </h3>
                   <div className="space-y-3">
                     {groupModels.map(displayModel => (
@@ -528,7 +532,7 @@ const ModelList: React.FC<ModelListProps> = ({
                             ]}
                           >
                             <Tag variant="success" className="text-xs">
-                              {t('models.group')}
+                              {t('common:models.group')}
                             </Tag>
                           </ResourceListItem>
                           {/* Action buttons for group resources */}
@@ -540,7 +544,7 @@ const ModelList: React.FC<ModelListProps> = ({
                                 className="h-8 w-8"
                                 onClick={() => handleEdit(displayModel)}
                                 disabled={loadingModelName === displayModel.name}
-                                title={t('models.edit')}
+                                title={t('common:models.edit')}
                               >
                                 {loadingModelName === displayModel.name ? (
                                   <Loader2 className="w-4 h-4 animate-spin" />
@@ -555,7 +559,7 @@ const ModelList: React.FC<ModelListProps> = ({
                                 size="icon"
                                 className="h-8 w-8 hover:text-error"
                                 onClick={() => setDeleteConfirmModel(displayModel)}
-                                title={t('models.delete')}
+                                title={t('common:models.delete')}
                               >
                                 <TrashIcon className="w-4 h-4" />
                               </Button>
@@ -572,7 +576,7 @@ const ModelList: React.FC<ModelListProps> = ({
               {publicModels.length > 0 && (
                 <div className="space-y-2">
                   <h3 className="text-sm font-medium text-text-secondary px-2">
-                    {t('models.public_models')} ({publicModels.length})
+                    {t('common:models.public_models')} ({publicModels.length})
                   </h3>
                   <div className="space-y-3">
                     {publicModels.map(displayModel => (
@@ -586,7 +590,7 @@ const ModelList: React.FC<ModelListProps> = ({
                             displayName={displayModel.displayName}
                             showId={true}
                             isPublic={true}
-                            publicLabel={t('models.public')}
+                            publicLabel={t('common:models.public')}
                             icon={<GlobeAltIcon className="w-5 h-5 text-primary" />}
                             tags={[
                               {
@@ -626,7 +630,9 @@ const ModelList: React.FC<ModelListProps> = ({
         {!loading && (scope === 'personal' || canCreateInCurrentGroup) && (
           <div className="border-t border-border pt-3 mt-3 bg-base">
             <div className="flex justify-center">
-              <UnifiedAddButton onClick={handleCreate}>{t('models.create')}</UnifiedAddButton>
+              <UnifiedAddButton onClick={handleCreate}>
+                {t('common:models.create')}
+              </UnifiedAddButton>
             </div>
           </div>
         )}
@@ -649,13 +655,15 @@ const ModelList: React.FC<ModelListProps> = ({
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t('models.delete_confirm_title')}</AlertDialogTitle>
+            <AlertDialogTitle>{t('common:models.delete_confirm_title')}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t('models.delete_confirm_message', { name: deleteConfirmModel?.name })}
+              {t('common:models.delete_confirm_message', { name: deleteConfirmModel?.name })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={isDeleting}>{t('actions.cancel')}</AlertDialogCancel>
+            <AlertDialogCancel disabled={isDeleting}>
+              {t('common:actions.cancel')}
+            </AlertDialogCancel>
             <AlertDialogAction
               onClick={handleDelete}
               disabled={isDeleting}
@@ -683,10 +691,10 @@ const ModelList: React.FC<ModelListProps> = ({
                       d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                     ></path>
                   </svg>
-                  {t('actions.deleting')}
+                  {t('common:actions.deleting')}
                 </div>
               ) : (
-                t('actions.delete')
+                t('common:actions.delete')
               )}
             </AlertDialogAction>
           </AlertDialogFooter>

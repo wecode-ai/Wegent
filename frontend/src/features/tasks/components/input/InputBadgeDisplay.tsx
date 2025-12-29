@@ -208,7 +208,7 @@ function AttachmentPreviewInline({
         <span className="text-xs text-text-muted">
           {formatFileSize(attachment.file_size)}
           {attachment.text_length &&
-            ` · ${attachment.text_length.toLocaleString()} ${t('attachment.characters')}`}
+            ` · ${attachment.text_length.toLocaleString()} ${t('tasks:attachment.characters')}`}
         </span>
       </div>
       {attachment.status === 'parsing' && (
@@ -240,7 +240,7 @@ export default function InputBadgeDisplay({
   onRemoveAttachment,
   disabled = false,
 }: InputBadgeDisplayProps) {
-  const { t } = useTranslation('tasks');
+  const { t } = useTranslation();
   const hasContexts = contexts.length > 0;
   const hasAttachments = attachmentState.attachments.length > 0;
   const isUploading = attachmentState.uploadingFiles.size > 0;

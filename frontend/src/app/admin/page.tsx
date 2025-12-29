@@ -28,15 +28,17 @@ import '@/app/tasks/tasks.css';
 import '@/features/common/scrollbar.css';
 
 function AccessDenied() {
-  const { t } = useTranslation('admin');
+  const { t } = useTranslation();
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
       <ShieldExclamationIcon className="w-16 h-16 text-text-muted mb-4" />
-      <h1 className="text-2xl font-semibold text-text-primary mb-2">{t('access_denied.title')}</h1>
-      <p className="text-text-muted mb-6 max-w-md">{t('access_denied.message')}</p>
+      <h1 className="text-2xl font-semibold text-text-primary mb-2">
+        {t('admin:access_denied.title')}
+      </h1>
+      <p className="text-text-muted mb-6 max-w-md">{t('admin:access_denied.message')}</p>
       <Link href="/">
-        <Button>{t('access_denied.go_home')}</Button>
+        <Button>{t('admin:access_denied.go_home')}</Button>
       </Link>
     </div>
   );
@@ -45,7 +47,7 @@ function AccessDenied() {
 function AdminContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { t } = useTranslation('admin');
+  const { t } = useTranslation();
   const { user, isLoading } = useUser();
   const isMobile = useIsMobile();
 
@@ -139,7 +141,7 @@ function AdminContent() {
           <TopNavigation
             activePage="dashboard"
             variant="with-sidebar"
-            title={t('title')}
+            title={t('admin:title')}
             onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
           >
             {isMobile ? <ThemeToggle /> : <GithubStarButton />}
@@ -169,7 +171,7 @@ function AdminContent() {
         <TopNavigation
           activePage="dashboard"
           variant="with-sidebar"
-          title={t('title')}
+          title={t('admin:title')}
           onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
         >
           {isMobile ? <ThemeToggle /> : <GithubStarButton />}

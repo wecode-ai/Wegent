@@ -24,7 +24,7 @@ export default function DifyAppSelector({
   onAppChange,
   disabled = false,
 }: DifyAppSelectorProps) {
-  const _t = useTranslation('common');
+  const _t = useTranslation();
   const [apps, setApps] = useState<DifyApp[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

@@ -119,7 +119,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   groupName,
   scope,
 }) => {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const isEditing = !!model;
   const isGroupScope = scope === 'group';
 
@@ -305,7 +305,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     if (!finalModelId || !apiKey) {
       toast({
         variant: 'destructive',
-        title: t('models.errors.model_id_required'),
+        title: t('common:models.errors.model_id_required'),
       });
       return;
     }
@@ -315,7 +315,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     if (parsedHeaders === null) {
       toast({
         variant: 'destructive',
-        title: t('models.errors.custom_headers_invalid'),
+        title: t('common:models.errors.custom_headers_invalid'),
       });
       return;
     }
@@ -333,20 +333,20 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
 
       if (result.success) {
         toast({
-          title: t('models.test_success'),
+          title: t('common:models.test_success'),
           description: result.message,
         });
       } else {
         toast({
           variant: 'destructive',
-          title: t('models.test_failed'),
+          title: t('common:models.test_failed'),
           description: result.message,
         });
       }
     } catch (error) {
       toast({
         variant: 'destructive',
-        title: t('models.test_failed'),
+        title: t('common:models.test_failed'),
         description: (error as Error).message,
       });
     } finally {
@@ -362,19 +362,19 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     try {
       const parsed = JSON.parse(value);
       if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-        setCustomHeadersError(t('models.errors.custom_headers_invalid_object'));
+        setCustomHeadersError(t('common:models.errors.custom_headers_invalid_object'));
         return null;
       }
       for (const [_key, val] of Object.entries(parsed)) {
         if (typeof val !== 'string') {
-          setCustomHeadersError(t('models.errors.custom_headers_values_must_be_strings'));
+          setCustomHeadersError(t('common:models.errors.custom_headers_values_must_be_strings'));
           return null;
         }
       }
       setCustomHeadersError('');
       return parsed as Record<string, string>;
     } catch {
-      setCustomHeadersError(t('models.errors.custom_headers_invalid_json'));
+      setCustomHeadersError(t('common:models.errors.custom_headers_invalid_json'));
       return null;
     }
   };
@@ -397,7 +397,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     if (!modelIdName.trim()) {
       toast({
         variant: 'destructive',
-        title: t('models.errors.id_required'),
+        title: t('common:models.errors.id_required'),
       });
       return;
     }
@@ -406,7 +406,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     if (!nameRegex.test(modelIdName)) {
       toast({
         variant: 'destructive',
-        title: t('models.errors.id_invalid'),
+        title: t('common:models.errors.id_invalid'),
       });
       return;
     }
@@ -415,7 +415,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     if (!finalModelId) {
       toast({
         variant: 'destructive',
-        title: t('models.errors.model_id_required'),
+        title: t('common:models.errors.model_id_required'),
       });
       return;
     }
@@ -423,7 +423,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     if (!apiKey.trim()) {
       toast({
         variant: 'destructive',
-        title: t('models.errors.api_key_required'),
+        title: t('common:models.errors.api_key_required'),
       });
       return;
     }
@@ -432,7 +432,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     if (parsedHeaders === null) {
       toast({
         variant: 'destructive',
-        title: t('models.errors.custom_headers_invalid'),
+        title: t('common:models.errors.custom_headers_invalid'),
       });
       return;
     }
@@ -516,12 +516,12 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
       if (isEditing && model) {
         await modelApis.updateModel(model.metadata.name, modelCRD);
         toast({
-          title: t('models.update_success'),
+          title: t('common:models.update_success'),
         });
       } else {
         await modelApis.createModel(modelCRD);
         toast({
-          title: t('models.create_success'),
+          title: t('common:models.create_success'),
         });
       }
 
@@ -529,7 +529,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     } catch (error) {
       toast({
         variant: 'destructive',
-        title: isEditing ? t('models.errors.update_failed') : t('models.errors.create_failed'),
+        title: isEditing
+          ? t('common:models.errors.update_failed')
+          : t('common:models.errors.create_failed'),
         description: (error as Error).message,
       });
     } finally {
@@ -550,14 +552,16 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     <Dialog open={open} onOpenChange={open => !open && onClose()}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{isEditing ? t('models.edit_title') : t('models.create_title')}</DialogTitle>
+          <DialogTitle>
+            {isEditing ? t('common:models.edit_title') : t('common:models.create_title')}
+          </DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4 py-4">
           {/* Model Category Type Selector - New */}
           <div className="space-y-2">
             <Label htmlFor="modelCategoryType" className="text-sm font-medium">
-              {t('models.model_category_type')} <span className="text-red-400">*</span>
+              {t('common:models.model_category_type')} <span className="text-red-400">*</span>
             </Label>
             <Select
               value={modelCategoryType}
@@ -565,7 +569,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
               disabled={isEditing}
             >
               <SelectTrigger className="bg-base">
-                <SelectValue placeholder={t('models.select_model_category_type')} />
+                <SelectValue placeholder={t('common:models.select_model_category_type')} />
               </SelectTrigger>
               <SelectContent>
                 {MODEL_CATEGORY_OPTIONS.map(option => (
@@ -581,7 +585,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="modelIdName" className="text-sm font-medium">
-                {t('models.model_id_name')} <span className="text-red-400">*</span>
+                {t('common:models.model_id_name')} <span className="text-red-400">*</span>
               </Label>
               <Input
                 id="modelIdName"
@@ -592,22 +596,22 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                 className="bg-base"
               />
               <p className="text-xs text-text-muted">
-                {isEditing ? t('models.id_readonly_hint') : t('models.id_hint')}
+                {isEditing ? t('common:models.id_readonly_hint') : t('common:models.id_hint')}
               </p>
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="displayName" className="text-sm font-medium">
-                {t('models.display_name')}
+                {t('common:models.display_name')}
               </Label>
               <Input
                 id="displayName"
                 value={displayName}
                 onChange={e => setDisplayName(e.target.value)}
-                placeholder={t('models.display_name_placeholder')}
+                placeholder={t('common:models.display_name_placeholder')}
                 className="bg-base"
               />
-              <p className="text-xs text-text-muted">{t('models.display_name_hint')}</p>
+              <p className="text-xs text-text-muted">{t('common:models.display_name_hint')}</p>
             </div>
           </div>
 
@@ -615,11 +619,11 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="provider_type" className="text-sm font-medium">
-                {t('models.provider_type')} <span className="text-red-400">*</span>
+                {t('common:models.provider_type')} <span className="text-red-400">*</span>
               </Label>
               <Select value={providerType} onValueChange={handleProviderChange}>
                 <SelectTrigger className="bg-base">
-                  <SelectValue placeholder={t('models.select_provider')} />
+                  <SelectValue placeholder={t('common:models.select_provider')} />
                 </SelectTrigger>
                 <SelectContent>
                   {availableProtocols.map(protocol => (
@@ -638,11 +642,11 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
 
             <div className="space-y-2">
               <Label htmlFor="model_id" className="text-sm font-medium">
-                {t('models.model_id')} <span className="text-red-400">*</span>
+                {t('common:models.model_id')} <span className="text-red-400">*</span>
               </Label>
               <Select value={modelId} onValueChange={setModelId}>
                 <SelectTrigger className="bg-base">
-                  <SelectValue placeholder={t('models.select_model_id')} />
+                  <SelectValue placeholder={t('common:models.select_model_id')} />
                 </SelectTrigger>
                 <SelectContent>
                   {modelOptions.map(option => (
@@ -656,7 +660,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                 <Input
                   value={customModelId}
                   onChange={e => setCustomModelId(e.target.value)}
-                  placeholder={t('models.custom_model_id_placeholder')}
+                  placeholder={t('common:models.custom_model_id_placeholder')}
                   className="mt-2 bg-base"
                 />
               )}
@@ -666,7 +670,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           {/* API Key */}
           <div className="space-y-2">
             <Label htmlFor="api_key" className="text-sm font-medium">
-              {t('models.api_key')} <span className="text-red-400">*</span>
+              {t('common:models.api_key')} <span className="text-red-400">*</span>
             </Label>
             <div className="relative">
               <Input
@@ -696,7 +700,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           {/* Base URL */}
           <div className="space-y-2">
             <Label htmlFor="base_url" className="text-sm font-medium">
-              {t('models.base_url')}
+              {t('common:models.base_url')}
             </Label>
             <Input
               id="base_url"
@@ -705,13 +709,13 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
               placeholder={baseUrlPlaceholder}
               className="bg-base"
             />
-            <p className="text-xs text-text-muted">{t('models.base_url_hint')}</p>
+            <p className="text-xs text-text-muted">{t('common:models.base_url_hint')}</p>
           </div>
 
           {/* Custom Headers */}
           <div className="space-y-2">
             <Label htmlFor="custom_headers" className="text-sm font-medium">
-              {t('models.custom_headers')}
+              {t('common:models.custom_headers')}
             </Label>
             <Textarea
               id="custom_headers"
@@ -721,7 +725,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
               className={`bg-base font-mono text-sm min-h-[100px] ${customHeadersError ? 'border-error' : ''}`}
             />
             {customHeadersError && <p className="text-xs text-error">{customHeadersError}</p>}
-            <p className="text-xs text-text-muted">{t('models.custom_headers_hint')}</p>
+            <p className="text-xs text-text-muted">{t('common:models.custom_headers_hint')}</p>
           </div>
 
           {/* TTS-specific fields */}
@@ -731,7 +735,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
               <div className="grid grid-cols-3 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="tts_voice" className="text-sm font-medium">
-                    {t('models.tts_voice')}
+                    {t('common:models.tts_voice')}
                   </Label>
                   <Input
                     id="tts_voice"
@@ -740,11 +744,11 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                     placeholder="alloy, echo, fable, onyx, nova, shimmer"
                     className="bg-base"
                   />
-                  <p className="text-xs text-text-muted">{t('models.tts_voice_hint')}</p>
+                  <p className="text-xs text-text-muted">{t('common:models.tts_voice_hint')}</p>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="tts_speed" className="text-sm font-medium">
-                    {t('models.tts_speed')}
+                    {t('common:models.tts_speed')}
                   </Label>
                   <Input
                     id="tts_speed"
@@ -756,11 +760,11 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                     onChange={e => setTtsSpeed(parseFloat(e.target.value) || 1.0)}
                     className="bg-base"
                   />
-                  <p className="text-xs text-text-muted">{t('models.tts_speed_hint')}</p>
+                  <p className="text-xs text-text-muted">{t('common:models.tts_speed_hint')}</p>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="tts_output_format" className="text-sm font-medium">
-                    {t('models.tts_output_format')}
+                    {t('common:models.tts_output_format')}
                   </Label>
                   <Select
                     value={ttsOutputFormat}
@@ -786,7 +790,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="stt_language" className="text-sm font-medium">
-                    {t('models.stt_language')}
+                    {t('common:models.stt_language')}
                   </Label>
                   <Input
                     id="stt_language"
@@ -795,11 +799,11 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                     placeholder="en, zh, es, fr, de, ja, ko"
                     className="bg-base"
                   />
-                  <p className="text-xs text-text-muted">{t('models.stt_language_hint')}</p>
+                  <p className="text-xs text-text-muted">{t('common:models.stt_language_hint')}</p>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="stt_format" className="text-sm font-medium">
-                    {t('models.stt_transcription_format')}
+                    {t('common:models.stt_transcription_format')}
                   </Label>
                   <Select
                     value={sttTranscriptionFormat}
@@ -826,7 +830,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="embedding_dimensions" className="text-sm font-medium">
-                    {t('models.embedding_dimensions')}
+                    {t('common:models.embedding_dimensions')}
                   </Label>
                   <Input
                     id="embedding_dimensions"
@@ -836,11 +840,13 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                     placeholder="1536 (OpenAI), 768 (Cohere)"
                     className="bg-base"
                   />
-                  <p className="text-xs text-text-muted">{t('models.embedding_dimensions_hint')}</p>
+                  <p className="text-xs text-text-muted">
+                    {t('common:models.embedding_dimensions_hint')}
+                  </p>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="embedding_format" className="text-sm font-medium">
-                    {t('models.embedding_encoding_format')}
+                    {t('common:models.embedding_encoding_format')}
                   </Label>
                   <Select
                     value={embeddingEncodingFormat}
@@ -866,7 +872,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="rerank_top_n" className="text-sm font-medium">
-                    {t('models.rerank_top_n')}
+                    {t('common:models.rerank_top_n')}
                   </Label>
                   <Input
                     id="rerank_top_n"
@@ -876,11 +882,11 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                     placeholder="Default: return all"
                     className="bg-base"
                   />
-                  <p className="text-xs text-text-muted">{t('models.rerank_top_n_hint')}</p>
+                  <p className="text-xs text-text-muted">{t('common:models.rerank_top_n_hint')}</p>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="rerank_return_docs" className="text-sm font-medium">
-                    {t('models.rerank_return_documents')}
+                    {t('common:models.rerank_return_documents')}
                   </Label>
                   <Select
                     value={rerankReturnDocuments ? 'true' : 'false'}
@@ -908,11 +914,11 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           >
             {testing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             <BeakerIcon className="w-4 h-4 mr-1" />
-            {t('models.test_connection')}
+            {t('common:models.test_connection')}
           </Button>
           <div className="flex gap-2">
             <Button variant="outline" onClick={onClose}>
-              {t('actions.cancel')}
+              {t('common:actions.cancel')}
             </Button>
             <Button
               onClick={handleSave}
@@ -920,7 +926,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
               className="bg-primary hover:bg-primary/90"
             >
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {saving ? t('actions.saving') : t('actions.save')}
+              {saving ? t('common:actions.saving') : t('common:actions.save')}
             </Button>
           </div>
         </DialogFooter>

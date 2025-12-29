@@ -157,7 +157,7 @@ export default function Workbench({
   const [tipIndex, setTipIndex] = useState(0);
   const [isTimelineExpanded, setIsTimelineExpanded] = useState(false); // Timeline collapse state
   const { theme } = useTheme();
-  const { t } = useTranslation('tasks');
+  const { t } = useTranslation();
 
   // Internal state: cache the latest workbench data
   const [cachedWorkbenchData, setCachedWorkbenchData] = useState<WorkbenchData | null>(null);
@@ -168,7 +168,9 @@ export default function Workbench({
   // Loading state rotation (4 seconds)
   useEffect(() => {
     if (!displayData) {
-      const loadingStates = t('workbench.loading_states', { returnObjects: true }) as string[];
+      const loadingStates = t('tasks:workbench.loading_states', {
+        returnObjects: true,
+      }) as string[];
       const interval = setInterval(() => {
         setLoadingStateIndex(prev => (prev + 1) % loadingStates.length);
       }, 4000);
@@ -179,7 +181,7 @@ export default function Workbench({
   // Tips rotation (6 seconds, random)
   useEffect(() => {
     if (!displayData) {
-      const tips = t('workbench.tips', { returnObjects: true }) as string[];
+      const tips = t('tasks:workbench.tips', { returnObjects: true }) as string[];
       const interval = setInterval(() => {
         setTipIndex(Math.floor(Math.random() * tips.length));
       }, 6000);
@@ -269,12 +271,12 @@ export default function Workbench({
 
   const navigation = [
     {
-      name: t('workbench.overview'),
+      name: t('tasks:workbench.overview'),
       value: 'overview' as const,
       current: activeTab === 'overview',
     },
     {
-      name: t('workbench.files_changed'),
+      name: t('tasks:workbench.files_changed'),
       value: 'files' as const,
       current: activeTab === 'files',
       badge: shouldShowDiffData()
@@ -297,11 +299,11 @@ export default function Workbench({
   const getStatusText = () => {
     switch (displayData?.status) {
       case 'completed':
-        return t('workbench.status.completed');
+        return t('tasks:workbench.status.completed');
       case 'failed':
-        return t('workbench.status.failed');
+        return t('tasks:workbench.status.failed');
       default:
-        return t('workbench.status.running');
+        return t('tasks:workbench.status.running');
     }
   };
 
@@ -462,7 +464,7 @@ export default function Workbench({
                       onClick={onClose}
                       className="relative rounded-full p-1 text-text-muted hover:text-text-primary focus:outline focus:outline-2 focus:outline-offset-2 focus:outline-primary"
                     >
-                      <span className="sr-only">{t('workbench.close_panel')}</span>
+                      <span className="sr-only">{t('tasks:workbench.close_panel')}</span>
                       <XMarkIcon aria-hidden="true" className="size-6" />
                     </button>
                   </div>
@@ -470,7 +472,7 @@ export default function Workbench({
                     {/* Mobile menu button */}
                     <DisclosureButton className="group relative inline-flex items-center justify-center rounded-md bg-surface p-2 text-text-muted hover:bg-muted hover:text-text-primary focus:outline focus:outline-2 focus:outline-offset-2 focus:outline-primary">
                       <span className="absolute -inset-0.5" />
-                      <span className="sr-only">{t('workbench.open_main_menu')}</span>
+                      <span className="sr-only">{t('tasks:workbench.open_main_menu')}</span>
                       <Bars3Icon
                         aria-hidden="true"
                         className="block size-6 group-data-[open]:hidden"
@@ -534,9 +536,9 @@ export default function Workbench({
                       <div className="animate-spin rounded-full h-5 w-5 border-2 border-primary border-t-transparent"></div>
                       <p className="text-sm text-text-primary">
                         {
-                          (t('workbench.loading_states', { returnObjects: true }) as string[])[
-                            loadingStateIndex
-                          ]
+                          (
+                            t('tasks:workbench.loading_states', { returnObjects: true }) as string[]
+                          )[loadingStateIndex]
                         }
                       </p>
                     </div>
@@ -544,7 +546,7 @@ export default function Workbench({
                     {/* Tips */}
                     <div className="flex items-center justify-center transition-opacity duration-300">
                       <p className="text-xs text-text-muted text-center">
-                        {(t('workbench.tips', { returnObjects: true }) as string[])[tipIndex]}
+                        {(t('tasks:workbench.tips', { returnObjects: true }) as string[])[tipIndex]}
                       </p>
                     </div>
                   </div>
@@ -624,7 +626,7 @@ export default function Workbench({
                         >
                           <div className="flex items-center justify-between">
                             <h3 className="text-base font-semibold text-text-primary">
-                              {t('workbench.execution_timeline')}
+                              {t('tasks:workbench.execution_timeline')}
                             </h3>
                             <ChevronRightIcon
                               className={classNames(
@@ -694,7 +696,7 @@ export default function Workbench({
                     <div className="rounded-lg border border-border bg-surface overflow-hidden">
                       <div className="border-b border-border bg-muted px-4 py-3">
                         <h3 className="text-base font-semibold text-text-primary">
-                          {t('workbench.summary')}
+                          {t('tasks:workbench.summary')}
                         </h3>
                         <div className="mt-1 flex items-center gap-2 text-sm text-text-muted">
                           <button
@@ -703,7 +705,7 @@ export default function Workbench({
                           >
                             <span className="font-medium text-primary">
                               {displayData?.git_info?.task_commits?.length || 0}{' '}
-                              {t('workbench.commits')}
+                              {t('tasks:workbench.commits')}
                             </span>
                             <ChevronRightIcon
                               className={classNames(
@@ -714,7 +716,8 @@ export default function Workbench({
                           </button>
                           <span>·</span>
                           <span>
-                            {t('workbench.last_updated')} {formatDateTime(displayData?.lastUpdated)}
+                            {t('tasks:workbench.last_updated')}{' '}
+                            {formatDateTime(displayData?.lastUpdated)}
                           </span>
                         </div>
                       </div>
@@ -740,7 +743,7 @@ export default function Workbench({
                                           setTimeout(() => setCopiedCommitId(null), 2000);
                                         }}
                                         className="p-1 hover:bg-muted rounded transition-colors"
-                                        title={t('workbench.copy_commit_id')}
+                                        title={t('tasks:workbench.copy_commit_id')}
                                       >
                                         {copiedCommitId === commit.commit_id ? (
                                           <CheckIcon className="h-4 w-4 text-green-600" />
@@ -753,7 +756,7 @@ export default function Workbench({
                                       <span>{commit.author}</span>
                                       <span>·</span>
                                       <span>
-                                        {commit.stats.files_changed} {t('workbench.files')}, +
+                                        {commit.stats.files_changed} {t('tasks:workbench.files')}, +
                                         {commit.stats.insertions} -{commit.stats.deletions}
                                       </span>
                                     </div>
@@ -794,7 +797,7 @@ export default function Workbench({
                     {displayData?.changes && displayData.changes.length > 0 && (
                       <div className="rounded-lg border border-border bg-surface p-4">
                         <h3 className="text-base font-semibold text-text-primary mb-3">
-                          {t('workbench.changes')}
+                          {t('tasks:workbench.changes')}
                         </h3>
                         <ul className="space-y-2">
                           {displayData.changes.map((change: string, index: number) => (
@@ -817,7 +820,7 @@ export default function Workbench({
                           <div className="rounded-lg border border-border bg-surface overflow-hidden">
                             <DisclosureButton className="flex w-full items-center justify-between bg-muted px-4 py-3 text-left hover:bg-muted/80">
                               <span className="text-base font-semibold text-text-primary">
-                                {t('workbench.original_prompt')}
+                                {t('tasks:workbench.original_prompt')}
                               </span>
                               <ChevronRightIcon
                                 className={classNames(
@@ -845,7 +848,9 @@ export default function Workbench({
                       // Loading diff data
                       <div className="flex items-center justify-center h-64">
                         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-                        <span className="ml-3 text-text-muted">{t('workbench.loading_diff')}</span>
+                        <span className="ml-3 text-text-muted">
+                          {t('tasks:workbench.loading_diff')}
+                        </span>
                       </div>
                     ) : shouldShowDiffData() ? (
                       // Show diff data with expand/collapse
@@ -863,7 +868,7 @@ export default function Workbench({
                             <button
                               onClick={() => setShowErrorDialog(true)}
                               className="text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 transition-colors"
-                              title={t('workbench.view_error_details')}
+                              title={t('tasks:workbench.view_error_details')}
                             >
                               <ExclamationTriangleIcon className="w-5 h-5" />
                             </button>
@@ -882,8 +887,8 @@ export default function Workbench({
                       <div className="rounded-lg border border-border bg-surface p-8 text-center">
                         <p className="text-text-muted">
                           {displayData?.status === 'completed'
-                            ? t('workbench.no_changes_found')
-                            : t('workbench.no_file_changes')}
+                            ? t('tasks:workbench.no_changes_found')
+                            : t('tasks:workbench.no_file_changes')}
                         </p>
                       </div>
                     )}
@@ -907,7 +912,7 @@ export default function Workbench({
             <div className="flex items-center justify-between border-b border-border px-6 py-4">
               <DialogTitle className="text-lg font-semibold text-text-primary flex items-center gap-2">
                 <ExclamationTriangleIcon className="w-5 h-5 text-red-600" />
-                {t('workbench.error_details')}
+                {t('tasks:workbench.error_details')}
               </DialogTitle>
               <button
                 onClick={() => setShowErrorDialog(false)}
@@ -928,7 +933,7 @@ export default function Workbench({
                 onClick={() => setShowErrorDialog(false)}
                 className="px-4 py-2 text-sm font-medium text-text-primary bg-muted hover:bg-muted/80 rounded-md transition-colors"
               >
-                {t('workbench.close_panel')}
+                {t('tasks:workbench.close_panel')}
               </button>
               <button
                 onClick={() => {
@@ -939,7 +944,7 @@ export default function Workbench({
                 }}
                 className="px-4 py-2 text-sm font-medium text-white bg-primary hover:bg-primary/90 rounded-md transition-colors"
               >
-                {t('workbench.retry')}
+                {t('tasks:workbench.retry')}
               </button>
             </div>
           </DialogPanel>

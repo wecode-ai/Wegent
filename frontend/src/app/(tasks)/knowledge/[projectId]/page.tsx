@@ -22,7 +22,7 @@ import {
 } from '@/features/knowledge';
 
 export default function WikiDetailPage() {
-  const { t: _t } = useTranslation('common');
+  const { t: _t } = useTranslation();
   const params = useParams();
   const router = useRouter();
   const projectId = Number(params.projectId);

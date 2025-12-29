@@ -26,7 +26,7 @@ export default function TaskMenu({
   handleDeleteTask,
   isGroupChat = false,
 }: TaskMenuProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
 
   return (
     <Menu as="div" className="relative">
@@ -50,7 +50,7 @@ export default function TaskMenu({
               className={`w-full px-3 py-2 text-xs text-left text-text-primary flex items-center ${active ? 'bg-muted' : ''}`}
             >
               <ClipboardDocumentIcon className="h-3.5 w-3.5 mr-2" />
-              {t('tasks.copy_task_id')}
+              {t('common:tasks.copy_task_id')}
             </button>
           )}
         </Menu.Item>
@@ -66,12 +66,12 @@ export default function TaskMenu({
               {isGroupChat ? (
                 <>
                   <ArrowRightOnRectangleIcon className="h-3.5 w-3.5 mr-2" />
-                  {t('groupChat.leave')}
+                  {t('common:groupChat.leave')}
                 </>
               ) : (
                 <>
                   <TrashIcon className="h-3.5 w-3.5 mr-2" />
-                  {t('tasks.delete_task')}
+                  {t('common:tasks.delete_task')}
                 </>
               )}
             </button>

@@ -61,7 +61,7 @@ const McpConfigImportModal: React.FC<McpConfigImportModalProps> = ({
   toast,
   agentType,
 }) => {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const [importConfig, setImportConfig] = useState('');
   const [importConfigError, setImportConfigError] = useState(false);
   const [importMode, setImportMode] = useState<'replace' | 'append'>('replace');
@@ -73,7 +73,7 @@ const McpConfigImportModal: React.FC<McpConfigImportModalProps> = ({
       setImportConfigError(true);
       toast({
         variant: 'destructive',
-        title: t('bot.errors.mcp_config_json'),
+        title: t('common:bot.errors.mcp_config_json'),
       });
       return;
     }
@@ -95,12 +95,12 @@ const McpConfigImportModal: React.FC<McpConfigImportModalProps> = ({
       if (error instanceof SyntaxError) {
         toast({
           variant: 'destructive',
-          title: t('bot.errors.mcp_config_json'),
+          title: t('common:bot.errors.mcp_config_json'),
         });
       } else {
         toast({
           variant: 'destructive',
-          title: t('bot.errors.mcp_config_invalid'),
+          title: t('common:bot.errors.mcp_config_invalid'),
         });
       }
     }
@@ -117,10 +117,10 @@ const McpConfigImportModal: React.FC<McpConfigImportModalProps> = ({
     <Dialog open={visible} onOpenChange={open => !open && handleCancel()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{t('bot.import_mcp_title')}</DialogTitle>
+          <DialogTitle>{t('common:bot.import_mcp_title')}</DialogTitle>
         </DialogHeader>
         <div className="mb-2">
-          <p>{t('bot.import_mcp_desc')}</p>
+          <p>{t('common:bot.import_mcp_desc')}</p>
           <div className="mt-2 mb-3">
             <div className="flex items-center space-x-4">
               <div className="flex items-center">
@@ -133,7 +133,7 @@ const McpConfigImportModal: React.FC<McpConfigImportModalProps> = ({
                   onChange={() => setImportMode('replace')}
                   className="mr-2"
                 />
-                <label htmlFor="replace-mode">{t('bot.import_mode_replace')}</label>
+                <label htmlFor="replace-mode">{t('common:bot.import_mode_replace')}</label>
               </div>
               <div className="flex items-center">
                 <input
@@ -145,7 +145,7 @@ const McpConfigImportModal: React.FC<McpConfigImportModalProps> = ({
                   onChange={() => setImportMode('append')}
                   className="mr-2"
                 />
-                <label htmlFor="append-mode">{t('bot.import_mode_append')}</label>
+                <label htmlFor="append-mode">{t('common:bot.import_mode_append')}</label>
               </div>
             </div>
           </div>
@@ -175,13 +175,13 @@ const McpConfigImportModal: React.FC<McpConfigImportModalProps> = ({
           className={importConfigError ? 'border-red-500' : ''}
         />
         {importConfigError && (
-          <div className="text-red-500 mt-1">{t('bot.errors.mcp_config_json')}</div>
+          <div className="text-red-500 mt-1">{t('common:bot.errors.mcp_config_json')}</div>
         )}
         <DialogFooter>
           <Button variant="outline" onClick={handleCancel}>
-            {t('actions.cancel')}
+            {t('common:actions.cancel')}
           </Button>
-          <Button onClick={handleImportConfirm}>{t('actions.confirm')}</Button>
+          <Button onClick={handleImportConfirm}>{t('common:actions.confirm')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -41,7 +41,7 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
   groupRoleMap,
   onEditResource,
 }) => {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const { toast } = useToast();
   const [retrievers, setRetrievers] = useState<UnifiedRetriever[]>([]);
   const [loading, setLoading] = useState(true);
@@ -62,7 +62,7 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
       console.error('Failed to fetch retrievers:', error);
       toast({
         variant: 'destructive',
-        title: t('retrievers.errors.load_retrievers_failed'),
+        title: t('common:retrievers.errors.load_retrievers_failed'),
       });
     } finally {
       setLoading(false);
@@ -128,20 +128,20 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
 
       if (result.success) {
         toast({
-          title: t('retrievers.test_success'),
+          title: t('common:retrievers.test_success'),
           description: result.message,
         });
       } else {
         toast({
           variant: 'destructive',
-          title: t('retrievers.test_failed'),
+          title: t('common:retrievers.test_failed'),
           description: result.message,
         });
       }
     } catch (error) {
       toast({
         variant: 'destructive',
-        title: t('retrievers.test_failed'),
+        title: t('common:retrievers.test_failed'),
         description: (error as Error).message,
       });
     } finally {
@@ -159,14 +159,14 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
         deleteConfirmRetriever.namespace
       );
       toast({
-        title: t('retrievers.delete_success'),
+        title: t('common:retrievers.delete_success'),
       });
       setDeleteConfirmRetriever(null);
       fetchRetrievers();
     } catch (error) {
       toast({
         variant: 'destructive',
-        title: t('retrievers.errors.delete_failed'),
+        title: t('common:retrievers.errors.delete_failed'),
         description: (error as Error).message,
       });
     } finally {
@@ -210,8 +210,10 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
     <div className="space-y-3">
       {/* Header */}
       <div>
-        <h2 className="text-xl font-semibold text-text-primary mb-1">{t('retrievers.title')}</h2>
-        <p className="text-sm text-text-muted mb-1">{t('retrievers.description')}</p>
+        <h2 className="text-xl font-semibold text-text-primary mb-1">
+          {t('common:retrievers.title')}
+        </h2>
+        <p className="text-sm text-text-muted mb-1">{t('common:retrievers.description')}</p>
       </div>
 
       {/* Content Container */}
@@ -227,8 +229,10 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
         {!loading && totalRetrievers === 0 && (
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <CircleStackIcon className="w-12 h-12 text-text-muted mb-4" />
-            <p className="text-text-muted">{t('retrievers.no_retrievers')}</p>
-            <p className="text-sm text-text-muted mt-1">{t('retrievers.no_retrievers_hint')}</p>
+            <p className="text-text-muted">{t('common:retrievers.no_retrievers')}</p>
+            <p className="text-sm text-text-muted mt-1">
+              {t('common:retrievers.no_retrievers_hint')}
+            </p>
           </div>
         )}
 
@@ -240,7 +244,7 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
               {userRetrievers.length > 0 && (
                 <div className="space-y-2">
                   <h3 className="text-sm font-medium text-text-secondary px-2">
-                    {t('retrievers.my_retrievers')} ({userRetrievers.length})
+                    {t('common:retrievers.my_retrievers')} ({userRetrievers.length})
                   </h3>
                   <div className="space-y-3">
                     {userRetrievers.map(retriever => (
@@ -270,7 +274,7 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
                               className="h-8 w-8"
                               onClick={() => handleTestConnection(retriever)}
                               disabled={testingRetrieverName === retriever.name}
-                              title={t('retrievers.test_connection')}
+                              title={t('common:retrievers.test_connection')}
                             >
                               {testingRetrieverName === retriever.name ? (
                                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -283,7 +287,7 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
                               size="icon"
                               className="h-8 w-8"
                               onClick={() => handleEdit(retriever)}
-                              title={t('retrievers.edit')}
+                              title={t('common:retrievers.edit')}
                             >
                               <PencilIcon className="w-4 h-4" />
                             </Button>
@@ -292,7 +296,7 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
                               size="icon"
                               className="h-8 w-8 hover:text-error"
                               onClick={() => setDeleteConfirmRetriever(retriever)}
-                              title={t('retrievers.delete')}
+                              title={t('common:retrievers.delete')}
                             >
                               <TrashIcon className="w-4 h-4" />
                             </Button>
@@ -308,7 +312,7 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
               {groupRetrievers.length > 0 && (
                 <div className="space-y-2">
                   <h3 className="text-sm font-medium text-text-secondary px-2">
-                    {t('retrievers.group_retrievers')} ({groupRetrievers.length})
+                    {t('common:retrievers.group_retrievers')} ({groupRetrievers.length})
                   </h3>
                   <div className="space-y-3">
                     {groupRetrievers.map(retriever => (
@@ -332,7 +336,7 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
                             ]}
                           >
                             <Tag variant="success" className="text-xs">
-                              {t('retrievers.group')}
+                              {t('common:retrievers.group')}
                             </Tag>
                           </ResourceListItem>
                           {/* Action buttons for group resources */}
@@ -343,7 +347,7 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
                                 size="icon"
                                 className="h-8 w-8"
                                 onClick={() => handleEdit(retriever)}
-                                title={t('retrievers.edit')}
+                                title={t('common:retrievers.edit')}
                               >
                                 <PencilIcon className="w-4 h-4" />
                               </Button>
@@ -354,7 +358,7 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
                                 size="icon"
                                 className="h-8 w-8 hover:text-error"
                                 onClick={() => setDeleteConfirmRetriever(retriever)}
-                                title={t('retrievers.delete')}
+                                title={t('common:retrievers.delete')}
                               >
                                 <TrashIcon className="w-4 h-4" />
                               </Button>
@@ -374,7 +378,9 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
         {!loading && (scope === 'personal' || canCreateInAnyGroup) && (
           <div className="border-t border-border pt-3 mt-3 bg-base">
             <div className="flex justify-center">
-              <UnifiedAddButton onClick={handleCreate}>{t('retrievers.create')}</UnifiedAddButton>
+              <UnifiedAddButton onClick={handleCreate}>
+                {t('common:retrievers.create')}
+              </UnifiedAddButton>
             </div>
           </div>
         )}
@@ -397,13 +403,17 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t('retrievers.delete_confirm_title')}</AlertDialogTitle>
+            <AlertDialogTitle>{t('common:retrievers.delete_confirm_title')}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t('retrievers.delete_confirm_message', { name: deleteConfirmRetriever?.name })}
+              {t('common:retrievers.delete_confirm_message', {
+                name: deleteConfirmRetriever?.name,
+              })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={isDeleting}>{t('actions.cancel')}</AlertDialogCancel>
+            <AlertDialogCancel disabled={isDeleting}>
+              {t('common:actions.cancel')}
+            </AlertDialogCancel>
             <AlertDialogAction
               onClick={handleDelete}
               disabled={isDeleting}
@@ -431,10 +441,10 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
                       d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                     ></path>
                   </svg>
-                  {t('actions.deleting')}
+                  {t('common:actions.deleting')}
                 </div>
               ) : (
-                t('actions.delete')
+                t('common:actions.delete')
               )}
             </AlertDialogAction>
           </AlertDialogFooter>

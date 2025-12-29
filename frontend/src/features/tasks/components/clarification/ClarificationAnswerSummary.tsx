@@ -20,13 +20,13 @@ export default function ClarificationAnswerSummary({
   data,
   rawContent,
 }: ClarificationAnswerSummaryProps) {
-  const { t } = useTranslation('chat');
+  const { t } = useTranslation();
   const [showRawContent, setShowRawContent] = useState(false);
 
   if (!data.answers || data.answers.length === 0) {
     return (
       <div className="text-sm text-text-secondary">
-        <div>✓ {t('clarification.answers_submitted') || 'Answers submitted'}</div>
+        <div>✓ {t('chat:clarification.answers_submitted') || 'Answers submitted'}</div>
       </div>
     );
   }
@@ -36,7 +36,7 @@ export default function ClarificationAnswerSummary({
       <div className="flex items-center justify-between">
         <div className="text-sm font-medium text-text-primary flex items-center gap-2">
           <span>✓</span>
-          <span>{t('clarification.my_answers') || 'My Answers'}</span>
+          <span>{t('chat:clarification.my_answers') || 'My Answers'}</span>
         </div>
         <Button
           variant="ghost"
@@ -47,12 +47,12 @@ export default function ClarificationAnswerSummary({
           {showRawContent ? (
             <>
               <FileText className="w-3.5 h-3.5 mr-1.5" />
-              {t('clarification.show_form') || 'Show Form'}
+              {t('chat:clarification.show_form') || 'Show Form'}
             </>
           ) : (
             <>
               <Code className="w-3.5 h-3.5 mr-1.5" />
-              {t('clarification.show_raw') || 'Show Raw'}
+              {t('chat:clarification.show_raw') || 'Show Raw'}
             </>
           )}
         </Button>
@@ -74,7 +74,7 @@ export default function ClarificationAnswerSummary({
               {/* Question Text */}
               <div className="mb-2 text-sm font-medium text-text-secondary">
                 <span className="text-text-tertiary mr-1">
-                  {t('clarification.question') || 'Q'}
+                  {t('chat:clarification.question') || 'Q'}
                   {idx + 1}:
                 </span>
                 <span>{answer.question_text}</span>
@@ -85,7 +85,7 @@ export default function ClarificationAnswerSummary({
                 {answer.answer_type === 'custom' ? (
                   <div className="text-sm">
                     <span className="text-xs text-text-tertiary mr-1">
-                      ({t('clarification.custom_answer') || 'Custom'}):
+                      ({t('chat:clarification.custom_answer') || 'Custom'}):
                     </span>
                     <span className="text-text-primary">{answer.value as string}</span>
                   </div>

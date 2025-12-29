@@ -67,13 +67,13 @@ function PromptEdit({
   unsavedPrompts?: Record<string, string>;
   setUnsavedPrompts?: React.Dispatch<React.SetStateAction<Record<string, string>>>;
 }) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const [loading, setLoading] = React.useState(false);
 
   const drawerTitle = React.useMemo(() => {
-    if (isNewTeam) return t('team.prompts_drawer_title_new');
-    if (team) return t('team.prompts_drawer_title_existing', { name: team.name });
-    return t('team.prompts_drawer_title_generic');
+    if (isNewTeam) return t('common:team.prompts_drawer_title_new');
+    if (team) return t('common:team.prompts_drawer_title_existing', { name: team.name });
+    return t('common:team.prompts_drawer_title_generic');
   }, [isNewTeam, team, t]);
 
   const handleBack = React.useCallback(() => {
@@ -170,7 +170,7 @@ function PromptEdit({
       if (
         activeElement &&
         (activeElement.getAttribute('role') === 'combobox' ||
-          activeElement.closest('.ant-select-dropdown'))
+          activeElement.closest('common:.ant-select-dropdown'))
       ) {
         return;
       }
@@ -211,7 +211,7 @@ function PromptEdit({
           setUnsavedPrompts(collectPrompts());
         }
         toast({
-          title: t('team.prompts_save_success'),
+          title: t('common:team.prompts_save_success'),
         });
         onClose();
         return;
@@ -234,14 +234,14 @@ function PromptEdit({
         onTeamUpdate({ ...team, bots: updatedBots });
 
         toast({
-          title: t('team.prompts_update_success'),
+          title: t('common:team.prompts_update_success'),
         });
         onClose();
       }
     } catch {
       toast({
         variant: 'destructive',
-        title: t('team.prompts_update_error'),
+        title: t('common:team.prompts_update_error'),
       });
     } finally {
       setLoading(false);
@@ -254,7 +254,7 @@ function PromptEdit({
         <button
           onClick={handleBack}
           className="flex items-center text-muted-foreground hover:text-foreground text-base"
-          title={t('common.back')}
+          title={t('common:common.back')}
         >
           <svg
             width="24"
@@ -266,11 +266,11 @@ function PromptEdit({
           >
             <path d="M15 6l-6 6 6 6" />
           </svg>
-          {t('common.back')}
+          {t('common:common.back')}
         </button>
         <Button onClick={handleSave} disabled={loading}>
           {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-          {t('actions.save')}
+          {t('common:actions.save')}
         </Button>
       </div>
 
@@ -278,8 +278,10 @@ function PromptEdit({
       <Alert className="mb-4">
         <Info className="h-4 w-4" />
         <AlertDescription>
-          <div className="font-medium">{t('team.prompts_scope_hint')}</div>
-          <div className="text-sm text-muted-foreground mt-1">{t('team.prompts_scope_sub')}</div>
+          <div className="font-medium">{t('common:team.prompts_scope_hint')}</div>
+          <div className="text-sm text-muted-foreground mt-1">
+            {t('common:team.prompts_scope_sub')}
+          </div>
         </AlertDescription>
       </Alert>
 
@@ -297,7 +299,7 @@ function PromptEdit({
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button variant="link" size="sm" className="h-auto p-0 text-xs">
-                      {t('team.prompts_base_button')}
+                      {t('common:team.prompts_base_button')}
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent className="max-w-xs">
@@ -308,7 +310,7 @@ function PromptEdit({
             </div>
             <Textarea
               rows={4}
-              placeholder={t('team.prompts_placeholder')}
+              placeholder={t('common:team.prompts_placeholder')}
               className="bg-base border-border"
               {...form.register(`prompt-${bot.bot_id}`)}
             />

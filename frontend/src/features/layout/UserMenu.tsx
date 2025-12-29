@@ -19,9 +19,9 @@ type UserMenuProps = {
 };
 
 export default function UserMenu({ className = '' }: UserMenuProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const { user, logout } = useUser();
-  const userDisplayName = user?.user_name || t('user.default_name');
+  const userDisplayName = user?.user_name || t('common:user.default_name');
   const isAdmin = user?.role === 'admin';
 
   return (
@@ -55,7 +55,7 @@ export default function UserMenu({ className = '' }: UserMenuProps) {
                       }`}
                     >
                       <Cog8ToothIcon className="w-3.5 h-3.5" />
-                      {t('navigation.admin', 'Admin')}
+                      {t('common:navigation.admin', 'Admin')}
                     </Button>
                   </Link>
                 )}
@@ -72,7 +72,7 @@ export default function UserMenu({ className = '' }: UserMenuProps) {
                   active ? '!bg-muted' : '!bg-transparent'
                 }`}
               >
-                {t('user.logout')}
+                {t('common:user.logout')}
               </Button>
             )}
           </Menu.Item>

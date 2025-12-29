@@ -40,8 +40,7 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
   thinking,
   taskStatus,
 }: DetailedThinkingViewProps) {
-  const { t: tTasks } = useTranslation('tasks');
-  const { t: tChat } = useTranslation('chat');
+  const { t } = useTranslation();
 
   const {
     items,
@@ -66,11 +65,11 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
   const formatCollapsedTitle = (): string => {
     let statusText = '';
     if (taskStatus === 'COMPLETED') {
-      statusText = tTasks('thinking.execution_completed');
+      statusText = t('tasks:thinking.execution_completed');
     } else if (taskStatus === 'FAILED') {
-      statusText = tTasks('thinking.execution_failed');
+      statusText = t('tasks:thinking.execution_failed');
     } else if (taskStatus === 'CANCELLED') {
-      statusText = tTasks('thinking.execution_cancelled');
+      statusText = t('tasks:thinking.execution_cancelled');
     }
 
     const toolSummary = formatToolSummary(toolCounts);
@@ -93,9 +92,9 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
       return formatCollapsedTitle();
     }
     if (isCompleted) {
-      return tTasks('thinking.execution_completed');
+      return t('tasks:thinking.execution_completed');
     }
-    return tChat('messages.thinking') || 'Thinking';
+    return t('chat:messages.thinking') || 'Thinking';
   };
 
   // Render text content with tool_call parsing
@@ -133,8 +132,8 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
                 className="flex items-center gap-1 text-blue-400 hover:text-blue-500 hover:font-semibold transition-colors text-xs"
               >
                 {isExpanded
-                  ? tChat('thinking.collapse') || 'Collapse'
-                  : tChat('thinking.expand') || 'Expand'}
+                  ? t('chat:thinking.collapse') || 'Collapse'
+                  : t('chat:thinking.expand') || 'Expand'}
               </button>
             </div>
           )}
@@ -180,7 +179,7 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
         )}
         <div>
           <div className="text-xs font-medium text-blue-400 mb-1">
-            {tChat('thinking.pre_tool_call') || 'Tool Call'}: {parsed.toolName}
+            {t('chat:thinking.pre_tool_call') || 'Tool Call'}: {parsed.toolName}
           </div>
           <div className="space-y-2">
             {Object.entries(parsed.args).map(([key, value]) => {
@@ -199,8 +198,8 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
                         className="text-xs text-blue-400 hover:text-blue-500 hover:font-semibold transition-colors"
                       >
                         {isExpanded
-                          ? tChat('thinking.collapse') || 'Collapse'
-                          : tChat('thinking.expand') || 'Expand'}
+                          ? t('chat:thinking.collapse') || 'Collapse'
+                          : t('chat:thinking.expand') || 'Expand'}
                       </button>
                     )}
                   </div>
@@ -292,7 +291,7 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
       return (
         <div>
           <div className="text-xs font-medium text-purple-400 mb-1">
-            📋 {tChat('thinking.result_message') || 'Result Message'}
+            📋 {t('chat:thinking.result_message') || 'Result Message'}
           </div>
           <div className="space-y-1 text-xs text-text-tertiary">
             {details.subtype && <div>Subtype: {details.subtype}</div>}
@@ -391,7 +390,7 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
                   <div className="flex-1 min-w-0">
                     {/* Title with color coding */}
                     <div className={`mb-0.5 font-medium text-xs ${stepConfig.titleClass}`}>
-                      {getThinkingText(item.title, tChat)}
+                      {getThinkingText(item.title, t)}
                     </div>
 
                     {/* Legacy fields for backward compatibility */}
@@ -400,18 +399,18 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
                         {item.action && (
                           <div className="mb-1 text-xs text-text-secondary">
                             <span className="font-medium">
-                              {tChat('messages.action') || 'Action'}:{' '}
+                              {t('chat:messages.action') || 'Action'}:{' '}
                             </span>
-                            {getThinkingText(item.action, tChat)}
+                            {getThinkingText(item.action, t)}
                           </div>
                         )}
                         {item.result && (
                           <div className="mb-1 text-xs text-text-tertiary">
                             <span className="font-medium">
-                              {tChat('messages.result') || 'Result'}:{' '}
+                              {t('chat:messages.result') || 'Result'}:{' '}
                             </span>
                             {renderTextContent(
-                              getThinkingText(item.result, tChat),
+                              getThinkingText(item.result, t),
                               `item-${index}-legacy-result`
                             )}
                           </div>
@@ -419,10 +418,10 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
                         {item.reasoning && (
                           <div className="mb-1 text-xs text-text-tertiary">
                             <span className="font-medium">
-                              {tChat('messages.reasoning') || 'Reasoning'}:{' '}
+                              {t('chat:messages.reasoning') || 'Reasoning'}:{' '}
                             </span>
                             {renderTextContent(
-                              getThinkingText(item.reasoning, tChat),
+                              getThinkingText(item.reasoning, t),
                               `item-${index}-legacy-reasoning`
                             )}
                           </div>
@@ -438,7 +437,7 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
                       {confidenceText && (
                         <div className="text-xs text-text-tertiary">
                           <span className="font-medium">
-                            {tChat('messages.confidence') || 'Confidence'}:{' '}
+                            {t('chat:messages.confidence') || 'Confidence'}:{' '}
                           </span>
                           {confidenceText}
                         </div>
@@ -447,7 +446,7 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
                         item.next_action !== 'continue' &&
                         item.next_action !== 'thinking.continue' && (
                           <div className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-blue-500/10 text-blue-400 text-xs border border-blue-500/20">
-                            {getThinkingText(item.next_action, tChat)}
+                            {getThinkingText(item.next_action, t)}
                           </div>
                         )}
                     </div>

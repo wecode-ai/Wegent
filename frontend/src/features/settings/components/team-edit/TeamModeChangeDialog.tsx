@@ -29,21 +29,21 @@ export default function TeamModeChangeDialog({
   onConfirm,
   onCancel,
 }: TeamModeChangeDialogProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{t('team.mode_change_confirm_title')}</DialogTitle>
-          <DialogDescription>{t('team.mode_change_confirm_message')}</DialogDescription>
+          <DialogTitle>{t('common:team.mode_change_confirm_title')}</DialogTitle>
+          <DialogDescription>{t('common:team.mode_change_confirm_message')}</DialogDescription>
         </DialogHeader>
         <DialogFooter>
           <Button variant="secondary" onClick={onCancel}>
-            {t('common.cancel')}
+            {t('common:common.cancel')}
           </Button>
           <Button variant="default" className="bg-primary hover:bg-primary/90" onClick={onConfirm}>
-            {t('common.confirm')}
+            {t('common:common.confirm')}
           </Button>
         </DialogFooter>
       </DialogContent>

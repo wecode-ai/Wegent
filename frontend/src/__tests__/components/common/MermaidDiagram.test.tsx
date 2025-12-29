@@ -17,14 +17,14 @@ jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
     t: (key: string) => {
       const translations: Record<string, string> = {
-        'mermaid.renderError': 'Mermaid render failed',
-        'mermaid.copied': 'Copied',
-        'mermaid.copyCode': 'Copy Code',
-        'mermaid.zoomIn': 'Zoom In',
-        'mermaid.zoomOut': 'Zoom Out',
-        'mermaid.resetZoom': 'Reset Zoom',
-        'mermaid.exportPng': 'Export PNG',
-        'mermaid.exportSuccess': 'Exported',
+        'chat:mermaid.renderError': 'Mermaid render failed',
+        'chat:mermaid.copied': 'Copied',
+        'chat:mermaid.copyCode': 'Copy Code',
+        'chat:mermaid.zoomIn': 'Zoom In',
+        'chat:mermaid.zoomOut': 'Zoom Out',
+        'chat:mermaid.resetZoom': 'Reset Zoom',
+        'chat:mermaid.exportPng': 'Export PNG',
+        'chat:mermaid.exportSuccess': 'Exported',
         'knowledge:diagram': 'Diagram',
       };
       return translations[key] || key;

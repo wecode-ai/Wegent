@@ -40,7 +40,7 @@ export default function SearchDialog({
   shortcutDisplayText = '',
   pageType = 'chat',
 }: SearchDialogProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const router = useRouter();
   const { clearAllStreams } = useChatStreamContext();
   const { tasks, setSelectedTask } = useTaskContext();
@@ -194,7 +194,7 @@ export default function SearchDialog({
     >
       <DialogContent className="sm:max-w-[678px] max-h-[440px] flex flex-col">
         <DialogHeader>
-          <DialogTitle>{t('tasks.search_placeholder_chat')}</DialogTitle>
+          <DialogTitle>{t('common:tasks.search_placeholder_chat')}</DialogTitle>
         </DialogHeader>
         <div className="relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-text-muted" />
@@ -205,8 +205,10 @@ export default function SearchDialog({
             onChange={handleDialogSearchChange}
             placeholder={
               shortcutDisplayText
-                ? t('tasks.search_placeholder_with_shortcut', { shortcut: shortcutDisplayText })
-                : t('tasks.search_placeholder_chat')
+                ? t('common:tasks.search_placeholder_with_shortcut', {
+                    shortcut: shortcutDisplayText,
+                  })
+                : t('common:tasks.search_placeholder_chat')
             }
             className="w-full pl-10 pr-10 py-2 bg-surface border border-border rounded-lg text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent"
           />
@@ -229,17 +231,19 @@ export default function SearchDialog({
             <Plus className="w-3.5 h-3.5 text-primary" />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-sm text-primary font-medium">{t('tasks.new_conversation')}</p>
+            <p className="text-sm text-primary font-medium">{t('common:tasks.new_conversation')}</p>
           </div>
         </div>
 
         {/* Search Results List or Recent Tasks */}
         <div className="flex-1 overflow-y-auto mt-3 -mx-6 px-6">
           {isDialogSearching ? (
-            <div className="text-center py-8 text-sm text-text-muted">{t('tasks.searching')}</div>
+            <div className="text-center py-8 text-sm text-text-muted">
+              {t('common:tasks.searching')}
+            </div>
           ) : dialogSearchTerm && dialogSearchResults.length === 0 ? (
             <div className="text-center py-8 text-sm text-text-muted">
-              {t('tasks.no_search_results')}
+              {t('common:tasks.no_search_results')}
             </div>
           ) : dialogSearchTerm && dialogSearchResults.length > 0 ? (
             // Show search results when there's a search term
@@ -288,7 +292,9 @@ export default function SearchDialog({
               ))}
             </div>
           ) : !dialogSearchTerm && tasks.length === 0 ? (
-            <div className="text-center py-8 text-sm text-text-muted">{t('tasks.no_tasks')}</div>
+            <div className="text-center py-8 text-sm text-text-muted">
+              {t('common:tasks.no_tasks')}
+            </div>
           ) : null}
         </div>
       </DialogContent>

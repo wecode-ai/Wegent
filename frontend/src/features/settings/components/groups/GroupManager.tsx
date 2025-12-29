@@ -23,7 +23,7 @@ interface GroupManagerProps {
 }
 
 export function GroupManager({ onGroupsChange }: GroupManagerProps) {
-  const { t } = useTranslation('groups');
+  const { t } = useTranslation();
   const { user } = useUser();
   const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(true);
@@ -88,22 +88,22 @@ export function GroupManager({ onGroupsChange }: GroupManagerProps) {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-semibold text-text-primary">{t('groups.title')}</h2>
-          <p className="text-sm text-text-secondary mt-1">{t('groupManager.subtitle')}</p>
+          <h2 className="text-xl font-semibold text-text-primary">{t('groups:groups.title')}</h2>
+          <p className="text-sm text-text-secondary mt-1">{t('groups:groupManager.subtitle')}</p>
         </div>
         <Button onClick={handleCreateClick}>
           <PlusIcon className="w-4 h-4 mr-2" />
-          {t('groups.create')}
+          {t('groups:groups.create')}
         </Button>
       </div>
 
       {groups.length === 0 ? (
         <div className="text-center py-12 bg-surface rounded-lg border border-border">
           <UsersIcon className="w-12 h-12 mx-auto text-text-muted mb-4" />
-          <p className="text-text-secondary">{t('groupManager.noGroups')}</p>
+          <p className="text-text-secondary">{t('groups:groupManager.noGroups')}</p>
           <Button variant="outline" className="mt-4" onClick={handleCreateClick}>
             <PlusIcon className="w-4 h-4 mr-2" />
-            {t('groups.create')}
+            {t('groups:groups.create')}
           </Button>
         </div>
       ) : (
@@ -113,19 +113,19 @@ export function GroupManager({ onGroupsChange }: GroupManagerProps) {
               <thead className="bg-muted">
                 <tr>
                   <th className="px-4 py-3 text-left text-sm font-medium text-text-primary">
-                    {t('groups.name')}
+                    {t('groups:groups.name')}
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-medium text-text-primary">
-                    {t('groups.displayName')}
+                    {t('groups:groups.displayName')}
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-medium text-text-primary">
-                    {t('groups.visibility')}
+                    {t('groups:groups.visibility')}
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-medium text-text-primary">
-                    {t('groups.myRole')}
+                    {t('groups:groups.myRole')}
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-medium text-text-primary">
-                    {t('groups.members')}
+                    {t('groups:groups.members')}
                   </th>
                   <th className="px-4 py-3 text-right text-sm font-medium text-text-primary">
                     {t('common:actions.edit')}
@@ -143,12 +143,14 @@ export function GroupManager({ onGroupsChange }: GroupManagerProps) {
                     </td>
                     <td className="px-4 py-3 text-sm">
                       <Badge variant={group.visibility === 'public' ? 'success' : 'secondary'}>
-                        {t(`groups.${group.visibility}`)}
+                        {t(`groups:groups.${group.visibility}`)}
                       </Badge>
                     </td>
                     <td className="px-4 py-3 text-sm">
                       {group.my_role ? (
-                        <Badge variant="secondary">{t(`groups.roles.${group.my_role}`)}</Badge>
+                        <Badge variant="secondary">
+                          {t(`groups:groups.roles.${group.my_role}`)}
+                        </Badge>
                       ) : (
                         '-'
                       )}
@@ -163,7 +165,7 @@ export function GroupManager({ onGroupsChange }: GroupManagerProps) {
                             variant="ghost"
                             size="icon"
                             onClick={() => handleEditClick(group)}
-                            title={t('groupManager.editGroup')}
+                            title={t('groups:groupManager.editGroup')}
                           >
                             <PencilIcon className="w-4 h-4" />
                           </Button>
@@ -173,7 +175,7 @@ export function GroupManager({ onGroupsChange }: GroupManagerProps) {
                             variant="ghost"
                             size="icon"
                             onClick={() => handleMembersClick(group)}
-                            title={t('groupManager.manageMembers')}
+                            title={t('groups:groupManager.manageMembers')}
                           >
                             <UsersIcon className="w-4 h-4" />
                           </Button>
@@ -183,7 +185,7 @@ export function GroupManager({ onGroupsChange }: GroupManagerProps) {
                             variant="ghost"
                             size="icon"
                             onClick={() => handleDeleteClick(group)}
-                            title={t('groupManager.deleteGroup')}
+                            title={t('groups:groupManager.deleteGroup')}
                           >
                             <TrashIcon className="w-4 h-4 text-error" />
                           </Button>

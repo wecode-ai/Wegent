@@ -49,7 +49,7 @@ export default function ChatArea({
   onShareButtonRender,
   onRefreshTeams,
 }: ChatAreaProps) {
-  const { t } = useTranslation('chat');
+  const { t } = useTranslation();
   const router = useRouter();
 
   // Task context
@@ -306,10 +306,10 @@ export default function ChatArea({
               </div>
             </div>
             <h1 className="text-2xl font-semibold text-center mb-3 text-text-primary">
-              {t('tasks.access_denied_title')}
+              {t('tasks:access_denied_title')}
             </h1>
             <p className="text-center text-text-muted mb-8 leading-relaxed">
-              {t('tasks.access_denied_description')}
+              {t('tasks:access_denied_description')}
             </p>
             <div className="flex justify-center">
               <Button
@@ -318,7 +318,7 @@ export default function ChatArea({
                 size="default"
                 className="min-w-[160px]"
               >
-                {t('tasks.access_denied_go_home')}
+                {t('tasks:access_denied_go_home')}
               </Button>
             </div>
           </div>

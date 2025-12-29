@@ -39,7 +39,7 @@ export default function BranchSelector({
   taskDetail,
   compact = false,
 }: BranchSelectorProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const { toast } = useToast();
   const isMobile = useIsMobile();
   const [branches, setBranches] = useState<GitBranch[]>([]);
@@ -77,10 +77,10 @@ export default function BranchSelector({
       })
       .catch(() => {
         if (!ignore) {
-          setError(t('branches.load_failed'));
+          setError(t('common:branches.load_failed'));
           toast({
             variant: 'destructive',
-            title: t('branches.load_failed'),
+            title: t('common:branches.load_failed'),
           });
         }
       })
@@ -139,7 +139,7 @@ export default function BranchSelector({
         <span>
           {branch.name}
           {branch.default && (
-            <span className="ml-2 text-green-400 text-[10px]">{t('branches.default')}</span>
+            <span className="ml-2 text-green-400 text-[10px]">{t('common:branches.default')}</span>
           )}
         </span>
       ),
@@ -162,8 +162,8 @@ export default function BranchSelector({
   // In compact mode, show selected branch name in tooltip
   const tooltipContent =
     compact && selectedBranch
-      ? `${t('repos.branch_tooltip', '选择分支')}: ${selectedBranch.name}${selectedBranch.default ? ' (default)' : ''}`
-      : t('repos.branch_tooltip', '选择分支');
+      ? `${t('common:repos.branch_tooltip', '选择分支')}: ${selectedBranch.name}${selectedBranch.default ? ' (default)' : ''}`
+      : t('common:repos.branch_tooltip', '选择分支');
 
   // In compact mode, only show the icon button
   if (compact) {
@@ -204,13 +204,15 @@ export default function BranchSelector({
             value={selectedBranch?.name}
             onValueChange={handleChange}
             disabled={disabled || showError || showNoBranch || showLoading}
-            placeholder={t('branches.select_branch')}
-            searchPlaceholder={t('branches.search_branch')}
+            placeholder={t('common:branches.select_branch')}
+            searchPlaceholder={t('common:branches.search_branch')}
             items={selectItems}
             loading={showLoading}
             error={showError ? error : null}
-            emptyText={showNoBranch ? t('branches.no_branch') : t('branches.select_branch')}
-            noMatchText={t('branches.no_match')}
+            emptyText={
+              showNoBranch ? t('common:branches.no_branch') : t('common:branches.select_branch')
+            }
+            noMatchText={t('common:branches.no_match')}
             contentClassName="max-w-[260px]"
           />
         </div>
@@ -255,13 +257,15 @@ export default function BranchSelector({
           value={selectedBranch?.name}
           onValueChange={handleChange}
           disabled={disabled || showError || showNoBranch || showLoading}
-          placeholder={t('branches.select_branch')}
-          searchPlaceholder={t('branches.search_branch')}
+          placeholder={t('common:branches.select_branch')}
+          searchPlaceholder={t('common:branches.search_branch')}
           items={selectItems}
           loading={showLoading}
           error={showError ? error : null}
-          emptyText={showNoBranch ? t('branches.no_branch') : t('branches.select_branch')}
-          noMatchText={t('branches.no_match')}
+          emptyText={
+            showNoBranch ? t('common:branches.no_branch') : t('common:branches.select_branch')
+          }
+          noMatchText={t('common:branches.no_match')}
           triggerClassName="w-full border-0 shadow-none h-auto py-0 px-0 hover:bg-transparent focus:ring-0"
           contentClassName="max-w-[260px]"
           renderTriggerValue={item => {

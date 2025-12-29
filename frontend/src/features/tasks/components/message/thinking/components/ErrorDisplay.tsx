@@ -15,7 +15,7 @@ const ErrorDisplay = memo(function ErrorDisplay({
   errorMessage,
   executionType,
 }: ErrorDisplayProps) {
-  const { t } = useTranslation('chat');
+  const { t } = useTranslation();
 
   return (
     <div>
@@ -23,7 +23,7 @@ const ErrorDisplay = memo(function ErrorDisplay({
         {errorMessage && (
           <div className="text-xs">
             <span className="font-medium text-red-300">
-              {t('thinking.error_message') || 'Error Message'}:
+              {t('chat:thinking.error_message') || 'Error Message'}:
             </span>
             <pre className="mt-1 text-text-tertiary overflow-x-auto whitespace-pre-wrap break-words">
               {errorMessage}
@@ -33,7 +33,7 @@ const ErrorDisplay = memo(function ErrorDisplay({
         {executionType && (
           <div className="text-xs">
             <span className="font-medium text-red-300">
-              {t('thinking.execution_type') || 'Execution Type'}:
+              {t('chat:thinking.execution_type') || 'Execution Type'}:
             </span>
             <span className="ml-2 text-text-tertiary">{executionType}</span>
           </div>

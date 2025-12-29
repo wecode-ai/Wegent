@@ -23,7 +23,7 @@ import { userApis } from '@/apis/user';
 import type { UserPreferences } from '@/types/api';
 
 export default function NotificationSettings() {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const { toast } = useToast();
   const router = useRouter();
   const { user, refresh } = useUser();
@@ -53,7 +53,7 @@ export default function NotificationSettings() {
   const handleToggle = async () => {
     if (!supported) {
       toast({
-        title: t('notifications.not_supported'),
+        title: t('common:notifications.not_supported'),
       });
       return;
     }
@@ -63,19 +63,19 @@ export default function NotificationSettings() {
       if (granted) {
         setEnabled(true);
         toast({
-          title: t('notifications.enable_success'),
+          title: t('common:notifications.enable_success'),
         });
       } else {
         toast({
           variant: 'destructive',
-          title: t('notifications.permission_denied'),
+          title: t('common:notifications.permission_denied'),
         });
       }
     } else {
       setNotificationEnabled(false);
       setEnabled(false);
       toast({
-        title: t('notifications.disable_success'),
+        title: t('common:notifications.disable_success'),
       });
     }
   };
@@ -88,13 +88,13 @@ export default function NotificationSettings() {
       await userApis.updateUser({ preferences });
       await refresh();
       toast({
-        title: t('send_key.save_success'),
+        title: t('common:send_key.save_success'),
       });
     } catch (error) {
       console.error('Failed to save send key preference:', error);
       toast({
         variant: 'destructive',
-        title: t('send_key.save_failed'),
+        title: t('common:send_key.save_failed'),
       });
       // Revert to previous value
       setSendKey(user?.preferences?.send_key || 'enter');
@@ -114,13 +114,13 @@ export default function NotificationSettings() {
       await userApis.updateUser({ preferences });
       await refresh();
       toast({
-        title: t('search_key.save_success'),
+        title: t('common:search_key.save_success'),
       });
     } catch (error) {
       console.error('Failed to save search key preference:', error);
       toast({
         variant: 'destructive',
-        title: t('search_key.save_failed'),
+        title: t('common:search_key.save_failed'),
       });
       // Revert to previous value
       setSearchKey(user?.preferences?.search_key || 'cmd_k');
@@ -140,15 +140,19 @@ export default function NotificationSettings() {
     <div className="space-y-4">
       <div>
         <h2 className="text-xl font-semibold text-text-primary mb-2">
-          {t('settings.sections.general')}
+          {t('common:settings.sections.general')}
         </h2>
-        <p className="text-sm text-text-muted">{t('notifications.enable_description')}</p>
+        <p className="text-sm text-text-muted">{t('common:notifications.enable_description')}</p>
       </div>
 
       <div className="flex items-center justify-between p-4 bg-base border border-border rounded-lg">
         <div className="flex-1">
-          <h3 className="text-sm font-medium text-text-primary">{t('notifications.enable')}</h3>
-          <p className="text-xs text-text-muted mt-1">{t('notifications.enable_description')}</p>
+          <h3 className="text-sm font-medium text-text-primary">
+            {t('common:notifications.enable')}
+          </h3>
+          <p className="text-xs text-text-muted mt-1">
+            {t('common:notifications.enable_description')}
+          </p>
         </div>
         <Switch checked={enabled} onCheckedChange={handleToggle} disabled={!supported} />
       </div>
@@ -156,7 +160,7 @@ export default function NotificationSettings() {
       {!supported && (
         <div className="p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 rounded-lg">
           <p className="text-sm text-yellow-800 dark:text-yellow-200">
-            {t('notifications.not_supported')}
+            {t('common:notifications.not_supported')}
           </p>
         </div>
       )}
@@ -164,8 +168,8 @@ export default function NotificationSettings() {
       {/* Send Key Shortcut Setting */}
       <div className="p-4 bg-base border border-border rounded-lg">
         <div className="mb-3">
-          <h3 className="text-sm font-medium text-text-primary">{t('send_key.title')}</h3>
-          <p className="text-xs text-text-muted mt-1">{t('send_key.description')}</p>
+          <h3 className="text-sm font-medium text-text-primary">{t('common:send_key.title')}</h3>
+          <p className="text-xs text-text-muted mt-1">{t('common:send_key.description')}</p>
         </div>
         <RadioGroup
           value={sendKey}
@@ -176,13 +180,13 @@ export default function NotificationSettings() {
           <div className="flex items-center space-x-2">
             <RadioGroupItem value="enter" id="send-key-enter" />
             <Label htmlFor="send-key-enter" className="text-sm cursor-pointer">
-              {t('send_key.option_enter')}
+              {t('common:send_key.option_enter')}
             </Label>
           </div>
           <div className="flex items-center space-x-2">
             <RadioGroupItem value="cmd_enter" id="send-key-cmd-enter" />
             <Label htmlFor="send-key-cmd-enter" className="text-sm cursor-pointer">
-              {t('send_key.option_cmd_enter')}
+              {t('common:send_key.option_cmd_enter')}
             </Label>
           </div>
         </RadioGroup>
@@ -191,8 +195,8 @@ export default function NotificationSettings() {
       {/* Search Key Shortcut Setting */}
       <div className="p-4 bg-base border border-border rounded-lg">
         <div className="mb-3">
-          <h3 className="text-sm font-medium text-text-primary">{t('search_key.title')}</h3>
-          <p className="text-xs text-text-muted mt-1">{t('search_key.description')}</p>
+          <h3 className="text-sm font-medium text-text-primary">{t('common:search_key.title')}</h3>
+          <p className="text-xs text-text-muted mt-1">{t('common:search_key.description')}</p>
         </div>
         <RadioGroup
           value={searchKey}
@@ -203,19 +207,19 @@ export default function NotificationSettings() {
           <div className="flex items-center space-x-2">
             <RadioGroupItem value="cmd_k" id="search-key-cmd-k" />
             <Label htmlFor="search-key-cmd-k" className="text-sm cursor-pointer">
-              {t('search_key.option_cmd_k')}
+              {t('common:search_key.option_cmd_k')}
             </Label>
           </div>
           <div className="flex items-center space-x-2">
             <RadioGroupItem value="cmd_f" id="search-key-cmd-f" />
             <Label htmlFor="search-key-cmd-f" className="text-sm cursor-pointer">
-              {t('search_key.option_cmd_f')}
+              {t('common:search_key.option_cmd_f')}
             </Label>
           </div>
           <div className="flex items-center space-x-2">
             <RadioGroupItem value="disabled" id="search-key-disabled" />
             <Label htmlFor="search-key-disabled" className="text-sm cursor-pointer">
-              {t('search_key.option_disabled')}
+              {t('common:search_key.option_disabled')}
             </Label>
           </div>
         </RadioGroup>
@@ -224,11 +228,13 @@ export default function NotificationSettings() {
       {/* Restart Onboarding Button */}
       <div className="flex items-center justify-between p-4 bg-base border border-border rounded-lg">
         <div className="flex-1">
-          <h3 className="text-sm font-medium text-text-primary">{t('onboarding.restart_tour')}</h3>
-          <p className="text-xs text-text-muted mt-1">{t('onboarding.step1_description')}</p>
+          <h3 className="text-sm font-medium text-text-primary">
+            {t('common:onboarding.restart_tour')}
+          </h3>
+          <p className="text-xs text-text-muted mt-1">{t('common:onboarding.step1_description')}</p>
         </div>
         <Button onClick={handleRestartOnboarding} variant="default" size="default">
-          {t('onboarding.restart_tour')}
+          {t('common:onboarding.restart_tour')}
         </Button>
       </div>
     </div>

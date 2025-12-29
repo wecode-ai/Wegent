@@ -8,7 +8,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useUser } from '@/features/common/UserContext';
-import { useTranslation } from '@/hooks/useTranslation';
+import { useTranslation, languageNames } from '@/hooks/useTranslation';
 import { DocsButton } from '@/features/layout/DocsButton';
 import { FeedbackButton } from '@/features/layout/FeedbackButton';
 import { ThemeToggle } from '@/features/theme/ThemeToggle';
@@ -19,6 +19,7 @@ import {
   ArrowRightOnRectangleIcon,
   ChevronUpIcon,
   ShieldCheckIcon,
+  LanguageIcon,
 } from '@heroicons/react/24/outline';
 
 interface UserFloatingMenuProps {
@@ -26,15 +27,25 @@ interface UserFloatingMenuProps {
 }
 
 export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
-  const { t } = useTranslation('common');
+  const { t, changeLanguage, getCurrentLanguage, getSupportedLanguages } = useTranslation();
   const router = useRouter();
   const { user, logout } = useUser();
   const [isExpanded, setIsExpanded] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  const userDisplayName = user?.user_name || t('user.default_name');
+  const userDisplayName = user?.user_name || t('common:user.default_name');
   const isAdmin = user?.role === 'admin';
+  const currentLanguage = getCurrentLanguage();
+  const supportedLanguages = getSupportedLanguages();
+
+  const handleLanguageClick = () => {
+    const currentIndex = supportedLanguages.indexOf(currentLanguage);
+    const nextIndex = (currentIndex + 1) % supportedLanguages.length;
+    const nextLang = supportedLanguages[nextIndex];
+    changeLanguage(nextLang);
+    setIsExpanded(false);
+  };
 
   const handleMouseEnter = () => {
     if (timeoutRef.current) {
@@ -120,7 +131,7 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
             className="w-full flex items-center gap-3 px-3 py-2 text-sm text-text-primary hover:bg-muted transition-colors duration-150"
           >
             <Cog6ToothIcon className="w-4 h-4 text-text-muted" />
-            {t('navigation.settings')}
+            {t('common:navigation.settings')}
           </button>
 
           {/* Docs */}
@@ -140,6 +151,16 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
             onToggle={() => setIsExpanded(false)}
           />
 
+          {/* Language Switcher */}
+          <button
+            type="button"
+            onClick={handleLanguageClick}
+            className="w-full flex items-center gap-3 px-3 py-2 text-sm text-text-primary hover:bg-muted transition-colors duration-150"
+          >
+            <LanguageIcon className="w-4 h-4 text-text-muted" />
+            {languageNames[currentLanguage] || currentLanguage}
+          </button>
+
           {/* Admin link */}
           {isAdmin && (
             <>
@@ -150,7 +171,7 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
                   className="w-full flex items-center gap-3 px-3 py-2 text-sm text-text-primary hover:bg-muted transition-colors duration-150"
                 >
                   <ShieldCheckIcon className="w-4 h-4 text-primary" />
-                  {t('navigation.admin', 'Admin')}
+                  {t('common:navigation.admin', 'Admin')}
                 </button>
               </Link>
             </>
@@ -164,7 +185,7 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
             className="w-full flex items-center gap-3 px-3 py-2 text-sm text-text-primary hover:bg-muted transition-colors duration-150"
           >
             <ArrowRightOnRectangleIcon className="w-4 h-4 text-text-muted" />
-            {t('user.logout')}
+            {t('common:user.logout')}
           </button>
         </div>
       </div>

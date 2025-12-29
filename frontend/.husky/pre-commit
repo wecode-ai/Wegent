@@ -98,6 +98,22 @@ if [ -n "$FRONTEND_FILES" ]; then
 
   # Run lint-staged
   npx lint-staged
+
+  # Run Translation Checks
+  # Run Translation Checks
+  echo "🌍 Checking translations..."
+  # We use the script relative to project root
+  TRANSLATION_CHECK_SCRIPT="frontend/scripts/find-missing-translations.js"
+  
+  # Ensure we run from project root to resolve paths correctly
+  cd "$PROJECT_ROOT"
+  
+  if node "$TRANSLATION_CHECK_SCRIPT"; then
+     : # Success
+  else
+     echo "❌ Translation check failed. Please resolve before committing."
+     exit 1
+  fi
 fi
 
 # =============================================================================

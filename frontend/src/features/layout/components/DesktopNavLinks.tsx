@@ -17,7 +17,7 @@ interface DesktopNavLinksProps {
 const isWikiEnabled = process.env.NEXT_PUBLIC_ENABLE_WIKI !== 'false';
 
 export function DesktopNavLinks({ activePage }: DesktopNavLinksProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
@@ -38,7 +38,7 @@ export function DesktopNavLinks({ activePage }: DesktopNavLinksProps) {
     () => [
       {
         key: 'chat' as const,
-        label: t('navigation.chat'),
+        label: t('common:navigation.chat'),
         onClick: () => {
           startTransition(() => {
             router.push(paths.chat.getHref());
@@ -47,7 +47,7 @@ export function DesktopNavLinks({ activePage }: DesktopNavLinksProps) {
       },
       {
         key: 'code' as const,
-        label: t('navigation.code'),
+        label: t('common:navigation.code'),
         onClick: () => {
           startTransition(() => {
             router.push(paths.code.getHref());
@@ -58,7 +58,7 @@ export function DesktopNavLinks({ activePage }: DesktopNavLinksProps) {
         ? [
             {
               key: 'wiki' as const,
-              label: t('navigation.wiki'),
+              label: t('common:navigation.wiki'),
               onClick: () => {
                 startTransition(() => {
                   router.push(paths.wiki.getHref());

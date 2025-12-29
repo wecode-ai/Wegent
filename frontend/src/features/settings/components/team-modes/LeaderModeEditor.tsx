@@ -58,7 +58,7 @@ export default function LeaderModeEditor({
   onOpenPromptDrawer,
   onLeaderChange,
 }: LeaderModeEditorProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
 
   const configuredPromptBadgeStyle = useMemo(() => getPromptBadgeStyle('configured'), []);
 
@@ -68,7 +68,7 @@ export default function LeaderModeEditor({
       <div className="flex flex-col mb-4">
         <div className="flex items-center mb-1">
           <label className="block text-lg font-semibold text-text-primary">
-            {t('team.leader')} <span className="text-red-400">*</span>
+            {t('common:team.leader')} <span className="text-red-400">*</span>
           </label>
         </div>
         <Select
@@ -107,7 +107,7 @@ export default function LeaderModeEditor({
                 </div>
               </div>
             ) : (
-              <SelectValue placeholder={t('team.select_leader')} />
+              <SelectValue placeholder={t('common:team.select_leader')} />
             )}
           </SelectTrigger>
           <SelectContent>
@@ -121,7 +121,7 @@ export default function LeaderModeEditor({
                   }}
                 >
                   <Plus className="mr-2 h-4 w-4" />
-                  {t('bots.new_bot')}
+                  {t('common:bots.new_bot')}
                 </Button>
               </div>
             ) : (
@@ -149,11 +149,11 @@ export default function LeaderModeEditor({
                               variant="default"
                               style={configuredPromptBadgeStyle}
                             >
-                              {t('team.prompts_badge')}
+                              {t('common:team.prompts_badge')}
                             </Tag>
                           </TooltipTrigger>
                           <TooltipContent>
-                            <p>{t('team.prompts_badge_tooltip')}</p>
+                            <p>{t('common:team.prompts_badge_tooltip')}</p>
                           </TooltipContent>
                         </Tooltip>
                       )}

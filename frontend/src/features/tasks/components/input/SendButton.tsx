@@ -28,7 +28,7 @@ export default function SendButton({
   isLoading = false,
   className = '',
 }: SendButtonProps) {
-  const { t } = useTranslation('chat');
+  const { t } = useTranslation();
   const { toast } = useToast();
   const { user, refresh } = useUser();
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -75,13 +75,13 @@ export default function SendButton({
         await userApis.updateUser({ preferences });
         await refresh();
         toast({
-          title: t('send_button.preference_saved'),
+          title: t('chat:send_button.preference_saved'),
         });
       } catch (error) {
         console.error('Failed to save send key preference:', error);
         toast({
           variant: 'destructive',
-          title: t('send_button.preference_save_failed'),
+          title: t('chat:send_button.preference_save_failed'),
         });
       } finally {
         setIsSaving(false);
@@ -130,9 +130,11 @@ export default function SendButton({
   const getOptionLabel = useCallback(
     (option: SendKeyOption): string => {
       if (option === 'enter') {
-        return t('send_button.option_enter');
+        return t('chat:send_button.option_enter');
       }
-      return isMac ? t('send_button.option_cmd_enter_mac') : t('send_button.option_cmd_enter_win');
+      return isMac
+        ? t('chat:send_button.option_cmd_enter_mac')
+        : t('chat:send_button.option_cmd_enter_win');
     },
     [isMac, t]
   );
@@ -179,7 +181,7 @@ export default function SendButton({
                 : 'text-text-muted hover:text-text-primary hover:bg-hover'
             }
           `}
-          aria-label={t('send_button.change_shortcut')}
+          aria-label={t('chat:send_button.change_shortcut')}
           aria-expanded={isDropdownOpen}
           aria-haspopup="true"
         >
@@ -197,7 +199,7 @@ export default function SendButton({
         >
           <div className="p-1">
             <div className="px-2 py-1.5 text-xs font-medium text-text-muted">
-              {t('send_button.shortcut_title')}
+              {t('chat:send_button.shortcut_title')}
             </div>
             {(['enter', 'cmd_enter'] as SendKeyOption[]).map(option => (
               <button

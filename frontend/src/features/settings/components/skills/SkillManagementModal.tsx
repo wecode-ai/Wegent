@@ -36,7 +36,7 @@ export default function SkillManagementModal({
   onClose,
   onSkillsChange,
 }: SkillManagementModalProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const { toast } = useToast();
   const [skills, setSkills] = useState<Skill[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -54,8 +54,8 @@ export default function SkillManagementModal({
     } catch (error) {
       toast({
         variant: 'destructive',
-        title: t('skills.failed_load'),
-        description: error instanceof Error ? error.message : t('common.unknown_error'),
+        title: t('common:skills.failed_load'),
+        description: error instanceof Error ? error.message : t('common:common.unknown_error'),
       });
     } finally {
       setIsLoading(false);
@@ -91,8 +91,8 @@ export default function SkillManagementModal({
       const skillId = parseInt(skillToDelete.metadata.labels?.id || '0');
       await deleteSkill(skillId);
       toast({
-        title: t('common.success'),
-        description: t('skills.success_delete', { skillName: skillToDelete.metadata.name }),
+        title: t('common:common.success'),
+        description: t('common:skills.success_delete', { skillName: skillToDelete.metadata.name }),
       });
       await loadSkills();
       onSkillsChange?.();
@@ -101,8 +101,8 @@ export default function SkillManagementModal({
     } catch (error) {
       toast({
         variant: 'destructive',
-        title: t('skills.failed_delete'),
-        description: error instanceof Error ? error.message : t('common.unknown_error'),
+        title: t('common:skills.failed_delete'),
+        description: error instanceof Error ? error.message : t('common:common.unknown_error'),
       });
     } finally {
       setIsDeleting(false);
@@ -114,14 +114,14 @@ export default function SkillManagementModal({
       const skillId = parseInt(skill.metadata.labels?.id || '0');
       await downloadSkill(skillId, skill.metadata.name);
       toast({
-        title: t('common.success'),
-        description: t('skills.success_download', { skillName: skill.metadata.name }),
+        title: t('common:common.success'),
+        description: t('common:skills.success_download', { skillName: skill.metadata.name }),
       });
     } catch (error) {
       toast({
         variant: 'destructive',
-        title: t('skills.failed_download'),
-        description: error instanceof Error ? error.message : t('common.unknown_error'),
+        title: t('common:skills.failed_download'),
+        description: error instanceof Error ? error.message : t('common:common.unknown_error'),
       });
     }
   };
@@ -140,19 +140,19 @@ export default function SkillManagementModal({
       <Dialog open={open} onOpenChange={onClose}>
         <DialogContent className="sm:max-w-[800px] max-h-[80vh] flex flex-col bg-surface">
           <DialogHeader>
-            <DialogTitle>{t('skills.manage_skills')}</DialogTitle>
-            <DialogDescription>{t('skills.manage_skills_description')}</DialogDescription>
+            <DialogTitle>{t('common:skills.manage_skills')}</DialogTitle>
+            <DialogDescription>{t('common:skills.manage_skills_description')}</DialogDescription>
           </DialogHeader>
 
           <div className="flex-1 overflow-y-auto py-4">
             {isLoading ? (
-              <LoadingState message={t('skills.loading')} />
+              <LoadingState message={t('common:skills.loading')} />
             ) : (
               <div className="space-y-4">
                 {/* Add Button */}
                 <div className="flex justify-end">
                   <UnifiedAddButton onClick={handleCreateSkill}>
-                    {t('skills.upload_skill')}
+                    {t('common:skills.upload_skill')}
                   </UnifiedAddButton>
                 </div>
 
@@ -161,12 +161,14 @@ export default function SkillManagementModal({
                   <Card className="p-8 text-center">
                     <PackageIcon className="w-12 h-12 mx-auto text-text-muted mb-3" />
                     <h3 className="text-base font-medium text-text-primary mb-2">
-                      {t('skills.no_skills')}
+                      {t('common:skills.no_skills')}
                     </h3>
                     <p className="text-sm text-text-muted mb-4">
-                      {t('skills.no_skills_description')}
+                      {t('common:skills.no_skills_description')}
                     </p>
-                    <Button onClick={handleCreateSkill}>{t('skills.upload_first_skill')}</Button>
+                    <Button onClick={handleCreateSkill}>
+                      {t('common:skills.upload_first_skill')}
+                    </Button>
                   </Card>
                 ) : (
                   <div className="space-y-3">
@@ -191,12 +193,12 @@ export default function SkillManagementModal({
                               <div className="flex flex-wrap gap-1.5 mt-2">
                                 {skill.spec.version && (
                                   <Tag variant="default">
-                                    {t('skills.version', { version: skill.spec.version })}
+                                    {t('common:skills.version', { version: skill.spec.version })}
                                   </Tag>
                                 )}
                                 {skill.spec.author && (
                                   <Tag variant="default">
-                                    {t('skills.author', { author: skill.spec.author })}
+                                    {t('common:skills.author', { author: skill.spec.author })}
                                   </Tag>
                                 )}
                                 {skill.spec.tags?.map(tag => (
@@ -238,8 +240,8 @@ export default function SkillManagementModal({
                                     }
                                   >
                                     {skill.status.state === 'Available'
-                                      ? t('skills.state_available')
-                                      : t('skills.state_unavailable')}
+                                      ? t('common:skills.state_available')
+                                      : t('common:skills.state_unavailable')}
                                   </span>
                                 )}
                               </div>
@@ -253,7 +255,7 @@ export default function SkillManagementModal({
                               size="icon"
                               className="h-8 w-8"
                               onClick={() => handleDownloadSkill(skill)}
-                              title={t('skills.download_skill')}
+                              title={t('common:skills.download_skill')}
                             >
                               <DownloadIcon className="w-4 h-4" />
                             </Button>
@@ -262,7 +264,7 @@ export default function SkillManagementModal({
                               size="icon"
                               className="h-8 w-8"
                               onClick={() => handleEditSkill(skill)}
-                              title={t('skills.update_skill')}
+                              title={t('common:skills.update_skill')}
                             >
                               <PencilIcon className="w-4 h-4" />
                             </Button>
@@ -271,7 +273,7 @@ export default function SkillManagementModal({
                               size="icon"
                               className="h-8 w-8 text-error hover:text-error hover:bg-error/10"
                               onClick={() => handleDeleteSkill(skill)}
-                              title={t('skills.delete_skill')}
+                              title={t('common:skills.delete_skill')}
                             >
                               <TrashIcon className="w-4 h-4" />
                             </Button>
@@ -287,7 +289,7 @@ export default function SkillManagementModal({
 
           <DialogFooter>
             <Button variant="outline" onClick={onClose}>
-              {t('actions.close')}
+              {t('common:actions.close')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -305,12 +307,14 @@ export default function SkillManagementModal({
       >
         <DialogContent className="bg-surface">
           <DialogHeader>
-            <DialogTitle>{t('skills.delete_confirm_title')}</DialogTitle>
+            <DialogTitle>{t('common:skills.delete_confirm_title')}</DialogTitle>
             <DialogDescription>
-              {t('skills.delete_confirm_message', { skillName: skillToDelete?.metadata.name })}
+              {t('common:skills.delete_confirm_message', {
+                skillName: skillToDelete?.metadata.name,
+              })}
               {skillToDelete && (
                 <div className="mt-3 p-3 bg-muted rounded-md text-sm">
-                  <strong>{t('skills.delete_note')}</strong>
+                  <strong>{t('common:skills.delete_note')}</strong>
                 </div>
               )}
             </DialogDescription>
@@ -321,7 +325,7 @@ export default function SkillManagementModal({
               onClick={() => setDeleteConfirmVisible(false)}
               disabled={isDeleting}
             >
-              {t('actions.cancel')}
+              {t('common:actions.cancel')}
             </Button>
             <Button variant="destructive" onClick={handleConfirmDelete} disabled={isDeleting}>
               {isDeleting ? (
@@ -346,10 +350,10 @@ export default function SkillManagementModal({
                       d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                     ></path>
                   </svg>
-                  {t('actions.deleting')}
+                  {t('common:actions.deleting')}
                 </div>
               ) : (
-                t('actions.delete')
+                t('common:actions.delete')
               )}
             </Button>
           </DialogFooter>

@@ -13,7 +13,7 @@ import type { ScrollToBottomProps } from '../types';
  * Floating button to scroll to bottom of content area
  */
 const ScrollToBottom = memo(function ScrollToBottom({ show, onClick }: ScrollToBottomProps) {
-  const { t } = useTranslation('chat');
+  const { t } = useTranslation();
 
   if (!show) return null;
 
@@ -21,10 +21,10 @@ const ScrollToBottom = memo(function ScrollToBottom({ show, onClick }: ScrollToB
     <button
       onClick={onClick}
       className="absolute bottom-2 right-2 flex items-center gap-1 text-xs text-blue-400 hover:text-blue-500 hover:font-semibold transition-colors"
-      title={t('thinking.scroll_to_bottom') || 'Scroll to bottom'}
+      title={t('chat:thinking.scroll_to_bottom') || 'Scroll to bottom'}
     >
       <ChevronsDown className="h-3 w-3" />
-      <span>{t('thinking.scroll_to_bottom') || 'Scroll to bottom'}</span>
+      <span>{t('chat:thinking.scroll_to_bottom') || 'Scroll to bottom'}</span>
     </button>
   );
 });

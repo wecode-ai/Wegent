@@ -43,7 +43,7 @@ import {
 import UnifiedAddButton from '@/components/common/UnifiedAddButton';
 
 const PublicModelList: React.FC = () => {
-  const { t } = useTranslation('admin');
+  const { t } = useTranslation();
   const { toast } = useToast();
   const [models, setModels] = useState<AdminPublicModel[]>([]);
   const [_total, setTotal] = useState(0);
@@ -81,7 +81,7 @@ const PublicModelList: React.FC = () => {
     } catch (_error) {
       toast({
         variant: 'destructive',
-        title: t('public_models.errors.load_failed'),
+        title: t('admin:public_models.errors.load_failed'),
       });
     } finally {
       setLoading(false);
@@ -94,19 +94,19 @@ const PublicModelList: React.FC = () => {
 
   const validateConfig = (value: string): Record<string, unknown> | null => {
     if (!value.trim()) {
-      setConfigError(t('public_models.errors.config_required'));
+      setConfigError(t('admin:public_models.errors.config_required'));
       return null;
     }
     try {
       const parsed = JSON.parse(value);
       if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-        setConfigError(t('public_models.errors.config_invalid_json'));
+        setConfigError(t('admin:public_models.errors.config_invalid_json'));
         return null;
       }
       setConfigError('');
       return parsed as Record<string, unknown>;
     } catch {
-      setConfigError(t('public_models.errors.config_invalid_json'));
+      setConfigError(t('admin:public_models.errors.config_invalid_json'));
       return null;
     }
   };
@@ -115,7 +115,7 @@ const PublicModelList: React.FC = () => {
     if (!formData.name.trim()) {
       toast({
         variant: 'destructive',
-        title: t('public_models.errors.name_required'),
+        title: t('admin:public_models.errors.name_required'),
       });
       return;
     }
@@ -124,7 +124,7 @@ const PublicModelList: React.FC = () => {
     if (!config) {
       toast({
         variant: 'destructive',
-        title: t('public_models.errors.config_invalid_json'),
+        title: t('admin:public_models.errors.config_invalid_json'),
       });
       return;
     }
@@ -137,14 +137,14 @@ const PublicModelList: React.FC = () => {
         json: config,
       };
       await adminApis.createPublicModel(createData);
-      toast({ title: t('public_models.success.created') });
+      toast({ title: t('admin:public_models.success.created') });
       setIsCreateDialogOpen(false);
       resetForm();
       fetchModels();
     } catch (error) {
       toast({
         variant: 'destructive',
-        title: t('public_models.errors.create_failed'),
+        title: t('admin:public_models.errors.create_failed'),
         description: (error as Error).message,
       });
     } finally {
@@ -159,7 +159,7 @@ const PublicModelList: React.FC = () => {
     if (!config) {
       toast({
         variant: 'destructive',
-        title: t('public_models.errors.config_invalid_json'),
+        title: t('admin:public_models.errors.config_invalid_json'),
       });
       return;
     }
@@ -179,14 +179,14 @@ const PublicModelList: React.FC = () => {
       }
 
       await adminApis.updatePublicModel(selectedModel.id, updateData);
-      toast({ title: t('public_models.success.updated') });
+      toast({ title: t('admin:public_models.success.updated') });
       setIsEditDialogOpen(false);
       resetForm();
       fetchModels();
     } catch (error) {
       toast({
         variant: 'destructive',
-        title: t('public_models.errors.update_failed'),
+        title: t('admin:public_models.errors.update_failed'),
         description: (error as Error).message,
       });
     } finally {
@@ -200,14 +200,14 @@ const PublicModelList: React.FC = () => {
     setSaving(true);
     try {
       await adminApis.deletePublicModel(selectedModel.id);
-      toast({ title: t('public_models.success.deleted') });
+      toast({ title: t('admin:public_models.success.deleted') });
       setIsDeleteDialogOpen(false);
       setSelectedModel(null);
       fetchModels();
     } catch (error) {
       toast({
         variant: 'destructive',
-        title: t('public_models.errors.delete_failed'),
+        title: t('admin:public_models.errors.delete_failed'),
         description: (error as Error).message,
       });
     } finally {
@@ -259,8 +259,10 @@ const PublicModelList: React.FC = () => {
     <div className="space-y-3">
       {/* Header */}
       <div>
-        <h2 className="text-xl font-semibold text-text-primary mb-1">{t('public_models.title')}</h2>
-        <p className="text-sm text-text-muted">{t('public_models.description')}</p>
+        <h2 className="text-xl font-semibold text-text-primary mb-1">
+          {t('admin:public_models.title')}
+        </h2>
+        <p className="text-sm text-text-muted">{t('admin:public_models.description')}</p>
       </div>
 
       {/* Content Container */}
@@ -276,7 +278,7 @@ const PublicModelList: React.FC = () => {
         {!loading && models.length === 0 && (
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <CpuChipIcon className="w-12 h-12 text-text-muted mb-4" />
-            <p className="text-text-muted">{t('public_models.no_models')}</p>
+            <p className="text-text-muted">{t('admin:public_models.no_models')}</p>
           </div>
         )}
 
@@ -298,22 +300,22 @@ const PublicModelList: React.FC = () => {
                         </h3>
                         <Tag variant="info">{getModelProvider(model.json)}</Tag>
                         {model.is_active ? (
-                          <Tag variant="success">{t('public_models.status.active')}</Tag>
+                          <Tag variant="success">{t('admin:public_models.status.active')}</Tag>
                         ) : (
-                          <Tag variant="error">{t('public_models.status.inactive')}</Tag>
+                          <Tag variant="error">{t('admin:public_models.status.inactive')}</Tag>
                         )}
                       </div>
                       <div className="flex items-center gap-2 mt-1 text-xs text-text-muted">
                         <span>
-                          {t('public_models.form.name')}: {model.name}
+                          {t('admin:public_models.form.name')}: {model.name}
                         </span>
                         <span>•</span>
                         <span>
-                          {t('public_models.model_id')}: {getModelId(model.json)}
+                          {t('admin:public_models.model_id')}: {getModelId(model.json)}
                         </span>
                         <span>•</span>
                         <span>
-                          {t('public_models.namespace_label')}: {model.namespace}
+                          {t('admin:public_models.namespace_label')}: {model.namespace}
                         </span>
                       </div>
                     </div>
@@ -324,7 +326,7 @@ const PublicModelList: React.FC = () => {
                       size="icon"
                       className="h-8 w-8"
                       onClick={() => openEditDialog(model)}
-                      title={t('public_models.edit_model')}
+                      title={t('admin:public_models.edit_model')}
                     >
                       <PencilIcon className="w-4 h-4" />
                     </Button>
@@ -336,7 +338,7 @@ const PublicModelList: React.FC = () => {
                         setSelectedModel(model);
                         setIsDeleteDialogOpen(true);
                       }}
-                      title={t('public_models.delete_model')}
+                      title={t('admin:public_models.delete_model')}
                     >
                       <TrashIcon className="w-4 h-4" />
                     </Button>
@@ -352,7 +354,7 @@ const PublicModelList: React.FC = () => {
           <div className="border-t border-border pt-3 mt-3 bg-base">
             <div className="flex justify-center">
               <UnifiedAddButton onClick={() => setIsCreateDialogOpen(true)}>
-                {t('public_models.create_model')}
+                {t('admin:public_models.create_model')}
               </UnifiedAddButton>
             </div>
           </div>
@@ -363,30 +365,30 @@ const PublicModelList: React.FC = () => {
       <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{t('public_models.create_model')}</DialogTitle>
-            <DialogDescription>{t('public_models.description')}</DialogDescription>
+            <DialogTitle>{t('admin:public_models.create_model')}</DialogTitle>
+            <DialogDescription>{t('admin:public_models.description')}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="name">{t('public_models.form.name')} *</Label>
+              <Label htmlFor="name">{t('admin:public_models.form.name')} *</Label>
               <Input
                 id="name"
                 value={formData.name}
                 onChange={e => setFormData({ ...formData, name: e.target.value })}
-                placeholder={t('public_models.form.name_placeholder')}
+                placeholder={t('admin:public_models.form.name_placeholder')}
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="namespace">{t('public_models.form.namespace')}</Label>
+              <Label htmlFor="namespace">{t('admin:public_models.form.namespace')}</Label>
               <Input
                 id="namespace"
                 value={formData.namespace}
                 onChange={e => setFormData({ ...formData, namespace: e.target.value })}
-                placeholder={t('public_models.form.namespace_placeholder')}
+                placeholder={t('admin:public_models.form.namespace_placeholder')}
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="config">{t('public_models.form.config')} *</Label>
+              <Label htmlFor="config">{t('admin:public_models.form.config')} *</Label>
               <Textarea
                 id="config"
                 value={formData.config}
@@ -394,7 +396,7 @@ const PublicModelList: React.FC = () => {
                   setFormData({ ...formData, config: e.target.value });
                   validateConfig(e.target.value);
                 }}
-                placeholder={t('public_models.form.config_placeholder')}
+                placeholder={t('admin:public_models.form.config_placeholder')}
                 className={`font-mono text-sm min-h-[200px] ${configError ? 'border-error' : ''}`}
               />
               {configError && <p className="text-xs text-error">{configError}</p>}
@@ -402,11 +404,11 @@ const PublicModelList: React.FC = () => {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
-              {t('common.cancel')}
+              {t('admin:common.cancel')}
             </Button>
             <Button onClick={handleCreateModel} disabled={saving}>
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {t('common.create')}
+              {t('admin:common.create')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -416,29 +418,29 @@ const PublicModelList: React.FC = () => {
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{t('public_models.edit_model')}</DialogTitle>
+            <DialogTitle>{t('admin:public_models.edit_model')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="edit-name">{t('public_models.form.name')}</Label>
+              <Label htmlFor="edit-name">{t('admin:public_models.form.name')}</Label>
               <Input
                 id="edit-name"
                 value={formData.name}
                 onChange={e => setFormData({ ...formData, name: e.target.value })}
-                placeholder={t('public_models.form.name_placeholder')}
+                placeholder={t('admin:public_models.form.name_placeholder')}
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="edit-namespace">{t('public_models.form.namespace')}</Label>
+              <Label htmlFor="edit-namespace">{t('admin:public_models.form.namespace')}</Label>
               <Input
                 id="edit-namespace"
                 value={formData.namespace}
                 onChange={e => setFormData({ ...formData, namespace: e.target.value })}
-                placeholder={t('public_models.form.namespace_placeholder')}
+                placeholder={t('admin:public_models.form.namespace_placeholder')}
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="edit-config">{t('public_models.form.config')}</Label>
+              <Label htmlFor="edit-config">{t('admin:public_models.form.config')}</Label>
               <Textarea
                 id="edit-config"
                 value={formData.config}
@@ -446,18 +448,18 @@ const PublicModelList: React.FC = () => {
                   setFormData({ ...formData, config: e.target.value });
                   validateConfig(e.target.value);
                 }}
-                placeholder={t('public_models.form.config_placeholder')}
+                placeholder={t('admin:public_models.form.config_placeholder')}
                 className={`font-mono text-sm min-h-[200px] ${configError ? 'border-error' : ''}`}
               />
               {configError && <p className="text-xs text-error">{configError}</p>}
             </div>
             <div className="flex items-center justify-between">
-              <Label htmlFor="edit-is-active">{t('public_models.columns.status')}</Label>
+              <Label htmlFor="edit-is-active">{t('admin:public_models.columns.status')}</Label>
               <div className="flex items-center gap-2">
                 <span className="text-sm text-text-muted">
                   {formData.is_active
-                    ? t('public_models.status.active')
-                    : t('public_models.status.inactive')}
+                    ? t('admin:public_models.status.active')
+                    : t('admin:public_models.status.inactive')}
                 </span>
                 <Switch
                   id="edit-is-active"
@@ -469,11 +471,11 @@ const PublicModelList: React.FC = () => {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>
-              {t('common.cancel')}
+              {t('admin:common.cancel')}
             </Button>
             <Button onClick={handleUpdateModel} disabled={saving}>
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {t('common.save')}
+              {t('admin:common.save')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -483,15 +485,15 @@ const PublicModelList: React.FC = () => {
       <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t('public_models.confirm.delete_title')}</AlertDialogTitle>
+            <AlertDialogTitle>{t('admin:public_models.confirm.delete_title')}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t('public_models.confirm.delete_message', { name: selectedModel?.name })}
+              {t('admin:public_models.confirm.delete_message', { name: selectedModel?.name })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogCancel>{t('admin:common.cancel')}</AlertDialogCancel>
             <AlertDialogAction onClick={handleDeleteModel} className="bg-error hover:bg-error/90">
-              {t('common.delete')}
+              {t('admin:common.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

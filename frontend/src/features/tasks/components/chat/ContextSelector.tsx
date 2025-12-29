@@ -68,7 +68,7 @@ function KnowledgeBaseItem({ kb, isSelected, onSelect, t }: KnowledgeBaseItemPro
             </span>
           )}
           <span className="text-xs text-text-muted mt-0.5">
-            {kb.document_count || 0} {t('documents')}
+            {kb.document_count || 0} {t('knowledge:documents')}
           </span>
         </div>
       </div>
@@ -95,7 +95,7 @@ export default function ContextSelector({
   onDeselect,
   children,
 }: ContextSelectorProps) {
-  const { t } = useTranslation('knowledge');
+  const { t } = useTranslation();
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -109,7 +109,7 @@ export default function ContextSelector({
       setKnowledgeBases(response.items);
     } catch (error) {
       console.error('Failed to fetch knowledge bases:', error);
-      setError(t('fetch_error'));
+      setError(t('knowledge:fetch_error'));
     } finally {
       setLoading(false);
     }
@@ -173,7 +173,7 @@ export default function ContextSelector({
       >
         <Command className="border-0 flex flex-col flex-1 min-h-0 overflow-hidden">
           <CommandInput
-            placeholder={t('search_placeholder')}
+            placeholder={t('knowledge:search_placeholder')}
             value={searchValue}
             onValueChange={setSearchValue}
             className={cn(
@@ -198,13 +198,13 @@ export default function ContextSelector({
               </div>
             ) : sortedKnowledgeBases.length === 0 ? (
               <div className="py-6 px-4 text-center">
-                <p className="text-sm text-text-muted mb-3">{t('no_knowledge_bases')}</p>
+                <p className="text-sm text-text-muted mb-3">{t('knowledge:no_knowledge_bases')}</p>
                 <Link
                   href="/knowledge"
                   onClick={() => onOpenChange(false)}
                   className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 font-medium transition-colors"
                 >
-                  {t('go_to_create')}
+                  {t('knowledge:go_to_create')}
                   <ArrowRight className="w-3.5 h-3.5" />
                 </Link>
               </div>

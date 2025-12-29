@@ -61,7 +61,7 @@ export function RetrievalTestDialog({
   onOpenChange,
   knowledgeBase,
 }: RetrievalTestDialogProps) {
-  const { t } = useTranslation('knowledge');
+  const { t } = useTranslation();
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<RetrievalResult[]>([]);
@@ -165,7 +165,7 @@ export function RetrievalTestDialog({
       const response = await apiClient.post<RetrieveResponse>('/rag/retrieve', request);
       setResults(response.records || []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('document.retrievalTest.error'));
+      setError(err instanceof Error ? err.message : t('knowledge:document.retrievalTest.error'));
       setResults([]);
     } finally {
       setLoading(false);
@@ -196,11 +196,11 @@ export function RetrievalTestDialog({
   const getRetrievalModeText = (mode: RetrievalMethodType) => {
     switch (mode) {
       case 'hybrid':
-        return t('document.retrieval.hybrid');
+        return t('knowledge:document.retrieval.hybrid');
       case 'keyword':
-        return t('document.retrieval.keyword');
+        return t('knowledge:document.retrieval.keyword');
       default:
-        return t('document.retrieval.vector');
+        return t('knowledge:document.retrieval.vector');
     }
   };
 
@@ -222,9 +222,9 @@ export function RetrievalTestDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Target className="w-5 h-5 text-primary" />
-            {t('document.retrievalTest.title')}
+            {t('knowledge:document.retrievalTest.title')}
           </DialogTitle>
-          <DialogDescription>{t('document.retrievalTest.description')}</DialogDescription>
+          <DialogDescription>{t('knowledge:document.retrievalTest.description')}</DialogDescription>
         </DialogHeader>
 
         <div className="flex-1 flex gap-4 min-h-0 overflow-hidden">
@@ -235,7 +235,7 @@ export function RetrievalTestDialog({
               {/* Header with label and config popover */}
               <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-surface/50">
                 <span className="text-sm text-text-secondary">
-                  {t('document.retrievalTest.sourceText')}
+                  {t('knowledge:document.retrievalTest.sourceText')}
                 </span>
 
                 {/* Config Popover */}
@@ -255,7 +255,7 @@ export function RetrievalTestDialog({
                           <span>{getRetrievalModeText(testConfig.retrieval_mode)}</span>
                           {hasConfigChanges && (
                             <Badge variant="warning" className="h-4 px-1 text-[10px]">
-                              {t('document.retrievalTest.modified')}
+                              {t('knowledge:document.retrievalTest.modified')}
                             </Badge>
                           )}
                           <Settings2 className="w-3 h-3 ml-0.5" />
@@ -266,13 +266,13 @@ export function RetrievalTestDialog({
                   <PopoverContent className="w-72 p-4" align="end">
                     <div className="space-y-4">
                       <div className="text-sm font-medium text-text-primary">
-                        {t('document.retrievalTest.configTitle')}
+                        {t('knowledge:document.retrievalTest.configTitle')}
                       </div>
 
                       {/* Retrieval Mode */}
                       <div className="space-y-2">
                         <Label className="text-xs text-text-secondary">
-                          {t('document.retrieval.retrievalMode')}
+                          {t('knowledge:document.retrieval.retrievalMode')}
                         </Label>
                         <Select
                           value={testConfig.retrieval_mode}
@@ -296,7 +296,7 @@ export function RetrievalTestDialog({
                       {/* Score Threshold */}
                       <div className="space-y-2">
                         <Label className="text-xs text-text-secondary">
-                          {t('document.retrieval.scoreThreshold')}
+                          {t('knowledge:document.retrieval.scoreThreshold')}
                         </Label>
                         <Input
                           type="number"
@@ -313,14 +313,14 @@ export function RetrievalTestDialog({
                           className="h-8 text-sm"
                         />
                         <p className="text-[10px] text-text-muted">
-                          {t('document.retrieval.scoreThresholdHint')}
+                          {t('knowledge:document.retrieval.scoreThresholdHint')}
                         </p>
                       </div>
 
                       {/* Top K */}
                       <div className="space-y-2">
                         <Label className="text-xs text-text-secondary">
-                          {t('document.retrieval.topK')}
+                          {t('knowledge:document.retrieval.topK')}
                         </Label>
                         <Input
                           type="number"
@@ -337,13 +337,13 @@ export function RetrievalTestDialog({
                           className="h-8 text-sm"
                         />
                         <p className="text-[10px] text-text-muted">
-                          {t('document.retrieval.topKHint')}
+                          {t('knowledge:document.retrieval.topKHint')}
                         </p>
                       </div>
 
                       {/* Config hint */}
                       <p className="text-[10px] text-text-muted border-t border-border pt-3">
-                        {t('document.retrievalTest.configHint')}
+                        {t('knowledge:document.retrievalTest.configHint')}
                       </p>
                     </div>
                   </PopoverContent>
@@ -355,7 +355,7 @@ export function RetrievalTestDialog({
                 value={query}
                 onChange={e => setQuery(e.target.value.slice(0, maxQueryLength))}
                 onKeyDown={handleKeyDown}
-                placeholder={t('document.retrievalTest.placeholder')}
+                placeholder={t('knowledge:document.retrievalTest.placeholder')}
                 className="border-0 focus-visible:ring-0 resize-none min-h-[200px]"
                 disabled={!hasRetrievalConfig}
               />
@@ -371,7 +371,11 @@ export function RetrievalTestDialog({
                   onClick={handleSearch}
                   disabled={!query.trim() || loading || !hasRetrievalConfig}
                 >
-                  {loading ? <Spinner className="w-4 h-4" /> : t('document.retrievalTest.search')}
+                  {loading ? (
+                    <Spinner className="w-4 h-4" />
+                  ) : (
+                    t('knowledge:document.retrievalTest.search')
+                  )}
                 </Button>
               </div>
             </div>
@@ -379,7 +383,7 @@ export function RetrievalTestDialog({
             {/* No config warning */}
             {!hasRetrievalConfig && (
               <div className="mt-3 p-3 bg-warning/10 border border-warning/20 rounded-lg text-sm text-warning">
-                {t('document.retrievalTest.noConfig')}
+                {t('knowledge:document.retrievalTest.noConfig')}
               </div>
             )}
           </div>
@@ -389,7 +393,7 @@ export function RetrievalTestDialog({
             {/* Results header */}
             <div className="px-4 py-3 border-b border-border">
               <span className="text-sm font-medium text-text-primary">
-                {t('document.retrievalTest.results')}
+                {t('knowledge:document.retrievalTest.results')}
                 {hasSearched && results.length > 0 && (
                   <span className="ml-2 text-text-muted font-normal">({results.length})</span>
                 )}
@@ -409,12 +413,12 @@ export function RetrievalTestDialog({
               ) : !hasSearched ? (
                 <div className="flex flex-col items-center justify-center h-full text-text-muted">
                   <Target className="w-12 h-12 mb-3 opacity-30" />
-                  <p className="text-sm">{t('document.retrievalTest.emptyHint')}</p>
+                  <p className="text-sm">{t('knowledge:document.retrievalTest.emptyHint')}</p>
                 </div>
               ) : results.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full text-text-muted">
                   <FileText className="w-12 h-12 mb-3 opacity-30" />
-                  <p className="text-sm">{t('document.retrievalTest.noResults')}</p>
+                  <p className="text-sm">{t('knowledge:document.retrievalTest.noResults')}</p>
                 </div>
               ) : (
                 <div className="space-y-3">

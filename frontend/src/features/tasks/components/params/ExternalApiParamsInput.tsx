@@ -112,7 +112,7 @@ export default function ExternalApiParamsInput({
   onAppModeChange,
   initialParams = {},
 }: ExternalApiParamsInputProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [paramFields, setParamFields] = useState<ParameterField[]>([]);
@@ -229,7 +229,9 @@ export default function ExternalApiParamsInput({
         setHasFetched(true);
       } catch (err) {
         console.error('Failed to fetch team parameters:', err);
-        setError(t('bot.dify_parameters_load_failed') || 'Failed to load application parameters');
+        setError(
+          t('common:bot.dify_parameters_load_failed') || 'Failed to load application parameters'
+        );
         setParamFields([]);
         setHasFetched(true);
       } finally {
@@ -297,7 +299,7 @@ export default function ExternalApiParamsInput({
       <div className="flex items-center justify-center py-4 text-text-muted">
         <Loader2 className="w-4 h-4 animate-spin mr-2" />
         <span className="text-sm">
-          {t('bot.dify_parameters_loading') || 'Loading parameters...'}
+          {t('common:bot.dify_parameters_loading') || 'Loading parameters...'}
         </span>
       </div>
     );
@@ -317,7 +319,7 @@ export default function ExternalApiParamsInput({
             className="h-7 px-2"
           >
             <RefreshCw className={`w-4 h-4 mr-1 ${isRefreshing ? 'animate-spin' : ''}`} />
-            {t('actions.refresh') || 'Refresh'}
+            {t('common:actions.refresh') || 'Refresh'}
           </Button>
         </div>
       </div>
@@ -342,10 +344,10 @@ export default function ExternalApiParamsInput({
             <div className="flex items-center justify-between w-full pr-2">
               <div className="flex items-center gap-2">
                 <span className="text-sm font-medium text-text-primary">
-                  {t('bot.dify_app_parameters') || 'Application Parameters'}
+                  {t('common:bot.dify_app_parameters') || 'Application Parameters'}
                 </span>
                 <span className="text-xs text-text-muted">
-                  ({paramFields.length} {t('bot.dify_parameters_count') || 'parameters'})
+                  ({paramFields.length} {t('common:bot.dify_parameters_count') || 'parameters'})
                 </span>
               </div>
               <Button
@@ -357,7 +359,7 @@ export default function ExternalApiParamsInput({
                 }}
                 disabled={isRefreshing}
                 className="h-7 px-2 ml-2"
-                title={t('bot.dify_parameters_refresh') || 'Refresh parameters'}
+                title={t('common:bot.dify_parameters_refresh') || 'Refresh parameters'}
               >
                 <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
               </Button>
@@ -367,12 +369,13 @@ export default function ExternalApiParamsInput({
             <div className="space-y-3">
               {paramFields.length === 0 ? (
                 <p className="text-xs text-text-muted">
-                  {t('bot.dify_no_parameters') || 'No parameters configured for this application.'}
+                  {t('common:bot.dify_no_parameters') ||
+                    'No parameters configured for this application.'}
                 </p>
               ) : (
                 <>
                   <p className="text-xs text-text-muted">
-                    {t('bot.dify_parameters_hint') ||
+                    {t('common:bot.dify_parameters_hint') ||
                       'Configure the input parameters for this application.'}
                   </p>
                   {paramFields.map(field => (

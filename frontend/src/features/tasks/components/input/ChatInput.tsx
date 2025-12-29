@@ -46,7 +46,7 @@ export default function ChatInput({
   team = null,
   onPasteFile,
 }: ChatInputProps) {
-  const { t, i18n } = useTranslation('chat');
+  const { t, i18n } = useTranslation();
 
   // Get current language for tip text
   const currentLang = i18n.language?.startsWith('zh') ? 'zh' : 'en';
@@ -54,13 +54,13 @@ export default function ChatInput({
   // Use tip text as placeholder if available, otherwise use default
   const placeholder = useMemo(() => {
     if (tipText) {
-      return tipText[currentLang] || tipText.en || t('placeholder.input');
+      return tipText[currentLang] || tipText.en || t('chat:placeholder.input');
     }
     // For group chat, show mention instruction
     if (isGroupChat && team?.name) {
-      return t('groupChat.mentionToTrigger', { teamName: team.name });
+      return t('chat:groupChat.mentionToTrigger', { teamName: team.name });
     }
-    return t('placeholder.input');
+    return t('chat:placeholder.input');
   }, [tipText, currentLang, t, isGroupChat, team?.name]);
   const [isComposing, setIsComposing] = useState(false);
   // Track if composition just ended (for Safari where compositionend fires before keydown)
@@ -132,7 +132,7 @@ export default function ChatInput({
     // Convert newlines to <br> tags for proper display in contentEditable
     // Use innerHTML to properly render the <br> tags
     const htmlContent = text
-      .split('\n')
+      .split('chat:\n')
       .map(line => {
         // Escape HTML entities to prevent XSS
         const escaped = line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -433,9 +433,9 @@ export default function ChatInput({
       // Detect if Mac or Windows
       const isMac =
         typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform);
-      return isMac ? t('send_shortcut_cmd_enter_mac') : t('send_shortcut_cmd_enter_win');
+      return isMac ? t('chat:send_shortcut_cmd_enter_mac') : t('chat:send_shortcut_cmd_enter_win');
     }
-    return t('send_shortcut');
+    return t('chat:send_shortcut');
   }, [sendKey, t]);
 
   return (

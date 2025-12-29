@@ -23,18 +23,18 @@ const isWikiEnabled = process.env.NEXT_PUBLIC_ENABLE_WIKI !== 'false';
 
 export function MobileNavTabs({ activePage }: MobileNavTabsProps) {
   const router = useRouter();
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
 
   const tabs = [
     {
       key: 'chat' as const,
-      label: t('navigation.chat'),
+      label: t('common:navigation.chat'),
       icon: ChatBubbleLeftIcon,
       path: paths.chat.getHref(),
     },
     {
       key: 'code' as const,
-      label: t('navigation.code'),
+      label: t('common:navigation.code'),
       icon: CodeBracketIcon,
       path: paths.code.getHref(),
     },
@@ -42,7 +42,7 @@ export function MobileNavTabs({ activePage }: MobileNavTabsProps) {
       ? [
           {
             key: 'wiki' as const,
-            label: t('navigation.wiki'),
+            label: t('common:navigation.wiki'),
             icon: BookOpenIcon,
             path: paths.wiki.getHref(),
           },
@@ -50,7 +50,7 @@ export function MobileNavTabs({ activePage }: MobileNavTabsProps) {
       : []),
     {
       key: 'dashboard' as const,
-      label: t('navigation.settings'),
+      label: t('common:navigation.settings'),
       icon: Cog6ToothIcon,
       path: paths.settings.root.getHref(),
     },

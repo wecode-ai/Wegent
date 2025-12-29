@@ -17,7 +17,7 @@ import { POST_LOGIN_REDIRECT_KEY, sanitizeRedirectPath } from '@/features/login/
 import Image from 'next/image';
 
 export default function LoginForm() {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const router = useRouter();
   const searchParams = useSearchParams();
   const [formData, setFormData] = useState({
@@ -34,7 +34,7 @@ export default function LoginForm() {
   const showOidcLogin = loginMode === 'oidc' || loginMode === 'all';
 
   // Get OIDC login button text
-  const oidcLoginText = process.env.NEXT_PUBLIC_OIDC_LOGIN_TEXT || t('login.oidc_login');
+  const oidcLoginText = process.env.NEXT_PUBLIC_OIDC_LOGIN_TEXT || t('common:login.oidc_login');
   const loginPath = paths.auth.login.getHref();
   const defaultRedirect = paths.chat.getHref();
   const [redirectPath, setRedirectPath] = useState(defaultRedirect);
@@ -122,7 +122,7 @@ export default function LoginForm() {
         <form className="space-y-6" onSubmit={handleSubmit}>
           <div>
             <label htmlFor="user_name" className="block text-sm font-medium text-text-secondary">
-              {t('login.username')}
+              {t('common:login.username')}
             </label>
             <div className="mt-1">
               <input
@@ -134,14 +134,14 @@ export default function LoginForm() {
                 value={formData.user_name}
                 onChange={handleInputChange}
                 className="appearance-none block w-full px-3 py-2 border border-border rounded-md shadow-sm bg-base text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent sm:text-sm"
-                placeholder={t('login.enter_username')}
+                placeholder={t('common:login.enter_username')}
               />
             </div>
           </div>
 
           <div>
             <label htmlFor="password" className="block text-sm font-medium text-text-secondary">
-              {t('login.password')}
+              {t('common:login.password')}
             </label>
             <div className="mt-1 relative">
               <input
@@ -153,7 +153,7 @@ export default function LoginForm() {
                 value={formData.password}
                 onChange={handleInputChange}
                 className="appearance-none block w-full px-3 py-2 pr-10 border border-border rounded-md shadow-sm bg-base text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent sm:text-sm"
-                placeholder={t('login.enter_password')}
+                placeholder={t('common:login.enter_password')}
               />
               <button
                 type="button"
@@ -195,16 +195,18 @@ export default function LoginForm() {
                       d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                     ></path>
                   </svg>
-                  {t('login.logging_in')}
+                  {t('common:login.logging_in')}
                 </div>
               ) : (
-                t('user.login')
+                t('common:user.login')
               )}
             </Button>
           </div>
 
           {/* Show test account info */}
-          <div className="mt-6 text-center text-xs text-text-muted">{t('login.test_account')}</div>
+          <div className="mt-6 text-center text-xs text-text-muted">
+            {t('common:login.test_account')}
+          </div>
         </form>
       )}
 
@@ -216,7 +218,9 @@ export default function LoginForm() {
               <div className="w-full border-t border-border" />
             </div>
             <div className="relative flex justify-center text-sm">
-              <span className="px-2 bg-surface text-text-muted">{t('login.or_continue_with')}</span>
+              <span className="px-2 bg-surface text-text-muted">
+                {t('common:login.or_continue_with')}
+              </span>
             </div>
           </div>
         </div>
