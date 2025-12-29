@@ -4,7 +4,7 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from '@/hooks/useTranslation';
 import Modal from '@/features/common/Modal';
 import { Button } from '@/components/ui/button';
@@ -25,9 +25,17 @@ import {
   inviteAllUsers,
   leaveGroup,
 } from '@/apis/groups';
+import { userApis } from '@/apis/user';
 import { toast } from 'sonner';
 import type { Group, GroupMember, GroupRole } from '@/types/group';
-import { UserPlusIcon, LogOutIcon } from 'lucide-react';
+import { UserPlusIcon, LogOutIcon, Search } from 'lucide-react';
+// User type for search results
+interface SearchUser {
+  id: number;
+  user_name: string;
+  email?: string;
+}
+
 interface GroupMembersDialogProps {
   isOpen: boolean;
   onClose: () => void;
@@ -50,6 +58,11 @@ export function GroupMembersDialog({
   const [newMemberUsername, setNewMemberUsername] = useState('');
   const [selectedRole, setSelectedRole] = useState<GroupRole>('Reporter');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [searchResults, setSearchResults] = useState<SearchUser[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [showSearchDropdown, setShowSearchDropdown] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   const myRole = group?.my_role;
   const isPrivateGroup = group?.visibility === 'private';
@@ -69,6 +82,50 @@ export function GroupMembersDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, group]);
 
+  // Search users with 300ms debounce
+  useEffect(() => {
+    if (!newMemberUsername.trim()) {
+      setSearchResults([]);
+      setShowSearchDropdown(false);
+      return;
+    }
+
+    const timeoutId = setTimeout(async () => {
+      setIsSearching(true);
+      try {
+        const response = await userApis.searchUsers(newMemberUsername);
+        setSearchResults(response.users || []);
+        setShowSearchDropdown(true);
+      } catch (error) {
+        console.error('Failed to search users:', error);
+        setSearchResults([]);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 300);
+
+    return () => clearTimeout(timeoutId);
+  }, [newMemberUsername]);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(event.target as Node) &&
+        searchInputRef.current &&
+        !searchInputRef.current.contains(event.target as Node)
+      ) {
+        setShowSearchDropdown(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
+
   const loadMembers = async () => {
     if (!group) return;
 
@@ -84,6 +141,13 @@ export function GroupMembersDialog({
     } finally {
       setLoading(false);
     }
+  };
+
+  // Handle selecting a user from search results
+  const handleSelectUser = (user: SearchUser) => {
+    setNewMemberUsername(user.user_name);
+    setSearchResults([]);
+    setShowSearchDropdown(false);
   };
 
   const handleAddMember = async () => {
@@ -109,6 +173,8 @@ export function GroupMembersDialog({
         setShowAddMember(false);
         setNewMemberUsername('');
         setSelectedRole('Reporter');
+        setSearchResults([]);
+        setShowSearchDropdown(false);
         loadMembers();
         onSuccess();
       } else {
@@ -265,13 +331,51 @@ export function GroupMembersDialog({
           <div className="p-4 border border-border rounded-lg bg-surface space-y-3">
             <h3 className="text-sm font-medium">{t('groups:groups.actions.addMember')}</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div className="md:col-span-2">
-                <Input
-                  value={newMemberUsername}
-                  onChange={e => setNewMemberUsername(e.target.value)}
-                  placeholder={t('groups:groupMembers.enterUsername')}
-                  disabled={isSubmitting}
-                />
+              <div className="md:col-span-2 relative">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted" />
+                  <Input
+                    ref={searchInputRef}
+                    value={newMemberUsername}
+                    onChange={e => setNewMemberUsername(e.target.value)}
+                    onFocus={() => {
+                      if (searchResults.length > 0) {
+                        setShowSearchDropdown(true);
+                      }
+                    }}
+                    placeholder={t('groups:groupMembers.enterUsername')}
+                    disabled={isSubmitting}
+                    className="pl-9"
+                  />
+                </div>
+                {/* Search Results Dropdown */}
+                {showSearchDropdown && (searchResults.length > 0 || isSearching) && (
+                  <div
+                    ref={dropdownRef}
+                    className="absolute z-50 w-full mt-1 bg-base border border-border rounded-md shadow-lg max-h-48 overflow-y-auto"
+                  >
+                    {isSearching ? (
+                      <div className="p-3 text-sm text-text-muted text-center">
+                        {t('common:actions.loading')}
+                      </div>
+                    ) : (
+                      searchResults.map(user => (
+                        <button
+                          key={user.id}
+                          onClick={() => handleSelectUser(user)}
+                          className="w-full flex flex-col items-start p-3 hover:bg-surface cursor-pointer text-left"
+                        >
+                          <span className="font-medium text-sm text-text-primary">
+                            {user.user_name}
+                          </span>
+                          {user.email && (
+                            <span className="text-xs text-text-muted">{user.email}</span>
+                          )}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
               </div>
               <div>
                 <Select
@@ -357,6 +461,8 @@ export function GroupMembersDialog({
                 onClick={() => {
                   setShowAddMember(false);
                   setNewMemberUsername('');
+                  setSearchResults([]);
+                  setShowSearchDropdown(false);
                 }}
               >
                 {t('common:actions.cancel')}
