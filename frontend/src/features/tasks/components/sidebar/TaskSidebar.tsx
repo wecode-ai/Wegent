@@ -102,21 +102,28 @@ export default function TaskSidebar({
   }, []);
 
   // Effect to handle auto-expand and scroll to newly created group chat
+  // This effect watches for the new task to appear in the tasks list
   useEffect(() => {
     if (newlyCreatedGroupChatId) {
-      // 1. Expand group chats section
-      setIsGroupChatsExpanded(true);
+      // Check if the new group chat is already in the tasks list
+      const taskExists = tasks.some(task => task.id === newlyCreatedGroupChatId);
 
-      // 2. Wait for DOM update, then scroll and highlight
-      // Use a small delay to ensure the list has re-rendered with expanded state
-      setTimeout(() => {
-        scrollToAndHighlightTask(newlyCreatedGroupChatId);
-      }, 100);
+      if (taskExists) {
+        // 1. Expand group chats section
+        setIsGroupChatsExpanded(true);
 
-      // 3. Clear the state to prevent re-triggering
-      setNewlyCreatedGroupChatId(null);
+        // 2. Wait for DOM update, then scroll and highlight
+        // Use a small delay to ensure the list has re-rendered with expanded state
+        setTimeout(() => {
+          scrollToAndHighlightTask(newlyCreatedGroupChatId);
+        }, 100);
+
+        // 3. Clear the state after handling
+        setNewlyCreatedGroupChatId(null);
+      }
+      // If task doesn't exist yet, keep waiting - the effect will re-run when tasks updates
     }
-  }, [newlyCreatedGroupChatId, setNewlyCreatedGroupChatId, scrollToAndHighlightTask]);
+  }, [newlyCreatedGroupChatId, setNewlyCreatedGroupChatId, scrollToAndHighlightTask, tasks]);
 
   // Clear search for sidebar (used when clearing search results)
   const handleClearSearch = () => {
