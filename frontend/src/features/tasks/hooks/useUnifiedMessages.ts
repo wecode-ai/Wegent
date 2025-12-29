@@ -30,7 +30,7 @@ import { useMemo, useEffect, useRef } from 'react';
 import { useChatStreamContext, computeIsStreaming } from '../contexts/chatStreamContext';
 import { useUser } from '@/features/common/UserContext';
 import { useTaskContext } from '../contexts/taskContext';
-import type { Team, Attachment } from '@/types/api';
+import type { Team, Attachment, SubtaskContextBrief } from '@/types/api';
 
 /**
  * Message for display - extends UnifiedMessage with additional rendering info
@@ -52,8 +52,10 @@ export interface DisplayMessage {
   messageId?: number;
   /** Error message if status is 'error' */
   error?: string;
-  /** Attachments array */
+  /** Attachments array (deprecated, use contexts) */
   attachments?: Attachment[];
+  /** Unified contexts (attachments, knowledge bases, etc.) */
+  contexts?: SubtaskContextBrief[];
   /** Bot name for AI messages */
   botName?: string;
   /** Sender user name for group chat */
@@ -218,6 +220,9 @@ export function useUnifiedMessages({
         attachments = [msg.attachment as Attachment];
       }
 
+      // Get contexts from message (new unified context system)
+      const contexts = (msg.contexts as SubtaskContextBrief[] | undefined);
+
       const displayMsg: DisplayMessage = {
         id: msg.id,
         type: msg.type,
@@ -228,6 +233,7 @@ export function useUnifiedMessages({
         messageId: msg.messageId,
         error: msg.error,
         attachments,
+        contexts,
         botName: msg.botName || team?.name,
         senderUserName: msg.senderUserName,
         senderUserId: msg.senderUserId,

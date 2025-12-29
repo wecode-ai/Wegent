@@ -697,6 +697,7 @@ export default function MessagesArea({
         subtaskStatus: msg.subtaskStatus,
         subtaskId: msg.subtaskId,
         attachments: msg.attachments,
+        contexts: msg.contexts, // Add contexts for unified context system
         senderUserName: msg.senderUserName,
         senderUserId: msg.senderUserId,
         shouldShowSender: msg.shouldShowSender,

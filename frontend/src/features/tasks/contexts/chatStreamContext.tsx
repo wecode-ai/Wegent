@@ -77,8 +77,10 @@ export interface UnifiedMessage {
   content: string;
   /** Attachment if any (for pending messages) */
   attachment?: unknown;
-  /** Attachments array (for confirmed messages) */
+  /** Attachments array (for confirmed messages, deprecated - use contexts) */
   attachments?: unknown[];
+  /** Unified contexts (attachments, knowledge bases, etc.) */
+  contexts?: unknown[];
   /** Timestamp when message was created */
   timestamp: number;
   /** Subtask ID from backend (set when confirmed) */
@@ -238,6 +240,8 @@ interface ChatStreamContextType {
       pendingUserMessage?: string;
       pendingAttachment?: unknown;
       pendingAttachments?: unknown[];
+      /** Pending contexts for immediate display (attachments, knowledge bases, etc.) */
+      pendingContexts?: unknown[];
       onError?: (error: Error) => void;
       /** Callback when message is sent, passes back localMessageId for precise update */
       onMessageSent?: (localMessageId: string, taskId: number, subtaskId: number) => void;
@@ -798,8 +802,17 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
    * Adds the message to the unified messages Map for real-time display
    */
   const handleChatMessage = useCallback((data: ChatMessagePayload) => {
-    const { task_id, subtask_id, message_id, role, content, sender, created_at, attachments } =
-      data;
+    const {
+      task_id,
+      subtask_id,
+      message_id,
+      role,
+      content,
+      sender,
+      created_at,
+      attachments,
+      contexts,
+    } = data;
 
     // Generate message ID based on role
     const isUserMessage = role === 'user' || role?.toUpperCase() === 'USER';
@@ -832,6 +845,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         senderUserId: sender?.user_id,
         shouldShowSender: isUserMessage, // Show sender for user messages in group chat
         attachments: attachments,
+        contexts: contexts,
       };
 
       newMessages.set(msgId, newMessage);
@@ -1080,6 +1094,8 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         pendingUserMessage?: string;
         pendingAttachment?: unknown;
         pendingAttachments?: unknown[];
+        /** Pending contexts for immediate display (attachments, knowledge bases, etc.) */
+        pendingContexts?: unknown[];
         onError?: (error: Error) => void;
         /** Callback when message is sent, passes back localMessageId for precise update */
         onMessageSent?: (localMessageId: string, taskId: number, subtaskId: number) => void;
@@ -1118,6 +1134,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         content: options?.pendingUserMessage || request.message,
         attachment: options?.pendingAttachment,
         attachments: options?.pendingAttachments,
+        contexts: options?.pendingContexts,
         timestamp: Date.now(),
         // Add sender info for group chat
         senderUserName: options?.currentUserName,
@@ -1671,6 +1688,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
               subtaskId: subtask.id,
               messageId: subtask.message_id,
               attachments: subtask.attachments,
+              contexts: subtask.contexts,
               botName: subtask.bots?.[0]?.name || teamName,
               subtaskStatus: subtask.status,
               result: subtask.result as UnifiedMessage['result'],
@@ -1712,6 +1730,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
             subtaskId: subtask.id,
             messageId: subtask.message_id,
             attachments: subtask.attachments,
+            contexts: subtask.contexts,
             botName: !isUserMessage && subtask.bots?.[0]?.name ? subtask.bots[0].name : teamName,
             senderUserName:
               subtask.sender_user_name ||
