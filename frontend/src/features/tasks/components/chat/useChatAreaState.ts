@@ -268,14 +268,15 @@ export function useChatAreaState({
       setCorrectionModelId(modelId || null);
       setCorrectionModelName(modelName || null);
       // When correction mode is enabled, read web search settings from localStorage
+      const taskId = selectedTaskDetail?.id ?? null;
       if (enabled) {
-        const savedState = correctionApis.getCorrectionModeState();
+        const savedState = correctionApis.getCorrectionModeState(taskId);
         setEnableCorrectionWebSearch(savedState.enableWebSearch ?? true);
       } else {
         setEnableCorrectionWebSearch(false);
       }
     },
-    []
+    [selectedTaskDetail?.id]
   );
 
   // Check if a team is compatible with the current mode

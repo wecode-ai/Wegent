@@ -145,7 +145,7 @@ class Settings(BaseSettings):
     WEB_SEARCH_ENABLED: bool = False  # Enable/disable web search feature
     WEB_SEARCH_ENGINES: str = "{}"  # JSON configuration for search API adapter
     WEB_SEARCH_DEFAULT_MAX_RESULTS: int = (
-        100  # Default max results when not specified by LLM or engine config
+        50  # Default max results when not specified by LLM or engine config
     )
 
     # Wizard configuration
@@ -173,6 +173,8 @@ class Settings(BaseSettings):
     #         }
     #     }
     # }
+    # Supports ${{path}} variable substitution, e.g.:
+    # "headers": {"X-User": "${{user.name}}"} will be replaced with actual username
     CHAT_MCP_SERVERS: str = "{}"
 
     # Maximum time to wait for active streaming requests to complete (seconds)

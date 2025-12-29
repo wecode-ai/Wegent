@@ -20,6 +20,13 @@ export interface UserPreferences {
 export type UserRole = 'admin' | 'user';
 export type AuthSource = 'password' | 'oidc' | 'unknown';
 
+/** User type for search results (used in member search dropdowns) */
+export interface SearchUser {
+  id: number;
+  user_name: string;
+  email?: string;
+}
+
 export interface User {
   id: number;
   user_name: string;
@@ -76,9 +83,12 @@ export interface SkillMetadata {
 
 export interface SkillSpec {
   description: string;
+  prompt?: string;
   version?: string;
   author?: string;
   tags?: string[];
+  /** List of shell types this skill is compatible with (e.g., 'ClaudeCode', 'Agno', 'Dify', 'Chat') */
+  bindShells?: string[];
 }
 
 export interface SkillStatus {

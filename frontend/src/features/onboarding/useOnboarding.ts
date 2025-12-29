@@ -28,7 +28,7 @@ export const useOnboarding = ({
   isLoading = false,
   hasShareId = false,
 }: UseOnboardingOptions) => {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const router = useRouter();
   const driverInstance = useRef<Driver | null>(null);
   const [isReady, setIsReady] = useState(false);
@@ -82,16 +82,16 @@ export const useOnboarding = ({
       overlayOpacity: 0.7,
       allowClose: true,
       steps,
-      nextBtnText: t('onboarding.next'),
-      prevBtnText: t('onboarding.previous'),
-      doneBtnText: t('onboarding.done'),
+      nextBtnText: t('common:onboarding.next'),
+      prevBtnText: t('common:onboarding.previous'),
+      doneBtnText: t('common:onboarding.done'),
       showButtons: ['next', 'previous', 'close'] as AllowedButtons[],
       popoverClass: 'onboarding-popover',
       onPopoverRender: popover => {
         // Customize close button text to show "Skip"
         const closeBtn = popover.wrapper.querySelector('.driver-popover-close-btn');
         if (closeBtn) {
-          closeBtn.textContent = t('onboarding.skip');
+          closeBtn.textContent = t('common:onboarding.skip');
         }
       },
       onCloseClick: () => {

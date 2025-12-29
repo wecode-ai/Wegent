@@ -27,7 +27,7 @@ export default function TeamModeSelector({
   shouldCollapse,
   onCollapseHandled,
 }: TeamModeSelectorProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const [isExpanded, setIsExpanded] = useState(false);
 
   // Handle collapse from parent (after dialog confirmation)
@@ -60,7 +60,7 @@ export default function TeamModeSelector({
       {/* Title outside the collapsible container */}
       <div className="flex items-center">
         <Label className="text-sm font-medium text-text-primary">
-          {t('team.model')} <span className="text-red-400">*</span>
+          {t('common:team.model')} <span className="text-red-400">*</span>
         </Label>
       </div>
 

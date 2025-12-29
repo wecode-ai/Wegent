@@ -24,6 +24,8 @@ async function loadTranslations() {
     'wizard',
     'groups',
     'knowledge',
+    'shared-task',
+    'promptTune',
   ];
 
   for (const lng of supportedLanguages) {
@@ -71,6 +73,8 @@ export async function initI18n() {
       'wizard',
       'groups',
       'knowledge',
+      'shared-task',
+      'promptTune',
     ],
   });
 

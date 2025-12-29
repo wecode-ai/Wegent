@@ -18,7 +18,7 @@ const ToolResultItem = memo(function ToolResultItem({
   isError = false,
   itemIndex,
 }: ToolResultItemProps) {
-  const { t } = useTranslation('chat');
+  const { t } = useTranslation();
   const [isExpanded, setIsExpanded] = useState(false);
 
   const resultContent = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
@@ -30,13 +30,14 @@ const ToolResultItem = memo(function ToolResultItem({
   const buttonClass = isError
     ? 'text-red-400 hover:text-red-500 hover:font-semibold'
     : 'text-green-400 hover:text-green-500 hover:font-semibold';
-  const icon = isError ? '❌' : '✅';
 
   return (
-    <div>
+    <div className="mt-1">
       <div className="flex items-center justify-between mb-1">
         <div className={`text-xs font-medium ${textClass}`}>
-          {icon} {t('thinking.tool_result') || 'Tool Result'}
+          {isError
+            ? t('chat:thinking.tool_error') || 'Tool Error'
+            : t('chat:thinking.tool_result') || 'Tool Result'}
         </div>
         {isCollapsible && (
           <button
@@ -46,19 +47,21 @@ const ToolResultItem = memo(function ToolResultItem({
             {isExpanded ? (
               <>
                 <Minimize2 className="h-3 w-3" />
-                <span className="text-xs">{t('thinking.collapse') || 'Collapse'}</span>
+                <span className="text-xs">{t('chat:thinking.collapse') || 'Collapse'}</span>
               </>
             ) : (
               <>
                 <Maximize2 className="h-3 w-3" />
-                <span className="text-xs">{t('thinking.expand') || 'Expand'}</span>
+                <span className="text-xs">{t('chat:thinking.expand') || 'Expand'}</span>
               </>
             )}
           </button>
         )}
       </div>
       <pre
-        className="text-xs text-text-tertiary whitespace-pre-wrap break-words"
+        className={`text-xs whitespace-pre-wrap break-words ${
+          isError ? 'text-red-400/90' : 'text-text-tertiary'
+        }`}
         data-result-index={itemIndex}
       >
         {displayContent}

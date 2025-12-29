@@ -34,7 +34,7 @@ interface UseAttachmentReturn {
 }
 
 export function useAttachment(): UseAttachmentReturn {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const [state, setState] = useState<AttachmentUploadState>({
     file: null,
     attachment: null,
@@ -54,7 +54,7 @@ export function useAttachment(): UseAttachmentReturn {
           attachment: null,
           isUploading: false,
           uploadProgress: 0,
-          error: `${t('attachment.errors.unsupported_type')}: ${t('attachment.errors.unsupported_type_hint', { types: t('attachment.supported_types') })}`,
+          error: `${t('common:attachment.errors.unsupported_type')}: ${t('common:attachment.errors.unsupported_type_hint', { types: t('common:attachment.supported_types') })}`,
         }));
         return;
       }
@@ -67,7 +67,7 @@ export function useAttachment(): UseAttachmentReturn {
           attachment: null,
           isUploading: false,
           uploadProgress: 0,
-          error: `${t('attachment.errors.file_too_large')}: ${t('attachment.errors.file_too_large_hint', { size: Math.round(MAX_FILE_SIZE / (1024 * 1024)) })}`,
+          error: `${t('common:attachment.errors.file_too_large')}: ${t('common:attachment.errors.file_too_large_hint', { size: Math.round(MAX_FILE_SIZE / (1024 * 1024)) })}`,
         }));
         return;
       }
@@ -96,7 +96,7 @@ export function useAttachment(): UseAttachmentReturn {
           const errorMessage =
             getErrorMessageFromCode(attachment.error_code, t) ||
             attachment.error_message ||
-            t('attachment.errors.parse_failed');
+            t('common:attachment.errors.parse_failed');
           setState(prev => ({
             ...prev,
             file: null,
@@ -140,14 +140,14 @@ export function useAttachment(): UseAttachmentReturn {
           error: null,
         }));
       } catch (err) {
-        const errorMessage = (err as Error).message || t('attachment.errors.network_error');
+        const errorMessage = (err as Error).message || t('common:attachment.errors.network_error');
         setState(prev => ({
           ...prev,
           file: null,
           attachment: null,
           isUploading: false,
           uploadProgress: 0,
-          error: `${t('attachment.errors.network_error')}: ${errorMessage}`,
+          error: `${t('common:attachment.errors.network_error')}: ${errorMessage}`,
         }));
       }
     },

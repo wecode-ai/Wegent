@@ -37,7 +37,7 @@ interface UseMultiAttachmentReturn {
 }
 
 export function useMultiAttachment(): UseMultiAttachmentReturn {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const [state, setState] = useState<MultiAttachmentUploadState>({
     attachments: [],
     uploadingFiles: new Map(),
@@ -54,27 +54,13 @@ export function useMultiAttachment(): UseMultiAttachmentReturn {
       for (const file of fileList) {
         const fileId = `${file.name}-${file.size}-${Date.now()}`;
 
-        // Check if a file with the same name already exists
-        const existingAttachment = state.attachments.find(att => att.filename === file.name);
-        if (existingAttachment) {
-          // File with same name already exists, show toast and skip upload
-          toast({
-            title: t('attachment.errors.file_exists') || '文件已存在',
-            description:
-              t('attachment.errors.file_exists_hint', { filename: file.name }) ||
-              `文件 "${file.name}" 已存在，请先删除后再上传`,
-            variant: 'destructive',
-          });
-          continue;
-        }
-
         // Validate file type
         if (!isSupportedExtension(file.name)) {
           setState(prev => {
             const newErrors = new Map(prev.errors);
             newErrors.set(
               fileId,
-              `${t('attachment.errors.unsupported_type')}: ${t('attachment.errors.unsupported_type_hint', { types: t('attachment.supported_types') })}`
+              `${t('common:attachment.errors.unsupported_type')}: ${t('common:attachment.errors.unsupported_type_hint', { types: t('common:attachment.supported_types') })}`
             );
             return { ...prev, errors: newErrors };
           });
@@ -87,7 +73,7 @@ export function useMultiAttachment(): UseMultiAttachmentReturn {
             const newErrors = new Map(prev.errors);
             newErrors.set(
               fileId,
-              `${t('attachment.errors.file_too_large')}: ${t('attachment.errors.file_too_large_hint', { size: Math.round(MAX_FILE_SIZE / (1024 * 1024)) })}`
+              `${t('common:attachment.errors.file_too_large')}: ${t('common:attachment.errors.file_too_large_hint', { size: Math.round(MAX_FILE_SIZE / (1024 * 1024)) })}`
             );
             return { ...prev, errors: newErrors };
           });
@@ -124,7 +110,7 @@ export function useMultiAttachment(): UseMultiAttachmentReturn {
             const errorMessage =
               getErrorMessageFromCode(attachment.error_code, t) ||
               attachment.error_message ||
-              t('attachment.errors.parse_failed');
+              t('common:attachment.errors.parse_failed');
             setState(prev => {
               const newUploadingFiles = new Map(prev.uploadingFiles);
               newUploadingFiles.delete(fileId);
@@ -154,8 +140,8 @@ export function useMultiAttachment(): UseMultiAttachmentReturn {
             });
             // Show toast notification for truncation
             toast({
-              title: t('attachment.errors.content_truncated'),
-              description: t('attachment.truncation.notice', {
+              title: t('common:attachment.errors.content_truncated'),
+              description: t('common:attachment.truncation.notice', {
                 original: attachment.truncation_info.original_length?.toLocaleString(),
                 truncated: attachment.truncation_info.truncated_length?.toLocaleString(),
               }),
@@ -196,7 +182,7 @@ export function useMultiAttachment(): UseMultiAttachmentReturn {
             const newErrors = new Map(prev.errors);
             newErrors.set(
               fileId,
-              `${t('attachment.errors.network_error')}: ${(err as Error).message || t('attachment.errors.network_error_hint')}`
+              `${t('common:attachment.errors.network_error')}: ${(err as Error).message || t('common:attachment.errors.network_error_hint')}`
             );
             return {
               ...prev,

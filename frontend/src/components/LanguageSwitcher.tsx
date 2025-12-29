@@ -17,7 +17,7 @@ export default function LanguageSwitcher({
   className = '',
   showLabel = true,
 }: LanguageSwitcherProps) {
-  const { changeLanguage, getCurrentLanguage, getSupportedLanguages } = useTranslation('common');
+  const { changeLanguage, getCurrentLanguage, getSupportedLanguages } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
 
   const currentLanguage = getCurrentLanguage();

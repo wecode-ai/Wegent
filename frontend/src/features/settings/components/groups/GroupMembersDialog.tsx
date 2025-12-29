@@ -9,7 +9,6 @@ import { useTranslation } from '@/hooks/useTranslation';
 import Modal from '@/features/common/Modal';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -27,7 +26,10 @@ import {
 } from '@/apis/groups';
 import { toast } from 'sonner';
 import type { Group, GroupMember, GroupRole } from '@/types/group';
+import type { SearchUser } from '@/types/api';
 import { UserPlusIcon, LogOutIcon } from 'lucide-react';
+import { UserSearchSelect } from '@/components/common/UserSearchSelect';
+
 interface GroupMembersDialogProps {
   isOpen: boolean;
   onClose: () => void;
@@ -43,13 +45,13 @@ export function GroupMembersDialog({
   group,
   currentUserId,
 }: GroupMembersDialogProps) {
-  const { t } = useTranslation('groups');
+  const { t } = useTranslation();
   const [members, setMembers] = useState<GroupMember[]>([]);
   const [loading, setLoading] = useState(false);
   const [showAddMember, setShowAddMember] = useState(false);
-  const [newMemberUsername, setNewMemberUsername] = useState('');
   const [selectedRole, setSelectedRole] = useState<GroupRole>('Reporter');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [selectedUsers, setSelectedUsers] = useState<SearchUser[]>([]);
 
   const myRole = group?.my_role;
   const isPrivateGroup = group?.visibility === 'private';
@@ -80,45 +82,63 @@ export function GroupMembersDialog({
       setMembers(membersList);
     } catch (error) {
       console.error('Failed to load members:', error);
-      toast.error(t('groupMembers.loadMembersFailed'));
+      toast.error(t('groups:groupMembers.loadMembersFailed'));
     } finally {
       setLoading(false);
     }
   };
 
-  const handleAddMember = async () => {
-    if (!group || !newMemberUsername.trim()) return;
-
-    // Check if user already exists in members
-    const existingMember = members.find(m => m.user_name === newMemberUsername.trim());
-    if (existingMember) {
-      toast.error(t('groupMembers.userAlreadyMember'));
-      return;
-    }
+  const handleAddMembers = async () => {
+    if (!group || selectedUsers.length === 0) return;
 
     setIsSubmitting(true);
-    try {
-      const result = await addGroupMemberByUsername(
-        group.name,
-        newMemberUsername.trim(),
-        selectedRole
-      );
+    let successCount = 0;
+    let alreadyMemberCount = 0;
+    const errors: string[] = [];
 
-      if (result.success) {
-        toast.success(result.message || t('groups.messages.memberAdded'));
-        setShowAddMember(false);
-        setNewMemberUsername('');
-        setSelectedRole('Reporter');
-        loadMembers();
-        onSuccess();
-      } else {
-        toast.error(result.message || t('groupMembers.addMemberFailed'));
+    try {
+      for (const user of selectedUsers) {
+        // Check if user already exists in members
+        const existingMember = members.find(m => m.user_name === user.user_name);
+        if (existingMember) {
+          alreadyMemberCount++;
+          continue;
+        }
+
+        try {
+          const result = await addGroupMemberByUsername(group.name, user.user_name, selectedRole);
+          if (result.success) {
+            successCount++;
+          } else {
+            errors.push(
+              `${user.user_name}: ${result.message || t('groups:groupMembers.addMemberFailed')}`
+            );
+          }
+        } catch (error: unknown) {
+          const err = error as { message?: string };
+          errors.push(
+            `${user.user_name}: ${err?.message || t('groups:groupMembers.addMemberFailed')}`
+          );
+        }
       }
-    } catch (error: unknown) {
-      console.error('Failed to add member:', error);
-      const err = error as { message?: string };
-      const errorMessage = err?.message || t('groupMembers.addMemberFailed');
-      toast.error(errorMessage);
+
+      // Show results
+      if (successCount > 0) {
+        toast.success(t('groups:groupMembers.addMembersSuccess', { count: successCount }));
+      }
+      if (alreadyMemberCount > 0) {
+        toast.info(t('groups:groupMembers.alreadyMembers', { count: alreadyMemberCount }));
+      }
+      if (errors.length > 0) {
+        errors.forEach(err => toast.error(err));
+      }
+
+      // Reset form and reload members
+      setShowAddMember(false);
+      setSelectedRole('Reporter');
+      setSelectedUsers([]);
+      loadMembers();
+      onSuccess();
     } finally {
       setIsSubmitting(false);
     }
@@ -127,19 +147,19 @@ export function GroupMembersDialog({
   const handleRemoveMember = async (userId: number) => {
     if (!group) return;
 
-    if (!confirm(t('groupMembers.confirmRemove'))) {
+    if (!confirm(t('groups:groupMembers.confirmRemove'))) {
       return;
     }
 
     try {
       await removeGroupMember(group.name, userId);
-      toast.success(t('groups.messages.memberRemoved'));
+      toast.success(t('groups:groups.messages.memberRemoved'));
       loadMembers();
       onSuccess();
     } catch (error: unknown) {
       console.error('Failed to remove member:', error);
       const err = error as { message?: string };
-      const errorMessage = err?.message || t('groupMembers.removeMemberFailed');
+      const errorMessage = err?.message || t('groups:groupMembers.removeMemberFailed');
       toast.error(errorMessage);
     }
   };
@@ -149,13 +169,13 @@ export function GroupMembersDialog({
 
     try {
       await updateGroupMemberRole(group.name, userId, { role: newRole });
-      toast.success(t('groups.messages.roleUpdated'));
+      toast.success(t('groups:groups.messages.roleUpdated'));
       loadMembers();
       onSuccess();
     } catch (error: unknown) {
       console.error('Failed to update role:', error);
       const err = error as { message?: string };
-      const errorMessage = err?.message || t('groupMembers.updateRoleFailed');
+      const errorMessage = err?.message || t('groups:groupMembers.updateRoleFailed');
       toast.error(errorMessage);
     }
   };
@@ -163,20 +183,20 @@ export function GroupMembersDialog({
   const handleInviteAll = async () => {
     if (!group) return;
 
-    if (!confirm(t('groupMembers.confirmInviteAll'))) {
+    if (!confirm(t('groups:groupMembers.confirmInviteAll'))) {
       return;
     }
 
     setIsSubmitting(true);
     try {
       await inviteAllUsers(group.name);
-      toast.success(t('groupMembers.inviteAllSuccess'));
+      toast.success(t('groups:groupMembers.inviteAllSuccess'));
       loadMembers();
       onSuccess();
     } catch (error: unknown) {
       console.error('Failed to invite all users:', error);
       const err = error as { message?: string };
-      const errorMessage = err?.message || t('groupMembers.inviteAllFailed');
+      const errorMessage = err?.message || t('groups:groupMembers.inviteAllFailed');
       toast.error(errorMessage);
     } finally {
       setIsSubmitting(false);
@@ -186,19 +206,19 @@ export function GroupMembersDialog({
   const handleLeaveGroup = async () => {
     if (!group) return;
 
-    if (!confirm(t('groupMembers.confirmLeave'))) {
+    if (!confirm(t('groups:groupMembers.confirmLeave'))) {
       return;
     }
 
     try {
       await leaveGroup(group.name);
-      toast.success(t('groupMembers.leaveSuccess'));
+      toast.success(t('groups:groupMembers.leaveSuccess'));
       onSuccess();
       onClose();
     } catch (error: unknown) {
       console.error('Failed to leave group:', error);
       const err = error as { message?: string };
-      const errorMessage = err?.message || t('groupMembers.leaveFailed');
+      const errorMessage = err?.message || t('groups:groupMembers.leaveFailed');
       toast.error(errorMessage);
     }
   };
@@ -228,7 +248,7 @@ export function GroupMembersDialog({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={t('groups.actions.manageMembers')}
+      title={t('groups:groups.actions.manageMembers')}
       maxWidth="3xl"
     >
       <div className="space-y-4">
@@ -242,20 +262,20 @@ export function GroupMembersDialog({
               disabled={isSubmitting}
             >
               <UserPlusIcon className="w-4 h-4 mr-2" />
-              {t('groups.actions.addMember')}
+              {t('groups:groups.actions.addMember')}
             </Button>
           )}
           {/* Temporarily hidden: Invite All Users button */}
           {false && canInviteAll && (
             <Button variant="outline" size="sm" onClick={handleInviteAll} disabled={isSubmitting}>
               <UserPlusIcon className="w-4 h-4 mr-2" />
-              {t('groups.actions.inviteAll')}
+              {t('groups:groups.actions.inviteAll')}
             </Button>
           )}
           {canLeave && (
             <Button variant="outline" size="sm" onClick={handleLeaveGroup}>
               <LogOutIcon className="w-4 h-4 mr-2" />
-              {t('groups.actions.leave')}
+              {t('groups:groups.actions.leave')}
             </Button>
           )}
         </div>
@@ -263,14 +283,14 @@ export function GroupMembersDialog({
         {/* Add Member Form */}
         {showAddMember && canAddMember && (
           <div className="p-4 border border-border rounded-lg bg-surface space-y-3">
-            <h3 className="text-sm font-medium">{t('groups.actions.addMember')}</h3>
+            <h3 className="text-sm font-medium">{t('groups:groups.actions.addMember')}</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div className="md:col-span-2">
-                <Input
-                  value={newMemberUsername}
-                  onChange={e => setNewMemberUsername(e.target.value)}
-                  placeholder={t('groupMembers.enterUsername')}
+                <UserSearchSelect
+                  selectedUsers={selectedUsers}
+                  onSelectedUsersChange={setSelectedUsers}
                   disabled={isSubmitting}
+                  placeholder={t('groups:groupMembers.searchPlaceholder')}
                 />
               </div>
               <div>
@@ -282,10 +302,12 @@ export function GroupMembersDialog({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Owner">{t('groups.roles.Owner')}</SelectItem>
-                    <SelectItem value="Maintainer">{t('groups.roles.Maintainer')}</SelectItem>
-                    <SelectItem value="Developer">{t('groups.roles.Developer')}</SelectItem>
-                    <SelectItem value="Reporter">{t('groups.roles.Reporter')}</SelectItem>
+                    <SelectItem value="Owner">{t('groups:groups.roles.Owner')}</SelectItem>
+                    <SelectItem value="Maintainer">
+                      {t('groups:groups.roles.Maintainer')}
+                    </SelectItem>
+                    <SelectItem value="Developer">{t('groups:groups.roles.Developer')}</SelectItem>
+                    <SelectItem value="Reporter">{t('groups:groups.roles.Reporter')}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -293,43 +315,55 @@ export function GroupMembersDialog({
 
             {/* Role Permission Description */}
             <div className="p-3 bg-muted rounded-md">
-              <h4 className="text-sm font-medium mb-2">{t('groupMembers.rolePermissions')}</h4>
+              <h4 className="text-sm font-medium mb-2">
+                {t('groups:groupMembers.rolePermissions')}
+              </h4>
               <div className="space-y-2 text-xs text-text-muted">
                 {selectedRole === 'Reporter' && (
                   <div>
                     <strong>Reporter：</strong>
-                    {t('groupMembers.roleDescriptions.Reporter')}
+                    {t('groups:groupMembers.roleDescriptions.Reporter')}
                   </div>
                 )}
                 {selectedRole === 'Developer' && (
                   <div>
                     <strong>Developer：</strong>
-                    {t('groupMembers.roleDescriptions.Developer')}
+                    {t('groups:groupMembers.roleDescriptions.Developer')}
                   </div>
                 )}
                 {selectedRole === 'Maintainer' && (
                   <div>
                     <strong>Maintainer：</strong>
-                    {t('groupMembers.roleDescriptions.Maintainer')}
+                    {t('groups:groupMembers.roleDescriptions.Maintainer')}
                     <ul className="list-disc list-inside ml-2 mt-1">
                       <li>
-                        {t('groupMembers.roleDescriptions.MaintainerDetails.manageResources')}
+                        {t(
+                          'groups:groupMembers.roleDescriptions.MaintainerDetails.manageResources'
+                        )}
                       </li>
-                      <li>{t('groupMembers.roleDescriptions.MaintainerDetails.manageMembers')}</li>
-                      <li>{t('groupMembers.roleDescriptions.MaintainerDetails.updateRoles')}</li>
-                      <li>{t('groupMembers.roleDescriptions.MaintainerDetails.canLeave')}</li>
+                      <li>
+                        {t('groups:groupMembers.roleDescriptions.MaintainerDetails.manageMembers')}
+                      </li>
+                      <li>
+                        {t('groups:groupMembers.roleDescriptions.MaintainerDetails.updateRoles')}
+                      </li>
+                      <li>
+                        {t('groups:groupMembers.roleDescriptions.MaintainerDetails.canLeave')}
+                      </li>
                     </ul>
                   </div>
                 )}
                 {selectedRole === 'Owner' && (
                   <div>
                     <strong>Owner：</strong>
-                    {t('groupMembers.roleDescriptions.Owner')}
+                    {t('groups:groupMembers.roleDescriptions.Owner')}
                     <ul className="list-disc list-inside ml-2 mt-1">
-                      <li>{t('groupMembers.roleDescriptions.OwnerDetails.fullControl')}</li>
-                      <li>{t('groupMembers.roleDescriptions.OwnerDetails.deleteGroup')}</li>
-                      <li>{t('groupMembers.roleDescriptions.OwnerDetails.transferOwnership')}</li>
-                      <li>{t('groupMembers.roleDescriptions.OwnerDetails.cannotLeave')}</li>
+                      <li>{t('groups:groupMembers.roleDescriptions.OwnerDetails.fullControl')}</li>
+                      <li>{t('groups:groupMembers.roleDescriptions.OwnerDetails.deleteGroup')}</li>
+                      <li>
+                        {t('groups:groupMembers.roleDescriptions.OwnerDetails.transferOwnership')}
+                      </li>
+                      <li>{t('groups:groupMembers.roleDescriptions.OwnerDetails.cannotLeave')}</li>
                     </ul>
                   </div>
                 )}
@@ -342,17 +376,20 @@ export function GroupMembersDialog({
                 size="sm"
                 onClick={() => {
                   setShowAddMember(false);
-                  setNewMemberUsername('');
+                  setSelectedUsers([]);
                 }}
               >
                 {t('common:actions.cancel')}
               </Button>
               <Button
                 size="sm"
-                onClick={handleAddMember}
-                disabled={!newMemberUsername.trim() || isSubmitting}
+                onClick={handleAddMembers}
+                disabled={selectedUsers.length === 0 || isSubmitting}
               >
-                {t('groupMembers.add')}
+                <UserPlusIcon className="w-4 h-4 mr-2" />
+                {isSubmitting
+                  ? t('groups:groupMembers.adding')
+                  : t('groups:groupMembers.addCount', { count: selectedUsers.length })}
               </Button>
             </div>
           </div>
@@ -368,19 +405,19 @@ export function GroupMembersDialog({
                 <thead className="bg-muted border-b border-border sticky top-0">
                   <tr>
                     <th className="px-4 py-3 text-left text-xs font-medium text-text-primary">
-                      {t('groupMembers.username')}
+                      {t('groups:groupMembers.username')}
                     </th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-text-primary">
-                      {t('groups.role')}
+                      {t('groups:groups.role')}
                     </th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-text-primary">
-                      {t('groupMembers.invitedBy')}
+                      {t('groups:groupMembers.invitedBy')}
                     </th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-text-primary">
-                      {t('groupMembers.joinDate')}
+                      {t('groups:groupMembers.joinDate')}
                     </th>
                     <th className="px-4 py-3 text-right text-xs font-medium text-text-primary">
-                      {t('groupMembers.actions')}
+                      {t('groups:groupMembers.actions')}
                     </th>
                   </tr>
                 </thead>
@@ -395,7 +432,7 @@ export function GroupMembersDialog({
                           {member.user_name || `User ${member.user_id}`}
                           {isMe && (
                             <Badge variant="info" className="ml-2">
-                              {t('groupMembers.you')}
+                              {t('groups:groupMembers.you')}
                             </Badge>
                           )}
                         </td>
@@ -409,27 +446,29 @@ export function GroupMembersDialog({
                             >
                               <SelectTrigger className="w-[140px]">
                                 <Badge variant={getRoleBadgeVariant(member.role)}>
-                                  {t(`groups.roles.${member.role}`)}
+                                  {t(`groups:groups.roles.${member.role}`)}
                                 </Badge>
                               </SelectTrigger>
                               <SelectContent>
                                 {myRole === 'Owner' && (
-                                  <SelectItem value="Owner">{t('groups.roles.Owner')}</SelectItem>
+                                  <SelectItem value="Owner">
+                                    {t('groups:groups.roles.Owner')}
+                                  </SelectItem>
                                 )}
                                 <SelectItem value="Maintainer">
-                                  {t('groups.roles.Maintainer')}
+                                  {t('groups:groups.roles.Maintainer')}
                                 </SelectItem>
                                 <SelectItem value="Developer">
-                                  {t('groups.roles.Developer')}
+                                  {t('groups:groups.roles.Developer')}
                                 </SelectItem>
                                 <SelectItem value="Reporter">
-                                  {t('groups.roles.Reporter')}
+                                  {t('groups:groups.roles.Reporter')}
                                 </SelectItem>
                               </SelectContent>
                             </Select>
                           ) : (
                             <Badge variant={getRoleBadgeVariant(member.role)}>
-                              {t(`groups.roles.${member.role}`)}
+                              {t(`groups:groups.roles.${member.role}`)}
                             </Badge>
                           )}
                         </td>
@@ -447,7 +486,7 @@ export function GroupMembersDialog({
                               onClick={() => handleRemoveMember(member.user_id)}
                               className="text-error hover:text-error"
                             >
-                              {t('groupMembers.remove')}
+                              {t('groups:groupMembers.remove')}
                             </Button>
                           )}
                         </td>

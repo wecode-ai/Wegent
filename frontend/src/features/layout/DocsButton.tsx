@@ -17,7 +17,7 @@ export function DocsButton({
   onClick?: () => void;
   showLabel?: boolean;
 }) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
 
   const navigateToDocs = () => {
     // Use window.open to open documentation in new tab
@@ -36,10 +36,10 @@ export function DocsButton({
       type="button"
       onClick={navigateToDocs}
       className={mergedClassName}
-      aria-label={t('navigation.docs')}
+      aria-label={t('common:navigation.docs')}
     >
       <FileText className="h-4 w-4 text-text-muted" />
-      {showLabel && <span>{t('navigation.docs')}</span>}
+      {showLabel && <span>{t('common:navigation.docs')}</span>}
     </button>
   );
 }

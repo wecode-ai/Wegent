@@ -25,14 +25,14 @@ export default function TeamShareModal({
   teamName,
   shareUrl,
 }: TeamShareModalProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const { toast } = useToast();
 
   const handleCopyLink = async () => {
     try {
       await navigator.clipboard.writeText(shareUrl);
       toast({
-        title: t('teams.copy_success'),
+        title: t('common:teams.copy_success'),
       });
       onClose();
     } catch {
@@ -44,33 +44,38 @@ export default function TeamShareModal({
       document.execCommand('copy');
       document.body.removeChild(textArea);
       toast({
-        title: t('teams.copy_success'),
+        title: t('common:teams.copy_success'),
       });
       onClose();
     }
   };
 
   return (
-    <Modal isOpen={visible} onClose={onClose} title={t('teams.share_success_title')} maxWidth="lg">
+    <Modal
+      isOpen={visible}
+      onClose={onClose}
+      title={t('common:teams.share_success_title')}
+      maxWidth="lg"
+    >
       <div>
         <div className="space-y-6">
           {/* Success message */}
           <div className="text-center">
             <p className="text-lg font-medium text-text-primary leading-relaxed">
-              {t('teams.share_success_message_prefix')}
+              {t('common:teams.share_success_message_prefix')}
               <span className="text-lg font-semibold text-blue-600"> {teamName} </span>
-              {t('teams.share_success_message_suffix')}
+              {t('common:teams.share_success_message_suffix')}
             </p>
           </div>
 
           {/* Instructions */}
           <div className="mx-auto max-w-md">
             <Alert variant="default" className="text-sm">
-              <AlertDescription>{t('teams.share_instructions_content1')}</AlertDescription>
+              <AlertDescription>{t('common:teams.share_instructions_content1')}</AlertDescription>
             </Alert>
             <div className="mt-2"></div>
             <Alert variant="default" className="text-sm mt-2">
-              <AlertDescription>{t('teams.share_instructions_content2')}</AlertDescription>
+              <AlertDescription>{t('common:teams.share_instructions_content2')}</AlertDescription>
             </Alert>
           </div>
         </div>
@@ -78,11 +83,11 @@ export default function TeamShareModal({
         {/* Bottom button area */}
         <div className="flex space-x-3 mt-6">
           <Button onClick={onClose} variant="outline" size="sm" style={{ flex: 1 }}>
-            {t('common.cancel')}
+            {t('common:common.cancel')}
           </Button>
           <Button onClick={handleCopyLink} variant="default" size="sm" style={{ flex: 1 }}>
             <DocumentDuplicateIcon className="w-4 h-4" />
-            {t('teams.copy_link')}
+            {t('common:teams.copy_link')}
           </Button>
         </div>
       </div>

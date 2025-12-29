@@ -220,7 +220,8 @@
     "failed": "PDF 导出失败",
     "docx_failed": "DOCX 导出失败",
     "select_from_here": "从此处开始选择",
-    "select_below": "选择以下所有"
+    "select_below": "选择以下所有",
+    "attachments": "个附件"
   },
   "web_search": {
     "enable": "启用联网搜索",
@@ -230,6 +231,9 @@
   "deep_thinking": {
     "enable": "启用深度思考",
     "disable": "禁用深度思考"
+  },
+  "upload": {
+    "tooltip": "支持的文件类型: PDF, Word, PPT, Excel, TXT, Markdown, 图片(JPG, PNG, GIF, BMP, WebP)\n最大文件大小: {{maxSize}} MB\n支持多文件同时上传"
   },
   "clarification_toggle": {
     "enable": "启用智能追问模式",
@@ -290,6 +294,7 @@
       "loadFailed": "加载成员失败",
       "removeSuccess": "已移除 {{name}}",
       "removeFailed": "移除成员失败",
+      "notOwner": "只有任务创建者可以创建邀请链接",
       "leaveGroupChat": "退出群聊",
       "leaveSuccess": "已退出群聊",
       "leaveFailed": "退出群聊失败"
@@ -364,6 +369,16 @@
     "apply_failed": "应用改进回答失败",
     "no_improvement_needed": "未提供改进后的回答",
     "show_details": "显示评估详情",
-    "hide_details": "隐藏评估详情"
+    "hide_details": "隐藏评估详情",
+    "progress": {
+      "starting": "正在启动交叉验证",
+      "verifying_facts": "正在验证事实",
+      "evaluating": "正在评估回答质量",
+      "generating_improvement": "正在生成改进建议"
+    },
+    "streaming": {
+      "summary": "总结评价",
+      "improved_answer": "改进后的回答"
+    }
   }
 }

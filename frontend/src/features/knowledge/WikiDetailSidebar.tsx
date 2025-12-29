@@ -26,7 +26,7 @@ export function WikiDetailSidebar({
   onBackToList,
   onSelectContent,
 }: WikiDetailSidebarProps) {
-  const { t } = useTranslation('knowledge');
+  const { t } = useTranslation();
 
   return (
     <div className="w-64 border-r border-border overflow-y-auto bg-surface/10">
@@ -43,7 +43,7 @@ export function WikiDetailSidebar({
               d="M10 19l-7-7m0 0l7-7m-7 7h18"
             />
           </svg>
-          {t('back_to_list')}
+          {t('knowledge:back_to_list')}
         </button>
 
         <h2 className="text-lg font-medium mb-2 border-b border-border pb-2">
@@ -71,7 +71,7 @@ export function WikiDetailSidebar({
               </svg>
             </a>
           ) : (
-            <span>{wikiDetail?.project?.project_name || t('loading')}</span>
+            <span>{wikiDetail?.project?.project_name || t('knowledge:loading')}</span>
           )}
         </h2>
 
@@ -91,7 +91,7 @@ export function WikiDetailSidebar({
               />
             </svg>
             <span>
-              {t('last_indexed')}:{' '}
+              {t('knowledge:last_indexed')}:{' '}
               {new Date(wikiDetail.updated_at).toLocaleString('en-US', {
                 year: 'numeric',
                 month: '2-digit',

@@ -1577,7 +1577,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
     async def _call_chat_shell_cancel(self, subtask_id: int):
         """Background task to cancel Chat Shell streaming via session manager"""
         try:
-            from app.services.chat.session_manager import session_manager
+            from app.services.chat.storage import session_manager
 
             success = await session_manager.cancel_stream(subtask_id)
             if success:
