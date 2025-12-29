@@ -26,7 +26,7 @@ export default function TaskShareModal({
   taskTitle,
   shareUrl,
 }: TaskShareModalProps) {
-  const { t } = useTranslation('shared-task');
+  const { t } = useTranslation();
   const { toast } = useToast();
   const { traced } = useTraceAction();
 
@@ -39,8 +39,8 @@ export default function TaskShareModal({
     try {
       await navigator.clipboard.writeText(shareUrl);
       toast({
-        title: t('link_copied'),
-        description: t('link_copied_desc'),
+        title: t('shared-task:link_copied'),
+        description: t('shared-task:link_copied_desc'),
       });
       onClose();
     } catch {
@@ -52,8 +52,8 @@ export default function TaskShareModal({
       document.execCommand('copy');
       document.body.removeChild(textArea);
       toast({
-        title: t('link_copied'),
-        description: t('link_copied_desc'),
+        title: t('shared-task:link_copied'),
+        description: t('shared-task:link_copied_desc'),
       });
       onClose();
     }
@@ -63,7 +63,7 @@ export default function TaskShareModal({
     <Modal
       isOpen={visible}
       onClose={onClose}
-      title={t('share_success_title')}
+      title={t('shared-task:share_success_title')}
       maxWidth="lg"
     >
       <div>
@@ -71,20 +71,20 @@ export default function TaskShareModal({
           {/* Success message */}
           <div className="text-center">
             <p className="text-lg font-medium text-text-primary leading-relaxed">
-              {t('share_success_message_prefix')}
+              {t('shared-task:share_success_message_prefix')}
               <span className="text-lg font-semibold text-blue-600"> {taskTitle} </span>
-              {t('share_success_message_suffix')}
+              {t('shared-task:share_success_message_suffix')}
             </p>
           </div>
 
           {/* Instructions */}
           <div className="mx-auto max-w-md">
             <Alert variant="default" className="text-sm">
-              <AlertDescription>{t('share_link_info')}</AlertDescription>
+              <AlertDescription>{t('shared-task:share_link_info')}</AlertDescription>
             </Alert>
             <div className="mt-2"></div>
             <Alert variant="default" className="text-sm mt-2">
-              <AlertDescription>{t('share_continue_info')}</AlertDescription>
+              <AlertDescription>{t('shared-task:share_continue_info')}</AlertDescription>
             </Alert>
           </div>
         </div>
@@ -96,7 +96,7 @@ export default function TaskShareModal({
           </Button>
           <Button onClick={handleCopyLink} variant="default" size="sm" style={{ flex: 1 }}>
             <DocumentDuplicateIcon className="w-4 h-4" />
-            {t('copy_link')}
+            {t('shared-task:copy_link')}
           </Button>
         </div>
       </div>

@@ -55,7 +55,7 @@ export default function BotTransfer({
   onCloneBot,
   onOpenPromptDrawer,
 }: BotTransferProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
 
   const configuredPromptBadgeStyle = useMemo(() => getPromptBadgeStyle('configured'), []);
 
@@ -72,23 +72,23 @@ export default function BotTransfer({
     if (unsavedHasContent) {
       const countText =
         configuredCount > 0
-          ? ` - ${t('team.prompts_tag_configured', { count: configuredCount })}`
+          ? ` - ${t('common:team.prompts_tag_configured', { count: configuredCount })}`
           : '';
       return {
-        label: `${t('team.prompts_tag_pending')}${countText}`,
+        label: `${t('common:team.prompts_tag_pending')}${countText}`,
         variant: 'pending',
       };
     }
 
     if (configuredCount > 0) {
       return {
-        label: t('team.prompts_tag_configured', { count: configuredCount }),
+        label: t('common:team.prompts_tag_configured', { count: configuredCount }),
         variant: 'configured',
       };
     }
 
     return {
-      label: t('team.prompts_tag_none'),
+      label: t('common:team.prompts_tag_none'),
       variant: 'none',
     };
   }, [teamPromptMap, unsavedPrompts, t]);
@@ -161,7 +161,9 @@ export default function BotTransfer({
   return (
     <div className="flex flex-col min-h-0 mt-1 flex-1">
       <div className="flex items-center justify-between mb-1">
-        <label className="block text-lg font-semibold text-text-primary">{t('team.bots')}</label>
+        <label className="block text-lg font-semibold text-text-primary">
+          {t('common:team.bots')}
+        </label>
       </div>
       <div className="flex items-center gap-2 mb-2">
         <Tooltip>
@@ -173,11 +175,11 @@ export default function BotTransfer({
               onClick={onOpenPromptDrawer}
             >
               <RiMagicLine className="mr-1 h-4 w-4" />
-              {t('team.prompts_link')}
+              {t('common:team.prompts_link')}
             </Button>
           </TooltipTrigger>
           <TooltipContent>
-            <p>{t('team.prompts_tooltip')}</p>
+            <p>{t('common:team.prompts_tooltip')}</p>
           </TooltipContent>
         </Tooltip>
         <Tag
@@ -195,7 +197,7 @@ export default function BotTransfer({
         {isDifyLeader && (
           <div className="absolute inset-0 bg-white/50 dark:bg-black/50 z-10 flex items-center justify-center rounded-md backdrop-blur-[1px]">
             <div className="bg-background/95 px-4 py-2 rounded-md shadow-sm border border-border text-sm text-muted-foreground">
-              {t('team.dify_no_members_hint') ||
+              {t('common:team.dify_no_members_hint') ||
                 'Dify bots handle execution independently and do not support team members.'}
             </div>
           </div>
@@ -230,11 +232,11 @@ export default function BotTransfer({
                         variant="default"
                         style={configuredPromptBadgeStyle}
                       >
-                        {t('team.prompts_badge')}
+                        {t('common:team.prompts_badge')}
                       </Tag>
                     </TooltipTrigger>
                     <TooltipContent>
-                      <p>{t('team.prompts_badge_tooltip')}</p>
+                      <p>{t('common:team.prompts_badge_tooltip')}</p>
                     </TooltipContent>
                   </Tooltip>
                 )}
@@ -256,7 +258,7 @@ export default function BotTransfer({
               </div>
             </div>
           )}
-          titles={[t('team.candidates'), t('team.in_team')]}
+          titles={[t('common:team.candidates'), t('common:team.in_team')]}
           className="h-full transfer-fill"
           listStyle={{
             backgroundColor: 'rgb(var(--color-bg-surface))',
@@ -271,7 +273,7 @@ export default function BotTransfer({
               disabled={isDifyLeader}
             >
               <Plus className="mr-2 h-4 w-4" />
-              {t('bots.new_bot')}
+              {t('common:bots.new_bot')}
             </Button>
           }
         />

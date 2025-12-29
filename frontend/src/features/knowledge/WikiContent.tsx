@@ -287,7 +287,7 @@ function CodeBlock({
  * Encapsulates complex ReactMarkdown config and custom components
  */
 export function WikiContent({ content, loading, error }: WikiContentProps) {
-  const { t } = useTranslation('knowledge');
+  const { t } = useTranslation();
 
   if (loading) {
     return (
@@ -295,7 +295,7 @@ export function WikiContent({ content, loading, error }: WikiContentProps) {
         <div className="relative">
           <div className="animate-spin rounded-full h-12 w-12 border-4 border-primary/20 border-t-primary"></div>
         </div>
-        <p className="mt-4 text-sm text-text-secondary">{t('loading_content')}</p>
+        <p className="mt-4 text-sm text-text-secondary">{t('knowledge:loading_content')}</p>
       </div>
     );
   }
@@ -337,8 +337,8 @@ export function WikiContent({ content, loading, error }: WikiContentProps) {
             d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
           />
         </svg>
-        <p className="text-lg font-medium">{t('select_content')}</p>
-        <p className="text-sm mt-1">{t('select_content_hint')}</p>
+        <p className="text-lg font-medium">{t('knowledge:select_content')}</p>
+        <p className="text-sm mt-1">{t('knowledge:select_content_hint')}</p>
       </div>
     );
   }
@@ -532,8 +532,8 @@ export function WikiContent({ content, loading, error }: WikiContentProps) {
                   if (className === 'language-mermaid') {
                     return (
                       <MermaidDiagram
-                        diagramText={t('diagram')}
-                        clickToExpandText={t('click_to_expand')}
+                        diagramText={t('knowledge:diagram')}
+                        clickToExpandText={t('knowledge:click_to_expand')}
                       >
                         {children}
                       </MermaidDiagram>
@@ -565,8 +565,8 @@ export function WikiContent({ content, loading, error }: WikiContentProps) {
                       <CodeBlock
                         language={language}
                         code={codeContent}
-                        copiedText={t('copied')}
-                        copyText={t('copy_code')}
+                        copiedText={t('knowledge:copied')}
+                        copyText={t('knowledge:copy_code')}
                       />
                     );
                   }

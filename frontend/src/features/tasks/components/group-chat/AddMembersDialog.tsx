@@ -47,7 +47,7 @@ export function AddMembersDialog({
   onMembersAdded,
   onComplete,
 }: AddMembersDialogProps) {
-  const { t } = useTranslation('chat');
+  const { t } = useTranslation();
   const { toast } = useToast();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -146,14 +146,14 @@ export function AddMembersDialog({
         setShowInviteLink(true);
 
         toast({
-          title: t('groupChat.addMembers.allUnregistered'),
-          description: t('groupChat.addMembers.useInviteLink'),
+          title: t('chat:groupChat.addMembers.allUnregistered'),
+          description: t('chat:groupChat.addMembers.useInviteLink'),
           variant: 'default',
         });
       } catch (error) {
         console.error('Failed to generate invite link:', error);
         toast({
-          title: t('groupChat.inviteLink.generateFailed'),
+          title: t('chat:groupChat.inviteLink.generateFailed'),
           description: error instanceof Error ? error.message : undefined,
           variant: 'destructive',
         });
@@ -208,14 +208,14 @@ export function AddMembersDialog({
       // Show toast messages based on results
       if (successCount > 0) {
         toast({
-          title: t('groupChat.addMembers.success', { count: successCount }),
+          title: t('chat:groupChat.addMembers.success', { count: successCount }),
         });
       }
 
       if (alreadyMemberCount > 0 && successCount === 0 && errors.length === 0) {
         // All users are already members
         toast({
-          title: t('groupChat.addMembers.allAlreadyMembers'),
+          title: t('chat:groupChat.addMembers.allAlreadyMembers'),
           variant: 'default',
         });
       }
@@ -240,7 +240,7 @@ export function AddMembersDialog({
         } catch (error) {
           console.error('Failed to generate invite link:', error);
           toast({
-            title: t('groupChat.inviteLink.generateFailed'),
+            title: t('chat:groupChat.inviteLink.generateFailed'),
             description: error instanceof Error ? error.message : undefined,
             variant: 'destructive',
           });
@@ -253,7 +253,7 @@ export function AddMembersDialog({
       }
     } catch (error) {
       toast({
-        title: t('groupChat.addMembers.failed'),
+        title: t('chat:groupChat.addMembers.failed'),
         description: error instanceof Error ? error.message : undefined,
         variant: 'destructive',
       });
@@ -283,7 +283,7 @@ export function AddMembersDialog({
         await navigator.clipboard.writeText(inviteUrl);
         setCopied(true);
         toast({
-          title: t('groupChat.inviteLink.copied'),
+          title: t('chat:groupChat.inviteLink.copied'),
         });
         setTimeout(() => {
           handleClose();
@@ -306,7 +306,7 @@ export function AddMembersDialog({
       document.body.removeChild(textarea);
       setCopied(true);
       toast({
-        title: t('groupChat.inviteLink.copied'),
+        title: t('chat:groupChat.inviteLink.copied'),
       });
       setTimeout(() => {
         handleClose();
@@ -315,7 +315,7 @@ export function AddMembersDialog({
     } catch (err) {
       console.error('Fallback copy failed: ', err);
       toast({
-        title: t('groupChat.inviteLink.copyFailed'),
+        title: t('chat:groupChat.inviteLink.copyFailed'),
         variant: 'destructive',
       });
     }
@@ -325,11 +325,11 @@ export function AddMembersDialog({
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{t('groupChat.addMembers.title')}</DialogTitle>
+          <DialogTitle>{t('chat:groupChat.addMembers.title')}</DialogTitle>
           <DialogDescription>
             {showInviteLink
-              ? t('groupChat.addMembers.inviteLinkDescription', { count: addedCount })
-              : t('groupChat.addMembers.description', { taskTitle })}
+              ? t('chat:groupChat.addMembers.inviteLinkDescription', { count: addedCount })
+              : t('chat:groupChat.addMembers.description', { taskTitle })}
           </DialogDescription>
         </DialogHeader>
 
@@ -339,7 +339,7 @@ export function AddMembersDialog({
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted" />
               <Input
-                placeholder={t('groupChat.addMembers.searchPlaceholder')}
+                placeholder={t('chat:groupChat.addMembers.searchPlaceholder')}
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
                 className="pl-9"
@@ -373,18 +373,18 @@ export function AddMembersDialog({
 
             {isSearching && (
               <div className="text-center text-sm text-text-muted py-4">
-                {t('groupChat.addMembers.searching')}
+                {t('chat:groupChat.addMembers.searching')}
               </div>
             )}
 
             {searchQuery && !isSearching && searchResults.length === 0 && (
               <div className="space-y-2">
                 <div className="text-center text-sm text-text-muted py-2">
-                  {t('groupChat.addMembers.noResults')}
+                  {t('chat:groupChat.addMembers.noResults')}
                 </div>
                 <Button variant="outline" className="w-full" onClick={handleAddUnregisteredUser}>
                   <UserPlus className="h-4 w-4 mr-2" />
-                  {t('groupChat.addMembers.addAsUnregistered', { name: searchQuery })}
+                  {t('chat:groupChat.addMembers.addAsUnregistered', { name: searchQuery })}
                 </Button>
               </div>
             )}
@@ -393,7 +393,7 @@ export function AddMembersDialog({
             {selectedUsers.length > 0 && (
               <div className="space-y-2">
                 <div className="text-sm font-medium">
-                  {t('groupChat.addMembers.selected', { count: selectedUsers.length })}
+                  {t('chat:groupChat.addMembers.selected', { count: selectedUsers.length })}
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {selectedUsers.map(user => (
@@ -405,7 +405,7 @@ export function AddMembersDialog({
                       {user.user_name}
                       {user.isUnregistered && (
                         <span className="ml-1 text-xs">
-                          ({t('groupChat.addMembers.unregistered')})
+                          ({t('chat:groupChat.addMembers.unregistered')})
                         </span>
                       )}
                       <button
@@ -426,15 +426,15 @@ export function AddMembersDialog({
             {unregisteredUsers.length > 0 && (
               <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4">
                 <div className="text-sm font-medium text-yellow-800 dark:text-yellow-200 mb-2">
-                  {t('groupChat.addMembers.unregisteredUsersTitle')}
+                  {t('chat:groupChat.addMembers.unregisteredUsersTitle')}
                 </div>
                 <div className="text-sm text-yellow-700 dark:text-yellow-300 mb-2">
-                  {t('groupChat.addMembers.unregisteredUsersDesc', {
+                  {t('chat:groupChat.addMembers.unregisteredUsersDesc', {
                     users: unregisteredUsers.join(', '),
                   })}
                 </div>
                 <div className="text-xs text-yellow-600 dark:text-yellow-400">
-                  {t('groupChat.addMembers.useInviteLink')}
+                  {t('chat:groupChat.addMembers.useInviteLink')}
                 </div>
               </div>
             )}
@@ -442,7 +442,7 @@ export function AddMembersDialog({
             {/* Show added count if any */}
             {addedCount > 0 && (
               <div className="text-sm text-text-secondary">
-                {t('groupChat.addMembers.inviteLinkDescription', { count: addedCount })}
+                {t('chat:groupChat.addMembers.inviteLinkDescription', { count: addedCount })}
               </div>
             )}
 
@@ -466,17 +466,17 @@ export function AddMembersDialog({
           {!showInviteLink ? (
             <>
               <Button variant="outline" onClick={handleClose}>
-                {t('common.cancel')}
+                {t('chat:common.cancel')}
               </Button>
               <Button onClick={handleAddMembers} disabled={selectedUsers.length === 0 || isAdding}>
                 <UserPlus className="h-4 w-4 mr-2" />
                 {isAdding
-                  ? t('groupChat.addMembers.adding')
-                  : t('groupChat.addMembers.add', { count: selectedUsers.length })}
+                  ? t('chat:groupChat.addMembers.adding')
+                  : t('chat:groupChat.addMembers.add', { count: selectedUsers.length })}
               </Button>
             </>
           ) : (
-            <Button onClick={handleClose}>{t('common.close')}</Button>
+            <Button onClick={handleClose}>{t('chat:common.close')}</Button>
           )}
         </DialogFooter>
       </DialogContent>

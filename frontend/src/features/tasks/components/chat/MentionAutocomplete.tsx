@@ -31,7 +31,7 @@ export default function MentionAutocomplete({
   onClose,
   position,
 }: MentionAutocompleteProps) {
-  const { t } = useTranslation('chat');
+  const { t } = useTranslation();
   const menuRef = useRef<HTMLDivElement>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
 
@@ -158,7 +158,7 @@ export default function MentionAutocomplete({
         </div>
       ))}
       <div className="px-3 py-1 text-xs text-text-muted border-t border-border">
-        {t('groupChat.mentionAutocomplete.title')}
+        {t('chat:groupChat.mentionAutocomplete.title')}
       </div>
     </div>
   );

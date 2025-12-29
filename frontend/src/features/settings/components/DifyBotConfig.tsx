@@ -47,7 +47,7 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
   toast,
   readOnly = false,
 }) => {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const [difyApiKey, setDifyApiKey] = useState<string>('');
   const [difyBaseUrl, setDifyBaseUrl] = useState<string>('https://api.dify.ai');
   const [isValidating, setIsValidating] = useState(false);
@@ -89,7 +89,8 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
     if (!difyApiKey || !difyBaseUrl) {
       toast({
         variant: 'destructive',
-        title: t('bot.dify_api_key_required') || 'Please enter Dify API Key and Base URL first',
+        title:
+          t('common:bot.dify_api_key_required') || 'Please enter Dify API Key and Base URL first',
       });
       return;
     }
@@ -123,14 +124,14 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
       setIsValidated(true);
 
       toast({
-        title: t('bot.dify_validation_success') || 'API Key validated successfully',
+        title: t('common:bot.dify_validation_success') || 'API Key validated successfully',
         description: `Application: ${completeAppInfo.name}`,
       });
     } catch (error) {
       console.error('Failed to validate Dify API key:', error);
       toast({
         variant: 'destructive',
-        title: t('bot.errors.dify_validation_failed') || 'Failed to validate API key',
+        title: t('common:bot.errors.dify_validation_failed') || 'Failed to validate API key',
         description: 'Please make sure your API key is valid and the base URL is correct.',
       });
       setIsValidated(false);
@@ -179,10 +180,10 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
           <InformationCircleIcon className="w-5 h-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
           <div className="flex-1 min-w-0">
             <h4 className="text-sm font-medium text-blue-900 dark:text-blue-100 mb-1">
-              {t('bot.dify_mode_title') || 'Dify External API Mode'}
+              {t('common:bot.dify_mode_title') || 'Dify External API Mode'}
             </h4>
             <p className="text-xs text-blue-700 dark:text-blue-300 mb-2">
-              {t('bot.dify_mode_description') ||
+              {t('common:bot.dify_mode_description') ||
                 'Dify bot delegates execution to external Dify API service. Enter your Dify application API key to get started.'}
             </p>
             <Button
@@ -191,7 +192,7 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
               onClick={handleOpenDifyDocs}
               className="text-xs h-7 border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/40"
             >
-              📚 {t('bot.view_dify_docs') || 'View Dify API Documentation'}
+              📚 {t('common:bot.view_dify_docs') || 'View Dify API Documentation'}
             </Button>
           </div>
         </div>
@@ -203,7 +204,8 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
           {/* Dify API Key */}
           <div className="flex flex-col">
             <Label htmlFor="dify-api-key" className="text-base font-medium text-text-primary mb-2">
-              {t('bot.dify_api_key') || 'Dify API Key'} <span className="text-red-400">*</span>
+              {t('common:bot.dify_api_key') || 'Dify API Key'}{' '}
+              <span className="text-red-400">*</span>
             </Label>
             <input
               id="dify-api-key"
@@ -218,7 +220,7 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
               className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent text-base font-mono ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
             />
             <p className="text-xs text-text-muted mt-1">
-              {t('bot.dify_api_key_hint') ||
+              {t('common:bot.dify_api_key_hint') ||
                 'Enter your Dify application API key. Each Dify application has its own API key.'}
             </p>
           </div>
@@ -226,7 +228,8 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
           {/* Dify Base URL */}
           <div className="flex flex-col">
             <Label htmlFor="dify-base-url" className="text-base font-medium text-text-primary mb-2">
-              {t('bot.dify_base_url') || 'Dify Base URL'} <span className="text-red-400">*</span>
+              {t('common:bot.dify_base_url') || 'Dify Base URL'}{' '}
+              <span className="text-red-400">*</span>
             </Label>
             <input
               id="dify-base-url"
@@ -241,7 +244,7 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
               className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent text-base font-mono ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
             />
             <p className="text-xs text-text-muted mt-1">
-              {t('bot.dify_base_url_hint') ||
+              {t('common:bot.dify_base_url_hint') ||
                 'Dify API base URL. Use https://api.dify.ai for Dify Cloud, or your self-hosted URL.'}
             </p>
           </div>
@@ -256,10 +259,10 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
             {isValidating ? (
               <>
                 <div className="animate-spin h-4 w-4 border-2 border-current border-t-transparent rounded-full mr-2" />
-                {t('bot.validating') || 'Validating...'}
+                {t('common:bot.validating') || 'Validating...'}
               </>
             ) : (
-              <>✓ {t('bot.validate_api_key') || 'Validate API Key'}</>
+              <>✓ {t('common:bot.validate_api_key') || 'Validate API Key'}</>
             )}
           </Button>
         </div>
@@ -273,7 +276,7 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
                 <CheckCircleIcon className="w-5 h-5 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
                 <div className="flex-1 min-w-0">
                   <h4 className="text-sm font-medium text-green-900 dark:text-green-100 mb-1">
-                    {t('bot.validation_success') || 'API Key Validated Successfully'}
+                    {t('common:bot.validation_success') || 'API Key Validated Successfully'}
                   </h4>
                   <div className="text-xs text-green-700 dark:text-green-300 space-y-1">
                     <p>
@@ -307,18 +310,18 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
                     <AccordionTrigger className="px-4 py-3 hover:no-underline">
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-medium text-text-primary">
-                          {t('bot.dify_app_parameters') || 'Application Parameters'}
+                          {t('common:bot.dify_app_parameters') || 'Application Parameters'}
                         </span>
                         <span className="text-xs text-text-muted">
                           ({appInfo.user_input_form.length}{' '}
-                          {t('bot.dify_parameters_count') || 'parameters'})
+                          {t('common:bot.dify_parameters_count') || 'parameters'})
                         </span>
                       </div>
                     </AccordionTrigger>
                     <AccordionContent className="px-4 pb-4">
                       <div className="space-y-4">
                         <p className="text-xs text-text-muted mb-3">
-                          {t('bot.dify_parameters_hint') ||
+                          {t('common:bot.dify_parameters_hint') ||
                             'Configure the input parameters for this Dify application. These values will be used when executing tasks.'}
                         </p>
                         {appInfo.user_input_form.map(field => (
@@ -397,7 +400,7 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
           {/* Preview Configuration */}
           <div className="flex flex-col">
             <Label className="text-sm font-medium text-text-muted mb-2">
-              {t('bot.config_preview') || 'Configuration Preview'}
+              {t('common:bot.config_preview') || 'Configuration Preview'}
             </Label>
             <Textarea
               value={agentConfig}

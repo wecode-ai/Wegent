@@ -231,6 +231,9 @@
     "enable": "Enable deep thinking",
     "disable": "Disable deep thinking"
   },
+  "upload": {
+    "tooltip": "Supported file types: PDF, Word, PPT, Excel, TXT, Markdown, Images(JPG, PNG, GIF, BMP, WebP)\nMax file size: {{maxSize}} MB\nSupports multiple file uploads"
+  },
   "clarification_toggle": {
     "enable": "Enable smart follow-up mode",
     "disable": "Disable smart follow-up mode"

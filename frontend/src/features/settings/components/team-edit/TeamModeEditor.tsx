@@ -67,11 +67,11 @@ export default function TeamModeEditor({
   onOpenPromptDrawer,
   onLeaderChange,
 }: TeamModeEditorProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
 
   return (
     <div className="space-y-2">
-      <Label className="text-sm font-medium">{t('team.members')}</Label>
+      <Label className="text-sm font-medium">{t('common:team.members')}</Label>
 
       <div className="min-h-[300px]">
         {mode === 'solo' && (

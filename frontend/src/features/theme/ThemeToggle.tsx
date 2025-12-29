@@ -18,7 +18,7 @@ export function ThemeToggle({
   showLabel?: boolean;
 }) {
   const { theme, toggleTheme } = useTheme();
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const isDark = theme === 'dark';
 
   const baseClassName = showLabel
@@ -28,7 +28,9 @@ export function ThemeToggle({
   const mergedClassName = `${baseClassName} ${className}`.trim();
 
   const Icon = isDark ? Sun : Moon;
-  const label = isDark ? t('theme.light', 'Light Mode') : t('theme.dark', 'Dark Mode');
+  const label = isDark
+    ? t('common:theme.light', 'Light Mode')
+    : t('common:theme.dark', 'Dark Mode');
 
   const handleClick = () => {
     // Execute callback to close menu first, then toggle theme to avoid flicker
@@ -41,7 +43,7 @@ export function ThemeToggle({
       type="button"
       onClick={handleClick}
       className={mergedClassName}
-      aria-label={t('actions.toggle_theme')}
+      aria-label={t('common:actions.toggle_theme')}
     >
       <Icon className="h-3.5 w-3.5" />
       {showLabel && <span>{label}</span>}

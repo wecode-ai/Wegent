@@ -19,7 +19,7 @@ export default function CollapsedSidebarButtons({
   onExpand,
   onNewTask,
 }: CollapsedSidebarButtonsProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const { tasks, getUnreadCount, viewStatusVersion } = useTaskContext();
 
   // Calculate unread count from task context, same as TaskSidebar
@@ -38,13 +38,13 @@ export default function CollapsedSidebarButtons({
               <button
                 onClick={onExpand}
                 className="flex-shrink-0 p-1.5 -m-1.5 rounded-full hover:bg-hover transition-colors"
-                aria-label={t('sidebar.expand')}
+                aria-label={t('common:sidebar.expand')}
               >
                 <PanelLeftOpen className="h-4 w-4 text-text-primary" />
               </button>
             </TooltipTrigger>
             <TooltipContent side="bottom">
-              <p>{t('sidebar.expand')}</p>
+              <p>{t('common:sidebar.expand')}</p>
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
@@ -56,13 +56,13 @@ export default function CollapsedSidebarButtons({
               <button
                 onClick={onNewTask}
                 className="flex-shrink-0 p-1.5 -m-1.5 rounded-full hover:bg-hover transition-colors"
-                aria-label={t('tasks.new_task')}
+                aria-label={t('common:tasks.new_task')}
               >
                 <Plus className="h-4 w-4 text-text-primary" />
               </button>
             </TooltipTrigger>
             <TooltipContent side="bottom">
-              <p>{t('tasks.new_task')}</p>
+              <p>{t('common:tasks.new_task')}</p>
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>

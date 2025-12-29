@@ -65,7 +65,7 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
   scope = 'personal',
   groupName,
 }) => {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const isEditing = !!shell;
 
   // Form state
@@ -162,15 +162,15 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
           setValidating(false);
           setValidationStatus({
             status: 'error',
-            message: t('shells.validation_timeout'),
+            message: t('common:shells.validation_timeout'),
             progress: 0,
             valid: false,
-            errors: [t('shells.validation_timeout')],
+            errors: [t('common:shells.validation_timeout')],
           });
           toast({
             variant: 'destructive',
-            title: t('shells.validation_failed'),
-            description: t('shells.validation_timeout'),
+            title: t('common:shells.validation_failed'),
+            description: t('common:shells.validation_timeout'),
           });
           return;
         }
@@ -198,18 +198,18 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
             if (result.valid === true) {
               setValidationStatus({
                 status: 'success',
-                message: t('shells.validation_passed'),
+                message: t('common:shells.validation_passed'),
                 progress: 100,
                 valid: true,
                 checks: result.checks ?? undefined,
               });
               toast({
-                title: t('shells.validation_success'),
+                title: t('common:shells.validation_success'),
               });
             } else {
               setValidationStatus({
                 status: 'failed',
-                message: result.errorMessage || t('shells.validation_not_passed'),
+                message: result.errorMessage || t('common:shells.validation_not_passed'),
                 progress: 100,
                 valid: false,
                 checks: result.checks ?? undefined,
@@ -217,8 +217,8 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
               });
               toast({
                 variant: 'destructive',
-                title: t('shells.validation_failed'),
-                description: result.errorMessage || t('shells.validation_not_passed'),
+                title: t('common:shells.validation_failed'),
+                description: result.errorMessage || t('common:shells.validation_not_passed'),
               });
             }
           }
@@ -235,7 +235,7 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
     if (!baseImage || !baseShellRef) {
       toast({
         variant: 'destructive',
-        title: t('shells.errors.base_image_and_shell_required'),
+        title: t('common:shells.errors.base_image_and_shell_required'),
       });
       return;
     }
@@ -245,7 +245,7 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
     if (!selectedBaseShell) {
       toast({
         variant: 'destructive',
-        title: t('shells.errors.base_shell_not_found'),
+        title: t('common:shells.errors.base_shell_not_found'),
       });
       return;
     }
@@ -253,7 +253,7 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
     setValidating(true);
     setValidationStatus({
       status: 'submitted',
-      message: t('shells.validation_stage_submitted'),
+      message: t('common:shells.validation_stage_submitted'),
       progress: STAGE_PROGRESS.submitted,
     });
 
@@ -277,7 +277,7 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
           errors: [],
         });
         toast({
-          title: t('shells.validation_skipped'),
+          title: t('common:shells.validation_skipped'),
           description: result.message,
         });
       } else if (result.status === 'submitted' && result.validationId) {
@@ -285,8 +285,8 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
         setValidationId(result.validationId);
         startPolling(result.validationId);
         toast({
-          title: t('shells.validation_submitted'),
-          description: t('shells.validation_async_hint'),
+          title: t('common:shells.validation_submitted'),
+          description: t('common:shells.validation_async_hint'),
         });
       } else if (result.status === 'error') {
         // Error submitting validation
@@ -300,7 +300,7 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
         });
         toast({
           variant: 'destructive',
-          title: t('shells.validation_failed'),
+          title: t('common:shells.validation_failed'),
           description: result.message,
         });
       }
@@ -315,7 +315,7 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
       });
       toast({
         variant: 'destructive',
-        title: t('shells.validation_failed'),
+        title: t('common:shells.validation_failed'),
         description: (error as Error).message,
       });
     }
@@ -338,7 +338,7 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
 
   const getSaveButtonTooltip = useCallback(() => {
     if (isSaveDisabled()) {
-      return t('shells.validation_required');
+      return t('common:shells.validation_required');
     }
     return undefined;
   }, [isSaveDisabled, t]);
@@ -348,7 +348,7 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
     if (!name.trim()) {
       toast({
         variant: 'destructive',
-        title: t('shells.errors.name_required'),
+        title: t('common:shells.errors.name_required'),
       });
       return;
     }
@@ -358,7 +358,7 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
     if (!nameRegex.test(name)) {
       toast({
         variant: 'destructive',
-        title: t('shells.errors.name_invalid'),
+        title: t('common:shells.errors.name_invalid'),
       });
       return;
     }
@@ -367,7 +367,7 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
       if (!baseShellRef) {
         toast({
           variant: 'destructive',
-          title: t('shells.errors.base_shell_required'),
+          title: t('common:shells.errors.base_shell_required'),
         });
         return;
       }
@@ -375,7 +375,7 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
       if (!baseImage.trim()) {
         toast({
           variant: 'destructive',
-          title: t('shells.errors.base_image_required'),
+          title: t('common:shells.errors.base_image_required'),
         });
         return;
       }
@@ -384,8 +384,8 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
       if (scope === 'group' && !groupName) {
         toast({
           variant: 'destructive',
-          title: t('shells.errors.group_required'),
-          description: t('shells.errors.group_required_hint'),
+          title: t('common:shells.errors.group_required'),
+          description: t('common:shells.errors.group_required_hint'),
         });
         return;
       }
@@ -399,7 +399,7 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
           baseImage: baseImage.trim() || undefined,
         });
         toast({
-          title: t('shells.update_success'),
+          title: t('common:shells.update_success'),
         });
       } else {
         await shellApis.createShell(
@@ -412,7 +412,7 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
           groupName
         );
         toast({
-          title: t('shells.create_success'),
+          title: t('common:shells.create_success'),
         });
       }
 
@@ -420,7 +420,9 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
     } catch (error) {
       toast({
         variant: 'destructive',
-        title: isEditing ? t('shells.errors.update_failed') : t('shells.errors.create_failed'),
+        title: isEditing
+          ? t('common:shells.errors.update_failed')
+          : t('common:shells.errors.create_failed'),
         description: (error as Error).message,
       });
     } finally {
@@ -441,19 +443,19 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
   const getStageDisplayText = (status: ValidationStage | 'error' | 'success' | 'failed') => {
     switch (status) {
       case 'submitted':
-        return t('shells.validation_stage_submitted');
+        return t('common:shells.validation_stage_submitted');
       case 'pulling_image':
-        return t('shells.validation_stage_pulling');
+        return t('common:shells.validation_stage_pulling');
       case 'starting_container':
-        return t('shells.validation_stage_starting');
+        return t('common:shells.validation_stage_starting');
       case 'running_checks':
-        return t('shells.validation_stage_checking');
+        return t('common:shells.validation_stage_checking');
       case 'completed':
       case 'success':
-        return t('shells.validation_passed');
+        return t('common:shells.validation_passed');
       case 'failed':
       case 'error':
-        return t('shells.validation_not_passed');
+        return t('common:shells.validation_not_passed');
       default:
         return status;
     }
@@ -463,7 +465,9 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
     <Dialog open={open} onOpenChange={open => !open && handleClose()}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{isEditing ? t('shells.edit_title') : t('shells.create_title')}</DialogTitle>
+          <DialogTitle>
+            {isEditing ? t('common:shells.edit_title') : t('common:shells.create_title')}
+          </DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4 py-4">
@@ -471,7 +475,7 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="name" className="text-sm font-medium">
-                {t('shells.shell_name')} <span className="text-red-400">*</span>
+                {t('common:shells.shell_name')} <span className="text-red-400">*</span>
               </Label>
               <Input
                 id="name"
@@ -482,29 +486,29 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
                 className="bg-base"
               />
               <p className="text-xs text-text-muted">
-                {isEditing ? t('shells.name_readonly_hint') : t('shells.name_hint')}
+                {isEditing ? t('common:shells.name_readonly_hint') : t('common:shells.name_hint')}
               </p>
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="displayName" className="text-sm font-medium">
-                {t('shells.display_name')}
+                {t('common:shells.display_name')}
               </Label>
               <Input
                 id="displayName"
                 value={displayName}
                 onChange={e => setDisplayName(e.target.value)}
-                placeholder={t('shells.display_name_placeholder')}
+                placeholder={t('common:shells.display_name_placeholder')}
                 className="bg-base"
               />
-              <p className="text-xs text-text-muted">{t('shells.display_name_hint')}</p>
+              <p className="text-xs text-text-muted">{t('common:shells.display_name_hint')}</p>
             </div>
           </div>
 
           {/* Base Shell Reference */}
           <div className="space-y-2">
             <Label htmlFor="baseShellRef" className="text-sm font-medium">
-              {t('shells.base_shell')} <span className="text-red-400">*</span>
+              {t('common:shells.base_shell')} <span className="text-red-400">*</span>
             </Label>
             <Select
               value={baseShellRef}
@@ -512,7 +516,7 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
               disabled={isEditing || loadingBaseShells}
             >
               <SelectTrigger className="bg-base">
-                <SelectValue placeholder={t('shells.select_base_shell')} />
+                <SelectValue placeholder={t('common:shells.select_base_shell')} />
               </SelectTrigger>
               <SelectContent>
                 {baseShells.map(baseShell => (
@@ -525,7 +529,7 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
                 ))}
               </SelectContent>
             </Select>
-            <p className="text-xs text-text-muted">{t('shells.base_shell_hint')}</p>
+            <p className="text-xs text-text-muted">{t('common:shells.base_shell_hint')}</p>
 
             {/* Software Requirements Display */}
             {baseShellRef &&
@@ -540,7 +544,7 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
           {/* Base Image */}
           <div className="space-y-2">
             <Label htmlFor="baseImage" className="text-sm font-medium">
-              {t('shells.base_image')} <span className="text-red-400">*</span>
+              {t('common:shells.base_image')} <span className="text-red-400">*</span>
             </Label>
             <Input
               id="baseImage"
@@ -558,7 +562,7 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
               placeholder="ghcr.io/your-org/your-image:latest"
               className="bg-base"
             />
-            <p className="text-xs text-text-muted">{t('shells.base_image_hint')}</p>
+            <p className="text-xs text-text-muted">{t('common:shells.base_image_hint')}</p>
 
             {/* Validation Status */}
             {validationStatus && (
@@ -646,7 +650,7 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
             {/* Validation required hint when save is disabled */}
             {isSaveDisabled() && !validating && (
               <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">
-                {t('shells.validation_required')}
+                {t('common:shells.validation_required')}
               </p>
             )}
           </div>
@@ -663,11 +667,11 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
             ) : (
               <BeakerIcon className="w-4 h-4 mr-1" />
             )}
-            {t('shells.validate')}
+            {t('common:shells.validate')}
           </Button>
           <div className="flex gap-2">
             <Button variant="outline" onClick={handleClose}>
-              {t('actions.cancel')}
+              {t('common:actions.cancel')}
             </Button>
             <Button
               onClick={handleSave}
@@ -676,7 +680,7 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
               className="bg-primary hover:bg-primary/90"
             >
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {saving ? t('actions.saving') : t('actions.save')}
+              {saving ? t('common:actions.saving') : t('common:actions.save')}
             </Button>
           </div>
         </DialogFooter>
