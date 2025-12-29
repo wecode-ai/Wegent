@@ -5,11 +5,15 @@
 """
 Unified Kind service for all Kubernetes-style CRD operations
 """
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from app.core.exceptions import NotFoundException
 from app.models.kind import Kind
+from app.models.task import TaskResource
 from app.services.kind_factory import KindServiceFactory
+
+# Kinds that use the tasks table instead of kinds table
+TASK_RESOURCE_KINDS = {"Task", "Workspace"}
 
 
 class KindService:
@@ -68,13 +72,27 @@ class KindService:
         from app.db.session import SessionLocal
 
         with SessionLocal() as db:
-            resource = (
-                db.query(Kind)
-                .filter(
-                    Kind.id == resource_id, Kind.kind == kind, Kind.is_active == True
+            # Use TaskResource model for Task and Workspace kinds
+            if kind in TASK_RESOURCE_KINDS:
+                resource = (
+                    db.query(TaskResource)
+                    .filter(
+                        TaskResource.id == resource_id,
+                        TaskResource.kind == kind,
+                        TaskResource.is_active == True,
+                    )
+                    .first()
                 )
-                .first()
-            )
+            else:
+                resource = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.id == resource_id,
+                        Kind.kind == kind,
+                        Kind.is_active == True,
+                    )
+                    .first()
+                )
 
             if not resource:
                 raise NotFoundException(f"{kind} with ID {resource_id} not found")
@@ -82,18 +100,34 @@ class KindService:
             service = KindServiceFactory.get_service(kind)
             return service._format_resource(resource)
 
-    def get_resource_by_id(self, kind: str, resource_id: int) -> Optional[Kind]:
+    def get_resource_by_id(
+        self, kind: str, resource_id: int
+    ) -> Optional[Union[Kind, TaskResource]]:
         """Get a resource by its ID using a new session"""
         from app.db.session import SessionLocal
 
         with SessionLocal() as db:
-            resource = (
-                db.query(Kind)
-                .filter(
-                    Kind.id == resource_id, Kind.kind == kind, Kind.is_active == True
+            # Use TaskResource model for Task and Workspace kinds
+            if kind in TASK_RESOURCE_KINDS:
+                resource = (
+                    db.query(TaskResource)
+                    .filter(
+                        TaskResource.id == resource_id,
+                        TaskResource.kind == kind,
+                        TaskResource.is_active == True,
+                    )
+                    .first()
                 )
-                .first()
-            )
+            else:
+                resource = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.id == resource_id,
+                        Kind.kind == kind,
+                        Kind.is_active == True,
+                    )
+                    .first()
+                )
             return resource
 
     def get_team_by_id(self, team_id: int) -> Optional[Dict[str, Any]]:

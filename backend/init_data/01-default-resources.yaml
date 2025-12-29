@@ -244,6 +244,8 @@ metadata:
   user_id: 1
 spec:
   mcpServers: {}
+  skills:
+    - mermaid-diagram
   systemPrompt: |
     You are Wegent, a helpful, harmless, and honest AI assistant.
 

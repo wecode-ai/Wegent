@@ -18,6 +18,7 @@ from app.api.dependencies import get_db
 from app.core import security
 from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Bot, Task, Team
 from app.schemas.openapi_response import (
@@ -176,11 +177,11 @@ async def create_response(
 
             # Verify previous task exists and belongs to the current user
             existing_task = (
-                db.query(Kind)
+                db.query(TaskResource)
                 .filter(
-                    Kind.id == previous_task_id,
-                    Kind.kind == "Task",
-                    Kind.is_active == True,
+                    TaskResource.id == previous_task_id,
+                    TaskResource.kind == "Task",
+                    TaskResource.is_active == True,
                 )
                 .first()
             )
@@ -453,11 +454,11 @@ async def get_response(
 
     # Reconstruct model string from task team reference
     task_kind = (
-        db.query(Kind)
+        db.query(TaskResource)
         .filter(
-            Kind.id == task_id,
-            Kind.kind == "Task",
-            Kind.is_active == True,
+            TaskResource.id == task_id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active == True,
         )
         .first()
     )
@@ -522,11 +523,11 @@ async def cancel_response(
 
     # Get task to check if it's a Chat Shell type
     task_kind = (
-        db.query(Kind)
+        db.query(TaskResource)
         .filter(
-            Kind.id == task_id,
-            Kind.kind == "Task",
-            Kind.is_active == True,
+            TaskResource.id == task_id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active == True,
         )
         .first()
     )
@@ -709,11 +710,11 @@ async def delete_response(
 
     # Get task to check if it's a Chat Shell type with running stream
     task_kind = (
-        db.query(Kind)
+        db.query(TaskResource)
         .filter(
-            Kind.id == task_id,
-            Kind.kind == "Task",
-            Kind.is_active == True,
+            TaskResource.id == task_id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active == True,
         )
         .first()
     )

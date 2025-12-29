@@ -44,6 +44,7 @@ from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Bot, Shell, Task, Team
 from app.services.chat.rag_integration import retrieve_and_assemble_rag_prompt
@@ -129,11 +130,11 @@ async def can_access_task(user_id: int, task_id: int) -> bool:
     db = SessionLocal()
     try:
         task = (
-            db.query(Kind)
+            db.query(TaskResource)
             .filter(
-                Kind.id == task_id,
-                Kind.kind == "Task",
-                Kind.is_active == True,
+                TaskResource.id == task_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active == True,
             )
             .first()
         )
@@ -249,6 +250,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             "task:join": "on_task_join",
             "task:leave": "on_task_leave",
             "history:sync": "on_history_sync",
+            "skill:response": "on_skill_response",
         }
 
     @trace_websocket_event(
@@ -723,11 +725,11 @@ class ChatNamespace(socketio.AsyncNamespace):
             task_json = {}
             if payload.task_id:
                 existing_task = (
-                    db.query(Kind)
+                    db.query(TaskResource)
                     .filter(
-                        Kind.id == payload.task_id,
-                        Kind.kind == "Task",
-                        Kind.is_active == True,
+                        TaskResource.id == payload.task_id,
+                        TaskResource.kind == "Task",
+                        TaskResource.is_active == True,
                     )
                     .first()
                 )
@@ -849,13 +851,13 @@ class ChatNamespace(socketio.AsyncNamespace):
                     task_id=payload.task_id,
                 )
 
-                # Get the task Kind object from database
+                # Get the task TaskResource object from database
                 task = (
-                    db.query(Kind)
+                    db.query(TaskResource)
                     .filter(
-                        Kind.id == task_dict["id"],
-                        Kind.kind == "Task",
-                        Kind.is_active == True,
+                        TaskResource.id == task_dict["id"],
+                        TaskResource.kind == "Task",
+                        TaskResource.is_active == True,
                     )
                     .first()
                 )
@@ -1223,11 +1225,11 @@ class ChatNamespace(socketio.AsyncNamespace):
 
             # Update task status
             task = (
-                db.query(Kind)
+                db.query(TaskResource)
                 .filter(
-                    Kind.id == subtask.task_id,
-                    Kind.kind == "Task",
-                    Kind.is_active == True,
+                    TaskResource.id == subtask.task_id,
+                    TaskResource.kind == "Task",
+                    TaskResource.is_active == True,
                 )
                 .first()
             )
@@ -1298,10 +1300,11 @@ class ChatNamespace(socketio.AsyncNamespace):
         finally:
             db.close()
 
-    def _fetch_retry_context(
-        self, db, payload: "ChatRetryPayload"
-    ) -> tuple[
-        Optional["Subtask"], Optional["Kind"], Optional["Kind"], Optional["Subtask"]
+    def _fetch_retry_context(self, db, payload: "ChatRetryPayload") -> tuple[
+        Optional["Subtask"],
+        Optional["TaskResource"],
+        Optional["Kind"],
+        Optional["Subtask"],
     ]:
         """
         Fetch all required database entities for retry operation in a single optimized query.
@@ -1315,7 +1318,7 @@ class ChatNamespace(socketio.AsyncNamespace):
         """
         from sqlalchemy.orm import aliased, joinedload
 
-        TaskKind = aliased(Kind)
+        TaskKind = aliased(TaskResource)
         TeamKind = aliased(Kind)
 
         # Optimized query: fetch failed_ai_subtask, task, and team in one go
@@ -1809,6 +1812,71 @@ class ChatNamespace(socketio.AsyncNamespace):
 
         finally:
             db.close()
+
+    # ============================================================
+    # Generic Skill Events
+    # ============================================================
+
+    async def on_skill_response(self, sid: str, data: dict) -> dict:
+        """
+        Handle generic skill response from frontend.
+
+        This is the unified handler for all skill responses.
+        Uses Redis-backed PendingRequestRegistry for cross-worker support.
+
+        Args:
+            sid: Socket ID
+            data: SkillResponsePayload fields
+
+        Returns:
+            {"success": true} or {"error": "..."}
+        """
+        from app.api.ws.events import SkillResponsePayload
+        from app.services.chat_v2.tools.pending_requests import (
+            get_pending_request_registry,
+        )
+
+        request_id = data.get("request_id")
+        skill_name = data.get("skill_name")
+        action = data.get("action")
+        success = data.get("success", False)
+        result = data.get("result")
+        error = data.get("error")
+
+        if not request_id:
+            logger.warning("[WS] skill:response received without request_id")
+            return {"error": "Missing request_id"}
+
+        logger.info(
+            f"[WS] skill:response received: {skill_name}:{action} "
+            f"for request {request_id}, success={success}"
+        )
+
+        # Get registry (async to ensure Pub/Sub listener is started)
+        registry = await get_pending_request_registry()
+
+        # Build a complete result object that includes the success flag
+        # This is needed because tools like render_mermaid expect result.get("success")
+        complete_result = {
+            "success": success,
+            "result": result,
+            "error": error,
+        }
+
+        resolved = await registry.resolve(
+            request_id=request_id,
+            result=complete_result,
+            error=None,  # Error is now part of complete_result
+        )
+
+        if not resolved:
+            logger.warning(
+                f"[WS] skill:response could not resolve request {request_id}"
+            )
+            return {"error": "No pending request found"}
+
+        logger.info(f"[WS] skill:response resolved request {request_id}")
+        return {"success": True}
 
 
 def register_chat_namespace(sio: socketio.AsyncServer):

@@ -319,13 +319,17 @@ async def create_document(
             if retrieval_config:
                 # Extract configuration using snake_case format
                 retriever_name = retrieval_config.get("retriever_name")
-                retriever_namespace = retrieval_config.get("retriever_namespace", "default")
+                retriever_namespace = retrieval_config.get(
+                    "retriever_namespace", "default"
+                )
                 embedding_config = retrieval_config.get("embedding_config")
 
                 if retriever_name and embedding_config:
                     # Extract embedding model info
                     embedding_model_name = embedding_config.get("model_name")
-                    embedding_model_namespace = embedding_config.get("model_namespace", "default")
+                    embedding_model_namespace = embedding_config.get(
+                        "model_namespace", "default"
+                    )
 
                     # Schedule RAG indexing in background
                     # Note: We use a synchronous function that creates its own event loop
@@ -514,9 +518,11 @@ def _index_document_background(
         if document_id:
             from app.models.knowledge import KnowledgeDocument
 
-            doc = db.query(KnowledgeDocument).filter(
-                KnowledgeDocument.id == document_id
-            ).first()
+            doc = (
+                db.query(KnowledgeDocument)
+                .filter(KnowledgeDocument.id == document_id)
+                .first()
+            )
             if doc:
                 doc.is_active = True
                 db.commit()

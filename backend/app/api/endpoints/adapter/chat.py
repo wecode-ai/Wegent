@@ -20,6 +20,7 @@ from app.api.dependencies import get_db
 from app.core import security
 from app.models.kind import Kind
 from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
+from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Bot, Shell, Task, Team
 from app.services.chat.base import ChatServiceBase
@@ -238,12 +239,12 @@ async def _create_task_and_subtasks(
     if task_id:
         # Get existing task - check both ownership and membership
         task = (
-            db.query(Kind)
+            db.query(TaskResource)
             .filter(
-                Kind.id == task_id,
-                Kind.user_id == user.id,
-                Kind.kind == "Task",
-                Kind.is_active,
+                TaskResource.id == task_id,
+                TaskResource.user_id == user.id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active,
             )
             .first()
         )
@@ -265,11 +266,11 @@ async def _create_task_and_subtasks(
             if member:
                 # User is a group member, get task without user_id check
                 task = (
-                    db.query(Kind)
+                    db.query(TaskResource)
                     .filter(
-                        Kind.id == task_id,
-                        Kind.kind == "Task",
-                        Kind.is_active,
+                        TaskResource.id == task_id,
+                        TaskResource.kind == "Task",
+                        TaskResource.is_active,
                     )
                     .first()
                 )
@@ -314,7 +315,7 @@ async def _create_task_and_subtasks(
             "apiVersion": "agent.wecode.io/v1",
         }
 
-        workspace = Kind(
+        workspace = TaskResource(
             user_id=user.id,
             kind="Workspace",
             name=workspace_name,
@@ -377,7 +378,7 @@ async def _create_task_and_subtasks(
             "apiVersion": "agent.wecode.io/v1",
         }
 
-        task = Kind(
+        task = TaskResource(
             id=new_task_id,
             user_id=user.id,
             kind="Task",
@@ -715,12 +716,12 @@ async def stream_chat(
     if request.task_id:
         # Get existing task - first try as owner
         task_kind = (
-            db.query(Kind)
+            db.query(TaskResource)
             .filter(
-                Kind.id == request.task_id,
-                Kind.user_id == current_user.id,
-                Kind.kind == "Task",
-                Kind.is_active,
+                TaskResource.id == request.task_id,
+                TaskResource.user_id == current_user.id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active,
             )
             .first()
         )
@@ -742,11 +743,11 @@ async def stream_chat(
             if member:
                 # User is a group member, get task without user_id check
                 task_kind = (
-                    db.query(Kind)
+                    db.query(TaskResource)
                     .filter(
-                        Kind.id == request.task_id,
-                        Kind.kind == "Task",
-                        Kind.is_active,
+                        TaskResource.id == request.task_id,
+                        TaskResource.kind == "Task",
+                        TaskResource.is_active,
                     )
                     .first()
                 )
@@ -1390,11 +1391,11 @@ async def cancel_chat(
 
     # Also update the task status to COMPLETED so conversation can continue
     task = (
-        db.query(Kind)
+        db.query(TaskResource)
         .filter(
-            Kind.id == subtask.task_id,
-            Kind.kind == "Task",
-            Kind.is_active == True,
+            TaskResource.id == subtask.task_id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active == True,
         )
         .first()
     )
@@ -1786,12 +1787,12 @@ async def correct_response(
 
     # Validate that the task belongs to the current user
     task = (
-        db.query(Kind)
+        db.query(TaskResource)
         .filter(
-            Kind.id == request.task_id,
-            Kind.user_id == current_user.id,
-            Kind.kind == "Task",
-            Kind.is_active == True,
+            TaskResource.id == request.task_id,
+            TaskResource.user_id == current_user.id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active == True,
         )
         .first()
     )
@@ -1843,70 +1844,26 @@ async def correct_response(
             "is_correct": existing_correction.get("is_correct", False),
         }
 
-    # Get the correction model config
-    # First check if it's a public model (user_id=0 in kinds table)
-    public_model = (
-        db.query(Kind)
-        .filter(
-            Kind.user_id == 0,
-            Kind.kind == "Model",
-            Kind.name == request.correction_model_id,
-            Kind.is_active == True,
-        )
-        .first()
+    # Get the correction model config using chat_v2's unified model resolver
+    # This handles: env var placeholders, decryption, default_headers, etc.
+    from app.services.chat_v2.models.resolver import (
+        _find_model,
+        extract_and_process_model_config,
     )
 
-    model_config = None
-    if public_model and public_model.json:
-        # Public models store config in json.spec.modelConfig.env
-        spec = public_model.json.get("spec", {})
-        model_config_data = spec.get("modelConfig", {})
-        env = model_config_data.get("env", {})
-        model_config = {
-            "provider": env.get("model", "openai"),
-            "model_id": env.get("model_id", ""),
-            "api_key": env.get("api_key", ""),
-            "base_url": env.get("base_url"),
-            "default_headers": env.get("custom_headers", {}),
-        }
-    else:
-        # Try user-defined model
-        user_model = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == current_user.id,
-                Kind.kind == "Model",
-                Kind.name == request.correction_model_id,
-                Kind.is_active == True,
-            )
-            .first()
-        )
-
-        if user_model and user_model.json:
-            from app.schemas.kind import Model as ModelCRD
-
-            model_crd = ModelCRD.model_validate(user_model.json)
-            # modelConfig is a Dict[str, Any], so use dictionary access
-            model_config_data = model_crd.spec.modelConfig
-            env = model_config_data.get("env", {})
-            model_config = {
-                "provider": env.get("model", "openai"),
-                "model_id": env.get("model_id", ""),
-                "api_key": env.get("api_key", ""),
-                "base_url": env.get("base_url"),
-                "default_headers": env.get("custom_headers") or {},
-            }
-
-    if not model_config:
+    model_spec = _find_model(db, request.correction_model_id, current_user.id)
+    if not model_spec:
         raise HTTPException(
             status_code=400,
             detail=f"Correction model '{request.correction_model_id}' not found",
         )
 
-    # Decrypt API key if encrypted
-    from shared.utils.crypto import decrypt_api_key
-
-    model_config["api_key"] = decrypt_api_key(model_config["api_key"])
+    # Extract and process model config with all placeholder handling
+    model_config = extract_and_process_model_config(
+        model_spec=model_spec,
+        user_id=current_user.id,
+        user_name=current_user.user_name or "",
+    )
 
     # Build chat history from previous subtasks
     history: list[dict[str, str]] = []
@@ -1964,22 +1921,8 @@ async def correct_response(
             tools=tools,
         )
 
-        # Get model display name for persistence
-        model_display_name = request.correction_model_id
-        if public_model and public_model.json:
-            model_display_name = (
-                public_model.json.get("spec", {})
-                .get("modelConfig", {})
-                .get("env", {})
-                .get("model_id", request.correction_model_id)
-            )
-        elif user_model and user_model.json:
-            model_display_name = (
-                user_model.json.get("spec", {})
-                .get("modelConfig", {})
-                .get("env", {})
-                .get("model_id", request.correction_model_id)
-            )
+        # Get model display name for persistence (from processed model_config)
+        model_display_name = model_config.get("model_id", request.correction_model_id)
 
         # Save correction to subtask.result for persistence
         from sqlalchemy.orm.attributes import flag_modified
@@ -2051,12 +1994,12 @@ async def delete_correction(
 
     # Verify user has access to the task
     task = (
-        db.query(Kind)
+        db.query(TaskResource)
         .filter(
-            Kind.id == subtask.task_id,
-            Kind.user_id == current_user.id,
-            Kind.kind == "Task",
-            Kind.is_active == True,
+            TaskResource.id == subtask.task_id,
+            TaskResource.user_id == current_user.id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active == True,
         )
         .first()
     )
@@ -2131,12 +2074,12 @@ async def apply_correction(
 
     # Verify user has access to the task
     task = (
-        db.query(Kind)
+        db.query(TaskResource)
         .filter(
-            Kind.id == subtask.task_id,
-            Kind.user_id == current_user.id,
-            Kind.kind == "Task",
-            Kind.is_active == True,
+            TaskResource.id == subtask.task_id,
+            TaskResource.user_id == current_user.id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active == True,
         )
         .first()
     )

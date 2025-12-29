@@ -156,19 +156,19 @@ async def get_attachment(
 
     if not has_access and attachment.subtask_id > 0:
         # Check if user is a task owner or member
-        from app.models.kind import Kind
         from app.models.subtask import Subtask
+        from app.models.task import TaskResource
         from app.models.task_member import MemberStatus, TaskMember
 
         subtask = db.query(Subtask).filter(Subtask.id == attachment.subtask_id).first()
         if subtask:
             # Check if user is the task owner
             task = (
-                db.query(Kind)
+                db.query(TaskResource)
                 .filter(
-                    Kind.id == subtask.task_id,
-                    Kind.kind == "Task",
-                    Kind.user_id == current_user.id,
+                    TaskResource.id == subtask.task_id,
+                    TaskResource.kind == "Task",
+                    TaskResource.user_id == current_user.id,
                 )
                 .first()
             )
@@ -232,19 +232,19 @@ async def download_attachment(
 
     if not has_access and attachment.subtask_id > 0:
         # Check if user is a task owner or member
-        from app.models.kind import Kind
         from app.models.subtask import Subtask
+        from app.models.task import TaskResource
         from app.models.task_member import MemberStatus, TaskMember
 
         subtask = db.query(Subtask).filter(Subtask.id == attachment.subtask_id).first()
         if subtask:
             # Check if user is the task owner
             task = (
-                db.query(Kind)
+                db.query(TaskResource)
                 .filter(
-                    Kind.id == subtask.task_id,
-                    Kind.kind == "Task",
-                    Kind.user_id == current_user.id,
+                    TaskResource.id == subtask.task_id,
+                    TaskResource.kind == "Task",
+                    TaskResource.user_id == current_user.id,
                 )
                 .first()
             )

@@ -507,6 +507,48 @@ class WebSocketEmitter:
         )
         logger.debug(f"[WS] emit unread:count user={user_id} count={count}")
 
+    # ============================================================
+    # Generic Skill Events
+    # ============================================================
+
+    async def emit_skill_request(
+        self,
+        task_id: int,
+        request_id: str,
+        skill_name: str,
+        action: str,
+        data: Dict[str, Any],
+    ) -> None:
+        """
+        Emit a generic skill request to frontend.
+
+        Args:
+            task_id: Task ID (used to determine the room)
+            request_id: Unique identifier for this request
+            skill_name: Name of the skill
+            action: Action to perform (e.g., "render")
+            data: Skill-specific data payload
+        """
+        from app.api.ws.events import ServerEvents, SkillRequestPayload
+
+        payload = SkillRequestPayload(
+            request_id=request_id,
+            skill_name=skill_name,
+            action=action,
+            data=data,
+        )
+
+        await self.sio.emit(
+            ServerEvents.SKILL_REQUEST,
+            payload.to_dict(),
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(
+            f"[WS] emit skill:request task={task_id} skill={skill_name} "
+            f"action={action} request={request_id}"
+        )
+
 
 # Global emitter instance (lazy initialized)
 _ws_emitter: Optional[WebSocketEmitter] = None

@@ -107,11 +107,25 @@ class SkillValidator:
                 # Parse YAML frontmatter from SKILL.md
                 metadata = SkillValidator._parse_skill_md(skill_md_content)
 
+                # Extract SKILL.md body as prompt content
+                prompt_content = SkillValidator._extract_skill_body(skill_md_content)
+
                 return {
                     "description": metadata.get("description", ""),
+                    "displayName": metadata.get("displayName"),
+                    "prompt": prompt_content,
                     "version": metadata.get("version"),
                     "author": metadata.get("author"),
                     "tags": metadata.get("tags"),
+                    "bindShells": metadata.get(
+                        "bindShells"
+                    ),  # Shell types this skill is compatible with
+                    "tools": metadata.get(
+                        "tools"
+                    ),  # Tool declarations for skill-tool binding
+                    "provider": metadata.get(
+                        "provider"
+                    ),  # Provider config for dynamic loading
                     "file_size": file_size,
                     "file_hash": file_hash,
                 }
@@ -184,3 +198,21 @@ class SkillValidator:
                 status_code=400,
                 detail=f"Failed to parse SKILL.md frontmatter: {str(e)}",
             )
+
+    @staticmethod
+    def _extract_skill_body(content: str) -> str:
+        """
+        Extract the body content from SKILL.md (after YAML frontmatter).
+
+        Args:
+            content: Full SKILL.md file content
+
+        Returns:
+            The markdown body content after the frontmatter, or empty string if none
+        """
+        # Remove YAML frontmatter, keep the body
+        frontmatter_pattern = re.compile(
+            r"^---\s*\n.*?\n---\s*\n", re.DOTALL | re.MULTILINE
+        )
+        body = frontmatter_pattern.sub("", content).strip()
+        return body

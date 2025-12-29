@@ -94,7 +94,9 @@ class ElasticsearchBackend(BaseStorageBackend):
             # Hybrid search: vector + BM25 with linear combination
             # Note: rrf=False uses linear combination instead of RRF fusion
             # RRF requires Elasticsearch paid license (Platinum/Enterprise)
-            retrieval_strategy = AsyncDenseVectorStrategy(hybrid=True, rrf=False, text_field="content")
+            retrieval_strategy = AsyncDenseVectorStrategy(
+                hybrid=True, rrf=False, text_field="content"
+            )
         else:
             # Default: Pure vector search
             retrieval_strategy = AsyncDenseVectorStrategy(hybrid=False)

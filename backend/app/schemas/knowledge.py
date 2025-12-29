@@ -169,7 +169,9 @@ class KnowledgeDocumentResponse(BaseModel):
     user_id: int
     is_active: bool
     splitter_config: Optional[SplitterConfig] = None
-    doc_ref: Optional[str] = Field(None, description="RAG storage document reference ID")
+    doc_ref: Optional[str] = Field(
+        None, description="RAG storage document reference ID"
+    )
     created_at: datetime
     updated_at: datetime
 

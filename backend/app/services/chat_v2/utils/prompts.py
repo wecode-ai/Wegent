@@ -231,3 +231,38 @@ def append_deep_thinking_prompt(system_prompt: str, enable_deep_thinking: bool) 
     if enable_deep_thinking:
         return system_prompt + DEEP_THINKING_PROMPT
     return system_prompt
+
+
+# Skill Metadata Prompt Template
+SKILL_METADATA_PROMPT = """
+
+## Available Skills
+
+The following skills provide specialized guidance for specific tasks. When your task matches a skill's description, use the `load_skill` tool to load the full instructions.
+
+{skill_list}
+
+### How to Use Skills
+
+**Load the skill**: Call `load_skill(skill_name="<skill-name>")` to load detailed instructions
+"""
+
+
+def append_skill_metadata_prompt(system_prompt: str, skills: list[dict]) -> str:
+    """
+    Append skill metadata to system prompt.
+
+    Args:
+        system_prompt: The original system prompt.
+        skills: List of skill metadata [{"name": "...", "description": "..."}]
+
+    Returns:
+        System prompt with skill metadata appended.
+    """
+    if not skills:
+        return system_prompt
+
+    skill_list = "\n".join([f"- **{s['name']}**: {s['description']}" for s in skills])
+
+    skill_section = SKILL_METADATA_PROMPT.format(skill_list=skill_list)
+    return system_prompt + skill_section
