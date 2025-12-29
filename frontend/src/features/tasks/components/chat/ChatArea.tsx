@@ -463,12 +463,20 @@ export default function ChatArea({
         {hasMessages && (
           <div
             ref={floatingInputRef}
-            className="fixed bottom-0 z-50 bg-gradient-to-t from-base via-base/95 to-base/0"
-            style={{
-              left: floatingMetrics.width ? floatingMetrics.left : 0,
-              width: floatingMetrics.width || '100%',
-              right: floatingMetrics.width ? undefined : 0,
-            }}
+            className="fixed bottom-0 z-50 bg-gradient-to-t from-base via-base/95 to-base/0 transition-opacity duration-150"
+            style={
+              floatingMetrics.width
+                ? {
+                    left: floatingMetrics.left,
+                    width: floatingMetrics.width,
+                    opacity: 1,
+                  }
+                : {
+                    left: 0,
+                    right: 0,
+                    opacity: 0,
+                  }
+            }
           >
             <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 py-4">
               <ChatInputCard {...inputCardProps} />
