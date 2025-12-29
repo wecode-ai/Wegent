@@ -480,7 +480,7 @@ export default function MessagesArea({
 
   // Prepare exportable messages and open export modal
   const prepareExport = useCallback(
-    (format: ExportFormat) => {
+    async (format: ExportFormat) => {
       if (!selectedTaskDetail?.id) {
         toast({
           variant: 'destructive',
@@ -490,9 +490,13 @@ export default function MessagesArea({
         return;
       }
 
+      // Refresh task detail to get the latest messages before export
+      const latestTaskDetail = await refreshSelectedTaskDetail(true);
+      const taskDetailToExport = latestTaskDetail || selectedTaskDetail;
+
       // Convert subtasks to selectable messages
-      const messages: SelectableMessage[] = selectedTaskDetail.subtasks
-        ? selectedTaskDetail.subtasks.map((sub: TaskDetailSubtask) => {
+      const messages: SelectableMessage[] = taskDetailToExport.subtasks
+        ? taskDetailToExport.subtasks.map((sub: TaskDetailSubtask) => {
             const isUser = sub.role === 'USER';
             let content = sub.prompt || '';
 
@@ -515,8 +519,8 @@ export default function MessagesArea({
               content,
               timestamp: new Date(sub.updated_at).getTime(),
               botName: sub.bots?.[0]?.name || 'Bot',
-              userName: sub.sender_user_name || selectedTaskDetail?.user?.user_name,
-              teamName: selectedTaskDetail?.team?.name,
+              userName: sub.sender_user_name || taskDetailToExport?.user?.user_name,
+              teamName: taskDetailToExport?.team?.name,
               attachments: sub.attachments?.map(att => ({
                 id: att.id,
                 filename: att.filename,
@@ -541,7 +545,7 @@ export default function MessagesArea({
       setExportFormat(format);
       setShowExportModal(true);
     },
-    [selectedTaskDetail, toast, t]
+    [selectedTaskDetail, refreshSelectedTaskDetail, toast, t]
   );
 
   // Handle PDF export - open modal
