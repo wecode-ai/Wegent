@@ -163,3 +163,17 @@ class SubtaskContext(Base):
         if self.type_data and isinstance(self.type_data, dict):
             return self.type_data.get("document_count", 0)
         return 0
+
+    # === Common helper properties ===
+
+    @property
+    def text_preview(self) -> str:
+        """Get a preview of extracted_text (first 50 chars).
+
+        Useful for logging and debugging purposes.
+        """
+        if not self.extracted_text:
+            return ""
+        if len(self.extracted_text) > 50:
+            return self.extracted_text[:50] + "..."
+        return self.extracted_text

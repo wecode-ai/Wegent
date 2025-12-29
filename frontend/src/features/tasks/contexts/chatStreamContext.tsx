@@ -546,9 +546,11 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         if (result) {
           updatedMessage.result = result as UnifiedMessage['result'];
         }
-        // If sources are provided directly (chat v2), update them
-        if (sources) {
-          updatedMessage.sources = sources;
+        // Extract sources from either top-level or result.sources
+        // Backend may send sources inside result object
+        const chunkSources = sources || (result?.sources as typeof sources);
+        if (chunkSources) {
+          updatedMessage.sources = chunkSources;
         }
 
         newMessages.set(aiMessageId, updatedMessage);
@@ -569,6 +571,10 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
    */
   const handleChatDone = useCallback((data: ChatDonePayload) => {
     const { task_id: eventTaskId, subtask_id, result, message_id, sources } = data;
+
+    // Extract sources from either top-level or result.sources
+    // Backend may send sources inside result object
+    const finalSources = sources || (result?.sources as typeof sources);
 
     // Find task ID from subtask mapping, or use task_id from event (for group chat members)
     let taskId = subtaskToTaskRef.current.get(subtask_id);
@@ -636,8 +642,8 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           error: hasError ? (result.error as string) : existingMessage.error,
           // Set messageId from backend for proper sorting
           messageId: message_id,
-          // Set sources if provided
-          sources: sources || existingMessage.sources,
+          // Set sources if provided (check both top-level and result.sources)
+          sources: finalSources || existingMessage.sources,
         });
       }
 

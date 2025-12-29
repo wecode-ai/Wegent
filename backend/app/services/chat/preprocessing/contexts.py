@@ -9,11 +9,15 @@ Handles processing of subtask contexts including:
 - Knowledge bases (RAG retrieval)
 
 Replaces the original attachments.py with unified context support.
+
+This module provides unified context processing based on user_subtask_id,
+eliminating the need to pass separate attachment_ids and knowledge_base_ids.
 """
 
 import logging
-from typing import Any, List, Tuple
+from typing import Any, List, Optional, Tuple
 
+from langchain_core.tools import BaseTool
 from sqlalchemy.orm import Session
 
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
@@ -209,9 +213,10 @@ def link_contexts_to_subtask(
     """
     Link attachments and create knowledge base contexts for a subtask.
 
-    This function handles two types of contexts:
-    1. Attachments: Pre-uploaded files with existing context IDs, just need to link
-    2. Knowledge bases: Selected at send time, need to create SubtaskContext records
+    This function handles two types of contexts in a single database transaction:
+    1. Attachments: Pre-uploaded files with existing context IDs, batch update subtask_id
+    2. Knowledge bases: Selected at send time, batch create SubtaskContext records
+       (without extracted_text - RAG retrieval is done later via tools/Service)
 
     Args:
         db: Database session
@@ -223,23 +228,14 @@ def link_contexts_to_subtask(
     Returns:
         List of all linked/created context IDs
     """
-    from app.schemas.subtask_context import KnowledgeBaseContextCreate
-
     linked_context_ids = []
+    kb_contexts_to_create: List[SubtaskContext] = []
 
-    # 1. Link pre-uploaded attachments
+    # 1. Collect attachment IDs to link
     if attachment_ids:
-        context_service.link_many_to_subtask(
-            db=db,
-            context_ids=attachment_ids,
-            subtask_id=subtask_id,
-        )
         linked_context_ids.extend(attachment_ids)
-        logger.info(
-            f"Linked {len(attachment_ids)} attachment contexts to subtask {subtask_id}"
-        )
 
-    # 2. Create and link knowledge base contexts
+    # 2. Prepare knowledge base contexts for batch creation
     if contexts:
         for ctx in contexts:
             if ctx.type == "knowledge_base":
@@ -249,26 +245,349 @@ def link_contexts_to_subtask(
                     kb_name = kb_data.get("name", f"Knowledge Base {knowledge_id}")
                     document_count = kb_data.get("document_count")
 
-                    # Create knowledge base context
-                    kb_context_create = KnowledgeBaseContextCreate(
-                        knowledge_id=int(knowledge_id) if knowledge_id else 0,
-                        name=kb_name,
-                        document_count=document_count,
-                    )
-                    kb_context = context_service.create_knowledge_base_context(
-                        db=db,
-                        user_id=user_id,
-                        data=kb_context_create,
+                    # Create SubtaskContext object (not yet committed)
+                    kb_context = SubtaskContext(
                         subtask_id=subtask_id,
+                        user_id=user_id,
+                        context_type=ContextType.KNOWLEDGE_BASE.value,
+                        name=kb_name,
+                        status=ContextStatus.READY.value,
+                        type_data={
+                            "knowledge_id": int(knowledge_id) if knowledge_id else 0,
+                            "document_count": document_count,
+                        },
                     )
-                    linked_context_ids.append(kb_context.id)
-                    logger.info(
-                        f"Created knowledge base context: id={kb_context.id}, "
-                        f"knowledge_id={knowledge_id}, name={kb_name}, "
-                        f"subtask_id={subtask_id}"
-                    )
+                    kb_contexts_to_create.append(kb_context)
                 except Exception as e:
-                    logger.warning(f"Failed to create knowledge base context: {e}")
+                    logger.warning(f"Failed to prepare knowledge base context: {e}")
                     continue
 
+    # 3. Execute all database operations in a single transaction
+    try:
+        # Batch update existing attachments' subtask_id
+        if attachment_ids:
+            db.query(SubtaskContext).filter(
+                SubtaskContext.id.in_(attachment_ids)
+            ).update(
+                {"subtask_id": subtask_id},
+                synchronize_session=False,
+            )
+
+        # Batch add new knowledge base contexts
+        if kb_contexts_to_create:
+            db.add_all(kb_contexts_to_create)
+
+        # Single commit for all operations
+        db.commit()
+
+        # Refresh KB contexts to get their IDs and add to linked_context_ids
+        for kb_context in kb_contexts_to_create:
+            db.refresh(kb_context)
+            linked_context_ids.append(kb_context.id)
+            logger.debug(
+                f"Created knowledge base context: id={kb_context.id}, "
+                f"knowledge_id={kb_context.type_data.get('knowledge_id')}, "
+                f"name={kb_context.name}, subtask_id={subtask_id}"
+            )
+
+        if attachment_ids:
+            logger.info(
+                f"Linked {len(attachment_ids)} attachment contexts to subtask {subtask_id}"
+            )
+        if kb_contexts_to_create:
+            logger.info(
+                f"Created {len(kb_contexts_to_create)} knowledge base contexts "
+                f"for subtask {subtask_id}"
+            )
+
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to link contexts to subtask {subtask_id}: {e}")
+        raise
+
     return linked_context_ids
+
+
+# ==================== Unified Context Processing ====================
+
+
+async def prepare_contexts_for_chat(
+    db: Session,
+    user_subtask_id: int,
+    user_id: int,
+    message: str,
+    base_system_prompt: str,
+    task_id: Optional[int] = None,
+) -> Tuple[str, str, List[BaseTool]]:
+    """
+    Unified context processing based on user_subtask_id.
+
+    This function retrieves all contexts associated with a user subtask and:
+    1. Processes attachment contexts - injects content into the message
+    2. Processes knowledge base contexts - creates KnowledgeBaseTool for RAG
+
+    This eliminates the need to pass separate attachment_ids and knowledge_base_ids
+    through the call chain.
+
+    Args:
+        db: Database session
+        user_subtask_id: User subtask ID to get contexts from
+        user_id: User ID for access control
+        message: Original user message
+        base_system_prompt: Base system prompt to enhance
+        task_id: Optional task ID for fetching historical KB meta
+
+    Returns:
+        Tuple of (final_message, enhanced_system_prompt, extra_tools)
+    """
+    # Get all contexts for this subtask
+    contexts = context_service.get_by_subtask(db, user_subtask_id)
+
+    if not contexts:
+        logger.debug(f"No contexts found for subtask {user_subtask_id}")
+        # Even without contexts, check for historical KB meta
+        enhanced_prompt = base_system_prompt
+        if task_id:
+            kb_meta_prompt = _build_historical_kb_meta_prompt(db, task_id)
+            if kb_meta_prompt:
+                enhanced_prompt = f"{base_system_prompt}{kb_meta_prompt}"
+        return message, enhanced_prompt, []
+
+    # Separate contexts by type
+    attachment_contexts = [
+        c
+        for c in contexts
+        if c.context_type == ContextType.ATTACHMENT.value
+        and c.status == ContextStatus.READY.value
+    ]
+    kb_contexts = [
+        c
+        for c in contexts
+        if c.context_type == ContextType.KNOWLEDGE_BASE.value
+        and c.status == ContextStatus.READY.value
+    ]
+
+    logger.info(
+        f"[prepare_contexts_for_chat] subtask={user_subtask_id}: "
+        f"{len(attachment_contexts)} attachments, {len(kb_contexts)} knowledge bases"
+    )
+
+    # 1. Process attachment contexts - inject into message
+    final_message = await _process_attachment_contexts_for_message(
+        attachment_contexts, message
+    )
+
+    # 2. Process knowledge base contexts - create tools
+    extra_tools, enhanced_system_prompt = _prepare_kb_tools_from_contexts(
+        kb_contexts=kb_contexts,
+        user_id=user_id,
+        db=db,
+        base_system_prompt=base_system_prompt,
+        task_id=task_id,
+        user_subtask_id=user_subtask_id,
+    )
+
+    return final_message, enhanced_system_prompt, extra_tools
+
+
+async def _process_attachment_contexts_for_message(
+    attachment_contexts: List[SubtaskContext],
+    message: str,
+) -> str | dict[str, Any]:
+    """
+    Process attachment contexts and build message with content.
+
+    Args:
+        attachment_contexts: List of attachment SubtaskContext records
+        message: Original user message
+
+    Returns:
+        Message with attachment contents prepended, or vision structure for images
+    """
+    if not attachment_contexts:
+        return message
+
+    text_contents = []
+    image_contents = []
+
+    for idx, context in enumerate(attachment_contexts, start=1):
+        try:
+            _process_attachment_context(context, idx, text_contents, image_contents)
+        except Exception as e:
+            logger.error(f"Error processing attachment context {context.id}: {e}")
+            continue
+
+    # If we have images, return a multi-vision structure
+    if image_contents:
+        combined_text = ""
+        if text_contents:
+            combined_text = "\n".join(text_contents) + "\n\n"
+        combined_text += f"[User Question]:\n{message}"
+
+        return {
+            "type": "multi_vision",
+            "text": combined_text,
+            "images": image_contents,
+        }
+
+    # If only text contents, combine them
+    if text_contents:
+        combined_contents = "\n".join(text_contents)
+        return f"{combined_contents}[User Question]:\n{message}"
+
+    return message
+
+
+def _prepare_kb_tools_from_contexts(
+    kb_contexts: List[SubtaskContext],
+    user_id: int,
+    db: Session,
+    base_system_prompt: str,
+    task_id: Optional[int] = None,
+    user_subtask_id: Optional[int] = None,
+) -> Tuple[List[BaseTool], str]:
+    """
+    Prepare knowledge base tools from context records.
+
+    Args:
+        kb_contexts: List of knowledge base SubtaskContext records
+        user_id: User ID for access control
+        db: Database session
+        base_system_prompt: Base system prompt to enhance
+        task_id: Optional task ID for historical KB meta
+        user_subtask_id: User subtask ID for RAG persistence
+
+    Returns:
+        Tuple of (extra_tools list, enhanced_system_prompt string)
+    """
+    extra_tools: List[BaseTool] = []
+    enhanced_system_prompt = base_system_prompt
+
+    # Extract knowledge_id values from contexts
+    knowledge_base_ids = [
+        c.knowledge_id for c in kb_contexts if c.knowledge_id is not None
+    ]
+
+    if not knowledge_base_ids:
+        # Even without current knowledge bases, check for historical KB meta
+        if task_id:
+            kb_meta_prompt = _build_historical_kb_meta_prompt(db, task_id)
+            if kb_meta_prompt:
+                enhanced_system_prompt = f"{base_system_prompt}{kb_meta_prompt}"
+        return extra_tools, enhanced_system_prompt
+
+    logger.info(
+        f"[_prepare_kb_tools_from_contexts] Creating KnowledgeBaseTool for "
+        f"{len(knowledge_base_ids)} knowledge bases: {knowledge_base_ids}"
+    )
+
+    # Import KnowledgeBaseTool
+    from app.chat_shell.tools.builtin import KnowledgeBaseTool
+
+    # Create KnowledgeBaseTool with the specified knowledge bases
+    kb_tool = KnowledgeBaseTool(
+        knowledge_base_ids=knowledge_base_ids,
+        user_id=user_id,
+        db_session=db,
+        user_subtask_id=user_subtask_id,
+    )
+    extra_tools.append(kb_tool)
+
+    # Enhance system prompt to REQUIRE AI to use the knowledge base tool
+    kb_instruction = """
+
+# IMPORTANT: Knowledge Base Requirement
+
+The user has selected specific knowledge bases for this conversation. You MUST use the `knowledge_base_search` tool to retrieve information from these knowledge bases before answering any questions.
+
+## Required Workflow:
+1. **ALWAYS** call `knowledge_base_search` first with the user's query
+2. Wait for the search results
+3. Base your answer **ONLY** on the retrieved information
+4. If the search returns no results or irrelevant information, clearly state: "I cannot find relevant information in the selected knowledge base to answer this question."
+5. **DO NOT** use your general knowledge or make assumptions beyond what's in the knowledge base
+
+## Critical Rules:
+- You MUST search the knowledge base for EVERY user question
+- You MUST NOT answer without searching first
+- You MUST NOT make up information if the knowledge base doesn't contain it
+- If unsure, search again with different keywords
+
+The user expects answers based on the selected knowledge base content only."""
+
+    enhanced_system_prompt = f"{base_system_prompt}{kb_instruction}"
+
+    # Add historical knowledge base meta info if available
+    if task_id:
+        kb_meta_prompt = _build_historical_kb_meta_prompt(db, task_id)
+        if kb_meta_prompt:
+            enhanced_system_prompt = f"{enhanced_system_prompt}{kb_meta_prompt}"
+
+    logger.info(
+        "[_prepare_kb_tools_from_contexts] Enhanced system prompt with "
+        "REQUIRED knowledge base usage instructions"
+    )
+
+    return extra_tools, enhanced_system_prompt
+
+
+def _build_historical_kb_meta_prompt(
+    db: Session,
+    task_id: int,
+) -> str:
+    """
+    Build knowledge base meta information from historical contexts.
+
+    Args:
+        db: Database session
+        task_id: Task ID
+
+    Returns:
+        Formatted prompt string with KB meta info, or empty string
+    """
+    from app.chat_shell.history.loader import get_knowledge_base_meta_prompt
+
+    try:
+        return get_knowledge_base_meta_prompt(db, task_id)
+    except Exception as e:
+        logger.warning(f"Failed to get KB meta prompt for task {task_id}: {e}")
+        return ""
+
+
+def get_knowledge_base_ids_from_subtask(
+    db: Session,
+    subtask_id: int,
+) -> List[int]:
+    """
+    Get knowledge base IDs from a subtask's contexts.
+
+    This is a convenience function to extract KB IDs from subtask contexts
+    without needing to pass them through the call chain.
+
+    Args:
+        db: Database session
+        subtask_id: Subtask ID
+
+    Returns:
+        List of knowledge_id values from knowledge_base type contexts
+    """
+    kb_contexts = context_service.get_knowledge_base_contexts_by_subtask(db, subtask_id)
+    return [c.knowledge_id for c in kb_contexts if c.knowledge_id is not None]
+
+
+def get_attachment_context_ids_from_subtask(
+    db: Session,
+    subtask_id: int,
+) -> List[int]:
+    """
+    Get attachment context IDs from a subtask.
+
+    Args:
+        db: Database session
+        subtask_id: Subtask ID
+
+    Returns:
+        List of attachment context IDs
+    """
+    attachments = context_service.get_attachments_by_subtask(db, subtask_id)
+    return [a.id for a in attachments]
