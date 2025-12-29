@@ -5,6 +5,7 @@
     "users": "Users",
     "public_models": "Public Models",
     "public_skills": "Public Skills",
+    "service_keys": "Service Keys",
     "system_config": "System Config"
   },
   "stats": {
@@ -240,6 +241,32 @@
       "save_failed": "Failed to save configuration",
       "slogan_required": "Both Chinese and English slogan are required",
       "tip_required": "Both Chinese and English tip text are required"
+    }
+  },
+  "service_keys": {
+    "title": "Service Key Management",
+    "description": "Manage trusted keys for service-to-service calls",
+    "no_keys": "No service keys found",
+    "create": "Create Service Key",
+    "name": "Key Name",
+    "name_placeholder": "Enter key name",
+    "description_label": "Description",
+    "description_placeholder": "Enter key description (optional)",
+    "key": "Key",
+    "created_at": "Created At",
+    "last_used": "Last Used",
+    "expires_at": "Expires At",
+    "never_expires": "Never expires",
+    "create_success": "Service key created successfully",
+    "delete_success": "Service key deleted successfully",
+    "warning_save_key": "Please save this key securely. It will only be shown once!",
+    "delete_confirm_title": "Confirm Deletion",
+    "delete_confirm_message": "Are you sure you want to delete service key \"{{name}}\"? Related services will no longer be able to use this key.",
+    "errors": {
+      "load_failed": "Failed to load service keys",
+      "create_failed": "Failed to create service key",
+      "delete_failed": "Failed to delete service key",
+      "name_required": "Key name is required"
     }
   }
 }

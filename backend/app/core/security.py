@@ -370,33 +370,52 @@ def get_current_user_flexible(
 
 def get_wegent_source_header(
     wegent_source: Optional[str] = Header(default=None, alias="wegent-source"),
+    db: Session = Depends(get_db),
 ) -> Optional[str]:
     """
-    Extract wegent-source header value.
+    Extract and validate wegent-source header value.
 
     This is used to identify the trusted source that is making the request.
-    Returns the source name if it's in the trusted sources whitelist, None otherwise.
+    Returns the source key if it's a valid service key in the database, None otherwise.
 
     Args:
-        wegent_source: Trusted source identifier (from wegent-source header)
+        wegent_source: Service key identifier (from wegent-source header)
+        db: Database session
 
     Returns:
-        Source name if trusted, None otherwise
+        Service key if valid, None otherwise
     """
     if not wegent_source:
         return None
 
-    # Get API trusted sources from configuration
-    trusted_sources_str = settings.API_TRUSTED_SOURCES
-    if not trusted_sources_str:
-        return None
+    # First, check database for service keys
+    from app.models.api_key import APIKey, KEY_TYPE_SERVICE
 
-    # Parse trusted sources (comma-separated list)
-    trusted_sources = [s.strip() for s in trusted_sources_str.split(",") if s.strip()]
+    key_hash = hashlib.sha256(wegent_source.encode()).hexdigest()
+    service_key = (
+        db.query(APIKey)
+        .filter(
+            APIKey.key_hash == key_hash,
+            APIKey.key_type == KEY_TYPE_SERVICE,
+            APIKey.is_active == True,
+        )
+        .first()
+    )
 
-    # Only return the source if it's in the whitelist
-    if wegent_source in trusted_sources:
+    if service_key:
+        # Check expiration
+        if service_key.expires_at < datetime.utcnow():
+            return None
         return wegent_source
+
+    # Fallback: check configuration-based trusted sources for backward compatibility
+    trusted_sources_str = settings.API_TRUSTED_SOURCES
+    if trusted_sources_str:
+        trusted_sources = [
+            s.strip() for s in trusted_sources_str.split(",") if s.strip()
+        ]
+        if wegent_source in trusted_sources:
+            return wegent_source
 
     return None
 
@@ -407,14 +426,14 @@ def get_current_user_from_trusted_source(
     wegent_username: Optional[str],
 ) -> Optional[User]:
     """
-    Authenticate user via API trusted source headers.
+    Authenticate user via service key headers.
 
     Allows trusted services to proxy requests on behalf of users.
-    The service must be in the API_TRUSTED_SOURCES whitelist.
+    The service key must be a valid service key in the database.
 
     Args:
         db: Database session
-        wegent_source: API trusted source identifier (from wegent-source header)
+        wegent_source: Service key (from wegent-source header)
         wegent_username: Username to impersonate (from wegent-username header)
 
     Returns:
@@ -424,7 +443,37 @@ def get_current_user_from_trusted_source(
     if not wegent_source or not wegent_username:
         return None
 
-    # Get API trusted sources from configuration
+    # Import here to avoid circular imports
+    from app.models.api_key import APIKey, KEY_TYPE_SERVICE
+
+    # First, verify the service key in database
+    key_hash = hashlib.sha256(wegent_source.encode()).hexdigest()
+    service_key = (
+        db.query(APIKey)
+        .filter(
+            APIKey.key_hash == key_hash,
+            APIKey.key_type == KEY_TYPE_SERVICE,
+            APIKey.is_active == True,
+        )
+        .first()
+    )
+
+    if service_key:
+        # Check expiration
+        if service_key.expires_at < datetime.utcnow():
+            return None
+
+        # Update last_used_at
+        service_key.last_used_at = datetime.utcnow()
+        db.commit()
+
+        # Look up the user by username
+        user = user_service.get_user_by_name(db=db, user_name=wegent_username)
+        if user and user.is_active:
+            return user
+        return None
+
+    # Fallback: check configuration-based trusted sources for backward compatibility
     trusted_sources_str = settings.API_TRUSTED_SOURCES
     if not trusted_sources_str:
         return None

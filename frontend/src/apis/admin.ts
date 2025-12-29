@@ -114,6 +114,32 @@ export interface ChatSloganTipsResponse {
   tips: ChatTipItem[];
 }
 
+// Service Key Types
+export interface ServiceKey {
+  id: number;
+  name: string;
+  key_prefix: string;
+  description: string | null;
+  expires_at: string;
+  last_used_at: string;
+  created_at: string;
+  is_active: boolean;
+}
+
+export interface ServiceKeyCreated extends ServiceKey {
+  key: string; // Full key, only at creation
+}
+
+export interface ServiceKeyCreateRequest {
+  name: string;
+  description?: string;
+}
+
+export interface ServiceKeyListResponse {
+  items: ServiceKey[];
+  total: number;
+}
+
 // Admin API Services
 export const adminApis = {
   // ==================== User Management ====================
@@ -263,5 +289,29 @@ export const adminApis = {
    */
   async updateSloganTipsConfig(data: ChatSloganTipsUpdate): Promise<ChatSloganTipsResponse> {
     return apiClient.put('/admin/system-config/slogan-tips', data);
+  },
+
+  // ==================== Service Key Management ====================
+
+  /**
+   * Get list of all service keys
+   */
+  async getServiceKeys(): Promise<ServiceKeyListResponse> {
+    return apiClient.get('/admin/service-keys');
+  },
+
+  /**
+   * Create a new service key
+   * The full key is only returned at creation time
+   */
+  async createServiceKey(data: ServiceKeyCreateRequest): Promise<ServiceKeyCreated> {
+    return apiClient.post('/admin/service-keys', data);
+  },
+
+  /**
+   * Delete a service key
+   */
+  async deleteServiceKey(keyId: number): Promise<void> {
+    return apiClient.delete(`/admin/service-keys/${keyId}`);
   },
 };

@@ -5,6 +5,7 @@
     "users": "用户管理",
     "public_models": "公共模型",
     "public_skills": "公共技能",
+    "service_keys": "服务密钥",
     "system_config": "系统配置"
   },
   "stats": {
@@ -240,6 +241,32 @@
       "save_failed": "保存配置失败",
       "slogan_required": "中英文 Slogan 均为必填项",
       "tip_required": "中英文提示内容均为必填项"
+    }
+  },
+  "service_keys": {
+    "title": "服务密钥管理",
+    "description": "管理用于服务间调用的信任密钥",
+    "no_keys": "暂无服务密钥",
+    "create": "创建服务密钥",
+    "name": "密钥名称",
+    "name_placeholder": "请输入密钥名称",
+    "description_label": "描述",
+    "description_placeholder": "请输入密钥描述（可选）",
+    "key": "密钥",
+    "created_at": "创建时间",
+    "last_used": "最后使用",
+    "expires_at": "过期时间",
+    "never_expires": "永不过期",
+    "create_success": "服务密钥创建成功",
+    "delete_success": "服务密钥删除成功",
+    "warning_save_key": "请妥善保存此密钥，它只会显示一次！",
+    "delete_confirm_title": "确认删除",
+    "delete_confirm_message": "确定要删除服务密钥 \"{{name}}\" 吗？相关服务将无法再使用此密钥进行调用。",
+    "errors": {
+      "load_failed": "加载服务密钥失败",
+      "create_failed": "创建服务密钥失败",
+      "delete_failed": "删除服务密钥失败",
+      "name_required": "密钥名称不能为空"
     }
   }
 }

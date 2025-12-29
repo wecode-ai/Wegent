@@ -1234,3 +1234,132 @@ async def update_slogan_tips_config(
         slogans=config_data.slogans,
         tips=config_data.tips,
     )
+
+
+# ==================== Service Key Management Endpoints ====================
+
+import hashlib
+import secrets
+
+from app.models.api_key import APIKey, KEY_TYPE_SERVICE
+from app.schemas.api_key import (
+    ServiceKeyCreate,
+    ServiceKeyCreatedResponse,
+    ServiceKeyListResponse,
+    ServiceKeyResponse,
+)
+
+
+@router.get("/service-keys", response_model=ServiceKeyListResponse)
+async def list_service_keys(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Get list of all service keys (admin only).
+
+    Service keys are used for trusted service authentication.
+    """
+    keys = (
+        db.query(APIKey)
+        .filter(
+            APIKey.key_type == KEY_TYPE_SERVICE,
+            APIKey.is_active == True,
+        )
+        .order_by(APIKey.created_at.desc())
+        .all()
+    )
+    return ServiceKeyListResponse(
+        items=[ServiceKeyResponse.model_validate(key) for key in keys],
+        total=len(keys),
+    )
+
+
+@router.post(
+    "/service-keys",
+    response_model=ServiceKeyCreatedResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_service_key(
+    service_key_create: ServiceKeyCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Create a new service key (admin only).
+
+    The full key is only returned once at creation time.
+    Store it securely as it cannot be retrieved again.
+
+    Service keys are used for trusted service authentication
+    via the wegent-source header.
+    """
+    # Generate key: wg-{32 random chars}
+    random_part = secrets.token_urlsafe(32)
+    full_key = f"wg-{random_part}"
+
+    # Hash the key for storage
+    key_hash = hashlib.sha256(full_key.encode()).hexdigest()
+
+    # Create prefix for display (first 8 chars after "wg-")
+    key_prefix = f"wg-{random_part[:8]}..."
+
+    # Create the service key record (user_id=0 for system-level keys)
+    service_key = APIKey(
+        user_id=0,
+        key_hash=key_hash,
+        key_prefix=key_prefix,
+        name=service_key_create.name,
+        key_type=KEY_TYPE_SERVICE,
+        description=service_key_create.description,
+    )
+
+    db.add(service_key)
+    db.commit()
+    db.refresh(service_key)
+
+    # Return with full key (only shown once)
+    return ServiceKeyCreatedResponse(
+        id=service_key.id,
+        name=service_key.name,
+        key_prefix=service_key.key_prefix,
+        description=service_key.description,
+        key=full_key,
+        expires_at=service_key.expires_at,
+        last_used_at=service_key.last_used_at,
+        created_at=service_key.created_at,
+        is_active=service_key.is_active,
+    )
+
+
+@router.delete("/service-keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_service_key(
+    key_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Delete a service key (admin only).
+
+    This is a hard delete - the key will be permanently removed.
+    """
+    service_key = (
+        db.query(APIKey)
+        .filter(
+            APIKey.id == key_id,
+            APIKey.key_type == KEY_TYPE_SERVICE,
+        )
+        .first()
+    )
+
+    if not service_key:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Service key not found",
+        )
+
+    # Hard delete - permanently remove the record
+    db.delete(service_key)
+    db.commit()
+
+    return None
