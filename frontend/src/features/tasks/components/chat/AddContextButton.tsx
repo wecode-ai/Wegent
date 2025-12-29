@@ -19,7 +19,7 @@ interface AddContextButtonProps {
  * Uses ActionButton for consistent 36px size with other control buttons
  */
 export default function AddContextButton({ onClick }: AddContextButtonProps) {
-  const { t } = useTranslation('knowledge');
+  const { t } = useTranslation();
 
   return (
     <TooltipProvider>
@@ -30,13 +30,13 @@ export default function AddContextButton({ onClick }: AddContextButtonProps) {
               variant="outline"
               onClick={onClick}
               icon={<span className="text-base font-medium text-text-primary">@</span>}
-              title={t('tooltip')}
+              title={t('knowledge:tooltip')}
               className="border-border bg-base text-text-primary hover:bg-hover"
             />
           </div>
         </TooltipTrigger>
         <TooltipContent side="top">
-          <p>{t('tooltip')}</p>
+          <p>{t('knowledge:tooltip')}</p>
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>

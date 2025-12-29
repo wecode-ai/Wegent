@@ -367,9 +367,14 @@ async def export_task_docx(
     filter_message_ids: Optional[list[int]] = None
     if message_ids:
         try:
-            filter_message_ids = [int(id.strip()) for id in message_ids.split(",") if id.strip()]
+            filter_message_ids = [
+                int(id.strip()) for id in message_ids.split(",") if id.strip()
+            ]
         except ValueError as e:
-            raise HTTPException(status_code=400, detail="Invalid message_ids format. Must be comma-separated integers.") from e
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid message_ids format. Must be comma-separated integers.",
+            ) from e
 
     try:
         # Generate DOCX document with optional message filter

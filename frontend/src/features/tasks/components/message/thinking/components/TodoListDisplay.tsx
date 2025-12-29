@@ -12,7 +12,7 @@ import type { TodoListDisplayProps } from '../types';
  * Component to display a todo list from TodoWrite tool
  */
 const TodoListDisplay = memo(function TodoListDisplay({ todos }: TodoListDisplayProps) {
-  const { t } = useTranslation('chat');
+  const { t } = useTranslation();
 
   if (!Array.isArray(todos) || todos.length === 0) {
     return null;
@@ -21,7 +21,7 @@ const TodoListDisplay = memo(function TodoListDisplay({ todos }: TodoListDisplay
   return (
     <div>
       <div className="text-xs font-medium text-blue-400 mb-1">
-        {t('thinking.todo_list') || 'Todo List'}
+        {t('chat:thinking.todo_list') || 'Todo List'}
       </div>
       <div className="space-y-0.5">
         {todos.map((todo, idx) => {
@@ -31,21 +31,21 @@ const TodoListDisplay = memo(function TodoListDisplay({ todos }: TodoListDisplay
                 {todo.status === 'completed' ? (
                   <span
                     className="text-green-400"
-                    title={t('thinking.todo_status_completed') || 'Completed'}
+                    title={t('chat:thinking.todo_status_completed') || 'Completed'}
                   >
                     ☑
                   </span>
                 ) : todo.status === 'in_progress' ? (
                   <span
                     className="text-blue-400 animate-pulse"
-                    title={t('thinking.todo_status_in_progress') || 'In Progress'}
+                    title={t('chat:thinking.todo_status_in_progress') || 'In Progress'}
                   >
                     ☐
                   </span>
                 ) : (
                   <span
                     className="text-text-tertiary"
-                    title={t('thinking.todo_status_pending') || 'Pending'}
+                    title={t('chat:thinking.todo_status_pending') || 'Pending'}
                   >
                     ☐
                   </span>

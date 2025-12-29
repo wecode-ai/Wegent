@@ -16,7 +16,7 @@ import type { TodoItem } from '../types';
  * Component to display a single tool call with name and parameters
  */
 const ToolCallItem = memo(function ToolCallItem({ toolName, input, itemIndex }: ToolCallItemProps) {
-  const { t } = useTranslation('chat');
+  const { t } = useTranslation();
   const [expandedParams, setExpandedParams] = useState<Set<string>>(new Set());
 
   const toggleParamExpansion = (paramKey: string) => {
@@ -55,17 +55,17 @@ const ToolCallItem = memo(function ToolCallItem({ toolName, input, itemIndex }: 
             <button
               onClick={() => toggleParamExpansion(paramKey)}
               className="flex items-center gap-1 text-blue-400 hover:text-blue-500 hover:font-semibold transition-colors"
-              title={isExpanded ? t('thinking.collapse') : t('thinking.expand')}
+              title={isExpanded ? t('chat:thinking.collapse') : t('chat:thinking.expand')}
             >
               {isExpanded ? (
                 <>
                   <Minimize2 className="h-3 w-3" />
-                  <span className="text-xs">{t('thinking.collapse') || 'Collapse'}</span>
+                  <span className="text-xs">{t('chat:thinking.collapse') || 'Collapse'}</span>
                 </>
               ) : (
                 <>
                   <Maximize2 className="h-3 w-3" />
-                  <span className="text-xs">{t('thinking.expand') || 'Expand'}</span>
+                  <span className="text-xs">{t('chat:thinking.expand') || 'Expand'}</span>
                 </>
               )}
             </button>
@@ -82,7 +82,7 @@ const ToolCallItem = memo(function ToolCallItem({ toolName, input, itemIndex }: 
   return (
     <div className="mt-1">
       <div className="text-xs font-medium text-blue-400 mb-1">
-        {t('thinking.tool_use') || 'Tool Use'}: {toolName}
+        {t('chat:thinking.tool_use') || 'Tool Use'}: {toolName}
       </div>
       {input && (
         <div className="space-y-2">

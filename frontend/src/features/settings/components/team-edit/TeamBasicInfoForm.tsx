@@ -31,7 +31,7 @@ export default function TeamBasicInfoForm({
   icon,
   setIcon,
 }: TeamBasicInfoFormProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
 
   return (
     <div className="space-y-4">
@@ -39,7 +39,7 @@ export default function TeamBasicInfoForm({
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
           <Label htmlFor="teamName" className="text-sm font-medium">
-            {t('team.name')} <span className="text-red-400">*</span>
+            {t('common:team.name')} <span className="text-red-400">*</span>
           </Label>
           <div className="flex items-center gap-2">
             {setIcon && <TeamIconPicker value={icon} onChange={setIcon} />}
@@ -47,7 +47,7 @@ export default function TeamBasicInfoForm({
               id="teamName"
               value={name}
               onChange={e => setName(e.target.value)}
-              placeholder={t('team.name_placeholder')}
+              placeholder={t('common:team.name_placeholder')}
               className="bg-base flex-1"
             />
           </div>
@@ -55,7 +55,7 @@ export default function TeamBasicInfoForm({
 
         {/* Bind Mode */}
         <div className="space-y-2">
-          <Label className="text-sm font-medium">{t('team.bind_mode')}</Label>
+          <Label className="text-sm font-medium">{t('common:team.bind_mode')}</Label>
           <div className="flex gap-2">
             {(['chat', 'code'] as const).map(opt => {
               const isSelected = bindMode.includes(opt);
@@ -92,13 +92,13 @@ export default function TeamBasicInfoForm({
       {/* Description - Full width */}
       <div className="space-y-2">
         <Label htmlFor="teamDescription" className="text-sm font-medium">
-          {t('team.description')}
+          {t('common:team.description')}
         </Label>
         <Input
           id="teamDescription"
           value={description}
           onChange={e => setDescription(e.target.value)}
-          placeholder={t('team.description_placeholder')}
+          placeholder={t('common:team.description_placeholder')}
           className="bg-base"
         />
       </div>

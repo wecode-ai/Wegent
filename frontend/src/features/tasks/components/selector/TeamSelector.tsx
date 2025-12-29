@@ -47,7 +47,7 @@ export default function TeamSelector({
   // Try to get context, but don't throw if not available
   const taskContext = useContext(TaskContext);
   const selectedTaskDetail = taskDetail ?? taskContext?.selectedTaskDetail ?? null;
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const router = useRouter();
   const isMobile = useMediaQuery('(max-width: 767px)');
   const sharedBadgeStyle = useMemo(() => getSharedBadgeStyle(), []);
@@ -143,7 +143,7 @@ export default function TeamSelector({
                 variant="default"
                 style={sharedBadgeStyle}
               >
-                {t('teams.shared_by', { author: team.user?.user_name })}
+                {t('common:teams.shared_by', { author: team.user?.user_name })}
               </Tag>
             )}
           </div>
@@ -170,12 +170,12 @@ export default function TeamSelector({
           value={selectedTeam?.id.toString()}
           onValueChange={handleChange}
           disabled={disabled || isLoading}
-          placeholder={isLoading ? 'Loading...' : t('teams.select_team')}
-          searchPlaceholder={t('teams.search_team')}
+          placeholder={isLoading ? 'Loading...' : t('common:teams.select_team')}
+          searchPlaceholder={t('common:teams.search_team')}
           items={selectItems}
           loading={isLoading}
-          emptyText={t('teams.no_match')}
-          noMatchText={t('teams.no_match')}
+          emptyText={t('common:teams.no_match')}
+          noMatchText={t('common:teams.no_match')}
           triggerClassName="w-full border-0 shadow-none h-auto py-0 px-0 hover:bg-transparent focus:ring-0"
           contentClassName="max-w-[320px]"
           defaultOpen={defaultOpen}
@@ -222,7 +222,7 @@ export default function TeamSelector({
               >
                 <Cog6ToothIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
                 <span className="font-medium group-hover:text-text-primary">
-                  {t('teams.manage')}
+                  {t('common:teams.manage')}
                 </span>
               </div>
             )

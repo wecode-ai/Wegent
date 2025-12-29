@@ -17,7 +17,7 @@ interface MobileSidebarProps {
 }
 
 export function MobileSidebar({ isOpen, onClose, children, title }: MobileSidebarProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
 
   return (
     <Transition.Root show={isOpen} as={Fragment}>
@@ -61,7 +61,7 @@ export function MobileSidebar({ isOpen, onClose, children, title }: MobileSideba
                     type="button"
                     className="touch-target -m-2.5 p-2.5 rounded-full bg-black/20 hover:bg-black/30 active:bg-black/40 backdrop-blur-sm transition-all duration-200"
                     onClick={onClose}
-                    aria-label={t('common.close_sidebar')}
+                    aria-label={t('common:common.close_sidebar')}
                   >
                     <XMarkIcon className="h-6 w-6 text-white drop-shadow-lg" aria-hidden="true" />
                   </button>

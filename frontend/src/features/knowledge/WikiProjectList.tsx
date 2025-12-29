@@ -49,7 +49,7 @@ export default function WikiProjectList({
   onLoadMore,
   currentUserId,
 }: WikiProjectListProps) {
-  const { t } = useTranslation('knowledge');
+  const { t } = useTranslation();
   const observerRef = useRef<IntersectionObserver | null>(null);
   const loadMoreTriggerRef = useRef<HTMLDivElement | null>(null);
 
@@ -137,8 +137,12 @@ export default function WikiProjectList({
               />
             </svg>
           </div>
-          <h3 className="font-medium text-base mb-2 text-text-primary">{t('add_repository')}</h3>
-          <p className="text-sm text-text-muted text-center">{t('add_repository_desc')}</p>
+          <h3 className="font-medium text-base mb-2 text-text-primary">
+            {t('knowledge:add_repository')}
+          </h3>
+          <p className="text-sm text-text-muted text-center">
+            {t('knowledge:add_repository_desc')}
+          </p>
         </Card>
       </div>
     );
@@ -169,7 +173,7 @@ export default function WikiProjectList({
               />
             </svg>
           </div>
-          <h3 className="font-medium text-sm">{t('add_repository')}</h3>
+          <h3 className="font-medium text-sm">{t('knowledge:add_repository')}</h3>
         </Card>
 
         {/* Project card list */}
@@ -238,7 +242,7 @@ export default function WikiProjectList({
                       <button
                         className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors opacity-0 group-hover:opacity-100"
                         onClick={e => onRegenerateClick(project.id, e)}
-                        title={t('regenerate')}
+                        title={t('knowledge:regenerate')}
                         disabled={regeneratingIds.has(project.id)}
                       >
                         {regeneratingIds.has(project.id) ? (
@@ -296,7 +300,7 @@ export default function WikiProjectList({
                         e.stopPropagation();
                         onProjectClick(project.id);
                       }}
-                      title={t('view_detail')}
+                      title={t('knowledge:view_detail')}
                     >
                       <svg
                         className="w-4 h-4"
@@ -334,15 +338,15 @@ export default function WikiProjectList({
                               onTaskClick(taskId);
                             }
                           }}
-                          title={t('view_task')}
+                          title={t('knowledge:view_task')}
                         >
                           <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span>
-                          {t('indexing')}
+                          {t('knowledge:indexing')}
                         </button>
                       ) : (
                         <span className="px-2 py-1 text-xs rounded-full bg-primary/10 text-primary flex items-center gap-1">
                           <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span>
-                          {t('indexing')}
+                          {t('knowledge:indexing')}
                         </span>
                       )}
                       {/* Cancel button - only show if current user is task executor */}
@@ -350,12 +354,12 @@ export default function WikiProjectList({
                         <button
                           className="px-2 py-1 text-xs rounded-full text-text-muted border border-border hover:bg-hover hover:text-error transition-colors"
                           onClick={e => onCancelClick(project.id, e)}
-                          title={t('cancel_title')}
+                          title={t('knowledge:cancel_title')}
                           disabled={cancellingIds.has(project.generations[0].id)}
                         >
                           {cancellingIds.has(project.generations[0].id)
-                            ? t('cancelling')
-                            : t('cancel')}
+                            ? t('knowledge:cancelling')
+                            : t('knowledge:cancel')}
                         </button>
                       )}
                     </div>

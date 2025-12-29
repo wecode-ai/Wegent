@@ -54,7 +54,7 @@ type ItemFormData = {
 };
 
 const SystemConfigPanel: React.FC = () => {
-  const { t } = useTranslation('admin');
+  const { t } = useTranslation();
   const { toast } = useToast();
 
   // State
@@ -97,7 +97,7 @@ const SystemConfigPanel: React.FC = () => {
     } catch (error) {
       console.error('Failed to fetch slogan tips config:', error);
       toast({
-        title: t('system_config.errors.load_failed'),
+        title: t('admin:system_config.errors.load_failed'),
         variant: 'destructive',
       });
     } finally {
@@ -119,12 +119,12 @@ const SystemConfigPanel: React.FC = () => {
       });
       setVersion(response.version);
       toast({
-        title: t('system_config.success.updated'),
+        title: t('admin:system_config.success.updated'),
       });
     } catch (error) {
       console.error('Failed to save slogan tips config:', error);
       toast({
-        title: t('system_config.errors.save_failed'),
+        title: t('admin:system_config.errors.save_failed'),
         variant: 'destructive',
       });
     } finally {
@@ -151,7 +151,7 @@ const SystemConfigPanel: React.FC = () => {
   const handleSaveSlogan = () => {
     if (!sloganFormData.zh.trim() || !sloganFormData.en.trim()) {
       toast({
-        title: t('system_config.errors.slogan_required'),
+        title: t('admin:system_config.errors.slogan_required'),
         variant: 'destructive',
       });
       return;
@@ -213,7 +213,7 @@ const SystemConfigPanel: React.FC = () => {
   const handleSaveTip = () => {
     if (!tipFormData.zh.trim() || !tipFormData.en.trim()) {
       toast({
-        title: t('system_config.errors.tip_required'),
+        title: t('admin:system_config.errors.tip_required'),
         variant: 'destructive',
       });
       return;
@@ -262,7 +262,7 @@ const SystemConfigPanel: React.FC = () => {
     return (
       <div className="flex items-center justify-center py-12">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        <span className="ml-2 text-text-muted">{t('system_config.loading')}</span>
+        <span className="ml-2 text-text-muted">{t('admin:system_config.loading')}</span>
       </div>
     );
   }
@@ -289,7 +289,7 @@ const SystemConfigPanel: React.FC = () => {
               <div className="flex items-center gap-2">
                 <p className="text-sm text-text-primary truncate flex-1">{item.zh}</p>
                 <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary flex-shrink-0">
-                  {t(`system_config.mode_${item.mode || 'both'}`)}
+                  {t(`admin:system_config.mode_${item.mode || 'both'}`)}
                 </span>
               </div>
               <p className="text-xs text-text-muted truncate mt-1">{item.en}</p>
@@ -335,7 +335,7 @@ const SystemConfigPanel: React.FC = () => {
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>{t('system_config.dialog_description')}</DialogDescription>
+          <DialogDescription>{t('admin:system_config.dialog_description')}</DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-4">
           <div>
@@ -361,27 +361,27 @@ const SystemConfigPanel: React.FC = () => {
             />
           </div>
           <div>
-            <Label htmlFor="item-mode">{t('system_config.mode')}</Label>
+            <Label htmlFor="item-mode">{t('admin:system_config.mode')}</Label>
             <Select
               value={formData.mode || 'both'}
               onValueChange={(value: SloganTipMode) => setFormData({ ...formData, mode: value })}
             >
               <SelectTrigger className="mt-1">
-                <SelectValue placeholder={t('system_config.mode')} />
+                <SelectValue placeholder={t('admin:system_config.mode')} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="chat">{t('system_config.mode_chat')}</SelectItem>
-                <SelectItem value="code">{t('system_config.mode_code')}</SelectItem>
-                <SelectItem value="both">{t('system_config.mode_both')}</SelectItem>
+                <SelectItem value="chat">{t('admin:system_config.mode_chat')}</SelectItem>
+                <SelectItem value="code">{t('admin:system_config.mode_code')}</SelectItem>
+                <SelectItem value="both">{t('admin:system_config.mode_both')}</SelectItem>
               </SelectContent>
             </Select>
           </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            {t('common.cancel')}
+            {t('admin:common.cancel')}
           </Button>
-          <Button onClick={onSave}>{t('common.save')}</Button>
+          <Button onClick={onSave}>{t('admin:common.save')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -402,8 +402,8 @@ const SystemConfigPanel: React.FC = () => {
           <AlertDialogDescription>{message}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
-          <AlertDialogAction onClick={onConfirm}>{t('common.delete')}</AlertDialogAction>
+          <AlertDialogCancel>{t('admin:common.cancel')}</AlertDialogCancel>
+          <AlertDialogAction onClick={onConfirm}>{t('admin:common.delete')}</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
@@ -414,12 +414,14 @@ const SystemConfigPanel: React.FC = () => {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-text-primary">{t('system_config.title')}</h2>
-          <p className="text-sm text-text-muted">{t('system_config.description')}</p>
+          <h2 className="text-lg font-semibold text-text-primary">
+            {t('admin:system_config.title')}
+          </h2>
+          <p className="text-sm text-text-muted">{t('admin:system_config.description')}</p>
         </div>
         <Button onClick={handleSave} disabled={saving}>
           {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-          {t('common.save')}
+          {t('admin:common.save')}
         </Button>
       </div>
 
@@ -427,61 +429,63 @@ const SystemConfigPanel: React.FC = () => {
       <Card className="p-6">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-md font-medium text-text-primary">
-            {t('system_config.slogan_title')}
+            {t('admin:system_config.slogan_title')}
           </h3>
           <Button variant="outline" size="sm" onClick={handleAddSlogan}>
             <PlusIcon className="h-4 w-4 mr-1" />
-            {t('system_config.add_slogan')}
+            {t('admin:system_config.add_slogan')}
           </Button>
         </div>
         {renderItemList(
           slogans,
           handleEditSlogan as (item: ChatSloganItem | ChatTipItem, index: number) => void,
           handleDeleteSloganClick as (item: ChatSloganItem | ChatTipItem, index: number) => void,
-          t('system_config.no_slogans')
+          t('admin:system_config.no_slogans')
         )}
       </Card>
 
       {/* Tips Configuration */}
       <Card className="p-6">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-md font-medium text-text-primary">{t('system_config.tips_title')}</h3>
+          <h3 className="text-md font-medium text-text-primary">
+            {t('admin:system_config.tips_title')}
+          </h3>
           <Button variant="outline" size="sm" onClick={handleAddTip}>
             <PlusIcon className="h-4 w-4 mr-1" />
-            {t('system_config.add_tip')}
+            {t('admin:system_config.add_tip')}
           </Button>
         </div>
         {renderItemList(
           tips,
           handleEditTip as (item: ChatSloganItem | ChatTipItem, index: number) => void,
           handleDeleteTipClick as (item: ChatSloganItem | ChatTipItem, index: number) => void,
-          t('system_config.no_tips')
+          t('admin:system_config.no_tips')
         )}
       </Card>
 
       {/* Version Info */}
       <div className="text-xs text-text-muted text-right">
-        {t('system_config.version')}: {version}
+        {t('admin:system_config.version')}: {version}
       </div>
 
       {/* Slogan Dialogs */}
       {renderEditDialog(
         isSloganDialogOpen,
         setIsSloganDialogOpen,
-        editingSlogan ? t('system_config.edit_slogan') : t('system_config.add_slogan'),
+        editingSlogan ? t('admin:system_config.edit_slogan') : t('admin:system_config.add_slogan'),
         sloganFormData,
         setSloganFormData,
         handleSaveSlogan,
-        t('system_config.slogan_zh'),
-        t('system_config.slogan_zh_placeholder'),
-        t('system_config.slogan_en'),
-        t('system_config.slogan_en_placeholder')
+        t('admin:system_config.slogan_zh'),
+        t('admin:system_config.slogan_zh_placeholder'),
+        t('admin:system_config.slogan_en'),
+        t('admin:system_config.slogan_en_placeholder')
       )}
       {renderDeleteDialog(
         isDeleteSloganDialogOpen,
         setIsDeleteSloganDialogOpen,
-        t('system_config.delete_slogan_title'),
-        t('system_config.delete_slogan_message'),
+        t('admin:system_config.delete_slogan_title'),
+        t('admin:system_config.delete_slogan_message'),
         handleConfirmDeleteSlogan
       )}
 
@@ -489,20 +493,20 @@ const SystemConfigPanel: React.FC = () => {
       {renderEditDialog(
         isTipDialogOpen,
         setIsTipDialogOpen,
-        editingTip ? t('system_config.edit_tip') : t('system_config.add_tip'),
+        editingTip ? t('admin:system_config.edit_tip') : t('admin:system_config.add_tip'),
         tipFormData,
         setTipFormData,
         handleSaveTip,
-        t('system_config.tip_zh'),
-        t('system_config.tip_zh_placeholder'),
-        t('system_config.tip_en'),
-        t('system_config.tip_en_placeholder')
+        t('admin:system_config.tip_zh'),
+        t('admin:system_config.tip_zh_placeholder'),
+        t('admin:system_config.tip_en'),
+        t('admin:system_config.tip_en_placeholder')
       )}
       {renderDeleteDialog(
         isDeleteTipDialogOpen,
         setIsDeleteTipDialogOpen,
-        t('system_config.delete_tip_title'),
-        t('system_config.delete_tip_message'),
+        t('admin:system_config.delete_tip_title'),
+        t('admin:system_config.delete_tip_message'),
         handleConfirmDeleteTip
       )}
     </div>

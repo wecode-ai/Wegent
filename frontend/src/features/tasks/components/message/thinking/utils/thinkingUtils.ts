@@ -242,8 +242,14 @@ export function getThinkingText(key: string, tChat: (key: string) => string): st
   let result = key;
 
   while ((match = templateRegex.exec(key)) !== null) {
-    const templateKey = match[1];
-    if (templateKey.includes('.')) {
+    let templateKey = match[1];
+
+    // Add chat: prefix for thinking keys if missing
+    if (templateKey.startsWith('thinking.') && !templateKey.startsWith('chat:')) {
+      templateKey = `chat:${templateKey}`;
+    }
+
+    if (templateKey.includes('.') || templateKey.includes(':')) {
       const translatedText = tChat(templateKey) || templateKey;
       result = result.replace(match[0], translatedText);
     } else {
@@ -251,7 +257,18 @@ export function getThinkingText(key: string, tChat: (key: string) => string): st
     }
   }
 
-  if (result === key && key.includes('.')) {
+  // Handle direct key that isn't a template
+  if (result === key && (key.includes('.') || key.includes(':'))) {
+    // Add chat: prefix for thinking keys if missing
+    if (key.startsWith('thinking.') && !key.startsWith('chat:')) {
+      const translated = tChat(`chat:${key}`);
+      // return key if translation failed (returned key itself) AND original key didn't have chat prefix
+      // Wait, t function returns key if missing?
+      // If tChat('chat:key') returns 'chat:key', we might want to display just key or 'key'
+      // But typically we return the translation.
+
+      return translated !== `chat:${key}` ? translated : key;
+    }
     return tChat(key) || key;
   }
 

@@ -231,6 +231,9 @@
     "enable": "启用深度思考",
     "disable": "禁用深度思考"
   },
+  "upload": {
+    "tooltip": "支持的文件类型: PDF, Word, PPT, Excel, TXT, Markdown, 图片(JPG, PNG, GIF, BMP, WebP)\n最大文件大小: {{maxSize}} MB\n支持多文件同时上传"
+  },
   "clarification_toggle": {
     "enable": "启用智能追问模式",
     "disable": "禁用智能追问模式"
@@ -290,6 +293,7 @@
       "loadFailed": "加载成员失败",
       "removeSuccess": "已移除 {{name}}",
       "removeFailed": "移除成员失败",
+      "notOwner": "只有任务创建者可以创建邀请链接",
       "leaveGroupChat": "退出群聊",
       "leaveSuccess": "已退出群聊",
       "leaveFailed": "退出群聊失败"
