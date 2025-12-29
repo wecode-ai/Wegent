@@ -491,7 +491,8 @@ export default function MessagesArea({
       }
 
       // Refresh task detail to get the latest messages before export
-      const latestTaskDetail = await refreshSelectedTaskDetail(true);
+      // Use false to force refresh even for completed tasks
+      const latestTaskDetail = await refreshSelectedTaskDetail(false);
       const taskDetailToExport = latestTaskDetail || selectedTaskDetail;
 
       // Convert subtasks to selectable messages
