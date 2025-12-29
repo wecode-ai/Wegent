@@ -221,7 +221,10 @@
     "docx_failed": "Failed to export DOCX",
     "select_from_here": "Select from here",
     "select_below": "Select below",
-    "attachments": "attachment(s)"
+    "attachments": "attachment(s)",
+    "preparing": "Preparing export...",
+    "font_load_failed": "Failed to load font, please retry",
+    "retry": "Retry"
   },
   "web_search": {
     "enable": "Enable web search",
