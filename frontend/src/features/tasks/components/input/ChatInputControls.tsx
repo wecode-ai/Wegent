@@ -17,7 +17,7 @@ import AttachmentButton from '../AttachmentButton';
 import SendButton from './SendButton';
 import LoadingDots from '../message/LoadingDots';
 import QuotaUsage from '../params/QuotaUsage';
-import { Button } from '@/components/ui/button';
+import { ActionButton } from '@/components/ui/action-button';
 import type {
   Team,
   GitRepoInfo,
@@ -151,22 +151,24 @@ export function ChatInputControls({
     if (isStreaming || isStopping) {
       if (isStopping) {
         return (
-          <div className="relative h-6 w-6 flex items-center justify-center flex-shrink-0 translate-y-0.5">
-            <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
-            <CircleStop className="h-4 w-4 text-orange-500" />
-          </div>
+          <ActionButton
+            variant="loading"
+            icon={
+              <>
+                <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
+                <CircleStop className="h-4 w-4 text-orange-500" />
+              </>
+            }
+          />
         );
       }
       return (
-        <Button
-          variant="ghost"
-          size="icon"
+        <ActionButton
           onClick={onStopStream}
-          className="h-6 w-6 rounded-full hover:bg-orange-100 flex-shrink-0 translate-y-0.5"
           title="Stop generating"
-        >
-          <CircleStop className="h-5 w-5 text-orange-500" />
-        </Button>
+          icon={<CircleStop className="h-4 w-4 text-orange-500" />}
+          className="hover:bg-orange-100"
+        />
       );
     }
 
@@ -182,25 +184,21 @@ export function ChatInputControls({
 
     // For non-group-chat tasks with PENDING status, show loading animation
     if (selectedTaskDetail?.status === 'PENDING') {
-      return (
-        <Button
-          variant="ghost"
-          size="icon"
-          disabled
-          className="h-6 w-6 rounded-full flex-shrink-0 translate-y-0.5"
-        >
-          <LoadingDots />
-        </Button>
-      );
+      return <ActionButton disabled variant="loading" icon={<LoadingDots />} />;
     }
 
     // CANCELLING status
     if (selectedTaskDetail?.status === 'CANCELLING') {
       return (
-        <div className="relative h-6 w-6 flex items-center justify-center flex-shrink-0 translate-y-0.5">
-          <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
-          <CircleStop className="h-5 w-5 text-orange-500" />
-        </div>
+        <ActionButton
+          variant="loading"
+          icon={
+            <>
+              <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
+              <CircleStop className="h-4 w-4 text-orange-500" />
+            </>
+          }
+        />
       );
     }
 
