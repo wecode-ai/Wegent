@@ -217,4 +217,35 @@ export const correctionApis = {
       console.error('Failed to clear correction mode state:', e);
     }
   },
+
+  /**
+   * Migrate correction mode state from one task to another.
+   * This is used when a new task is created and we need to transfer
+   * the correction mode state from the "new" task to the real task ID.
+   * @param fromTaskId - The source task ID (null for new tasks)
+   * @param toTaskId - The destination task ID
+   * @returns The migrated state, or null if no state was found
+   */
+  migrateCorrectionModeState(
+    fromTaskId: number | null,
+    toTaskId: number
+  ): CorrectionModeState | null {
+    if (typeof window === 'undefined') return null;
+    try {
+      const fromKey = getCorrectionModeKey(fromTaskId);
+      const stored = localStorage.getItem(fromKey);
+      if (stored) {
+        const state = JSON.parse(stored) as CorrectionModeState;
+        // Save to new task ID
+        const toKey = getCorrectionModeKey(toTaskId);
+        localStorage.setItem(toKey, stored);
+        // Remove from old key
+        localStorage.removeItem(fromKey);
+        return state;
+      }
+    } catch (e) {
+      console.error('Failed to migrate correction mode state:', e);
+    }
+    return null;
+  },
 };

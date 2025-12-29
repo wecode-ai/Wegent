@@ -149,16 +149,34 @@ class StreamingState:
                 self.sources.append(source)
                 existing_keys.add(key)
 
-    def get_current_result(self) -> dict[str, Any]:
-        """Get current result with thinking steps and sources for WebSocket emission."""
+    def get_current_result(
+        self,
+        include_value: bool = True,
+        include_thinking: bool = True,
+    ) -> dict[str, Any]:
+        """Get current result with thinking steps and sources for WebSocket emission.
+
+        Args:
+            include_value: Whether to include full_response as 'value' field.
+                          Set to False for chunk events to reduce data size.
+                          Set to True for done events and periodic DB saves.
+            include_thinking: Whether to include thinking steps and sources.
+                             Set to False for Chat mode chunk events (only need token).
+                             Set to True for Code mode or done events.
+
+        Returns:
+            Result dictionary with shell_type, and optionally value, thinking, sources.
+        """
         result: dict[str, Any] = {
-            "value": self.full_response,
             "shell_type": self.shell_type,  # Include shell_type for frontend display
         }
-        if self.thinking:
-            result["thinking"] = self.thinking
-        if self.sources:
-            result["sources"] = self.sources  # Include sources for citation display
+        if include_value:
+            result["value"] = self.full_response
+        if include_thinking:
+            if self.thinking:
+                result["thinking"] = self.thinking
+            if self.sources:
+                result["sources"] = self.sources  # Include sources for citation display
         return result
 
 
@@ -334,9 +352,15 @@ class StreamingCore:
         # Accumulate content
         self.state.append_content(token)
 
-        # Emit chunk to client with result data (including shell_type and thinking if available)
-        # Always send result to include shell_type for frontend display logic
-        result = self.state.get_current_result()
+        # Emit chunk to client with result data
+        # - include_value=False: avoid sending full response in every chunk (reduces data size)
+        # - include_thinking: only for Code mode (ClaudeCode, Agno), Chat mode only needs token
+        # Frontend accumulates content from individual chunks, doesn't need full value
+        is_chat_mode = self.state.shell_type == "Chat"
+        result = self.state.get_current_result(
+            include_value=False,
+            include_thinking=not is_chat_mode,  # Chat mode doesn't need thinking in chunks
+        )
         await self.emitter.emit_chunk(
             token,
             self.state.offset - len(token),  # offset before this token

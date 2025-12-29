@@ -83,13 +83,13 @@ def _handle_tool_start(
         }
     )
 
-    # Immediately emit thinking step
+    # Immediately emit thinking step (exclude value to reduce data size)
     asyncio.create_task(
         emitter.emit_chunk(
             content="",
             offset=state.offset,
             subtask_id=state.subtask_id,
-            result=state.get_current_result(),
+            result=state.get_current_result(include_value=False),
         )
     )
 
@@ -148,13 +148,14 @@ def _handle_tool_end(
     else:
         state.add_thinking_step(result_step)
 
-    # Immediately emit thinking step
+    # Immediately emit thinking step (exclude value to reduce data size)
+    # Tool events only happen in non-Chat modes, so include_thinking=True is correct
     asyncio.create_task(
         emitter.emit_chunk(
             content="",
             offset=state.offset,
             subtask_id=state.subtask_id,
-            result=state.get_current_result(),
+            result=state.get_current_result(include_value=False),
         )
     )
 
