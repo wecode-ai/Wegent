@@ -77,8 +77,10 @@ export interface UnifiedMessage {
   content: string;
   /** Attachment if any (for pending messages) */
   attachment?: unknown;
-  /** Attachments array (for confirmed messages) */
+  /** Attachments array (for confirmed messages, deprecated - use contexts) */
   attachments?: unknown[];
+  /** Unified contexts (attachments, knowledge bases, etc.) */
+  contexts?: unknown[];
   /** Timestamp when message was created */
   timestamp: number;
   /** Subtask ID from backend (set when confirmed) */
@@ -1671,6 +1673,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
               subtaskId: subtask.id,
               messageId: subtask.message_id,
               attachments: subtask.attachments,
+              contexts: subtask.contexts,
               botName: subtask.bots?.[0]?.name || teamName,
               subtaskStatus: subtask.status,
               result: subtask.result as UnifiedMessage['result'],
@@ -1712,6 +1715,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
             subtaskId: subtask.id,
             messageId: subtask.message_id,
             attachments: subtask.attachments,
+            contexts: subtask.contexts,
             botName: !isUserMessage && subtask.bots?.[0]?.name ? subtask.bots[0].name : teamName,
             senderUserName:
               subtask.sender_user_name ||

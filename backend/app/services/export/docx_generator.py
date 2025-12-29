@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.subtask import Subtask
-from app.models.subtask_attachment import SubtaskAttachment
+from app.models.subtask_context import SubtaskContext
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -269,7 +269,7 @@ def _convert_emoji_to_text(text: str) -> str:
     return text
 
 
-def _add_attachments(doc: Document, attachments: List[SubtaskAttachment], db: Session):
+def _add_attachments(doc: Document, attachments: List[SubtaskContext], db: Session):
     """Add attachment section (images embedded, files as info cards)"""
     for attachment in attachments:
         if _is_image_extension(attachment.file_extension):
@@ -284,7 +284,7 @@ def _is_image_extension(extension: str) -> bool:
     return extension.lower() in image_exts
 
 
-def _add_image_attachment(doc: Document, attachment: SubtaskAttachment, db: Session):
+def _add_image_attachment(doc: Document, attachment: SubtaskContext, db: Session):
     """Embed image attachment in document"""
     try:
         from app.services.attachment.storage_factory import get_storage_backend
@@ -321,7 +321,7 @@ def _add_image_attachment(doc: Document, attachment: SubtaskAttachment, db: Sess
         _add_file_attachment(doc, attachment)
 
 
-def _add_file_attachment(doc: Document, attachment: SubtaskAttachment):
+def _add_file_attachment(doc: Document, attachment: SubtaskContext):
     """Add file attachment info card"""
     p = doc.add_paragraph()
 

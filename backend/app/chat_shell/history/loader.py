@@ -62,10 +62,10 @@ def _load_history_from_db_sync(
 ) -> list[dict[str, Any]]:
     """Synchronous implementation of chat history retrieval."""
     from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
-    from app.models.subtask_attachment import AttachmentStatus, SubtaskAttachment
+    from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
     from app.models.user import User
-    from app.services.attachment import attachment_service
     from app.services.chat.storage.db import _db_session
+    from app.services.context import context_service
 
     history: list[dict[str, Any]] = []
     with _db_session() as db:
@@ -85,7 +85,7 @@ def _load_history_from_db_sync(
 
         for subtask, sender_username in subtasks:
             msg = _build_history_message(
-                db, subtask, sender_username, attachment_service, is_group_chat
+                db, subtask, sender_username, context_service, is_group_chat
             )
             if msg:
                 history.append(msg)
@@ -97,12 +97,12 @@ def _build_history_message(
     db,
     subtask,
     sender_username: str | None,
-    attachment_service,
+    context_service,
     is_group_chat: bool = False,
 ) -> dict[str, Any] | None:
     """Build a single history message from a subtask."""
     from app.models.subtask import SubtaskRole
-    from app.models.subtask_attachment import AttachmentStatus, SubtaskAttachment
+    from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 
     if subtask.role == SubtaskRole.USER:
         # Build text content
@@ -110,12 +110,13 @@ def _build_history_message(
         if is_group_chat and sender_username:
             text_content = f"User[{sender_username}]: {text_content}"
 
-        # Get attachments
+        # Get attachment contexts
         attachments = (
-            db.query(SubtaskAttachment)
+            db.query(SubtaskContext)
             .filter(
-                SubtaskAttachment.subtask_id == subtask.id,
-                SubtaskAttachment.status == AttachmentStatus.READY,
+                SubtaskContext.subtask_id == subtask.id,
+                SubtaskContext.context_type == ContextType.ATTACHMENT.value,
+                SubtaskContext.status == ContextStatus.READY.value,
             )
             .all()
         )
