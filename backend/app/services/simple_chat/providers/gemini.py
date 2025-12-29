@@ -98,6 +98,13 @@ class GeminiProvider(LLMProvider):
                 return msg.get("content", "")
         return ""
 
+    def _build_headers(self) -> dict[str, str]:
+        """Build headers for Gemini API."""
+        headers = super()._build_headers()
+        if self.config.api_key:
+            headers["x-goog-api-key"] = self.config.api_key
+        return headers
+
     async def stream_chat(
         self,
         messages: list[dict[str, Any]],
@@ -105,8 +112,7 @@ class GeminiProvider(LLMProvider):
     ) -> AsyncGenerator[StreamChunk, None]:
         """Stream chat completion from Gemini API."""
         base_url = self.config.base_url.rstrip("/")
-        url = f"{base_url}/models/{self.config.model_id}:streamGenerateContent"
-        url = f"{url}?alt=sse&key={self.config.api_key}"
+        url = f"{base_url}/v1beta/models/{self.config.model_id}-preview:streamGenerateContent?alt=sse"
 
         formatted_messages = self.format_messages(messages)
         system_prompt = self._extract_system_prompt(messages)
