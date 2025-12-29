@@ -5,7 +5,7 @@
 'use client';
 
 import './task-list-scrollbar.css';
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
@@ -68,6 +68,8 @@ export default function TaskSidebar({
     markAllTasksAsViewed,
     viewStatusVersion,
     setSelectedTask,
+    newlyCreatedGroupChatId,
+    setNewlyCreatedGroupChatId,
   } = useTaskContext();
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -80,6 +82,41 @@ export default function TaskSidebar({
 
   // Use external shortcut display text from parent
   const shortcutDisplayText = externalShortcutDisplayText ?? '';
+
+  // Handler to scroll to and highlight a newly created group chat
+  const scrollToAndHighlightTask = useCallback((taskId: number) => {
+    // Use requestAnimationFrame to ensure DOM is updated after state change
+    requestAnimationFrame(() => {
+      const element = scrollRef.current?.querySelector(
+        `[data-task-id="${taskId}"]`
+      );
+      if (element) {
+        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        element.classList.add('highlight-new-task');
+        // Remove highlight animation after it completes
+        setTimeout(() => {
+          element.classList.remove('highlight-new-task');
+        }, 2000);
+      }
+    });
+  }, []);
+
+  // Effect to handle auto-expand and scroll to newly created group chat
+  useEffect(() => {
+    if (newlyCreatedGroupChatId) {
+      // 1. Expand group chats section
+      setIsGroupChatsExpanded(true);
+
+      // 2. Wait for DOM update, then scroll and highlight
+      // Use a small delay to ensure the list has re-rendered with expanded state
+      setTimeout(() => {
+        scrollToAndHighlightTask(newlyCreatedGroupChatId);
+      }, 100);
+
+      // 3. Clear the state to prevent re-triggering
+      setNewlyCreatedGroupChatId(null);
+    }
+  }, [newlyCreatedGroupChatId, setNewlyCreatedGroupChatId, scrollToAndHighlightTask]);
 
   // Clear search for sidebar (used when clearing search results)
   const handleClearSearch = () => {

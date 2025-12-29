@@ -49,7 +49,7 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
 
   const { teams, isTeamsLoading } = teamService.useTeams();
   const { sendMessage } = useChatStreamContext();
-  const { refreshTasks, setSelectedTask } = useTaskContext();
+  const { refreshTasks, setSelectedTask, setNewlyCreatedGroupChatId } = useTaskContext();
   const { user } = useUser();
 
   // Filter teams to only show chat-type teams (agent_type === 'chat')
@@ -134,6 +134,9 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
 
             // Refresh task list to show the new group chat
             refreshTasks();
+
+            // Trigger auto-expand and scroll to newly created group chat in sidebar
+            setNewlyCreatedGroupChatId(realTaskId);
 
             // Set selected task with is_group_chat flag BEFORE navigation
             // This ensures ChatArea receives the correct isGroupChat prop immediately

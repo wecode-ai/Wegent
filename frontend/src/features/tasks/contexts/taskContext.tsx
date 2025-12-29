@@ -50,6 +50,9 @@ type TaskContextType = {
   // Access denied state for 403 errors when accessing shared tasks
   accessDenied: boolean;
   clearAccessDenied: () => void;
+  // Newly created group chat ID - used to trigger auto-expand and scroll in sidebar
+  newlyCreatedGroupChatId: number | null;
+  setNewlyCreatedGroupChatId: (id: number | null) => void;
 };
 
 const TaskContext = createContext<TaskContextType | undefined>(undefined);
@@ -68,6 +71,9 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   const [viewStatusVersion, setViewStatusVersion] = useState<number>(0);
   // Access denied state for 403 errors when accessing shared tasks
   const [accessDenied, setAccessDenied] = useState<boolean>(false);
+
+  // Newly created group chat ID - used to trigger auto-expand and scroll in sidebar
+  const [newlyCreatedGroupChatId, setNewlyCreatedGroupChatId] = useState<number | null>(null);
 
   // Track task status for notification
   const taskStatusMapRef = useRef<Map<number, TaskStatus>>(new Map());
@@ -597,6 +603,8 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
         viewStatusVersion,
         accessDenied,
         clearAccessDenied,
+        newlyCreatedGroupChatId,
+        setNewlyCreatedGroupChatId,
       }}
     >
       {children}

@@ -18,3 +18,14 @@
 .task-list-scrollbar::-webkit-scrollbar {
   display: none;
 }
+
+/* Highlight animation for newly created group chat */
+@keyframes highlight-pulse {
+  0%, 100% { background-color: transparent; }
+  50% { background-color: rgba(20, 184, 166, 0.15); }
+}
+
+.highlight-new-task {
+  animation: highlight-pulse 0.5s ease-in-out 3;
+  border-radius: 0.75rem; /* Match the rounded-xl (12px) */
+}

@@ -396,6 +396,7 @@ export default function TaskListSection({
                 <Tooltip delayDuration={0}>
                   <TooltipTrigger asChild>
                     <div
+                      data-task-id={task.id}
                       className={`flex items-center justify-center py-1.5 px-2 h-8 rounded-xl cursor-pointer ${
                         selectedTask?.id === task.id || selectedTaskDetail?.id === task.id
                           ? 'bg-primary/10'
@@ -444,6 +445,7 @@ export default function TaskListSection({
               <Tooltip delayDuration={500}>
                 <TooltipTrigger asChild>
                   <div
+                    data-task-id={task.id}
                     className={`flex items-center gap-2 py-1.5 px-3 h-8 rounded-xl cursor-pointer ${
                       selectedTask?.id === task.id || selectedTaskDetail?.id === task.id
                         ? 'bg-primary/10'

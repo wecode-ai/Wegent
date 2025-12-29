@@ -22,6 +22,7 @@ import { useToast } from '@/hooks/use-toast';
 import { taskMemberApi } from '@/apis/task-member';
 import { useTranslation } from '@/hooks/useTranslation';
 import { userApis } from '@/apis/user';
+import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 
 interface User {
   id: number;
@@ -49,6 +50,7 @@ export function AddMembersDialog({
 }: AddMembersDialogProps) {
   const { t } = useTranslation('chat');
   const { toast } = useToast();
+  const { setNewlyCreatedGroupChatId } = useTaskContext();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<User[]>([]);
@@ -136,6 +138,8 @@ export function AddMembersDialog({
           await taskMemberApi.convertToGroupChat(taskId);
           // Trigger callback immediately after conversion to update UI
           onMembersAdded?.();
+          // Trigger auto-expand and scroll to converted group chat in sidebar
+          setNewlyCreatedGroupChatId(taskId);
         } catch (conversionError) {
           console.log('Task conversion for invite link:', conversionError);
         }
@@ -176,6 +180,8 @@ export function AddMembersDialog({
         wasConverted = true;
         // Note: Don't call onMembersAdded here yet - wait until members are added
         // to avoid race condition where UI refreshes before additions complete
+        // But trigger auto-expand and scroll to converted group chat in sidebar
+        setNewlyCreatedGroupChatId(taskId);
       } catch (conversionError) {
         // Ignore conversion errors - task might already be a group chat
         console.log('Task conversion:', conversionError);
