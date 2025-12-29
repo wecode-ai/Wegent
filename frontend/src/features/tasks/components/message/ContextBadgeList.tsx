@@ -4,10 +4,43 @@
 
 'use client';
 
-import React from 'react';
+import React, { ReactNode } from 'react';
 import { Database } from 'lucide-react';
 import AttachmentPreview from '../input/AttachmentPreview';
 import type { SubtaskContextBrief, Attachment } from '@/types/api';
+import { useTranslation } from '@/hooks/useTranslation';
+import { formatDocumentCount } from '@/lib/i18n-helpers';
+
+/**
+ * Base preview component for context items (attachments, knowledge bases, etc.)
+ * Provides consistent styling and layout structure
+ */
+interface ContextPreviewBaseProps {
+  /** Icon element to display (should be text-2xl size) */
+  icon: ReactNode;
+  /** Primary text (filename, KB name, etc.) */
+  title: string;
+  /** Secondary text (file size, document count, etc.) */
+  subtitle?: string;
+  /** Optional className for customization */
+  className?: string;
+}
+
+function ContextPreviewBase({ icon, title, subtitle, className = '' }: ContextPreviewBaseProps) {
+  return (
+    <div
+      className={`flex items-center gap-3 p-3 bg-muted rounded-lg border border-border mb-2 max-w-full ${className}`}
+    >
+      <div className="text-2xl flex-shrink-0">{icon}</div>
+      <div className="flex-1 min-w-0 overflow-hidden">
+        <div className="font-medium text-sm truncate" title={title}>
+          {title}
+        </div>
+        {subtitle && <div className="text-xs text-text-muted">{subtitle}</div>}
+      </div>
+    </div>
+  );
+}
 
 interface ContextBadgeListProps {
   /** List of contexts to display */
@@ -94,23 +127,27 @@ function AttachmentContextBadge({ context }: { context: SubtaskContextBrief }) {
 
   return <AttachmentPreview attachment={attachment} compact={false} showDownload={true} />;
 }
-
 /**
  * Knowledge base badge - displays KB name and document count
  *
- * Uses a simple badge design with database icon
+ * Uses ContextPreviewBase for consistent styling with attachments
  */
 function KnowledgeBaseBadge({ context }: { context: SubtaskContextBrief }) {
+  const { t } = useTranslation('knowledge');
+
+  const subtitle =
+    context.document_count !== undefined &&
+    context.document_count !== null &&
+    context.document_count > 0
+      ? formatDocumentCount(context.document_count, t)
+      : undefined;
+
   return (
-    <div className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-surface border border-border text-xs text-text-secondary">
-      <Database className="w-3.5 h-3.5 text-primary flex-shrink-0" />
-      <span className="max-w-[140px] truncate font-medium">{context.name}</span>
-      {context.document_count !== undefined &&
-        context.document_count !== null &&
-        context.document_count > 0 && (
-          <span className="text-text-muted">({context.document_count})</span>
-        )}
-    </div>
+    <ContextPreviewBase
+      icon={<Database className="text-primary" />}
+      title={context.name}
+      subtitle={subtitle}
+    />
   );
 }
 

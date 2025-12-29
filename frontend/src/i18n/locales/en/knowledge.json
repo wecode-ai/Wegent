@@ -7,6 +7,7 @@
   "go_to_create": "Go to Create Knowledge Base",
   "fetch_error": "Failed to load knowledge bases",
   "documents": "documents",
+  "document_count": "{{count}} document",
   "documents_count": "{{count}} documents",
   "modules": {
     "title": "Knowledge Space",

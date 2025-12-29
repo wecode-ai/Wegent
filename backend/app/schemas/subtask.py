@@ -69,7 +69,15 @@ class SubtaskCreate(SubtaskBase):
 
 
 class SubtaskAttachment(BaseModel):
-    """Subtask attachment schema (deprecated, use SubtaskContextBrief instead)"""
+    """
+    Subtask attachment schema.
+
+    DEPRECATED: This schema is deprecated and will be removed in a future version.
+    Use SubtaskContextBrief instead for unified context management.
+
+    Migration: Replace all usage with SubtaskContextBrief which supports
+    both attachments and knowledge base contexts.
+    """
 
     id: int
     filename: str = Field(validation_alias="original_filename")
@@ -166,8 +174,9 @@ class SubtaskInDB(SubtaskBase):
     executor_deleted_at: Optional[bool] = False
     # Contexts replace attachments for unified context management
     contexts: List[SubtaskContextBrief] = []
-    # Backward compatibility: attachments field (derived from contexts)
+    # DEPRECATED: Backward compatibility field (derived from contexts)
     # This field is populated from contexts where context_type='attachment'
+    # Use 'contexts' field instead for new code
     attachments: List[SubtaskAttachment] = []
     # Group chat fields
     sender_type: Optional[SenderType] = None  # USER or TEAM

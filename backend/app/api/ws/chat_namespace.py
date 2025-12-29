@@ -63,7 +63,7 @@ from app.services.chat.operations import (
     reset_subtask_for_retry,
     update_subtask_on_cancel,
 )
-from app.services.chat.rag import extract_knowledge_base_ids, process_context_and_rag
+from app.services.chat.rag import process_context_and_rag
 from app.services.chat.storage import session_manager
 
 logger = logging.getLogger(__name__)
@@ -568,22 +568,10 @@ class ChatNamespace(socketio.AsyncNamespace):
 
                 user_subtask_for_context = user_subtask
 
-            # Update user subtask with context metadata
-            if context_metadata and user_subtask_for_context:
-                try:
-                    user_subtask_for_context.metadata = context_metadata
-                    db.commit()
-                    logger.info(
-                        f"[WS] chat:send stored context metadata in subtask {user_subtask_for_context.id}"
-                    )
-                except Exception as e:
-                    logger.exception(
-                        f"[WS] chat:send failed to store context metadata: {e}"
-                    )
-                    db.rollback()
-
             # Link attachments and create knowledge base contexts for the user subtask
             # This handles both pre-uploaded attachments and knowledge bases selected at send time
+            # Note: RAG retrieval for knowledge bases is done later via tools/Service
+            linked_context_ids = []
             if user_subtask_for_context:
                 from app.services.chat.preprocessing import link_contexts_to_subtask
 
@@ -666,17 +654,13 @@ class ChatNamespace(socketio.AsyncNamespace):
             if should_trigger_ai and assistant_subtask:
                 from app.services.chat.trigger import trigger_ai_response
 
-                # Extract knowledge base IDs for tool-based RAG (only used when tools enabled)
-                kb_ids = extract_knowledge_base_ids(context_metadata)
-                if kb_ids:
-                    logger.info(
-                        f"[WS] chat:send will use KnowledgeBaseTool with {len(kb_ids)} knowledge bases: {kb_ids}"
-                    )
-
                 logger.info(
                     f"[WS] chat:send triggering AI response with enable_deep_thinking={payload.enable_deep_thinking} (controls tool usage)"
                 )
-
+                # Note: knowledge_base_ids is no longer passed separately.
+                # The unified context processing in trigger_ai_response will
+                # retrieve both attachments and knowledge bases from the
+                # user_subtask's associated contexts.
                 await trigger_ai_response(
                     task=task,
                     assistant_subtask=assistant_subtask,
@@ -687,7 +671,11 @@ class ChatNamespace(socketio.AsyncNamespace):
                     task_room=task_room,
                     supports_direct_chat=supports_direct_chat,
                     namespace=self,
-                    knowledge_base_ids=kb_ids,  # Pass KB IDs for tool-based RAG
+                    user_subtask_id=(
+                        user_subtask_for_context.id
+                        if user_subtask_for_context
+                        else None
+                    ),  # Pass user subtask ID for unified context processing
                 )
 
             # Return unified response - same structure for all modes
@@ -755,27 +743,9 @@ class ChatNamespace(socketio.AsyncNamespace):
         ]
 
         # Build legacy attachment info for backward compatibility
+        # Note: attachments field is kept for backward compatibility but set to empty
+        # All context data should be read from the 'contexts' field
         attachment_info = None
-        attachments_list = None
-        if attachment_id:
-            context = context_service.get_context_optional(
-                db=db,
-                context_id=attachment_id,
-            )
-            if context and context.context_type == "attachment":
-                attachment_info = {
-                    "id": context.id,
-                    "original_filename": context.original_filename,
-                    "file_extension": context.file_extension,
-                    "file_size": context.file_size,
-                    "mime_type": context.mime_type,
-                    "status": (
-                        context.status
-                        if isinstance(context.status, str)
-                        else context.status.value
-                    ),
-                }
-                attachments_list = [attachment_info]
 
         logger.info(
             f"[WS] Broadcasting user message to room: room={task_room}, "
@@ -798,7 +768,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 },
                 "created_at": user_subtask.created_at.isoformat(),
                 "attachment": attachment_info,  # Keep for backward compatibility
-                "attachments": attachments_list,  # Legacy array format
+                "attachments": [],  # Legacy array format - empty, use contexts instead
                 "contexts": contexts_list,  # New contexts format
             },
             room=task_room,
@@ -1169,6 +1139,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 task_room=task_room,
                 supports_direct_chat=supports_direct_chat,
                 namespace=self,
+                user_subtask_id=user_subtask.id,  # Pass user subtask ID for unified context processing
             )
 
             logger.info(

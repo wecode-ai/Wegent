@@ -72,16 +72,27 @@ class SubtaskContext(Base):
     status = Column(
         String(20), nullable=False, default=ContextStatus.PENDING.value, index=True
     )
-    error_message = Column(Text, nullable=True)
+    error_message = Column(Text, nullable=False, default="")
 
     # Special content fields (used by different types as needed)
-    # binary_data: Attachment binary (mysql backend only)
-    binary_data = Column(BinaryDataType, nullable=True)
-    # image_base64: Image base64 for vision models
-    image_base64 = Column(LongTextType, nullable=True)
-    # extracted_text: Parsed text from documents / RAG retrieval results
-    extracted_text = Column(LongTextType, nullable=True)
-    # text_length: Length of extracted text
+    # Note: BLOB/TEXT fields cannot have server_default in MySQL, but application
+    # layer provides default values (empty string/bytes) to ensure NOT NULL constraint
+
+    # Binary data storage (LONGBLOB for MySQL, LargeBinary for SQLite - supports up to 4GB)
+    # When using external storage backends, this column stores empty bytes (b'') as a marker
+    binary_data = Column(BinaryDataType, nullable=False, default=b"")
+
+    # Image base64 encoding (for vision models, LONGTEXT for MySQL, Text for SQLite)
+    # Empty string means no image data
+    image_base64 = Column(LongTextType, nullable=False, default="")
+
+    # Extracted text content (LONGTEXT for MySQL, Text for SQLite - supports up to 4GB)
+    # For attachments: parsed text from documents
+    # For knowledge bases: RAG retrieval results
+    # Empty string means no extracted text
+    extracted_text = Column(LongTextType, nullable=False, default="")
+
+    # Character count of extracted text
     text_length = Column(Integer, nullable=False, default=0)
 
     # Type-specific metadata (JSON)
@@ -163,3 +174,20 @@ class SubtaskContext(Base):
         if self.type_data and isinstance(self.type_data, dict):
             return self.type_data.get("document_count", 0)
         return 0
+
+    # === Common helper properties ===
+
+    @property
+    def text_preview(self) -> str:
+        """Get a preview of extracted_text (first 50 chars).
+
+        Useful for logging and debugging purposes.
+        Replaces newlines with spaces for cleaner log output.
+        """
+        if not self.extracted_text:
+            return ""
+        # Replace newlines and multiple spaces with single space
+        text = " ".join(self.extracted_text.split())
+        if len(text) > 50:
+            return text[:50] + "..."
+        return text

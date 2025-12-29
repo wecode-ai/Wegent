@@ -317,38 +317,42 @@ async def executor_download_attachment(
     Returns:
         File binary data with appropriate content type
     """
-    # Get attachment and verify ownership
-    attachment = attachment_service.get_attachment(
+    # Get context and verify ownership
+    context = context_service.get_context_optional(
         db=db,
-        attachment_id=attachment_id,
+        context_id=attachment_id,
         user_id=current_user.id,
     )
 
-    if attachment is None:
+    if context is None:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    # Verify it's an attachment type
+    if context.context_type != ContextType.ATTACHMENT.value:
         raise HTTPException(status_code=404, detail="Attachment not found")
 
     # Get binary data from the appropriate storage backend
-    binary_data = attachment_service.get_attachment_binary_data(
+    binary_data = context_service.get_attachment_binary_data(
         db=db,
-        attachment=attachment,
+        context=context,
     )
 
     if binary_data is None:
         logger.error(
             f"Failed to retrieve binary data for attachment {attachment_id}, "
-            f"storage_backend={attachment.storage_backend}, "
-            f"storage_key={attachment.storage_key}"
+            f"storage_backend={context.storage_backend}, "
+            f"storage_key={context.storage_key}"
         )
         raise HTTPException(
             status_code=500, detail="Failed to retrieve attachment data"
         )
 
     # Encode filename for Content-Disposition header
-    encoded_filename = quote(attachment.original_filename)
+    encoded_filename = quote(context.original_filename)
 
     return Response(
         content=binary_data,
-        media_type=attachment.mime_type,
+        media_type=context.mime_type,
         headers={
             "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
         },

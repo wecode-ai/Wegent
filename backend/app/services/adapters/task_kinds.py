@@ -1456,21 +1456,9 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                         )
                     contexts_list.append(ctx_dict)
 
-            # Build legacy attachments list for backward compatibility
+            # Legacy attachments list - kept for backward compatibility but empty
+            # All context data should be read from the 'contexts' field
             attachments_list = []
-            for ctx in contexts_list:
-                if ctx.get("context_type") == "attachment":
-                    attachments_list.append(
-                        {
-                            "id": ctx["id"],
-                            "filename": ctx["name"],
-                            "file_size": ctx.get("file_size", 0),
-                            "mime_type": ctx.get("mime_type", ""),
-                            "status": ctx["status"],
-                            "file_extension": ctx.get("file_extension", ""),
-                            "created_at": None,  # Not available in context brief
-                        }
-                    )
 
             # Convert subtask to dict
             subtask_dict = {

@@ -31,6 +31,7 @@ import { useChatStreamContext, computeIsStreaming } from '../contexts/chatStream
 import { useUser } from '@/features/common/UserContext';
 import { useTaskContext } from '../contexts/taskContext';
 import type { Team, Attachment, SubtaskContextBrief } from '@/types/api';
+import type { SourceReference } from '@/types/socket';
 
 /**
  * Message for display - extends UnifiedMessage with additional rendering info
@@ -74,7 +75,10 @@ export interface DisplayMessage {
     thinking?: unknown[];
     workbench?: Record<string, unknown>;
     shell_type?: string; // Shell type for frontend display (Chat, ClaudeCode, Agno, etc.)
+    sources?: SourceReference[]; // RAG knowledge base sources
   };
+  /** Knowledge base source references (for RAG citations) - top-level for backward compatibility */
+  sources?: SourceReference[];
   /** Whether this message is from the current user (for alignment) */
   isCurrentUser?: boolean;
   /** Whether to show the sender avatar/name */
@@ -220,7 +224,7 @@ export function useUnifiedMessages({
       }
 
       // Get contexts from message (new unified context system)
-      const contexts = (msg.contexts as SubtaskContextBrief[] | undefined);
+      const contexts = msg.contexts as SubtaskContextBrief[] | undefined;
 
       const displayMsg: DisplayMessage = {
         id: msg.id,
@@ -242,6 +246,8 @@ export function useUnifiedMessages({
         thinking: msg.result?.thinking,
         // Include full result object (contains shell_type and other metadata)
         result: msg.result,
+        // Include sources from both top-level and result for backward compatibility
+        sources: msg.sources || msg.result?.sources,
         isCurrentUser: msg.type === 'user' && (msg.senderUserId === user?.id || !msg.senderUserId),
         showSender: isGroupChat && msg.type === 'user',
       };

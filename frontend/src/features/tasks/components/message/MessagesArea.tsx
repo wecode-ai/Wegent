@@ -97,6 +97,8 @@ function StreamingMessageBubble({
     thinking: message.thinking as Message['thinking'],
     // Pass result with shell_type for component selection
     result: message.result,
+    // Pass sources for RAG knowledge base citations
+    sources: message.sources,
   };
 
   return (
@@ -703,6 +705,7 @@ export default function MessagesArea({
         shouldShowSender: msg.shouldShowSender,
         thinking: msg.thinking as Message['thinking'],
         result: msg.result, // Include result with shell_type for component selection
+        sources: msg.sources, // Include sources for RAG knowledge base citations
         recoveredContent: msg.recoveredContent,
         isRecovered: msg.isRecovered,
         isIncomplete: msg.isIncomplete,

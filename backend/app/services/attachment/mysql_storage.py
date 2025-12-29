@@ -14,6 +14,7 @@ import logging
 from typing import Dict, Optional
 
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.subtask_context import SubtaskContext
 from app.services.attachment.storage_backend import StorageBackend, StorageError
@@ -83,6 +84,8 @@ class MySQLStorageBackend(StorageBackend):
                     "storage_backend": self.BACKEND_TYPE,
                     "storage_key": key,
                 }
+                # Mark JSON field as modified so SQLAlchemy detects the change
+                flag_modified(context, "type_data")
             self._db.flush()
 
             logger.debug(f"Saved binary data to MySQL for context {context_id}")

@@ -7,12 +7,21 @@ Add subtask_contexts table and migrate from subtask_attachments.
 
 Revision ID: o5p6q7r8s9t0
 Revises: n4o5p6q7r8s9
-Create Date: 2025-01-01 00:00:00.000000
+Create Date: 2025-12-31 12:00:00.000000
+
+This migration:
+1. Creates the new subtask_contexts table with unified context storage
+2. Migrates all data from subtask_attachments to subtask_contexts
+3. Drops the old subtask_attachments table
+
+The subtask_contexts table provides a unified storage for all context types
+including attachments, knowledge bases, and future context types.
 """
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import mysql
+
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "o5p6q7r8s9t0"
@@ -59,15 +68,11 @@ def upgrade():
         sa.PrimaryKeyConstraint("id"),
     )
 
-    # 2. Create indexes
+    # 2. Create indexes (only for high-cardinality fields)
     op.create_index(
         "idx_subtask_contexts_subtask_id", "subtask_contexts", ["subtask_id"]
     )
     op.create_index("idx_subtask_contexts_user_id", "subtask_contexts", ["user_id"])
-    op.create_index(
-        "idx_subtask_contexts_context_type", "subtask_contexts", ["context_type"]
-    )
-    op.create_index("idx_subtask_contexts_status", "subtask_contexts", ["status"])
 
     # 3. Migrate data from subtask_attachments (if table exists)
     connection = op.get_bind()
@@ -170,6 +175,7 @@ def downgrade():
     )
 
     # 3. Migrate data back from subtask_contexts (only attachment type)
+    # Note: Convert 'pending' status to 'uploading' since AttachmentStatus doesn't have 'pending'
     connection = op.get_bind()
     connection.execute(
         sa.text(
@@ -192,7 +198,10 @@ def downgrade():
             image_base64,
             extracted_text,
             text_length,
-            status,
+            CASE
+                WHEN status = 'pending' THEN 'uploading'
+                ELSE status
+            END AS status,
             error_message,
             created_at,
             updated_at
@@ -203,8 +212,6 @@ def downgrade():
     )
 
     # 4. Drop subtask_contexts table
-    op.drop_index("idx_subtask_contexts_status", table_name="subtask_contexts")
-    op.drop_index("idx_subtask_contexts_context_type", table_name="subtask_contexts")
     op.drop_index("idx_subtask_contexts_user_id", table_name="subtask_contexts")
     op.drop_index("idx_subtask_contexts_subtask_id", table_name="subtask_contexts")
     op.drop_table("subtask_contexts")
