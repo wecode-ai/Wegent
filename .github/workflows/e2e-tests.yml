@@ -194,8 +194,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report-${{ matrix.shardIndex }}
-          path: frontend/playwright-report/
+          name: blob-report-${{ matrix.shardIndex }}
+          path: frontend/blob-report/
           retention-days: 14
 
       - name: Upload test traces
@@ -229,23 +229,30 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Download all test reports
+      - name: Download all blob reports
         uses: actions/download-artifact@v4
         with:
-          pattern: playwright-report-*
-          path: all-reports
-          merge-multiple: false
+          pattern: blob-report-*
+          path: all-blob-reports
 
-      - name: Install Playwright
-        run: npm install -g @playwright/test
+      - name: Install frontend dependencies
+        working-directory: ./frontend
+        run: npm ci
 
       - name: Merge reports
+        working-directory: ./frontend
         run: |
-          npx playwright merge-reports --reporter html ./all-reports/*/
+          BLOB_DIRS=""
+          for dir in ../all-blob-reports/blob-report-*/; do
+            if [ -d "$dir" ]; then
+              BLOB_DIRS="$BLOB_DIRS $dir"
+            fi
+          done
+          npx playwright merge-reports --reporter html $BLOB_DIRS
 
       - name: Upload merged report
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report-merged
-          path: playwright-report/
+          path: frontend/playwright-report/
           retention-days: 30
