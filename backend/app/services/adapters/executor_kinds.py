@@ -719,10 +719,12 @@ class ExecutorKindsService(
             previous_subtask_results = ""
 
             user_prompt = ""
+            user_subtask = None
             for i, related in enumerate(related_subtasks):
                 if related.role == SubtaskRole.USER:
                     user_prompt = related.prompt
                     previous_subtask_results = ""
+                    user_subtask = related
                     continue
                 if related.message_id < subtask.message_id:
                     previous_subtask_results = related.result
@@ -967,6 +969,43 @@ class ExecutorKindsService(
                         f"Failed to generate auth token for user {user.id}: {e}"
                     )
 
+            # Query attachments for this subtask
+            from app.models.subtask_attachment import (
+                AttachmentStatus,
+                SubtaskAttachment,
+            )
+
+            attachments_data = []
+            subtask_attachments = (
+                db.query(SubtaskAttachment)
+                .filter(
+                    SubtaskAttachment.subtask_id == user_subtask.id,
+                    SubtaskAttachment.status == AttachmentStatus.READY,
+                )
+                .all()
+            )
+
+            # Note: We don't include download_url here.
+            # The executor will construct the download URL using TASK_API_DOMAIN env var,
+            # similar to how skill downloads work. This decouples backend from knowing its own URL.
+            for att in subtask_attachments:
+                att_data = {
+                    "id": att.id,
+                    "original_filename": att.original_filename,
+                    "file_extension": att.file_extension,
+                    "file_size": att.file_size,
+                    "mime_type": att.mime_type,
+                }
+                # Note: We intentionally don't include image_base64 here to avoid
+                # large task JSON payloads. The executor will download attachments
+                # via AttachmentDownloader using the attachment id.
+                attachments_data.append(att_data)
+
+            if attachments_data:
+                logger.info(
+                    f"Found {len(attachments_data)} attachments for subtask {subtask.id}"
+                )
+
             formatted_subtasks.append(
                 {
                     "subtask_id": subtask.id,
@@ -997,6 +1036,7 @@ class ExecutorKindsService(
                     "git_url": git_url,
                     "prompt": aggregated_prompt,
                     "auth_token": auth_token,
+                    "attachments": attachments_data,
                     "status": subtask.status,
                     "progress": subtask.progress,
                     "created_at": subtask.created_at,
