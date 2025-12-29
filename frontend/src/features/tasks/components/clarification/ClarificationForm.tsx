@@ -32,7 +32,7 @@ export default function ClarificationForm({
   rawContent,
   onSubmit,
 }: ClarificationFormProps) {
-  const { t } = useTranslation('chat');
+  const { t } = useTranslation();
   const { toast } = useToast();
 
   // Use context directly - it will be undefined if not within TaskContextProvider (e.g., shared task page)
@@ -168,7 +168,8 @@ export default function ClarificationForm({
 
       toast({
         title:
-          t('clarification.please_answer_all') || 'Please answer all questions before submitting',
+          t('chat:clarification.please_answer_all') ||
+          'Please answer all questions before submitting',
         description: questionTitles,
       });
 
@@ -216,7 +217,8 @@ export default function ClarificationForm({
     if (additionalInput && additionalInput.trim() !== '') {
       answerPayload.push({
         question_id: 'additional_input',
-        question_text: t('clarification.additional_thoughts') || 'Additional Thoughts or Remarks',
+        question_text:
+          t('chat:clarification.additional_thoughts') || 'Additional Thoughts or Remarks',
         answer_type: 'custom',
         value: additionalInput.trim(),
       });
@@ -259,7 +261,7 @@ export default function ClarificationForm({
       // Fallback: show a warning if no onSubmit callback is provided
       toast({
         variant: 'destructive',
-        title: t('clarification.submit_failed') || 'Failed to submit answers',
+        title: t('chat:clarification.submit_failed') || 'Failed to submit answers',
         description: 'No submit handler provided',
       });
     }
@@ -271,7 +273,7 @@ export default function ClarificationForm({
         <div className="flex items-center gap-2">
           <span className="text-lg">💬</span>
           <h3 className="text-base font-semibold text-primary">
-            {t('clarification.title') || 'Spec Clarification'}
+            {t('chat:clarification.title') || 'Spec Clarification'}
           </h3>
         </div>
         <Button
@@ -283,12 +285,12 @@ export default function ClarificationForm({
           {showRawContent ? (
             <>
               <FileText className="w-3.5 h-3.5 mr-1.5" />
-              {t('clarification.show_form') || 'Show Form'}
+              {t('chat:clarification.show_form') || 'Show Form'}
             </>
           ) : (
             <>
               <Code className="w-3.5 h-3.5 mr-1.5" />
-              {t('clarification.show_raw') || 'Show Raw'}
+              {t('chat:clarification.show_raw') || 'Show Raw'}
             </>
           )}
         </Button>
@@ -315,7 +317,7 @@ export default function ClarificationForm({
                   {hasError && (
                     <div className="mb-2 text-xs text-red-400 flex items-center gap-1">
                       <span>⚠️</span>
-                      <span>{t('clarification.required_field') || '此问题必须回答'}</span>
+                      <span>{t('chat:clarification.required_field') || '此问题必须回答'}</span>
                     </div>
                   )}
                   <ClarificationQuestion
@@ -332,13 +334,13 @@ export default function ClarificationForm({
             <div className="p-3 rounded bg-surface/50 border border-border">
               <div className="space-y-3">
                 <div className="text-sm font-medium text-text-primary">
-                  {t('clarification.additional_thoughts') || '其他想法或补充说明'}
+                  {t('chat:clarification.additional_thoughts') || '其他想法或补充说明'}
                 </div>
                 <Textarea
                   value={additionalInput}
                   onChange={e => setAdditionalInput(e.target.value)}
                   placeholder={
-                    t('clarification.additional_placeholder') ||
+                    t('chat:clarification.additional_placeholder') ||
                     '在此输入其他想法、补充需求或特殊说明...'
                   }
                   disabled={isSubmitted}
@@ -353,7 +355,7 @@ export default function ClarificationForm({
             <div className="flex justify-end pt-2">
               <Button variant="secondary" onClick={handleSubmit} size="lg">
                 <Send className="w-4 h-4 mr-2" />
-                {t('clarification.submit_answers') || 'Submit Answers'}
+                {t('chat:clarification.submit_answers') || 'Submit Answers'}
               </Button>
             </div>
           )}

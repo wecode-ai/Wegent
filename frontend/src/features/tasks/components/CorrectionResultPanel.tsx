@@ -62,7 +62,7 @@ export default function CorrectionResultPanel({
   onApply,
   subtaskId,
 }: CorrectionResultPanelProps) {
-  const { t } = useTranslation('chat');
+  const { t } = useTranslation();
   const { toast } = useToast();
   const { theme } = useTheme();
   const [isApplying, setIsApplying] = useState(false);
@@ -84,7 +84,7 @@ export default function CorrectionResultPanel({
       await correctionApis.applyCorrection(subtaskId, result.improved_answer);
       setIsApplied(true);
       toast({
-        title: t('correction.apply_success'),
+        title: t('chat:correction.apply_success'),
       });
       // Call the onApply callback if provided
       if (onApply) {
@@ -94,7 +94,7 @@ export default function CorrectionResultPanel({
       console.error('Failed to apply correction:', error);
       toast({
         variant: 'destructive',
-        title: t('correction.apply_failed'),
+        title: t('chat:correction.apply_failed'),
         description: (error as Error)?.message || 'Unknown error',
       });
     } finally {
@@ -107,7 +107,7 @@ export default function CorrectionResultPanel({
       <div className={cn('bg-surface rounded-xl border border-border p-4', className)}>
         {/* <div className="flex items-center gap-2 mb-4">
           <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary"></div>
-          <span className="text-sm text-text-secondary">{t('correction.evaluating')}</span>
+          <span className="text-sm text-text-secondary">{t('chat:correction.evaluating')}</span>
         </div> */}
         <div className="space-y-3">
           {[1, 2, 3].map(i => (
@@ -120,9 +120,9 @@ export default function CorrectionResultPanel({
 
   const improvedMessage: Message = {
     type: 'ai',
-    content: result.improved_answer || t('correction.no_improvement_needed'),
+    content: result.improved_answer || t('chat:correction.no_improvement_needed'),
     timestamp: Date.now(),
-    botName: t('correction.result_title'),
+    botName: t('chat:correction.result_title'),
     subtaskStatus: 'COMPLETED',
     subtaskId: subtaskId,
   };
@@ -149,7 +149,7 @@ export default function CorrectionResultPanel({
           />
         ) : (
           <div className="p-5 text-text-secondary text-sm italic">
-            {t('correction.no_improvement_needed')}
+            {t('chat:correction.no_improvement_needed')}
           </div>
         )}
 
@@ -169,17 +169,17 @@ export default function CorrectionResultPanel({
               {isApplying ? (
                 <>
                   <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
-                  {t('correction.applying')}
+                  {t('chat:correction.applying')}
                 </>
               ) : isApplied ? (
                 <>
                   <Check className="h-3 w-3 mr-1" />
-                  {t('correction.applied')}
+                  {t('chat:correction.applied')}
                 </>
               ) : (
                 <>
                   <Check className="h-3 w-3 mr-1" />
-                  {t('correction.apply')}
+                  {t('chat:correction.apply')}
                 </>
               )}
             </Button>
@@ -195,8 +195,8 @@ export default function CorrectionResultPanel({
         >
           <span className="mr-1">
             {isDetailsOpen
-              ? t('correction.hide_details') || 'Hide Evaluation Details'
-              : t('correction.show_details') || 'Show Evaluation (Scores & Issues)'}
+              ? t('chat:correction.hide_details') || 'Hide Evaluation Details'
+              : t('chat:correction.show_details') || 'Show Evaluation (Scores & Issues)'}
           </span>
           {isDetailsOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
         </button>
@@ -207,12 +207,15 @@ export default function CorrectionResultPanel({
             <div className="space-y-3">
               <div className="flex items-center gap-2 text-sm font-medium text-text-primary">
                 <BarChart3 className="h-4 w-4 text-text-secondary" />
-                <span>{t('correction.scores')}</span>
+                <span>{t('chat:correction.scores')}</span>
               </div>
               <div className="space-y-2 pl-6">
-                <ScoreBar score={result.scores.accuracy} label={t('correction.accuracy')} />
-                <ScoreBar score={result.scores.logic} label={t('correction.logic')} />
-                <ScoreBar score={result.scores.completeness} label={t('correction.completeness')} />
+                <ScoreBar score={result.scores.accuracy} label={t('chat:correction.accuracy')} />
+                <ScoreBar score={result.scores.logic} label={t('chat:correction.logic')} />
+                <ScoreBar
+                  score={result.scores.completeness}
+                  label={t('chat:correction.completeness')}
+                />
               </div>
             </div>
 
@@ -221,7 +224,7 @@ export default function CorrectionResultPanel({
               <div className="space-y-3">
                 <div className="flex items-center gap-2 text-sm font-medium text-text-primary">
                   <AlertCircle className="h-4 w-4 text-orange-500" />
-                  <span>{t('correction.issues_found')}</span>
+                  <span>{t('chat:correction.issues_found')}</span>
                 </div>
                 <div className="space-y-2 pl-6">
                   {result.corrections.map((correction, index) => (
@@ -254,7 +257,7 @@ export default function CorrectionResultPanel({
               <div className="flex items-center gap-2 p-3 bg-green-50 dark:bg-green-950/20 rounded-lg ml-6">
                 <CheckCircle className="h-5 w-5 text-green-600 dark:text-green-400" />
                 <span className="text-sm text-green-700 dark:text-green-300">
-                  {t('correction.no_corrections_needed')}
+                  {t('chat:correction.no_corrections_needed')}
                 </span>
               </div>
             )}
@@ -263,7 +266,7 @@ export default function CorrectionResultPanel({
             <div className="space-y-2">
               <div className="flex items-center gap-2 text-sm font-medium text-text-primary">
                 <FileText className="h-4 w-4 text-text-secondary" />
-                <span>{t('correction.summary')}</span>
+                <span>{t('chat:correction.summary')}</span>
               </div>
               <div className="pl-6 text-sm text-text-secondary">{result.summary}</div>
             </div>
@@ -279,7 +282,7 @@ export default function CorrectionResultPanel({
                   className="h-8 text-xs text-text-secondary hover:text-primary"
                 >
                   <RefreshCw className={cn('h-3 w-3 mr-1', isLoading && 'animate-spin')} />
-                  {t('correction.retry_evaluation')}
+                  {t('chat:correction.retry_evaluation')}
                 </Button>
               </div>
             )}

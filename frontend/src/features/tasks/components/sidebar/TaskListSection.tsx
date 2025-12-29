@@ -55,7 +55,7 @@ export default function TaskListSection({
     markTaskAsViewed,
   } = useTaskContext();
   const { clearAllStreams } = useChatStreamContext();
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   // Use viewStatusVersion to trigger re-render when task view status changes
   // This is needed to update the unread dot immediately when a task is clicked
   const _viewStatusVersion = viewStatusVersion;
@@ -385,7 +385,9 @@ export default function TaskListSection({
                   taskType = 'chat';
                 }
               }
-              return taskType === 'code' ? t('navigation.code') : t('navigation.chat');
+              return taskType === 'code'
+                ? t('common:navigation.code')
+                : t('common:navigation.chat');
             })();
 
             const truncatedTitle =
@@ -436,7 +438,7 @@ export default function TaskListSection({
                 taskType = 'chat';
               }
             }
-            return taskType === 'code' ? t('navigation.code') : t('navigation.chat');
+            return taskType === 'code' ? t('common:navigation.code') : t('common:navigation.chat');
           })();
 
           return (

@@ -116,7 +116,7 @@ export default function ModelSelector({
   isLoading: externalLoading,
   compact = false,
 }: ModelSelectorProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const router = useRouter();
   const isMobile = useMediaQuery('(max-width: 767px)');
   const [models, setModels] = useState<Model[]>([]);
@@ -164,7 +164,7 @@ export default function ModelSelector({
       setModels(modelList);
     } catch (err) {
       console.error('Failed to fetch models:', err);
-      setError(t('models.errors.load_models_failed'));
+      setError(t('common:models.errors.load_models_failed'));
     } finally {
       setIsLoading(false);
     }
@@ -402,13 +402,13 @@ export default function ModelSelector({
   const getTriggerDisplayText = () => {
     if (!selectedModel) {
       if (isLoading) {
-        return t('actions.loading');
+        return t('common:actions.loading');
       }
       // Show required hint for legacy teams without predefined models
       if (isModelRequired) {
-        return t('task_submit.model_required', '请选择模型');
+        return t('common:task_submit.model_required', '请选择模型');
       }
-      return t('task_submit.select_model', '选择模型');
+      return t('common:task_submit.select_model', '选择模型');
     }
     if (selectedModel.name === DEFAULT_MODEL_NAME) {
       const boundModelDisplayNames = getBoundModelDisplayNames();
@@ -421,11 +421,11 @@ export default function ModelSelector({
         return `${boundModelDisplayNames[0]} +${boundModelDisplayNames.length - 1}`;
       }
       // Fallback to default label when no bound models found
-      return t('task_submit.default_model', '默认');
+      return t('common:task_submit.default_model', '默认');
     }
     const displayText = getModelDisplayText(selectedModel);
     if (forceOverride && !isMixedTeam) {
-      return `${displayText}(${t('task_submit.override_short', '覆盖')})`;
+      return `${displayText}(${t('common:task_submit.override_short', '覆盖')})`;
     }
     return displayText;
   };
@@ -434,8 +434,8 @@ export default function ModelSelector({
   // In compact mode, show selected model name in tooltip
   const tooltipContent =
     compact && selectedModel
-      ? `${t('task_submit.model_tooltip', '选择用于对话的 AI 模型')}: ${getTriggerDisplayText()}`
-      : t('task_submit.model_tooltip', '选择用于对话的 AI 模型');
+      ? `${t('common:task_submit.model_tooltip', '选择用于对话的 AI 模型')}: ${getTriggerDisplayText()}`
+      : t('common:task_submit.model_tooltip', '选择用于对话的 AI 模型');
 
   return (
     <div
@@ -493,7 +493,7 @@ export default function ModelSelector({
         >
           <Command className="border-0 flex flex-col flex-1 min-h-0 overflow-hidden">
             <CommandInput
-              placeholder={t('task_submit.search_model', '搜索模型...')}
+              placeholder={t('common:task_submit.search_model', '搜索模型...')}
               value={searchValue}
               onValueChange={setSearchValue}
               className={cn(
@@ -506,19 +506,19 @@ export default function ModelSelector({
                 <div className="py-4 px-3 text-center text-sm text-error">{error}</div>
               ) : filteredModels.length === 0 ? (
                 <CommandEmpty className="py-4 text-center text-sm text-text-muted">
-                  {isLoading ? 'Loading...' : t('models.no_models')}
+                  {isLoading ? 'Loading...' : t('common:models.no_models')}
                 </CommandEmpty>
               ) : (
                 <>
                   <CommandEmpty className="py-4 text-center text-sm text-text-muted">
-                    {t('branches.no_match')}
+                    {t('common:branches.no_match')}
                   </CommandEmpty>
                   <CommandGroup>
                     {/* Default option - only show when all bots have predefined models */}
                     {showDefaultOption && (
                       <CommandItem
                         key={DEFAULT_MODEL_NAME}
-                        value={`${DEFAULT_MODEL_NAME} ${t('task_submit.default_model', '默认')} ${t('task_submit.use_bot_model', '使用 Bot 预设模型')}`}
+                        value={`${DEFAULT_MODEL_NAME} ${t('common:task_submit.default_model', '默认')} ${t('common:task_submit.use_bot_model', '使用 Bot 预设模型')}`}
                         onSelect={() => handleModelSelect(DEFAULT_MODEL_NAME)}
                         className={cn(
                           'group cursor-pointer select-none',
@@ -532,17 +532,17 @@ export default function ModelSelector({
                         <div className="flex flex-col min-w-0 flex-1">
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <span className="font-medium text-sm text-text-primary">
-                              {t('task_submit.default_model', '默认模型')}
+                              {t('common:task_submit.default_model', '默认模型')}
                             </span>
                             <Tag
                               variant="info"
                               className="text-[10px] flex-shrink-0 whitespace-nowrap"
                             >
-                              {t('models.public', '公共')}
+                              {t('common:models.public', '公共')}
                             </Tag>
                           </div>
                           <span className="text-xs text-text-muted">
-                            {t('task_submit.use_bot_model', '使用Bot预设模型')}
+                            {t('common:task_submit.use_bot_model', '使用Bot预设模型')}
                           </span>
                         </div>
                         <Check
@@ -582,7 +582,7 @@ export default function ModelSelector({
                                 variant="info"
                                 className="text-[10px] flex-shrink-0 whitespace-nowrap"
                               >
-                                {t('models.public', '公共')}
+                                {t('common:models.public', '公共')}
                               </Tag>
                             )}
                           </div>
@@ -628,7 +628,7 @@ export default function ModelSelector({
                     className="h-4 w-4"
                   />
                   <span className="text-xs text-text-secondary">
-                    {t('task_submit.override_default_model', '覆盖默认模型')}
+                    {t('common:task_submit.override_default_model', '覆盖默认模型')}
                   </span>
                 </div>
               )}
@@ -647,7 +647,7 @@ export default function ModelSelector({
               >
                 <Cog6ToothIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
                 <span className="text-xs text-text-secondary group-hover:text-text-primary">
-                  {t('models.manage', '模型设置')}
+                  {t('common:models.manage', '模型设置')}
                 </span>
               </div>
             </div>

@@ -30,7 +30,7 @@ export default function AiFollowUpStep({
   onAnswerChange,
   onAdditionalThoughtsChange,
 }: AiFollowUpStepProps) {
-  const { t } = useTranslation('wizard');
+  const { t } = useTranslation();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const roundRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const [highlightedRound, setHighlightedRound] = useState<number | null>(null);
@@ -93,7 +93,7 @@ export default function AiFollowUpStep({
     return (
       <div className="flex flex-col items-center justify-center py-12">
         <Loader2 className="w-8 h-8 text-primary animate-spin" />
-        <p className="mt-4 text-text-muted">{t('generating_questions')}</p>
+        <p className="mt-4 text-text-muted">{t('wizard:generating_questions')}</p>
       </div>
     );
   }
@@ -101,14 +101,14 @@ export default function AiFollowUpStep({
   if (rounds.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-12">
-        <p className="text-text-muted">{t('no_questions')}</p>
+        <p className="text-text-muted">{t('wizard:no_questions')}</p>
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      <p className="text-sm text-text-muted">{t('followup_description')}</p>
+      <p className="text-sm text-text-muted">{t('wizard:followup_description')}</p>
 
       {/* Chat-like display of Q&A history */}
       <div ref={scrollContainerRef} className="space-y-4 max-h-[400px] overflow-y-auto pr-2">
@@ -128,7 +128,7 @@ export default function AiFollowUpStep({
             {rounds.length > 1 && (
               <div className="flex items-center gap-2 text-xs text-text-muted">
                 <div className="flex-1 h-px bg-border" />
-                <span>{t('round_n', { n: roundIndex + 1 })}</span>
+                <span>{t('wizard:round_n', { n: roundIndex + 1 })}</span>
                 <div className="flex-1 h-px bg-border" />
               </div>
             )}
@@ -185,15 +185,17 @@ export default function AiFollowUpStep({
                 </div>
                 <div className="flex-1">
                   <label className="block text-sm font-medium text-text-secondary mb-2">
-                    {t('additional_thoughts_label')}
+                    {t('wizard:additional_thoughts_label')}
                   </label>
                   <Textarea
                     value={round.additionalThoughts || ''}
                     onChange={e => onAdditionalThoughtsChange(e.target.value, roundIndex)}
-                    placeholder={t('additional_thoughts_placeholder')}
+                    placeholder={t('wizard:additional_thoughts_placeholder')}
                     className="min-h-[80px] text-sm"
                   />
-                  <p className="mt-1 text-xs text-text-muted">{t('additional_thoughts_hint')}</p>
+                  <p className="mt-1 text-xs text-text-muted">
+                    {t('wizard:additional_thoughts_hint')}
+                  </p>
                 </div>
               </div>
             </div>
@@ -209,7 +211,7 @@ export default function AiFollowUpStep({
             <div className="flex-1 bg-surface border border-border rounded-lg p-3">
               <div className="flex items-center gap-2">
                 <Loader2 className="w-4 h-4 text-primary animate-spin" />
-                <span className="text-sm text-text-muted">{t('thinking')}</span>
+                <span className="text-sm text-text-muted">{t('wizard:thinking')}</span>
               </div>
             </div>
           </div>
@@ -222,7 +224,7 @@ export default function AiFollowUpStep({
               <Bot className="w-4 h-4 text-primary" />
             </div>
             <div className="flex-1 bg-success/10 border border-success/20 rounded-lg p-3">
-              <p className="text-sm text-success">{t('followup_complete')}</p>
+              <p className="text-sm text-success">{t('wizard:followup_complete')}</p>
             </div>
           </div>
         )}
@@ -238,7 +240,7 @@ interface QuestionInputProps {
 }
 
 function QuestionInput({ question, value, onChange }: QuestionInputProps) {
-  const { t } = useTranslation('wizard');
+  const { t } = useTranslation();
 
   if (question.input_type === 'single_choice' && question.options) {
     return (
@@ -256,7 +258,7 @@ function QuestionInput({ question, value, onChange }: QuestionInputProps) {
   }
 
   if (question.input_type === 'multiple_choice' && question.options) {
-    const selected = value ? value.split(',').filter(Boolean) : [];
+    const selected = value ? value.split('wizard:,').filter(Boolean) : [];
     return (
       <div className="space-y-2">
         {question.options.map(option => {
@@ -288,7 +290,7 @@ function QuestionInput({ question, value, onChange }: QuestionInputProps) {
     <Textarea
       value={value}
       onChange={e => onChange(e.target.value)}
-      placeholder={t('answer_placeholder')}
+      placeholder={t('wizard:answer_placeholder')}
       className="min-h-[60px] text-sm"
     />
   );

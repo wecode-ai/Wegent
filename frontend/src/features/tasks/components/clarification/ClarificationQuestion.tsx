@@ -29,7 +29,7 @@ export default function ClarificationQuestion({
   onChange,
   readonly = false,
 }: ClarificationQuestionProps) {
-  const { t } = useTranslation('chat');
+  const { t } = useTranslation();
   const [isCustomMode, setIsCustomMode] = useState(answer?.answer_type === 'custom');
 
   const handleToggleCustomMode = () => {
@@ -83,7 +83,7 @@ export default function ClarificationQuestion({
                 {option.label}
                 {option.recommended && (
                   <span className="ml-2 text-xs text-primary">
-                    ({t('clarification.recommended') || 'Recommended'})
+                    ({t('chat:clarification.recommended') || 'Recommended'})
                   </span>
                 )}
               </label>
@@ -121,7 +121,7 @@ export default function ClarificationQuestion({
                 {option.label}
                 {option.recommended && (
                   <span className="ml-2 text-xs text-primary">
-                    ({t('clarification.recommended') || 'Recommended'})
+                    ({t('chat:clarification.recommended') || 'Recommended'})
                   </span>
                 )}
               </label>
@@ -139,7 +139,9 @@ export default function ClarificationQuestion({
       <Textarea
         value={answer?.answer_type === 'custom' ? (answer.value as string) : ''}
         onChange={e => onChange({ answer_type: 'custom', value: e.target.value })}
-        placeholder={t('clarification.custom_input_placeholder') || 'Enter your custom input...'}
+        placeholder={
+          t('chat:clarification.custom_input_placeholder') || 'Enter your custom input...'
+        }
         disabled={readonly}
         rows={3}
         className="w-full"
@@ -160,8 +162,8 @@ export default function ClarificationQuestion({
           >
             <FiEdit3 className="w-3 h-3" />
             {isCustomMode
-              ? t('clarification.back_to_choices') || 'Back to Choices'
-              : t('clarification.custom_input') || 'Custom Input'}
+              ? t('chat:clarification.back_to_choices') || 'Back to Choices'
+              : t('chat:clarification.custom_input') || 'Custom Input'}
           </Button>
         )}
       </div>
@@ -175,8 +177,8 @@ export default function ClarificationQuestion({
       {readonly && answer && (
         <div className="text-xs text-text-tertiary italic">
           {answer.answer_type === 'custom'
-            ? `${t('clarification.custom_answer') || 'Custom'}: ${answer.value}`
-            : `${t('clarification.selected') || 'Selected'}: ${
+            ? `${t('chat:clarification.custom_answer') || 'Custom'}: ${answer.value}`
+            : `${t('chat:clarification.selected') || 'Selected'}: ${
                 Array.isArray(answer.value)
                   ? answer.value
                       .map(v => question.options?.find(opt => opt.value === v)?.label || v)

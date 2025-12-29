@@ -22,11 +22,11 @@ from langchain_core.messages import AIMessage
 from langchain_core.tools import BaseTool
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_async
 
-from app.services.chat_v2.agents import LangGraphAgentBuilder
-from app.services.chat_v2.messages import MessageConverter
-from app.services.chat_v2.models import LangChainModelFactory
-from app.services.chat_v2.tools import ToolRegistry
-from app.services.chat_v2.tools.builtin import SubmitEvaluationResultTool
+from app.chat_shell.agents import LangGraphAgentBuilder
+from app.chat_shell.messages import MessageConverter
+from app.chat_shell.models import LangChainModelFactory
+from app.chat_shell.tools import ToolRegistry
+from app.chat_shell.tools.builtin import SubmitEvaluationResultTool
 
 # Type aliases for progress callbacks
 ProgressCallback = Callable[[str, str | None], Awaitable[None]]
@@ -111,6 +111,9 @@ class CorrectionService:
         """
         Evaluate an AI response and provide corrections if needed.
 
+        Uses LangGraph agent workflow to obtain structured results,
+        consistent with chat_shell service implementation.
+
         Args:
             original_question: The user's original question
             original_answer: The AI's original answer
@@ -123,7 +126,7 @@ class CorrectionService:
             Dictionary with scores, corrections, summary, improved_answer, and is_correct
         """
         try:
-            # 1. Initialize Model
+            # 1. Initialize Model (consistent with chat_shell)
             llm = LangChainModelFactory.create_from_config(
                 model_config, streaming=False
             )
@@ -141,7 +144,7 @@ class CorrectionService:
                 for tool in tools:
                     tool_registry.register(tool)
 
-            # 3. Build Agent
+            # 3. Build Agent (consistent with chat_shell)
             agent = LangGraphAgentBuilder(
                 llm=llm,
                 tool_registry=tool_registry,

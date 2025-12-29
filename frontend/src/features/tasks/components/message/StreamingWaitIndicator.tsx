@@ -37,10 +37,10 @@ interface WaitStage {
  * - 10s+: "Response is taking longer than usual..."
  */
 const WAIT_STAGES: WaitStage[] = [
-  { minTime: 10000, messageKey: 'streaming_wait.longer_than_usual' },
-  { minTime: 6000, messageKey: 'streaming_wait.generating_response' },
-  { minTime: 3000, messageKey: 'streaming_wait.analyzing' },
-  { minTime: 500, messageKey: 'streaming_wait.thinking' },
+  { minTime: 10000, messageKey: 'tasks:streaming_wait.longer_than_usual' },
+  { minTime: 6000, messageKey: 'tasks:streaming_wait.generating_response' },
+  { minTime: 3000, messageKey: 'tasks:streaming_wait.analyzing' },
+  { minTime: 500, messageKey: 'tasks:streaming_wait.thinking' },
 ];
 
 /**
@@ -62,7 +62,7 @@ export default function StreamingWaitIndicator({
   isWaiting,
   startTime: externalStartTime,
 }: StreamingWaitIndicatorProps) {
-  const { t } = useTranslation('chat');
+  const { t } = useTranslation();
   const [internalStartTime, setInternalStartTime] = useState<number | null>(null);
   const [elapsedTime, setElapsedTime] = useState(0);
 

@@ -938,8 +938,9 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         Returns:
             List of running task info dictionaries
         """
-        from app.models.task import TaskResource
         from sqlalchemy import func, or_
+
+        from app.models.task import TaskResource
 
         # Use JSON queries to filter at database level instead of loading all tasks into memory
         # This is much faster when there are many tasks
@@ -949,13 +950,25 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 TaskResource.kind == "Task",
                 TaskResource.is_active == True,
                 # Filter by team reference using JSON path
-                func.json_unquote(func.json_extract(TaskResource.json, "$.spec.teamRef.name")) == team_name,
-                func.json_unquote(func.json_extract(TaskResource.json, "$.spec.teamRef.namespace")) == team_namespace,
+                func.json_unquote(
+                    func.json_extract(TaskResource.json, "$.spec.teamRef.name")
+                )
+                == team_name,
+                func.json_unquote(
+                    func.json_extract(TaskResource.json, "$.spec.teamRef.namespace")
+                )
+                == team_namespace,
                 # Filter by status using JSON path - only get PENDING or RUNNING tasks
                 or_(
-                    func.json_unquote(func.json_extract(TaskResource.json, "$.status.status")) == "PENDING",
-                    func.json_unquote(func.json_extract(TaskResource.json, "$.status.status")) == "RUNNING"
-                )
+                    func.json_unquote(
+                        func.json_extract(TaskResource.json, "$.status.status")
+                    )
+                    == "PENDING",
+                    func.json_unquote(
+                        func.json_extract(TaskResource.json, "$.status.status")
+                    )
+                    == "RUNNING",
+                ),
             )
             .all()
         )

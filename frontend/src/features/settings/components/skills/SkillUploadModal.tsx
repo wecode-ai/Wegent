@@ -32,7 +32,7 @@ interface SkillUploadModalProps {
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
 export default function SkillUploadModal({ open, onClose, skill }: SkillUploadModalProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const [skillName, setSkillName] = useState(skill?.metadata.name || '');
   const [namespace] = useState('default');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -45,10 +45,12 @@ export default function SkillUploadModal({ open, onClose, skill }: SkillUploadMo
 
   const validateFile = (file: File): string | null => {
     if (!file.name.endsWith('.zip')) {
-      return t('skills.error_file_format');
+      return t('common:skills.error_file_format');
     }
     if (file.size > MAX_FILE_SIZE) {
-      return t('skills.error_file_size', { fileSize: (file.size / (1024 * 1024)).toFixed(1) });
+      return t('common:skills.error_file_size', {
+        fileSize: (file.size / (1024 * 1024)).toFixed(1),
+      });
     }
     return null;
   };
@@ -107,12 +109,12 @@ export default function SkillUploadModal({ open, onClose, skill }: SkillUploadMo
 
   const handleSubmit = async () => {
     if (!selectedFile) {
-      setError(t('skills.error_select_file'));
+      setError(t('common:skills.error_select_file'));
       return;
     }
 
     if (!isEditMode && !skillName.trim()) {
-      setError(t('skills.error_enter_name'));
+      setError(t('common:skills.error_enter_name'));
       return;
     }
 
@@ -129,7 +131,7 @@ export default function SkillUploadModal({ open, onClose, skill }: SkillUploadMo
       }
       onClose(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('skills.error_upload_failed'));
+      setError(err instanceof Error ? err.message : t('common:skills.error_upload_failed'));
     } finally {
       setUploading(false);
     }
@@ -146,12 +148,14 @@ export default function SkillUploadModal({ open, onClose, skill }: SkillUploadMo
       <DialogContent className="sm:max-w-[500px] bg-surface">
         <DialogHeader>
           <DialogTitle>
-            {isEditMode ? t('skills.update_modal_title') : t('skills.upload_modal_title')}
+            {isEditMode
+              ? t('common:skills.update_modal_title')
+              : t('common:skills.upload_modal_title')}
           </DialogTitle>
           <DialogDescription>
             {isEditMode
-              ? t('skills.update_modal_description')
-              : t('skills.upload_modal_description')}
+              ? t('common:skills.update_modal_description')
+              : t('common:skills.upload_modal_description')}
             <div className="mt-2 text-xs text-text-muted">
               <strong>Expected ZIP structure:</strong>
               <div className="font-mono bg-muted p-2 rounded mt-1">
@@ -180,21 +184,21 @@ export default function SkillUploadModal({ open, onClose, skill }: SkillUploadMo
           {/* Skill Name Input (only for create mode) */}
           {!isEditMode && (
             <div className="space-y-2">
-              <Label htmlFor="skill-name">{t('skills.skill_name_required')}</Label>
+              <Label htmlFor="skill-name">{t('common:skills.skill_name_required')}</Label>
               <Input
                 id="skill-name"
-                placeholder={t('skills.skill_name_placeholder')}
+                placeholder={t('common:skills.skill_name_placeholder')}
                 value={skillName}
                 onChange={e => setSkillName(e.target.value)}
                 disabled={uploading}
               />
-              <p className="text-xs text-text-muted">{t('skills.skill_name_hint')}</p>
+              <p className="text-xs text-text-muted">{t('common:skills.skill_name_hint')}</p>
             </div>
           )}
 
           {/* File Upload Area */}
           <div className="space-y-2">
-            <Label>{t('skills.zip_package_required')}</Label>
+            <Label>{t('common:skills.zip_package_required')}</Label>
             <div
               className={`
                 relative border-2 border-dashed rounded-lg p-6 text-center transition-colors
@@ -227,8 +231,10 @@ export default function SkillUploadModal({ open, onClose, skill }: SkillUploadMo
               ) : (
                 <div>
                   <UploadIcon className="w-8 h-8 mx-auto text-text-muted mb-2" />
-                  <p className="text-sm text-text-primary mb-1">{t('skills.drop_file_here')}</p>
-                  <p className="text-xs text-text-muted">{t('skills.max_file_size')}</p>
+                  <p className="text-sm text-text-primary mb-1">
+                    {t('common:skills.drop_file_here')}
+                  </p>
+                  <p className="text-xs text-text-muted">{t('common:skills.max_file_size')}</p>
                 </div>
               )}
             </div>
@@ -238,7 +244,7 @@ export default function SkillUploadModal({ open, onClose, skill }: SkillUploadMo
           {uploading && (
             <div className="space-y-2">
               <div className="flex justify-between text-sm">
-                <span className="text-text-secondary">{t('skills.upload_progress')}</span>
+                <span className="text-text-secondary">{t('common:skills.upload_progress')}</span>
                 <span className="text-text-secondary">{uploadProgress}%</span>
               </div>
               <Progress value={uploadProgress} />
@@ -256,14 +262,14 @@ export default function SkillUploadModal({ open, onClose, skill }: SkillUploadMo
           {/* Requirements Info */}
           <Alert>
             <AlertDescription className="text-xs">
-              <strong>{t('skills.requirements')}</strong>
+              <strong>{t('common:skills.requirements')}</strong>
               <ul className="list-disc list-inside mt-1 space-y-0.5">
-                <li>{t('skills.requirement_zip')}</li>
-                <li>{t('skills.requirement_structure')}</li>
-                <li>{t('skills.requirement_folder_name')}</li>
-                <li>{t('skills.requirement_description')}</li>
-                <li>{t('skills.requirement_optional')}</li>
-                <li>{t('skills.requirement_size')}</li>
+                <li>{t('common:skills.requirement_zip')}</li>
+                <li>{t('common:skills.requirement_structure')}</li>
+                <li>{t('common:skills.requirement_folder_name')}</li>
+                <li>{t('common:skills.requirement_description')}</li>
+                <li>{t('common:skills.requirement_optional')}</li>
+                <li>{t('common:skills.requirement_size')}</li>
               </ul>
             </AlertDescription>
           </Alert>
@@ -271,14 +277,14 @@ export default function SkillUploadModal({ open, onClose, skill }: SkillUploadMo
 
         <DialogFooter>
           <Button variant="outline" onClick={handleClose} disabled={uploading}>
-            {t('actions.cancel')}
+            {t('common:actions.cancel')}
           </Button>
           <Button onClick={handleSubmit} disabled={uploading || !selectedFile}>
             {uploading
-              ? t('skills.uploading')
+              ? t('common:skills.uploading')
               : isEditMode
-                ? t('skills.update_skill')
-                : t('actions.upload')}
+                ? t('common:skills.update_skill')
+                : t('common:actions.upload')}
           </Button>
         </DialogFooter>
       </DialogContent>

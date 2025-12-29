@@ -22,7 +22,7 @@ export default function DeepThinkingToggle({
   onToggle,
   disabled = false,
 }: DeepThinkingToggleProps) {
-  const { t } = useTranslation('chat');
+  const { t } = useTranslation();
 
   const handleToggle = () => {
     onToggle(!enabled);
@@ -48,7 +48,7 @@ export default function DeepThinkingToggle({
           </div>
         </TooltipTrigger>
         <TooltipContent side="top">
-          <p>{enabled ? t('deep_thinking.disable') : t('deep_thinking.enable')}</p>
+          <p>{enabled ? t('chat:deep_thinking.disable') : t('chat:deep_thinking.enable')}</p>
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>

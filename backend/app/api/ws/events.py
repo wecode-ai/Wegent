@@ -101,7 +101,7 @@ class ChatSendPayload(BaseModel):
         None, description="Optional list of attachment IDs"
     )
     enable_deep_thinking: bool = Field(
-        False, description="Enable deep thinking mode (uses chat_v2)"
+        True, description="Enable deep thinking mode (enables tool usage)"
     )
     enable_web_search: bool = Field(False, description="Enable web search")
     search_engine: Optional[str] = Field(None, description="Search engine to use")

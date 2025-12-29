@@ -1,4 +1,7 @@
 {
+  "access_denied_title": "无访问权限",
+  "access_denied_description": "您没有权限访问此任务。该任务可能已被删除或您没有必要的权限。",
+  "access_denied_go_home": "返回首页",
   "attachment": {
     "characters": "字符"
   },
@@ -67,5 +70,22 @@
       "WebFetch": "获取网页",
       "WebSearch": "搜索网络"
     }
+  },
+  "urlPreview": {
+    "loading": "正在加载链接预览...",
+    "loadFailed": "无法加载链接预览",
+    "openInNewTab": "在新标签页打开",
+    "imageLoadFailed": "图片加载失败",
+    "zoomIn": "放大",
+    "zoomOut": "缩小",
+    "rotate": "旋转",
+    "download": "下载",
+    "close": "关闭"
+  },
+  "streaming_wait": {
+    "thinking": "正在思考",
+    "analyzing": "正在深入分析",
+    "generating_response": "请稍候，正在生成回复",
+    "longer_than_usual": "响应时间较长，请耐心等待"
   }
 }

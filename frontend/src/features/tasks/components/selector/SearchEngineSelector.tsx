@@ -37,7 +37,7 @@ export default function SearchEngineSelector({
   disabled = false,
   engines,
 }: SearchEngineSelectorProps) {
-  const { t } = useTranslation('chat');
+  const { t } = useTranslation();
 
   // Initialize selected engine if not set and engines are available
   useEffect(() => {
@@ -88,7 +88,7 @@ export default function SearchEngineSelector({
             </Button>
           </TooltipTrigger>
           <TooltipContent side="top">
-            <p>{enabled ? t('web_search.disable') : t('web_search.enable')}</p>
+            <p>{enabled ? t('chat:web_search.disable') : t('chat:web_search.enable')}</p>
           </TooltipContent>
         </Tooltip>
       </TooltipProvider>
@@ -119,7 +119,7 @@ export default function SearchEngineSelector({
             </Button>
           </TooltipTrigger>
           <TooltipContent side="top">
-            <p>{enabled ? t('web_search.disable') : t('web_search.enable')}</p>
+            <p>{enabled ? t('chat:web_search.disable') : t('chat:web_search.enable')}</p>
           </TooltipContent>
         </Tooltip>
 
@@ -135,7 +135,7 @@ export default function SearchEngineSelector({
               </DropdownMenuTrigger>
             </TooltipTrigger>
             <TooltipContent side="top">
-              <p>{currentEngine?.display_name || t('web_search.select_engine')}</p>
+              <p>{currentEngine?.display_name || t('chat:web_search.select_engine')}</p>
             </TooltipContent>
           </Tooltip>
           <DropdownMenuContent align="start" className="w-[180px]">
