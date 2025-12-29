@@ -6,7 +6,6 @@
 
 import React from 'react';
 import ImagePreview from '@/components/common/ImagePreview';
-import LinkCard from '@/components/common/LinkCard';
 import { isImageUrl, detectUrls } from '@/utils/url-detector';
 
 /**
@@ -31,13 +30,9 @@ interface SmartLinkProps {
   href: string;
   /** Link text/children from Markdown */
   children: React.ReactNode;
-  /** Whether to use compact mode */
+  /** @deprecated compact mode is no longer used - cards are disabled */
   compact?: boolean;
-  /**
-   * Whether to disable rich rendering (metadata fetching).
-   * When true, renders URLs as simple clickable links.
-   * Useful during streaming to avoid excessive API calls.
-   */
+  /** @deprecated disabled is no longer used - cards are disabled */
   disabled?: boolean;
 }
 
@@ -45,14 +40,17 @@ interface SmartLinkProps {
  * SmartLink component that renders URLs intelligently:
  * - Relative URLs, anchors, and non-HTTP protocols: Rendered as plain links
  * - Image URLs: Rendered as inline image previews with Lightbox
- * - Web URLs: Rendered as original link text + rich link card below
+ * - Web URLs: Rendered as styled plain links (cards disabled to avoid layout issues)
  *
- * @param disabled - When true, skips metadata fetching and renders as simple link.
- *                   Use this during streaming to avoid excessive API calls.
+ * Note: LinkCard rendering is disabled to prevent layout issues in tables and
+ * other constrained containers. All links are rendered as simple styled links.
  */
-export function SmartLink({ href, children, compact = false, disabled = false }: SmartLinkProps) {
+export function SmartLink({
+  href,
+  children,
+}: SmartLinkProps) {
   // For non-absolute HTTP(S) URLs (relative links, anchors, mailto:, tel:, etc.),
-  // render as a plain link to avoid incorrect card rendering
+  // render without target="_blank"
   if (!isAbsoluteHttpUrl(href)) {
     return (
       <a href={href} className="text-primary hover:underline">
@@ -68,25 +66,16 @@ export function SmartLink({ href, children, compact = false, disabled = false }:
     return <ImagePreview src={href} alt={alt} />;
   }
 
-  // For web URLs, render original markdown link + LinkCard below
-  const linkText = typeof children === 'string' ? children : undefined;
-  const hasCustomText = linkText && linkText !== href;
-
-  // Always show original link text first, then card below
+  // For web URLs, render as styled external link (no card to avoid layout issues)
   return (
-    <span className="block w-full max-w-full">
-      {/* Original markdown link */}
-      <a
-        href={href}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-primary hover:underline break-all"
-      >
-        {hasCustomText ? linkText : href}
-      </a>
-      {/* Link card below */}
-      <LinkCard url={href} compact={compact} disabled={disabled} />
-    </span>
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-primary hover:underline"
+    >
+      {children}
+    </a>
   );
 }
 
@@ -108,25 +97,18 @@ export function SmartImage({ src, alt }: SmartImageProps) {
  * Create custom Markdown components for MarkdownEditor.Markdown
  * that support smart URL rendering.
  *
- * @param options.disabled - When true, skips metadata fetching for link cards.
- *                           Use this during streaming to avoid excessive API calls.
+ * Note: Link cards are disabled in markdown rendering to avoid layout issues
+ * (especially in tables). Links are rendered as styled plain links instead.
+ * Image preview with Lightbox is still supported.
  */
 export function createSmartMarkdownComponents(options?: {
-  enableLinkCards?: boolean;
   enableImagePreview?: boolean;
-  compact?: boolean;
-  /** When true, disables rich rendering (metadata fetching) for links */
-  disabled?: boolean;
 }) {
-  const {
-    enableLinkCards = true,
-    enableImagePreview = true,
-    compact = false,
-    disabled = false,
-  } = options || {};
+  const { enableImagePreview = true } = options || {};
 
   return {
-    // Custom link renderer
+    // Custom link renderer - always render as plain styled links
+    // Link cards are disabled in markdown to avoid layout issues in tables
     a: ({
       href,
       children,
@@ -141,9 +123,8 @@ export function createSmartMarkdownComponents(options?: {
         );
       }
 
-      // For non-absolute HTTP(S) URLs, render as plain link
-      // This handles anchors (#section), relative paths (./path, ../path, /path),
-      // and non-HTTP protocols (mailto:, tel:, etc.)
+      // For non-absolute HTTP(S) URLs (anchors, relative paths, mailto, tel, etc.)
+      // render without target="_blank"
       if (!isAbsoluteHttpUrl(href)) {
         return (
           <a href={href} className="text-primary hover:underline" {...props}>
@@ -152,20 +133,17 @@ export function createSmartMarkdownComponents(options?: {
         );
       }
 
-      // If link cards are disabled, render as normal external link
-      if (!enableLinkCards) {
-        return (
-          <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-            {children}
-          </a>
-        );
-      }
-
-      // Use SmartLink for intelligent rendering of absolute HTTP(S) URLs
+      // For absolute HTTP(S) URLs, render as external link
       return (
-        <SmartLink href={href} compact={compact} disabled={disabled}>
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-primary hover:underline"
+          {...props}
+        >
           {children}
-        </SmartLink>
+        </a>
       );
     },
 
@@ -188,11 +166,7 @@ interface SmartTextLineProps {
   text: string;
   /** CSS class name for the container */
   className?: string;
-  /**
-   * Whether to disable rich rendering (metadata fetching).
-   * When true, renders URLs as simple clickable links.
-   * Useful during streaming to avoid excessive API calls.
-   */
+  /** @deprecated disabled is no longer used - cards are disabled */
   disabled?: boolean;
 }
 
@@ -202,13 +176,10 @@ interface SmartTextLineProps {
  *
  * Detects URLs in the text and renders them appropriately:
  * - Image URLs: Rendered as inline image previews
- * - Web URLs: Rendered as rich link cards (unless disabled)
+ * - Web URLs: Rendered as styled plain links (cards disabled to avoid layout issues)
  * - Other text: Rendered as plain text
- *
- * @param disabled - When true, skips metadata fetching and renders URLs as simple links.
- *                   Use this during streaming to avoid excessive API calls.
  */
-export function SmartTextLine({ text, className = '', disabled = false }: SmartTextLineProps) {
+export function SmartTextLine({ text, className = '' }: SmartTextLineProps) {
   // If empty line, return non-breaking space to preserve line height
   if (!text) {
     return <div className={`text-sm break-all min-h-[1.25em] ${className}`}>{'\u00A0'}</div>;
@@ -245,14 +216,17 @@ export function SmartTextLine({ text, className = '', disabled = false }: SmartT
         />
       );
     } else {
+      // Render as styled plain link (no card to avoid layout issues)
       segments.push(
-        <LinkCard
+        <a
           key={`url-${index}`}
-          url={urlInfo.url}
-          linkText={urlInfo.linkText}
-          compact={false}
-          disabled={disabled}
-        />
+          href={urlInfo.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-primary hover:underline"
+        >
+          {urlInfo.linkText || urlInfo.url}
+        </a>
       );
     }
 
