@@ -44,7 +44,7 @@ interface TaskShareHandlerProps {
  * Handle task sharing URL parameter detection, copy logic, and modal display
  */
 export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation('shared-task');
   const { toast } = useToast();
   const { user } = useUser();
   const searchParams = useSearchParams();
@@ -124,8 +124,8 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
         console.error('Failed to fetch task share info:', err);
         toast({
           variant: 'destructive',
-          title: t('shared_task.handler_load_failed'),
-          description: (err as Error)?.message || t('messages.unknown_error'),
+          title: t('handler_load_failed'),
+          description: (err as Error)?.message || t('common:messages.unknown_error'),
         });
         cleanupUrlParams();
       } finally {
@@ -201,7 +201,7 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
     if (!selectedTeamId) {
       toast({
         variant: 'destructive',
-        title: t('shared_task.handler_select_team'),
+        title: t('handler_select_team'),
       });
       return;
     }
@@ -210,7 +210,7 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
     if (isModelSelectionRequired) {
       toast({
         variant: 'destructive',
-        title: t('task_submit.model_required'),
+        title: t('common:task_submit.model_required'),
       });
       return;
     }
@@ -220,14 +220,14 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
       if (!selectedRepo) {
         toast({
           variant: 'destructive',
-          title: t('shared_task.handler_repo_required'),
+          title: t('handler_repo_required'),
         });
         return;
       }
       if (!selectedBranch) {
         toast({
           variant: 'destructive',
-          title: t('shared_task.handler_branch_required'),
+          title: t('handler_branch_required'),
         });
         return;
       }
@@ -260,8 +260,8 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
       });
 
       toast({
-        title: t('shared_task.handler_copy_success'),
-        description: `"${shareInfo.task_title}" ${t('shared_task.handler_copy_success_desc')}`,
+        title: t('handler_copy_success'),
+        description: `"${shareInfo.task_title}" ${t('handler_copy_success_desc')}`,
       });
 
       // Refresh task list in parent component
@@ -296,8 +296,8 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
 
   const handleSelfShare = () => {
     toast({
-      title: t('shared_task.handler_self_task_title'),
-      description: t('shared_task.handler_self_task_desc'),
+      title: t('handler_self_task_title'),
+      description: t('handler_self_task_desc'),
     });
     handleCloseModal();
   };
@@ -308,7 +308,7 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
     <Modal
       isOpen={isModalOpen}
       onClose={handleCloseModal}
-      title={t('shared_task.handler_modal_title')}
+      title={t('handler_modal_title')}
       maxWidth="md"
     >
       <div className="space-y-4">
@@ -321,7 +321,7 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
           <Alert variant="warning">
             <AlertDescription>
               <span className="text-lg font-semibold text-blue-600"> {shareInfo.task_title} </span>
-              {t('shared_task.handler_is_your_own_task')}
+              {t('handler_is_your_own_task')}
             </AlertDescription>
           </Alert>
         ) : (
@@ -329,27 +329,27 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
             <div className="text-center">
               <p className="text-text-primary text-base">
                 <span className="text-lg font-semibold text-blue-600">{shareInfo.user_name}</span>{' '}
-                {t('shared_task.handler_shared_by')}
+                {t('handler_shared_by')}
                 <span className="text-lg font-semibold text-blue-600">
                   {' '}
                   {shareInfo.task_title}
                 </span>{' '}
-                {t('shared_task.handler_with_you')}
+                {t('handler_with_you')}
               </p>
             </div>
 
             <Alert variant="default">
               <AlertDescription>
-                {t('shared_task.handler_copy_description')}
+                {t('handler_copy_description')}
                 <span className="font-semibold"> {shareInfo.task_title} </span>
-                {t('shared_task.handler_copy_description_suffix')}
+                {t('handler_copy_description_suffix')}
               </AlertDescription>
             </Alert>
 
             {/* Team Selection */}
             <div className="space-y-2">
               <label className="text-sm font-medium text-text-primary">
-                {t('shared_task.handler_select_team_label')}
+                {t('handler_select_team_label')}
               </label>
               <Popover open={isTeamSelectorOpen} onOpenChange={setIsTeamSelectorOpen}>
                 <PopoverTrigger asChild>
@@ -370,7 +370,7 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
                     <span className="truncate">
                       {selectedTeam
                         ? selectedTeam.name
-                        : t('shared_task.handler_select_team_label')}
+                        : t('handler_select_team_label')}
                     </span>
                     <svg
                       className="ml-2 h-4 w-4 shrink-0 opacity-50"
@@ -397,7 +397,7 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
                 >
                   <Command className="border-0">
                     <CommandInput
-                      placeholder={t('teams.search_placeholder')}
+                      placeholder={t('common:teams.search_placeholder')}
                       value={teamSearchValue}
                       onValueChange={setTeamSearchValue}
                       className="h-10 border-b border-border"
@@ -405,12 +405,12 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
                     <CommandList className="max-h-[200px] overflow-y-auto">
                       {teams.length === 0 ? (
                         <div className="py-6 text-center text-sm text-text-muted">
-                          {t('shared_task.handler_no_teams')}
+                          {t('handler_no_teams')}
                         </div>
                       ) : (
                         <>
                           <CommandEmpty className="py-6 text-center text-sm text-text-muted">
-                            {t('branches.no_match')}
+                            {t('common:branches.no_match')}
                           </CommandEmpty>
                           <CommandGroup>
                             {teams.map(team => (
@@ -448,7 +448,7 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
               </Popover>
               {teams.length === 0 && (
                 <p className="text-sm text-destructive">
-                  {t('shared_task.handler_create_team_hint')}
+                  {t('handler_create_team_hint')}
                 </p>
               )}
             </div>
@@ -483,14 +483,14 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
                     />
                   </svg>
                   <h3 className="text-sm font-semibold text-text-primary">
-                    {t('shared_task.handler_code_settings')}
+                    {t('handler_code_settings')}
                   </h3>
                 </div>
 
                 <div className="space-y-4">
                   <div className="space-y-2">
                     <label className="text-sm font-medium text-text-primary flex items-center gap-1">
-                      {t('repos.repository')}
+                      {t('common:repos.repository')}
                       <span className="text-destructive">*</span>
                     </label>
                     <RepositorySelector
@@ -501,7 +501,7 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
                     />
                     <Alert variant="default" className="py-2">
                       <AlertDescription className="text-xs text-text-muted leading-relaxed">
-                        💡 {t('shared_task.handler_repo_hint')}
+                        💡 {t('handler_repo_hint')}
                       </AlertDescription>
                     </Alert>
                   </div>
@@ -509,7 +509,7 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
                   {selectedRepo && (
                     <div className="space-y-2">
                       <label className="text-sm font-medium text-text-primary flex items-center gap-1">
-                        {t('repos.branch')}
+                        {t('common:repos.branch')}
                         <span className="text-destructive">*</span>
                       </label>
                       <BranchSelector
@@ -535,7 +535,7 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
           style={{ flex: 1 }}
           disabled={isCopying}
         >
-          {t('common.cancel')}
+          {t('common:common.cancel')}
         </Button>
         <Button
           onClick={handleConfirmCopy}
@@ -550,7 +550,7 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
           }
           style={{ flex: 1 }}
         >
-          {isCopying ? t('shared_task.handler_copying') : t('shared_task.handler_copy_to_tasks')}
+          {isCopying ? t('handler_copying') : t('handler_copy_to_tasks')}
         </Button>
       </div>
     </Modal>
