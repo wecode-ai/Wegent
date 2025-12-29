@@ -1234,3 +1234,170 @@ async def update_slogan_tips_config(
         slogans=config_data.slogans,
         tips=config_data.tips,
     )
+
+
+# ==================== User API Key Management Endpoints ====================
+
+from app.models.api_key import APIKey
+from app.schemas.api_key import (
+    AdminAPIKeyListResponse,
+    AdminAPIKeyResponse,
+    APIKeyResponse,
+)
+
+
+@router.get("/user-api-keys", response_model=AdminAPIKeyListResponse)
+async def list_all_user_api_keys(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    search: Optional[str] = Query(None, description="Search by username or key name"),
+    include_inactive: bool = Query(False, description="Include disabled keys"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Get list of all user API keys with pagination and search (admin only).
+    """
+    query = db.query(APIKey, User).join(User, APIKey.user_id == User.id)
+
+    if not include_inactive:
+        query = query.filter(APIKey.is_active == True)
+
+    # Apply search filter
+    if search:
+        search_pattern = f"%{search}%"
+        query = query.filter(
+            (User.user_name.ilike(search_pattern)) | (APIKey.name.ilike(search_pattern))
+        )
+
+    total = query.count()
+    results = (
+        query.order_by(APIKey.created_at.desc())
+        .offset((page - 1) * limit)
+        .limit(limit)
+        .all()
+    )
+
+    return AdminAPIKeyListResponse(
+        total=total,
+        items=[
+            AdminAPIKeyResponse(
+                id=api_key.id,
+                name=api_key.name,
+                key_prefix=api_key.key_prefix,
+                expires_at=api_key.expires_at,
+                last_used_at=api_key.last_used_at,
+                created_at=api_key.created_at,
+                is_active=api_key.is_active,
+                user_id=user.id,
+                user_name=user.user_name,
+            )
+            for api_key, user in results
+        ],
+    )
+
+
+@router.get("/users/{user_id}/api-keys", response_model=AdminAPIKeyListResponse)
+async def list_user_api_keys(
+    user_id: int = Path(..., description="User ID"),
+    include_inactive: bool = Query(False, description="Include disabled keys"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Get all API keys for a specific user (admin only).
+    """
+    # Verify user exists
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User with id {user_id} not found",
+        )
+
+    query = db.query(APIKey).filter(APIKey.user_id == user_id)
+
+    if not include_inactive:
+        query = query.filter(APIKey.is_active == True)
+
+    keys = query.order_by(APIKey.created_at.desc()).all()
+
+    return AdminAPIKeyListResponse(
+        total=len(keys),
+        items=[
+            AdminAPIKeyResponse(
+                id=key.id,
+                name=key.name,
+                key_prefix=key.key_prefix,
+                expires_at=key.expires_at,
+                last_used_at=key.last_used_at,
+                created_at=key.created_at,
+                is_active=key.is_active,
+                user_id=user.id,
+                user_name=user.user_name,
+            )
+            for key in keys
+        ],
+    )
+
+
+@router.post("/user-api-keys/{key_id}/toggle-status", response_model=AdminAPIKeyResponse)
+async def toggle_user_api_key_status(
+    key_id: int = Path(..., description="API Key ID"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Toggle a user's API key active status (admin only).
+    """
+    api_key = db.query(APIKey).filter(APIKey.id == key_id).first()
+
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="API key not found",
+        )
+
+    # Get user info
+    user = db.query(User).filter(User.id == api_key.user_id).first()
+
+    # Toggle is_active status
+    api_key.is_active = not api_key.is_active
+    db.commit()
+    db.refresh(api_key)
+
+    return AdminAPIKeyResponse(
+        id=api_key.id,
+        name=api_key.name,
+        key_prefix=api_key.key_prefix,
+        expires_at=api_key.expires_at,
+        last_used_at=api_key.last_used_at,
+        created_at=api_key.created_at,
+        is_active=api_key.is_active,
+        user_id=user.id,
+        user_name=user.user_name,
+    )
+
+
+@router.delete("/user-api-keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_user_api_key(
+    key_id: int = Path(..., description="API Key ID"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Delete a user's API key (admin only). This is a hard delete.
+    """
+    api_key = db.query(APIKey).filter(APIKey.id == key_id).first()
+
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="API key not found",
+        )
+
+    # Hard delete
+    db.delete(api_key)
+    db.commit()
+
+    return None

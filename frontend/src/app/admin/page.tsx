@@ -14,6 +14,7 @@ import { ShieldExclamationIcon } from '@heroicons/react/24/outline';
 import UserList from '@/features/admin/components/UserList';
 import PublicModelList from '@/features/admin/components/PublicModelList';
 import PublicSkillList from '@/features/admin/components/PublicSkillList';
+import UserApiKeyList from '@/features/admin/components/UserApiKeyList';
 import SystemConfigPanel from '@/features/admin/components/SystemConfigPanel';
 import { UserProvider, useUser } from '@/features/common/UserContext';
 import { TaskContextProvider } from '@/features/tasks/contexts/taskContext';
@@ -57,7 +58,7 @@ function AdminContent() {
   // Get initial tab from URL
   const getInitialTab = (): AdminTabId => {
     const tab = searchParams.get('tab');
-    if (tab && ['users', 'public-models', 'public-skills', 'system-config'].includes(tab)) {
+    if (tab && ['users', 'public-models', 'public-skills', 'user-api-keys', 'system-config'].includes(tab)) {
       return tab as AdminTabId;
     }
     return 'users';
@@ -105,6 +106,8 @@ function AdminContent() {
         return <PublicModelList />;
       case 'public-skills':
         return <PublicSkillList />;
+      case 'user-api-keys':
+        return <UserApiKeyList />;
       case 'system-config':
         return <SystemConfigPanel />;
       default:

@@ -33,6 +33,20 @@ class APIKeyResponse(BaseModel):
         from_attributes = True
 
 
+class AdminAPIKeyResponse(APIKeyResponse):
+    """Response schema for admin viewing user's API key."""
+
+    user_id: int
+    user_name: str  # Username for display
+
+
+class AdminAPIKeyListResponse(BaseModel):
+    """Response schema for admin listing user's API keys."""
+
+    items: List[AdminAPIKeyResponse]
+    total: int
+
+
 class APIKeyCreatedResponse(APIKeyResponse):
     """Response schema when creating an API key (includes full key, shown only once)."""
 

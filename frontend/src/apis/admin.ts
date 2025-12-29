@@ -114,6 +114,24 @@ export interface ChatSloganTipsResponse {
   tips: ChatTipItem[];
 }
 
+// User API Key Types (for admin management)
+export interface AdminUserApiKey {
+  id: number;
+  name: string;
+  key_prefix: string;
+  expires_at: string;
+  last_used_at: string;
+  created_at: string;
+  is_active: boolean;
+  user_id: number;
+  user_name: string;
+}
+
+export interface AdminUserApiKeyListResponse {
+  total: number;
+  items: AdminUserApiKey[];
+}
+
 // Admin API Services
 export const adminApis = {
   // ==================== User Management ====================
@@ -263,5 +281,56 @@ export const adminApis = {
    */
   async updateSloganTipsConfig(data: ChatSloganTipsUpdate): Promise<ChatSloganTipsResponse> {
     return apiClient.put('/admin/system-config/slogan-tips', data);
+  },
+
+  // ==================== User API Key Management ====================
+
+  /**
+   * Get list of all user API keys with pagination and search
+   */
+  async getUserApiKeys(
+    page: number = 1,
+    limit: number = 20,
+    includeInactive: boolean = false,
+    search?: string
+  ): Promise<AdminUserApiKeyListResponse> {
+    const params = new URLSearchParams();
+    params.append('page', String(page));
+    params.append('limit', String(limit));
+    if (includeInactive) {
+      params.append('include_inactive', 'true');
+    }
+    if (search) {
+      params.append('search', search);
+    }
+    return apiClient.get(`/admin/user-api-keys?${params.toString()}`);
+  },
+
+  /**
+   * Get API keys for a specific user
+   */
+  async getUserApiKeysByUserId(
+    userId: number,
+    includeInactive: boolean = false
+  ): Promise<AdminUserApiKeyListResponse> {
+    const params = new URLSearchParams();
+    if (includeInactive) {
+      params.append('include_inactive', 'true');
+    }
+    return apiClient.get(`/admin/users/${userId}/api-keys?${params.toString()}`);
+  },
+
+  /**
+   * Toggle user API key active status
+   */
+  async toggleUserApiKeyStatus(keyId: number): Promise<AdminUserApiKey> {
+    return apiClient.post(`/admin/user-api-keys/${keyId}/toggle-status`);
+  },
+
+  /**
+   * Delete a user's API key
+   */
+  async deleteUserApiKey(keyId: number): Promise<void> {
+    return apiClient.delete(`/admin/user-api-keys/${keyId}`);
   },
 };

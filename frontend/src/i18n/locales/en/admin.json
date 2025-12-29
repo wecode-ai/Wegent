@@ -5,6 +5,7 @@
     "users": "Users",
     "public_models": "Public Models",
     "public_skills": "Public Skills",
+    "user_api_keys": "User API Keys",
     "system_config": "System Config"
   },
   "stats": {
@@ -201,6 +202,30 @@
     "title": "Access Denied",
     "message": "You do not have permission to access this page. Only administrators can view this content.",
     "go_home": "Go to Home"
+  },
+  "user_api_keys": {
+    "title": "User API Key Management",
+    "description": "View, disable, and delete user API keys",
+    "search_placeholder": "Search by username or key name...",
+    "show_disabled": "Show disabled",
+    "no_keys": "No user API keys found",
+    "status_disabled": "Disabled",
+    "enable": "Enable API key",
+    "disable": "Disable API key",
+    "created_at": "Created",
+    "last_used": "Last used",
+    "expires_at": "Expires",
+    "never_expires": "Never",
+    "enabled_success": "API key enabled successfully",
+    "disabled_success": "API key disabled successfully",
+    "delete_success": "API key deleted successfully",
+    "delete_confirm_title": "Delete API Key",
+    "delete_confirm_message": "Are you sure you want to delete the API key \"{{name}}\" for user \"{{user}}\"? This action cannot be undone.",
+    "errors": {
+      "load_failed": "Failed to load user API keys",
+      "toggle_failed": "Failed to toggle API key status",
+      "delete_failed": "Failed to delete API key"
+    }
   },
   "system_config": {
     "title": "Slogan & Tips Management",
