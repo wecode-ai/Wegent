@@ -6,7 +6,16 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from '@/hooks/useTranslation';
-import { fetchUnifiedSkillsList, UnifiedSkill, deleteSkill, downloadSkill } from '@/apis/skills';
+import {
+  fetchUnifiedSkillsList,
+  UnifiedSkill,
+  deleteSkill,
+  downloadSkill,
+  removeSkillReferences,
+  removeSingleSkillReference,
+  parseSkillReferenceError,
+  ReferencedGhost,
+} from '@/apis/skills';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -22,6 +31,7 @@ import {
 import { Download, Trash2, Sparkles, Globe, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import SkillUploadModal from './skills/SkillUploadModal';
+import { SkillReferenceConflictDialog } from './skills/SkillReferenceConflictDialog';
 
 interface SkillListWithScopeProps {
   scope: 'personal' | 'group' | 'all';
@@ -38,6 +48,10 @@ export function SkillListWithScope({ scope }: SkillListWithScopeProps) {
   const [skillToDelete, setSkillToDelete] = useState<UnifiedSkill | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
+
+  // Reference conflict dialog state
+  const [referenceConflictOpen, setReferenceConflictOpen] = useState(false);
+  const [referencedGhosts, setReferencedGhosts] = useState<ReferencedGhost[]>([]);
 
   const loadSkills = useCallback(async () => {
     try {
@@ -64,13 +78,50 @@ export function SkillListWithScope({ scope }: SkillListWithScopeProps) {
       await deleteSkill(skillToDelete.id);
       toast.success(t('skills.delete_success'));
       loadSkills();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : t('skills.delete_failed'));
-    } finally {
-      setDeleting(false);
       setDeleteDialogOpen(false);
       setSkillToDelete(null);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+
+      // Check if this is a reference conflict error
+      const referenceError = parseSkillReferenceError(errorMessage);
+      if (referenceError) {
+        // Close the simple delete dialog and open the reference conflict dialog
+        setDeleteDialogOpen(false);
+        setReferencedGhosts(referenceError.referenced_ghosts);
+        setReferenceConflictOpen(true);
+      } else {
+        toast.error(errorMessage || t('skills.delete_failed'));
+        setDeleteDialogOpen(false);
+        setSkillToDelete(null);
+      }
+    } finally {
+      setDeleting(false);
     }
+  };
+
+  // Handle removing all references and then deleting the skill
+  const handleRemoveAllReferences = async () => {
+    if (!skillToDelete) return;
+
+    await removeSkillReferences(skillToDelete.id);
+    // After removing references, delete the skill
+    await deleteSkill(skillToDelete.id);
+    loadSkills();
+  };
+
+  // Handle removing a single reference
+  const handleRemoveSingleReference = async (ghostId: number) => {
+    if (!skillToDelete) return;
+
+    await removeSingleSkillReference(skillToDelete.id, ghostId);
+  };
+
+  // Handle successful deletion after removing references
+  const handleDeleteSuccess = () => {
+    setSkillToDelete(null);
+    setReferencedGhosts([]);
+    loadSkills();
   };
 
   const handleDownload = async (skill: UnifiedSkill) => {
@@ -234,7 +285,7 @@ export function SkillListWithScope({ scope }: SkillListWithScopeProps) {
           <AlertDialogHeader>
             <AlertDialogTitle>{t('skills.delete_confirm_title')}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t('skills.delete_confirm_message', { name: skillToDelete?.name })}
+              {t('skills.delete_confirm_message', { skillName: skillToDelete?.name })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -248,6 +299,20 @@ export function SkillListWithScope({ scope }: SkillListWithScopeProps) {
 
       {/* Upload Modal */}
       <SkillUploadModal open={uploadModalOpen} onClose={handleUploadModalClose} />
+
+      {/* Reference Conflict Dialog */}
+      {skillToDelete && (
+        <SkillReferenceConflictDialog
+          open={referenceConflictOpen}
+          onOpenChange={setReferenceConflictOpen}
+          skillName={skillToDelete.name}
+          skillId={skillToDelete.id}
+          referencedGhosts={referencedGhosts}
+          onRemoveAllReferences={handleRemoveAllReferences}
+          onRemoveSingleReference={handleRemoveSingleReference}
+          onDeleteSuccess={handleDeleteSuccess}
+        />
+      )}
     </div>
   );
 }
