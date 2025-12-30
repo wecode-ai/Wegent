@@ -22,44 +22,25 @@ logger = logging.getLogger(__name__)
 
 def sync_task_contexts(
     db: Session,
-    task_id: int,
-    new_context_ids: List[int],
+    task: TaskResource,
+    new_context_objects: List[SubtaskContext],
 ) -> None:
     """
-    Incrementally merge new context IDs to Task's contexts field.
+    Incrementally merge new context objects to Task's contexts field.
 
     This function updates the task's JSON field to include new subtask contexts,
     enabling task-level context aggregation for global visibility.
 
     Args:
         db: Database session
-        task_id: Task ID
-        new_context_ids: List of new subtask_context IDs to add
+        task: TaskResource object (already loaded, no additional query needed)
+        new_context_objects: List of SubtaskContext objects to add
     """
-    if not new_context_ids:
+    if not new_context_objects:
         return
-
-    task = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.id == task_id,
-            TaskResource.kind == "Task",
-            TaskResource.is_active,
-        )
-        .first()
-    )
-
-    if not task:
-        logger.warning(f"Task {task_id} not found for context sync")
-        return
-
-    # Get context types for the new IDs
-    contexts = (
-        db.query(SubtaskContext).filter(SubtaskContext.id.in_(new_context_ids)).all()
-    )
 
     new_context_entries = [
-        {"id": ctx.id, "context_type": ctx.context_type} for ctx in contexts
+        {"id": ctx.id, "context_type": ctx.context_type} for ctx in new_context_objects
     ]
 
     # Get existing contexts from Task JSON
@@ -80,7 +61,7 @@ def sync_task_contexts(
     flag_modified(task, "json")
 
     logger.info(
-        f"[sync_task_contexts] Task {task_id}: added {added_count} contexts, "
+        f"[sync_task_contexts] Task {task.id}: added {added_count} contexts, "
         f"total={len(existing_entries)}"
     )
 

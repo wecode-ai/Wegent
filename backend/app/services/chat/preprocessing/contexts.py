@@ -209,7 +209,7 @@ def link_contexts_to_subtask(
     user_id: int,
     attachment_ids: List[int] | None = None,
     contexts: List[Any] | None = None,
-    task_id: Optional[int] = None,
+    task: Optional[Any] = None,
 ) -> List[int]:
     """
     Link attachments and create knowledge base contexts for a subtask.
@@ -226,13 +226,14 @@ def link_contexts_to_subtask(
         user_id: User ID
         attachment_ids: List of pre-uploaded attachment context IDs to link
         contexts: List of ContextItem objects from payload (for knowledge bases)
-        task_id: Optional Task ID for syncing contexts to Task level
+        task: Optional TaskResource object for syncing contexts to Task level (avoids extra query)
 
     Returns:
         List of all linked/created context IDs
     """
     linked_context_ids = []
     kb_contexts_to_create: List[SubtaskContext] = []
+    linked_context_objects: List[SubtaskContext] = []  # For task-level sync
 
     # 1. Collect attachment IDs to link
     if attachment_ids:
@@ -275,6 +276,13 @@ def link_contexts_to_subtask(
                 {"subtask_id": subtask_id},
                 synchronize_session=False,
             )
+            # Fetch linked attachment contexts for task-level sync
+            linked_attachments = (
+                db.query(SubtaskContext)
+                .filter(SubtaskContext.id.in_(attachment_ids))
+                .all()
+            )
+            linked_context_objects.extend(linked_attachments)
 
         # Batch add new knowledge base contexts
         if kb_contexts_to_create:
@@ -287,6 +295,7 @@ def link_contexts_to_subtask(
         for kb_context in kb_contexts_to_create:
             db.refresh(kb_context)
             linked_context_ids.append(kb_context.id)
+            linked_context_objects.append(kb_context)  # Add to sync list
             logger.debug(
                 f"Created knowledge base context: id={kb_context.id}, "
                 f"knowledge_id={kb_context.type_data.get('knowledge_id')}, "
@@ -303,11 +312,11 @@ def link_contexts_to_subtask(
                 f"for subtask {subtask_id}"
             )
 
-        # Sync to Task-level contexts for global visibility
-        if task_id and linked_context_ids:
+        # Sync to Task-level contexts for global visibility (no extra query needed)
+        if task and linked_context_objects:
             from app.services.chat.storage.task_contexts import sync_task_contexts
 
-            sync_task_contexts(db, task_id, linked_context_ids)
+            sync_task_contexts(db, task, linked_context_objects)
 
     except Exception as e:
         db.rollback()
