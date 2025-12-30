@@ -38,11 +38,6 @@ class KnowledgeBaseTool(BaseTool):
 
     name: str = "knowledge_base_search"
     display_name: str = "检索知识库"
-    description: str = (
-        "Search the knowledge base for relevant information. "
-        "Use this tool when you need to find specific information from the knowledge base. "
-        "Returns relevant document chunks with their sources and relevance scores."
-    )
     args_schema: type[BaseModel] = KnowledgeBaseInput
 
     # Knowledge base IDs to search (set when creating the tool)
@@ -57,6 +52,29 @@ class KnowledgeBaseTool(BaseTool):
     # User subtask ID for persisting RAG results to context database
     # This is the subtask_id of the user message that triggered the AI response
     user_subtask_id: Optional[int] = None
+
+    # Available knowledge bases metadata for dynamic description
+    available_knowledge_bases: list[dict] = Field(default_factory=list)
+
+    @property
+    def description(self) -> str:
+        """Dynamic description with available knowledge base list."""
+        base_desc = (
+            "Search the knowledge base for relevant information. "
+            "Use this tool when you need to find specific information from the knowledge base. "
+            "Returns relevant document chunks with their sources and relevance scores."
+        )
+
+        if self.available_knowledge_bases:
+            kb_list = "\n".join(
+                [
+                    f"  - ID: {kb['id']}, Name: {kb['name']}"
+                    for kb in self.available_knowledge_bases
+                ]
+            )
+            return f"{base_desc}\n\nAvailable knowledge bases:\n{kb_list}"
+
+        return base_desc
 
     def _run(
         self,

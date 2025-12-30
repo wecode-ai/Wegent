@@ -2,6 +2,25 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+"""Task schemas.
+
+Task JSON structure (TaskResource.json field):
+{
+    "apiVersion": "agent.wecode.io/v1",
+    "kind": "Task",
+    "metadata": {...},
+    "spec": {...},
+    "status": {...},
+    "contexts": {  # Task-level context aggregation (added by sync_task_contexts)
+        "subtask_contexts": [
+            {"id": 123, "context_type": "knowledge_base"},
+            {"id": 456, "context_type": "knowledge_base"},
+            {"id": 789, "context_type": "attachment"}
+        ]
+    }
+}
+"""
+
 from datetime import datetime
 from enum import Enum
 from typing import Any, List, Optional
