@@ -591,6 +591,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                         attachment_ids_to_link if attachment_ids_to_link else None
                     ),
                     contexts=payload.contexts,
+                    task=task,  # Pass task object for efficient task-level context sync
                 )
                 if linked_context_ids:
                     logger.info(
