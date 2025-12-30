@@ -22,6 +22,7 @@ from app.schemas.knowledge import (
     AccessibleKnowledgeResponse,
     BatchDocumentIds,
     BatchOperationResult,
+    DocumentDetailResponse,
     KnowledgeBaseCreate,
     KnowledgeBaseListResponse,
     KnowledgeBaseResponse,
@@ -34,6 +35,7 @@ from app.schemas.knowledge import (
 )
 from app.schemas.rag import SplitterConfig
 from app.services.adapters.retriever_kinds import retriever_kinds_service
+from app.services.chat.config.model_resolver import _extract_model_config, _find_model
 from app.services.knowledge_service import KnowledgeService
 from app.services.rag.document_service import DocumentService
 from app.services.rag.storage.factory import create_storage_backend
@@ -356,6 +358,14 @@ async def create_document(
                         f"Knowledge base {knowledge_base_id} has incomplete retrieval_config, skipping RAG indexing"
                     )
 
+        # Schedule summary generation in background
+        background_tasks.add_task(
+            _generate_summary_background,
+            document_id=document.id,
+            user_id=current_user.id,
+        )
+        logger.info(f"Scheduled summary generation for document {document.id}")
+
         return KnowledgeDocumentResponse.model_validate(document)
     except ValueError as e:
         raise HTTPException(
@@ -541,8 +551,141 @@ def _index_document_background(
         logger.info(f"Background task completed for knowledge base {knowledge_base_id}")
 
 
+def _generate_summary_background(
+    document_id: int,
+    user_id: int,
+):
+    """
+    Background task for document summary generation.
+
+    This is a synchronous function that creates its own event loop to run
+    the async summary generation code.
+
+    Args:
+        document_id: Document ID to generate summary for
+        user_id: User ID (the user who triggered the upload)
+    """
+    from app.models.kind import Kind
+    from app.services.summary_service import summary_service
+
+    logger.info(f"Background task started: generating summary for document {document_id}")
+
+    # Create a new database session for the background task
+    db = SessionLocal()
+    try:
+        # Find a suitable LLM model for summary generation
+        # First try to find a public LLM model
+        model_spec = None
+
+        # Query for public LLM models (user_id=0)
+        public_model = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == 0,
+                Kind.kind == "Model",
+                Kind.namespace == "default",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
+        if public_model and public_model.json:
+            model_spec = public_model.json.get("spec", {})
+            logger.info(
+                f"Using public model '{public_model.name}' for summary generation"
+            )
+        else:
+            # Fall back to user's private models
+            user_model = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == user_id,
+                    Kind.kind == "Model",
+                    Kind.namespace == "default",
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+
+            if user_model and user_model.json:
+                model_spec = user_model.json.get("spec", {})
+                logger.info(
+                    f"Using user model '{user_model.name}' for summary generation"
+                )
+
+        if not model_spec:
+            logger.warning(
+                f"No LLM model available for summary generation, document {document_id}"
+            )
+            # Update document summary status to failed
+            from app.models.knowledge import KnowledgeDocument, SummaryStatus
+
+            doc = (
+                db.query(KnowledgeDocument)
+                .filter(KnowledgeDocument.id == document_id)
+                .first()
+            )
+            if doc:
+                doc.summary_status = SummaryStatus.FAILED
+                doc.summary_error = "No LLM model available for summary generation"
+                db.commit()
+            return
+
+        # Extract model configuration
+        model_config = _extract_model_config(model_spec)
+
+        # Run async summary generation
+        asyncio.run(
+            summary_service.generate_summary_async(
+                db=db,
+                document_id=document_id,
+                model_config=model_config,
+            )
+        )
+
+        logger.info(f"Successfully generated summary for document {document_id}")
+
+    except Exception as e:
+        logger.error(
+            f"Failed to generate summary for document {document_id}: {str(e)}",
+            exc_info=True,
+        )
+    finally:
+        # Always close the database session
+        db.close()
+        logger.info(
+            f"Summary generation background task completed for document {document_id}"
+        )
+
+
 # Document-specific endpoints (without knowledge_base_id in path)
 document_router = APIRouter()
+
+
+@document_router.get("/{document_id}/detail", response_model=DocumentDetailResponse)
+def get_document_detail(
+    document_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get document detail including summary and raw content.
+
+    Returns document metadata, summary (if generated), and parsed text content.
+    """
+    detail = KnowledgeService.get_document_detail(
+        db=db,
+        document_id=document_id,
+        user_id=current_user.id,
+    )
+
+    if not detail:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found or access denied",
+        )
+
+    return DocumentDetailResponse(**detail)
 
 
 @document_router.put("/{document_id}", response_model=KnowledgeDocumentResponse)

@@ -14,6 +14,7 @@ interface DocumentItemProps {
   document: KnowledgeDocument;
   onEdit?: (doc: KnowledgeDocument) => void;
   onDelete?: (doc: KnowledgeDocument) => void;
+  onViewDetail?: (doc: KnowledgeDocument) => void;
   canManage?: boolean;
   showBorder?: boolean;
   selected?: boolean;
@@ -24,6 +25,7 @@ export function DocumentItem({
   document,
   onEdit,
   onDelete,
+  onViewDetail,
   canManage = true,
   showBorder = true,
   selected = false,
@@ -63,6 +65,10 @@ export function DocumentItem({
     onDelete?.(document);
   };
 
+  const handleViewDetail = () => {
+    onViewDetail?.(document);
+  };
+
   return (
     <div
       className={`flex items-center gap-4 px-4 py-3 bg-base hover:bg-surface transition-colors group ${showBorder ? 'border-b border-border' : ''}`}
@@ -83,9 +89,15 @@ export function DocumentItem({
         <FileText className="w-4 h-4 text-primary" />
       </div>
 
-      {/* File name */}
+      {/* File name - clickable to view detail */}
       <div className="flex-1 min-w-[120px]">
-        <span className="text-sm font-medium text-text-primary truncate">{document.name}</span>
+        <button
+          className="text-sm font-medium text-text-primary truncate hover:text-primary hover:underline transition-colors cursor-pointer text-left"
+          onClick={handleViewDetail}
+          title={t('knowledge:document.detail.viewDetail')}
+        >
+          {document.name}
+        </button>
       </div>
 
       {/* Edit button - in the middle area */}

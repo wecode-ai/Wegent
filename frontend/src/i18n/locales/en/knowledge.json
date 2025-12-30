@@ -99,6 +99,24 @@
         "delete": "Delete"
       }
     },
+    "detail": {
+      "title": "Document Details",
+      "fileInfo": "File Information",
+      "summary": "Document Summary",
+      "content": "Original Content",
+      "summaryStatusLabel": "Summary Status",
+      "summaryStatus": {
+        "pending": "Pending",
+        "processing": "Generating...",
+        "completed": "Completed",
+        "failed": "Failed"
+      },
+      "noSummary": "No summary available",
+      "noContent": "No content available",
+      "summaryError": "Summary generation failed",
+      "summaryGenerating": "Generating summary...",
+      "viewDetail": "View Details"
+    },
     "permission": {
       "noAccess": "You do not have permission to perform this action"
     },

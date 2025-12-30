@@ -15,6 +15,7 @@ import type {
   KnowledgeBaseUpdate,
   KnowledgeDocument,
   KnowledgeDocumentCreate,
+  KnowledgeDocumentDetail,
   KnowledgeDocumentListResponse,
   KnowledgeDocumentUpdate,
   KnowledgeResourceScope,
@@ -105,6 +106,13 @@ export async function updateDocument(
  */
 export async function deleteDocument(documentId: number): Promise<void> {
   return apiClient.delete(`/knowledge-documents/${documentId}`);
+}
+
+/**
+ * Get document detail including summary and raw content
+ */
+export async function getDocumentDetail(documentId: number): Promise<KnowledgeDocumentDetail> {
+  return apiClient.get<KnowledgeDocumentDetail>(`/knowledge-documents/${documentId}/detail`);
 }
 
 // ============== Batch Document Operations ==============

@@ -31,6 +31,15 @@ class DocumentStatus(str, Enum):
     DISABLED = "disabled"
 
 
+class SummaryStatus(str, Enum):
+    """Summary generation status enumeration."""
+
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class ResourceScope(str, Enum):
     """Resource scope for filtering."""
 
@@ -172,6 +181,16 @@ class KnowledgeDocumentResponse(BaseModel):
     doc_ref: Optional[str] = Field(
         None, description="RAG storage document reference ID"
     )
+    summary: Optional[str] = Field(None, description="Document summary content")
+    summary_status: SummaryStatus = Field(
+        default=SummaryStatus.PENDING, description="Summary generation status"
+    )
+    summary_error: Optional[str] = Field(
+        None, description="Error message if summary generation failed"
+    )
+    summary_generated_at: Optional[datetime] = Field(
+        None, description="Timestamp when summary was generated"
+    )
     created_at: datetime
     updated_at: datetime
 
@@ -184,6 +203,14 @@ class KnowledgeDocumentListResponse(BaseModel):
 
     total: int
     items: list[KnowledgeDocumentResponse]
+
+
+class DocumentDetailResponse(KnowledgeDocumentResponse):
+    """Schema for document detail response including raw content."""
+
+    content: Optional[str] = Field(
+        None, description="Document parsed raw text content"
+    )
 
 
 # ============== Batch Operation Schemas ==============

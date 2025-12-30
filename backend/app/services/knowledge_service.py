@@ -564,6 +564,61 @@ class KnowledgeService:
         return doc
 
     @staticmethod
+    def get_document_detail(
+        db: Session,
+        document_id: int,
+        user_id: int,
+    ) -> Optional[dict]:
+        """
+        Get document detail including summary and raw content.
+
+        Args:
+            db: Database session
+            document_id: Document ID
+            user_id: Requesting user ID
+
+        Returns:
+            Dict with document data and content, or None if not found
+        """
+        from app.services.attachment import attachment_service
+
+        # Get document with permission check
+        doc = KnowledgeService.get_document(db, document_id, user_id)
+        if not doc:
+            return None
+
+        # Get document content from attachment
+        content = None
+        if doc.attachment_id:
+            attachment = attachment_service.get_attachment(
+                db=db,
+                attachment_id=doc.attachment_id,
+            )
+            if attachment:
+                content = attachment.extracted_text
+
+        # Build response dict
+        return {
+            "id": doc.id,
+            "kind_id": doc.kind_id,
+            "attachment_id": doc.attachment_id,
+            "name": doc.name,
+            "file_extension": doc.file_extension,
+            "file_size": doc.file_size,
+            "status": doc.status,
+            "user_id": doc.user_id,
+            "is_active": doc.is_active,
+            "splitter_config": doc.splitter_config,
+            "summary": doc.summary,
+            "summary_status": doc.summary_status,
+            "summary_error": doc.summary_error,
+            "summary_generated_at": doc.summary_generated_at,
+            "created_at": doc.created_at,
+            "updated_at": doc.updated_at,
+            "content": content,
+        }
+
+    @staticmethod
     def list_documents(
         db: Session,
         knowledge_base_id: int,

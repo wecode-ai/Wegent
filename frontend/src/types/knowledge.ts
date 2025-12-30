@@ -8,6 +8,8 @@
 
 export type DocumentStatus = 'enabled' | 'disabled';
 
+export type SummaryStatus = 'pending' | 'processing' | 'completed' | 'failed';
+
 export type KnowledgeResourceScope = 'personal' | 'group' | 'all';
 
 // Retrieval Config types
@@ -107,8 +109,16 @@ export interface KnowledgeDocument {
   user_id: number;
   is_active: boolean;
   splitter_config?: SplitterConfig;
+  summary?: string | null;
+  summary_status: SummaryStatus;
+  summary_error?: string | null;
+  summary_generated_at?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface KnowledgeDocumentDetail extends KnowledgeDocument {
+  content?: string | null;
 }
 
 export interface KnowledgeDocumentCreate {

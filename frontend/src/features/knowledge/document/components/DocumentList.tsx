@@ -26,6 +26,7 @@ import { DocumentUpload } from './DocumentUpload';
 import { DeleteDocumentDialog } from './DeleteDocumentDialog';
 import { EditDocumentDialog } from './EditDocumentDialog';
 import { RetrievalTestDialog } from './RetrievalTestDialog';
+import { DocumentDetailDrawer } from './DocumentDetailDrawer';
 import { useDocuments } from '../hooks/useDocuments';
 import type { KnowledgeBase, KnowledgeDocument, SplitterConfig } from '@/types/knowledge';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -53,6 +54,7 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
   const [showRetrievalTest, setShowRetrievalTest] = useState(false);
   const [editingDoc, setEditingDoc] = useState<KnowledgeDocument | null>(null);
   const [deletingDoc, setDeletingDoc] = useState<KnowledgeDocument | null>(null);
+  const [detailDoc, setDetailDoc] = useState<KnowledgeDocument | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortField, setSortField] = useState<SortField>('date');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
@@ -323,6 +325,7 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
                 document={doc}
                 onEdit={setEditingDoc}
                 onDelete={setDeletingDoc}
+                onViewDetail={setDetailDoc}
                 canManage={canManage}
                 showBorder={index < filteredAndSortedDocuments.length - 1}
                 selected={selectedIds.has(doc.id)}
@@ -377,6 +380,12 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
         open={showRetrievalTest}
         onOpenChange={setShowRetrievalTest}
         knowledgeBase={knowledgeBase}
+      />
+
+      <DocumentDetailDrawer
+        open={!!detailDoc}
+        onOpenChange={open => !open && setDetailDoc(null)}
+        document={detailDoc}
       />
     </div>
   );
