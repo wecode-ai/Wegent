@@ -111,7 +111,7 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
     file: File,
     splitterConfig?: Partial<SplitterConfig>
   ) => {
-    const extension = file.name.split('knowledge:.').pop() || '';
+    const extension = file.name.split('.').pop() || '';
     try {
       await create({
         attachment_id: attachmentId,
