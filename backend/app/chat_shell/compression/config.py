@@ -5,9 +5,12 @@
 """Configuration for message compression.
 
 This module defines model context limits and compression configurations.
+Model-specific limits can be configured in Model CRD spec (contextWindow, maxOutputTokens)
+or fall back to built-in defaults based on model ID.
 """
 
 from dataclasses import dataclass
+from typing import Any, Optional
 
 
 @dataclass
@@ -95,15 +98,40 @@ MODEL_CONTEXT_LIMITS: dict[str, ModelContextConfig] = {
 }
 
 
-def get_model_context_config(model_id: str) -> ModelContextConfig:
+def get_model_context_config(
+    model_id: str,
+    model_config: Optional[dict[str, Any]] = None,
+) -> ModelContextConfig:
     """Get context configuration for a model.
+
+    Priority for configuration values:
+    1. Model CRD spec (contextWindow, maxOutputTokens from model_config)
+    2. Built-in defaults from MODEL_CONTEXT_LIMITS based on model_id
+    3. Conservative defaults for unknown models
 
     Args:
         model_id: Model identifier (e.g., "claude-3-5-sonnet-20241022")
+        model_config: Optional model configuration from Model CRD spec
+                     (from model_resolver._extract_model_config)
 
     Returns:
         ModelContextConfig for the model
     """
+    # Priority 1: Use values from Model CRD spec if provided
+    if model_config:
+        context_window = model_config.get("context_window")
+        max_output_tokens = model_config.get("max_output_tokens")
+
+        if context_window is not None:
+            # Use CRD values with fallback for output_tokens
+            output_tokens = max_output_tokens if max_output_tokens is not None else 4096
+            return ModelContextConfig(
+                context_window=context_window,
+                output_tokens=output_tokens,
+                safety_margin=0.90,
+            )
+
+    # Priority 2: Look up in built-in defaults
     model_lower = model_id.lower()
 
     # Try exact match first
@@ -115,7 +143,7 @@ def get_model_context_config(model_id: str) -> ModelContextConfig:
         if model_lower.startswith(prefix):
             return config
 
-    # Default config for unknown models (conservative estimate)
+    # Priority 3: Default config for unknown models (conservative estimate)
     return ModelContextConfig(
         context_window=128000,
         output_tokens=4096,

@@ -6,16 +6,18 @@
 
 import pytest
 
-from app.chat_shell.compression import (
-    AttachmentTruncationStrategy,
+from app.chat_shell.compression.compressor import MessageCompressor
+from app.chat_shell.compression.config import (
     CompressionConfig,
-    CompressionResult,
-    HistoryTruncationStrategy,
-    MessageCompressor,
     ModelContextConfig,
-    TokenCounter,
     get_model_context_config,
 )
+from app.chat_shell.compression.strategies import (
+    AttachmentTruncationStrategy,
+    CompressionResult,
+    HistoryTruncationStrategy,
+)
+from app.chat_shell.compression.token_counter import TokenCounter
 
 
 class TestTokenCounter:
@@ -122,6 +124,49 @@ class TestModelContextConfig:
         # Should return default config
         assert config.context_window == 128000
         assert config.safety_margin == 0.85
+
+    def test_get_model_context_config_from_model_config(self):
+        """Test getting config from model_config (Model CRD spec)."""
+        model_config = {
+            "context_window": 256000,
+            "max_output_tokens": 16000,
+        }
+        config = get_model_context_config("unknown-model-xyz", model_config=model_config)
+        # Should use values from model_config
+        assert config.context_window == 256000
+        assert config.output_tokens == 16000
+        assert config.safety_margin == 0.90
+
+    def test_get_model_context_config_model_config_takes_priority(self):
+        """Test that model_config takes priority over built-in defaults."""
+        model_config = {
+            "context_window": 500000,
+            "max_output_tokens": 32000,
+        }
+        # Use a known model ID but override with model_config
+        config = get_model_context_config("gpt-4o", model_config=model_config)
+        # Should use values from model_config, not built-in defaults
+        assert config.context_window == 500000
+        assert config.output_tokens == 32000
+
+    def test_get_model_context_config_partial_model_config(self):
+        """Test getting config with partial model_config (only context_window)."""
+        model_config = {
+            "context_window": 300000,
+            # max_output_tokens not provided
+        }
+        config = get_model_context_config("unknown-model", model_config=model_config)
+        # Should use context_window from model_config and default output_tokens
+        assert config.context_window == 300000
+        assert config.output_tokens == 4096  # default fallback
+
+    def test_get_model_context_config_empty_model_config(self):
+        """Test getting config with empty model_config falls back to built-in."""
+        model_config = {}  # Empty dict
+        config = get_model_context_config("gpt-4o", model_config=model_config)
+        # Should fall back to built-in defaults for gpt-4o
+        assert config.context_window == 128000
+        assert config.output_tokens == 16384
 
 
 class TestCompressionConfig:

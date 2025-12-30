@@ -49,6 +49,7 @@ class MessageCompressor:
         model_id: str,
         config: CompressionConfig | None = None,
         strategies: list[CompressionStrategy] | None = None,
+        model_config: dict[str, Any] | None = None,
     ):
         """Initialize message compressor.
 
@@ -56,10 +57,12 @@ class MessageCompressor:
             model_id: Model identifier for context limit lookup
             config: Optional compression configuration (uses settings if not provided)
             strategies: Optional list of strategies (uses defaults if not provided)
+            model_config: Optional model configuration from Model CRD spec
+                         (contains context_window, max_output_tokens from model_resolver)
         """
         self.model_id = model_id
         self.config = config or CompressionConfig.from_settings()
-        self.model_context = get_model_context_config(model_id)
+        self.model_context = get_model_context_config(model_id, model_config)
         self.token_counter = TokenCounter(model_id)
 
         # Default strategies in order of application

@@ -572,6 +572,9 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
         "model_id": model_id,
         "model": model_type,
         "default_headers": default_headers,
+        # Context window and output token limits from ModelSpec
+        "context_window": model_spec.get("contextWindow"),
+        "max_output_tokens": model_spec.get("maxOutputTokens"),
     }
 
 

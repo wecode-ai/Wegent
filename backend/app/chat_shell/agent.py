@@ -325,7 +325,12 @@ class ChatAgent:
 
         # Apply message compression if enabled and model_id is provided
         if model_id and settings.MESSAGE_COMPRESSION_ENABLED:
-            compressor = MessageCompressor(model_id)
+            # Pass model_config to compressor for context window configuration
+            model_config_for_compression = config.model_config if config else None
+            compressor = MessageCompressor(
+                model_id,
+                model_config=model_config_for_compression,
+            )
             result = compressor.compress_if_needed(messages)
 
             if result.was_compressed:

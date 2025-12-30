@@ -151,6 +151,7 @@ class LangChainModelFactory:
                 - api_key: API key for the provider
                 - base_url: Optional custom API endpoint
                 - default_headers: Optional custom headers
+                - max_output_tokens: Optional max output tokens from Model CRD spec
             **kwargs: Additional parameters (temperature, max_tokens, streaming)
 
         Returns:
@@ -164,6 +165,12 @@ class LangChainModelFactory:
             "default_headers": model_config.get("default_headers"),
         }
         model_type = model_config.get("model", "openai")
+
+        # Determine max_tokens: kwargs takes priority, then model_config, then defaults
+        if "max_tokens" not in kwargs:
+            max_output_tokens = model_config.get("max_output_tokens")
+            if max_output_tokens:
+                kwargs["max_tokens"] = max_output_tokens
 
         logger.info(
             "Creating LangChain model: %s, type=%s, key=%s",
