@@ -83,6 +83,10 @@ class LangGraphAgentBuilder:
         self.enable_checkpointing = enable_checkpointing
         self._agent = None
         self._load_skill_tool = load_skill_tool
+        # Track tools with return_direct=True for direct output handling
+        self._return_direct_tools: set[str] = set()
+        # Store GeminiSearchTool reference for streaming support
+        self._gemini_search_tool: GeminiSearchTool | None = None
 
         # Get all LangChain tools from registry
         self.tools: list[BaseTool] = []
@@ -236,14 +240,17 @@ class LangGraphAgentBuilder:
             # Note: GeminiSearchTool uses its own internal system prompt optimized for
             # comprehensive web search, not the main agent's system prompt.
             gemini_search_tool = create_gemini_search_tool(self.llm)
+            # Store reference for streaming support
+            self._gemini_search_tool = gemini_search_tool
             # Use gemini-specific prompt modifier that wraps skill injection
             prompt_modifier = self._create_gemini_prompt_modifier(gemini_search_tool)
             self.tools.append(gemini_search_tool)
 
             logger.info(
                 "[LangGraphAgentBuilder] Created GeminiSearchTool for Google model, "
-                "tools count: %d",
+                "tools count: %d, return_direct: %s",
                 len(self.tools),
+                gemini_search_tool.return_direct,
             )
 
             # Create a dynamic model callable that manages search tool visibility
@@ -542,6 +549,7 @@ class LangGraphAgentBuilder:
                     tool_name = event.get("name", "unknown")
                     # Get run_id to track tool execution pairs
                     run_id = event.get("run_id", "")
+                    tool_input_data = event.get("data", {})
                     logger.info(
                         "[stream_tokens] Tool started: %s (run_id=%s)",
                         tool_name,
@@ -554,9 +562,48 @@ class LangGraphAgentBuilder:
                             {
                                 "name": tool_name,
                                 "run_id": run_id,
-                                "data": event.get("data", {}),
+                                "data": tool_input_data,
                             },
                         )
+
+                    # Special handling for gemini_search: intercept and stream directly
+                    # This provides real-time streaming output instead of waiting for
+                    # the tool to complete and returning all at once.
+                    # gemini_search acts as a sub-agent that receives the full conversation
+                    # context and performs web search using Gemini with google_search.
+                    if tool_name == "gemini_search" and self._gemini_search_tool:
+                        logger.info(
+                            "[stream_tokens] Intercepting gemini_search for streaming, "
+                            "forwarding full conversation context (%d messages) (run_id=%s)",
+                            len(lc_messages),
+                            run_id,
+                        )
+                        # Stream the search results directly with full conversation context
+                        # The sub-agent will receive all messages and perform search
+                        async for (
+                            chunk
+                        ) in self._gemini_search_tool.astream_with_context(lc_messages):
+                            if chunk:
+                                streamed_content = True
+                                yield chunk
+
+                        # Notify tool_end callback
+                        if on_tool_event:
+                            on_tool_event(
+                                "tool_end",
+                                {
+                                    "name": tool_name,
+                                    "run_id": run_id,
+                                    "data": {"output": "[Streamed directly]"},
+                                },
+                            )
+
+                        logger.info(
+                            "[stream_tokens] gemini_search streaming completed, "
+                            "returning early (return_direct=True)"
+                        )
+                        # Return early since gemini_search has return_direct=True
+                        return
 
                 elif kind == "on_tool_end":
                     tool_name = event.get("name", "unknown")
@@ -577,14 +624,40 @@ class LangGraphAgentBuilder:
                                 else str(tool_output)
                             ),
                         )
+                    elif tool_name == "gemini_search":
+                        # If we reach here, it means the streaming interception didn't work
+                        # (e.g., _gemini_search_tool was None). Fall back to non-streaming output.
+                        logger.info(
+                            "[stream_tokens] gemini_search completed (fallback non-streaming), "
+                            "yielding output directly as final response (run_id=%s), output length=%d",
+                            run_id,
+                            len(str(tool_output)),
+                        )
+                        # Notify callback if provided
+                        if on_tool_event:
+                            on_tool_event(
+                                "tool_end",
+                                {
+                                    "name": tool_name,
+                                    "run_id": run_id,
+                                    "data": tool_data,
+                                },
+                            )
+                        # Yield the tool output directly as the final response
+                        if tool_output:
+                            streamed_content = True
+                            yield str(tool_output)
+                        # Return early to stop the agent loop since return_direct=True
+                        # means we should use the tool output as the final response
+                        return
                     else:
                         logger.info(
                             "[stream_tokens] Tool completed: %s (run_id=%s)",
                             tool_name,
                             run_id,
                         )
-                    # Notify callback if provided
-                    if on_tool_event:
+                    # Notify callback if provided (for non-gemini_search tools)
+                    if tool_name != "gemini_search" and on_tool_event:
                         on_tool_event(
                             "tool_end",
                             {
