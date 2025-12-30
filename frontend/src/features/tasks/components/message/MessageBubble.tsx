@@ -125,6 +125,8 @@ export interface MessageBubbleProps {
   onRetry?: (message: Message) => void;
   /** Message type for feedback storage key differentiation */
   feedbackMessageType?: 'original' | 'correction';
+  /** Whether this is a group chat (for enabling message collapsing) */
+  isGroupChat?: boolean;
 }
 
 // Component for rendering a paragraph with hover action button
@@ -236,6 +238,7 @@ const MessageBubble = memo(
     isCurrentUserMessage,
     onRetry,
     feedbackMessageType,
+    isGroupChat,
   }: MessageBubbleProps) {
     // Use trace hook for telemetry (auto-includes user and task context)
     const { trace } = useTraceAction();
@@ -458,8 +461,9 @@ const MessageBubble = memo(
         );
       };
 
-      // Check if message should be collapsible (only for completed AI messages, not streaming)
-      const shouldEnableCollapse = !isStreaming && msg.subtaskStatus !== 'RUNNING';
+      // Check if message should be collapsible (only for completed AI messages in group chat, not streaming)
+      // Only enable collapsing for group chat messages
+      const shouldEnableCollapse = !isStreaming && msg.subtaskStatus !== 'RUNNING' && isGroupChat;
 
       const markdownContent = (
         <MarkdownWithMermaid

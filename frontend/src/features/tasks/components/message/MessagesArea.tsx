@@ -56,6 +56,7 @@ interface StreamingMessageBubbleProps {
   t: (key: string) => string;
   onSendMessage?: (content: string) => void;
   index: number;
+  isGroupChat?: boolean;
 }
 
 function StreamingMessageBubble({
@@ -68,6 +69,7 @@ function StreamingMessageBubble({
   t,
   onSendMessage,
   index,
+  isGroupChat,
 }: StreamingMessageBubbleProps) {
   // Use typewriter effect for streaming content
   const displayContent = useTypewriter(message.content || '');
@@ -110,6 +112,7 @@ function StreamingMessageBubble({
       t={t}
       isWaiting={Boolean(isStreaming && !hasContent && !hasThinking)}
       onSendMessage={onSendMessage}
+      isGroupChat={isGroupChat}
     />
   );
 }
@@ -754,6 +757,7 @@ export default function MessagesArea({
                   t={t}
                   onSendMessage={onSendMessage}
                   index={index}
+                  isGroupChat={isGroupChat}
                 />
               );
             }
@@ -781,6 +785,7 @@ export default function MessagesArea({
                     t={t}
                     onSendMessage={onSendMessage}
                     isCurrentUserMessage={isCurrentUserMessage}
+                    isGroupChat={isGroupChat}
                   />
                   <div className="flex flex-col gap-2">
                     {/* Show progress indicator when correction is in progress */}
@@ -839,6 +844,7 @@ export default function MessagesArea({
                 onSendMessage={onSendMessage}
                 isCurrentUserMessage={isCurrentUserMessage}
                 onRetry={onRetry}
+                isGroupChat={isGroupChat}
               />
             );
           })}
