@@ -50,6 +50,7 @@ class AgentConfig:
     enable_clarification: bool = False
     enable_deep_thinking: bool = True
     skills: list[dict[str, Any]] | None = None  # Skill metadata for prompt injection
+    force_web_search: bool = False  # Force AI to perform web search at least once
 
 
 class ChatAgent:
@@ -313,6 +314,7 @@ class ChatAgent:
                 enable_clarification=config.enable_clarification,
                 enable_deep_thinking=config.enable_deep_thinking,
                 skills=config.skills,
+                force_web_search=config.force_web_search,
             )
 
         return MessageConverter.build_messages(

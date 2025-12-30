@@ -232,7 +232,14 @@
   "web_search": {
     "enable": "Enable web search",
     "disable": "Disable web search",
-    "select_engine": "Select search engine"
+    "select_engine": "Select search engine",
+    "select_mode": "Search mode",
+    "mode_auto": "Auto",
+    "mode_auto_desc": "AI decides whether to search",
+    "mode_on": "On",
+    "mode_on_desc": "Force search with engine",
+    "mode_off": "Off",
+    "mode_off_desc": "Disable search completely"
   },
   "deep_thinking": {
     "enable": "Enable deep thinking",

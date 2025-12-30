@@ -105,6 +105,12 @@ class ChatSendPayload(BaseModel):
     )
     enable_web_search: bool = Field(False, description="Enable web search")
     search_engine: Optional[str] = Field(None, description="Search engine to use")
+    force_web_search: bool = Field(
+        False, description="Force AI to perform web search at least once"
+    )
+    disable_web_search: bool = Field(
+        False, description="Completely disable web search tool"
+    )
     enable_clarification: bool = Field(
         False, description="Enable clarification mode for smart follow-up questions"
     )

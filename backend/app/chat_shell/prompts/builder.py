@@ -248,6 +248,38 @@ The following skills provide specialized guidance for specific tasks. When your 
 """
 
 
+# Force Web Search Prompt
+FORCE_WEB_SEARCH_PROMPT = """
+
+## MANDATORY Web Search Requirement
+
+**IMPORTANT: You MUST use the web_search tool at least once before providing your response.**
+
+This is a user-enforced requirement. Regardless of whether you think the search is necessary:
+1. First, formulate an appropriate search query based on the user's question
+2. Execute the web_search tool with that query
+3. Use the search results to inform and enhance your response
+
+Do NOT skip this step. The user has explicitly requested that web search be performed.
+"""
+
+
+def append_force_web_search_prompt(system_prompt: str, force_web_search: bool) -> str:
+    """
+    Append force web search prompt to system prompt if enabled.
+
+    Args:
+        system_prompt: The original system prompt.
+        force_web_search: Whether to force web search.
+
+    Returns:
+        The system prompt with force web search instructions appended if enabled.
+    """
+    if force_web_search:
+        return system_prompt + FORCE_WEB_SEARCH_PROMPT
+    return system_prompt
+
+
 def append_skill_metadata_prompt(system_prompt: str, skills: list[dict]) -> str:
     """
     Append skill metadata to system prompt.
@@ -273,19 +305,21 @@ def build_system_prompt(
     enable_clarification: bool = False,
     enable_deep_thinking: bool = True,
     skills: list[dict] | None = None,
+    force_web_search: bool = False,
 ) -> str:
     """
     Build the final system prompt with optional enhancements.
 
     This function centralizes all prompt building logic within chat_shell,
-    applying clarification mode, deep thinking mode, and skill metadata
-    based on the provided configuration.
+    applying clarification mode, deep thinking mode, skill metadata,
+    and force web search based on the provided configuration.
 
     Args:
         base_prompt: The base system prompt from Ghost
         enable_clarification: Whether to enable clarification mode
         enable_deep_thinking: Whether to enable deep thinking mode
         skills: List of skill metadata [{"name": "...", "description": "..."}]
+        force_web_search: Whether to force AI to perform web search
 
     Returns:
         The final system prompt with all enhancements applied
@@ -303,5 +337,9 @@ def build_system_prompt(
     # Inject skill metadata if skills are configured
     if skills:
         system_prompt = append_skill_metadata_prompt(system_prompt, skills)
+
+    # Append force web search instructions if enabled
+    if force_web_search:
+        system_prompt = append_force_web_search_prompt(system_prompt, True)
 
     return system_prompt

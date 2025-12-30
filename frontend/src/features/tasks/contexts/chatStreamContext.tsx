@@ -182,6 +182,10 @@ export interface ChatMessageRequest {
   enable_web_search?: boolean;
   /** Search engine to use (when web search is enabled) */
   search_engine?: string;
+  /** Force AI to perform web search */
+  force_web_search?: boolean;
+  /** Completely disable web search tool */
+  disable_web_search?: boolean;
   /** Enable clarification mode for this message */
   enable_clarification?: boolean;
   /** Enable deep thinking mode for this message */
@@ -1154,6 +1158,8 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         attachment_ids: request.attachment_ids,
         enable_web_search: request.enable_web_search,
         search_engine: request.search_engine,
+        force_web_search: request.force_web_search,
+        disable_web_search: request.disable_web_search,
         enable_clarification: request.enable_clarification,
         enable_deep_thinking: request.enable_deep_thinking,
         force_override_bot_model: request.model_id,

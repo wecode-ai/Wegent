@@ -232,7 +232,14 @@
   "web_search": {
     "enable": "启用联网搜索",
     "disable": "禁用联网搜索",
-    "select_engine": "选择搜索引擎"
+    "select_engine": "选择搜索引擎",
+    "select_mode": "搜索模式",
+    "mode_auto": "自动",
+    "mode_auto_desc": "AI 自动判断是否搜索",
+    "mode_on": "启用",
+    "mode_on_desc": "强制使用搜索引擎",
+    "mode_off": "关闭",
+    "mode_off_desc": "禁用搜索功能"
   },
   "deep_thinking": {
     "enable": "启用深度思考",

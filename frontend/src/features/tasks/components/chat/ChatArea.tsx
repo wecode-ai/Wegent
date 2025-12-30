@@ -4,7 +4,7 @@
 
 'use client';
 
-import React, { useEffect, useCallback, useMemo } from 'react';
+import React, { useEffect, useCallback, useMemo, useState } from 'react';
 import { ShieldX } from 'lucide-react';
 import MessagesArea from '../message/MessagesArea';
 import { QuickAccessCards } from './QuickAccessCards';
@@ -14,6 +14,8 @@ import { useChatAreaState } from './useChatAreaState';
 import { useChatStreamHandlers } from './useChatStreamHandlers';
 import { allBotsHavePredefinedModel } from '../selector/ModelSelector';
 import type { Team } from '@/types/api';
+import type { SearchEngine } from '@/apis/chat';
+import { getSearchEngines } from '@/apis/chat';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useRouter } from 'next/navigation';
 import { useTaskContext } from '../../contexts/taskContext';
@@ -64,6 +66,26 @@ export default function ChatArea({
     taskType,
     selectedTeamForNewTask,
   });
+
+  // Web search configuration - fetched from backend
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
+  const [searchEngines, setSearchEngines] = useState<SearchEngine[]>([]);
+
+  // Fetch search engines configuration on mount
+  useEffect(() => {
+    const fetchSearchEngines = async () => {
+      try {
+        const response = await getSearchEngines();
+        setWebSearchEnabled(response.enabled);
+        setSearchEngines(response.engines);
+      } catch (error) {
+        console.error('Failed to fetch search engines:', error);
+        setWebSearchEnabled(false);
+        setSearchEngines([]);
+      }
+    };
+    fetchSearchEngines();
+  }, []);
 
   // Compute subtask info for scroll management
   const subtaskList = selectedTaskDetail?.subtasks ?? [];
@@ -125,6 +147,8 @@ export default function ChatArea({
     shouldHideChatInput: chatState.shouldHideChatInput,
     scrollToBottom,
     selectedContexts: chatState.selectedContexts,
+    webSearchMode: chatState.webSearchMode,
+    selectedSearchEngine: chatState.selectedSearchEngine,
   });
 
   // Determine if there are messages to display (full computation)
@@ -334,6 +358,13 @@ export default function ChatArea({
     onCorrectionModeToggle: chatState.handleCorrectionModeToggle,
     selectedContexts: chatState.selectedContexts,
     setSelectedContexts: chatState.setSelectedContexts,
+    // Web search props
+    webSearchMode: chatState.webSearchMode,
+    setWebSearchMode: chatState.setWebSearchMode,
+    selectedSearchEngine: chatState.selectedSearchEngine,
+    setSelectedSearchEngine: chatState.setSelectedSearchEngine,
+    searchEngines,
+    webSearchEnabled,
     attachmentState: chatState.attachmentState,
     onFileSelect: chatState.handleFileSelect,
     onAttachmentRemove: chatState.handleAttachmentRemove,
