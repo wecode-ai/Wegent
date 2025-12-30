@@ -220,7 +220,7 @@ async def callback_handler(request: CallbackRequest, http_request: Request):
     """
     try:
         client_ip = http_request.client.host if http_request.client else "unknown"
-        logger.info(f"Received callback: body={request} from {client_ip}")
+        logger.info(f"Received callback from {client_ip}")
 
         # Set task context for tracing (function handles OTEL enabled check internally)
         set_task_context(task_id=request.task_id, subtask_id=request.subtask_id)
