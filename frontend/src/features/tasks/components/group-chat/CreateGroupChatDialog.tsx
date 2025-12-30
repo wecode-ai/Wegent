@@ -232,6 +232,7 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
                 selectedTeam={selectedTeam}
                 disabled={isCreating}
                 isLoading={false}
+                taskType="chat"
               />
             </div>
           )}

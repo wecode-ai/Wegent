@@ -199,6 +199,7 @@ export function ChatInputCard({
             setSelectedModel={setSelectedModel}
             forceOverride={forceOverride}
             setForceOverride={setForceOverride}
+            taskType={taskType}
             showRepositorySelector={showRepositorySelector}
             selectedRepo={selectedRepo}
             setSelectedRepo={setSelectedRepo}
