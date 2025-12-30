@@ -196,13 +196,15 @@ class TestHistoryTruncationStrategy:
         counter = TokenCounter(model_id="gpt-4")
         config = CompressionConfig(first_messages_to_keep=1, last_messages_to_keep=2)
 
-        # Create conversation with many messages
-        messages = [{"role": "system", "content": "You are helpful."}]
+        # Create conversation with many messages that exceed the token limit
+        # Use longer content to ensure token count is high enough
+        messages = [{"role": "system", "content": "You are a helpful assistant."}]
         for i in range(10):
-            messages.append({"role": "user", "content": f"Message {i}"})
-            messages.append({"role": "assistant", "content": f"Response {i}"})
+            messages.append({"role": "user", "content": f"This is user message number {i} with some additional text to increase token count."})
+            messages.append({"role": "assistant", "content": f"This is the assistant response number {i} with some additional text to increase token count."})
 
-        compressed, details = strategy.compress(messages, counter, 500, config)
+        # Use a very low target to ensure truncation happens
+        compressed, details = strategy.compress(messages, counter, 50, config)
 
         # Should have fewer messages
         assert len(compressed) < len(messages)
