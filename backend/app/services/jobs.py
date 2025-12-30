@@ -374,13 +374,6 @@ def daily_notification_worker(stop_event: threading.Event):
                         db.close()
                 except Exception as e:
                     logger.error(f"[job] Error in daily summary task: {str(e)}")
-                finally:
-                    try:
-                        loop.run_until_complete(
-                            release_notification_lock(DAILY_NOTIFICATION_LOCK_KEY)
-                        )
-                    except Exception as e:
-                        logger.error(f"[job] Error releasing daily lock: {str(e)}")
 
             loop.close()
         except Exception as e:
