@@ -17,15 +17,21 @@ from collections.abc import AsyncGenerator
 from typing import Any, Callable
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.messages.utils import convert_to_messages
 from langchain_core.tools.base import BaseTool
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.errors import GraphRecursionError
 from langgraph.prebuilt import create_react_agent
 
 from ..tools.base import ToolRegistry
 
 logger = logging.getLogger(__name__)
+
+# Message to send to model when tool call limit is reached
+TOOL_LIMIT_REACHED_MESSAGE = """[SYSTEM NOTICE] Tool call limit reached. You have made too many tool calls in this conversation.
+
+Please provide your final response to the user based on the information you have gathered so far. Do NOT attempt to call any more tools - simply summarize your findings and provide a helpful response."""
 
 
 class LangGraphAgentBuilder:
@@ -442,6 +448,45 @@ class LangGraphAgentBuilder:
                 streamed_content,
             )
 
+        except GraphRecursionError:
+            # Tool call limit reached - ask model to provide final response
+            logger.warning(
+                "[stream_tokens] GraphRecursionError: Tool call limit reached (max_iterations=%d). "
+                "Asking model to provide final response.",
+                self.max_iterations,
+            )
+
+            # Build messages with the limit reached notice
+            # Add a human message to prompt the model to provide final response
+            limit_messages = list(lc_messages) + [
+                HumanMessage(content=TOOL_LIMIT_REACHED_MESSAGE)
+            ]
+
+            # Call the LLM directly (without tools) to get final response
+            try:
+                async for chunk in self.llm.astream(limit_messages):
+                    if hasattr(chunk, "content"):
+                        content = chunk.content
+                        if isinstance(content, str) and content:
+                            yield content
+                        elif isinstance(content, list):
+                            for part in content:
+                                if isinstance(part, str) and part:
+                                    yield part
+                                elif isinstance(part, dict):
+                                    text = part.get("text", "")
+                                    if text:
+                                        yield text
+
+                logger.info(
+                    "[stream_tokens] Final response generated after tool limit reached"
+                )
+            except Exception:
+                logger.exception(
+                    "Error generating final response after tool limit reached"
+                )
+                raise
+
         except Exception:
             logger.exception("Error in stream_tokens")
             raise
@@ -590,6 +635,51 @@ class LangGraphAgentBuilder:
             )
 
             return final_state, all_events
+
+        except GraphRecursionError:
+            # Tool call limit reached - ask model to provide final response
+            logger.warning(
+                "[stream_events_with_state] GraphRecursionError: Tool call limit reached (max_iterations=%d). "
+                "Asking model to provide final response.",
+                self.max_iterations,
+            )
+
+            # Build messages with the limit reached notice
+            limit_messages = list(lc_messages) + [
+                HumanMessage(content=TOOL_LIMIT_REACHED_MESSAGE)
+            ]
+
+            # Call the LLM directly (without tools) to get final response
+            try:
+                response = await self.llm.ainvoke(limit_messages)
+                final_content = ""
+                if hasattr(response, "content"):
+                    if isinstance(response.content, str):
+                        final_content = response.content
+                    elif isinstance(response.content, list):
+                        text_parts = []
+                        for part in response.content:
+                            if isinstance(part, str):
+                                text_parts.append(part)
+                            elif isinstance(part, dict) and part.get("type") == "text":
+                                text_parts.append(part.get("text", ""))
+                        final_content = "".join(text_parts)
+
+                # Create a final state with the response
+                final_state = {
+                    "messages": list(lc_messages) + [AIMessage(content=final_content)]
+                }
+
+                logger.info(
+                    "[stream_events_with_state] Final response generated after tool limit reached"
+                )
+                return final_state, all_events
+
+            except Exception:
+                logger.exception(
+                    "Error generating final response after tool limit reached"
+                )
+                raise
 
         except Exception:
             logger.exception("Error in stream_events_with_state")
