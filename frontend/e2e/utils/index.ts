@@ -26,6 +26,15 @@ export type { CleanupResource, CleanupResourceType } from './cleanup';
 
 // Helpers
 export {
+  // Smart wait utilities (use these instead of waitForTimeout)
+  waitForPageStable,
+  waitForLoadingComplete,
+  waitForContentReady,
+  waitForApiCall,
+  waitForDialogOpen,
+  waitForDialogClose,
+  waitForToast,
+  // Legacy wait utilities
   waitForElement,
   waitForElementHidden,
   waitForNavigation,

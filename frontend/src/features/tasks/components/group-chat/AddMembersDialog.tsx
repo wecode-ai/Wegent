@@ -4,8 +4,8 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Search, UserPlus, X, Check, Copy } from 'lucide-react';
+import { useState } from 'react';
+import { UserPlus, X, Check, Copy } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -17,16 +17,13 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { useToast } from '@/hooks/use-toast';
 import { taskMemberApi } from '@/apis/task-member';
 import { useTranslation } from '@/hooks/useTranslation';
-import { userApis } from '@/apis/user';
+import type { SearchUser } from '@/types/api';
+import { UserSearchSelect } from '@/components/common/UserSearchSelect';
 
-interface User {
-  id: number;
-  user_name: string;
-  email?: string;
+interface User extends SearchUser {
   isUnregistered?: boolean; // Mark user as not registered in platform
 }
 
@@ -50,10 +47,7 @@ export function AddMembersDialog({
   const { t } = useTranslation();
   const { toast } = useToast();
 
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<User[]>([]);
   const [selectedUsers, setSelectedUsers] = useState<User[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
   const [isAdding, setIsAdding] = useState(false);
   const [showInviteLink, setShowInviteLink] = useState(false);
   const [addedCount, setAddedCount] = useState(0);
@@ -61,42 +55,9 @@ export function AddMembersDialog({
   const [inviteUrl, setInviteUrl] = useState<string>('');
   const [copied, setCopied] = useState(false);
 
-  // Search users with debounce
-  useEffect(() => {
-    if (!searchQuery.trim()) {
-      setSearchResults([]);
-      return;
-    }
-
-    const timeoutId = setTimeout(async () => {
-      setIsSearching(true);
-      try {
-        // Call user search API (you need to implement this endpoint)
-        const response = await userApis.searchUsers(searchQuery);
-        setSearchResults(response.users || []);
-      } catch (error) {
-        console.error('Failed to search users:', error);
-        setSearchResults([]);
-      } finally {
-        setIsSearching(false);
-      }
-    }, 300);
-
-    return () => clearTimeout(timeoutId);
-  }, [searchQuery]);
-
-  const handleSelectUser = (user: User) => {
-    if (!selectedUsers.find(u => u.id === user.id || u.user_name === user.user_name)) {
-      setSelectedUsers([...selectedUsers, user]);
-    }
-    setSearchQuery('');
-    setSearchResults([]);
-  };
-
   // Add unregistered user by name
-  const handleAddUnregisteredUser = () => {
-    const username = searchQuery.trim();
-    if (!username) return;
+  const handleAddUnregisteredUser = (username: string) => {
+    if (!username.trim()) return;
 
     // Check if already added
     if (selectedUsers.find(u => u.user_name === username)) {
@@ -111,7 +72,6 @@ export function AddMembersDialog({
     };
 
     setSelectedUsers([...selectedUsers, unregisteredUser]);
-    setSearchQuery('');
   };
 
   const handleRemoveUser = (userId: number) => {
@@ -263,8 +223,6 @@ export function AddMembersDialog({
   };
 
   const handleClose = () => {
-    setSearchQuery('');
-    setSearchResults([]);
     setSelectedUsers([]);
     setShowInviteLink(false);
     setAddedCount(0);
@@ -335,61 +293,34 @@ export function AddMembersDialog({
 
         {!showInviteLink ? (
           <div className="space-y-4">
-            {/* Search Input */}
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted" />
-              <Input
-                placeholder={t('chat:groupChat.addMembers.searchPlaceholder')}
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                className="pl-9"
-                autoFocus
-              />
-            </div>
-
-            {/* Search Results */}
-            {searchResults.length > 0 && (
-              <ScrollArea className="h-48 border rounded-md">
-                <div className="p-2">
-                  {searchResults.map(user => (
-                    <button
-                      key={user.id}
-                      onClick={() => handleSelectUser(user)}
-                      disabled={selectedUsers.some(u => u.id === user.id)}
-                      className="w-full flex items-center gap-3 p-2 rounded-md hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <div className="flex-1 text-left">
-                        <div className="font-medium text-sm">{user.user_name}</div>
-                        {user.email && <div className="text-xs text-text-muted">{user.email}</div>}
-                      </div>
-                      {selectedUsers.some(u => u.id === user.id) && (
-                        <Check className="h-4 w-4 text-green-500" />
-                      )}
-                    </button>
-                  ))}
+            {/* User Search Select with custom no-results and selected users rendering */}
+            <UserSearchSelect<User>
+              selectedUsers={selectedUsers}
+              onSelectedUsersChange={setSelectedUsers}
+              placeholder={t('chat:groupChat.addMembers.searchPlaceholder')}
+              autoFocus
+              hideSelectedUsers
+              renderNoResults={(searchQuery, clearSearch) => (
+                <div className="space-y-2">
+                  <div className="text-center text-sm text-text-muted py-2">
+                    {t('chat:groupChat.addMembers.noResults')}
+                  </div>
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => {
+                      handleAddUnregisteredUser(searchQuery);
+                      clearSearch();
+                    }}
+                  >
+                    <UserPlus className="h-4 w-4 mr-2" />
+                    {t('chat:groupChat.addMembers.addAsUnregistered', { name: searchQuery })}
+                  </Button>
                 </div>
-              </ScrollArea>
-            )}
+              )}
+            />
 
-            {isSearching && (
-              <div className="text-center text-sm text-text-muted py-4">
-                {t('chat:groupChat.addMembers.searching')}
-              </div>
-            )}
-
-            {searchQuery && !isSearching && searchResults.length === 0 && (
-              <div className="space-y-2">
-                <div className="text-center text-sm text-text-muted py-2">
-                  {t('chat:groupChat.addMembers.noResults')}
-                </div>
-                <Button variant="outline" className="w-full" onClick={handleAddUnregisteredUser}>
-                  <UserPlus className="h-4 w-4 mr-2" />
-                  {t('chat:groupChat.addMembers.addAsUnregistered', { name: searchQuery })}
-                </Button>
-              </div>
-            )}
-
-            {/* Selected Users */}
+            {/* Selected Users - Custom rendering with unregistered badge */}
             {selectedUsers.length > 0 && (
               <div className="space-y-2">
                 <div className="text-sm font-medium">

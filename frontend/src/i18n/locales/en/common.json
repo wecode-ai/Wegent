@@ -149,7 +149,8 @@
     "dify_parameters_refresh": "Refresh parameters",
     "dify_no_parameters": "No parameters configured for this application.",
     "custom_shell": "Custom",
-    "public_model": "Public"
+    "public_model": "Public",
+    "fine_tune_prompt": "Fine-tune Prompt"
   },
   "bots": {
     "title": "AI Assistant",
@@ -570,6 +571,11 @@
     "warning": "Warning",
     "cannotUndo": "This action cannot be undone",
     "coming_soon": "Coming Soon"
+  },
+  "userSearch": {
+    "placeholder": "Search username or email...",
+    "selectedUsers": "{{count}} user(s) selected",
+    "noResults": "No users found"
   },
   "quota": {
     "load_failed": "Failed to fetch quota info",

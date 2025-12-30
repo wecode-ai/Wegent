@@ -93,7 +93,7 @@ class LangGraphAgentBuilder:
                 content = msg.content if hasattr(msg, "content") else str(msg)
                 content_str = content if isinstance(content, str) else str(content)
                 # Print FULL content without truncation
-                logger.info("[prompt_modifier] " + content_str)
+                # logger.info("[prompt_modifier] " + content_str)
 
             logger.info("[prompt_modifier] ========== MODEL INPUT END ==========")
 

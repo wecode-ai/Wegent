@@ -172,7 +172,8 @@
     "dify_parameters_refresh": "刷新参数",
     "dify_no_parameters": "此应用未配置输入参数。",
     "custom_shell": "自定义",
-    "public_model": "公共"
+    "public_model": "公共",
+    "fine_tune_prompt": "微调提示词"
   },
   "messages": {
     "copy_markdown": "复制 Markdown 内容",
@@ -571,6 +572,11 @@
     "warning": "警告",
     "cannotUndo": "此操作无法撤销",
     "coming_soon": "即将推出"
+  },
+  "userSearch": {
+    "placeholder": "搜索用户名或邮箱...",
+    "selectedUsers": "已选择 {{count}} 个用户",
+    "noResults": "未找到用户"
   },
   "quota": {
     "load_failed": "用量信息获取失败",

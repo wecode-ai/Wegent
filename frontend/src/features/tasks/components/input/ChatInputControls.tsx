@@ -26,6 +26,7 @@ import type {
 } from '@/types/api';
 import type { ContextItem } from '@/types/context';
 import { isChatShell } from '../../service/messageService';
+import { supportsAttachments } from '../../service/attachmentService';
 
 export interface ChatInputControlsProps {
   // Team and Model
@@ -219,8 +220,8 @@ export function ChatInputControls({
           />
         )}
 
-        {/* File Upload Button - always show for chat shell */}
-        {isChatShell(selectedTeam) && (
+        {/* File Upload Button - show for shells that support attachments (Chat, ClaudeCode) */}
+        {supportsAttachments(selectedTeam) && (
           <AttachmentButton onFileSelect={onFileSelect} disabled={isLoading || isStreaming} />
         )}
 

@@ -2,28 +2,29 @@ import { defineConfig, devices } from '@playwright/test';
 
 /**
  * Playwright configuration for Wegent E2E testing
+ * Optimized for faster execution while maintaining test reliability
  * @see https://playwright.dev/docs/test-configuration
  */
 export default defineConfig({
   testDir: './e2e/tests',
 
-  /* Run tests in parallel within same file, but limit workers to avoid data conflicts */
-  fullyParallel: false,
-  workers: process.env.CI ? 2 : 3,
+  /* Enable full parallelization for faster execution */
+  fullyParallel: true,
+  /* Increase workers: CI uses more workers per shard, local uses available CPUs */
+  workers: process.env.CI ? 4 : '50%',
 
   /* Fail the build on CI if you accidentally left test.only in the source code */
   forbidOnly: !!process.env.CI,
 
-  /* Retry on CI only */
-  retries: process.env.CI ? 2 : 0,
+  /* Retry once on CI to handle flaky tests, reduce from 2 to 1 for speed */
+  retries: process.env.CI ? 1 : 0,
 
-  /* Reporter to use */
+  /* Reporter to use - use blob reporter for sharded runs */
   reporter: process.env.CI
     ? [
         ['list'],
-        ['json', { outputFile: 'e2e-results.json' }],
+        ['blob', { outputDir: 'blob-report' }],
         ['html', { open: 'never' }],
-        ['junit', { outputFile: 'e2e-results.xml' }],
       ]
     : [['html', { open: 'never' }], ['list']],
 
@@ -35,19 +36,14 @@ export default defineConfig({
     /* Base URL to use in actions like `await page.goto('/')` */
     baseURL: process.env.E2E_BASE_URL || 'http://localhost:3000',
 
-    /* Collect trace when retrying the failed test */
-    trace: {
-      mode: 'retain-on-failure',
-      snapshots: true,
-      screenshots: true,
-      sources: true,
-    },
+    /* Collect trace only on first retry to save time */
+    trace: 'on-first-retry',
 
     /* Capture screenshot only on failure */
     screenshot: 'only-on-failure',
 
-    /* Record video only on failure */
-    video: 'retain-on-failure',
+    /* Disable video recording for speed (enable only when debugging) */
+    video: 'off',
 
     /* Test ID attribute for locators */
     testIdAttribute: 'data-testid',
@@ -55,7 +51,7 @@ export default defineConfig({
     /* Viewport size */
     viewport: { width: 1280, height: 720 },
 
-    /* Action timeout */
+    /* Action timeout - keep at 15s for API calls that may take longer */
     actionTimeout: 15000,
 
     /* Navigation timeout */
@@ -114,7 +110,7 @@ export default defineConfig({
     },
   ],
 
-  /* Timeout for each test */
+  /* Test timeout - keep at 60s for complex tests */
   timeout: 60000,
 
   /* Timeout for each expect assertion */
