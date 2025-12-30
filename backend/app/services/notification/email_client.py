@@ -39,7 +39,7 @@ class EmailClient:
         self.login_user = (
             settings.EMAIL_LOGIN_USER
         )  # Login username (may differ from sender)
-        self.password = settings.EMAIL_password
+        self.password = settings.EMAIL_PASSWORD
         self.use_tls = settings.EMAIL_USE_TLS
 
     def send_html_email(

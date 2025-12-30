@@ -206,7 +206,7 @@ class Settings(BaseSettings):
     EMAIL_SMTP_PORT: int = 25
     EMAIL_SENDER: str = ""
     EMAIL_LOGIN_USER: str = ""  # Login username (may differ from sender email)
-    EMAIL_password: str = ""
+    EMAIL_PASSWORD: str = ""
     EMAIL_USE_TLS: bool = False
     # Daily summary notification hour (0-23, default 18:00)
     DAILY_SUMMARY_HOUR: int = 18

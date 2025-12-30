@@ -45,6 +45,13 @@ logger = logging.getLogger(__name__)
 # Built-in tool definition for Google web search
 GOOGLE_WEB_SEARCH_TOOL = {"google_search": {}}
 
+# Thinking level configuration based on model type
+# For Gemini models with google_search tool, we need to set appropriate thinking levels
+# - pro models: "low" - minimizes latency while maintaining some reasoning
+# - flash models: "minimal" - minimizes latency, model likely will not think
+THINKING_LEVEL_PRO = "low"
+THINKING_LEVEL_FLASH = "minimal"
+
 # Default system prompt for the internal research agent
 # This prompt guides the internal LLM to act as a comprehensive research agent
 # that thoroughly investigates topics and returns well-organized research reports
@@ -411,6 +418,27 @@ class GeminiSearchTool(BaseTool):
         """
         self._called_this_turn = False
 
+    def _get_thinking_level(self, model_name: str) -> str:
+        """Determine the appropriate thinking level based on model name.
+
+        For Gemini models with google_search tool, we need to set appropriate
+        thinking levels to optimize latency:
+        - pro models: "low" - minimizes latency while maintaining some reasoning
+        - flash models: "minimal" - minimizes latency, model likely will not think
+
+        Args:
+            model_name: The Gemini model name (e.g., "gemini-2.0-flash", "gemini-2.5-pro")
+
+        Returns:
+            The thinking level string ("low" or "minimal")
+        """
+        model_lower = model_name.lower()
+        if "pro" in model_lower:
+            return THINKING_LEVEL_PRO
+        else:
+            # Default to minimal for flash and other models
+            return THINKING_LEVEL_FLASH
+
     def _get_streaming_llm(self) -> Any:
         """Get or create a streaming Gemini LLM instance with google_search.
 
@@ -501,12 +529,36 @@ class GeminiSearchTool(BaseTool):
         # Mark as called BEFORE executing
         self._called_this_turn = True
 
-        # Use isolated config with no callbacks
-        isolated_config = {"callbacks": [], "run_name": "gemini_search_streaming"}
-
         try:
             # Get the streaming LLM
             llm = self._get_streaming_llm()
+
+            # Get model name for thinking level determination
+            model_name = self.model
+            if self.llm is not None:
+                config = _extract_llm_config(self.llm)
+                model_name = config.get("model", self.model)
+
+            # Determine thinking level based on model type
+            # - pro models: "low" - minimizes latency while maintaining some reasoning
+            # - flash models: "minimal" - minimizes latency, model likely will not think
+            thinking_level = self._get_thinking_level(model_name)
+
+            # Build generation_config with thinkingConfig for optimized search performance
+            # This follows the Gemini API format: generationConfig.thinkingConfig.thinkingLevel
+            generation_config = {"thinkingConfig": {"thinkingLevel": thinking_level}}
+
+            # Use isolated config with no callbacks
+            isolated_config = {
+                "callbacks": [],
+                "run_name": "gemini_search_streaming",
+            }
+
+            logger.info(
+                "[GeminiSearchTool] Using thinkingLevel=%s for model=%s",
+                thinking_level,
+                model_name,
+            )
 
             # Process messages: enhance system prompt with search instructions
             processed_messages = []
@@ -549,22 +601,112 @@ You are now in web research mode. You have access to the google_search tool to f
                     "[GeminiSearchTool] No system message found, prepended default search prompt"
                 )
 
-            # Stream the response
-            async for chunk in llm.astream(processed_messages, config=isolated_config):
-                if hasattr(chunk, "content"):
-                    content = chunk.content
-                    if isinstance(content, str) and content:
-                        yield content
-                    elif isinstance(content, list):
-                        for part in content:
-                            if isinstance(part, str) and part:
-                                yield part
-                            elif isinstance(part, dict):
-                                text = part.get("text", "")
-                                if text:
-                                    yield text
+            # Stream the response with generation_config containing thinkingConfig
+            # The generation_config is passed as a keyword argument to control thinking behavior:
+            # - thinkingConfig.thinkingLevel: "low" for pro models, "minimal" for flash models
+            # This follows the same pattern as invoke() with generation_config parameter
+            #
+            # Retry logic: If we get UNEXPECTED_TOOL_CALL error on the first chunk, retry once
+            # This preserves streaming behavior since UNEXPECTED_TOOL_CALL typically occurs
+            # on the first chunk with empty content, before any real content is streamed.
+            max_retries = 2
+            for attempt in range(max_retries):
+                chunk_count = 0
+                total_content_len = 0
+                unexpected_tool_call = False
+                has_yielded_content = False
 
-            logger.info("[GeminiSearchTool] Streaming search with context completed")
+                async for chunk in llm.astream(
+                    processed_messages,
+                    config=isolated_config,
+                    generation_config=generation_config,
+                ):
+                    chunk_count += 1
+
+                    # Check for UNEXPECTED_TOOL_CALL in response_metadata
+                    # This typically occurs on the first chunk with empty content
+                    if hasattr(chunk, "response_metadata"):
+                        metadata = chunk.response_metadata
+                        if isinstance(metadata, dict):
+                            finish_reason = metadata.get("finish_reason", "")
+                            if finish_reason == "UNEXPECTED_TOOL_CALL":
+                                unexpected_tool_call = True
+                                logger.warning(
+                                    "[GeminiSearchTool] Got UNEXPECTED_TOOL_CALL, "
+                                    "attempt=%d/%d, has_yielded=%s",
+                                    attempt + 1,
+                                    max_retries,
+                                    has_yielded_content,
+                                )
+                                break
+
+                    if hasattr(chunk, "content"):
+                        content = chunk.content
+                        if isinstance(content, str) and content:
+                            total_content_len += len(content)
+                            has_yielded_content = True
+                            yield content
+                        elif isinstance(content, list):
+                            for part in content:
+                                if isinstance(part, str) and part:
+                                    total_content_len += len(part)
+                                    has_yielded_content = True
+                                    yield part
+                                elif isinstance(part, dict):
+                                    text = part.get("text", "")
+                                    if text:
+                                        total_content_len += len(text)
+                                        has_yielded_content = True
+                                        yield text
+                        # Log when content is empty or unexpected
+                        elif content == "" or content == []:
+                            logger.debug(
+                                "[GeminiSearchTool] Chunk #%d has empty content",
+                                chunk_count,
+                            )
+                    else:
+                        logger.debug(
+                            "[GeminiSearchTool] Chunk #%d has no content attr, type=%s",
+                            chunk_count,
+                            type(chunk).__name__,
+                        )
+
+                # If we got UNEXPECTED_TOOL_CALL and haven't yielded any content yet,
+                # we can safely retry
+                if (
+                    unexpected_tool_call
+                    and not has_yielded_content
+                    and attempt < max_retries - 1
+                ):
+                    logger.info(
+                        "[GeminiSearchTool] Retrying due to UNEXPECTED_TOOL_CALL..."
+                    )
+                    continue
+
+                # If we got UNEXPECTED_TOOL_CALL and either:
+                # - This is the last attempt, or
+                # - We've already yielded content (can't retry cleanly)
+                # Then raise exception so user can retry
+                if unexpected_tool_call:
+                    error_msg = (
+                        "搜索服务暂时不可用，请稍后重试。"
+                        "(Search service temporarily unavailable, please try again later.)"
+                    )
+                    logger.error(
+                        "[GeminiSearchTool] UNEXPECTED_TOOL_CALL after %d attempts",
+                        attempt + 1,
+                    )
+                    raise Exception(error_msg)
+
+                # Success
+                logger.info(
+                    "[GeminiSearchTool] Streaming search with context completed, "
+                    "chunks=%d, total_content_len=%d, attempt=%d",
+                    chunk_count,
+                    total_content_len,
+                    attempt + 1,
+                )
+                break  # Success, exit retry loop
 
         except Exception as e:
             error_msg = f"Search failed: {str(e)}. Please try rephrasing your query or proceed without search results."
