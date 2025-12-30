@@ -14,18 +14,18 @@ import json
 import time
 
 import requests
-from shared.logger import setup_logger
-from shared.utils.http_util import build_payload
-
 from executor_manager.config.config import (API_MAX_RETRIES, API_RETRY_BACKOFF,
                                             API_RETRY_DELAY, API_TIMEOUT,
                                             CALLBACK_TASK_API_URL,
                                             FETCH_TASK_API_BASE_URL,
                                             OFFLINE_TASK_FETCH_LIMIT,
                                             TASK_FETCH_LIMIT,
-                                            TASK_FETCH_STATUS)
+                                            TASK_FETCH_STATUS,
+                                            WHITELIST_ENABLED)
 # Import the shared logger
 from executor_manager.executors.dispatcher import ExecutorDispatcher
+from shared.logger import setup_logger
+from shared.utils.http_util import build_payload
 
 logger = setup_logger(__name__)
 
@@ -42,6 +42,7 @@ class TaskApiClient:
         limit=TASK_FETCH_LIMIT,
         task_status=TASK_FETCH_STATUS,
         offline_limit=OFFLINE_TASK_FETCH_LIMIT,
+        whitelist_enabled=WHITELIST_ENABLED,
     ):
         self.fetch_task_api_base_url = FETCH_TASK_API_BASE_URL
         self.callback_task_api_url = CALLBACK_TASK_API_URL
@@ -52,6 +53,7 @@ class TaskApiClient:
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.retry_backoff = retry_backoff
+        self.whitelist_enabled = whitelist_enabled
 
     def _request_with_retry(self, request_func, max_retries=None):
         """Generic request retry logic"""
@@ -90,19 +92,38 @@ class TaskApiClient:
     def _do_fetch_tasks(self):
         # Build URL with query parameters
         url = f"{self.fetch_task_api_base_url}?limit={self.limit}&task_status={self.task_status}"
+        # Add whitelist_enabled parameter if set
+        if self.whitelist_enabled is not None:
+            url += f"&whitelist_enabled={str(self.whitelist_enabled).lower()}"
         logger.info(f"Fetching tasks from: {url}")
         response = requests.post(url, timeout=self.timeout)
         return self._handle_response(
             response, expect_json=True, context="fetching tasks"
         )
-        
+
     def update_fetch_params(self, limit=None, task_status=None):
         """Update task fetch parameters"""
         if limit is not None:
             self.limit = limit
         if task_status is not None:
             self.task_status = task_status
-        logger.info(f"Updated fetch parameters: limit={self.limit}, task_status={self.task_status}")
+        logger.info(
+            f"Updated fetch parameters: limit={self.limit}, task_status={self.task_status}"
+        )
+
+    def update_whitelist_params(self, whitelist_enabled=None):
+        """Update whitelist filter parameter
+
+        Args:
+            whitelist_enabled:
+                - True: Only fetch tasks from whitelisted users
+                - False: Only fetch tasks from non-whitelisted users
+                - None: No filtering, fetch all tasks
+        """
+        self.whitelist_enabled = whitelist_enabled
+        logger.info(
+            f"Updated whitelist parameters: whitelist_enabled={self.whitelist_enabled}"
+        )
 
     def update_task_status_by_fields(self, task_id, subtask_id, progress=0, **kwargs):
         """Update task status in API"""
@@ -177,19 +198,21 @@ class TaskApiClient:
             raise requests.RequestException(
                 f"Server error ({response.status_code}) during {context}"
             )
-            
+
     def fetch_subtasks(self, task_id):
         """Fetch subtasks for a specific task ID"""
         logger.info(f"Fetching subtasks for task ID: {task_id}")
         try:
-            return self._request_with_retry(lambda: self._do_fetch_subtasks(task_id), max_retries=1)
+            return self._request_with_retry(
+                lambda: self._do_fetch_subtasks(task_id), max_retries=1
+            )
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse response data: {e}")
             return False, str(e)
         except Exception as e:
             logger.error(f"Unexpected error during fetch_subtasks: {e}")
             return False, str(e)
-            
+
     def _do_fetch_subtasks(self, task_id):
         """Execute the API request to fetch subtasks for a specific task ID"""
         # Build URL with query parameters
@@ -199,7 +222,7 @@ class TaskApiClient:
         return self._handle_response(
             response, expect_json=True, context=f"fetching subtasks for task {task_id}"
         )
-    
+
     def fetch_offline_tasks(self):
         """Fetch offline tasks from API"""
         logger.info("Fetching offline tasks...")
@@ -211,17 +234,20 @@ class TaskApiClient:
         except Exception as e:
             logger.error(f"Unexpected error during fetch_offline_tasks: {e}")
             return False, str(e)
-    
+
     def _do_fetch_offline_tasks(self):
         """Execute the API request to fetch offline tasks"""
         # Build URL with query parameters for offline tasks
         url = f"{self.fetch_task_api_base_url}?limit={self.offline_limit}&task_status={self.task_status}&type=offline"
+        # Add whitelist_enabled parameter if set
+        if self.whitelist_enabled is not None:
+            url += f"&whitelist_enabled={str(self.whitelist_enabled).lower()}"
         logger.info(f"Fetching offline tasks from: {url}")
         response = requests.post(url, timeout=self.timeout)
         return self._handle_response(
             response, expect_json=True, context="fetching offline tasks"
         )
-    
+
     def update_offline_fetch_params(self, limit=None):
         """Update offline task fetch parameters"""
         if limit is not None:
