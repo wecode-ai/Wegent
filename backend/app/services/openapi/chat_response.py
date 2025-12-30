@@ -44,7 +44,7 @@ async def create_streaming_response(
     input_text: str,
     tool_settings: Dict[str, Any],
     task_id: Optional[int] = None,
-    api_trusted_source: Optional[str] = None,
+    api_key_name: Optional[str] = None,
 ) -> StreamingResponse:
     """
     Create a streaming response for Chat Shell type teams.
@@ -60,7 +60,7 @@ async def create_streaming_response(
         input_text: Extracted input text
         tool_settings: Parsed tool settings (enable_mcp, enable_web_search, search_engine)
         task_id: Optional existing task ID for follow-up conversations
-        api_trusted_source: Optional API trusted source name (from wegent-source header)
+        api_key_name: Optional API key name
 
     Returns:
         StreamingResponse with SSE events
@@ -76,7 +76,7 @@ async def create_streaming_response(
         input_text,
         tool_settings,
         task_id,
-        api_trusted_source,
+        api_key_name,
     )
 
     response_id = f"resp_{setup.task_id}"
@@ -359,7 +359,7 @@ async def create_sync_response(
     input_text: str,
     tool_settings: Dict[str, Any],
     task_id: Optional[int] = None,
-    api_trusted_source: Optional[str] = None,
+    api_key_name: Optional[str] = None,
 ) -> ResponseObject:
     """
     Create a synchronous (blocking) response for Chat Shell type teams.
@@ -375,7 +375,7 @@ async def create_sync_response(
         input_text: Extracted input text
         tool_settings: Parsed tool settings (enable_mcp, enable_web_search, search_engine)
         task_id: Optional existing task ID for follow-up conversations
-        api_trusted_source: Optional API trusted source name (from wegent-source header)
+        api_key_name: Optional API key name
 
     Returns:
         ResponseObject with completed status and output
@@ -397,7 +397,7 @@ async def create_sync_response(
         input_text,
         tool_settings,
         task_id,
-        api_trusted_source,
+        api_key_name,
     )
 
     response_id = f"resp_{setup.task_id}"

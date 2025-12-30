@@ -42,7 +42,7 @@ def setup_chat_session(
     input_text: str,
     tool_settings: Dict[str, Any],
     task_id: Optional[int] = None,
-    api_trusted_source: Optional[str] = None,
+    api_key_name: Optional[str] = None,
 ) -> ChatSessionSetup:
     """
     Set up chat session: build config, create task and subtasks.
@@ -55,7 +55,7 @@ def setup_chat_session(
         input_text: User input text
         tool_settings: Tool settings
         task_id: Optional existing task ID
-        api_trusted_source: Optional API trusted source name (from wegent-source header)
+        api_key_name: Optional API key name
 
     Returns:
         ChatSessionSetup with task, subtasks, and config
@@ -208,11 +208,7 @@ def setup_chat_session(
                         if model_info.get("model_id")
                         else {}
                     ),
-                    **(
-                        {"api_trusted_source": api_trusted_source}
-                        if api_trusted_source
-                        else {}
-                    ),
+                    **({"api_key_name": api_key_name} if api_key_name else {}),
                 },
             },
             "apiVersion": "agent.wecode.io/v1",

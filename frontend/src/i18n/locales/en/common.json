@@ -930,13 +930,19 @@
     "delete_confirm_message": "Are you sure you want to delete the API key \"{{name}}\"? This action cannot be undone.",
     "create_success": "API key created successfully",
     "delete_success": "API key deleted successfully",
+    "enabled_success": "API key enabled",
+    "disabled_success": "API key disabled",
     "warning_save_key": "Please save this key now. You won't be able to see it again!",
     "no_keys": "No API keys yet",
     "no_keys_description": "Create an API key to access Wegent programmatically",
+    "status_disabled": "Disabled",
+    "enable": "Enable",
+    "disable": "Disable",
     "errors": {
       "load_failed": "Failed to load API keys",
       "create_failed": "Failed to create API key",
       "delete_failed": "Failed to delete API key",
+      "toggle_failed": "Failed to toggle API key status",
       "name_required": "Key name is required"
     }
   },

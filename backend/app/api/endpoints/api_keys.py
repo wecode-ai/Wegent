@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
-from app.models.api_key import APIKey
+from app.models.api_key import KEY_TYPE_PERSONAL, APIKey
 from app.models.user import User
 from app.schemas.api_key import (
     APIKeyCreate,
@@ -31,10 +31,13 @@ async def list_api_keys(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
-    """Get all API keys for the current user."""
+    """Get all personal API keys for the current user (including disabled ones)."""
     keys = (
         db.query(APIKey)
-        .filter(APIKey.user_id == current_user.id, APIKey.is_active == True)
+        .filter(
+            APIKey.user_id == current_user.id,
+            APIKey.key_type == KEY_TYPE_PERSONAL,
+        )
         .order_by(APIKey.created_at.desc())
         .all()
     )
@@ -52,7 +55,7 @@ async def create_api_key(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
-    """Create a new API key for the current user.
+    """Create a new personal API key for the current user.
 
     The full key is only returned once at creation time.
     Store it securely as it cannot be retrieved again.
@@ -73,6 +76,8 @@ async def create_api_key(
         key_hash=key_hash,
         key_prefix=key_prefix,
         name=api_key_create.name,
+        key_type=KEY_TYPE_PERSONAL,
+        description=api_key_create.description or "",
     )
 
     db.add(api_key)
@@ -84,6 +89,7 @@ async def create_api_key(
         id=api_key.id,
         name=api_key.name,
         key_prefix=api_key.key_prefix,
+        description=api_key.description,
         key=full_key,
         expires_at=api_key.expires_at,
         last_used_at=api_key.last_used_at,
@@ -92,18 +98,50 @@ async def create_api_key(
     )
 
 
+@router.post("/{key_id}/toggle-status", response_model=APIKeyResponse)
+async def toggle_api_key_status(
+    key_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Toggle a personal API key's active status (enable/disable)."""
+    api_key = (
+        db.query(APIKey)
+        .filter(
+            APIKey.id == key_id,
+            APIKey.user_id == current_user.id,
+            APIKey.key_type == KEY_TYPE_PERSONAL,
+        )
+        .first()
+    )
+
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="API key not found",
+        )
+
+    # Toggle is_active status
+    api_key.is_active = not api_key.is_active
+    db.commit()
+    db.refresh(api_key)
+
+    return APIKeyResponse.model_validate(api_key)
+
+
 @router.delete("/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_api_key(
     key_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
-    """Delete an API key (hard delete)."""
+    """Delete a personal API key (hard delete)."""
     api_key = (
         db.query(APIKey)
         .filter(
             APIKey.id == key_id,
             APIKey.user_id == current_user.id,
+            APIKey.key_type == KEY_TYPE_PERSONAL,
         )
         .first()
     )

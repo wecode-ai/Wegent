@@ -251,12 +251,12 @@ class TestOpenAPIResponsesCreate:
     """Test POST /api/v1/responses endpoint."""
 
     def test_create_response_invalid_model_format(
-        self, test_client: TestClient, test_token: str
+        self, test_client: TestClient, test_api_key
     ):
         """Test create response fails with invalid model format."""
         response = test_client.post(
             "/api/v1/responses",
-            headers={"Authorization": f"Bearer {test_token}"},
+            headers={"X-API-Key": test_api_key[0]},
             json={"model": "invalid-model-format", "input": "Hello"},
         )
 
@@ -264,12 +264,12 @@ class TestOpenAPIResponsesCreate:
         assert "Invalid model format" in response.json()["detail"]
 
     def test_create_response_team_not_found(
-        self, test_client: TestClient, test_token: str
+        self, test_client: TestClient, test_api_key
     ):
         """Test create response fails when team not found."""
         response = test_client.post(
             "/api/v1/responses",
-            headers={"Authorization": f"Bearer {test_token}"},
+            headers={"X-API-Key": test_api_key[0]},
             json={"model": "default#nonexistent-team", "input": "Hello"},
         )
 
@@ -277,7 +277,7 @@ class TestOpenAPIResponsesCreate:
         assert "not found" in response.json()["detail"]
 
     def test_create_response_invalid_previous_response_id_format(
-        self, test_client: TestClient, test_token: str, test_team: Kind, test_bot: Kind
+        self, test_client: TestClient, test_api_key, test_team: Kind, test_bot: Kind
     ):
         """Test create response with invalid previous_response_id format that doesn't start with resp_.
 
@@ -290,12 +290,12 @@ class TestOpenAPIResponsesCreate:
         pass
 
     def test_create_response_invalid_previous_response_id_number(
-        self, test_client: TestClient, test_token: str, test_team: Kind, test_bot: Kind
+        self, test_client: TestClient, test_api_key, test_team: Kind, test_bot: Kind
     ):
         """Test create response fails with invalid previous_response_id number."""
         response = test_client.post(
             "/api/v1/responses",
-            headers={"Authorization": f"Bearer {test_token}"},
+            headers={"X-API-Key": test_api_key[0]},
             json={
                 "model": "default#test-team",
                 "input": "Hello",
@@ -307,12 +307,12 @@ class TestOpenAPIResponsesCreate:
         assert "Invalid previous_response_id format" in response.json()["detail"]
 
     def test_create_response_previous_response_not_found(
-        self, test_client: TestClient, test_token: str, test_team: Kind, test_bot: Kind
+        self, test_client: TestClient, test_api_key, test_team: Kind, test_bot: Kind
     ):
         """Test create response fails when previous response not found."""
         response = test_client.post(
             "/api/v1/responses",
-            headers={"Authorization": f"Bearer {test_token}"},
+            headers={"X-API-Key": test_api_key[0]},
             json={
                 "model": "default#test-team",
                 "input": "Hello",
@@ -324,12 +324,12 @@ class TestOpenAPIResponsesCreate:
         assert "Previous response" in response.json()["detail"]
 
     def test_create_response_model_not_found(
-        self, test_client: TestClient, test_token: str, test_team: Kind, test_bot: Kind
+        self, test_client: TestClient, test_api_key, test_team: Kind, test_bot: Kind
     ):
         """Test create response fails when specified model not found."""
         response = test_client.post(
             "/api/v1/responses",
-            headers={"Authorization": f"Bearer {test_token}"},
+            headers={"X-API-Key": test_api_key[0]},
             json={"model": "default#test-team#nonexistent-model", "input": "Hello"},
         )
 
@@ -352,7 +352,7 @@ class TestOpenAPIResponsesCreate:
         mock_check_direct_chat,
         mock_create_sync,
         test_client: TestClient,
-        test_token: str,
+        test_api_key,
         test_team: Kind,
         test_bot: Kind,
         test_model: Kind,
@@ -384,7 +384,7 @@ class TestOpenAPIResponsesCreate:
 
         response = test_client.post(
             "/api/v1/responses",
-            headers={"Authorization": f"Bearer {test_token}"},
+            headers={"X-API-Key": test_api_key[0]},
             json={"model": "default#test-team", "input": "Hello", "stream": False},
         )
 
@@ -399,7 +399,7 @@ class TestOpenAPIResponsesCreate:
         self,
         mock_check_direct_chat,
         test_client: TestClient,
-        test_token: str,
+        test_api_key,
         test_team: Kind,
         test_bot: Kind,
         test_model: Kind,
@@ -410,7 +410,7 @@ class TestOpenAPIResponsesCreate:
 
         response = test_client.post(
             "/api/v1/responses",
-            headers={"Authorization": f"Bearer {test_token}"},
+            headers={"X-API-Key": test_api_key[0]},
             json={"model": "default#test-team", "input": "Hello", "stream": True},
         )
 
@@ -418,12 +418,12 @@ class TestOpenAPIResponsesCreate:
         assert "Streaming is only supported" in response.json()["detail"]
 
     def test_create_response_with_wegent_tools(
-        self, test_client: TestClient, test_token: str
+        self, test_client: TestClient, test_api_key
     ):
         """Test create response with Wegent tools parameter."""
         response = test_client.post(
             "/api/v1/responses",
-            headers={"Authorization": f"Bearer {test_token}"},
+            headers={"X-API-Key": test_api_key[0]},
             json={
                 "model": "default#nonexistent-team",
                 "input": "Hello",
@@ -435,12 +435,12 @@ class TestOpenAPIResponsesCreate:
         assert response.status_code == 404
 
     def test_create_response_with_list_input(
-        self, test_client: TestClient, test_token: str
+        self, test_client: TestClient, test_api_key
     ):
         """Test create response with list input format."""
         response = test_client.post(
             "/api/v1/responses",
-            headers={"Authorization": f"Bearer {test_token}"},
+            headers={"X-API-Key": test_api_key[0]},
             json={
                 "model": "default#nonexistent-team",
                 "input": [{"role": "user", "content": "Hello"}],
@@ -451,13 +451,13 @@ class TestOpenAPIResponsesCreate:
         assert response.status_code == 404
 
     def test_create_response_with_wegent_source_header(
-        self, test_client: TestClient, test_token: str
+        self, test_client: TestClient, test_api_key
     ):
         """Test create response with wegent-source header."""
         response = test_client.post(
             "/api/v1/responses",
             headers={
-                "Authorization": f"Bearer {test_token}",
+                "X-API-Key": test_api_key[0],
                 "wegent-source": "test-source",
             },
             json={"model": "default#nonexistent-team", "input": "Hello"},
@@ -471,35 +471,31 @@ class TestOpenAPIResponsesCreate:
 class TestOpenAPIResponsesGet:
     """Test GET /api/v1/responses/{response_id} endpoint."""
 
-    def test_get_response_invalid_format(
-        self, test_client: TestClient, test_token: str
-    ):
+    def test_get_response_invalid_format(self, test_client: TestClient, test_api_key):
         """Test get response fails with invalid response_id format."""
         response = test_client.get(
             "/api/v1/responses/invalid_id",
-            headers={"Authorization": f"Bearer {test_token}"},
+            headers={"X-API-Key": test_api_key[0]},
         )
 
         assert response.status_code == 400
         assert "Invalid response_id format" in response.json()["detail"]
 
-    def test_get_response_invalid_number(
-        self, test_client: TestClient, test_token: str
-    ):
+    def test_get_response_invalid_number(self, test_client: TestClient, test_api_key):
         """Test get response fails with invalid response_id number."""
         response = test_client.get(
             "/api/v1/responses/resp_abc",
-            headers={"Authorization": f"Bearer {test_token}"},
+            headers={"X-API-Key": test_api_key[0]},
         )
 
         assert response.status_code == 400
         assert "Invalid response_id format" in response.json()["detail"]
 
-    def test_get_response_not_found(self, test_client: TestClient, test_token: str):
+    def test_get_response_not_found(self, test_client: TestClient, test_api_key):
         """Test get response fails when response not found."""
         response = test_client.get(
             "/api/v1/responses/resp_99999",
-            headers={"Authorization": f"Bearer {test_token}"},
+            headers={"X-API-Key": test_api_key[0]},
         )
 
         assert response.status_code == 404
@@ -514,14 +510,14 @@ class TestOpenAPIResponsesGet:
     def test_get_response_success(
         self,
         test_client: TestClient,
-        test_token: str,
+        test_api_key,
         test_task: TaskResource,
         test_subtasks: list,
     ):
         """Test successful response retrieval."""
         response = test_client.get(
             f"/api/v1/responses/resp_{test_task.id}",
-            headers={"Authorization": f"Bearer {test_token}"},
+            headers={"X-API-Key": test_api_key[0]},
         )
 
         assert response.status_code == 200
@@ -533,13 +529,13 @@ class TestOpenAPIResponsesGet:
     def test_get_response_user_isolation(
         self,
         test_client: TestClient,
-        test_admin_token: str,
+        test_admin_api_key,
         test_task: TaskResource,
     ):
         """Test users cannot access other users' responses."""
         response = test_client.get(
             f"/api/v1/responses/resp_{test_task.id}",
-            headers={"Authorization": f"Bearer {test_admin_token}"},
+            headers={"X-API-Key": test_admin_api_key[0]},
         )
 
         assert response.status_code == 404
@@ -550,34 +546,34 @@ class TestOpenAPIResponsesCancel:
     """Test POST /api/v1/responses/{response_id}/cancel endpoint."""
 
     def test_cancel_response_invalid_format(
-        self, test_client: TestClient, test_token: str
+        self, test_client: TestClient, test_api_key
     ):
         """Test cancel response fails with invalid response_id format."""
         response = test_client.post(
             "/api/v1/responses/invalid_id/cancel",
-            headers={"Authorization": f"Bearer {test_token}"},
+            headers={"X-API-Key": test_api_key[0]},
         )
 
         assert response.status_code == 400
         assert "Invalid response_id format" in response.json()["detail"]
 
     def test_cancel_response_invalid_number(
-        self, test_client: TestClient, test_token: str
+        self, test_client: TestClient, test_api_key
     ):
         """Test cancel response fails with invalid response_id number."""
         response = test_client.post(
             "/api/v1/responses/resp_abc/cancel",
-            headers={"Authorization": f"Bearer {test_token}"},
+            headers={"X-API-Key": test_api_key[0]},
         )
 
         assert response.status_code == 400
         assert "Invalid response_id format" in response.json()["detail"]
 
-    def test_cancel_response_not_found(self, test_client: TestClient, test_token: str):
+    def test_cancel_response_not_found(self, test_client: TestClient, test_api_key):
         """Test cancel response fails when response not found."""
         response = test_client.post(
             "/api/v1/responses/resp_99999/cancel",
-            headers={"Authorization": f"Bearer {test_token}"},
+            headers={"X-API-Key": test_api_key[0]},
         )
 
         assert response.status_code == 404
@@ -594,7 +590,7 @@ class TestOpenAPIResponsesCancel:
         self,
         mock_session_manager,
         test_client: TestClient,
-        test_token: str,
+        test_api_key,
         test_db: Session,
         test_user: User,
         test_team: Kind,
@@ -668,7 +664,7 @@ class TestOpenAPIResponsesCancel:
 
         response = test_client.post(
             f"/api/v1/responses/resp_{task.id}/cancel",
-            headers={"Authorization": f"Bearer {test_token}"},
+            headers={"X-API-Key": test_api_key[0]},
         )
 
         assert response.status_code == 200
@@ -681,34 +677,34 @@ class TestOpenAPIResponsesDelete:
     """Test DELETE /api/v1/responses/{response_id} endpoint."""
 
     def test_delete_response_invalid_format(
-        self, test_client: TestClient, test_token: str
+        self, test_client: TestClient, test_api_key
     ):
         """Test delete response fails with invalid response_id format."""
         response = test_client.delete(
             "/api/v1/responses/invalid_id",
-            headers={"Authorization": f"Bearer {test_token}"},
+            headers={"X-API-Key": test_api_key[0]},
         )
 
         assert response.status_code == 400
         assert "Invalid response_id format" in response.json()["detail"]
 
     def test_delete_response_invalid_number(
-        self, test_client: TestClient, test_token: str
+        self, test_client: TestClient, test_api_key
     ):
         """Test delete response fails with invalid response_id number."""
         response = test_client.delete(
             "/api/v1/responses/resp_abc",
-            headers={"Authorization": f"Bearer {test_token}"},
+            headers={"X-API-Key": test_api_key[0]},
         )
 
         assert response.status_code == 400
         assert "Invalid response_id format" in response.json()["detail"]
 
-    def test_delete_response_not_found(self, test_client: TestClient, test_token: str):
+    def test_delete_response_not_found(self, test_client: TestClient, test_api_key):
         """Test delete response fails when response not found."""
         response = test_client.delete(
             "/api/v1/responses/resp_99999",
-            headers={"Authorization": f"Bearer {test_token}"},
+            headers={"X-API-Key": test_api_key[0]},
         )
 
         assert response.status_code == 404
@@ -723,7 +719,7 @@ class TestOpenAPIResponsesDelete:
     def test_delete_response_success(
         self,
         test_client: TestClient,
-        test_token: str,
+        test_api_key,
         test_db: Session,
         test_user: User,
     ):
@@ -769,7 +765,7 @@ class TestOpenAPIResponsesDelete:
 
         response = test_client.delete(
             f"/api/v1/responses/resp_{task_id}",
-            headers={"Authorization": f"Bearer {test_token}"},
+            headers={"X-API-Key": test_api_key[0]},
         )
 
         assert response.status_code == 200
@@ -780,14 +776,14 @@ class TestOpenAPIResponsesDelete:
         # Verify task is deleted (should return 404)
         get_response = test_client.get(
             f"/api/v1/responses/resp_{task_id}",
-            headers={"Authorization": f"Bearer {test_token}"},
+            headers={"X-API-Key": test_api_key[0]},
         )
         assert get_response.status_code == 404
 
     def test_delete_response_user_isolation(
         self,
         test_client: TestClient,
-        test_admin_token: str,
+        test_admin_api_key,
         test_task: TaskResource,
     ):
         """Test user isolation on delete.
@@ -801,7 +797,7 @@ class TestOpenAPIResponsesDelete:
         # This test documents actual behavior, not ideal behavior
         response = test_client.delete(
             f"/api/v1/responses/resp_{test_task.id}",
-            headers={"Authorization": f"Bearer {test_admin_token}"},
+            headers={"X-API-Key": test_admin_api_key[0]},
         )
 
         # Task can be deleted by any user (current implementation)

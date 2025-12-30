@@ -925,13 +925,19 @@
     "delete_confirm_message": "确定要删除 API 密钥 \"{{name}}\" 吗？此操作无法撤销。",
     "create_success": "API 密钥创建成功",
     "delete_success": "API 密钥删除成功",
+    "enabled_success": "API 密钥已启用",
+    "disabled_success": "API 密钥已禁用",
     "warning_save_key": "请立即保存此密钥，之后将无法再次查看！",
     "no_keys": "暂无 API 密钥",
     "no_keys_description": "创建 API 密钥以程序化方式访问 Wegent",
+    "status_disabled": "已禁用",
+    "enable": "启用",
+    "disable": "禁用",
     "errors": {
       "load_failed": "加载 API 密钥失败",
       "create_failed": "创建 API 密钥失败",
       "delete_failed": "删除 API 密钥失败",
+      "toggle_failed": "切换 API 密钥状态失败",
       "name_required": "请输入密钥名称"
     }
   },
