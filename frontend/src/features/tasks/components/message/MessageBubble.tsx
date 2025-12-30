@@ -37,6 +37,7 @@ import type { SourceReference } from '@/types/socket';
 import { useTraceAction } from '@/hooks/useTraceAction';
 import { useMessageFeedback } from '@/hooks/useMessageFeedback';
 import { SmartLink, SmartImage, SmartTextLine } from '@/components/common/SmartUrlRenderer';
+import { formatDateTime } from '@/utils/dateTime';
 export interface Message {
   type: 'user' | 'ai';
   content: string;
@@ -272,14 +273,7 @@ const MessageBubble = memo(
       : '';
 
     const formatTimestamp = (timestamp: number | undefined) => {
-      if (typeof timestamp !== 'number' || Number.isNaN(timestamp)) return '';
-      return new Date(timestamp).toLocaleTimeString(navigator.language, {
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        hour12: false,
-        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      });
+      return formatDateTime(timestamp);
     };
 
     const timestampLabel = formatTimestamp(msg.timestamp);
