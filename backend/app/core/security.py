@@ -3,6 +3,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import hashlib
+import json
+import logging
+import re
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional, Union
@@ -16,10 +20,13 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core.config import settings
-from app.models.api_key import APIKey
+from app.models.api_key import KEY_TYPE_PERSONAL, KEY_TYPE_SERVICE, APIKey
 from app.models.user import User
 from app.schemas.user import TokenData
+from app.services.k_batch import apply_default_resources_sync
 from app.services.user import user_service
+
+logger = logging.getLogger(__name__)
 
 # Password hashing context
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -307,8 +314,6 @@ def get_auth_context(
     Raises:
         HTTPException: If no authentication method succeeds
     """
-    from app.models.api_key import KEY_TYPE_PERSONAL, KEY_TYPE_SERVICE
-
     if not api_key:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -361,6 +366,13 @@ def get_auth_context(
                 detail="wegent-username header is required for service key authentication",
             )
 
+        # Validate wegent_username format: only letters, numbers, underscores, hyphens
+        if not re.match(r"^[a-zA-Z0-9_-]+$", wegent_username):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="wegent-username can only contain letters, numbers, underscores, and hyphens",
+            )
+
         # Try to find existing user
         user = db.query(User).filter(User.user_name == wegent_username).first()
 
@@ -373,10 +385,6 @@ def get_auth_context(
             return AuthContext(user=user, api_key_name=api_key_record.name)
 
         # User not found, auto-create for service key authentication
-        import json
-        import logging
-
-        logger = logging.getLogger(__name__)
         logger.info(
             f"Auto-creating user '{wegent_username}' via service key '{api_key_record.name}'"
         )
@@ -387,8 +395,8 @@ def get_auth_context(
             user_name=wegent_username,
             email=f"{wegent_username}@api.auto",  # Placeholder email
             password_hash=get_password_hash(
-                wegent_username
-            ),  # Use username as default password
+                str(uuid.uuid4())
+            ),  # Random password for security
             git_info=[],
             is_active=True,
             preferences=json.dumps({}),
@@ -398,17 +406,12 @@ def get_auth_context(
         db.commit()
         db.refresh(new_user)
 
-        # Apply default resources in background (async)
+        # Apply default resources synchronously for new API-created users
         try:
-            import asyncio
-
-            from app.services.k_batch import apply_default_resources_async
-
-            # Schedule async task
-            asyncio.create_task(apply_default_resources_async(new_user.id))
+            apply_default_resources_sync(new_user.id)
         except Exception as e:
             logger.warning(
-                f"Failed to schedule default resources for user {new_user.id}: {e}"
+                f"Failed to apply default resources for user {new_user.id}: {e}"
             )
 
         return AuthContext(user=new_user, api_key_name=api_key_record.name)
