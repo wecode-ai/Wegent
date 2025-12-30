@@ -116,8 +116,7 @@ def _task_to_response_object(
 async def create_response(
     request_body: ResponseCreateInput,
     db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user_flexible),
-    wegent_source: Optional[str] = Depends(security.get_wegent_source_header),
+    auth_context: security.AuthContext = Depends(security.get_auth_context),
 ):
     """
     Create a new response (execute a task).
@@ -151,6 +150,10 @@ async def create_response(
         or StreamingResponse with SSE events (Chat Shell + stream=true)
         or ResponseObject with status 'queued' (non-Chat Shell)
     """
+    # Extract user and api_key_name from auth context
+    current_user = auth_context.user
+    api_key_name = auth_context.api_key_name
+
     # Parse model string
     model_info = parse_model_string(request_body.model)
 
@@ -329,7 +332,7 @@ async def create_response(
                 input_text=input_text,
                 tool_settings=tool_settings,
                 task_id=task_id,
-                api_trusted_source=wegent_source,
+                api_key_name=api_key_name,
             )
         else:
             return await create_sync_response(
@@ -341,7 +344,7 @@ async def create_response(
                 input_text=input_text,
                 tool_settings=tool_settings,
                 task_id=task_id,
-                api_trusted_source=wegent_source,
+                api_key_name=api_key_name,
             )
 
     # Non-Chat Shell type (Executor-based): streaming not supported
@@ -362,7 +365,7 @@ async def create_response(
         source="api",
         model_id=model_info.get("model_id"),
         force_override_bot_model=model_info.get("model_id") is not None,
-        api_trusted_source=wegent_source,
+        api_key_name=api_key_name,
     )
 
     try:

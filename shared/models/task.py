@@ -2,9 +2,9 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
-from pydantic import Field
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, Field
 
 
 class User(BaseModel):
@@ -12,6 +12,21 @@ class User(BaseModel):
     name: str
     git_domain: Optional[str] = None
     git_token: Optional[str] = None
+
+
+class Attachment(BaseModel):
+    """Attachment model for executor.
+
+    Note: download_url and image_base64 are intentionally not included.
+    The executor constructs download URLs using TASK_API_DOMAIN env var,
+    and reads image data from downloaded files to avoid large task payloads.
+    """
+
+    id: int
+    original_filename: str
+    file_extension: str
+    file_size: int
+    mime_type: str
 
 
 class Bot(BaseModel):
@@ -40,29 +55,34 @@ class Task(BaseModel):
     prompt: str
     status: str
     progress: int
+    attachments: List[Attachment] = []  # Attachments for this subtask
+    auth_token: Optional[str] = None  # JWT token for authenticated API calls
 
 
 class ThinkingStep(BaseModel):
     """Thinking step model for recording agent reasoning process"""
+
     title: str = Field(..., description="Title of thinking step")
     next_action: str = Field(default="continue", description="Next action to take")
-    details: Optional[Dict[str, Any]] = Field(default=None, description="Detailed structured data for this step")
-    
+    details: Optional[Dict[str, Any]] = Field(
+        default=None, description="Detailed structured data for this step"
+    )
+
     def dict(self, **kwargs) -> Dict[str, Any]:
         """Override dict method to exclude None values"""
         # Exclude None values by default
-        kwargs.setdefault('exclude_none', True)
+        kwargs.setdefault("exclude_none", True)
         return super().dict(**kwargs)
 
 
 class ExecutionResult(BaseModel):
     value: Optional[str] = None
     thinking: List[ThinkingStep] = []
-    
+
     def dict(self, **kwargs) -> Dict[str, Any]:
         """Override dict method to exclude None values"""
         # Exclude None values by default
-        kwargs.setdefault('exclude_none', True)
+        kwargs.setdefault("exclude_none", True)
         return super().dict(**kwargs)
 
 

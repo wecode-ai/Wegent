@@ -63,7 +63,10 @@
     "tool_completed": "Tool completed",
     "query": "Query",
     "search_completed": "Search completed",
-    "found": "Found"
+    "found": "Found",
+    "expand_content": "Expand",
+    "collapse_content": "Collapse",
+    "lines": "lines"
   },
   "shared_task": {
     "share_task": "Share",
@@ -142,7 +145,8 @@
     "execution_failed": "❌ Execution Failed",
     "error_message": "Error Message",
     "execution_type": "Execution Type",
-    "mcp_init_fail": "❌ MCP initialization failed. "
+    "mcp_init_fail": "❌ MCP initialization failed. ",
+    "attachments_downloaded": "📎 Attachments Downloaded"
   },
   "send_button": {
     "shortcut_title": "Send Shortcut",
@@ -220,7 +224,10 @@
     "docx_failed": "Failed to export DOCX",
     "select_from_here": "Select from here",
     "select_below": "Select below",
-    "attachments": "attachment(s)"
+    "attachments": "attachment(s)",
+    "preparing": "Preparing export...",
+    "font_load_failed": "Failed to load font, please retry",
+    "retry": "Retry"
   },
   "web_search": {
     "enable": "Enable web search",

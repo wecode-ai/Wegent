@@ -12,6 +12,11 @@ Protection mechanisms:
 - Connection timeout: 30s default timeout for server connections
 - Tool wrapping: All MCP tools are wrapped with timeout and exception handling
 - Graceful degradation: Failed tools return error messages instead of crashing
+
+Variable substitution:
+- Supports ${{path}} placeholders in MCP server configurations
+- Use task_data dict to provide replacement values (e.g., user.name, user.id)
+- Example: "headers": {"X-User": "${{user.name}}"} -> {"X-User": "john"}
 """
 
 import asyncio
@@ -27,6 +32,8 @@ from langchain_mcp_adapters.sessions import (
     StdioConnection,
     StreamableHttpConnection,
 )
+from shared.utils.mcp_utils import replace_mcp_server_variables
+from shared.utils.sensitive_data_masker import mask_sensitive_data
 
 logger = logging.getLogger(__name__)
 
@@ -145,8 +152,13 @@ def wrap_tool_with_protection(
     return tool
 
 
-def build_connections(config: dict[str, dict[str, Any]]) -> dict[str, Connection]:
+def build_connections(
+    config: dict[str, dict[str, Any]], task_data: dict[str, Any] | None = None
+) -> dict[str, Connection]:
     """Build connection configs from server configuration dict.
+
+    This function supports variable substitution using ${{path}} placeholders.
+    Variables are replaced with values from task_data using dot notation paths.
 
     Args:
         config: MCP servers configuration dict. Format:
@@ -157,40 +169,76 @@ def build_connections(config: dict[str, dict[str, Any]]) -> dict[str, Connection
                     "command": "...",  # for stdio
                     "args": [...],  # for stdio
                     "env": {...},  # for stdio
-                    "headers": {...}  # for sse/streamable-http
+                    "headers": {...}  # for sse/streamable-http, supports ${{path}} placeholders
                 }
             }
+        task_data: Optional dict for variable substitution. Supports nested access:
+            - ${{user.name}} -> task_data["user"]["name"]
+            - ${{user.id}} -> task_data["user"]["id"]
 
     Returns:
         Dict of server_name to Connection config
+
+    Example:
+        config = {
+            "my-server": {
+                "type": "sse",
+                "url": "http://example.com",
+                "headers": {"X-User": "${{user.name}}"}
+            }
+        }
+        task_data = {"user": {"name": "john", "id": 123}}
+        # Result: headers will be {"X-User": "john"}
     """
-    builders = {
-        "sse": lambda cfg: SSEConnection(
-            transport="sse",
-            url=cfg["url"],
-            headers=cfg.get("headers"),
-            timeout=cfg.get("timeout", 30.0),
-        ),
-        "stdio": lambda cfg: StdioConnection(
-            transport="stdio",
-            command=cfg["command"],
-            args=cfg.get("args", []),
-            env=cfg.get("env"),
-        ),
-        "streamable-http": lambda cfg: StreamableHttpConnection(
-            transport="streamable_http",
-            url=cfg["url"],
-            headers=cfg.get("headers"),
-        ),
-    }
+    # Apply variable substitution to the entire config
+    if task_data:
+        config = replace_mcp_server_variables(config, task_data)
+        logger.info(
+            "[MCP] Applied variable substitution to MCP config with task_data keys: %s",
+            task_data,
+        )
 
     connections = {}
     for name, cfg in config.items():
         server_type = cfg.get("type", "sse")
-        builder = builders.get(server_type)
-        if not builder:
+        headers = cfg.get("headers") or None
+
+        if server_type == "sse":
+            connections[name] = SSEConnection(
+                transport="sse",
+                url=cfg["url"],
+                headers=headers,
+                timeout=cfg.get("timeout", 30.0),
+            )
+            if headers:
+                masked_headers = mask_sensitive_data(headers)
+                logger.info(
+                    "[MCP] Built SSE connection '%s' with headers: %s",
+                    name,
+                    masked_headers,
+                )
+        elif server_type == "stdio":
+            connections[name] = StdioConnection(
+                transport="stdio",
+                command=cfg["command"],
+                args=cfg.get("args", []),
+                env=cfg.get("env"),
+            )
+        elif server_type == "streamable-http":
+            connections[name] = StreamableHttpConnection(
+                transport="streamable_http",
+                url=cfg["url"],
+                headers=headers,
+            )
+            if headers:
+                masked_headers = mask_sensitive_data(headers)
+                logger.info(
+                    "[MCP] Built streamable-http connection '%s' with headers: %s",
+                    name,
+                    masked_headers,
+                )
+        else:
             raise ValueError(f"Unknown MCP server type: {server_type}")
-        connections[name] = builder(cfg)
 
     return connections
 
@@ -204,25 +252,34 @@ class MCPClient:
     being used as a context manager. This class now uses the new API:
     - client.get_tools() to get all tools directly
 
+    Variable substitution is supported via task_data parameter. Use ${{path}}
+    placeholders in your MCP server configuration headers or URLs.
+
     Usage:
-        client = MCPClient(config)
+        task_data = {"user": {"name": "john", "id": 123}}
+        client = MCPClient(config, task_data=task_data)
         await client.connect()
         tools = client.get_tools()
         await client.disconnect()
 
     Or with async context manager:
-        async with MCPClient(config) as client:
+        async with MCPClient(config, task_data=task_data) as client:
             tools = client.get_tools()
     """
 
-    def __init__(self, config: dict[str, dict[str, Any]]):
+    def __init__(
+        self, config: dict[str, dict[str, Any]], task_data: dict[str, Any] | None = None
+    ):
         """Initialize MCP client.
 
         Args:
-            config: MCP servers configuration dict
+            config: MCP servers configuration dict. Supports ${{path}} placeholders.
+            task_data: Optional dict for variable substitution in config.
+                Example: {"user": {"name": "john"}} allows using ${{user.name}}
         """
         self.config = config
-        self.connections = build_connections(config) if config else {}
+        self.task_data = task_data
+        self.connections = build_connections(config, task_data) if config else {}
         self._client: MultiServerMCPClient | None = None
         self._tools: list[BaseTool] = []
 
