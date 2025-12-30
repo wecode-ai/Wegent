@@ -53,8 +53,10 @@ class Settings(BaseSettings):
     CHAT_API_TIMEOUT_SECONDS: int = 300  # LLM API call timeout (5 minutes)
 
     # Tool calling flow limits
-    CHAT_TOOL_MAX_REQUESTS: int = 5  # Maximum LLM requests in tool calling flow
-    CHAT_TOOL_MAX_TIME_SECONDS: float = 30.0  # Maximum time for tool calling flow
+    CHAT_TOOL_MAX_REQUESTS: int = 20  # Maximum LLM requests in tool calling flow
+    CHAT_TOOL_MAX_TIME_SECONDS: float = (
+        60.0  # Maximum time for tool calling flow (5 minutes)
+    )
     # Group chat history configuration
     # In group chat mode, AI-bot sees: first N messages + last M messages (no duplicates)
     # If total messages < N + M, all messages are kept
