@@ -150,7 +150,8 @@
     "dify_no_parameters": "No parameters configured for this application.",
     "custom_shell": "Custom",
     "public_model": "Public",
-    "fine_tune_prompt": "Fine-tune Prompt"
+    "fine_tune_prompt": "Fine-tune Prompt",
+    "no_model_binding": "No model binding"
   },
   "bots": {
     "title": "AI Assistant",
