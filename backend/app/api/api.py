@@ -5,6 +5,7 @@
 import wecode.api  # noqa: F401  side-effect import to load wecode patches and auto-mount internal routers
 from app.api.endpoints import (
     admin,
+    admin_notification,
     api_keys,
     auth,
     grey,
@@ -45,6 +46,11 @@ api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(oidc.router, prefix="/auth/oidc", tags=["auth", "oidc"])
 api_router.include_router(users.router, prefix="/users", tags=["users"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
+api_router.include_router(
+    admin_notification.router,
+    prefix="/admin/notifications",
+    tags=["admin-notifications"],
+)
 api_router.include_router(groups.router, prefix="/groups", tags=["groups"])
 api_router.include_router(grey.router, prefix="/grey", tags=["grey"])
 api_router.include_router(api_keys.router, prefix="/api-keys", tags=["api-keys"])
