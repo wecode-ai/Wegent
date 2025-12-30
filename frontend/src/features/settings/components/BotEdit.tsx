@@ -341,13 +341,14 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
     fetchShells();
   }, [toast, t, allowedAgents, scope, groupName]);
-  // Check if current agent supports skills (ClaudeCode or Chat)
+  // Check if current agent supports skills (ClaudeCode only, Chat shell is hidden)
   const supportsSkills = useMemo(() => {
     // Get shell type from the selected shell
     const selectedShell = shells.find(s => s.name === agentName);
     const shellType = selectedShell?.shellType || agentName;
-    // Skills are supported for ClaudeCode and Chat shell types
-    return shellType === 'ClaudeCode' || shellType === 'Chat';
+    // Skills are supported for ClaudeCode shell type only
+    // Chat shell skills selection is hidden (but skills still work if configured)
+    return shellType === 'ClaudeCode';
   }, [agentName, shells]);
 
   // Get current shell type for skill filtering
