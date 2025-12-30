@@ -533,14 +533,26 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       const existingMessage = newMessages.get(aiMessageId);
       if (existingMessage) {
         // For executor tasks, result contains full data (thinking, workbench, sources)
-        // Content is accumulated, but result is replaced with latest
+        // IMPORTANT: Merge result instead of replacing to preserve thinking data
         const updatedMessage: UnifiedMessage = {
           ...existingMessage,
           content: existingMessage.content + content,
         };
-        // If result is provided (executor tasks), update it
+        // If result is provided (executor tasks), merge it with existing result
+        // This prevents losing thinking data when result is partially updated
         if (result) {
-          updatedMessage.result = result as UnifiedMessage['result'];
+          const newResult = result as UnifiedMessage['result'];
+          updatedMessage.result = {
+            ...existingMessage.result,
+            ...newResult,
+            // Special handling for thinking array:
+            // If new result has thinking, use it (backend sends full array)
+            // Otherwise keep existing thinking to prevent data loss
+            thinking:
+              newResult && newResult.thinking
+                ? newResult.thinking
+                : existingMessage.result?.thinking,
+          };
         }
         // If sources are provided directly (chat v2), update them
         if (sources) {
@@ -634,6 +646,14 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           messageId: message_id,
           // Set sources if provided
           sources: sources || existingMessage.sources,
+          // IMPORTANT: Update result field to preserve thinking data from incremental updates
+          // Merge with existing result to keep accumulated thinking data
+          result: result
+            ? {
+                ...existingMessage.result,
+                ...(result as UnifiedMessage['result']),
+              }
+            : existingMessage.result,
         });
       }
 

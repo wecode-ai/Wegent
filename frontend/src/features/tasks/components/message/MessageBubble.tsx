@@ -283,7 +283,8 @@ const MessageBubble = memo(
     };
 
     const timestampLabel = formatTimestamp(msg.timestamp);
-    const headerIcon = isUserTypeMessage ? null : msg.botName === t('correction.result_title') ? (
+    const headerIcon = isUserTypeMessage ? null : msg.botName ===
+      t('chat:correction.result_title') ? (
       <svg
         xmlns="http://www.w3.org/2000/svg"
         width="24"
@@ -1248,8 +1249,8 @@ const MessageBubble = memo(
               onLike={handleLike}
               onDislike={handleDislike}
               feedbackLabels={{
-                like: t('messages.like') || 'Like',
-                dislike: t('messages.dislike') || 'Dislike',
+                like: t('chat:messages.like') || 'Like',
+                dislike: t('chat:messages.dislike') || 'Dislike',
               }}
             />
           </div>
@@ -1322,8 +1323,8 @@ const MessageBubble = memo(
                 onLike={handleLike}
                 onDislike={handleDislike}
                 feedbackLabels={{
-                  like: t('messages.like') || 'Like',
-                  dislike: t('messages.dislike') || 'Dislike',
+                  like: t('chat:messages.like') || 'Like',
+                  dislike: t('chat:messages.dislike') || 'Dislike',
                 }}
               />
             </>
