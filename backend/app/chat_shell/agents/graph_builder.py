@@ -9,6 +9,7 @@ This module provides a simplified LangGraph agent implementation using:
 - LangChain's convert_to_messages for message format conversion
 - Streaming support with cancellation
 - State checkpointing for resumability
+- Dynamic tool filtering for gemini_search (removed after first use)
 """
 
 import asyncio
@@ -19,12 +20,15 @@ from typing import Any, Callable
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.messages.utils import convert_to_messages
+from langchain_core.runnables import Runnable
 from langchain_core.tools.base import BaseTool
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.errors import GraphRecursionError
 from langgraph.prebuilt import create_react_agent
 
 from ..tools.base import ToolRegistry
+from ..tools.gemini_search import GeminiSearchTool, create_gemini_search_tool
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +36,24 @@ logger = logging.getLogger(__name__)
 TOOL_LIMIT_REACHED_MESSAGE = """[SYSTEM NOTICE] Tool call limit reached. You have made too many tool calls in this conversation.
 
 Please provide your final response to the user based on the information you have gathered so far. Do NOT attempt to call any more tools - simply summarize your findings and provide a helpful response."""
+
+
+# SystemMessage content to inject after gemini_search has been called
+# This strongly instructs the model to stop calling tools and provide a final answer
+GEMINI_SEARCH_COMPLETE_INSTRUCTION = """[SYSTEM INSTRUCTION - RESEARCH COMPLETE]
+
+You have ALREADY called the heavy research tool `gemini_search` in THIS conversation turn.
+The research results are now available in the conversation above.
+
+⛔ CRITICAL: You MUST NOT call ANY tools again in this turn.
+
+✅ YOUR TASK NOW:
+1. Carefully read the research results already present in the conversation
+2. Synthesize the information into a comprehensive, well-structured answer
+3. Write your final response in Chinese (中文)
+4. Include all relevant findings, data points, and context from the research
+
+DO NOT request more research. DO NOT call any tools again. Just provide your final answer based on the research results above."""
 
 
 class LangGraphAgentBuilder:
@@ -145,6 +167,51 @@ class LangGraphAgentBuilder:
 
         return prompt_modifier
 
+    def _create_gemini_prompt_modifier(
+        self, gemini_search_tool: GeminiSearchTool
+    ) -> Callable:
+        """Create a prompt modifier that wraps skill injection and adds gemini_search constraints.
+
+        This function creates a prompt modifier that:
+        1. First applies skill prompt injection (if load_skill_tool exists)
+        2. Then injects a constraint SystemMessage after gemini_search has been called
+
+        Args:
+            gemini_search_tool: GeminiSearchTool instance for checking call state
+
+        Returns:
+            A callable that modifies the messages
+        """
+        base_modifier = self._create_prompt_modifier()
+        captured_gemini_tool = gemini_search_tool
+
+        def gemini_prompt_modifier(state: dict[str, Any]) -> list[BaseMessage]:
+            """Modify messages with skill prompts and gemini_search constraints."""
+            # First apply base modifier (skill injection) if it exists
+            if base_modifier:
+                messages = base_modifier(state)
+            else:
+                messages = list(state.get("messages", []))
+
+            if not messages:
+                return messages
+
+            # Then handle gemini_search constraint injection
+            # If gemini_search has been called, append a strong constraint SystemMessage
+            # This tells the model to stop calling tools and provide a final answer
+            if captured_gemini_tool.has_been_called():
+                logger.info(
+                    "[gemini_prompt_modifier] gemini_search has been called, injecting "
+                    "constraint SystemMessage to stop further tool calls"
+                )
+                messages.append(
+                    SystemMessage(content=GEMINI_SEARCH_COMPLETE_INSTRUCTION)
+                )
+
+            return messages
+
+        return gemini_prompt_modifier
+
     def _build_agent(self):
         """Build the LangGraph ReAct agent lazily."""
         if self._agent is not None:
@@ -156,9 +223,77 @@ class LangGraphAgentBuilder:
         # Create prompt modifier for dynamic skill prompt injection
         prompt_modifier = self._create_prompt_modifier()
 
-        # Build agent with optional prompt modifier for dynamic system prompt updates
+        # Track GeminiSearchTool instance for dynamic filtering
+        gemini_search_tool: GeminiSearchTool | None = None
+
+        # Add llm built-in search tool if supported
+        model_with_tools: BaseChatModel | Callable = self.llm
+        if isinstance(self.llm, ChatGoogleGenerativeAI):
+            # For Gemini models, create a GeminiSearchTool instead of directly binding
+            # google_search. This is because Gemini server forbids using google_search
+            # and other tools simultaneously.
+            # Note: GeminiSearchTool uses its own internal system prompt optimized for
+            # comprehensive web search, not the main agent's system prompt.
+            gemini_search_tool = create_gemini_search_tool(self.llm)
+            # Use gemini-specific prompt modifier that wraps skill injection
+            prompt_modifier = self._create_gemini_prompt_modifier(gemini_search_tool)
+            self.tools.append(gemini_search_tool)
+
+            logger.info(
+                "[LangGraphAgentBuilder] Created GeminiSearchTool for Google model, "
+                "tools count: %d",
+                len(self.tools),
+            )
+
+            # Create a dynamic model callable that filters out gemini_search after first use
+            # This uses LangGraph's native dynamic model support to remove the tool
+            # from the model's available tools after it has been called once.
+            #
+            # Why dynamic model instead of tool-level filtering:
+            # - Tool-level filtering (_called_this_turn) only returns an error message
+            # - The model still sees the tool and may try to call it repeatedly
+            # - Dynamic model filtering completely removes the tool from the model's view
+            # - This prevents wasted tokens and model confusion
+            base_llm = self.llm
+            all_tools = list(self.tools)
+            tools_without_gemini = [
+                t for t in all_tools if not isinstance(t, GeminiSearchTool)
+            ]
+            captured_gemini_tool = gemini_search_tool
+
+            def gemini_model_callable(state: dict[str, Any], runtime: Any) -> Runnable:
+                """Dynamic model that removes gemini_search after first use.
+
+                This callable is invoked before each LLM call. It checks if the
+                GeminiSearchTool has been called in this conversation turn:
+                - If not called: returns model with all tools (including gemini_search)
+                - If called: returns model with gemini_search filtered out
+
+                This ensures the model cannot see or attempt to call gemini_search
+                after it has been used once in the current agent run.
+                """
+                if captured_gemini_tool.has_been_called():
+                    # GeminiSearchTool has been called, filter it out
+                    logger.info(
+                        "[LangGraphAgentBuilder] gemini_search already called, "
+                        "returning model without gemini_search tool. "
+                        "Remaining tools: %d",
+                        len(tools_without_gemini),
+                    )
+                    return base_llm.bind_tools(tools_without_gemini)
+                else:
+                    # First call, include all tools
+                    logger.debug(
+                        "[LangGraphAgentBuilder] gemini_search not yet called, "
+                        "returning model with all tools: %d",
+                        len(all_tools),
+                    )
+                    return base_llm.bind_tools(all_tools)
+
+            model_with_tools = gemini_model_callable
+
         self._agent = create_react_agent(
-            model=self.llm,
+            model=model_with_tools,
             tools=self.tools,
             checkpointer=checkpointer,
             prompt=prompt_modifier,
