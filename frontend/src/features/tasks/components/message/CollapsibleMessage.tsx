@@ -59,11 +59,6 @@ const CollapsibleMessage = memo(function CollapsibleMessage({
     return shouldCollapseContent(content, maxLines);
   }, [content, maxLines, enabled]);
 
-  const lineCount = useMemo(() => {
-    if (!content) return 0;
-    return content.split('\n').length;
-  }, [content]);
-
   // If not collapsible, render children directly
   if (!isCollapsible) {
     return <div className={className}>{children}</div>;
@@ -98,10 +93,7 @@ const CollapsibleMessage = memo(function CollapsibleMessage({
           ) : (
             <>
               <ChevronDown className="h-4 w-4" />
-              <span>
-                {t('messages.expand_content') || 'Expand'} ({lineCount}{' '}
-                {t('messages.lines') || 'lines'})
-              </span>
+              <span>{t('messages.expand_content') || 'Expand'}</span>
             </>
           )}
         </button>
