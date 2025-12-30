@@ -53,8 +53,10 @@ class Settings(BaseSettings):
     CHAT_API_TIMEOUT_SECONDS: int = 300  # LLM API call timeout (5 minutes)
 
     # Tool calling flow limits
-    CHAT_TOOL_MAX_REQUESTS: int = 5  # Maximum LLM requests in tool calling flow
-    CHAT_TOOL_MAX_TIME_SECONDS: float = 30.0  # Maximum time for tool calling flow
+    CHAT_TOOL_MAX_REQUESTS: int = 20  # Maximum LLM requests in tool calling flow
+    CHAT_TOOL_MAX_TIME_SECONDS: float = (
+        60.0  # Maximum time for tool calling flow (5 minutes)
+    )
     # Group chat history configuration
     # In group chat mode, AI-bot sees: first N messages + last M messages (no duplicates)
     # If total messages < N + M, all messages are kept
@@ -182,12 +184,6 @@ class Settings(BaseSettings):
     GRACEFUL_SHUTDOWN_TIMEOUT: int = 600
     # Whether to reject new requests during shutdown (503 Service Unavailable)
     SHUTDOWN_REJECT_NEW_REQUESTS: bool = True
-
-    # API trusted sources configuration (comma-separated list)
-    # When set, allows trusted services to proxy requests on behalf of users
-    # via wegent-source and wegent-username headers
-    # Example: "service-a,service-b,internal-gateway"
-    API_TRUSTED_SOURCES: str = ""
 
     # OpenTelemetry configuration is centralized in shared/telemetry/config.py
     # Use: from shared.telemetry.config import get_otel_config

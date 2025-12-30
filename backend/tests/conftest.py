@@ -2,7 +2,9 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Generator
+import hashlib
+from datetime import datetime, timedelta
+from typing import Generator, Tuple
 
 import pytest
 from fastapi.testclient import TestClient
@@ -15,6 +17,7 @@ from app.db.base import Base
 
 # Import all models to ensure they are registered with same Base instance
 from app.models import *
+from app.models.api_key import KEY_TYPE_PERSONAL, APIKey
 
 # Import all models to ensure they are registered with Base
 from app.models.kind import Kind
@@ -178,3 +181,51 @@ def mock_redis(mocker):
     mock_redis_client.delete.return_value = True
     mock_redis_client.exists.return_value = False
     return mock_redis_client
+
+
+@pytest.fixture(scope="function")
+def test_api_key(test_db: Session, test_user: User) -> Tuple[str, APIKey]:
+    """
+    Create a test API key for the test user.
+    Returns a tuple of (raw_key, api_key_record).
+    """
+    raw_key = "wg-test-api-key-12345"
+    key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+    api_key = APIKey(
+        user_id=test_user.id,
+        key_hash=key_hash,
+        key_prefix="wg-test...",
+        name="Test API Key",
+        key_type=KEY_TYPE_PERSONAL,
+        description="Test API key for unit tests",
+        expires_at=datetime.utcnow() + timedelta(days=365),
+        is_active=True,
+    )
+    test_db.add(api_key)
+    test_db.commit()
+    test_db.refresh(api_key)
+    return raw_key, api_key
+
+
+@pytest.fixture(scope="function")
+def test_admin_api_key(test_db: Session, test_admin_user: User) -> Tuple[str, APIKey]:
+    """
+    Create a test API key for the admin user.
+    Returns a tuple of (raw_key, api_key_record).
+    """
+    raw_key = "wg-admin-api-key-12345"
+    key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+    api_key = APIKey(
+        user_id=test_admin_user.id,
+        key_hash=key_hash,
+        key_prefix="wg-admin...",
+        name="Admin API Key",
+        key_type=KEY_TYPE_PERSONAL,
+        description="Admin API key for unit tests",
+        expires_at=datetime.utcnow() + timedelta(days=365),
+        is_active=True,
+    )
+    test_db.add(api_key)
+    test_db.commit()
+    test_db.refresh(api_key)
+    return raw_key, api_key

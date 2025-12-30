@@ -9,6 +9,8 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Switch } from '@/components/ui/switch';
 import { KeyIcon, TrashIcon, ClipboardDocumentIcon, CheckIcon } from '@heroicons/react/24/outline';
 import { Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
@@ -31,37 +33,39 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { apiKeyApis, ApiKey, ApiKeyCreated } from '@/apis/api-keys';
+import { adminApis, ServiceKey, ServiceKeyCreated } from '@/apis/admin';
 import UnifiedAddButton from '@/components/common/UnifiedAddButton';
 
-const ApiKeyList: React.FC = () => {
-  const { t } = useTranslation();
+const ServiceKeyList: React.FC<{ showHeader?: boolean }> = ({ showHeader = true }) => {
+  const { t } = useTranslation('admin');
   const { toast } = useToast();
-  const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
+  const [serviceKeys, setServiceKeys] = useState<ServiceKey[]>([]);
   const [loading, setLoading] = useState(true);
-  const [deleteConfirmKey, setDeleteConfirmKey] = useState<ApiKey | null>(null);
+  const [deleteConfirmKey, setDeleteConfirmKey] = useState<ServiceKey | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [togglingKeyId, setTogglingKeyId] = useState<number | null>(null);
 
   // Create dialog state
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [keyName, setKeyName] = useState('');
+  const [keyDescription, setKeyDescription] = useState('');
   const [isCreating, setIsCreating] = useState(false);
 
   // Created key display state
-  const [createdKey, setCreatedKey] = useState<ApiKeyCreated | null>(null);
+  const [createdKey, setCreatedKey] = useState<ServiceKeyCreated | null>(null);
   const [showCreatedDialog, setShowCreatedDialog] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  const fetchApiKeys = useCallback(async () => {
+  const fetchServiceKeys = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await apiKeyApis.getApiKeys();
-      setApiKeys(response.items || []);
+      const response = await adminApis.getServiceKeys();
+      setServiceKeys(response.items || []);
     } catch (error) {
-      console.error('Failed to fetch API keys:', error);
+      console.error('Failed to fetch service keys:', error);
       toast({
         variant: 'destructive',
-        title: t('common:api_keys.errors.load_failed'),
+        title: t('service_keys.errors.load_failed'),
       });
     } finally {
       setLoading(false);
@@ -69,8 +73,8 @@ const ApiKeyList: React.FC = () => {
   }, [toast, t]);
 
   useEffect(() => {
-    fetchApiKeys();
-  }, [fetchApiKeys]);
+    fetchServiceKeys();
+  }, [fetchServiceKeys]);
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
@@ -92,30 +96,55 @@ const ApiKeyList: React.FC = () => {
     if (!keyName.trim()) {
       toast({
         variant: 'destructive',
-        title: t('common:api_keys.errors.name_required'),
+        title: t('service_keys.errors.name_required'),
       });
       return;
     }
 
     setIsCreating(true);
     try {
-      const created = await apiKeyApis.createApiKey({ name: keyName.trim() });
+      const created = await adminApis.createServiceKey({
+        name: keyName.trim(),
+        description: keyDescription.trim() || undefined,
+      });
       setCreatedKey(created);
       setCreateDialogOpen(false);
       setKeyName('');
+      setKeyDescription('');
       setShowCreatedDialog(true);
       toast({
-        title: t('common:api_keys.create_success'),
+        title: t('service_keys.create_success'),
       });
-      fetchApiKeys();
+      fetchServiceKeys();
     } catch (error) {
       toast({
         variant: 'destructive',
-        title: t('common:api_keys.errors.create_failed'),
+        title: t('service_keys.errors.create_failed'),
         description: (error as Error).message,
       });
     } finally {
       setIsCreating(false);
+    }
+  };
+
+  const handleToggleStatus = async (serviceKey: ServiceKey) => {
+    setTogglingKeyId(serviceKey.id);
+    try {
+      const updated = await adminApis.toggleServiceKeyStatus(serviceKey.id);
+      setServiceKeys(prev => prev.map(k => (k.id === updated.id ? updated : k)));
+      toast({
+        title: updated.is_active
+          ? t('service_keys.enabled_success')
+          : t('service_keys.disabled_success'),
+      });
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: t('service_keys.errors.toggle_failed'),
+        description: (error as Error).message,
+      });
+    } finally {
+      setTogglingKeyId(null);
     }
   };
 
@@ -124,16 +153,16 @@ const ApiKeyList: React.FC = () => {
 
     setIsDeleting(true);
     try {
-      await apiKeyApis.deleteApiKey(deleteConfirmKey.id);
+      await adminApis.deleteServiceKey(deleteConfirmKey.id);
       toast({
-        title: t('common:api_keys.delete_success'),
+        title: t('service_keys.delete_success'),
       });
       setDeleteConfirmKey(null);
-      fetchApiKeys();
+      fetchServiceKeys();
     } catch (error) {
       toast({
         variant: 'destructive',
-        title: t('common:api_keys.errors.delete_failed'),
+        title: t('service_keys.errors.delete_failed'),
         description: (error as Error).message,
       });
     } finally {
@@ -164,12 +193,14 @@ const ApiKeyList: React.FC = () => {
   return (
     <div className="space-y-3">
       {/* Header */}
-      <div>
-        <h2 className="text-xl font-semibold text-text-primary mb-1">
-          {t('common:api_keys.title')}
-        </h2>
-        <p className="text-sm text-text-muted mb-1">{t('common:api_keys.description')}</p>
-      </div>
+      {showHeader && (
+        <div>
+          <h2 className="text-xl font-semibold text-text-primary mb-1">
+            {t('service_keys.title')}
+          </h2>
+          <p className="text-sm text-text-muted mb-1">{t('service_keys.description')}</p>
+        </div>
+      )}
 
       {/* Content Container */}
       <div className="bg-base border border-border rounded-md p-2 w-full max-h-[70vh] flex flex-col overflow-y-auto custom-scrollbar">
@@ -180,62 +211,80 @@ const ApiKeyList: React.FC = () => {
           </div>
         )}
         {/* Empty State */}
-        {!loading && apiKeys.length === 0 && (
+        {!loading && serviceKeys.length === 0 && (
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <KeyIcon className="w-12 h-12 text-text-muted mb-4" />
-            <p className="text-text-muted">{t('common:api_keys.no_keys')}</p>
-            <p className="text-sm text-text-muted mt-1">
-              {t('common:api_keys.no_keys_description')}
-            </p>
+            <p className="text-text-muted">{t('service_keys.no_keys')}</p>
           </div>
         )}
 
-        {/* API Key List */}
-        {!loading && apiKeys.length > 0 && (
+        {/* Service Key List */}
+        {!loading && serviceKeys.length > 0 && (
           <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 p-1">
-            {apiKeys.map(apiKey => (
-              <Card key={apiKey.id} className="p-4 bg-base hover:bg-hover transition-colors">
+            {serviceKeys.map(serviceKey => (
+              <Card
+                key={serviceKey.id}
+                className={`p-4 bg-base hover:bg-hover transition-colors ${!serviceKey.is_active ? 'opacity-60' : ''}`}
+              >
                 <div className="flex items-center justify-between min-w-0">
                   <div className="flex items-center gap-3 min-w-0 flex-1">
-                    <KeyIcon className="w-5 h-5 flex-shrink-0 text-primary" />
+                    <KeyIcon
+                      className={`w-5 h-5 flex-shrink-0 ${serviceKey.is_active ? 'text-primary' : 'text-text-muted'}`}
+                    />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span
-                          className={`font-medium truncate ${apiKey.is_active ? 'text-text-primary' : 'text-text-muted'}`}
-                        >
-                          {apiKey.name}
+                        <span className="font-medium text-text-primary truncate">
+                          {serviceKey.name}
                         </span>
                         <code className="text-xs bg-muted px-1.5 py-0.5 rounded text-text-secondary">
-                          {apiKey.key_prefix}
+                          {serviceKey.key_prefix}
                         </code>
-                        {!apiKey.is_active && (
-                          <span className="text-xs px-1.5 py-0.5 rounded bg-error/10 text-error">
-                            {t('common:api_keys.status_disabled')}
+                        {!serviceKey.is_active && (
+                          <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-text-muted">
+                            {t('service_keys.status_disabled')}
                           </span>
                         )}
                       </div>
+                      {serviceKey.description && (
+                        <p className="text-sm text-text-muted mt-0.5 truncate">
+                          {serviceKey.description}
+                        </p>
+                      )}
                       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-muted mt-1">
+                        {serviceKey.created_by && (
+                          <span>
+                            {t('service_keys.created_by')}: {serviceKey.created_by}
+                          </span>
+                        )}
                         <span>
-                          {t('common:api_keys.created_at')}: {formatDate(apiKey.created_at)}
+                          {t('service_keys.created_at')}: {formatDate(serviceKey.created_at)}
                         </span>
                         <span>
-                          {t('common:api_keys.last_used')}: {formatDate(apiKey.last_used_at)}
+                          {t('service_keys.last_used')}: {formatDate(serviceKey.last_used_at)}
                         </span>
                         <span>
-                          {t('common:api_keys.expires_at')}:{' '}
-                          {isNeverExpires(apiKey.expires_at)
-                            ? t('common:api_keys.never_expires')
-                            : formatDate(apiKey.expires_at)}
+                          {t('service_keys.expires_at')}:{' '}
+                          {isNeverExpires(serviceKey.expires_at)
+                            ? t('service_keys.never_expires')
+                            : formatDate(serviceKey.expires_at)}
                         </span>
                       </div>
                     </div>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0 ml-3">
+                    <Switch
+                      checked={serviceKey.is_active}
+                      onCheckedChange={() => handleToggleStatus(serviceKey)}
+                      disabled={togglingKeyId === serviceKey.id}
+                      title={
+                        serviceKey.is_active ? t('service_keys.disable') : t('service_keys.enable')
+                      }
+                    />
                     <Button
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8 hover:text-error"
-                      onClick={() => setDeleteConfirmKey(apiKey)}
+                      onClick={() => setDeleteConfirmKey(serviceKey)}
                       title={t('common:actions.delete')}
                     >
                       <TrashIcon className="w-4 h-4" />
@@ -252,31 +301,44 @@ const ApiKeyList: React.FC = () => {
           <div className="border-t border-border pt-3 mt-3 bg-base">
             <div className="flex justify-center">
               <UnifiedAddButton onClick={() => setCreateDialogOpen(true)}>
-                {t('common:api_keys.create')}
+                {t('service_keys.create')}
               </UnifiedAddButton>
             </div>
           </div>
         )}
       </div>
 
-      {/* Create API Key Dialog */}
+      {/* Create Service Key Dialog */}
       <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{t('common:api_keys.create')}</DialogTitle>
-            <DialogDescription>{t('common:api_keys.description')}</DialogDescription>
+            <DialogTitle>{t('service_keys.create')}</DialogTitle>
+            <DialogDescription>{t('service_keys.description')}</DialogDescription>
           </DialogHeader>
-          <div className="py-4">
-            <label className="text-sm font-medium text-text-primary">
-              {t('common:api_keys.name')}
-            </label>
-            <Input
-              className="mt-2"
-              placeholder={t('common:api_keys.name_placeholder')}
-              value={keyName}
-              onChange={e => setKeyName(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleCreate()}
-            />
+          <div className="py-4 space-y-4">
+            <div>
+              <label className="text-sm font-medium text-text-primary">
+                {t('service_keys.name')}
+              </label>
+              <Input
+                className="mt-2"
+                placeholder={t('service_keys.name_placeholder')}
+                value={keyName}
+                onChange={e => setKeyName(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium text-text-primary">
+                {t('service_keys.description_label')}
+              </label>
+              <Textarea
+                className="mt-2"
+                placeholder={t('service_keys.description_placeholder')}
+                value={keyDescription}
+                onChange={e => setKeyDescription(e.target.value)}
+                rows={3}
+              />
+            </div>
           </div>
           <DialogFooter>
             <Button
@@ -304,15 +366,13 @@ const ApiKeyList: React.FC = () => {
       <Dialog open={showCreatedDialog} onOpenChange={handleCloseCreatedDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{t('common:api_keys.create_success')}</DialogTitle>
+            <DialogTitle>{t('service_keys.create_success')}</DialogTitle>
             <DialogDescription className="text-warning font-medium">
-              {t('common:api_keys.warning_save_key')}
+              {t('service_keys.warning_save_key')}
             </DialogDescription>
           </DialogHeader>
           <div className="py-4">
-            <label className="text-sm font-medium text-text-primary">
-              {t('common:api_keys.key')}
-            </label>
+            <label className="text-sm font-medium text-text-primary">{t('service_keys.key')}</label>
             <div className="mt-2 flex items-center gap-2">
               <code className="flex-1 bg-muted p-3 rounded text-sm font-mono break-all">
                 {createdKey?.key}
@@ -321,7 +381,7 @@ const ApiKeyList: React.FC = () => {
                 variant="outline"
                 size="icon"
                 onClick={handleCopyKey}
-                title={t('common:api_keys.copy')}
+                title={t('common:actions.copy')}
               >
                 {copied ? (
                   <CheckIcon className="w-4 h-4 text-success" />
@@ -344,9 +404,9 @@ const ApiKeyList: React.FC = () => {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t('common:api_keys.delete_confirm_title')}</AlertDialogTitle>
+            <AlertDialogTitle>{t('service_keys.delete_confirm_title')}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t('common:api_keys.delete_confirm_message', { name: deleteConfirmKey?.name })}
+              {t('service_keys.delete_confirm_message', { name: deleteConfirmKey?.name })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -374,4 +434,4 @@ const ApiKeyList: React.FC = () => {
   );
 };
 
-export default ApiKeyList;
+export default ServiceKeyList;
