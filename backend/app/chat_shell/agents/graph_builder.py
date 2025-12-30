@@ -28,6 +28,7 @@ from langgraph.errors import GraphRecursionError
 from langgraph.prebuilt import create_react_agent
 
 from ..tools.base import ToolRegistry
+from ..tools.builtin.web_search import WebSearchTool
 from ..tools.gemini_search import GeminiSearchTool, create_gemini_search_tool
 
 logger = logging.getLogger(__name__)
@@ -245,9 +246,17 @@ class LangGraphAgentBuilder:
                 len(self.tools),
             )
 
-            # Create a dynamic model callable that filters out gemini_search after first use
-            # This uses LangGraph's native dynamic model support to remove the tool
-            # from the model's available tools after it has been called once.
+            # Create a dynamic model callable that manages search tool visibility
+            # This uses LangGraph's native dynamic model support to control which
+            # search tools are available at different stages of the conversation.
+            #
+            # Search tool management strategy for Gemini models:
+            # - First call (gemini_search not yet called):
+            #   - Show gemini_search (Gemini's native search)
+            #   - Hide other search tools (e.g., web_search) to avoid confusion
+            # - After gemini_search is called:
+            #   - Hide gemini_search (already used, one-time per turn)
+            #   - Show other search tools (if any) as fallback options
             #
             # Why dynamic model instead of tool-level filtering:
             # - Tool-level filtering (_called_this_turn) only returns an error message
@@ -256,39 +265,58 @@ class LangGraphAgentBuilder:
             # - This prevents wasted tokens and model confusion
             base_llm = self.llm
             all_tools = list(self.tools)
+            
+            # Identify search tools: GeminiSearchTool and WebSearchTool
+            other_search_tools = [
+                t for t in all_tools if isinstance(t, WebSearchTool)
+            ]
+            
+            # Tools for first call: all tools except other search tools (only gemini_search for search)
+            tools_with_gemini_only = [
+                t for t in all_tools if not isinstance(t, WebSearchTool)
+            ]
+            
+            # Tools after gemini_search is called: all tools except gemini_search
+            # (includes other search tools if any)
             tools_without_gemini = [
                 t for t in all_tools if not isinstance(t, GeminiSearchTool)
             ]
+            
             captured_gemini_tool = gemini_search_tool
+            has_other_search_tools = len(other_search_tools) > 0
 
             def gemini_model_callable(state: dict[str, Any], runtime: Any) -> Runnable:
-                """Dynamic model that removes gemini_search after first use.
+                """Dynamic model that manages search tool visibility for Gemini.
 
-                This callable is invoked before each LLM call. It checks if the
-                GeminiSearchTool has been called in this conversation turn:
-                - If not called: returns model with all tools (including gemini_search)
-                - If called: returns model with gemini_search filtered out
+                This callable is invoked before each LLM call. It manages search tools:
+                - If gemini_search not called: show only gemini_search (hide other search tools)
+                - If gemini_search called: hide gemini_search, show other search tools (if any)
 
-                This ensures the model cannot see or attempt to call gemini_search
-                after it has been used once in the current agent run.
+                This ensures:
+                1. Gemini uses its native search first (better integration)
+                2. Other search tools are available as fallback after gemini_search is used
+                3. No duplicate search capabilities confuse the model
                 """
                 if captured_gemini_tool.has_been_called():
-                    # GeminiSearchTool has been called, filter it out
+                    # GeminiSearchTool has been called, filter it out and restore other search tools
                     logger.info(
                         "[LangGraphAgentBuilder] gemini_search already called, "
-                        "returning model without gemini_search tool. "
-                        "Remaining tools: %d",
+                        "returning model without gemini_search. "
+                        "Other search tools available: %s, Remaining tools: %d",
+                        has_other_search_tools,
                         len(tools_without_gemini),
                     )
                     return base_llm.bind_tools(tools_without_gemini)
                 else:
-                    # First call, include all tools
+                    # First call, include gemini_search but hide other search tools
                     logger.debug(
                         "[LangGraphAgentBuilder] gemini_search not yet called, "
-                        "returning model with all tools: %d",
-                        len(all_tools),
+                        "returning model with gemini_search only (hiding %d other search tools). "
+                        "Total tools: %d",
+                        len(other_search_tools),
+                        len(tools_with_gemini_only),
                     )
-                    return base_llm.bind_tools(all_tools)
+                    return base_llm.bind_tools(tools_with_gemini_only)
 
             model_with_tools = gemini_model_callable
 
