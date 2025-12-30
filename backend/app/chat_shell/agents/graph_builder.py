@@ -265,23 +265,21 @@ class LangGraphAgentBuilder:
             # - This prevents wasted tokens and model confusion
             base_llm = self.llm
             all_tools = list(self.tools)
-            
+
             # Identify search tools: GeminiSearchTool and WebSearchTool
-            other_search_tools = [
-                t for t in all_tools if isinstance(t, WebSearchTool)
-            ]
-            
+            other_search_tools = [t for t in all_tools if isinstance(t, WebSearchTool)]
+
             # Tools for first call: all tools except other search tools (only gemini_search for search)
             tools_with_gemini_only = [
                 t for t in all_tools if not isinstance(t, WebSearchTool)
             ]
-            
+
             # Tools after gemini_search is called: all tools except gemini_search
             # (includes other search tools if any)
             tools_without_gemini = [
                 t for t in all_tools if not isinstance(t, GeminiSearchTool)
             ]
-            
+
             captured_gemini_tool = gemini_search_tool
             has_other_search_tools = len(other_search_tools) > 0
 
