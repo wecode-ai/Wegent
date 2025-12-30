@@ -411,8 +411,11 @@ author: "New Author"
             service.delete_skill(db=test_db, skill_id=skill_id, user_id=test_user.id)
 
         assert exc_info.value.status_code == 400
-        assert "referenced by Ghosts" in exc_info.value.detail
-        assert "test-ghost" in exc_info.value.detail
+        # detail is now a dict with structured error info
+        detail = exc_info.value.detail
+        assert detail["code"] == "SKILL_REFERENCED"
+        assert "referenced by Ghosts" in detail["message"]
+        assert any(g["name"] == "test-ghost" for g in detail["referenced_ghosts"])
 
     def test_get_skill_binary(self, test_db: Session, test_user: User):
         """Test retrieving skill binary data"""
