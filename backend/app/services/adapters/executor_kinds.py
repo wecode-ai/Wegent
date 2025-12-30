@@ -43,6 +43,7 @@ class ExecutorKindsService(
         limit: int = 1,
         task_ids: Optional[List[int]] = None,
         type: str = "online",
+        whitelist_enabled: Optional[bool] = None,
     ) -> Dict[str, List[Dict]]:
         """
         Task dispatch logic with subtask support using tasks table
@@ -52,12 +53,19 @@ class ExecutorKindsService(
             limit: Maximum number of subtasks to return (only used when task_ids is None)
             task_ids: Optional list of task IDs to filter by
             type: Task type to filter by (default: "online")
+            whitelist_enabled:
+                - True: Only return tasks from whitelisted users
+                - False: Only return tasks from non-whitelisted users
+                - None: No filtering, return all tasks
+                - If whitelist service is not implemented, no filtering is applied
         """
         if task_ids:
             # Scenario 1: Specify task ID list, query subtasks for these tasks
             # When multiple task_ids are provided, ignore limit parameter, each task will only take 1 subtask
             subtasks = []
 
+            # First collect all valid tasks
+            valid_tasks = []
             for task_id in task_ids:
                 # First query tasks table to check task status
                 task = (
@@ -93,13 +101,24 @@ class ExecutorKindsService(
                     # If there are running subtasks, skip this task
                     continue
 
-                # Get subtasks for this task, only take 1 per task
-                task_subtasks = self._get_subtasks_for_task(db, task_id, status, 1)
+                valid_tasks.append(task)
+
+            # Apply whitelist filtering if enabled
+            if whitelist_enabled is not None and valid_tasks:
+                valid_tasks = self._filter_tasks_by_whitelist(
+                    valid_tasks, whitelist_enabled
+                )
+
+            # Get subtasks for each valid task
+            for task in valid_tasks:
+                task_subtasks = self._get_subtasks_for_task(db, task.id, status, 1)
                 if task_subtasks:
                     subtasks.extend(task_subtasks)
         else:
             # Scenario 2: No task_ids, first query tasks, then query first subtask for each task
-            subtasks = self._get_first_subtasks_for_tasks(db, status, limit, type)
+            subtasks = self._get_first_subtasks_for_tasks(
+                db, status, limit, type, whitelist_enabled
+            )
 
         if not subtasks:
             return {"tasks": []}
@@ -129,10 +148,30 @@ class ExecutorKindsService(
         )
 
     def _get_first_subtasks_for_tasks(
-        self, db: Session, status: str, limit: int, type: str
+        self,
+        db: Session,
+        status: str,
+        limit: int,
+        type: str,
+        whitelist_enabled: Optional[bool] = None,
     ) -> List[Subtask]:
-        """Get first subtask for multiple tasks using tasks table"""
+        """Get first subtask for multiple tasks using tasks table
+
+        Args:
+            db: Database session
+            status: Subtask status to filter by
+            limit: Maximum number of tasks to return
+            type: Task type (online/offline)
+            whitelist_enabled:
+                - True: Only return tasks from whitelisted users
+                - False: Only return tasks from non-whitelisted users
+                - None: No filtering, return all tasks
+        """
         # Step 1: First query tasks table to get limit tasks
+        # When whitelist filtering is enabled, we need to fetch more tasks
+        # to account for filtering, then apply limit after filtering
+        fetch_limit = limit * 3 if whitelist_enabled is not None else limit
+
         tasks = None
         if type == "offline":
             tasks = (
@@ -148,7 +187,7 @@ class ExecutorKindsService(
                 )
                 .params(status=status)
                 .order_by(TaskResource.created_at.desc())
-                .limit(limit)
+                .limit(fetch_limit)
                 .all()
             )
         else:
@@ -165,12 +204,18 @@ class ExecutorKindsService(
                 )
                 .params(status=status)
                 .order_by(TaskResource.created_at.desc())
-                .limit(limit)
+                .limit(fetch_limit)
                 .all()
             )
 
         if not tasks:
             return []
+
+        # Apply whitelist filtering if enabled
+        if whitelist_enabled is not None:
+            tasks = self._filter_tasks_by_whitelist(tasks, whitelist_enabled)
+            # Apply limit after filtering
+            tasks = tasks[:limit]
 
         task_ids = [task.id for task in tasks]
         # Step 2: Query first subtask with matching status for each task
@@ -191,6 +236,63 @@ class ExecutorKindsService(
                 subtasks.append(first_subtask)
 
         return subtasks
+
+    def _filter_tasks_by_whitelist(
+        self,
+        tasks: List[TaskResource],
+        whitelist_enabled: bool,
+    ) -> List[TaskResource]:
+        """
+        Filter tasks based on whitelist status.
+
+        Args:
+            tasks: List of tasks to filter
+            whitelist_enabled: If True, keep only whitelisted users tasks;
+                              If False, keep only non-whitelisted users tasks
+
+        Returns:
+            Filtered list of tasks
+        """
+        from app.services.whitelist import get_whitelist_service
+
+        whitelist_service = get_whitelist_service()
+
+        # If whitelist service is not implemented, return all tasks
+        if not whitelist_service.is_implemented():
+            return tasks
+
+        filtered_tasks = []
+
+        # Use asyncio to run async whitelist check
+        async def filter_async():
+            result = []
+            for task in tasks:
+                is_whitelisted = await whitelist_service.is_user_whitelisted(
+                    task.user_id
+                )
+                # whitelist_enabled=True: keep whitelisted users
+                # whitelist_enabled=False: keep non-whitelisted users
+                if whitelist_enabled == is_whitelisted:
+                    result.append(task)
+            return result
+
+        # Run the async function
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If we're already in an async context, create a new task
+                import concurrent.futures
+
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(asyncio.run, filter_async())
+                    filtered_tasks = future.result()
+            else:
+                filtered_tasks = loop.run_until_complete(filter_async())
+        except RuntimeError:
+            # No event loop, create one
+            filtered_tasks = asyncio.run(filter_async())
+
+        return filtered_tasks
 
     def _update_subtasks_to_running(
         self, db: Session, subtasks: List[Subtask]

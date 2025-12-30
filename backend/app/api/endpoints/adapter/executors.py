@@ -26,6 +26,10 @@ async def dispatch_tasks(
         default=None, description="Optional task IDs to filter by, comma separated"
     ),
     type: str = Query(default="online", description="online or offline"),
+    whitelist_enabled: Optional[bool] = Query(
+        default=None,
+        description="Filter by whitelist: True=only whitelisted, False=only non-whitelisted, None=no filtering",
+    ),
     db: Session = Depends(get_db),
 ):
     """Task dispatch interface with subtask support using kinds table
@@ -35,6 +39,10 @@ async def dispatch_tasks(
         limit: Maximum number of subtasks to return
         task_ids: Optional task IDs to filter by, comma separated. If not provided, will search across all tasks
         type: Task type to filter by (default: "online")
+        whitelist_enabled: Filter by whitelist status:
+            - True: Only return tasks from whitelisted users
+            - False: Only return tasks from non-whitelisted users
+            - None: No filtering, return all tasks
 
     Returns:
         List of subtasks with aggregated context from previous subtasks
@@ -48,7 +56,12 @@ async def dispatch_tasks(
             task_id_list = None
 
     return await executor_kinds_service.dispatch_tasks(
-        db=db, status=task_status, limit=limit, task_ids=task_id_list, type=type
+        db=db,
+        status=task_status,
+        limit=limit,
+        task_ids=task_id_list,
+        type=type,
+        whitelist_enabled=whitelist_enabled,
     )
 
 
