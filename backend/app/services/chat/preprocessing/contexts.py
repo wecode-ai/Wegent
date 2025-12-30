@@ -209,9 +209,11 @@ def link_contexts_to_subtask(
     user_id: int,
     attachment_ids: List[int] | None = None,
     contexts: List[Any] | None = None,
+    task_id: Optional[int] = None,
 ) -> List[int]:
     """
     Link attachments and create knowledge base contexts for a subtask.
+    Also syncs to Task-level contexts for global visibility.
 
     This function handles two types of contexts in a single database transaction:
     1. Attachments: Pre-uploaded files with existing context IDs, batch update subtask_id
@@ -224,6 +226,7 @@ def link_contexts_to_subtask(
         user_id: User ID
         attachment_ids: List of pre-uploaded attachment context IDs to link
         contexts: List of ContextItem objects from payload (for knowledge bases)
+        task_id: Optional Task ID for syncing contexts to Task level
 
     Returns:
         List of all linked/created context IDs
@@ -299,6 +302,12 @@ def link_contexts_to_subtask(
                 f"Created {len(kb_contexts_to_create)} knowledge base contexts "
                 f"for subtask {subtask_id}"
             )
+
+        # Sync to Task-level contexts for global visibility
+        if task_id and linked_context_ids:
+            from app.services.chat.storage.task_contexts import sync_task_contexts
+
+            sync_task_contexts(db, task_id, linked_context_ids)
 
     except Exception as e:
         db.rollback()
@@ -449,12 +458,14 @@ def _prepare_kb_tools_from_contexts(
     """
     Prepare knowledge base tools from context records.
 
+    Priority: Current subtask contexts > Task-level historical contexts
+
     Args:
         kb_contexts: List of knowledge base SubtaskContext records
         user_id: User ID for access control
         db: Database session
         base_system_prompt: Base system prompt to enhance
-        task_id: Optional task ID for historical KB meta
+        task_id: Optional task ID for Task-level historical contexts
         user_subtask_id: User subtask ID for RAG persistence
 
     Returns:
@@ -463,10 +474,38 @@ def _prepare_kb_tools_from_contexts(
     extra_tools: List[BaseTool] = []
     enhanced_system_prompt = base_system_prompt
 
-    # Extract knowledge_id values from contexts
+    # Extract knowledge_id values from current subtask contexts
     knowledge_base_ids = [
         c.knowledge_id for c in kb_contexts if c.knowledge_id is not None
     ]
+
+    # Build meta info for tool description
+    kb_meta_for_prompt = []
+
+    # Fallback to Task-level contexts if current subtask has no KB
+    if not knowledge_base_ids and task_id:
+        from app.services.chat.storage.task_contexts import get_kb_contexts_from_task
+
+        task_kb_contexts = get_kb_contexts_from_task(db, task_id)
+        if task_kb_contexts:
+            knowledge_base_ids = [
+                c.knowledge_id for c in task_kb_contexts if c.knowledge_id
+            ]
+            # Build meta info for tool description
+            kb_meta_for_prompt = [
+                {"id": c.knowledge_id, "name": c.name}
+                for c in task_kb_contexts
+                if c.knowledge_id
+            ]
+            logger.info(
+                f"[_prepare_kb_tools_from_contexts] Using Task-level KB contexts: "
+                f"{knowledge_base_ids}"
+            )
+    else:
+        # Build meta info from current subtask contexts
+        kb_meta_for_prompt = [
+            {"id": c.knowledge_id, "name": c.name} for c in kb_contexts if c.knowledge_id
+        ]
 
     if not knowledge_base_ids:
         # Even without current knowledge bases, check for historical KB meta
@@ -484,21 +523,55 @@ def _prepare_kb_tools_from_contexts(
     # Import KnowledgeBaseTool
     from app.chat_shell.tools.builtin import KnowledgeBaseTool
 
-    # Create KnowledgeBaseTool with the specified knowledge bases
+    # Create KnowledgeBaseTool with the specified knowledge bases and dynamic description
     kb_tool = KnowledgeBaseTool(
         knowledge_base_ids=knowledge_base_ids,
         user_id=user_id,
         db_session=db,
         user_subtask_id=user_subtask_id,
+        available_knowledge_bases=kb_meta_for_prompt,
     )
     extra_tools.append(kb_tool)
 
-    # Enhance system prompt to REQUIRE AI to use the knowledge base tool
-    kb_instruction = """
+    # Build knowledge base instruction prompt with available KB list
+    kb_instruction = _build_kb_instruction_prompt(kb_meta_for_prompt)
+    enhanced_system_prompt = f"{base_system_prompt}{kb_instruction}"
+
+    # Add historical knowledge base meta info if available
+    if task_id:
+        kb_meta_prompt = _build_historical_kb_meta_prompt(db, task_id)
+        if kb_meta_prompt:
+            enhanced_system_prompt = f"{enhanced_system_prompt}{kb_meta_prompt}"
+
+    logger.info(
+        "[_prepare_kb_tools_from_contexts] Enhanced system prompt with "
+        "REQUIRED knowledge base usage instructions"
+    )
+
+    return extra_tools, enhanced_system_prompt
+
+
+def _build_kb_instruction_prompt(kb_meta_list: List[dict]) -> str:
+    """Build knowledge base instruction prompt with available KB list.
+
+    Args:
+        kb_meta_list: List of knowledge base metadata dicts with 'id' and 'name' keys
+
+    Returns:
+        Formatted prompt string with KB usage instructions
+    """
+    kb_list_str = "\n".join(
+        [f"  - ID: {kb['id']}, Name: {kb['name']}" for kb in kb_meta_list]
+    )
+
+    return f"""
 
 # IMPORTANT: Knowledge Base Requirement
 
 The user has selected specific knowledge bases for this conversation. You MUST use the `knowledge_base_search` tool to retrieve information from these knowledge bases before answering any questions.
+
+## Available Knowledge Bases:
+{kb_list_str}
 
 ## Required Workflow:
 1. **ALWAYS** call `knowledge_base_search` first with the user's query
@@ -514,21 +587,6 @@ The user has selected specific knowledge bases for this conversation. You MUST u
 - If unsure, search again with different keywords
 
 The user expects answers based on the selected knowledge base content only."""
-
-    enhanced_system_prompt = f"{base_system_prompt}{kb_instruction}"
-
-    # Add historical knowledge base meta info if available
-    if task_id:
-        kb_meta_prompt = _build_historical_kb_meta_prompt(db, task_id)
-        if kb_meta_prompt:
-            enhanced_system_prompt = f"{enhanced_system_prompt}{kb_meta_prompt}"
-
-    logger.info(
-        "[_prepare_kb_tools_from_contexts] Enhanced system prompt with "
-        "REQUIRED knowledge base usage instructions"
-    )
-
-    return extra_tools, enhanced_system_prompt
 
 
 def _build_historical_kb_meta_prompt(
