@@ -75,6 +75,13 @@ class WebSocketStreamingHandler:
             namespace: ChatNamespace instance for emitting events
             max_iterations: Max tool loop iterations
         """
+        from opentelemetry import trace
+        from shared.telemetry.context import (
+            SpanNames,
+            set_task_context,
+        )
+        from shared.telemetry.core import is_telemetry_enabled
+
         from app.chat_shell.tools import WebSearchTool
         from app.core.shutdown import shutdown_manager
         from app.services.chat.ws_emitter import get_ws_emitter
@@ -82,6 +89,9 @@ class WebSocketStreamingHandler:
         subtask_id = config.subtask_id
         task_id = config.task_id
         task_room = config.task_room
+
+        # Set task context for tracing (propagates to all child spans)
+        set_task_context(task_id=task_id, subtask_id=subtask_id)
 
         # Create WebSocket emitter
         emitter = WebSocketEmitter(namespace, task_room, task_id)
@@ -250,7 +260,30 @@ class WebSocketStreamingHandler:
                 )
 
         except Exception as e:
+            from shared.telemetry.context import (
+                TelemetryEventNames,
+                record_stream_error,
+                set_task_context,
+            )
+
             logger.exception("[WS_STREAM] subtask=%s error", subtask_id)
+
+            # Ensure task context is set for trace
+            set_task_context(task_id=task_id, subtask_id=subtask_id)
+
+            # Record error in OpenTelemetry trace using unified function
+            record_stream_error(
+                error=e,
+                event_name=TelemetryEventNames.STREAM_ERROR,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                extra_attributes={
+                    "shell_type": config.shell_type,
+                    "tools_count": len(extra_tools) if "extra_tools" in dir() else 0,
+                    "token_count": token_count if "token_count" in dir() else 0,
+                },
+            )
+
             await core.handle_error(e)
 
         finally:
