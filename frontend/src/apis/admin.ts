@@ -114,6 +114,52 @@ export interface ChatSloganTipsResponse {
   tips: ChatTipItem[];
 }
 
+// Service Key Types
+export interface ServiceKey {
+  id: number;
+  name: string;
+  key_prefix: string;
+  description: string | null;
+  expires_at: string;
+  last_used_at: string;
+  created_at: string;
+  is_active: boolean;
+  created_by: string | null;
+}
+
+export interface ServiceKeyCreated extends ServiceKey {
+  key: string; // Full key, only at creation
+}
+
+export interface ServiceKeyCreateRequest {
+  name: string;
+  description?: string;
+}
+
+export interface ServiceKeyListResponse {
+  items: ServiceKey[];
+  total: number;
+}
+
+// Personal Key Types (Admin Management)
+export interface AdminPersonalKey {
+  id: number;
+  user_id: number;
+  user_name: string;
+  name: string;
+  key_prefix: string;
+  description: string | null;
+  expires_at: string;
+  last_used_at: string;
+  created_at: string;
+  is_active: boolean;
+}
+
+export interface AdminPersonalKeyListResponse {
+  items: AdminPersonalKey[];
+  total: number;
+}
+
 // Admin API Services
 export const adminApis = {
   // ==================== User Management ====================
@@ -263,5 +309,69 @@ export const adminApis = {
    */
   async updateSloganTipsConfig(data: ChatSloganTipsUpdate): Promise<ChatSloganTipsResponse> {
     return apiClient.put('/admin/system-config/slogan-tips', data);
+  },
+
+  // ==================== Service Key Management ====================
+
+  /**
+   * Get list of all service keys
+   */
+  async getServiceKeys(): Promise<ServiceKeyListResponse> {
+    return apiClient.get('/admin/service-keys');
+  },
+
+  /**
+   * Create a new service key
+   * The full key is only returned at creation time
+   */
+  async createServiceKey(data: ServiceKeyCreateRequest): Promise<ServiceKeyCreated> {
+    return apiClient.post('/admin/service-keys', data);
+  },
+
+  /**
+   * Toggle service key active status
+   */
+  async toggleServiceKeyStatus(keyId: number): Promise<ServiceKey> {
+    return apiClient.post(`/admin/service-keys/${keyId}/toggle-status`);
+  },
+
+  /**
+   * Delete a service key
+   */
+  async deleteServiceKey(keyId: number): Promise<void> {
+    return apiClient.delete(`/admin/service-keys/${keyId}`);
+  },
+
+  // ==================== Personal Key Management (Admin) ====================
+
+  /**
+   * Get list of all personal keys with their owners
+   */
+  async getPersonalKeys(
+    page: number = 1,
+    limit: number = 50,
+    search?: string
+  ): Promise<AdminPersonalKeyListResponse> {
+    const params = new URLSearchParams();
+    params.append('page', String(page));
+    params.append('limit', String(limit));
+    if (search) {
+      params.append('search', search);
+    }
+    return apiClient.get(`/admin/personal-keys?${params.toString()}`);
+  },
+
+  /**
+   * Toggle personal key active status
+   */
+  async togglePersonalKeyStatus(keyId: number): Promise<AdminPersonalKey> {
+    return apiClient.post(`/admin/personal-keys/${keyId}/toggle-status`);
+  },
+
+  /**
+   * Delete a personal key
+   */
+  async deletePersonalKey(keyId: number): Promise<void> {
+    return apiClient.delete(`/admin/personal-keys/${keyId}`);
   },
 };

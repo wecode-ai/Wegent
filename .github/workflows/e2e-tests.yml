@@ -10,11 +10,22 @@ on:
     - cron: '0 2 * * *'
   workflow_dispatch:
 
+# Cancel in-progress runs for the same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  # Single consolidated job that runs all tests with sharding
   e2e-tests:
-    name: E2E Tests (Chromium)
+    name: E2E Tests (Shard ${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shardIndex: [1, 2, 3]
+        shardTotal: [3]
 
     services:
       mysql:
@@ -44,6 +55,18 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # Cache Python packages
+      - name: Cache Python packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/uv
+            backend/.venv
+            shared/.venv
+          key: ${{ runner.os }}-python-${{ hashFiles('backend/pyproject.toml', 'shared/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-python-
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -59,6 +82,7 @@ jobs:
       - name: Install uv
         run: pip install uv
 
+      # Install dependencies in parallel
       - name: Install shared module
         working-directory: ./shared
         run: |
@@ -70,9 +94,30 @@ jobs:
         working-directory: ./backend
         run: |
           uv sync
-          # Install shared module in backend venv
           source .venv/bin/activate
           uv pip install -e ../shared
+
+      - name: Install frontend dependencies
+        working-directory: ./frontend
+        run: npm ci
+
+      # Cache Playwright browsers
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('frontend/package-lock.json') }}
+
+      - name: Install Playwright browsers
+        working-directory: ./frontend
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: Install Playwright dependencies (cached)
+        working-directory: ./frontend
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
 
       - name: Run database migrations
         working-directory: ./backend
@@ -96,95 +141,45 @@ jobs:
           source .venv/bin/activate
           nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 > backend.log 2>&1 &
           echo $! > backend.pid
-          sleep 15
-
-      - name: Verify backend is running
-        working-directory: ./backend
-        run: |
-          if [ -f backend.pid ]; then
-            PID=$(cat backend.pid)
-            if ps -p $PID > /dev/null; then
-              echo "Backend process is running (PID: $PID)"
-            else
-              echo "Backend process is not running!"
-              echo "=== Backend logs ==="
-              cat backend.log || echo "No log file found"
-              exit 1
-            fi
-          else
-            echo "Backend PID file not found!"
-            exit 1
-          fi
-
-      - name: Test backend health
-        run: |
-          echo "Testing backend health endpoint..."
-          for i in {1..10}; do
-            if curl -f http://localhost:8000/api/docs > /dev/null 2>&1; then
-              echo "Backend is responding!"
-              exit 0
-            fi
-            echo "Attempt $i failed, waiting 3 seconds..."
-            sleep 3
-          done
-          echo "Backend health check failed after 10 attempts"
-          exit 1
-
-      - name: Check backend logs on failure
-        if: failure()
-        working-directory: ./backend
-        run: |
-          if [ -f backend.log ]; then
-            echo "=== Backend logs ==="
-            cat backend.log
-          fi
-
-      - name: Install frontend dependencies
-        working-directory: ./frontend
-        run: npm ci
-
-      - name: Install Playwright browsers
-        working-directory: ./frontend
-        run: npx playwright install --with-deps chromium
 
       - name: Build frontend
         working-directory: ./frontend
         env:
-          # Build-time fallback (not used at runtime)
           NEXT_PUBLIC_API_URL: http://localhost:8000
         run: npm run build
 
       - name: Start frontend server
         working-directory: ./frontend
         env:
-          # Runtime variables (can be changed without rebuilding)
           RUNTIME_INTERNAL_API_URL: http://localhost:8000
           RUNTIME_SOCKET_DIRECT_URL: http://localhost:8000
         run: |
           npm start &
-          sleep 5
 
-      - name: Wait for services
-        run: |
-          npx wait-on http://localhost:3000 http://localhost:8000/api/docs --timeout 60000
-
-      - name: Start Mock Model Server for image upload tests
+      - name: Start Mock Model Server
         working-directory: ./frontend
         run: |
           npx tsx e2e/utils/mock-model-server.ts &
           echo $! > mock-server.pid
-          sleep 3
-          # Verify mock server is running
-          curl -f http://localhost:9999/health || echo "Mock server health check failed (non-critical)"
 
-      - name: Run E2E tests
+      - name: Wait for services
+        run: |
+          npx wait-on http://localhost:8000/api/docs http://localhost:3000 --timeout 90000
+
+      - name: Verify backend is running
+        run: |
+          curl -f http://localhost:8000/api/docs > /dev/null 2>&1 || (cat backend/backend.log && exit 1)
+
+      - name: Run E2E tests (Sharded)
         working-directory: ./frontend
         env:
           E2E_BASE_URL: http://localhost:3000
           E2E_API_URL: http://localhost:8000
           MOCK_MODEL_SERVER_URL: http://localhost:9999
           CI: true
-        run: npx playwright test --project=chromium --project=api
+        run: |
+          npx playwright test --project=chromium --project=api \
+            --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
 
       - name: Stop Mock Model Server
         if: always()
@@ -199,58 +194,32 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
-          path: frontend/playwright-report/
-          retention-days: 30
+          name: blob-report-${{ matrix.shardIndex }}
+          path: frontend/blob-report/
+          retention-days: 14
 
       - name: Upload test traces
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-traces
+          name: playwright-traces-${{ matrix.shardIndex }}
           path: frontend/test-results/
           retention-days: 7
 
-      - name: Upload screenshots
+      - name: Upload backend logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-screenshots
-          path: frontend/e2e/screenshots/
-          retention-days: 7
-
-      - name: Upload backend logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: backend-logs-e2e
+          name: backend-logs-${{ matrix.shardIndex }}
           path: backend/backend.log
           retention-days: 7
 
-  api-tests:
-    name: API Integration Tests
+  # Merge test reports from all shards
+  merge-reports:
+    name: Merge Test Reports
+    needs: e2e-tests
+    if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-
-    services:
-      mysql:
-        image: mysql:8.0
-        env:
-          MYSQL_ROOT_PASSWORD: test123
-          MYSQL_DATABASE: wegent_test
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=3
-
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -259,146 +228,25 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Download all blob reports
+        uses: actions/download-artifact@v4
         with:
-          python-version: '3.11'
-
-      - name: Install uv
-        run: pip install uv
-
-      - name: Install shared module
-        working-directory: ./shared
-        run: |
-          uv venv
-          source .venv/bin/activate
-          uv pip install -e .
-
-      - name: Install backend dependencies
-        working-directory: ./backend
-        run: |
-          uv sync
-          # Install shared module in backend venv
-          source .venv/bin/activate
-          uv pip install -e ../shared
-
-      - name: Run database migrations
-        working-directory: ./backend
-        env:
-          DATABASE_URL: mysql+pymysql://root:test123@localhost:3306/wegent_test
-        run: |
-          source .venv/bin/activate
-          alembic upgrade head
-
-      - name: Start backend server
-        working-directory: ./backend
-        env:
-          DATABASE_URL: mysql+pymysql://root:test123@localhost:3306/wegent_test
-          REDIS_URL: redis://localhost:6379/0
-          SECRET_KEY: test-secret-key-for-ci-testing
-          ALGORITHM: HS256
-          ENVIRONMENT: development
-          DB_AUTO_MIGRATE: "false"
-          INIT_DATA_ENABLED: "true"
-        run: |
-          source .venv/bin/activate
-          nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 > backend.log 2>&1 &
-          echo $! > backend.pid
-          sleep 15
-
-      - name: Verify backend is running
-        working-directory: ./backend
-        run: |
-          if [ -f backend.pid ]; then
-            PID=$(cat backend.pid)
-            if ps -p $PID > /dev/null; then
-              echo "Backend process is running (PID: $PID)"
-            else
-              echo "Backend process is not running!"
-              echo "=== Backend logs ==="
-              cat backend.log || echo "No log file found"
-              exit 1
-            fi
-          else
-            echo "Backend PID file not found!"
-            exit 1
-          fi
-
-      - name: Test backend health
-        run: |
-          echo "Testing backend health endpoint..."
-          for i in {1..10}; do
-            if curl -f http://localhost:8000/api/docs > /dev/null 2>&1; then
-              echo "Backend is responding!"
-              exit 0
-            fi
-            echo "Attempt $i failed, waiting 3 seconds..."
-            sleep 3
-          done
-          echo "Backend health check failed after 10 attempts"
-          exit 1
-
-      - name: Check backend logs on failure
-        if: failure()
-        working-directory: ./backend
-        run: |
-          if [ -f backend.log ]; then
-            echo "=== Backend logs ==="
-            cat backend.log
-          fi
+          pattern: blob-report-*
+          path: all-blob-reports
+          merge-multiple: true
 
       - name: Install frontend dependencies
         working-directory: ./frontend
         run: npm ci
 
-      - name: Install Playwright
+      - name: Merge reports
         working-directory: ./frontend
-        run: npx playwright install
+        run: npx playwright merge-reports --reporter html ../all-blob-reports
 
-      - name: Wait for backend
-        run: npx wait-on http://localhost:8000/api/docs --timeout 60000
-
-      - name: Start Mock Model Server for image upload tests
-        working-directory: ./frontend
-        run: |
-          npx tsx e2e/utils/mock-model-server.ts &
-          echo $! > mock-server.pid
-          sleep 3
-          # Verify mock server is running
-          curl -f http://localhost:9999/health || echo "Mock server health check failed (non-critical)"
-
-      - name: Run API tests
-        working-directory: ./frontend
-        env:
-          E2E_API_URL: http://localhost:8000
-          MOCK_MODEL_SERVER_URL: http://localhost:9999
-          CI: true
-        run: npx playwright test --project=api
-
-      - name: Stop Mock Model Server
-        if: always()
-        working-directory: ./frontend
-        run: |
-          if [ -f mock-server.pid ]; then
-            kill $(cat mock-server.pid) 2>/dev/null || true
-            rm mock-server.pid
-          fi
-
-      - name: Upload API test results
-        if: always()
+      - name: Upload merged report
         uses: actions/upload-artifact@v4
         with:
-          name: api-test-results
+          name: playwright-report-merged
           path: frontend/playwright-report/
-          retention-days: 14
-
-      - name: Upload backend logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: backend-logs-api
-          path: backend/backend.log
-          retention-days: 7
+          retention-days: 30

@@ -5,6 +5,7 @@
     "users": "Users",
     "public_models": "Public Models",
     "public_skills": "Public Skills",
+    "api_keys": "API Keys",
     "system_config": "System Config"
   },
   "stats": {
@@ -240,6 +241,70 @@
       "save_failed": "Failed to save configuration",
       "slogan_required": "Both Chinese and English slogan are required",
       "tip_required": "Both Chinese and English tip text are required"
+    }
+  },
+  "api_keys": {
+    "title": "API Key Management",
+    "description": "Manage service keys and personal API keys",
+    "service_keys": "Service Keys",
+    "personal_keys": "Personal Keys"
+  },
+  "service_keys": {
+    "title": "Service Key Management",
+    "description": "Manage trusted keys for service-to-service calls",
+    "no_keys": "No service keys found",
+    "create": "Create Service Key",
+    "name": "Key Name",
+    "name_placeholder": "Enter key name",
+    "description_label": "Description",
+    "description_placeholder": "Enter key description (optional)",
+    "key": "Key",
+    "created_by": "Created By",
+    "created_at": "Created At",
+    "last_used": "Last Used",
+    "expires_at": "Expires At",
+    "never_expires": "Never expires",
+    "create_success": "Service key created successfully",
+    "delete_success": "Service key deleted successfully",
+    "enabled_success": "Service key enabled",
+    "disabled_success": "Service key disabled",
+    "warning_save_key": "Please save this key securely. It will only be shown once!",
+    "delete_confirm_title": "Confirm Deletion",
+    "delete_confirm_message": "Are you sure you want to delete service key \"{{name}}\"? Related services will no longer be able to use this key.",
+    "status_disabled": "Disabled",
+    "enable": "Enable",
+    "disable": "Disable",
+    "errors": {
+      "load_failed": "Failed to load service keys",
+      "create_failed": "Failed to create service key",
+      "delete_failed": "Failed to delete service key",
+      "toggle_failed": "Failed to toggle service key status",
+      "name_required": "Key name is required"
+    }
+  },
+  "personal_keys": {
+    "title": "Personal Key Management",
+    "description": "View and manage all users' personal API keys",
+    "no_keys": "No personal keys found",
+    "search_placeholder": "Search username or key name...",
+    "name": "Key Name",
+    "owner": "Owner",
+    "created_at": "Created At",
+    "last_used": "Last Used",
+    "expires_at": "Expires At",
+    "never_expires": "Never expires",
+    "delete_success": "Personal key deleted successfully",
+    "enabled_success": "Personal key enabled",
+    "disabled_success": "Personal key disabled",
+    "delete_confirm_title": "Confirm Deletion",
+    "delete_confirm_message": "Are you sure you want to delete user \"{{owner}}\"'s key \"{{name}}\"? The user will no longer be able to use this key for API calls.",
+    "status_disabled": "Disabled",
+    "enable": "Enable",
+    "disable": "Disable",
+    "errors": {
+      "load_failed": "Failed to load personal keys",
+      "delete_failed": "Failed to delete personal key",
+      "toggle_failed": "Failed to toggle personal key status"
     }
   }
 }
