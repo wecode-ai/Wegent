@@ -233,11 +233,16 @@ def link_contexts_to_subtask(
     """
     linked_context_ids = []
     kb_contexts_to_create: List[SubtaskContext] = []
-    linked_context_objects: List[SubtaskContext] = []  # For task-level sync
+    task_context_entries: List[dict] = []  # For task-level sync (id + context_type)
 
     # 1. Collect attachment IDs to link
     if attachment_ids:
         linked_context_ids.extend(attachment_ids)
+        # Add attachment entries for task-level sync (we know the type is 'attachment')
+        for att_id in attachment_ids:
+            task_context_entries.append(
+                {"id": att_id, "context_type": ContextType.ATTACHMENT.value}
+            )
 
     # 2. Prepare knowledge base contexts for batch creation
     if contexts:
@@ -276,13 +281,6 @@ def link_contexts_to_subtask(
                 {"subtask_id": subtask_id},
                 synchronize_session=False,
             )
-            # Fetch linked attachment contexts for task-level sync
-            linked_attachments = (
-                db.query(SubtaskContext)
-                .filter(SubtaskContext.id.in_(attachment_ids))
-                .all()
-            )
-            linked_context_objects.extend(linked_attachments)
 
         # Batch add new knowledge base contexts
         if kb_contexts_to_create:
@@ -291,11 +289,14 @@ def link_contexts_to_subtask(
         # Single commit for all operations
         db.commit()
 
-        # Refresh KB contexts to get their IDs and add to linked_context_ids
+        # Refresh KB contexts to get their IDs and add to both lists
         for kb_context in kb_contexts_to_create:
             db.refresh(kb_context)
             linked_context_ids.append(kb_context.id)
-            linked_context_objects.append(kb_context)  # Add to sync list
+            # Add KB entry for task-level sync
+            task_context_entries.append(
+                {"id": kb_context.id, "context_type": kb_context.context_type}
+            )
             logger.debug(
                 f"Created knowledge base context: id={kb_context.id}, "
                 f"knowledge_id={kb_context.type_data.get('knowledge_id')}, "
@@ -313,10 +314,10 @@ def link_contexts_to_subtask(
             )
 
         # Sync to Task-level contexts for global visibility (no extra query needed)
-        if task and linked_context_objects:
+        if task and task_context_entries:
             from app.services.chat.storage.task_contexts import sync_task_contexts
 
-            sync_task_contexts(db, task, linked_context_objects)
+            sync_task_contexts(db, task, task_context_entries)
 
     except Exception as e:
         db.rollback()

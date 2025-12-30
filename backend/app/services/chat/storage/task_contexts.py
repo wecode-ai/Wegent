@@ -23,10 +23,10 @@ logger = logging.getLogger(__name__)
 def sync_task_contexts(
     db: Session,
     task: TaskResource,
-    new_context_objects: List[SubtaskContext],
+    new_context_entries: List[dict],
 ) -> None:
     """
-    Incrementally merge new context objects to Task's contexts field.
+    Incrementally merge new context entries to Task's contexts field.
 
     This function updates the task's JSON field to include new subtask contexts,
     enabling task-level context aggregation for global visibility.
@@ -34,14 +34,10 @@ def sync_task_contexts(
     Args:
         db: Database session
         task: TaskResource object (already loaded, no additional query needed)
-        new_context_objects: List of SubtaskContext objects to add
+        new_context_entries: List of context entry dicts with 'id' and 'context_type' keys
     """
-    if not new_context_objects:
+    if not new_context_entries:
         return
-
-    new_context_entries = [
-        {"id": ctx.id, "context_type": ctx.context_type} for ctx in new_context_objects
-    ]
 
     # Get existing contexts from Task JSON
     task_contexts = task.json.get("contexts", {})
