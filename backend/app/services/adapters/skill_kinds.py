@@ -273,7 +273,7 @@ class SkillKindsService:
 
     def delete_skill(self, db: Session, *, skill_id: int, user_id: int) -> None:
         """
-        Delete Skill (soft delete).
+        Delete Skill (soft delete for Kind, hard delete for SkillBinary).
 
         Checks if the Skill is referenced by any Ghost before deletion.
 
@@ -322,7 +322,10 @@ class SkillKindsService:
                 detail=f"Cannot delete Skill '{skill_name}' because it is referenced by Ghosts: {', '.join(referenced_ghosts)}",
             )
 
-        # Soft delete
+        # Delete associated SkillBinary (hard delete to free storage)
+        db.query(SkillBinary).filter(SkillBinary.kind_id == skill_id).delete()
+
+        # Soft delete the Kind record
         skill_kind.is_active = False
         db.commit()
 

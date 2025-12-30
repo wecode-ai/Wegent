@@ -6,7 +6,7 @@
 
 import { useState, useCallback } from 'react';
 import { Skill } from '@/types/api';
-import { uploadSkill, updateSkill } from '@/apis/skills';
+import { uploadSkill, updateSkill, fetchSkillByName } from '@/apis/skills';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
@@ -19,6 +19,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Label } from '@/components/ui/label';
 import { UploadIcon, FileIcon, AlertCircle } from 'lucide-react';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -40,6 +50,8 @@ export default function SkillUploadModal({ open, onClose, skill }: SkillUploadMo
   const [uploadProgress, setUploadProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
+  const [overwriteDialogOpen, setOverwriteDialogOpen] = useState(false);
+  const [existingSkill, setExistingSkill] = useState<Skill | null>(null);
 
   const isEditMode = !!skill;
 
@@ -118,6 +130,26 @@ export default function SkillUploadModal({ open, onClose, skill }: SkillUploadMo
       return;
     }
 
+    // Check if skill with same name already exists (only for create mode)
+    if (!isEditMode) {
+      try {
+        const existing = await fetchSkillByName(skillName.trim(), namespace);
+        if (existing) {
+          setExistingSkill(existing);
+          setOverwriteDialogOpen(true);
+          return;
+        }
+      } catch {
+        // Ignore errors when checking for existing skill
+      }
+    }
+
+    await performUpload();
+  };
+
+  const performUpload = async (overwrite: boolean = false) => {
+    if (!selectedFile) return;
+
     setUploading(true);
     setError(null);
     setUploadProgress(0);
@@ -125,6 +157,10 @@ export default function SkillUploadModal({ open, onClose, skill }: SkillUploadMo
     try {
       if (isEditMode && skill) {
         const skillId = parseInt(skill.metadata.labels?.id || '0');
+        await updateSkill(skillId, selectedFile, setUploadProgress);
+      } else if (overwrite && existingSkill) {
+        // Update existing skill
+        const skillId = parseInt(existingSkill.metadata.labels?.id || '0');
         await updateSkill(skillId, selectedFile, setUploadProgress);
       } else {
         await uploadSkill(selectedFile, skillName.trim(), namespace, setUploadProgress);
@@ -137,6 +173,16 @@ export default function SkillUploadModal({ open, onClose, skill }: SkillUploadMo
     }
   };
 
+  const handleOverwriteConfirm = async () => {
+    setOverwriteDialogOpen(false);
+    await performUpload(true);
+  };
+
+  const handleOverwriteCancel = () => {
+    setOverwriteDialogOpen(false);
+    setExistingSkill(null);
+  };
+
   const handleClose = () => {
     if (!uploading) {
       onClose(false);
@@ -144,150 +190,172 @@ export default function SkillUploadModal({ open, onClose, skill }: SkillUploadMo
   };
 
   return (
-    <Dialog open={open} onOpenChange={open => !open && handleClose()}>
-      <DialogContent className="sm:max-w-[500px] bg-surface">
-        <DialogHeader>
-          <DialogTitle>
-            {isEditMode
-              ? t('common:skills.update_modal_title')
-              : t('common:skills.upload_modal_title')}
-          </DialogTitle>
-          <DialogDescription>
-            {isEditMode
-              ? t('common:skills.update_modal_description')
-              : t('common:skills.upload_modal_description')}
-            <div className="mt-2 text-xs text-text-muted">
-              <strong>Expected ZIP structure:</strong>
-              <div className="font-mono bg-muted p-2 rounded mt-1">
-                my-skill.zip
-                <br />
-                └── my-skill/
-                <br />
-                &nbsp;&nbsp;&nbsp;&nbsp;├── SKILL.md
-                <br />
-                &nbsp;&nbsp;&nbsp;&nbsp;└── resources/
+    <>
+      <Dialog open={open} onOpenChange={open => !open && handleClose()}>
+        <DialogContent className="sm:max-w-[500px] bg-surface">
+          <DialogHeader>
+            <DialogTitle>
+              {isEditMode
+                ? t('common:skills.update_modal_title')
+                : t('common:skills.upload_modal_title')}
+            </DialogTitle>
+            <DialogDescription>
+              {isEditMode
+                ? t('common:skills.update_modal_description')
+                : t('common:skills.upload_modal_description')}
+              <div className="mt-2 text-xs text-text-muted">
+                <strong>Expected ZIP structure:</strong>
+                <div className="font-mono bg-muted p-2 rounded mt-1">
+                  my-skill.zip
+                  <br />
+                  └── my-skill/
+                  <br />
+                  &nbsp;&nbsp;&nbsp;&nbsp;├── SKILL.md
+                  <br />
+                  &nbsp;&nbsp;&nbsp;&nbsp;└── resources/
+                </div>
+                <div className="mt-2">
+                  <a
+                    href="https://support.claude.com/en/articles/12512198-how-to-create-custom-skills"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-link hover:underline"
+                  >
+                    Learn how to create custom skills →
+                  </a>
+                </div>
               </div>
-              <div className="mt-2">
-                <a
-                  href="https://support.claude.com/en/articles/12512198-how-to-create-custom-skills"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-link hover:underline"
-                >
-                  Learn how to create custom skills →
-                </a>
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            {/* Skill Name Input (only for create mode) */}
+            {!isEditMode && (
+              <div className="space-y-2">
+                <Label htmlFor="skill-name">{t('common:skills.skill_name_required')}</Label>
+                <Input
+                  id="skill-name"
+                  placeholder={t('common:skills.skill_name_placeholder')}
+                  value={skillName}
+                  onChange={e => setSkillName(e.target.value)}
+                  disabled={uploading}
+                />
+                <p className="text-xs text-text-muted">{t('common:skills.skill_name_hint')}</p>
               </div>
-            </div>
-          </DialogDescription>
-        </DialogHeader>
-        <div className="space-y-4 py-4">
-          {/* Skill Name Input (only for create mode) */}
-          {!isEditMode && (
+            )}
+
+            {/* File Upload Area */}
             <div className="space-y-2">
-              <Label htmlFor="skill-name">{t('common:skills.skill_name_required')}</Label>
-              <Input
-                id="skill-name"
-                placeholder={t('common:skills.skill_name_placeholder')}
-                value={skillName}
-                onChange={e => setSkillName(e.target.value)}
-                disabled={uploading}
-              />
-              <p className="text-xs text-text-muted">{t('common:skills.skill_name_hint')}</p>
-            </div>
-          )}
+              <Label>{t('common:skills.zip_package_required')}</Label>
+              <div
+                className={`
+                  relative border-2 border-dashed rounded-lg p-6 text-center transition-colors
+                  ${dragActive ? 'border-primary bg-primary/5' : 'border-border'}
+                  ${uploading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:border-primary/50'}
+                `}
+                onDragEnter={handleDrag}
+                onDragLeave={handleDrag}
+                onDragOver={handleDrag}
+                onDrop={handleDrop}
+                onClick={() => !uploading && document.getElementById('file-input')?.click()}
+              >
+                <input
+                  id="file-input"
+                  type="file"
+                  accept=".zip"
+                  onChange={handleFileChange}
+                  className="hidden"
+                  disabled={uploading}
+                />
 
-          {/* File Upload Area */}
-          <div className="space-y-2">
-            <Label>{t('common:skills.zip_package_required')}</Label>
-            <div
-              className={`
-                relative border-2 border-dashed rounded-lg p-6 text-center transition-colors
-                ${dragActive ? 'border-primary bg-primary/5' : 'border-border'}
-                ${uploading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:border-primary/50'}
-              `}
-              onDragEnter={handleDrag}
-              onDragLeave={handleDrag}
-              onDragOver={handleDrag}
-              onDrop={handleDrop}
-              onClick={() => !uploading && document.getElementById('file-input')?.click()}
-            >
-              <input
-                id="file-input"
-                type="file"
-                accept=".zip"
-                onChange={handleFileChange}
-                className="hidden"
-                disabled={uploading}
-              />
-
-              {selectedFile ? (
-                <div className="flex items-center justify-center gap-2">
-                  <FileIcon className="w-5 h-5 text-primary" />
-                  <span className="text-sm text-text-primary">{selectedFile.name}</span>
-                  <span className="text-xs text-text-muted">
-                    ({(selectedFile.size / (1024 * 1024)).toFixed(2)} MB)
-                  </span>
-                </div>
-              ) : (
-                <div>
-                  <UploadIcon className="w-8 h-8 mx-auto text-text-muted mb-2" />
-                  <p className="text-sm text-text-primary mb-1">
-                    {t('common:skills.drop_file_here')}
-                  </p>
-                  <p className="text-xs text-text-muted">{t('common:skills.max_file_size')}</p>
-                </div>
-              )}
+                {selectedFile ? (
+                  <div className="flex items-center justify-center gap-2">
+                    <FileIcon className="w-5 h-5 text-primary" />
+                    <span className="text-sm text-text-primary">{selectedFile.name}</span>
+                    <span className="text-xs text-text-muted">
+                      ({(selectedFile.size / (1024 * 1024)).toFixed(2)} MB)
+                    </span>
+                  </div>
+                ) : (
+                  <div>
+                    <UploadIcon className="w-8 h-8 mx-auto text-text-muted mb-2" />
+                    <p className="text-sm text-text-primary mb-1">
+                      {t('common:skills.drop_file_here')}
+                    </p>
+                    <p className="text-xs text-text-muted">{t('common:skills.max_file_size')}</p>
+                  </div>
+                )}
+              </div>
             </div>
+
+            {/* Upload Progress */}
+            {uploading && (
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-text-secondary">{t('common:skills.upload_progress')}</span>
+                  <span className="text-text-secondary">{uploadProgress}%</span>
+                </div>
+                <Progress value={uploadProgress} />
+              </div>
+            )}
+
+            {/* Error Message */}
+            {error && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+
+            {/* Requirements Info */}
+            <Alert>
+              <AlertDescription className="text-xs">
+                <strong>{t('common:skills.requirements')}</strong>
+                <ul className="list-disc list-inside mt-1 space-y-0.5">
+                  <li>{t('common:skills.requirement_zip')}</li>
+                  <li>{t('common:skills.requirement_structure')}</li>
+                  <li>{t('common:skills.requirement_folder_name')}</li>
+                  <li>{t('common:skills.requirement_description')}</li>
+                  <li>{t('common:skills.requirement_optional')}</li>
+                  <li>{t('common:skills.requirement_size')}</li>
+                </ul>
+              </AlertDescription>
+            </Alert>
           </div>
 
-          {/* Upload Progress */}
-          {uploading && (
-            <div className="space-y-2">
-              <div className="flex justify-between text-sm">
-                <span className="text-text-secondary">{t('common:skills.upload_progress')}</span>
-                <span className="text-text-secondary">{uploadProgress}%</span>
-              </div>
-              <Progress value={uploadProgress} />
-            </div>
-          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={handleClose} disabled={uploading}>
+              {t('common:actions.cancel')}
+            </Button>
+            <Button onClick={handleSubmit} disabled={uploading || !selectedFile}>
+              {uploading
+                ? t('common:skills.uploading')
+                : isEditMode
+                  ? t('common:skills.update_skill')
+                  : t('common:actions.upload')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-          {/* Error Message */}
-          {error && (
-            <Alert variant="destructive">
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          )}
-
-          {/* Requirements Info */}
-          <Alert>
-            <AlertDescription className="text-xs">
-              <strong>{t('common:skills.requirements')}</strong>
-              <ul className="list-disc list-inside mt-1 space-y-0.5">
-                <li>{t('common:skills.requirement_zip')}</li>
-                <li>{t('common:skills.requirement_structure')}</li>
-                <li>{t('common:skills.requirement_folder_name')}</li>
-                <li>{t('common:skills.requirement_description')}</li>
-                <li>{t('common:skills.requirement_optional')}</li>
-                <li>{t('common:skills.requirement_size')}</li>
-              </ul>
-            </AlertDescription>
-          </Alert>
-        </div>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={handleClose} disabled={uploading}>
-            {t('common:actions.cancel')}
-          </Button>
-          <Button onClick={handleSubmit} disabled={uploading || !selectedFile}>
-            {uploading
-              ? t('common:skills.uploading')
-              : isEditMode
-                ? t('common:skills.update_skill')
-                : t('common:actions.upload')}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      {/* Overwrite Confirmation Dialog */}
+      <AlertDialog open={overwriteDialogOpen} onOpenChange={setOverwriteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('common:skills.overwrite_confirm_title')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('common:skills.overwrite_confirm_message', { name: skillName })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={handleOverwriteCancel}>
+              {t('common:actions.cancel')}
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={handleOverwriteConfirm}>
+              {t('common:skills.overwrite_confirm_button')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }

@@ -708,7 +708,10 @@
     "delete_failed": "删除技能失败",
     "download_success": "开始下载",
     "bind_shells": "支持的执行器",
-    "no_bind_shells": "未绑定执行器"
+    "no_bind_shells": "未绑定执行器",
+    "overwrite_confirm_title": "技能已存在",
+    "overwrite_confirm_message": "名为 \"{{name}}\" 的技能已存在。是否要用新版本覆盖它？",
+    "overwrite_confirm_button": "覆盖"
   },
   "models": {
     "label": "模型",
