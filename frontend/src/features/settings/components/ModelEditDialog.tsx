@@ -137,6 +137,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   const [showApiKey, setShowApiKey] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  // LLM-specific config state
+  const [contextWindow, setContextWindow] = useState<number | undefined>(undefined);
+  const [maxOutputTokens, setMaxOutputTokens] = useState<number | undefined>(undefined);
 
   // Type-specific config state
   // TTS
@@ -210,6 +213,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           setRerankTopN(model.spec.rerankConfig.top_n);
           setRerankReturnDocuments(model.spec.rerankConfig.return_documents ?? true);
         }
+        // Load LLM-specific configs
+        setContextWindow(model.spec.contextWindow);
+        setMaxOutputTokens(model.spec.maxOutputTokens);
       } else {
         // Reset for new model
         setModelIdName('');
@@ -231,6 +237,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         setEmbeddingEncodingFormat('float');
         setRerankTopN(undefined);
         setRerankReturnDocuments(true);
+        // Reset LLM-specific configs
+        setContextWindow(undefined);
+        setMaxOutputTokens(undefined);
       }
       setCustomHeadersError('');
       setShowApiKey(false);
@@ -503,6 +512,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             },
           },
           modelType: modelCategoryType,
+          // LLM-specific fields
+          ...(modelCategoryType === 'llm' && contextWindow && { contextWindow }),
+          ...(modelCategoryType === 'llm' && maxOutputTokens && { maxOutputTokens }),
           ...(ttsConfig && { ttsConfig }),
           ...(sttConfig && { sttConfig }),
           ...(embeddingConfig && { embeddingConfig }),
@@ -727,6 +739,42 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             {customHeadersError && <p className="text-xs text-error">{customHeadersError}</p>}
             <p className="text-xs text-text-muted">{t('common:models.custom_headers_hint')}</p>
           </div>
+
+          {/* LLM-specific fields - Context Window and Max Output Tokens */}
+          {modelCategoryType === 'llm' && (
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="context_window" className="text-sm font-medium">
+                  {t('common:models.context_window')}
+                </Label>
+                <Input
+                  id="context_window"
+                  type="number"
+                  value={contextWindow || ''}
+                  onChange={e => setContextWindow(parseInt(e.target.value) || undefined)}
+                  placeholder="128000"
+                  className="bg-base"
+                />
+                <p className="text-xs text-text-muted">{t('common:models.context_window_hint')}</p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="max_output_tokens" className="text-sm font-medium">
+                  {t('common:models.max_output_tokens')}
+                </Label>
+                <Input
+                  id="max_output_tokens"
+                  type="number"
+                  value={maxOutputTokens || ''}
+                  onChange={e => setMaxOutputTokens(parseInt(e.target.value) || undefined)}
+                  placeholder="8192"
+                  className="bg-base"
+                />
+                <p className="text-xs text-text-muted">
+                  {t('common:models.max_output_tokens_hint')}
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* TTS-specific fields */}
           {modelCategoryType === 'tts' && (

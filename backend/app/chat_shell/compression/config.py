@@ -20,17 +20,34 @@ class ModelContextConfig:
     Attributes:
         context_window: Maximum context window size in tokens
         output_tokens: Reserved tokens for model output
-        safety_margin: Percentage of context window to use (0.0-1.0)
+        trigger_threshold: Percentage of context window that triggers compression (0.0-1.0)
+        target_threshold: Target percentage of context window after compression (0.0-1.0)
     """
 
     context_window: int
     output_tokens: int = 4096
-    safety_margin: float = 0.90  # Use 90% of context window
+    trigger_threshold: float = 0.90  # Trigger compression at 90% of available context
+    target_threshold: float = 0.70  # Compress to 70% of available context
+
+    @property
+    def available_tokens(self) -> int:
+        """Calculate available tokens after reserving output tokens."""
+        return self.context_window - self.output_tokens
+
+    @property
+    def trigger_limit(self) -> int:
+        """Calculate token count that triggers compression."""
+        return int(self.available_tokens * self.trigger_threshold)
+
+    @property
+    def target_limit(self) -> int:
+        """Calculate target token count after compression."""
+        return int(self.available_tokens * self.target_threshold)
 
     @property
     def effective_limit(self) -> int:
-        """Calculate effective token limit after safety margin and output reservation."""
-        return int((self.context_window - self.output_tokens) * self.safety_margin)
+        """Calculate effective token limit (alias for trigger_limit for backward compatibility)."""
+        return self.trigger_limit
 
 
 @dataclass
@@ -94,7 +111,6 @@ MODEL_CONTEXT_LIMITS: dict[str, ModelContextConfig] = {
     "gemini-1.5-pro": ModelContextConfig(context_window=2097152, output_tokens=8192),
     "gemini-1.5-flash": ModelContextConfig(context_window=1048576, output_tokens=8192),
     "gemini-2.0-flash": ModelContextConfig(context_window=1048576, output_tokens=8192),
-    "gemini-pro": ModelContextConfig(context_window=30720, output_tokens=2048),
 }
 
 
@@ -128,7 +144,8 @@ def get_model_context_config(
             return ModelContextConfig(
                 context_window=context_window,
                 output_tokens=output_tokens,
-                safety_margin=0.90,
+                trigger_threshold=0.90,
+                target_threshold=0.70,
             )
 
     # Priority 2: Look up in built-in defaults
@@ -147,5 +164,6 @@ def get_model_context_config(
     return ModelContextConfig(
         context_window=128000,
         output_tokens=4096,
-        safety_margin=0.85,  # More conservative for unknown models
+        trigger_threshold=0.85,  # More conservative for unknown models
+        target_threshold=0.65,
     )

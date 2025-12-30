@@ -102,11 +102,17 @@ class TestModelContextConfig:
         config = ModelContextConfig(
             context_window=200000,
             output_tokens=8192,
-            safety_margin=0.90,
+            trigger_threshold=0.90,
+            target_threshold=0.70,
         )
-        # (200000 - 8192) * 0.9 = 172627
+        # available_tokens = 200000 - 8192 = 191808
+        # trigger_limit (effective_limit) = 191808 * 0.90 = 172627
         expected = int((200000 - 8192) * 0.90)
         assert config.effective_limit == expected
+        assert config.trigger_limit == expected
+        # target_limit = 191808 * 0.70 = 134265
+        expected_target = int((200000 - 8192) * 0.70)
+        assert config.target_limit == expected_target
 
     def test_get_model_context_config_claude(self):
         """Test getting config for Claude model."""
@@ -123,7 +129,7 @@ class TestModelContextConfig:
         config = get_model_context_config("unknown-model-xyz")
         # Should return default config
         assert config.context_window == 128000
-        assert config.safety_margin == 0.85
+        assert config.trigger_threshold == 0.85
 
     def test_get_model_context_config_from_model_config(self):
         """Test getting config from model_config (Model CRD spec)."""
@@ -131,11 +137,13 @@ class TestModelContextConfig:
             "context_window": 256000,
             "max_output_tokens": 16000,
         }
-        config = get_model_context_config("unknown-model-xyz", model_config=model_config)
+        config = get_model_context_config(
+            "unknown-model-xyz", model_config=model_config
+        )
         # Should use values from model_config
         assert config.context_window == 256000
         assert config.output_tokens == 16000
-        assert config.safety_margin == 0.90
+        assert config.trigger_threshold == 0.90
 
     def test_get_model_context_config_model_config_takes_priority(self):
         """Test that model_config takes priority over built-in defaults."""
@@ -193,7 +201,9 @@ class TestAttachmentTruncationStrategy:
         """Test truncating long attachment content."""
         strategy = AttachmentTruncationStrategy()
         counter = TokenCounter(model_id="gpt-4")
-        config = CompressionConfig(attachment_truncate_length=100, min_attachment_length=50)
+        config = CompressionConfig(
+            attachment_truncate_length=100, min_attachment_length=50
+        )
 
         # Create message with long attachment
         long_content = "[Attachment 1 - doc.pdf]" + "x" * 200
@@ -210,7 +220,9 @@ class TestAttachmentTruncationStrategy:
         """Test that short attachments are not truncated."""
         strategy = AttachmentTruncationStrategy()
         counter = TokenCounter(model_id="gpt-4")
-        config = CompressionConfig(attachment_truncate_length=1000, min_attachment_length=500)
+        config = CompressionConfig(
+            attachment_truncate_length=1000, min_attachment_length=500
+        )
 
         # Create message with short attachment
         short_content = "[Attachment 1 - doc.pdf]short text"
@@ -231,6 +243,234 @@ class TestAttachmentTruncationStrategy:
         assert strategy._has_attachment_content("--- Slide 1 ---")
         assert not strategy._has_attachment_content("Regular message text")
 
+    def test_middle_truncation_preserves_begin_and_end(self):
+        """Test that truncation keeps beginning and end, removes middle."""
+        strategy = AttachmentTruncationStrategy()
+        counter = TokenCounter(model_id="gpt-4")
+        config = CompressionConfig(
+            attachment_truncate_length=100,  # Keep 100 chars total
+            min_attachment_length=50,
+        )
+
+        # Create content with distinct beginning, middle, and end
+        # Beginning: "AAAA...", Middle: "MMMM...", End: "ZZZZ..."
+        begin_marker = "A" * 100  # Beginning content
+        middle_marker = "M" * 200  # Middle content (will be truncated)
+        end_marker = "Z" * 100  # End content
+
+        long_content = (
+            f"[Attachment 1 - doc.pdf]{begin_marker}{middle_marker}{end_marker}"
+        )
+        messages = [{"role": "user", "content": long_content}]
+
+        compressed, details = strategy.compress(messages, counter, 100000, config)
+
+        result_content = compressed[0]["content"]
+
+        # Should contain beginning (A's)
+        assert "AAAA" in result_content, "Beginning content should be preserved"
+        # Should contain end (Z's)
+        assert "ZZZZ" in result_content, "End content should be preserved"
+        # Should contain truncation notice
+        assert (
+            "Middle content truncated" in result_content
+            or "truncated" in result_content.lower()
+        )
+        # Middle should be mostly removed (some M's might remain at boundaries)
+        # The truncated content should be shorter than original
+        assert len(result_content) < len(long_content)
+
+    def test_dynamic_halving_truncation(self):
+        """Test dynamic halving when initial truncation is not enough."""
+        strategy = AttachmentTruncationStrategy()
+        counter = TokenCounter(model_id="gpt-4")
+        # Start with large truncate length, but set a very low target
+        config = CompressionConfig(
+            attachment_truncate_length=10000,
+            min_attachment_length=100,
+        )
+
+        # Create message with very long attachment
+        long_content = "[Attachment 1 - doc.pdf]" + "x" * 50000
+        messages = [{"role": "user", "content": long_content}]
+
+        # Set a very low target to force multiple halving iterations
+        compressed, details = strategy.compress(messages, counter, 100, config)
+
+        # Should have performed multiple iterations
+        assert details["iterations"] > 1
+        # Final base truncate length should be less than initial
+        assert details["final_base_truncate_length"] < config.attachment_truncate_length
+        # Content should be significantly reduced
+        assert len(compressed[0]["content"]) < len(messages[0]["content"])
+
+    def test_dynamic_halving_stops_at_min_length(self):
+        """Test that dynamic halving stops when reaching min_length."""
+        strategy = AttachmentTruncationStrategy()
+        counter = TokenCounter(model_id="gpt-4")
+        # Set min_length high enough that halving will hit it
+        config = CompressionConfig(
+            attachment_truncate_length=1000,
+            min_attachment_length=600,  # 1000 / 2 = 500 < 600, so should stop
+        )
+
+        # Create message with long attachment
+        long_content = "[Attachment 1 - doc.pdf]" + "x" * 5000
+        messages = [{"role": "user", "content": long_content}]
+
+        # Set a very low target to force halving attempt
+        compressed, details = strategy.compress(messages, counter, 10, config)
+
+        # Should stop after first iteration since 500 < 600 (min_length)
+        assert details["iterations"] == 1
+        # Final base truncate length should be the initial value
+        assert details["final_base_truncate_length"] == 1000
+
+    def test_dynamic_halving_reaches_target(self):
+        """Test that dynamic halving stops when target is reached."""
+        strategy = AttachmentTruncationStrategy()
+        counter = TokenCounter(model_id="gpt-4")
+        config = CompressionConfig(
+            attachment_truncate_length=2000,
+            min_attachment_length=100,
+        )
+
+        # Create message with moderately long attachment
+        long_content = "[Attachment 1 - doc.pdf]" + "x" * 3000
+        messages = [{"role": "user", "content": long_content}]
+
+        # Set a reasonable target that can be reached
+        compressed, details = strategy.compress(messages, counter, 100000, config)
+
+        # Should reach target in first iteration
+        assert details["iterations"] == 1
+        # Final base truncate length should be the initial value
+        assert details["final_base_truncate_length"] == 2000
+
+    def test_dynamic_halving_multiple_attachments(self):
+        """Test dynamic halving with multiple attachments in one message."""
+        strategy = AttachmentTruncationStrategy()
+        counter = TokenCounter(model_id="gpt-4")
+        config = CompressionConfig(
+            attachment_truncate_length=5000,
+            min_attachment_length=100,
+        )
+
+        # Create message with multiple long attachments
+        content = (
+            "[Attachment 1 - doc1.pdf]"
+            + "a" * 10000
+            + "[Attachment 2 - doc2.pdf]"
+            + "b" * 10000
+        )
+        messages = [{"role": "user", "content": content}]
+
+        # Set a low target to force halving
+        compressed, details = strategy.compress(messages, counter, 100, config)
+
+        # Should have truncated attachments
+        assert details["attachments_truncated"] >= 1
+        assert details["chars_removed"] > 0
+        # Content should be reduced
+        assert len(compressed[0]["content"]) < len(messages[0]["content"])
+
+    def test_max_iterations_limit(self):
+        """Test that halving respects MAX_TRUNCATION_ITERATIONS."""
+        strategy = AttachmentTruncationStrategy()
+        counter = TokenCounter(model_id="gpt-4")
+        # Set very small min_length to allow many halvings
+        config = CompressionConfig(
+            attachment_truncate_length=1000000,  # Very large initial
+            min_attachment_length=1,  # Very small min
+        )
+
+        # Create extremely long content
+        long_content = "[Attachment 1 - doc.pdf]" + "x" * 2000000
+        messages = [{"role": "user", "content": long_content}]
+
+        # Set impossible target
+        compressed, details = strategy.compress(messages, counter, 1, config)
+
+        # Should not exceed MAX_TRUNCATION_ITERATIONS
+        assert details["iterations"] <= strategy.MAX_TRUNCATION_ITERATIONS
+
+    def test_recency_factor_calculation(self):
+        """Test recency factor calculation for different positions."""
+        strategy = AttachmentTruncationStrategy()
+
+        # Single message should get factor 1.0
+        assert strategy._calculate_recency_factor(0, 1) == 1.0
+
+        # First message in multi-message list should get 0.25
+        assert strategy._calculate_recency_factor(0, 10) == 0.25
+
+        # Last message should get 1.0
+        assert strategy._calculate_recency_factor(9, 10) == 1.0
+
+        # Middle message should get intermediate value
+        factor = strategy._calculate_recency_factor(4, 10)
+        assert 0.25 < factor < 1.0
+
+    def test_recency_aware_truncation_older_messages_truncated_more(self):
+        """Test that older messages are truncated more aggressively."""
+        strategy = AttachmentTruncationStrategy()
+        counter = TokenCounter(model_id="gpt-4")
+        config = CompressionConfig(
+            attachment_truncate_length=1000,
+            min_attachment_length=100,
+        )
+
+        # Create multiple messages with same-length attachments
+        # Older messages should be truncated more
+        messages = [
+            {"role": "user", "content": "[Attachment 1 - old.pdf]" + "a" * 2000},
+            {"role": "assistant", "content": "Response 1"},
+            {"role": "user", "content": "[Attachment 2 - mid.pdf]" + "b" * 2000},
+            {"role": "assistant", "content": "Response 2"},
+            {"role": "user", "content": "[Attachment 3 - new.pdf]" + "c" * 2000},
+        ]
+
+        compressed, details = strategy.compress(messages, counter, 100000, config)
+
+        # Get the lengths of attachment content in compressed messages
+        old_msg_len = len(compressed[0]["content"])
+        new_msg_len = len(compressed[4]["content"])
+
+        # Older message should be shorter (more truncated) than newer message
+        # because recency factor is lower for older messages
+        assert old_msg_len < new_msg_len, (
+            f"Older message ({old_msg_len}) should be shorter than "
+            f"newer message ({new_msg_len})"
+        )
+
+    def test_recency_aware_truncation_preserves_recent_context(self):
+        """Test that recent messages preserve more content."""
+        strategy = AttachmentTruncationStrategy()
+        counter = TokenCounter(model_id="gpt-4")
+        # Use a base length that will result in different truncation
+        # based on recency factor
+        config = CompressionConfig(
+            attachment_truncate_length=800,  # Base length
+            min_attachment_length=100,
+        )
+
+        # Create messages where the last one has attachment
+        messages = [
+            {"role": "user", "content": "[Attachment 1 - first.pdf]" + "x" * 1500},
+            {"role": "assistant", "content": "Response"},
+            {"role": "user", "content": "[Attachment 2 - last.pdf]" + "y" * 1500},
+        ]
+
+        compressed, details = strategy.compress(messages, counter, 100000, config)
+
+        # First message (index 0, factor ~0.25): truncate_length = 800 * 0.25 = 200
+        # Last message (index 2, factor 1.0): truncate_length = 800 * 1.0 = 800
+        first_content = compressed[0]["content"]
+        last_content = compressed[2]["content"]
+
+        # The last message should have more content preserved
+        assert len(last_content) > len(first_content)
+
 
 class TestHistoryTruncationStrategy:
     """Tests for history truncation strategy."""
@@ -245,8 +485,18 @@ class TestHistoryTruncationStrategy:
         # Use longer content to ensure token count is high enough
         messages = [{"role": "system", "content": "You are a helpful assistant."}]
         for i in range(10):
-            messages.append({"role": "user", "content": f"This is user message number {i} with some additional text to increase token count."})
-            messages.append({"role": "assistant", "content": f"This is the assistant response number {i} with some additional text to increase token count."})
+            messages.append(
+                {
+                    "role": "user",
+                    "content": f"This is user message number {i} with some additional text to increase token count.",
+                }
+            )
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": f"This is the assistant response number {i} with some additional text to increase token count.",
+                }
+            )
 
         # Use a very low target to ensure truncation happens
         compressed, details = strategy.compress(messages, counter, 50, config)
