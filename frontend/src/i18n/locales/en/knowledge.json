@@ -99,6 +99,24 @@
         "delete": "Delete"
       }
     },
+    "detail": {
+      "title": "Document Details",
+      "fileInfo": "File Information",
+      "summary": "Document Summary",
+      "content": "Original Content",
+      "summaryStatusLabel": "Summary Status",
+      "summaryStatus": {
+        "pending": "Pending",
+        "processing": "Generating...",
+        "completed": "Completed",
+        "failed": "Failed"
+      },
+      "noSummary": "No summary available",
+      "noContent": "No content available",
+      "summaryError": "Summary generation failed",
+      "summaryGenerating": "Generating summary...",
+      "viewDetail": "View Details"
+    },
     "permission": {
       "noAccess": "You do not have permission to perform this action"
     },
@@ -129,7 +147,13 @@
       "hybridWeights": "Hybrid Weights",
       "semanticWeight": "Semantic Weight",
       "keywordWeight": "Keyword Weight",
-      "weightSum": "Weights must sum to 1.0"
+      "weightSum": "Weights must sum to 1.0",
+      "sourceType": {
+        "user": "Personal",
+        "public": "Public",
+        "group": "Group"
+      },
+      "searchPlaceholder": "Search..."
     },
     "splitter": {
       "title": "Chunking Settings",

@@ -76,15 +76,21 @@ def create_embedding_model_from_crd(
     model_data = model_kind.json
     spec = model_data.get("spec", {})
 
-    # Validate modelType
-    model_type = spec.get("modelType", "llm")
+    # Extract modelConfig
+    model_config = spec.get("modelConfig", {})
+
+    # Validate modelType - support both new format (spec.modelType) and old format (spec.modelConfig.modelType)
+    # New format: modelType is at spec.modelType (e.g., "embedding")
+    # Old format: modelType is at spec.modelConfig.modelType (e.g., "embedding")
+    model_type = spec.get("modelType")
+    if model_type is None:
+        # Fallback to old format: check modelConfig.modelType
+        model_type = model_config.get("modelType", "llm")
+
     if model_type != "embedding":
         raise ValueError(
             f"Model '{model_name}' is not an embedding model (modelType='{model_type}')"
         )
-
-    # Extract modelConfig
-    model_config = spec.get("modelConfig", {})
 
     # Get protocol from spec.protocol or fallback to modelConfig.env.model
     protocol = spec.get("protocol")

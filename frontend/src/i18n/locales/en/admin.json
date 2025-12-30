@@ -4,6 +4,7 @@
   "tabs": {
     "users": "Users",
     "public_models": "Public Models",
+    "public_retrievers": "Public Retrievers",
     "public_skills": "Public Skills",
     "api_keys": "API Keys",
     "system_config": "System Config"
@@ -196,6 +197,56 @@
       "delete_failed": "Failed to delete public skill",
       "download_failed": "Failed to download public skill",
       "view_content_failed": "Failed to get skill content"
+    }
+  },
+  "public_retrievers": {
+    "title": "Public Retriever Management",
+    "description": "Manage system-level public retrievers available to all users",
+    "loading": "Loading retrievers...",
+    "no_retrievers": "No public retrievers found",
+    "create_retriever": "Create Retriever",
+    "edit_retriever": "Edit Retriever",
+    "delete_retriever": "Delete Retriever",
+    "form": {
+      "name": "Name",
+      "name_placeholder": "Enter retriever name",
+      "display_name": "Display Name",
+      "display_name_placeholder": "Enter display name (optional)",
+      "storage_type": "Storage Type",
+      "storage_type_placeholder": "Select storage type",
+      "url": "Connection URL",
+      "url_placeholder": "e.g., http://localhost:9200",
+      "username": "Username",
+      "username_placeholder": "Enter username (optional)",
+      "api_key": "API Key",
+      "api_key_placeholder": "Enter API key (optional)",
+      "index_strategy": "Index Strategy",
+      "index_strategy_placeholder": "Select index strategy",
+      "per_user": "Per User Index",
+      "fixed": "Fixed Index",
+      "fixed_name": "Fixed Index Name",
+      "fixed_name_placeholder": "Enter fixed index name",
+      "prefix": "Index Prefix",
+      "prefix_placeholder": "Default: kb_",
+      "description": "Description",
+      "description_placeholder": "Enter description (optional)"
+    },
+    "confirm": {
+      "delete_title": "Delete Retriever",
+      "delete_message": "Are you sure you want to delete public retriever \"{{name}}\"? This action cannot be undone."
+    },
+    "success": {
+      "created": "Public retriever created successfully",
+      "updated": "Public retriever updated successfully",
+      "deleted": "Public retriever deleted successfully"
+    },
+    "errors": {
+      "load_failed": "Failed to load public retrievers",
+      "create_failed": "Failed to create public retriever",
+      "update_failed": "Failed to update public retriever",
+      "delete_failed": "Failed to delete public retriever",
+      "name_required": "Retriever name is required",
+      "url_required": "Connection URL is required"
     }
   },
   "access_denied": {

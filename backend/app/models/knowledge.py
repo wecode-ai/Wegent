@@ -39,6 +39,15 @@ class DocumentStatus(str, PyEnum):
     DISABLED = "disabled"
 
 
+class SummaryStatus(str, PyEnum):
+    """Summary generation status for knowledge documents."""
+
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class KnowledgeDocument(Base):
     """
     Knowledge document model for storing document metadata.
@@ -73,6 +82,19 @@ class KnowledgeDocument(Base):
     splitter_config = Column(
         JSON, nullable=True
     )  # Splitter configuration for document chunking
+    # Summary generation fields
+    summary = Column(Text, nullable=True)  # Document summary content (300-500 chars)
+    summary_status = Column(
+        SQLEnum(SummaryStatus, values_callable=lambda obj: [e.value for e in obj]),
+        nullable=False,
+        default=SummaryStatus.PENDING,
+    )
+    summary_error = Column(
+        String(500), nullable=True
+    )  # Error message if summary generation failed
+    summary_generated_at = Column(
+        DateTime, nullable=True
+    )  # Timestamp when summary was generated
     created_at = Column(DateTime, nullable=False, default=func.now())
     updated_at = Column(
         DateTime, nullable=False, default=func.now(), onupdate=func.now()

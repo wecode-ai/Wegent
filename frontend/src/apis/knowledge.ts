@@ -15,6 +15,7 @@ import type {
   KnowledgeBaseUpdate,
   KnowledgeDocument,
   KnowledgeDocumentCreate,
+  KnowledgeDocumentDetail,
   KnowledgeDocumentListResponse,
   KnowledgeDocumentUpdate,
   KnowledgeResourceScope,
@@ -107,6 +108,13 @@ export async function deleteDocument(documentId: number): Promise<void> {
   return apiClient.delete(`/knowledge-documents/${documentId}`);
 }
 
+/**
+ * Get document detail including summary and raw content
+ */
+export async function getDocumentDetail(documentId: number): Promise<KnowledgeDocumentDetail> {
+  return apiClient.get<KnowledgeDocumentDetail>(`/knowledge-documents/${documentId}/detail`);
+}
+
 // ============== Batch Document Operations ==============
 
 /**
@@ -124,24 +132,6 @@ export interface BatchOperationResult {
  */
 export async function batchDeleteDocuments(documentIds: number[]): Promise<BatchOperationResult> {
   return apiClient.post<BatchOperationResult>('/knowledge-documents/batch/delete', {
-    document_ids: documentIds,
-  });
-}
-
-/**
- * Batch enable multiple documents
- */
-export async function batchEnableDocuments(documentIds: number[]): Promise<BatchOperationResult> {
-  return apiClient.post<BatchOperationResult>('/knowledge-documents/batch/enable', {
-    document_ids: documentIds,
-  });
-}
-
-/**
- * Batch disable multiple documents
- */
-export async function batchDisableDocuments(documentIds: number[]): Promise<BatchOperationResult> {
-  return apiClient.post<BatchOperationResult>('/knowledge-documents/batch/disable', {
     document_ids: documentIds,
   });
 }

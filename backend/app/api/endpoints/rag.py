@@ -25,6 +25,7 @@ from app.schemas.rag import (
     DocumentDetailResponse,
     DocumentListResponse,
     DocumentUploadResponse,
+    IndexNameResponse,
     RetrieveRequest,
     RetrieveResponse,
     SemanticSplitterConfig,
@@ -507,5 +508,70 @@ async def test_retriever_connection(
             "success": success,
             "message": "Connection successful" if success else "Connection failed",
         }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/index-name", response_model=IndexNameResponse)
+async def get_index_name(
+    knowledge_id: str = Query(..., description="Knowledge base ID"),
+    retriever_name: str = Query(..., description="Retriever name"),
+    retriever_namespace: str = Query(
+        default="default", description="Retriever namespace"
+    ),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Get the index name for a given knowledge base ID.
+
+    This endpoint computes the index name based on the retriever's index strategy
+    configuration and the provided knowledge_id.
+
+    Args:
+        knowledge_id: Knowledge base ID
+        retriever_name: Retriever name
+        retriever_namespace: Retriever namespace (default: "default")
+        db: Database session
+        current_user: Current user
+
+    Returns:
+        IndexNameResponse with knowledge_id, index_name, and index_strategy
+
+    Raises:
+        HTTPException: If retriever not found or computation fails
+    """
+    try:
+        # Get the correct user_id for index naming (for per_user strategy)
+        index_owner_user_id = get_index_owner_user_id(
+            db=db,
+            knowledge_id=knowledge_id,
+            current_user_id=current_user.id,
+        )
+
+        # Get retriever and create backend
+        retriever, storage_backend = get_retriever_and_backend(
+            retriever_name=retriever_name,
+            retriever_namespace=retriever_namespace,
+            user_id=current_user.id,
+            db=db,
+        )
+
+        # Get index name from storage backend
+        index_name = storage_backend.get_index_name(
+            knowledge_id=knowledge_id,
+            user_id=index_owner_user_id,
+        )
+
+        # Get index strategy mode from retriever config
+        index_strategy = storage_backend.index_strategy.get("mode", "per_dataset")
+
+        return IndexNameResponse(
+            knowledge_id=knowledge_id,
+            index_name=index_name,
+            index_strategy=index_strategy,
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -99,6 +99,24 @@
         "delete": "批量删除"
       }
     },
+    "detail": {
+      "title": "文档详情",
+      "fileInfo": "文件信息",
+      "summary": "文档摘要",
+      "content": "原始内容",
+      "summaryStatusLabel": "摘要状态",
+      "summaryStatus": {
+        "pending": "等待生成",
+        "processing": "正在生成...",
+        "completed": "已生成",
+        "failed": "生成失败"
+      },
+      "noSummary": "暂无摘要",
+      "noContent": "暂无内容",
+      "summaryError": "摘要生成失败",
+      "summaryGenerating": "正在生成摘要...",
+      "viewDetail": "查看详情"
+    },
     "permission": {
       "noAccess": "您没有操作权限"
     },
@@ -129,7 +147,13 @@
       "hybridWeights": "混合检索权重",
       "semanticWeight": "语义权重",
       "keywordWeight": "关键词权重",
-      "weightSum": "权重之和必须等于 1.0"
+      "weightSum": "权重之和必须等于 1.0",
+      "sourceType": {
+        "user": "个人",
+        "public": "公共",
+        "group": "组"
+      },
+      "searchPlaceholder": "搜索..."
     },
     "splitter": {
       "title": "分段设置",
