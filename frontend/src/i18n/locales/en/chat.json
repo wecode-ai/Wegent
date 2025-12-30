@@ -63,7 +63,10 @@
     "tool_completed": "Tool completed",
     "query": "Query",
     "search_completed": "Search completed",
-    "found": "Found"
+    "found": "Found",
+    "expand_content": "Expand",
+    "collapse_content": "Collapse",
+    "lines": "lines"
   },
   "shared_task": {
     "share_task": "Share",

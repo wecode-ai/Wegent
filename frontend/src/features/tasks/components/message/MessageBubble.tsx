@@ -31,6 +31,7 @@ import AttachmentPreview from '../input/AttachmentPreview';
 import StreamingWaitIndicator from './StreamingWaitIndicator';
 import BubbleTools, { CopyButton } from './BubbleTools';
 import { SourceReferences } from '../chat/SourceReferences';
+import CollapsibleMessage from './CollapsibleMessage';
 import type { ClarificationData, FinalPromptData, ClarificationAnswer } from '@/types/api';
 import type { SourceReference } from '@/types/socket';
 import { useTraceAction } from '@/hooks/useTraceAction';
@@ -457,83 +458,92 @@ const MessageBubble = memo(
         );
       };
 
+      // Check if message should be collapsible (only for completed AI messages, not streaming)
+      const shouldEnableCollapse = !isStreaming && msg.subtaskStatus !== 'RUNNING';
+
+      const markdownContent = (
+        <MarkdownWithMermaid
+          source={normalizedResult}
+          theme={theme}
+          components={
+            paragraphAction
+              ? {
+                  a: ({ href, children }) => {
+                    if (!href) {
+                      return <span>{children}</span>;
+                    }
+                    return (
+                      <SmartLink href={href} disabled={isStreaming}>
+                        {children}
+                      </SmartLink>
+                    );
+                  },
+                  img: ({ src, alt }) => {
+                    if (!src || typeof src !== 'string') return null;
+                    return <SmartImage src={src} alt={alt} />;
+                  },
+                  p: ({ children }) => {
+                    const text = extractText(children);
+                    return wrapWithAction(<p>{children}</p>, text);
+                  },
+                  h1: ({ children }) => {
+                    const text = extractText(children);
+                    return wrapWithAction(<h1>{children}</h1>, text);
+                  },
+                  h2: ({ children }) => {
+                    const text = extractText(children);
+                    return wrapWithAction(<h2>{children}</h2>, text);
+                  },
+                  h3: ({ children }) => {
+                    const text = extractText(children);
+                    return wrapWithAction(<h3>{children}</h3>, text);
+                  },
+                  h4: ({ children }) => {
+                    const text = extractText(children);
+                    return wrapWithAction(<h4>{children}</h4>, text);
+                  },
+                  h5: ({ children }) => {
+                    const text = extractText(children);
+                    return wrapWithAction(<h5>{children}</h5>, text);
+                  },
+                  h6: ({ children }) => {
+                    const text = extractText(children);
+                    return wrapWithAction(<h6>{children}</h6>, text);
+                  },
+                  li: ({ children }) => {
+                    const text = extractText(children);
+                    return wrapWithAction(<li>{children}</li>, text);
+                  },
+                  blockquote: ({ children }) => {
+                    const text = extractText(children);
+                    return wrapWithAction(<blockquote>{children}</blockquote>, text);
+                  },
+                }
+              : {
+                  a: ({ href, children }) => {
+                    if (!href) {
+                      return <span>{children}</span>;
+                    }
+                    return (
+                      <SmartLink href={href} disabled={isStreaming}>
+                        {children}
+                      </SmartLink>
+                    );
+                  },
+                  img: ({ src, alt }) => {
+                    if (!src || typeof src !== 'string') return null;
+                    return <SmartImage src={src} alt={alt} />;
+                  },
+                }
+          }
+        />
+      );
+
       return (
         <>
-          <MarkdownWithMermaid
-            source={normalizedResult}
-            theme={theme}
-            components={
-              paragraphAction
-                ? {
-                    a: ({ href, children }) => {
-                      if (!href) {
-                        return <span>{children}</span>;
-                      }
-                      return (
-                        <SmartLink href={href} disabled={isStreaming}>
-                          {children}
-                        </SmartLink>
-                      );
-                    },
-                    img: ({ src, alt }) => {
-                      if (!src || typeof src !== 'string') return null;
-                      return <SmartImage src={src} alt={alt} />;
-                    },
-                    p: ({ children }) => {
-                      const text = extractText(children);
-                      return wrapWithAction(<p>{children}</p>, text);
-                    },
-                    h1: ({ children }) => {
-                      const text = extractText(children);
-                      return wrapWithAction(<h1>{children}</h1>, text);
-                    },
-                    h2: ({ children }) => {
-                      const text = extractText(children);
-                      return wrapWithAction(<h2>{children}</h2>, text);
-                    },
-                    h3: ({ children }) => {
-                      const text = extractText(children);
-                      return wrapWithAction(<h3>{children}</h3>, text);
-                    },
-                    h4: ({ children }) => {
-                      const text = extractText(children);
-                      return wrapWithAction(<h4>{children}</h4>, text);
-                    },
-                    h5: ({ children }) => {
-                      const text = extractText(children);
-                      return wrapWithAction(<h5>{children}</h5>, text);
-                    },
-                    h6: ({ children }) => {
-                      const text = extractText(children);
-                      return wrapWithAction(<h6>{children}</h6>, text);
-                    },
-                    li: ({ children }) => {
-                      const text = extractText(children);
-                      return wrapWithAction(<li>{children}</li>, text);
-                    },
-                    blockquote: ({ children }) => {
-                      const text = extractText(children);
-                      return wrapWithAction(<blockquote>{children}</blockquote>, text);
-                    },
-                  }
-                : {
-                    a: ({ href, children }) => {
-                      if (!href) {
-                        return <span>{children}</span>;
-                      }
-                      return (
-                        <SmartLink href={href} disabled={isStreaming}>
-                          {children}
-                        </SmartLink>
-                      );
-                    },
-                    img: ({ src, alt }) => {
-                      if (!src || typeof src !== 'string') return null;
-                      return <SmartImage src={src} alt={alt} />;
-                    },
-                  }
-            }
-          />
+          <CollapsibleMessage content={normalizedResult} enabled={shouldEnableCollapse}>
+            {markdownContent}
+          </CollapsibleMessage>
           <SourceReferences sources={msg.sources || msg.result?.sources || []} />
           <BubbleTools
             contentToCopy={`${promptPart ? promptPart + '\n\n' : ''}${normalizedResult}`}
