@@ -39,14 +39,6 @@ function shouldCollapseContent(content: string, maxLines: number): boolean {
 }
 
 /**
- * Get the preview content (first N lines)
- */
-function getPreviewContent(content: string, maxLines: number): string {
-  const lines = content.split('\n');
-  return lines.slice(0, maxLines).join('\n');
-}
-
-/**
  * CollapsibleMessage component
  *
  * Wraps message content and collapses it if it exceeds the maximum line count.
