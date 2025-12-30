@@ -462,6 +462,7 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
                 forceOverride={forceOverride}
                 setForceOverride={setForceOverride}
                 disabled={isCopying}
+                taskType={isCodeTask ? 'code' : 'chat'}
               />
             )}
 

@@ -36,6 +36,9 @@ export interface ChatInputControlsProps {
   forceOverride: boolean;
   setForceOverride: (value: boolean) => void;
 
+  // Task type for model persistence
+  taskType?: 'chat' | 'code';
+
   // Repository and Branch
   showRepositorySelector: boolean;
   selectedRepo: GitRepoInfo | null;
@@ -104,6 +107,7 @@ export function ChatInputControls({
   setSelectedModel,
   forceOverride,
   setForceOverride,
+  taskType = 'chat',
   showRepositorySelector,
   selectedRepo,
   setSelectedRepo,
@@ -255,6 +259,7 @@ export function ChatInputControls({
             selectedTeam={selectedTeam}
             disabled={isLoading || isStreaming || (hasMessages && !isChatShell(selectedTeam))}
             compact={shouldCollapseSelectors}
+            taskType={taskType}
           />
         )}
 

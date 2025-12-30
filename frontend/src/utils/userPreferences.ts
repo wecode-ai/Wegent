@@ -13,6 +13,11 @@ const STORAGE_KEYS = {
   LAST_TEAM_ID_CODE: 'wegent_last_team_id_code',
   LAST_REPO_ID: 'wegent_last_repo_id',
   LAST_REPO_NAME: 'wegent_last_repo_name',
+  // Model selection by mode
+  LAST_MODEL_ID_CHAT: 'wegent_last_model_id_chat',
+  LAST_MODEL_TYPE_CHAT: 'wegent_last_model_type_chat',
+  LAST_MODEL_ID_CODE: 'wegent_last_model_id_code',
+  LAST_MODEL_TYPE_CODE: 'wegent_last_model_type_code',
 } as const;
 
 export type TabType = 'chat' | 'code' | 'wiki';
@@ -157,6 +162,89 @@ export function getLastRepo(): { repoId: number; repoName: string } | null {
   } catch (error) {
     console.warn('Failed to get last repo from localStorage:', error);
     return null;
+  }
+}
+
+/**
+ * Model preference type for storing model selection
+ */
+export interface ModelPreference {
+  modelId: string;
+  modelType?: string;
+}
+
+/**
+ * Save user's last selected model for a specific mode (chat/code)
+ * This allows chat and code modes to remember their own model selections independently
+ */
+export function saveLastModelByMode(
+  modelId: string,
+  mode: 'chat' | 'code',
+  modelType?: string
+): void {
+  try {
+    if (!modelId) {
+      console.warn('[userPreferences] Invalid model ID, not saving');
+      return;
+    }
+    const idKey =
+      mode === 'chat' ? STORAGE_KEYS.LAST_MODEL_ID_CHAT : STORAGE_KEYS.LAST_MODEL_ID_CODE;
+    const typeKey =
+      mode === 'chat' ? STORAGE_KEYS.LAST_MODEL_TYPE_CHAT : STORAGE_KEYS.LAST_MODEL_TYPE_CODE;
+
+    localStorage.setItem(idKey, modelId);
+    if (modelType) {
+      localStorage.setItem(typeKey, modelType);
+    } else {
+      localStorage.removeItem(typeKey);
+    }
+  } catch (error) {
+    console.warn('Failed to save last model to localStorage:', error);
+  }
+}
+
+/**
+ * Get user's last selected model for a specific mode (chat/code)
+ * Returns the model preference if found, or null if not set
+ */
+export function getLastModelByMode(mode: 'chat' | 'code'): ModelPreference | null {
+  try {
+    const idKey =
+      mode === 'chat' ? STORAGE_KEYS.LAST_MODEL_ID_CHAT : STORAGE_KEYS.LAST_MODEL_ID_CODE;
+    const typeKey =
+      mode === 'chat' ? STORAGE_KEYS.LAST_MODEL_TYPE_CHAT : STORAGE_KEYS.LAST_MODEL_TYPE_CODE;
+
+    const modelId = localStorage.getItem(idKey);
+    const modelType = localStorage.getItem(typeKey);
+
+    if (!modelId || modelId === 'undefined' || modelId === 'null') {
+      return null;
+    }
+
+    return {
+      modelId,
+      modelType: modelType || undefined,
+    };
+  } catch (error) {
+    console.warn('Failed to get last model from localStorage:', error);
+    return null;
+  }
+}
+
+/**
+ * Clear model preferences for a specific mode
+ */
+export function clearModelPreferenceByMode(mode: 'chat' | 'code'): void {
+  try {
+    const idKey =
+      mode === 'chat' ? STORAGE_KEYS.LAST_MODEL_ID_CHAT : STORAGE_KEYS.LAST_MODEL_ID_CODE;
+    const typeKey =
+      mode === 'chat' ? STORAGE_KEYS.LAST_MODEL_TYPE_CHAT : STORAGE_KEYS.LAST_MODEL_TYPE_CODE;
+
+    localStorage.removeItem(idKey);
+    localStorage.removeItem(typeKey);
+  } catch (error) {
+    console.warn('Failed to clear model preference from localStorage:', error);
   }
 }
 

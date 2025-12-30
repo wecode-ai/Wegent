@@ -16,6 +16,7 @@ import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { Tag } from '@/components/ui/tag';
 import { cn } from '@/lib/utils';
 import { paths } from '@/config/paths';
+import { saveLastModelByMode, getLastModelByMode } from '@/utils/userPreferences';
 import {
   Command,
   CommandEmpty,
@@ -64,10 +65,9 @@ interface ModelSelectorProps {
   isLoading?: boolean;
   /** When true, display only icon without text (for responsive collapse) */
   compact?: boolean;
+  /** Task type for mode-specific model persistence (chat/code) */
+  taskType?: 'chat' | 'code';
 }
-
-const LAST_SELECTED_MODEL_KEY = 'last_selected_model_id';
-const LAST_SELECTED_MODEL_TYPE_KEY = 'last_selected_model_type';
 
 // Helper function to convert UnifiedModel to Model
 function unifiedToModel(unified: UnifiedModel): Model {
@@ -115,6 +115,7 @@ export default function ModelSelector({
   disabled,
   isLoading: externalLoading,
   compact = false,
+  taskType = 'chat',
 }: ModelSelectorProps) {
   const { t } = useTranslation();
   const router = useRouter();
@@ -199,7 +200,7 @@ export default function ModelSelector({
 
   // Unified model selection logic:
   // 1. On initial load: restore from localStorage or set default
-  // 2. On team change: re-validate model selection
+  // 2. On team change: re-validate model selection with protocol compatibility
   // 3. On model list change: check compatibility
   // 4. Preserve user selection after task sends (when team ID doesn't actually change)
   // 5. Skip auto-initialization when disabled (viewing existing task)
@@ -208,7 +209,7 @@ export default function ModelSelector({
     const teamChanged = prevTeamIdRef.current !== null && prevTeamIdRef.current !== currentTeamId;
     prevTeamIdRef.current = currentTeamId;
 
-    // Case 1: Team changed - re-validate model selection
+    // Case 1: Team changed - re-validate model selection with protocol compatibility check
     if (teamChanged) {
       // Clear user selection on team change
       userSelectedModelRef.current = null;
@@ -217,18 +218,38 @@ export default function ModelSelector({
         // New team supports default option, set to default
         setSelectedModel({ name: DEFAULT_MODEL_NAME, provider: '', modelId: '' });
         setForceOverride(false);
-      } else if (selectedModel && selectedModel.name !== DEFAULT_MODEL_NAME) {
-        // Check if current model is still compatible
+        return;
+      }
+
+      // Try to restore from localStorage (mode-specific) if compatible with new team
+      const savedPreference = getLastModelByMode(taskType);
+      if (savedPreference && savedPreference.modelId !== DEFAULT_MODEL_NAME) {
+        const foundModel = filteredModels.find(m => {
+          if (savedPreference.modelType) {
+            return m.name === savedPreference.modelId && m.type === savedPreference.modelType;
+          }
+          return m.name === savedPreference.modelId;
+        });
+        if (foundModel) {
+          // Found a compatible model from saved preference
+          setSelectedModel(foundModel);
+          userSelectedModelRef.current = foundModel;
+          return;
+        }
+      }
+
+      // If current model is still compatible with new team's protocol, keep it
+      if (selectedModel && selectedModel.name !== DEFAULT_MODEL_NAME) {
         const isStillCompatible = filteredModels.some(
           m => m.name === selectedModel.name && m.type === selectedModel.type
         );
-        if (!isStillCompatible) {
-          setSelectedModel(null);
+        if (isStillCompatible) {
+          return;
         }
-      } else {
-        // Clear selection for non-default teams
-        setSelectedModel(null);
       }
+
+      // No compatible model found, clear selection
+      setSelectedModel(null);
       return;
     }
 
@@ -245,19 +266,16 @@ export default function ModelSelector({
         return;
       }
 
-      // Try to restore from localStorage
+      // Try to restore from localStorage (mode-specific)
       if (!selectedModel) {
-        const lastSelectedId = localStorage.getItem(LAST_SELECTED_MODEL_KEY);
-        const lastSelectedType = localStorage.getItem(
-          LAST_SELECTED_MODEL_TYPE_KEY
-        ) as ModelTypeEnum | null;
+        const savedPreference = getLastModelByMode(taskType);
 
-        if (lastSelectedId && lastSelectedId !== DEFAULT_MODEL_NAME) {
+        if (savedPreference && savedPreference.modelId !== DEFAULT_MODEL_NAME) {
           const foundModel = filteredModels.find(m => {
-            if (lastSelectedType) {
-              return m.name === lastSelectedId && m.type === lastSelectedType;
+            if (savedPreference.modelType) {
+              return m.name === savedPreference.modelId && m.type === savedPreference.modelType;
             }
-            return m.name === lastSelectedId;
+            return m.name === savedPreference.modelId;
           });
           if (foundModel) {
             setSelectedModel(foundModel);
@@ -317,6 +335,7 @@ export default function ModelSelector({
     selectedTeam?.id,
     showDefaultOption,
     filteredModels,
+    taskType,
     // NOTE: selectedModel is intentionally excluded to prevent infinite loops
     // The effect only needs to run when team/models change, not when selectedModel changes
     setSelectedModel,
@@ -324,15 +343,12 @@ export default function ModelSelector({
     disabled,
   ]);
 
-  // Save selected model to localStorage
+  // Save selected model to localStorage (mode-specific)
   useEffect(() => {
-    if (selectedModel) {
-      localStorage.setItem(LAST_SELECTED_MODEL_KEY, selectedModel.name);
-      if (selectedModel.type) {
-        localStorage.setItem(LAST_SELECTED_MODEL_TYPE_KEY, selectedModel.type);
-      }
+    if (selectedModel && selectedModel.name !== DEFAULT_MODEL_NAME) {
+      saveLastModelByMode(selectedModel.name, taskType, selectedModel.type);
     }
-  }, [selectedModel]);
+  }, [selectedModel, taskType]);
 
   // Get unique key for model (name + type)
   const getModelKey = (model: Model): string => {
