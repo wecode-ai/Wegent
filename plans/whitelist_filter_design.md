@@ -283,7 +283,6 @@ from app.services.whitelist import set_whitelist_service
 whitelist_service = MyWhitelistService({1, 2, 3})  # 用户ID 1, 2, 3 在白名单中
 set_whitelist_service(whitelist_service)
 ```
-
 ### 4.2 API 调用示例
 
 ```bash
@@ -297,6 +296,39 @@ POST /api/executors/tasks/dispatch?whitelist_enabled=false
 POST /api/executors/tasks/dispatch
 
 # 如果白名单服务未实现，传 whitelist_enabled 参数也不会过滤，返回所有任务
+```
+
+### 4.3 Executor Manager 环境变量配置
+
+在 `executor_manager` 中，可以通过环境变量 `WHITELIST_ENABLED` 配置默认的白名单过滤行为：
+
+```bash
+# 只获取白名单用户的任务
+export WHITELIST_ENABLED=true
+
+# 只获取非白名单用户的任务
+export WHITELIST_ENABLED=false
+
+# 不设置或设置为空 - 不做过滤（默认行为）
+# export WHITELIST_ENABLED=
+```
+
+配置文件位置：`executor_manager/config/config.py`
+
+```python
+# Whitelist filter configuration
+# WHITELIST_ENABLED: Controls task filtering by user whitelist
+#   - "true": Only fetch tasks from whitelisted users
+#   - "false": Only fetch tasks from non-whitelisted users
+#   - None/empty: No filtering, fetch all tasks (default)
+_whitelist_env = os.getenv("WHITELIST_ENABLED", "").lower()
+if _whitelist_env == "true":
+    WHITELIST_ENABLED = True
+elif _whitelist_env == "false":
+    WHITELIST_ENABLED = False
+else:
+    WHITELIST_ENABLED = None
+```
 ```
 
 ## 5. 测试用例

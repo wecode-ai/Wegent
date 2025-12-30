@@ -21,6 +21,19 @@ TASK_FETCH_LIMIT = 1
 TASK_FETCH_STATUS = "PENDING"
 OFFLINE_TASK_FETCH_LIMIT = 5
 
+# Whitelist filter configuration
+# WHITELIST_ENABLED: Controls task filtering by user whitelist
+#   - "true": Only fetch tasks from whitelisted users
+#   - "false": Only fetch tasks from non-whitelisted users
+#   - None/empty: No filtering, fetch all tasks (default)
+_whitelist_env = os.getenv("WHITELIST_ENABLED", "").lower()
+if _whitelist_env == "true":
+    WHITELIST_ENABLED = True
+elif _whitelist_env == "false":
+    WHITELIST_ENABLED = False
+else:
+    WHITELIST_ENABLED = None
+
 # API URLs
 FETCH_TASK_API_BASE_URL = TASK_API_DOMAIN + "/api/executors/tasks/dispatch"
 CALLBACK_TASK_API_URL = TASK_API_DOMAIN + "/api/executors/tasks"
@@ -52,7 +65,9 @@ GITHUB_PRIVATE_KEY_PATH = os.getenv("GITHUB_PRIVATE_KEY_PATH")
 GITHUB_PRIVATE_KEY = os.getenv("GITHUB_PRIVATE_KEY")
 
 EXECUTOR_DISPATCHER_MODE = os.getenv("EXECUTOR_DISPATCHER_MODE", "docker")
-EXECUTOR_CONFIG = os.getenv("EXECUTOR_CONFIG", "{\"docker\":\"executor_manager.executors.docker.DockerExecutor\"}")
+EXECUTOR_CONFIG = os.getenv(
+    "EXECUTOR_CONFIG", '{"docker":"executor_manager.executors.docker.DockerExecutor"}'
+)
 EXECUTOR_ENV = os.environ.get("EXECUTOR_ENV", "{}")
 
 # OpenTelemetry configuration is centralized in shared/telemetry/config.py
