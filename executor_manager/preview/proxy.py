@@ -19,6 +19,8 @@ from typing import Optional, Tuple
 import httpx
 from shared.logger import setup_logger
 
+from executor_manager.executors.docker.utils import find_container_for_task
+
 logger = setup_logger(__name__)
 
 
@@ -31,30 +33,6 @@ class PreviewProxy:
 
     def __init__(self):
         self._port_cache: dict[int, int] = {}  # task_id -> host_port
-
-    def _find_container_for_task(self, task_id: int) -> Optional[str]:
-        """Find the running container for a task"""
-        try:
-            cmd = [
-                "docker",
-                "ps",
-                "--filter",
-                f"label=task_id={task_id}",
-                "--filter",
-                "label=owner=executor_manager",
-                "--format",
-                "{{.Names}}",
-            ]
-            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-
-            containers = [c.strip() for c in result.stdout.strip().split("\n") if c.strip()]
-            if containers:
-                return containers[0]
-            return None
-
-        except subprocess.CalledProcessError as e:
-            logger.exception(f"Error finding container for task {task_id}: {e}")
-            return None
 
     def _get_container_ip(self, container_name: str) -> Optional[str]:
         """Get the IP address of a container"""
@@ -80,7 +58,7 @@ class PreviewProxy:
 
         Returns: (target_url, error_message)
         """
-        container_name = self._find_container_for_task(task_id)
+        container_name = find_container_for_task(task_id)
         if not container_name:
             return None, "Container not running"
 

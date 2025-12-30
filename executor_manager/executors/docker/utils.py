@@ -150,6 +150,41 @@ def get_docker_used_ports() -> Set[int]:
     return docker_used_ports
 
 
+def find_container_for_task(task_id: int) -> str | None:
+    """
+    Find the running container for a task.
+
+    Searches for containers with the task_id label and owner=executor_manager.
+
+    Args:
+        task_id: Task ID to search for
+
+    Returns:
+        Container name if found, None otherwise
+    """
+    try:
+        cmd = [
+            "docker",
+            "ps",
+            "--filter",
+            f"label=task_id={task_id}",
+            "--filter",
+            "label=owner=executor_manager",
+            "--format",
+            "{{.Names}}",
+        ]
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+
+        containers = [c.strip() for c in result.stdout.strip().split("\n") if c.strip()]
+        if containers:
+            return containers[0]
+        return None
+
+    except subprocess.CalledProcessError as e:
+        logger.exception(f"Error finding container for task {task_id}")
+        return None
+
+
 def check_container_ownership(container_name: str) -> bool:
     """
     Check if container exists and is owned by executor_manager.

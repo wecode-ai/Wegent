@@ -28,6 +28,7 @@ from shared.logger import setup_logger
 
 from executor_manager.executors.docker.utils import (
     check_container_ownership,
+    find_container_for_task,
     get_host_port_for_container,
 )
 
@@ -116,35 +117,7 @@ class PreviewManager:
             return get_host_port_for_container(container_name, container_port)
 
         except Exception as e:
-            logger.exception(f"Error getting preview host port: {e}")
-            return None
-
-    def _find_container_for_task(self, task_id: int) -> Optional[str]:
-        """
-        Find the running container for a task.
-
-        Searches for containers with the task_id label.
-        """
-        try:
-            cmd = [
-                "docker",
-                "ps",
-                "--filter",
-                f"label=task_id={task_id}",
-                "--filter",
-                "label=owner=executor_manager",
-                "--format",
-                "{{.Names}}",
-            ]
-            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-
-            containers = [c.strip() for c in result.stdout.strip().split("\n") if c.strip()]
-            if containers:
-                return containers[0]
-            return None
-
-        except subprocess.CalledProcessError as e:
-            logger.exception(f"Error finding container for task {task_id}: {e}")
+            logger.exception(f"Error getting preview host port")
             return None
 
     async def get_preview_config(self, task_id: int) -> Tuple[Optional[Dict], Optional[str]]:
@@ -153,7 +126,7 @@ class PreviewManager:
 
         Returns: (config_dict, error_message)
         """
-        container_name = self._find_container_for_task(task_id)
+        container_name = find_container_for_task(task_id)
         if not container_name:
             return None, "Container not running for this task"
 
@@ -220,7 +193,7 @@ class PreviewManager:
         state = self._states.get(task_id)
         if not state:
             # Check if container exists and has preview config
-            container_name = self._find_container_for_task(task_id)
+            container_name = find_container_for_task(task_id)
             if not container_name:
                 return {
                     "status": PreviewStatus.STOPPED.value,
@@ -260,7 +233,7 @@ class PreviewManager:
                 }
 
             # Find container
-            container_name = self._find_container_for_task(task_id)
+            container_name = find_container_for_task(task_id)
             if not container_name:
                 return {
                     "success": False,
@@ -435,7 +408,7 @@ class PreviewManager:
         async with self._lock:
             state = self._states.get(task_id)
 
-            container_name = self._find_container_for_task(task_id)
+            container_name = find_container_for_task(task_id)
             if not container_name:
                 if state:
                     del self._states[task_id]
