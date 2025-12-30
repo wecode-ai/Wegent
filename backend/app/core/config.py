@@ -189,6 +189,30 @@ class Settings(BaseSettings):
     # Use: from shared.telemetry.config import get_otel_config
     # All OTEL_* environment variables are read from there
 
+    # Group chat notification configuration
+    # Enable/disable hourly Dingtalk notification for unread messages
+    HOURLY_DINGTALK_NOTIFICATION_ENABLED: bool = False
+    # Enable/disable daily email summary for group chat conversations
+    DAILY_EMAIL_SUMMARY_ENABLED: bool = False
+    # Model config JSON for summarizing group chat conversations
+    # Example: {"model": "openai", "api_key": "sk-xxx", "base_url": "https://xxx/v1", "model_id": "gpt-4"}
+    DAILY_SUMMARY_MODEL_CONFIG: str = ""
+    # Dingtalk notification configuration
+    DINGTALK_APP_KEY: str = ""
+    DINGTALK_APP_SECRET: str = ""
+    DINGTALK_USER_INFO_URL: str = ""
+    # Email notification configuration
+    EMAIL_SMTP_HOST: str = ""
+    EMAIL_SMTP_PORT: int = 25
+    EMAIL_SENDER: str = ""
+    EMAIL_LOGIN_USER: str = ""  # Login username (may differ from sender email)
+    EMAIL_password: str = ""
+    EMAIL_USE_TLS: bool = False
+    # Daily summary notification hour (0-23, default 18:00)
+    DAILY_SUMMARY_HOUR: int = 18
+    # Morning summary notification hour (0-23, default 9:00)
+    MORNING_SUMMARY_HOUR: int = 9
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
