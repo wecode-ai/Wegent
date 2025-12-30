@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 import requests
 from executor_manager.config.config import EXECUTOR_ENV
+from executor_manager.config.config import DEFAULT_PREVIEW_CONTAINER_PORT
 from executor_manager.executors.base import Executor
 from executor_manager.executors.docker.constants import (
     CONTAINER_OWNER,
@@ -38,6 +39,7 @@ from executor_manager.executors.docker.utils import (
     check_container_ownership,
     delete_container,
     find_available_port,
+    find_available_preview_port,
     get_container_ports,
     get_running_task_details,
 )
@@ -559,10 +561,20 @@ class DockerExecutor(Executor):
         # Add network configuration
         self._add_network_config(cmd)
 
-        # Add port mapping
+        # Add port mapping for executor API
         port = find_available_port()
         logger.info(f"Assigned port {port} for container {executor_name}")
         cmd.extend(["-p", f"{port}:{port}", "-e", f"PORT={port}"])
+
+        # Add preview port mapping for dev server (e.g., npm run dev)
+        # This maps a host port to the default container preview port (3000)
+        preview_host_port = find_available_preview_port()
+        logger.info(f"Assigned preview port {preview_host_port} -> {DEFAULT_PREVIEW_CONTAINER_PORT} for container {executor_name}")
+        cmd.extend([
+            "-p", f"{preview_host_port}:{DEFAULT_PREVIEW_CONTAINER_PORT}",
+            "-e", f"PREVIEW_HOST_PORT={preview_host_port}",
+            "-l", f"preview_port={preview_host_port}",
+        ])
 
         # Add callback URL
         self._add_callback_url(cmd, task)

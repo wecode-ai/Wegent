@@ -26,7 +26,10 @@ from typing import Dict, Optional, Tuple
 import yaml
 from shared.logger import setup_logger
 
-from executor_manager.executors.docker.utils import check_container_ownership
+from executor_manager.executors.docker.utils import (
+    check_container_ownership,
+    get_host_port_for_container,
+)
 
 logger = setup_logger(__name__)
 
@@ -80,6 +83,41 @@ class PreviewManager:
     def _get_container_name(self, task_id: int) -> str:
         """Generate container name for a task"""
         return f"executor-task-{task_id}"
+
+    def _get_preview_host_port(self, container_name: str, container_port: int) -> Optional[int]:
+        """
+        Get the host port mapped to the container's preview port.
+
+        First tries to get from container label (preview_port),
+        then falls back to docker port inspection.
+
+        Args:
+            container_name: Name of the Docker container
+            container_port: Port number inside the container
+
+        Returns:
+            Host port number if found, None otherwise
+        """
+        try:
+            # First try to get preview_port label
+            cmd = [
+                "docker",
+                "inspect",
+                "-f",
+                "{{index .Config.Labels \"preview_port\"}}",
+                container_name,
+            ]
+            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+            label_port = result.stdout.strip()
+            if label_port and label_port.isdigit():
+                return int(label_port)
+
+            # Fallback: use docker port command
+            return get_host_port_for_container(container_name, container_port)
+
+        except Exception as e:
+            logger.exception(f"Error getting preview host port: {e}")
+            return None
 
     def _find_container_for_task(self, task_id: int) -> Optional[str]:
         """
@@ -293,9 +331,15 @@ class PreviewManager:
 
                 subprocess.run(cmd, check=True, capture_output=True, timeout=30)
 
-                # For now, assume the port inside container maps to same port on host
-                # In real implementation, would need to check container port mappings
-                state.host_port = preview_config.port
+                # Get the host port mapped to the container's preview port
+                # The port is set when container is created via -p flag and stored as label
+                host_port = self._get_preview_host_port(container_name, preview_config.port)
+                if not host_port:
+                    logger.warning(f"Could not find host port mapping for preview port {preview_config.port}")
+                    # Fallback: try to get from docker port command
+                    host_port = get_host_port_for_container(container_name, preview_config.port)
+
+                state.host_port = host_port
                 state.status = PreviewStatus.STARTING
 
                 # Schedule readiness check

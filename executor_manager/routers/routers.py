@@ -19,7 +19,7 @@ from executor_manager.clients.task_api_client import TaskApiClient
 from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
 from executor_manager.executors.dispatcher import ExecutorDispatcher
 from executor_manager.tasks.task_processor import TaskProcessor
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 from shared.logger import setup_logger
@@ -680,4 +680,69 @@ async def stop_preview(task_id: int, http_request: Request):
 
     except Exception as e:
         logger.exception(f"Error stopping preview for task {task_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.api_route(
+    "/executor-manager/preview/{task_id}/proxy/{path:path}",
+    methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+)
+async def proxy_preview_request(task_id: int, path: str, http_request: Request):
+    """
+    Proxy HTTP requests to the preview service running inside a container.
+
+    This endpoint forwards requests to the dev server (e.g., Next.js, Vite)
+    running inside the task's Docker container.
+    """
+    from executor_manager.preview.manager import preview_manager
+    from executor_manager.preview.proxy import preview_proxy
+
+    try:
+        # Get preview state
+        state = preview_manager._states.get(task_id)
+        if not state:
+            raise HTTPException(status_code=404, detail="Preview not running for this task")
+
+        if not state.config:
+            raise HTTPException(status_code=404, detail="Preview configuration not available")
+
+        # Get request body if present
+        body = None
+        if http_request.method in ["POST", "PUT", "PATCH"]:
+            body = await http_request.body()
+
+        # Proxy the request
+        response, error = await preview_proxy.proxy_request(
+            task_id=task_id,
+            port=state.config.port,
+            method=http_request.method,
+            path=f"/{path}" if not path.startswith("/") else path,
+            headers=dict(http_request.headers),
+            body=body,
+        )
+
+        if error:
+            raise HTTPException(status_code=502, detail=error)
+
+        # Build response headers (filter hop-by-hop headers)
+        skip_headers = {
+            "connection", "keep-alive", "proxy-authenticate",
+            "proxy-authorization", "te", "trailers", "transfer-encoding", "upgrade"
+        }
+        response_headers = {
+            k: v for k, v in response.headers.items()
+            if k.lower() not in skip_headers
+        }
+
+        return Response(
+            content=response.content,
+            status_code=response.status_code,
+            headers=response_headers,
+            media_type=response.headers.get("content-type"),
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error proxying preview request for task {task_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
