@@ -35,6 +35,12 @@ export interface ChatInputControlsProps {
   setSelectedModel: (model: Model | null) => void;
   forceOverride: boolean;
   setForceOverride: (value: boolean) => void;
+  /** Current team ID for model preference storage */
+  teamId?: number | null;
+  /** Current task ID for session-level model preference storage (null for new chat) */
+  taskId?: number | null;
+  /** Task's model_id from backend - used as fallback when no session preference exists */
+  taskModelId?: string | null;
 
   // Repository and Branch
   showRepositorySelector: boolean;
@@ -104,6 +110,9 @@ export function ChatInputControls({
   setSelectedModel,
   forceOverride,
   setForceOverride,
+  teamId,
+  taskId,
+  taskModelId,
   showRepositorySelector,
   selectedRepo,
   setSelectedRepo,
@@ -255,6 +264,9 @@ export function ChatInputControls({
             selectedTeam={selectedTeam}
             disabled={isLoading || isStreaming || (hasMessages && !isChatShell(selectedTeam))}
             compact={shouldCollapseSelectors}
+            teamId={teamId}
+            taskId={taskId}
+            taskModelId={taskModelId}
           />
         )}
 

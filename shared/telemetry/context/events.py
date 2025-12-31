@@ -17,6 +17,9 @@ class TelemetryEventNames:
     BOT_NOT_FOUND = "BotNotFound"
     PROVIDER_CREATION_FAILED = "ProviderCreationFailed"
     STREAM_CHUNK_ERROR = "StreamChunkError"
+    STREAM_ERROR = "StreamError"
+    RECURSION_LIMIT_ERROR = "RecursionLimitError"
+    AGENT_ERROR = "AgentError"
     GENERAL_ERROR = "GeneralError"
 
     # Success events
@@ -29,7 +32,12 @@ class SpanNames:
 
     # Chat operations
     CHAT_STREAM_RESPONSE = "chat.stream_response"
+    CHAT_STREAM_TOKENS = "chat.stream_tokens"
     WEBSOCKET_EVENT = "websocket.{event}"  # Format with event name
+
+    # Agent operations
+    AGENT_EXECUTE = "agent.execute"
+    AGENT_STREAM = "agent.stream"
 
     # Future: Add more span names as needed
     # EXECUTOR_RUN_TASK = "executor.run_task"

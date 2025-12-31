@@ -35,6 +35,27 @@ _user_id_var: ContextVar[Optional[str]] = ContextVar("user_id", default=None)
 _user_name_var: ContextVar[Optional[str]] = ContextVar("user_name", default=None)
 _request_id_var: ContextVar[Optional[str]] = ContextVar("request_id", default=None)
 
+# Cached server IP (doesn't change during process lifetime)
+_cached_server_ip: Optional[str] = None
+
+
+def get_server_ip() -> str:
+    """
+    Get the server IP address with caching.
+
+    The server IP doesn't change during process lifetime, so we cache it
+    to avoid repeated socket operations.
+
+    Returns:
+        The server IP address
+    """
+    global _cached_server_ip
+    if _cached_server_ip is None:
+        from shared.utils.ip_util import get_host_ip
+
+        _cached_server_ip = get_host_ip()
+    return _cached_server_ip
+
 
 def get_request_id() -> Optional[str]:
     """
@@ -221,6 +242,52 @@ def set_span_error(
         )
     except Exception as e:
         logger.debug(f"Failed to set span error: {e}")
+
+
+def record_stream_error(
+    error: Exception,
+    event_name: str,
+    task_id: Optional[int] = None,
+    subtask_id: Optional[int] = None,
+    extra_attributes: Optional[Dict[str, Any]] = None,
+) -> None:
+    """
+    Record a stream error with standardized attributes including server IP.
+
+    This is a convenience function that combines set_span_error and add_span_event
+    with common attributes for stream errors.
+
+    Args:
+        error: The exception that occurred
+        event_name: The telemetry event name (e.g., TelemetryEventNames.STREAM_ERROR)
+        task_id: Optional task ID
+        subtask_id: Optional subtask ID
+        extra_attributes: Optional additional attributes to include
+    """
+    error_type = type(error).__name__
+    error_msg = str(error)[:500]  # Truncate long messages
+
+    # Set span error status
+    set_span_error(error, description=f"Stream error: {error_type}")
+
+    # Build event attributes
+    attributes: Dict[str, Any] = {
+        "error.type": error_type,
+        "error.message": error_msg,
+        "server.ip": get_server_ip(),
+    }
+
+    if task_id is not None:
+        attributes["task.id"] = task_id
+    if subtask_id is not None:
+        attributes["subtask.id"] = subtask_id
+
+    # Merge extra attributes
+    if extra_attributes:
+        attributes.update(extra_attributes)
+
+    # Add span event
+    add_span_event(event_name, attributes)
 
 
 def set_span_ok(description: Optional[str] = None) -> None:
@@ -425,7 +492,7 @@ def set_agent_context(
 def set_request_context(request_id: Optional[str] = None) -> None:
     """
     Set request context attributes on the current span AND store in ContextVar
-    for use in logging.
+    for use in logging. Also sets server.ip for request tracing.
 
     Args:
         request_id: Request identifier
@@ -434,9 +501,17 @@ def set_request_context(request_id: Optional[str] = None) -> None:
     if request_id is not None:
         _request_id_var.set(request_id)
 
-    # Also set on current span immediately
+    # Build attributes to set
+    attributes = {}
     if request_id:
-        set_span_attributes({SpanAttributes.REQUEST_ID: request_id})
+        attributes[SpanAttributes.REQUEST_ID] = request_id
+
+    # Always set server IP for request tracing (uses cached value)
+    attributes[SpanAttributes.SERVER_IP] = get_server_ip()
+
+    # Set on current span immediately
+    if attributes:
+        set_span_attributes(attributes)
 
 
 def set_repository_context(

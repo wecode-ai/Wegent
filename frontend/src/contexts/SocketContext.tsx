@@ -152,8 +152,6 @@ export function SocketProvider({ children }: { children: ReactNode }) {
    * Internal function to create socket connection
    */
   const createSocketConnection = useCallback((token: string, socketUrl: string) => {
-    console.log('[Socket.IO] Connecting to server...', socketUrl + '/chat');
-
     // Create new socket connection
     // Transport strategy:
     // 1. Try WebSocket first (preferred for load-balanced environments without sticky sessions)
@@ -184,14 +182,12 @@ export function SocketProvider({ children }: { children: ReactNode }) {
 
     // Connection event handlers
     newSocket.on('connect', () => {
-      console.log('[Socket.IO] Connected:', newSocket.id);
       setIsConnected(true);
       setConnectionError(null);
       setReconnectAttempts(0);
     });
 
-    newSocket.on('disconnect', (reason: string) => {
-      console.log('[Socket.IO] Disconnected:', reason);
+    newSocket.on('disconnect', (_reason: string) => {
       setIsConnected(false);
     });
 
@@ -202,12 +198,10 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     });
 
     newSocket.io.on('reconnect_attempt', (attempt: number) => {
-      console.log('[Socket.IO] Reconnect attempt:', attempt);
       setReconnectAttempts(attempt);
     });
 
-    newSocket.io.on('reconnect', (attempt: number) => {
-      console.log('[Socket.IO] Reconnected after', attempt, 'attempts');
+    newSocket.io.on('reconnect', (_attempt: number) => {
       setIsConnected(true);
       setConnectionError(null);
       setReconnectAttempts(0);
@@ -234,13 +228,11 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     (token: string) => {
       // Check if already connected using ref
       if (socketRef.current?.connected) {
-        console.log('[Socket.IO] Already connected, skipping');
         return;
       }
 
       // Disconnect existing socket if any
       if (socketRef.current) {
-        console.log('[Socket.IO] Disconnecting existing socket');
         socketRef.current.disconnect();
         socketRef.current = null;
       }
@@ -289,7 +281,6 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       // Check if already joined this task room to prevent duplicate joins
       // This check happens BEFORE adding to the set to handle concurrent calls
       if (joinedTasksRef.current.has(taskId)) {
-        console.log('[Socket.IO] Already joined task room, skipping:', taskId);
         return {};
       }
 
@@ -343,13 +334,6 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       // Use socketRef for reliable access (socket state may be stale)
       const currentSocket = socketRef.current;
 
-      console.log('[Socket.IO] sendChatMessage called', {
-        hasSocket: !!currentSocket,
-        isConnected: currentSocket?.connected,
-        socketId: currentSocket?.id,
-        payload: { ...payload, message: payload.message?.substring(0, 50) + '...' },
-      });
-
       if (!currentSocket?.connected) {
         console.error('[Socket.IO] sendChatMessage failed: not connected', {
           hasSocket: !!currentSocket,
@@ -359,13 +343,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       }
 
       return new Promise(resolve => {
-        console.log('[Socket.IO] Emitting chat:send event, payload:', {
-          ...payload,
-          attachment_ids: payload.attachment_ids,
-          attachment_ids_length: payload.attachment_ids?.length || 0,
-        });
         currentSocket.emit('chat:send', payload, (response: ChatSendAck) => {
-          console.log('[Socket.IO] chat:send response received', response);
           resolve(response);
         });
       });
@@ -428,21 +406,11 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         use_model_override: forceOverride,
       };
 
-      console.log('[Socket.IO] Emitting chat:retry event', {
-        taskId,
-        subtaskId,
-        modelId,
-        modelType,
-        forceOverride,
-      });
-
       return new Promise(resolve => {
         socket.emit(
           'chat:retry',
           payload,
           (response: { success?: boolean; error?: string } | undefined) => {
-            console.log('[Socket.IO] chat:retry response:', response);
-
             // Handle undefined response (backend error or no acknowledgment)
             if (!response) {
               console.error('[Socket.IO] chat:retry received undefined response');
@@ -594,14 +562,6 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      console.log('[Socket.IO] Emitting skill:response event', {
-        request_id: payload.request_id,
-        skill_name: payload.skill_name,
-        action: payload.action,
-        success: payload.success,
-        hasError: !!payload.error,
-      });
-
       currentSocket.emit(ClientSkillEvents.SKILL_RESPONSE, payload);
     },
     [] // No dependencies - use socketRef
@@ -621,10 +581,9 @@ export function SocketProvider({ children }: { children: ReactNode }) {
 
     const token = getToken();
     if (token) {
-      console.log('[Socket.IO] Auto-connecting with token from localStorage');
       connect(token);
     } else {
-      console.log('[Socket.IO] No token found, skipping auto-connect');
+      console.error('[Socket.IO] No token found, skipping auto-connect');
     }
   }, [connect]);
 
@@ -636,11 +595,9 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       if (e.key === 'auth_token') {
         if (e.newValue) {
           // Token was set (login from another tab)
-          console.log('[Socket.IO] Token changed in another tab, connecting');
           connect(e.newValue);
         } else {
           // Token was removed (logout from another tab)
-          console.log('[Socket.IO] Token removed in another tab, disconnecting');
           disconnect();
         }
       }

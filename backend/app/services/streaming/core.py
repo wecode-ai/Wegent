@@ -532,12 +532,27 @@ class StreamingCore:
         Args:
             error: The exception that occurred
         """
+        from shared.telemetry.context import TelemetryEventNames, record_stream_error
+
         logger.exception(
             "[STREAMING] subtask=%s error",
             self.state.subtask_id,
         )
 
         error_msg = str(error)
+
+        # Record error in OpenTelemetry trace using unified function
+        record_stream_error(
+            error=error,
+            event_name=TelemetryEventNames.STREAM_ERROR,
+            task_id=self.state.task_id,
+            subtask_id=self.state.subtask_id,
+            extra_attributes={
+                "shell_type": self.state.shell_type,
+                "response_length": len(self.state.full_response),
+                "thinking_steps": len(self.state.thinking),
+            },
+        )
 
         # Emit chat:error first
         await self.emitter.emit_error(
