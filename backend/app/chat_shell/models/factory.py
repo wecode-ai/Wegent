@@ -91,6 +91,8 @@ class LangChainModelFactory:
                     if cfg.get("default_headers")
                     else None
                 ),
+                # Enable Responses API when api_format is "responses"
+                "use_responses_api": cfg.get("api_format") == "responses" or None,
             },
         },
         "anthropic": {
@@ -151,6 +153,7 @@ class LangChainModelFactory:
                 - api_key: API key for the provider
                 - base_url: Optional custom API endpoint
                 - default_headers: Optional custom headers
+                - api_format: Optional API format for OpenAI ("chat/completions" or "responses")
             **kwargs: Additional parameters (temperature, max_tokens, streaming)
 
         Returns:
@@ -162,14 +165,21 @@ class LangChainModelFactory:
             "api_key": model_config.get("api_key", ""),
             "base_url": model_config.get("base_url", ""),
             "default_headers": model_config.get("default_headers"),
+            "api_format": model_config.get("api_format"),
         }
         model_type = model_config.get("model", "openai")
 
+        # Log API format if using Responses API
+        api_format_log = ""
+        if cfg.get("api_format") == "responses":
+            api_format_log = ", api_format=responses"
+
         logger.info(
-            "Creating LangChain model: %s, type=%s, key=%s",
+            "Creating LangChain model: %s, type=%s, key=%s%s",
             cfg["model_id"],
             model_type,
             _mask_api_key(cfg["api_key"]),
+            api_format_log,
         )
 
         provider = _detect_provider(model_type, cfg["model_id"])
