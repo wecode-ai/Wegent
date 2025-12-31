@@ -573,6 +573,9 @@
     "cannotUndo": "此操作无法撤销",
     "coming_soon": "即将推出"
   },
+  "correction": {
+    "result_title": "纠正结果"
+  },
   "userSearch": {
     "placeholder": "搜索用户名或邮箱...",
     "selectedUsers": "已选择 {{count}} 个用户",

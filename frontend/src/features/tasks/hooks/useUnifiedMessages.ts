@@ -152,7 +152,6 @@ export function useUnifiedMessages({
       subtasks.length > 0 &&
       (taskId !== lastSyncedTaskIdRef.current || !hasMessages)
     ) {
-      console.log('[useUnifiedMessages] Syncing backend messages for task', taskId);
       syncBackendMessages(taskId, subtasks, {
         teamName: team?.name,
         isGroupChat,

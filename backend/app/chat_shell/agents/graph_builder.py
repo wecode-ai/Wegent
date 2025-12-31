@@ -448,12 +448,31 @@ class LangGraphAgentBuilder:
                 streamed_content,
             )
 
-        except GraphRecursionError:
+        except GraphRecursionError as e:
             # Tool call limit reached - ask model to provide final response
+            from shared.telemetry.context import (
+                TelemetryEventNames,
+                add_span_event,
+                record_stream_error,
+                set_span_error,
+            )
+
             logger.warning(
                 "[stream_tokens] GraphRecursionError: Tool call limit reached (max_iterations=%d). "
                 "Asking model to provide final response.",
                 self.max_iterations,
+            )
+
+            # Record recursion limit error in OpenTelemetry trace using unified function
+            add_span_event(
+                TelemetryEventNames.RECURSION_LIMIT_ERROR,
+                {
+                    "max_iterations": self.max_iterations,
+                    "recursion_limit": self.max_iterations * 2 + 1,
+                    "event_count": event_count,
+                    "streamed_content": streamed_content,
+                    "error.message": str(e),
+                },
             )
 
             # Build messages with the limit reached notice
@@ -481,14 +500,42 @@ class LangGraphAgentBuilder:
                 logger.info(
                     "[stream_tokens] Final response generated after tool limit reached"
                 )
-            except Exception:
+            except Exception as recovery_error:
                 logger.exception(
                     "Error generating final response after tool limit reached"
                 )
+                # Record recovery failure in trace
+                set_span_error(
+                    recovery_error,
+                    description="Failed to generate final response after recursion limit",
+                )
+                add_span_event(
+                    TelemetryEventNames.AGENT_ERROR,
+                    {
+                        "error.type": type(recovery_error).__name__,
+                        "error.message": str(recovery_error),
+                        "context": "recursion_limit_recovery",
+                    },
+                )
                 raise
 
-        except Exception:
+        except Exception as e:
+            from shared.telemetry.context import (
+                TelemetryEventNames,
+                record_stream_error,
+            )
+
             logger.exception("Error in stream_tokens")
+
+            # Record error in OpenTelemetry trace using unified function
+            record_stream_error(
+                error=e,
+                event_name=TelemetryEventNames.AGENT_ERROR,
+                extra_attributes={
+                    "event_count": event_count,
+                    "streamed_content": streamed_content,
+                },
+            )
             raise
 
     def get_final_content(self, state: dict[str, Any]) -> str:

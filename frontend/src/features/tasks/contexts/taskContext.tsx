@@ -177,13 +177,10 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
 
   // Handle new task created via WebSocket
   const handleTaskCreated = useCallback((data: TaskCreatedPayload) => {
-    console.log('[TaskContext] Received task:created event via WebSocket:', data);
-
     // Check if task already exists in the list
     setTasks(prev => {
       const exists = prev.some(task => task.id === data.task_id);
       if (exists) {
-        console.log(`[TaskContext] Task ${data.task_id} already exists, skipping`);
         return prev;
       }
 
@@ -217,20 +214,16 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
       // Initialize view status for the new task
       initializeTaskViewStatus([newTask]);
 
-      console.log(`[TaskContext] Added new task ${data.task_id} via WebSocket`);
       return [newTask, ...prev];
     });
   }, []);
 
   // Handle user invited to group chat via WebSocket
   const handleTaskInvited = useCallback((data: TaskInvitedPayload) => {
-    console.log('[TaskContext] Received task:invited event via WebSocket:', data);
-
     // Check if task already exists in the list
     setTasks(prev => {
       const exists = prev.some(task => task.id === data.task_id);
       if (exists) {
-        console.log(`[TaskContext] Task ${data.task_id} already exists (invited), skipping`);
         return prev;
       }
 
@@ -263,7 +256,6 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
       // Initialize view status for the new task
       initializeTaskViewStatus([newTask]);
 
-      console.log(`[TaskContext] Added invited group chat task ${data.task_id} via WebSocket`);
       return [newTask, ...prev];
     });
   }, []);
@@ -271,8 +263,6 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   // Handle task status update via WebSocket
   const handleTaskStatus = useCallback(
     (data: TaskStatusPayload) => {
-      console.log('[TaskContext] Received task:status event via WebSocket:', data);
-
       const now = new Date().toISOString();
       // Use completed_at from WebSocket payload for terminal states, or generate one
       const terminalStates = ['COMPLETED', 'FAILED', 'CANCELLED'];
@@ -284,9 +274,6 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
       setTasks(prev => {
         const taskIndex = prev.findIndex(task => task.id === data.task_id);
         if (taskIndex === -1) {
-          console.log(
-            `[TaskContext] Task ${data.task_id} not found in list, skipping status update`
-          );
           return prev;
         }
 
@@ -309,7 +296,6 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
           const updatedTasks = [...prev];
           updatedTasks.splice(taskIndex, 1); // Remove from current position
           updatedTasks.unshift(updatedTask); // Add to the beginning
-          console.log(`[TaskContext] Moved group chat task ${data.task_id} to top of list`);
 
           // Schedule the side effects for after state update
           // For group chat tasks, trigger re-render to show unread indicator
@@ -317,9 +303,6 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
           setTimeout(() => {
             if (!selectedTask || selectedTask.id !== data.task_id) {
               setViewStatusVersion(v => v + 1);
-              console.log(
-                `[TaskContext] Triggered re-render for group chat task ${data.task_id} unread indicator`
-              );
             }
           }, 0);
 
@@ -330,11 +313,6 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
         const updatedTasks = [...prev];
         updatedTasks[taskIndex] = updatedTask;
 
-        console.log(
-          `[TaskContext] Updated task ${data.task_id} status to ${data.status} via WebSocket`,
-          completedAt ? `completed_at=${completedAt}` : ''
-        );
-
         // Schedule the side effects for after state update
         // For non-group-chat tasks reaching terminal state, update viewedAt
         if (isTerminalState && completedAt) {
@@ -344,9 +322,6 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
               // User has previously viewed this task, update viewedAt to match completed_at
               markTaskAsViewed(data.task_id, data.status as TaskStatus, completedAt);
               setViewStatusVersion(v => v + 1);
-              console.log(
-                `[TaskContext] Updated viewedAt for task ${data.task_id} to match completed_at (user previously viewed)`
-              );
             }
           }, 0);
         }
@@ -375,11 +350,9 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   useEffect(() => {
     // Only register handlers when WebSocket is connected
     if (!isConnected) {
-      console.log('[TaskContext] WebSocket not connected, skipping task handler registration');
       return;
     }
 
-    console.log('[TaskContext] Registering WebSocket task handlers');
     const cleanup = registerTaskHandlers({
       onTaskCreated: handleTaskCreated,
       onTaskInvited: handleTaskInvited,
@@ -387,7 +360,6 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     });
 
     return () => {
-      console.log('[TaskContext] Cleaning up WebSocket task handlers');
       cleanup();
     };
   }, [isConnected, registerTaskHandlers, handleTaskCreated, handleTaskInvited, handleTaskStatus]);
@@ -453,11 +425,6 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
       // Check if it's a 403 Forbidden or 404 Not Found error (access denied or task not found)
       // Both cases should show the access denied UI to prevent information leakage
       if (error instanceof ApiError && (error.status === 403 || error.status === 404)) {
-        console.warn(
-          '[TaskContext] Access denied or task not found:',
-          selectedTask.id,
-          error.status
-        );
         setAccessDenied(true);
         setSelectedTaskDetail(null);
         return;
@@ -473,7 +440,6 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
 
     // Leave previous task room if switching to a different task
     if (previousTaskId !== null && previousTaskId !== currentTaskId) {
-      console.log(`[TaskContext] Leaving WebSocket room for task ${previousTaskId}`);
       leaveTask(previousTaskId);
     }
 
@@ -484,7 +450,6 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
       // Join the new task room to receive chat:start, chat:chunk, chat:done events
       // This is important for executor tasks (Code page) where the user needs to
       // receive AI response events via WebSocket
-      console.log(`[TaskContext] Joining WebSocket room for task ${selectedTask.id}`);
       joinTask(selectedTask.id);
 
       refreshSelectedTaskDetail(false); // Manual task selection, not auto-refresh
@@ -499,7 +464,6 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   // before WebSocket connection is established
   useEffect(() => {
     if (isConnected && selectedTask) {
-      console.log(`[TaskContext] WebSocket connected, re-joining room for task ${selectedTask.id}`);
       joinTask(selectedTask.id);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

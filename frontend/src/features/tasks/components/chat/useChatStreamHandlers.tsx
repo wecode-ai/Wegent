@@ -246,10 +246,6 @@ export function useChatStreamHandlers({
   // Reset state when clearVersion changes (e.g., "New Chat")
   useEffect(() => {
     if (clearVersion !== prevClearVersionRef.current) {
-      console.log('[ChatStreamHandlers] clearVersion changed, resetting state', {
-        prev: prevClearVersionRef.current,
-        current: clearVersion,
-      });
       prevClearVersionRef.current = clearVersion;
 
       setIsLoading(false);
@@ -300,13 +296,8 @@ export function useChatStreamHandlers({
     if (!selectedTeam || !isChatShell(selectedTeam)) return;
 
     const tryResumeStream = async () => {
-      console.log('[ChatStreamHandlers] Trying to resume stream for task', taskId);
       const resumed = await contextResumeStream(taskId, {
-        onComplete: (completedTaskId, subtaskId) => {
-          console.log('[ChatStreamHandlers] Resumed stream completed', {
-            completedTaskId,
-            subtaskId,
-          });
+        onComplete: (_completedTaskId, _subtaskId) => {
           refreshSelectedTaskDetail(false);
         },
         onError: error => {
@@ -315,7 +306,6 @@ export function useChatStreamHandlers({
       });
 
       if (resumed) {
-        console.log('[ChatStreamHandlers] Stream resumed successfully for task', taskId);
         setStreamingTaskId(taskId);
       }
     };
@@ -398,14 +388,6 @@ export function useChatStreamHandlers({
       }
 
       setIsLoading(true);
-
-      console.log('[ChatStreamHandlers] handleSendMessage - using unified WebSocket mode:', {
-        selectedTeam: selectedTeam?.name,
-        selectedTeamId: selectedTeam?.id,
-        agentType: selectedTeam?.agent_type,
-        taskType: taskType,
-        attachmentIds: attachments.map(a => a.id),
-      });
 
       // Set local pending state immediately
       setLocalPendingMessage(message);
