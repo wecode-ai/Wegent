@@ -55,6 +55,8 @@ class WebSocketStreamConfig:
     enable_tools: bool = True  # Enable tools (MCP, web search, skills, etc.)
     enable_web_search: bool = False
     search_engine: str | None = None
+    force_web_search: bool = False  # Force AI to perform web search at least once
+    disable_web_search: bool = False  # Completely disable web search tool
 
     # Prompt enhancement options
     enable_clarification: bool = False

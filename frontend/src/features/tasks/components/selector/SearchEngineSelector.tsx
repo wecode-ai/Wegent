@@ -5,7 +5,7 @@
 'use client';
 
 import React, { useEffect, useMemo } from 'react';
-import { Globe, Check, ChevronDown } from 'lucide-react';
+import { Globe, Check, ChevronDown, GlobeOff, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useTranslation } from '@/hooks/useTranslation';
 import {
@@ -13,14 +13,24 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuSeparator,
+  DropdownMenuLabel,
 } from '@/components/ui/dropdown';
 import { cn } from '@/lib/utils';
 import { SearchEngine } from '@/apis/chat';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
+/**
+ * Web search mode types:
+ * - auto: AI decides whether to search (default behavior)
+ * - on: Force search with specified engine
+ * - off: Disable search completely
+ */
+export type WebSearchMode = 'auto' | 'on' | 'off';
+
 interface SearchEngineSelectorProps {
-  enabled: boolean;
-  onToggle: (enabled: boolean) => void;
+  mode: WebSearchMode;
+  onModeChange: (mode: WebSearchMode) => void;
   selectedEngine: string | null;
   onSelectEngine: (engine: string) => void;
   disabled?: boolean;
@@ -30,14 +40,14 @@ interface SearchEngineSelectorProps {
 }
 
 export default function SearchEngineSelector({
-  enabled,
-  onToggle,
+  mode,
+  onModeChange,
   selectedEngine,
   onSelectEngine,
   disabled = false,
   engines,
 }: SearchEngineSelectorProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation('chat');
 
   // Initialize selected engine if not set and engines are available
   useEffect(() => {
@@ -50,24 +60,49 @@ export default function SearchEngineSelector({
     return engines.find(e => e.name === selectedEngine) || engines[0];
   }, [engines, selectedEngine]);
 
-  // If no engines defined or only one engine defined (and no need for selection),
-  // revert to simple toggle behavior appearance (but still wrapped in this component for consistency if needed)
-  // However, requirements say "let user select search engine", so we provide the UI.
-
-  const handleToggle = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onToggle(!enabled);
+  // Get mode display info
+  const getModeInfo = (modeValue: WebSearchMode) => {
+    switch (modeValue) {
+      case 'auto':
+        return {
+          icon: <Sparkles className="h-4 w-4" />,
+          label: t('web_search.mode_auto'),
+          desc: t('web_search.mode_auto_desc'),
+          color: 'text-text-muted hover:bg-surface hover:text-text-primary',
+        };
+      case 'on':
+        return {
+          icon: <Globe className="h-4 w-4" />,
+          label: t('web_search.mode_on'),
+          desc: t('web_search.mode_on_desc'),
+          color: 'bg-primary/10 text-primary hover:bg-primary/20',
+        };
+      case 'off':
+        return {
+          icon: <GlobeOff className="h-4 w-4" />,
+          label: t('web_search.mode_off'),
+          desc: t('web_search.mode_off_desc'),
+          color: 'text-text-muted hover:bg-surface hover:text-text-primary',
+        };
+    }
   };
 
-  const handleSelect = (engineId: string) => {
-    onSelectEngine(engineId);
-    if (!enabled) {
-      onToggle(true);
+  const currentModeInfo = getModeInfo(mode);
+
+  const handleModeSelect = (newMode: WebSearchMode) => {
+    onModeChange(newMode);
+  };
+
+  const handleEngineSelect = (engineName: string) => {
+    onSelectEngine(engineName);
+    // When selecting an engine, also set mode to 'on'
+    if (mode !== 'on') {
+      onModeChange('on');
     }
   };
 
   if (engines.length === 0) {
-    // Fallback if no engines configured but feature is enabled (shouldn't happen based on env logic)
+    // Fallback if no engines configured but feature is enabled
     return (
       <TooltipProvider>
         <Tooltip>
@@ -75,20 +110,18 @@ export default function SearchEngineSelector({
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => onToggle(!enabled)}
+              onClick={() => onModeChange(mode === 'off' ? 'auto' : 'off')}
               disabled={disabled}
               className={cn(
                 'h-8 w-8 rounded-lg flex-shrink-0 transition-colors',
-                enabled
-                  ? 'bg-primary/10 text-primary hover:bg-primary/20'
-                  : 'text-text-muted hover:bg-surface hover:text-text-primary'
+                currentModeInfo.color
               )}
             >
-              <Globe className="h-4 w-4" />
+              {currentModeInfo.icon}
             </Button>
           </TooltipTrigger>
           <TooltipContent side="top">
-            <p>{enabled ? t('chat:web_search.disable') : t('chat:web_search.enable')}</p>
+            <p>{currentModeInfo.label}</p>
           </TooltipContent>
         </Tooltip>
       </TooltipProvider>
@@ -97,63 +130,75 @@ export default function SearchEngineSelector({
 
   return (
     <TooltipProvider>
-      <div
-        className={cn(
-          'flex items-center h-8 rounded-lg transition-colors border border-transparent',
-          enabled
-            ? 'bg-primary/10 text-primary hover:bg-primary/20'
-            : 'text-text-muted hover:bg-surface hover:text-text-primary hover:border-border',
-          disabled && 'opacity-50 cursor-not-allowed pointer-events-none'
-        )}
-      >
+      <DropdownMenu>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={handleToggle}
-              disabled={disabled}
-              className="h-8 w-8 rounded-l-lg rounded-r-none hover:bg-transparent p-0"
-            >
-              <Globe className="h-4 w-4" />
-            </Button>
+            <DropdownMenuTrigger asChild disabled={disabled}>
+              <div
+                className={cn(
+                  'flex items-center h-8 rounded-lg transition-colors border border-transparent cursor-pointer px-2 gap-1',
+                  currentModeInfo.color,
+                  disabled && 'opacity-50 cursor-not-allowed pointer-events-none'
+                )}
+              >
+                {currentModeInfo.icon}
+                <ChevronDown className="h-3 w-3 opacity-70" />
+              </div>
+            </DropdownMenuTrigger>
           </TooltipTrigger>
           <TooltipContent side="top">
-            <p>{enabled ? t('chat:web_search.disable') : t('chat:web_search.enable')}</p>
+            <p>
+              {currentModeInfo.label}
+              {mode === 'on' && currentEngine ? ` - ${currentEngine.display_name}` : ''}
+            </p>
           </TooltipContent>
         </Tooltip>
-
-        <div className="h-4 w-[1px] bg-current opacity-20 mx-0" />
-
-        <DropdownMenu>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <DropdownMenuTrigger asChild disabled={disabled}>
-                <div className="h-8 px-1.5 flex items-center justify-center rounded-r-lg hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer">
-                  <ChevronDown className="h-3 w-3 opacity-70" />
-                </div>
-              </DropdownMenuTrigger>
-            </TooltipTrigger>
-            <TooltipContent side="top">
-              <p>{currentEngine?.display_name || t('chat:web_search.select_engine')}</p>
-            </TooltipContent>
-          </Tooltip>
-          <DropdownMenuContent align="start" className="w-[180px]">
-            {engines.map(engine => (
+        <DropdownMenuContent align="start" className="w-[220px]">
+          {/* Mode selection section */}
+          <DropdownMenuLabel className="text-xs text-text-muted font-normal">
+            {t('web_search.select_mode')}
+          </DropdownMenuLabel>
+          {(['auto', 'on', 'off'] as WebSearchMode[]).map(modeValue => {
+            const modeInfo = getModeInfo(modeValue);
+            return (
               <DropdownMenuItem
-                key={engine.name}
-                onClick={() => handleSelect(engine.name)}
+                key={modeValue}
+                onClick={() => handleModeSelect(modeValue)}
                 className="flex items-center justify-between cursor-pointer"
               >
-                <div className="flex flex-col">
-                  <span className="text-sm font-medium">{engine.display_name}</span>
+                <div className="flex items-center gap-2">
+                  {modeInfo.icon}
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium">{modeInfo.label}</span>
+                    <span className="text-xs text-text-muted">{modeInfo.desc}</span>
+                  </div>
                 </div>
-                {selectedEngine === engine.name && <Check className="h-4 w-4 text-primary" />}
+                {mode === modeValue && <Check className="h-4 w-4 text-primary" />}
               </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
+            );
+          })}
+
+          {/* Engine selection section - only show when mode is 'on' or has engines */}
+          {engines.length > 0 && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel className="text-xs text-text-muted font-normal">
+                {t('web_search.select_engine')}
+              </DropdownMenuLabel>
+              {engines.map(engine => (
+                <DropdownMenuItem
+                  key={engine.name}
+                  onClick={() => handleEngineSelect(engine.name)}
+                  className="flex items-center justify-between cursor-pointer"
+                >
+                  <span className="text-sm">{engine.display_name}</span>
+                  {selectedEngine === engine.name && <Check className="h-4 w-4 text-primary" />}
+                </DropdownMenuItem>
+              ))}
+            </>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
     </TooltipProvider>
   );
 }

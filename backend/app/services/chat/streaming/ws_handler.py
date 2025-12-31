@@ -151,7 +151,8 @@ class WebSocketStreamingHandler:
                         core.set_mcp_client(mcp_client)
 
                 # Always add web search tool if web search is enabled in settings
-                if settings.WEB_SEARCH_ENABLED:
+                # UNLESS disable_web_search flag is set (user chose "off" mode)
+                if settings.WEB_SEARCH_ENABLED and not config.disable_web_search:
                     # Use specified search engine or default to first one
                     search_engine = (
                         config.search_engine if config.search_engine else None
@@ -196,6 +197,7 @@ class WebSocketStreamingHandler:
                 enable_clarification=config.enable_clarification,
                 enable_deep_thinking=config.enable_deep_thinking,
                 skills=config.skills,
+                force_web_search=config.force_web_search,
             )
 
             # Build messages (prompt enhancements applied internally based on config)

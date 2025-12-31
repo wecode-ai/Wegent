@@ -16,6 +16,7 @@ import AttachmentButton from '../AttachmentButton';
 import SendButton from './SendButton';
 import LoadingDots from '../message/LoadingDots';
 import QuotaUsage from '../params/QuotaUsage';
+import SearchEngineSelector, { WebSearchMode } from '../selector/SearchEngineSelector';
 import { ActionButton } from '@/components/ui/action-button';
 import type {
   Team,
@@ -24,6 +25,7 @@ import type {
   TaskDetail,
   MultiAttachmentUploadState,
 } from '@/types/api';
+import type { SearchEngine } from '@/apis/chat';
 import type { ContextItem } from '@/types/context';
 import { isChatShell } from '../../service/messageService';
 import { supportsAttachments } from '../../service/attachmentService';
@@ -64,6 +66,14 @@ export interface ChatInputControlsProps {
   // Context selection (knowledge bases)
   selectedContexts: ContextItem[];
   setSelectedContexts: (contexts: ContextItem[]) => void;
+
+  // Web search state
+  webSearchMode: WebSearchMode;
+  setWebSearchMode: (mode: WebSearchMode) => void;
+  selectedSearchEngine: string | null;
+  setSelectedSearchEngine: (engine: string) => void;
+  searchEngines: SearchEngine[];
+  webSearchEnabled: boolean;
 
   // Attachment (multi-attachment)
   attachmentState: MultiAttachmentUploadState;
@@ -126,6 +136,12 @@ export function ChatInputControls({
   onCorrectionModeToggle,
   selectedContexts,
   setSelectedContexts,
+  webSearchMode,
+  setWebSearchMode,
+  selectedSearchEngine,
+  setSelectedSearchEngine,
+  searchEngines,
+  webSearchEnabled,
   attachmentState: _attachmentState,
   onFileSelect,
   onAttachmentRemove: _onAttachmentRemove,
@@ -251,6 +267,18 @@ export function ChatInputControls({
             disabled={isLoading || isStreaming}
             correctionModelName={correctionModelName}
             taskId={selectedTaskDetail?.id ?? null}
+          />
+        )}
+
+        {/* Web Search Selector - only show for chat shell when enabled */}
+        {isChatShell(selectedTeam) && webSearchEnabled && (
+          <SearchEngineSelector
+            mode={webSearchMode}
+            onModeChange={setWebSearchMode}
+            selectedEngine={selectedSearchEngine}
+            onSelectEngine={setSelectedSearchEngine}
+            disabled={isLoading || isStreaming}
+            engines={searchEngines}
           />
         )}
 

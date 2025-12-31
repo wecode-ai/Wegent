@@ -16,6 +16,7 @@ import { taskApis } from '@/apis/tasks';
 import { isChatShell } from '../../service/messageService';
 import { Button } from '@/components/ui/button';
 import { DEFAULT_MODEL_NAME } from '../selector/ModelSelector';
+import type { WebSearchMode } from '../selector/SearchEngineSelector';
 import type { Model } from '../selector/ModelSelector';
 import type { Team, GitRepoInfo, GitBranch, Attachment } from '@/types/api';
 import type { ContextItem } from '@/types/context';
@@ -61,6 +62,10 @@ export interface UseChatStreamHandlersOptions {
 
   // Context selection (knowledge bases)
   selectedContexts?: ContextItem[];
+
+  // Web search state
+  webSearchMode?: WebSearchMode;
+  selectedSearchEngine?: string | null;
 }
 
 export interface ChatStreamHandlers {
@@ -131,6 +136,8 @@ export function useChatStreamHandlers({
   shouldHideChatInput,
   scrollToBottom,
   selectedContexts = [],
+  webSearchMode = 'auto',
+  selectedSearchEngine = null,
 }: UseChatStreamHandlersOptions): ChatStreamHandlers {
   const { toast } = useToast();
   const { t } = useTranslation();
@@ -442,6 +449,14 @@ export function useChatStreamHandlers({
             attachment_ids: attachments.map(a => a.id),
             enable_deep_thinking: enableDeepThinking,
             enable_clarification: enableClarification,
+            // Web search based on mode:
+            // - 'auto': let AI decide (default behavior)
+            // - 'on': force search with specified engine
+            // - 'off': disable search completely
+            enable_web_search: webSearchMode === 'on',
+            search_engine: webSearchMode === 'on' ? selectedSearchEngine ?? undefined : undefined,
+            force_web_search: webSearchMode === 'on',
+            disable_web_search: webSearchMode === 'off',
             is_group_chat: selectedTaskDetail?.is_group_chat || false,
             git_url: showRepositorySelector ? effectiveRepo?.git_url : undefined,
             git_repo: showRepositorySelector ? effectiveRepo?.git_repo : undefined,
@@ -514,6 +529,8 @@ export function useChatStreamHandlers({
       forceOverride,
       enableDeepThinking,
       enableClarification,
+      webSearchMode,
+      selectedSearchEngine,
       refreshTasks,
       searchParams,
       router,

@@ -83,6 +83,8 @@ export interface ChatSendPayload {
   enable_deep_thinking?: boolean;
   enable_web_search?: boolean;
   search_engine?: string;
+  force_web_search?: boolean; // Force AI to perform web search
+  disable_web_search?: boolean; // Completely disable web search tool
   enable_clarification?: boolean;
   force_override_bot_model?: string;
   force_override_bot_model_type?: string;

@@ -108,6 +108,12 @@ export function ChatInputCard({
   onCorrectionModeToggle,
   selectedContexts,
   setSelectedContexts,
+  webSearchMode,
+  setWebSearchMode,
+  selectedSearchEngine,
+  setSelectedSearchEngine,
+  searchEngines,
+  webSearchEnabled,
   attachmentState,
   onFileSelect,
   onAttachmentRemove,
@@ -219,6 +225,12 @@ export function ChatInputCard({
             onCorrectionModeToggle={onCorrectionModeToggle}
             selectedContexts={selectedContexts}
             setSelectedContexts={setSelectedContexts}
+            webSearchMode={webSearchMode}
+            setWebSearchMode={setWebSearchMode}
+            selectedSearchEngine={selectedSearchEngine}
+            setSelectedSearchEngine={setSelectedSearchEngine}
+            searchEngines={searchEngines}
+            webSearchEnabled={webSearchEnabled}
             attachmentState={attachmentState}
             onFileSelect={onFileSelect}
             onAttachmentRemove={onAttachmentRemove}

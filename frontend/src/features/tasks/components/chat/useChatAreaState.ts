@@ -14,6 +14,7 @@ import type {
 } from '@/types/api';
 import type { ContextItem } from '@/types/context';
 import type { Model } from '../selector/ModelSelector';
+import type { WebSearchMode } from '../selector/SearchEngineSelector';
 import { useMultiAttachment } from '@/hooks/useMultiAttachment';
 import { userApis } from '@/apis/user';
 import { correctionApis } from '@/apis/correction';
@@ -106,6 +107,12 @@ export interface ChatAreaState {
   selectedContexts: ContextItem[];
   setSelectedContexts: (contexts: ContextItem[]) => void;
 
+  // Web search state
+  webSearchMode: WebSearchMode;
+  setWebSearchMode: (mode: WebSearchMode) => void;
+  selectedSearchEngine: string | null;
+  setSelectedSearchEngine: (engine: string) => void;
+
   // Refs
   initialTeamIdRef: React.MutableRefObject<number | null>;
 
@@ -179,6 +186,10 @@ export function useChatAreaState({
   // Context selection state (knowledge bases)
   const [selectedContexts, setSelectedContexts] = useState<ContextItem[]>([]);
 
+  // Web search state - persisted to localStorage
+  const [webSearchMode, setWebSearchModeState] = useState<WebSearchMode>('auto');
+  const [selectedSearchEngine, setSelectedSearchEngineState] = useState<string | null>(null);
+
   // Media query
   const isMobile = useMediaQuery('(max-width: 640px)');
 
@@ -208,6 +219,35 @@ export function useChatAreaState({
     };
 
     fetchWelcomeConfig();
+  }, []);
+
+  // Load web search preferences from localStorage on mount
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const savedMode = localStorage.getItem('wegent_web_search_mode') as WebSearchMode;
+    const savedEngine = localStorage.getItem('wegent_web_search_engine');
+    if (savedMode && ['auto', 'on', 'off'].includes(savedMode)) {
+      setWebSearchModeState(savedMode);
+    }
+    if (savedEngine) {
+      setSelectedSearchEngineState(savedEngine);
+    }
+  }, []);
+
+  // Persist web search mode to localStorage
+  const setWebSearchMode = useCallback((mode: WebSearchMode) => {
+    setWebSearchModeState(mode);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('wegent_web_search_mode', mode);
+    }
+  }, []);
+
+  // Persist selected search engine to localStorage
+  const setSelectedSearchEngine = useCallback((engine: string) => {
+    setSelectedSearchEngineState(engine);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('wegent_web_search_engine', engine);
+    }
   }, []);
 
   // Get random slogan for display
@@ -412,6 +452,12 @@ export function useChatAreaState({
     // Context selection state (knowledge bases)
     selectedContexts,
     setSelectedContexts,
+
+    // Web search state
+    webSearchMode,
+    setWebSearchMode,
+    selectedSearchEngine,
+    setSelectedSearchEngine,
 
     // Refs
     initialTeamIdRef,

@@ -438,6 +438,8 @@ async def _stream_chat_response(
             enable_tools=True,  # Deep thinking enables tools
             enable_web_search=payload.enable_web_search,
             search_engine=payload.search_engine,
+            force_web_search=payload.force_web_search,
+            disable_web_search=payload.disable_web_search,
             message_id=stream_data.assistant_message_id,
             user_message_id=stream_data.user_message_id,  # For history exclusion
             bot_name=chat_config.bot_name,
