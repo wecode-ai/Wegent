@@ -86,20 +86,6 @@ function extractTeamId(team: TaskDetail['team']): number | null {
 }
 
 /**
- * Extracts the model name from a team's first bot configuration.
- */
-function extractTeamModelName(team: Team): string | null {
-  if (!team.bots || team.bots.length === 0) return null;
-  const firstBotConfig = team.bots[0]?.bot?.agent_config;
-  if (!firstBotConfig) return null;
-  try {
-    return ((firstBotConfig as Record<string, unknown>).bind_model as string | undefined) ?? null;
-  } catch {
-    return null;
-  }
-}
-
-/**
  * useTeamPreferences Hook
  *
  * Consolidates all team preference and model synchronization logic:
@@ -259,52 +245,18 @@ export function useTeamPreferences({
       return;
     }
 
-    const isUserSwitchingTasks =
-      prevTaskIdForModelRef.current !== undefined && prevTaskIdForModelRef.current !== null;
-
-    // Check if this is a task creation (prev was undefined/null, now has a task ID)
-    const isTaskCreation =
-      (prevTaskIdForModelRef.current === undefined || prevTaskIdForModelRef.current === null) &&
-      typeof selectedTaskDetail.id === 'number';
+    // IMPORTANT: We no longer set model from task.model_id here.
+    // Model selection is now handled by ModelSelector using localStorage preferences.
+    // This hook only tracks task ID changes for team synchronization purposes.
+    //
+    // The model preference priority is:
+    // 1. Session preference (localStorage: wegent_model_pref_{taskId}_{teamId})
+    // 2. Task's model_id (only as fallback when no session preference exists)
+    //
+    // ModelSelector handles this logic in its init effect.
+    console.log('[useTeamPreferences] Task changed, letting ModelSelector handle model preference');
 
     prevTaskIdForModelRef.current = selectedTaskDetail.id;
-
-    // For task creation, we should set the model from the task's model_id
-    // This ensures the model selector shows the correct model after task creation
-    if (isTaskCreation && selectedTaskDetail.model_id) {
-      console.log(
-        '[useTeamPreferences] Task creation detected, setting model from task:',
-        selectedTaskDetail.model_id
-      );
-      handleExplicitModel(selectedTaskDetail.model_id);
-      setForceOverride(true);
-      return;
-    }
-
-    if (!isUserSwitchingTasks) {
-      console.log('[useTeamPreferences] Skipping: not user switching tasks (initial load)');
-      return;
-    }
-
-    const taskModelId = selectedTaskDetail.model_id;
-    console.log('[useTeamPreferences] User switching tasks, taskModelId:', taskModelId);
-
-    if (!taskModelId || taskModelId === DEFAULT_MODEL_NAME) {
-      const teamModelName = extractTeamModelName(selectedTeam);
-      console.log('[useTeamPreferences] No task model, using team model:', teamModelName);
-
-      if (teamModelName) {
-        handleExplicitModel(teamModelName);
-        setForceOverride(false);
-      } else {
-        handleDefaultModel();
-      }
-      return;
-    }
-
-    console.log('[useTeamPreferences] Setting model from task:', taskModelId);
-    handleExplicitModel(taskModelId);
-    setForceOverride(true);
   }, [
     selectedTaskDetail?.id,
     selectedTaskDetail?.model_id,

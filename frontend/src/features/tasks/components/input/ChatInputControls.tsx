@@ -39,6 +39,8 @@ export interface ChatInputControlsProps {
   teamId?: number | null;
   /** Current task ID for session-level model preference storage (null for new chat) */
   taskId?: number | null;
+  /** Task's model_id from backend - used as fallback when no session preference exists */
+  taskModelId?: string | null;
 
   // Repository and Branch
   showRepositorySelector: boolean;
@@ -110,6 +112,7 @@ export function ChatInputControls({
   setForceOverride,
   teamId,
   taskId,
+  taskModelId,
   showRepositorySelector,
   selectedRepo,
   setSelectedRepo,
@@ -263,6 +266,7 @@ export function ChatInputControls({
             compact={shouldCollapseSelectors}
             teamId={teamId}
             taskId={taskId}
+            taskModelId={taskModelId}
           />
         )}
 

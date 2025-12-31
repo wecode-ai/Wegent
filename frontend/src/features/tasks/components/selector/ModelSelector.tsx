@@ -30,7 +30,6 @@ import { isPredefinedModel, getModelFromConfig } from '@/features/settings/servi
 import {
   saveGlobalModelPreference,
   saveSessionModelPreference,
-  getModelPreference,
   getSessionModelPreference,
   getGlobalModelPreference,
   type ModelPreference,
@@ -76,6 +75,8 @@ interface ModelSelectorProps {
   teamId?: number | null;
   /** Current task ID for session-level model preference storage (null for new chat) */
   taskId?: number | null;
+  /** Task's model_id from backend - used as fallback when no session preference exists */
+  taskModelId?: string | null;
 }
 
 // Helper function to convert UnifiedModel to Model
@@ -126,6 +127,7 @@ export default function ModelSelector({
   compact = false,
   teamId,
   taskId,
+  taskModelId,
 }: ModelSelectorProps) {
   const { t } = useTranslation();
   const router = useRouter();
@@ -298,13 +300,21 @@ export default function ModelSelector({
       return;
     }
 
-    // Case 2: Task changed (user switching between tasks) - restore from session preference
+    // Case 2: Task changed (user switching between tasks) - restore from session preference or taskModelId
     if (taskChanged && taskId && teamId && filteredModels.length > 0 && !showDefaultOption) {
-      console.log('[ModelSelector] Case 2: Task changed, restoring from session preference');
+      console.log('[ModelSelector] Case 2: Task changed, restoring from session preference', {
+        taskModelId,
+      });
       isTaskSwitchingRef.current = true;
 
-      const preference = getModelPreference(teamId, taskId);
-      console.log('[ModelSelector] Task switch preference', { teamId, taskId, preference });
+      // Use getSessionModelPreference to avoid fallback to global preference
+      const preference = getSessionModelPreference(taskId, teamId);
+      console.log('[ModelSelector] Task switch preference', {
+        teamId,
+        taskId,
+        preference,
+        taskModelId,
+      });
 
       if (preference && preference.modelName !== DEFAULT_MODEL_NAME) {
         const foundModel = filteredModels.find(m => {
@@ -314,7 +324,7 @@ export default function ModelSelector({
           return m.name === preference.modelName;
         });
         if (foundModel) {
-          console.log('[ModelSelector] Restored model from task preference:', foundModel.name);
+          console.log('[ModelSelector] Restored model from session preference:', foundModel.name);
           setSelectedModel(foundModel);
           setForceOverride(preference.forceOverride);
           userSelectedModelRef.current = foundModel;
@@ -325,7 +335,24 @@ export default function ModelSelector({
           return;
         }
       }
-      // If no session preference, fall through to use global preference or current model
+
+      // No session preference found, fallback to taskModelId (from task.model_id)
+      if (taskModelId && taskModelId !== DEFAULT_MODEL_NAME) {
+        const foundModel = filteredModels.find(m => m.name === taskModelId);
+        if (foundModel) {
+          console.log('[ModelSelector] Restored model from taskModelId:', foundModel.name);
+          setSelectedModel(foundModel);
+          setForceOverride(true);
+          userSelectedModelRef.current = foundModel;
+          // Reset task switching flag after a short delay to allow save effect to skip
+          setTimeout(() => {
+            isTaskSwitchingRef.current = false;
+          }, 100);
+          return;
+        }
+      }
+
+      // No session preference and no taskModelId, reset flag
       isTaskSwitchingRef.current = false;
     }
 
@@ -349,15 +376,15 @@ export default function ModelSelector({
       }
 
       // IMPORTANT: If taskId is provided (viewing existing task or task just created),
-      // skip restoring from global preference. Let useTeamPreferences handle it.
-      // Only restore from session preference if it exists (no fallback to global).
+      // restore from session preference first, then fallback to taskModelId.
       if (taskId && teamId) {
         // Use getSessionModelPreference to avoid fallback to global preference
         const sessionPreference = getSessionModelPreference(taskId, teamId);
-        console.log('[ModelSelector] Task exists, checking session preference only', {
+        console.log('[ModelSelector] Task exists, checking session preference', {
           teamId,
           taskId,
           sessionPreference,
+          taskModelId,
         });
 
         if (sessionPreference && sessionPreference.modelName !== DEFAULT_MODEL_NAME) {
@@ -381,10 +408,25 @@ export default function ModelSelector({
             return;
           }
         }
-        // No session preference found, let useTeamPreferences handle it using task's model_id
-        console.log(
-          '[ModelSelector] No session preference, letting useTeamPreferences handle model from task.model_id'
-        );
+
+        // No session preference found, fallback to taskModelId (from task.model_id)
+        if (taskModelId && taskModelId !== DEFAULT_MODEL_NAME) {
+          const foundModel = filteredModels.find(m => m.name === taskModelId);
+          if (foundModel) {
+            console.log('[ModelSelector] Restored model from taskModelId:', foundModel.name);
+            isTaskSwitchingRef.current = true;
+            setTimeout(() => {
+              isTaskSwitchingRef.current = false;
+            }, 100);
+            setSelectedModel(foundModel);
+            setForceOverride(true);
+            userSelectedModelRef.current = foundModel;
+            return;
+          }
+        }
+
+        // No session preference and no taskModelId, leave model unset
+        console.log('[ModelSelector] No session preference and no taskModelId');
         return;
       }
 
