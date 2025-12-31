@@ -8,6 +8,7 @@ Email notification client for sending emails via SMTP.
 
 import logging
 import smtplib
+import time
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import List, Optional
@@ -95,6 +96,8 @@ class EmailClient:
             server.quit()
 
             logger.info(f"[Email] Email sent successfully to {to_emails}")
+            # 邮箱限制1分钟60封邮件, 所以再这里发送一封邮件 sleep 1s
+            time.sleep(1)
             return True
         except Exception as e:
             logger.error(f"[Email] Failed to send email to {to_emails}: {e}")
