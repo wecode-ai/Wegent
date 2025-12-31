@@ -30,6 +30,14 @@ class DocumentBlock(Base):
     - image: Images (metadata.image_url, content = OCR/AI description)
     - ai_summary: AI-generated summaries
     - unsupported: Unsupported content types
+
+    Source types:
+    - markdown: Markdown files
+    - pdf: PDF documents
+    - docx: Word documents
+    - image: Image files
+    - git: Git repository content
+    - ai: AI-generated content
     """
 
     __tablename__ = "document_blocks"
@@ -45,6 +53,12 @@ class DocumentBlock(Base):
         nullable=False,
         index=True,
         comment="Reference to uploaded document",
+    )
+    source_type = Column(
+        String(20),
+        nullable=False,
+        default="markdown",
+        comment="Source type: markdown, pdf, docx, image, git, ai",
     )
     block_type = Column(
         String(50),

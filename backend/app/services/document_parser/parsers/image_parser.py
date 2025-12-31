@@ -14,7 +14,7 @@ from typing import List, Optional
 
 from app.services.document_parser.base import BaseParser
 from app.services.document_parser.factory import ParserFactory
-from app.services.document_parser.models.block import BlockType, DocumentBlockData
+from app.services.document_parser.models.block import BlockType, DocumentBlockData, SourceType
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +103,7 @@ class ImageParser(BaseParser):
         block = DocumentBlockData(
             id=str(uuid.uuid4()),
             document_id=document_id,
+            source_type=SourceType.IMAGE,
             block_type=BlockType.IMAGE,
             content=description or "[Image - no description available]",
             editable=False,

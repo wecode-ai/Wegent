@@ -28,9 +28,23 @@ class BlockTypeEnum(str, Enum):
     UNSUPPORTED = "unsupported"
 
 
+class SourceTypeEnum(str, Enum):
+    """Enumeration of document source types."""
+
+    MARKDOWN = "markdown"
+    PDF = "pdf"
+    DOCX = "docx"
+    IMAGE = "image"
+    GIT = "git"
+    AI = "ai"
+
+
 class DocumentBlockBase(BaseModel):
     """Base schema for document blocks."""
 
+    source_type: SourceTypeEnum = Field(
+        SourceTypeEnum.MARKDOWN, description="Source type: markdown, pdf, docx, image, git, ai"
+    )
     block_type: BlockTypeEnum = Field(..., description="Type of the block")
     content: Optional[str] = Field(None, description="Text content or description")
     editable: bool = Field(False, description="Whether the block can be edited")

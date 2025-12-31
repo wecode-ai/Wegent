@@ -15,7 +15,7 @@ from typing import List, Optional
 
 from app.services.document_parser.base import BaseParser
 from app.services.document_parser.factory import ParserFactory
-from app.services.document_parser.models.block import BlockType, DocumentBlockData
+from app.services.document_parser.models.block import BlockType, DocumentBlockData, SourceType
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +79,7 @@ class DocxParser(BaseParser):
                 DocumentBlockData(
                     id=str(uuid.uuid4()),
                     document_id=document_id,
+                    source_type=SourceType.DOCX,
                     block_type=BlockType.UNSUPPORTED,
                     content="DOCX parsing requires python-docx library. Please install it with: pip install python-docx",
                     editable=False,
@@ -107,6 +108,7 @@ class DocxParser(BaseParser):
                         DocumentBlockData(
                             id=str(uuid.uuid4()),
                             document_id=document_id,
+                            source_type=SourceType.DOCX,
                             block_type=BlockType.HEADING,
                             content=text,
                             editable=False,
@@ -122,6 +124,7 @@ class DocxParser(BaseParser):
                         DocumentBlockData(
                             id=str(uuid.uuid4()),
                             document_id=document_id,
+                            source_type=SourceType.DOCX,
                             block_type=BlockType.LIST,
                             content=text,
                             editable=False,
@@ -134,6 +137,7 @@ class DocxParser(BaseParser):
                         DocumentBlockData(
                             id=str(uuid.uuid4()),
                             document_id=document_id,
+                            source_type=SourceType.DOCX,
                             block_type=BlockType.PARAGRAPH,
                             content=text,
                             editable=False,
@@ -152,6 +156,7 @@ class DocxParser(BaseParser):
                         DocumentBlockData(
                             id=str(uuid.uuid4()),
                             document_id=document_id,
+                            source_type=SourceType.DOCX,
                             block_type=BlockType.TABLE,
                             content=table_content,
                             editable=False,
@@ -197,6 +202,7 @@ class DocxParser(BaseParser):
                             DocumentBlockData(
                                 id=str(uuid.uuid4()),
                                 document_id=document_id,
+                                source_type=SourceType.DOCX,
                                 block_type=BlockType.IMAGE,
                                 content=description or "[Image - no description available]",
                                 editable=False,
@@ -222,6 +228,7 @@ class DocxParser(BaseParser):
                 DocumentBlockData(
                     id=str(uuid.uuid4()),
                     document_id=document_id,
+                    source_type=SourceType.DOCX,
                     block_type=BlockType.UNSUPPORTED,
                     content=f"Error parsing DOCX: {str(e)}",
                     editable=False,

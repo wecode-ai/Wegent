@@ -15,7 +15,7 @@ from typing import List, Optional
 
 from app.services.document_parser.base import BaseParser
 from app.services.document_parser.factory import ParserFactory
-from app.services.document_parser.models.block import BlockType, DocumentBlockData
+from app.services.document_parser.models.block import BlockType, DocumentBlockData, SourceType
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +87,7 @@ class MarkdownParser(BaseParser):
                 DocumentBlockData(
                     id=str(uuid.uuid4()),
                     document_id=document_id,
+                    source_type=SourceType.MARKDOWN,
                     block_type=BlockType.CODE,
                     content=code,
                     editable=True,
@@ -107,6 +108,7 @@ class MarkdownParser(BaseParser):
                     DocumentBlockData(
                         id=str(uuid.uuid4()),
                         document_id=document_id,
+                        source_type=SourceType.MARKDOWN,
                         block_type=BlockType.TABLE,
                         content=table_content,
                         editable=True,
@@ -160,6 +162,7 @@ class MarkdownParser(BaseParser):
                     DocumentBlockData(
                         id=str(uuid.uuid4()),
                         document_id=document_id,
+                        source_type=SourceType.MARKDOWN,
                         block_type=BlockType.HEADING,
                         content=heading_text,
                         editable=True,
@@ -248,6 +251,7 @@ class MarkdownParser(BaseParser):
         return DocumentBlockData(
             id=str(uuid.uuid4()),
             document_id=document_id,
+            source_type=SourceType.MARKDOWN,
             block_type=BlockType.PARAGRAPH,
             content="\n".join(lines),
             editable=True,
@@ -266,6 +270,7 @@ class MarkdownParser(BaseParser):
         return DocumentBlockData(
             id=str(uuid.uuid4()),
             document_id=document_id,
+            source_type=SourceType.MARKDOWN,
             block_type=BlockType.LIST,
             content="\n".join(lines),
             editable=True,

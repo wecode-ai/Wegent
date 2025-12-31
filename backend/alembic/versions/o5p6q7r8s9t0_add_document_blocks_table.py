@@ -34,6 +34,13 @@ def upgrade() -> None:
             comment="Reference to uploaded document",
         ),
         sa.Column(
+            "source_type",
+            sa.String(20),
+            nullable=False,
+            default="markdown",
+            comment="Source type: markdown, pdf, docx, image, git, ai",
+        ),
+        sa.Column(
             "block_type",
             sa.String(50),
             nullable=False,

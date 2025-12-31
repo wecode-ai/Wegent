@@ -14,7 +14,7 @@ from typing import List
 
 from app.services.document_parser.base import BaseParser
 from app.services.document_parser.factory import ParserFactory
-from app.services.document_parser.models.block import BlockType, DocumentBlockData
+from app.services.document_parser.models.block import BlockType, DocumentBlockData, SourceType
 
 logger = logging.getLogger(__name__)
 

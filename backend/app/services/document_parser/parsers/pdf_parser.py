@@ -15,7 +15,7 @@ from typing import List, Optional
 
 from app.services.document_parser.base import BaseParser
 from app.services.document_parser.factory import ParserFactory
-from app.services.document_parser.models.block import BlockType, DocumentBlockData
+from app.services.document_parser.models.block import BlockType, DocumentBlockData, SourceType
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +64,7 @@ class PDFParser(BaseParser):
                 DocumentBlockData(
                     id=str(uuid.uuid4()),
                     document_id=document_id,
+                    source_type=SourceType.PDF,
                     block_type=BlockType.UNSUPPORTED,
                     content="PDF parsing requires PyMuPDF library. Please install it with: pip install PyMuPDF",
                     editable=False,
@@ -95,6 +96,7 @@ class PDFParser(BaseParser):
                                 DocumentBlockData(
                                     id=str(uuid.uuid4()),
                                     document_id=document_id,
+                                    source_type=SourceType.PDF,
                                     block_type=block_type,
                                     content=text_content.strip(),
                                     editable=False,
@@ -139,6 +141,7 @@ class PDFParser(BaseParser):
                                 DocumentBlockData(
                                     id=str(uuid.uuid4()),
                                     document_id=document_id,
+                                    source_type=SourceType.PDF,
                                     block_type=BlockType.IMAGE,
                                     content=description or "[Image - no description available]",
                                     editable=False,
@@ -164,6 +167,7 @@ class PDFParser(BaseParser):
                 DocumentBlockData(
                     id=str(uuid.uuid4()),
                     document_id=document_id,
+                    source_type=SourceType.PDF,
                     block_type=BlockType.UNSUPPORTED,
                     content=f"Error parsing PDF: {str(e)}",
                     editable=False,

@@ -28,6 +28,17 @@ class BlockType(str, Enum):
     UNSUPPORTED = "unsupported"
 
 
+class SourceType(str, Enum):
+    """Enumeration of document source types."""
+
+    MARKDOWN = "markdown"
+    PDF = "pdf"
+    DOCX = "docx"
+    IMAGE = "image"
+    GIT = "git"
+    AI = "ai"
+
+
 @dataclass
 class DocumentBlockData:
     """
@@ -40,6 +51,7 @@ class DocumentBlockData:
     document_id: str
     block_type: BlockType
     order_index: int
+    source_type: SourceType = SourceType.MARKDOWN
     content: Optional[str] = None
     editable: bool = False
     source_ref: Optional[Dict[str, Any]] = None
@@ -56,6 +68,9 @@ class DocumentBlockData:
         return {
             "id": self.id,
             "document_id": self.document_id,
+            "source_type": self.source_type.value
+            if isinstance(self.source_type, SourceType)
+            else self.source_type,
             "block_type": self.block_type.value
             if isinstance(self.block_type, BlockType)
             else self.block_type,

@@ -10,10 +10,12 @@ from app.services.document_parser.models.block import (
     BlockType,
     DocumentBlockData,
     ParseResult,
+    SourceType,
 )
 
 __all__ = [
     "BlockType",
     "DocumentBlockData",
     "ParseResult",
+    "SourceType",
 ]

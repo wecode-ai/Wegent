@@ -91,6 +91,9 @@ def parse_document_task(
                 db_block = DocumentBlock(
                     id=block_data.id or str(uuid.uuid4()),
                     document_id=document_id,
+                    source_type=block_data.source_type.value
+                    if hasattr(block_data.source_type, "value")
+                    else block_data.source_type,
                     block_type=block_data.block_type.value
                     if hasattr(block_data.block_type, "value")
                     else block_data.block_type,
