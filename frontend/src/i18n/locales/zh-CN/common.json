@@ -785,6 +785,11 @@
     "rerank_top_n": "返回结果数",
     "rerank_top_n_hint": "返回前 N 个结果",
     "rerank_return_documents": "返回文档内容",
+    "llm_config_title": "LLM 配置",
+    "context_window": "上下文窗口",
+    "context_window_hint": "最大上下文窗口大小（token 数）。用于消息压缩。",
+    "max_output_tokens": "最大输出 Token",
+    "max_output_tokens_hint": "模型每次响应可生成的最大 token 数。",
     "errors": {
       "load_models_failed": "加载模型列表失败",
       "create_failed": "创建模型失败",
@@ -1033,11 +1038,11 @@
       "legacy_xls_hint": "请将 .xls 文件另存为 .xlsx 格式后上传",
       "network_error": "上传失败",
       "network_error_hint": "网络连接异常，请检查网络后重试",
-      "content_truncated": "文件内容已截断",
+      "content_truncated": "文件内容已压缩",
       "content_truncated_hint": "文件内容过长，已自动保留前 {{length}} 万字符"
     },
     "truncation": {
-      "notice": "⚠️ 文件内容过长，已自动截断（原始 {{original}} 字符 → 截断至 {{truncated}} 字符）"
+      "notice": "⚠️ 文件内容过长，已自动压缩（原始 {{original}} 字符 → 压缩至 {{truncated}} 字符）"
     },
     "supported_types": "PDF、Word、Excel、TXT、Markdown、图片",
     "characters": "字符"

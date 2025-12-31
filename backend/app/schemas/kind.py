@@ -160,6 +160,16 @@ class ModelSpec(BaseModel):
         "Only applies when protocol is 'openai'.",
     )
 
+    # Context window and output token limits for LLM models
+    contextWindow: Optional[int] = Field(
+        None,
+        description="Maximum context window size in tokens. Used for message compression.",
+    )
+    maxOutputTokens: Optional[int] = Field(
+        None,
+        description="Maximum output tokens the model can generate per response.",
+    )
+
     # New fields for multi-type model support
     modelType: Optional[ModelCategoryType] = Field(
         ModelCategoryType.LLM,

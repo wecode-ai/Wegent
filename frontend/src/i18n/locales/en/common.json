@@ -784,6 +784,11 @@
     "rerank_top_n": "Top N Results",
     "rerank_top_n_hint": "Number of top results to return",
     "rerank_return_documents": "Return Documents",
+    "llm_config_title": "LLM Configuration",
+    "context_window": "Context Window",
+    "context_window_hint": "Maximum context window size in tokens. Used for message compression.",
+    "max_output_tokens": "Max Output Tokens",
+    "max_output_tokens_hint": "Maximum output tokens the model can generate per response.",
     "errors": {
       "load_models_failed": "Failed to load models",
       "create_failed": "Failed to create model",

@@ -102,6 +102,7 @@ dev = [
     "pytest-cov>=7.0.0",
     "pytest-mock>=3.15.1",
     "pytest-httpx>=0.36.0",
+    "pytest-xdist>=3.5.0",  # Parallel test execution
     
     # Development tools
     "black>=23.7.0",
