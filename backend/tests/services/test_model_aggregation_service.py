@@ -262,3 +262,141 @@ class TestModelAggregationService:
         assert model_aggregation_service._is_model_compatible_with_shell(
             "gemini", shell_type, support_model
         )
+
+    def test_get_shell_support_model_with_group_shell(
+        self, test_db: Session, test_user: User
+    ):
+        """Test _get_shell_support_model with a group shell."""
+        from unittest.mock import patch
+
+        with patch(
+            "app.services.group_permission.get_user_groups",
+            return_value=["test-group"],
+        ):
+            # Create a group shell
+            shell_crd = {
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Shell",
+                "metadata": {
+                    "name": "group-shell",
+                    "namespace": "test-group",
+                    "labels": {"type": "local_engine"},
+                },
+                "spec": {
+                    "shellType": "Agno",
+                    "supportModel": ["claude", "openai"],
+                    "baseImage": "test-image:latest",
+                },
+                "status": {"state": "Available"},
+            }
+            shell = Kind(
+                user_id=999,  # Different user
+                kind="Shell",
+                name="group-shell",
+                namespace="test-group",
+                json=shell_crd,
+                is_active=True,
+            )
+            test_db.add(shell)
+            test_db.commit()
+
+            # Get support_model and shell_type for group shell
+            support_model, shell_type = (
+                model_aggregation_service._get_shell_support_model(
+                    test_db, "group-shell", test_user
+                )
+            )
+
+            assert shell_type == "Agno"
+            assert set(support_model) == {"claude", "openai"}
+
+    def test_get_shell_support_model_public_shell_in_non_default_namespace(
+        self, test_db: Session, test_user: User
+    ):
+        """Test _get_shell_support_model finds public shells in non-default namespaces."""
+        # Create a public shell in non-default namespace
+        shell_crd = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Shell",
+            "metadata": {
+                "name": "CustomPublicShell",
+                "namespace": "custom-ns",
+                "labels": {"type": "local_engine"},
+            },
+            "spec": {
+                "shellType": "CustomType",
+                "supportModel": ["custom-provider"],
+                "baseImage": "test-image:latest",
+            },
+            "status": {"state": "Available"},
+        }
+        shell = Kind(
+            user_id=0,  # Public shell
+            kind="Shell",
+            name="CustomPublicShell",
+            namespace="custom-ns",  # Non-default namespace
+            json=shell_crd,
+            is_active=True,
+        )
+        test_db.add(shell)
+        test_db.commit()
+
+        # Should find the shell even in non-default namespace
+        support_model, shell_type = model_aggregation_service._get_shell_support_model(
+            test_db, "CustomPublicShell", test_user
+        )
+
+        assert shell_type == "CustomType"
+        assert support_model == ["custom-provider"]
+
+    def test_get_shell_support_model_with_support_model_list(
+        self, test_db: Session, test_user: User
+    ):
+        """Test _get_shell_support_model correctly parses supportModel list."""
+        # Create a shell with specific supportModel
+        self._create_public_shell(
+            test_db,
+            "MultiProviderShell",
+            "MultiProvider",
+            support_model=["claude", "openai", "gemini"],
+        )
+
+        support_model, shell_type = model_aggregation_service._get_shell_support_model(
+            test_db, "MultiProviderShell", test_user
+        )
+
+        assert shell_type == "MultiProvider"
+        assert set(support_model) == {"claude", "openai", "gemini"}
+
+    def test_get_shell_support_model_precedence_order(
+        self, test_db: Session, test_user: User
+    ):
+        """Test that shell lookup follows correct precedence: public > personal > group."""
+        from unittest.mock import patch
+
+        # Create shells with same name in different scopes
+        # 1. Public shell
+        self._create_public_shell(
+            test_db,
+            "SharedShellName",
+            "PublicType",
+            support_model=["public-provider"],
+        )
+
+        # 2. Personal shell
+        self._create_custom_shell(
+            test_db,
+            test_user,
+            "SharedShellName",
+            "PublicType",
+            "PersonalType",
+            support_model=["personal-provider"],
+        )
+
+        # The function should return the public shell (precedence)
+        support_model, shell_type = model_aggregation_service._get_shell_support_model(
+            test_db, "SharedShellName", test_user
+        )
+
+        assert shell_type == "PublicType"  # From public shell
+        assert support_model == ["public-provider"]  # From public shell

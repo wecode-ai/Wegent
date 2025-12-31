@@ -22,6 +22,7 @@ from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.kind import Model, ModelCategoryType, Shell
 from app.services.adapters.public_model import public_model_service
+from app.services.adapters.shell_utils import find_shell_json
 from app.services.kind import kind_service
 
 logger = logging.getLogger(__name__)
@@ -212,14 +213,6 @@ class ModelAggregationService:
         """
         Get supported model list and shellType from shell configuration.
 
-        For custom shells, this method will:
-        1. First look up the shell by name (public or user-defined)
-        2. Return the shell's supportModel and its actual shellType
-
-        The shellType is important for custom shells because they inherit
-        shellType from their base shell (e.g., a custom shell based on
-        ClaudeCode will have shellType='ClaudeCode').
-
         Args:
             db: Database session
             shell_name: Shell name (can be public shell name or custom shell name)
@@ -228,74 +221,21 @@ class ModelAggregationService:
         Returns:
             Tuple of (supported model list, shell type)
         """
-        # First try to find public shell
-        shell_row = (
-            db.query(Kind.json)
-            .filter(Kind.user_id == 0, Kind.kind == "Shell", Kind.name == shell_name)
-            .first()
-        )
+        user_id = current_user.id if current_user else None
+        shell_json = find_shell_json(db, shell_name, user_id)
+        if not shell_json:
+            return ([], shell_name)
 
-        if shell_row and isinstance(shell_row[0], dict):
-            try:
-                shell_crd = Shell.model_validate(shell_row[0])
-                support_model = shell_crd.spec.supportModel or []
-                return (
-                    [str(x) for x in support_model if x],
-                    shell_crd.spec.shellType,
-                )
-            except (ValueError, KeyError, AttributeError) as e:
-                logger.warning("Failed to parse public shell config: %s", e)
-
-        # If not found in public shells, try user-defined shells
-        if current_user:
-            # Try personal namespace
-            user_shell_row = (
-                db.query(Kind.json)
-                .filter(
-                    Kind.user_id == current_user.id,
-                    Kind.kind == "Shell",
-                    Kind.name == shell_name,
-                    Kind.namespace == "default",
-                    Kind.is_active == True,  # noqa: E712
-                )
-                .first()
+        try:
+            shell_crd = Shell.model_validate(shell_json)
+            support_model = shell_crd.spec.supportModel or []
+            return (
+                [str(x) for x in support_model if x],
+                shell_crd.spec.shellType,
             )
-
-            if not user_shell_row:
-                # Try group namespaces
-                from app.services.group_permission import get_user_groups
-
-                user_groups = get_user_groups(db, current_user.id)
-                for group_name in user_groups:
-                    user_shell_row = (
-                        db.query(Kind.json)
-                        .filter(
-                            Kind.kind == "Shell",
-                            Kind.name == shell_name,
-                            Kind.namespace == group_name,
-                            Kind.is_active == True,  # noqa: E712
-                        )
-                        .first()
-                    )
-                    if user_shell_row:
-                        break
-
-            if user_shell_row and isinstance(user_shell_row[0], dict):
-                try:
-                    shell_crd = Shell.model_validate(user_shell_row[0])
-                    support_model = shell_crd.spec.supportModel or []
-                    # Custom shells inherit shellType from base shell
-                    # This is crucial for model compatibility filtering
-                    return (
-                        [str(x) for x in support_model if x],
-                        shell_crd.spec.shellType,
-                    )
-                except (ValueError, KeyError, AttributeError) as e:
-                    logger.warning("Failed to parse user shell config: %s", e)
-
-        # If shell not found, return empty list and the shell_name as type
-        # This maintains backward compatibility
-        return ([], shell_name)
+        except (ValueError, KeyError, AttributeError) as e:
+            logger.warning("Failed to parse shell config: %s", e)
+            return ([], shell_name)
 
     def _is_custom_model(self, model_data: Dict[str, Any]) -> bool:
         """
@@ -366,13 +306,9 @@ class ModelAggregationService:
         """
         from app.services.group_permission import get_user_groups
 
-        # Get shell configuration if shell_type is provided
-        # shell_type parameter is actually shell_name (can be public or custom shell)
         support_model: List[str] = []
         actual_shell_type: str = shell_type or ""
         if shell_type:
-            # Get both supportModel and actual shellType from shell config
-            # For custom shells, this returns the inherited shellType (e.g., ClaudeCode)
             support_model, actual_shell_type = self._get_shell_support_model(
                 db, shell_type, current_user
             )
@@ -434,8 +370,6 @@ class ModelAggregationService:
                     continue
                 info = self._extract_model_info_from_crd(model_data)
 
-                # Filter by shell compatibility if shell_type is provided
-                # Use actual_shell_type which is the inherited shellType for custom shells
                 if shell_type and not self._is_model_compatible_with_shell(
                     info["provider"], actual_shell_type, support_model
                 ):
@@ -487,8 +421,6 @@ class ModelAggregationService:
             if isinstance(config, dict):
                 public_model_category_type = config.get("modelType", "llm")
 
-            # Filter by shell compatibility if shell_type is provided
-            # Use actual_shell_type which is the inherited shellType for custom shells
             if shell_type and not self._is_model_compatible_with_shell(
                 provider, actual_shell_type, support_model
             ):

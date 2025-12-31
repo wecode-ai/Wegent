@@ -12,6 +12,7 @@ from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.kind import Model, Shell
 from app.schemas.model import ModelBulkCreateItem, ModelCreate, ModelUpdate
+from app.services.adapters.shell_utils import find_shell_json
 from app.services.base import BaseService
 
 
@@ -233,59 +234,10 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
 
         Returns list of dicts with 'name' and 'displayName' fields.
         """
-        # Get shell configuration from kinds table (try public shells first)
-        shell_row = (
-            db.query(Kind.json)
-            .filter(
-                Kind.user_id == 0,
-                Kind.kind == "Shell",
-                Kind.name == shell_type,
-                Kind.namespace == "default",
-            )
-            .first()
-        )
-
-        # If not found in public shells, try user-defined shells
-        if not shell_row:
-            # Try personal namespace
-            shell_row = (
-                db.query(Kind.json)
-                .filter(
-                    Kind.user_id == current_user.id,
-                    Kind.kind == "Shell",
-                    Kind.name == shell_type,
-                    Kind.namespace == "default",
-                    Kind.is_active == True,  # noqa: E712
-                )
-                .first()
-            )
-
-            if not shell_row:
-                # Try group namespaces
-                from app.services.group_permission import get_user_groups
-
-                user_groups = get_user_groups(db, current_user.id)
-                for group_name in user_groups:
-                    shell_row = (
-                        db.query(Kind.json)
-                        .filter(
-                            Kind.kind == "Shell",
-                            Kind.name == shell_type,
-                            Kind.namespace == group_name,
-                            Kind.is_active == True,  # noqa: E712
-                        )
-                        .first()
-                    )
-                    if shell_row:
-                        break
-
-        if not shell_row:
+        shell_json = find_shell_json(db, shell_type, current_user.id)
+        if not shell_json:
             raise HTTPException(status_code=400, detail="Shell type not found")
 
-        shell_json = shell_row[0] if isinstance(shell_row[0], dict) else {}
-
-        # Extract supportModel from shell spec
-        # For custom shells, this will be the inherited supportModel from base shell
         supportModel: List[str] = []
         if isinstance(shell_json, dict):
             shell_crd = Shell.model_validate(shell_json)
