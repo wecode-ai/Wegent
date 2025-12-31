@@ -173,7 +173,16 @@ export function useTeamPreferences({
 
     // Don't sync team if the task type doesn't match the current page mode
     // This prevents showing chat task's team on the code page and vice versa
-    if (selectedTaskDetail?.task_type && selectedTaskDetail.task_type !== taskType) {
+    // For tasks without task_type (legacy tasks), infer from git information
+    let taskDetailType = selectedTaskDetail?.task_type;
+    if (!taskDetailType && selectedTaskDetail) {
+      // Backward compatibility: infer type from git information
+      // If task has git repo info, assume it's a code task
+      const gitRepo = selectedTaskDetail.git_repo;
+      taskDetailType = gitRepo && gitRepo.trim() !== '' ? 'code' : 'chat';
+    }
+
+    if (taskDetailType && taskDetailType !== taskType) {
       return;
     }
 
@@ -196,6 +205,7 @@ export function useTeamPreferences({
     selectedTeam?.id,
     selectedTaskDetail?.team,
     selectedTaskDetail?.task_type,
+    selectedTaskDetail?.git_repo,
     taskType,
     setSelectedTeam,
     setHasRestoredPreferences,
