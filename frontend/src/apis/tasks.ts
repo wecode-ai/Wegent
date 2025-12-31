@@ -173,6 +173,26 @@ export const taskApis = {
     return apiClient.get(`/tasks/lite?${query}`);
   },
 
+  getGroupTasksLite: async (
+    params?: PaginationParams & { status?: TaskStatus }
+  ): Promise<TaskListResponse> => {
+    const query = new URLSearchParams();
+    if (params?.limit) query.append('limit', params.limit.toString());
+    if (params?.page) query.append('page', params.page.toString());
+    if (params?.status) query.append('status', params.status);
+    return apiClient.get(`/tasks/lite/group?${query}`);
+  },
+
+  getPersonalTasksLite: async (
+    params?: PaginationParams & { status?: TaskStatus }
+  ): Promise<TaskListResponse> => {
+    const query = new URLSearchParams();
+    if (params?.limit) query.append('limit', params.limit.toString());
+    if (params?.page) query.append('page', params.page.toString());
+    if (params?.status) query.append('status', params.status);
+    return apiClient.get(`/tasks/lite/personal?${query}`);
+  },
+
   getNewTasksLite: async (sinceId: number, limit?: number): Promise<TaskListResponse> => {
     const query = new URLSearchParams();
     query.append('since_id', sinceId.toString());

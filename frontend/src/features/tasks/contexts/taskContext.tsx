@@ -29,15 +29,25 @@ import { TaskCreatedPayload, TaskInvitedPayload, TaskStatusPayload } from '@/typ
 
 type TaskContextType = {
   tasks: Task[];
+  groupTasks: Task[];
+  personalTasks: Task[];
   taskLoading: boolean;
   selectedTask: Task | null;
   selectedTaskDetail: TaskDetail | null;
   setSelectedTask: (task: Task | null) => void;
   refreshTasks: () => void;
+  refreshGroupTasks: () => void;
+  refreshPersonalTasks: () => void;
   refreshSelectedTaskDetail: (isAutoRefresh?: boolean) => void;
   loadMore: () => void;
+  loadMoreGroupTasks: () => void;
+  loadMorePersonalTasks: () => void;
   hasMore: boolean;
+  hasMoreGroupTasks: boolean;
+  hasMorePersonalTasks: boolean;
   loadingMore: boolean;
+  loadingMoreGroupTasks: boolean;
+  loadingMorePersonalTasks: boolean;
   searchTerm: string;
   setSearchTerm: (term: string) => void;
   searchTasks: (term: string) => Promise<void>;
@@ -59,6 +69,8 @@ export { TaskContext };
 
 export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [groupTasks, setGroupTasks] = useState<Task[]>([]);
+  const [personalTasks, setPersonalTasks] = useState<Task[]>([]);
   const [taskLoading, setTaskLoading] = useState<boolean>(false);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [selectedTaskDetail, setSelectedTaskDetail] = useState<TaskDetail | null>(null);
@@ -78,11 +90,21 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   // Track previous task ID for leaving WebSocket room when switching tasks
   const previousTaskIdRef = useRef<number | null>(null);
 
-  // Pagination related
+  // Pagination related - legacy combined list
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadedPages, setLoadedPages] = useState([1]);
   const limit = 50;
+
+  // Pagination related - group tasks
+  const [hasMoreGroupTasks, setHasMoreGroupTasks] = useState(true);
+  const [loadingMoreGroupTasks, setLoadingMoreGroupTasks] = useState(false);
+  const [loadedGroupPages, setLoadedGroupPages] = useState([1]);
+
+  // Pagination related - personal tasks
+  const [hasMorePersonalTasks, setHasMorePersonalTasks] = useState(true);
+  const [loadingMorePersonalTasks, setLoadingMorePersonalTasks] = useState(false);
+  const [loadedPersonalPages, setLoadedPersonalPages] = useState([1]);
 
   // Batch load specified pages (only responsible for data requests and responses, does not handle loading state)
   // Returns { items, hasMore, pages, error } - error is true if network request failed
@@ -106,6 +128,46 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
+  // Load group task pages
+  const loadGroupPages = async (pagesArr: number[]) => {
+    if (pagesArr.length === 0) return { items: [], hasMore: false, error: false };
+    const requests = pagesArr.map(p => taskApis.getGroupTasksLite({ page: p, limit }));
+    try {
+      const results = await Promise.all(requests);
+      const allItems = results.flatMap(res => res.items || []);
+      const lastPageItems = results[results.length - 1]?.items || [];
+      return {
+        items: allItems,
+        hasMore: lastPageItems.length === limit,
+        pages: pagesArr,
+        error: false,
+      };
+    } catch (err) {
+      console.error('[TaskContext] Failed to load group pages:', err);
+      return { items: [], hasMore: true, pages: pagesArr, error: true };
+    }
+  };
+
+  // Load personal task pages
+  const loadPersonalPages = async (pagesArr: number[]) => {
+    if (pagesArr.length === 0) return { items: [], hasMore: false, error: false };
+    const requests = pagesArr.map(p => taskApis.getPersonalTasksLite({ page: p, limit }));
+    try {
+      const results = await Promise.all(requests);
+      const allItems = results.flatMap(res => res.items || []);
+      const lastPageItems = results[results.length - 1]?.items || [];
+      return {
+        items: allItems,
+        hasMore: lastPageItems.length === limit,
+        pages: pagesArr,
+        error: false,
+      };
+    } catch (err) {
+      console.error('[TaskContext] Failed to load personal pages:', err);
+      return { items: [], hasMore: true, pages: pagesArr, error: true };
+    }
+  };
+
   // Load more
   const loadMore = async () => {
     if (loadingMore || !hasMore) return;
@@ -125,27 +187,110 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     setLoadingMore(false);
   };
 
+  // Load more group tasks
+  const loadMoreGroupTasks = async () => {
+    if (loadingMoreGroupTasks || !hasMoreGroupTasks) return;
+    setLoadingMoreGroupTasks(true);
+    const nextPage = (loadedGroupPages[loadedGroupPages.length - 1] || 1) + 1;
+    const result = await loadGroupPages([nextPage]);
+
+    if (!result.error) {
+      setGroupTasks(prev => [...prev, ...result.items]);
+      setLoadedGroupPages(prev =>
+        Array.from(new Set([...prev, ...(result.pages || [])])).sort((a, b) => a - b)
+      );
+      setHasMoreGroupTasks(result.hasMore);
+    }
+    setLoadingMoreGroupTasks(false);
+  };
+
+  // Load more personal tasks
+  const loadMorePersonalTasks = async () => {
+    if (loadingMorePersonalTasks || !hasMorePersonalTasks) return;
+    setLoadingMorePersonalTasks(true);
+    const nextPage = (loadedPersonalPages[loadedPersonalPages.length - 1] || 1) + 1;
+    const result = await loadPersonalPages([nextPage]);
+
+    if (!result.error) {
+      setPersonalTasks(prev => [...prev, ...result.items]);
+      setLoadedPersonalPages(prev =>
+        Array.from(new Set([...prev, ...(result.pages || [])])).sort((a, b) => a - b)
+      );
+      setHasMorePersonalTasks(result.hasMore);
+    }
+    setLoadingMorePersonalTasks(false);
+  };
+
   // Refresh all loaded pages
   const refreshTasks = async () => {
     setTaskLoading(true);
-    const result = await loadPages(loadedPages, false);
 
-    // Only update tasks if no error occurred - preserve existing data on network error
-    if (!result.error) {
-      setTasks(result.items);
-      setLoadedPages(result.pages || []);
-      setHasMore(result.hasMore);
+    // Load group and personal tasks in parallel
+    const [groupResult, personalResult] = await Promise.all([
+      loadGroupPages(loadedGroupPages),
+      loadPersonalPages(loadedPersonalPages),
+    ]);
 
-      // Initialize task view status on first load (if not already initialized)
-      if (result.items.length > 0) {
-        initializeTaskViewStatus(result.items);
-      }
-    } else {
-      // On error, preserve existing data without clearing
-      console.warn('[TaskContext] Network error during refresh, preserving existing task list');
+    // Update group tasks
+    if (!groupResult.error) {
+      setGroupTasks(groupResult.items);
+      setLoadedGroupPages(groupResult.pages || [1]);
+      setHasMoreGroupTasks(groupResult.hasMore);
+    }
+
+    // Update personal tasks
+    if (!personalResult.error) {
+      setPersonalTasks(personalResult.items);
+      setLoadedPersonalPages(personalResult.pages || [1]);
+      setHasMorePersonalTasks(personalResult.hasMore);
+    }
+
+    // Combine both lists for backward compatibility
+    const allTasks = [...(groupResult.error ? groupTasks : groupResult.items), ...(personalResult.error ? personalTasks : personalResult.items)];
+    setTasks(allTasks);
+
+    // Initialize task view status on first load
+    if (allTasks.length > 0) {
+      initializeTaskViewStatus(allTasks);
     }
 
     setTaskLoading(false);
+  };
+
+  // Refresh group tasks only
+  const refreshGroupTasks = async () => {
+    const result = await loadGroupPages([1]);
+    if (!result.error) {
+      setGroupTasks(result.items);
+      setLoadedGroupPages([1]);
+      setHasMoreGroupTasks(result.hasMore);
+      // Update combined tasks
+      setTasks(prev => {
+        const personalOnly = prev.filter(t => !t.is_group_chat);
+        return [...result.items, ...personalOnly];
+      });
+      if (result.items.length > 0) {
+        initializeTaskViewStatus(result.items);
+      }
+    }
+  };
+
+  // Refresh personal tasks only
+  const refreshPersonalTasks = async () => {
+    const result = await loadPersonalPages([1]);
+    if (!result.error) {
+      setPersonalTasks(result.items);
+      setLoadedPersonalPages([1]);
+      setHasMorePersonalTasks(result.hasMore);
+      // Update combined tasks
+      setTasks(prev => {
+        const groupOnly = prev.filter(t => t.is_group_chat);
+        return [...groupOnly, ...result.items];
+      });
+      if (result.items.length > 0) {
+        initializeTaskViewStatus(result.items);
+      }
+    }
   };
   // Monitor task status changes and send notifications
   useEffect(() => {
@@ -178,84 +323,97 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   // Handle new task created via WebSocket
   const handleTaskCreated = useCallback((data: TaskCreatedPayload) => {
     // Check if task already exists in the list
+    const newTask: Task = {
+      id: data.task_id,
+      title: data.title,
+      team_id: data.team_id,
+      git_url: '',
+      git_repo: '',
+      git_repo_id: 0,
+      git_domain: '',
+      branch_name: '',
+      prompt: '',
+      status: 'RUNNING' as TaskStatus,
+      task_type: 'chat',
+      progress: 0,
+      batch: 0,
+      result: {},
+      error_message: '',
+      user_id: 0,
+      user_name: '',
+      created_at: data.created_at,
+      updated_at: data.created_at,
+      completed_at: '',
+      is_group_chat: false,
+    };
+
+    // Initialize view status for the new task
+    initializeTaskViewStatus([newTask]);
+
+    // Add to personal tasks (new tasks are always personal initially)
+    setPersonalTasks(prev => {
+      const exists = prev.some(task => task.id === data.task_id);
+      if (exists) return prev;
+      return [newTask, ...prev];
+    });
+
+    // Also update combined tasks list for backward compatibility
     setTasks(prev => {
       const exists = prev.some(task => task.id === data.task_id);
-      if (exists) {
-        return prev;
-      }
-
-      // Create a new task object from the WebSocket payload
-      // Note: Some fields use empty string as default since Task interface requires string type
-      // For streaming tasks, set initial status to RUNNING since the task is already being processed
-      const newTask: Task = {
-        id: data.task_id,
-        title: data.title,
-        team_id: data.team_id,
-        git_url: '',
-        git_repo: '',
-        git_repo_id: 0,
-        git_domain: '',
-        branch_name: '',
-        prompt: '',
-        status: 'RUNNING' as TaskStatus,
-        task_type: 'chat',
-        progress: 0,
-        batch: 0,
-        result: {},
-        error_message: '',
-        user_id: 0,
-        user_name: '',
-        created_at: data.created_at,
-        updated_at: data.created_at,
-        completed_at: '',
-        is_group_chat: false,
-      };
-
-      // Initialize view status for the new task
-      initializeTaskViewStatus([newTask]);
-
+      if (exists) return prev;
       return [newTask, ...prev];
     });
   }, []);
 
   // Handle user invited to group chat via WebSocket
   const handleTaskInvited = useCallback((data: TaskInvitedPayload) => {
-    // Check if task already exists in the list
+    // Create a new task object from the WebSocket payload for invited group chat
+    const newTask: Task = {
+      id: data.task_id,
+      title: data.title,
+      team_id: data.team_id,
+      git_url: '',
+      git_repo: '',
+      git_repo_id: 0,
+      git_domain: '',
+      branch_name: '',
+      prompt: '',
+      status: 'RUNNING' as TaskStatus,
+      task_type: 'chat',
+      progress: 0,
+      batch: 0,
+      result: {},
+      error_message: '',
+      user_id: 0,
+      user_name: '',
+      created_at: data.created_at,
+      updated_at: data.created_at,
+      completed_at: '',
+      is_group_chat: data.is_group_chat,
+    };
+
+    // Initialize view status for the new task
+    initializeTaskViewStatus([newTask]);
+
+    // Add to group tasks if it's a group chat
+    if (data.is_group_chat) {
+      setGroupTasks(prev => {
+        const exists = prev.some(task => task.id === data.task_id);
+        if (exists) return prev;
+        return [newTask, ...prev];
+      });
+    } else {
+      setPersonalTasks(prev => {
+        const exists = prev.some(task => task.id === data.task_id);
+        if (exists) return prev;
+        return [newTask, ...prev];
+      });
+    }
+
+    // Also update combined tasks list for backward compatibility
     setTasks(prev => {
       const exists = prev.some(task => task.id === data.task_id);
-      if (exists) {
-        return prev;
-      }
-
-      // Create a new task object from the WebSocket payload for invited group chat
-      // For streaming tasks, set initial status to RUNNING since the task is already being processed
-      const newTask: Task = {
-        id: data.task_id,
-        title: data.title,
-        team_id: data.team_id,
-        git_url: '',
-        git_repo: '',
-        git_repo_id: 0,
-        git_domain: '',
-        branch_name: '',
-        prompt: '',
-        status: 'RUNNING' as TaskStatus,
-        task_type: 'chat',
-        progress: 0,
-        batch: 0,
-        result: {},
-        error_message: '',
-        user_id: 0,
-        user_name: '',
-        created_at: data.created_at,
-        updated_at: data.created_at,
-        completed_at: '',
-        is_group_chat: data.is_group_chat,
-      };
-
-      // Initialize view status for the new task
-      initializeTaskViewStatus([newTask]);
-
+      if (exists) return prev;
       return [newTask, ...prev];
     });
   }, []);
@@ -269,8 +427,39 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
       const isTerminalState = terminalStates.includes(data.status);
       const completedAt = isTerminalState ? data.completed_at || now : undefined;
 
-      // Use a ref-like pattern to capture isGroupChatTask from within setTasks
-      // We need to handle the logic inside setTasks to ensure we have the correct task data
+      // Helper function to update a task in a list
+      const updateTaskInList = (prev: Task[], moveToTop = false) => {
+        const taskIndex = prev.findIndex(task => task.id === data.task_id);
+        if (taskIndex === -1) return prev;
+
+        const existingTask = prev[taskIndex];
+        const updatedTask = {
+          ...existingTask,
+          status: data.status as TaskStatus,
+          progress: data.progress ?? existingTask.progress,
+          updated_at: now,
+          ...(completedAt && { completed_at: completedAt }),
+        };
+
+        if (moveToTop) {
+          const updatedTasks = [...prev];
+          updatedTasks.splice(taskIndex, 1);
+          updatedTasks.unshift(updatedTask);
+          return updatedTasks;
+        }
+
+        const updatedTasks = [...prev];
+        updatedTasks[taskIndex] = updatedTask;
+        return updatedTasks;
+      };
+
+      // Update group tasks (move to top on update for group chats)
+      setGroupTasks(prev => updateTaskInList(prev, true));
+
+      // Update personal tasks (in place)
+      setPersonalTasks(prev => updateTaskInList(prev, false));
+
+      // Update combined tasks list
       setTasks(prev => {
         const taskIndex = prev.findIndex(task => task.id === data.task_id);
         if (taskIndex === -1) {
@@ -541,15 +730,25 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     <TaskContext.Provider
       value={{
         tasks,
+        groupTasks,
+        personalTasks,
         taskLoading,
         selectedTask,
         selectedTaskDetail,
         setSelectedTask,
         refreshTasks,
+        refreshGroupTasks,
+        refreshPersonalTasks,
         refreshSelectedTaskDetail,
         loadMore,
+        loadMoreGroupTasks,
+        loadMorePersonalTasks,
         hasMore,
+        hasMoreGroupTasks,
+        hasMorePersonalTasks,
         loadingMore,
+        loadingMoreGroupTasks,
+        loadingMorePersonalTasks,
         searchTerm,
         setSearchTerm,
         searchTasks,

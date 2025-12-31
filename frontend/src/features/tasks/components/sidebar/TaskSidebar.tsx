@@ -57,8 +57,16 @@ export default function TaskSidebar({
   const { clearAllStreams } = useChatStreamContext();
   const {
     tasks,
+    groupTasks,
+    personalTasks,
     loadMore,
+    loadMoreGroupTasks,
+    loadMorePersonalTasks,
     loadingMore,
+    loadingMoreGroupTasks,
+    loadingMorePersonalTasks,
+    hasMoreGroupTasks,
+    hasMorePersonalTasks,
     searchTerm: _searchTerm,
     setSearchTerm,
     searchTasks,
@@ -153,7 +161,37 @@ export default function TaskSidebar({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tasks, getUnreadCount, viewStatusVersion]);
 
-  // Scroll to bottom to load more
+  // Refs for separate scroll containers
+  const groupScrollRef = useRef<HTMLDivElement>(null);
+  const personalScrollRef = useRef<HTMLDivElement>(null);
+
+  // Scroll to bottom to load more (for group tasks)
+  useEffect(() => {
+    const el = groupScrollRef.current;
+    if (!el) return;
+    const handleScroll = () => {
+      if (el.scrollTop + el.clientHeight >= el.scrollHeight - 10) {
+        loadMoreGroupTasks();
+      }
+    };
+    el.addEventListener('scroll', handleScroll);
+    return () => el.removeEventListener('scroll', handleScroll);
+  }, [loadMoreGroupTasks]);
+
+  // Scroll to bottom to load more (for personal tasks)
+  useEffect(() => {
+    const el = personalScrollRef.current;
+    if (!el) return;
+    const handleScroll = () => {
+      if (el.scrollTop + el.clientHeight >= el.scrollHeight - 10) {
+        loadMorePersonalTasks();
+      }
+    };
+    el.addEventListener('scroll', handleScroll);
+    return () => el.removeEventListener('scroll', handleScroll);
+  }, [loadMorePersonalTasks]);
+
+  // Scroll to bottom to load more (legacy - for search results)
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -333,33 +371,90 @@ export default function TaskSidebar({
           <div className="text-center py-8 text-xs text-text-muted">
             {t('common:tasks.searching')}
           </div>
-        ) : tasks.length === 0 ? (
+        ) : isSearchResult ? (
+          // Search results mode - show mixed results from legacy tasks list
+          tasks.length === 0 ? (
+            <div className="text-center py-8 text-xs text-text-muted">
+              {t('common:tasks.no_search_results')}
+            </div>
+          ) : (
+            (() => {
+              // Separate group chats and regular tasks from search results
+              const allGroupChats = tasks
+                .filter(task => task.is_group_chat)
+                .sort(
+                  (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+                );
+              const regularTasks = tasks
+                .filter(task => !task.is_group_chat)
+                .sort(
+                  (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+                );
+
+              return (
+                <>
+                  {/* Group Chats from search results */}
+                  {allGroupChats.length > 0 && (
+                    <>
+                      {!isCollapsed && (
+                        <div className="px-1 pb-1 text-xs font-medium text-text-muted">
+                          {t('common:tasks.group_chats')}
+                        </div>
+                      )}
+                      <TaskListSection
+                        tasks={allGroupChats}
+                        title=""
+                        unreadCount={getUnreadCount(allGroupChats)}
+                        onTaskClick={() => setIsMobileSidebarOpen(false)}
+                        isCollapsed={isCollapsed}
+                        showTitle={false}
+                        key={`search-group-chats-${viewStatusVersion}`}
+                      />
+                    </>
+                  )}
+                  {/* Personal tasks from search results */}
+                  {regularTasks.length > 0 && (
+                    <>
+                      {!isCollapsed && (
+                        <div
+                          className={`px-1 pb-1 text-xs font-medium text-text-muted flex items-center justify-between ${allGroupChats.length > 0 ? 'pt-3 mt-2 border-t border-border' : ''}`}
+                        >
+                          <span>{t('common:tasks.history_title')}</span>
+                        </div>
+                      )}
+                      {isCollapsed && allGroupChats.length > 0 && (
+                        <div className="border-t border-border my-2" />
+                      )}
+                      <TaskListSection
+                        tasks={regularTasks}
+                        title=""
+                        unreadCount={getUnreadCount(regularTasks)}
+                        onTaskClick={() => setIsMobileSidebarOpen(false)}
+                        isCollapsed={isCollapsed}
+                        showTitle={false}
+                        key={`search-regular-tasks-${viewStatusVersion}`}
+                      />
+                    </>
+                  )}
+                </>
+              );
+            })()
+          )
+        ) : groupTasks.length === 0 && personalTasks.length === 0 ? (
           <div className="text-center py-8 text-xs text-text-muted">
-            {isSearchResult ? t('common:tasks.no_search_results') : t('common:tasks.no_tasks')}
+            {t('common:tasks.no_tasks')}
           </div>
         ) : (
           (() => {
-            // Separate group chats and regular tasks
-            const allGroupChats = tasks
-              .filter(task => task.is_group_chat)
-              .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
-            const regularTasks = tasks
-              .filter(task => !task.is_group_chat)
-              .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-
-            // Separate unread and read group chats, both sorted by updated_at desc
-            const unreadGroupChats = allGroupChats.filter(isTaskUnread);
-            const readGroupChats = allGroupChats.filter(task => !isTaskUnread(task));
-
-            // Merge: unread first, then read
+            // Use separated lists from context
+            // Sort group chats: unread first, then by updated_at
+            const unreadGroupChats = groupTasks.filter(isTaskUnread);
+            const readGroupChats = groupTasks.filter(task => !isTaskUnread(task));
             const orderedGroupChats = [...unreadGroupChats, ...readGroupChats];
 
             // Calculate visible group chats based on collapse state
             let visibleGroupChats: typeof orderedGroupChats;
-            if (isSearchResult) {
-              // Search mode: show all
-              visibleGroupChats = orderedGroupChats;
-            } else if (unreadGroupChats.length === 0) {
+            if (unreadGroupChats.length === 0) {
               // No unread: show max 5 or all if expanded
               visibleGroupChats = isGroupChatsExpanded
                 ? orderedGroupChats
@@ -377,18 +472,17 @@ export default function TaskSidebar({
               readGroupChats.length - (visibleGroupChats.length - unreadGroupChats.length);
 
             // Determine if expand/collapse button should be shown
-            // Button should show when there are more read chats than can fit after showing all unread chats
             const maxReadSlotsWhenCollapsed = Math.max(
               0,
               maxVisibleGroupChats - unreadGroupChats.length
             );
             const shouldShowExpandCollapseButton =
-              readGroupChats.length > maxReadSlotsWhenCollapsed;
+              readGroupChats.length > maxReadSlotsWhenCollapsed || hasMoreGroupTasks;
 
             return (
               <>
                 {/* Group Chats Section */}
-                {allGroupChats.length > 0 && (
+                {groupTasks.length > 0 && (
                   <>
                     {!isCollapsed && (
                       <div className="px-1 pb-1 text-xs font-medium text-text-muted">
@@ -405,9 +499,14 @@ export default function TaskSidebar({
                       key={`group-chats-${viewStatusVersion}`}
                     />
                     {/* Expand/Collapse button for group chats */}
-                    {!isSearchResult && shouldShowExpandCollapseButton && !isCollapsed && (
+                    {shouldShowExpandCollapseButton && !isCollapsed && (
                       <button
-                        onClick={() => setIsGroupChatsExpanded(!isGroupChatsExpanded)}
+                        onClick={() => {
+                          if (!isGroupChatsExpanded && hasMoreGroupTasks) {
+                            loadMoreGroupTasks();
+                          }
+                          setIsGroupChatsExpanded(!isGroupChatsExpanded);
+                        }}
                         className="flex items-center gap-1 px-1 py-1.5 text-xs text-text-muted hover:text-text-primary transition-colors w-full"
                       >
                         {isGroupChatsExpanded ? (
@@ -419,19 +518,27 @@ export default function TaskSidebar({
                           <>
                             <ChevronDown className="h-3.5 w-3.5" />
                             <span>
-                              {t('common:tasks.group_chats_expand', { count: collapsedReadCount })}
+                              {t('common:tasks.group_chats_expand', {
+                                count: collapsedReadCount,
+                                suffix: hasMoreGroupTasks ? '+' : '',
+                              })}
                             </span>
                           </>
                         )}
                       </button>
                     )}
                     {/* Collapsed mode: show icon + tooltip for expand/collapse */}
-                    {!isSearchResult && shouldShowExpandCollapseButton && isCollapsed && (
+                    {shouldShowExpandCollapseButton && isCollapsed && (
                       <TooltipProvider>
                         <Tooltip delayDuration={300}>
                           <TooltipTrigger asChild>
                             <button
-                              onClick={() => setIsGroupChatsExpanded(!isGroupChatsExpanded)}
+                              onClick={() => {
+                                if (!isGroupChatsExpanded && hasMoreGroupTasks) {
+                                  loadMoreGroupTasks();
+                                }
+                                setIsGroupChatsExpanded(!isGroupChatsExpanded);
+                              }}
                               className="flex items-center justify-center w-full py-1.5 text-text-muted hover:text-text-primary transition-colors"
                             >
                               {isGroupChatsExpanded ? (
@@ -447,20 +554,26 @@ export default function TaskSidebar({
                                 ? t('common:tasks.group_chats_collapse')
                                 : t('common:tasks.group_chats_expand', {
                                     count: collapsedReadCount,
+                                    suffix: '',
                                   })}
                             </p>
                           </TooltipContent>
                         </Tooltip>
                       </TooltipProvider>
                     )}
+                    {loadingMoreGroupTasks && (
+                      <div className="text-center py-2 text-xs text-text-muted">
+                        {t('common:tasks.loading')}
+                      </div>
+                    )}
                   </>
                 )}
-                {/* History Section - with search button next to title */}
-                {regularTasks.length > 0 && (
+                {/* History Section (Personal Tasks) - with search button next to title */}
+                {personalTasks.length > 0 && (
                   <>
                     {!isCollapsed && (
                       <div
-                        className={`px-1 pb-1 text-xs font-medium text-text-muted flex items-center justify-between ${allGroupChats.length > 0 ? 'pt-3 mt-2 border-t border-border' : ''}`}
+                        className={`px-1 pb-1 text-xs font-medium text-text-muted flex items-center justify-between ${groupTasks.length > 0 ? 'pt-3 mt-2 border-t border-border' : ''}`}
                       >
                         <div className="flex items-center gap-1">
                           <span>{t('common:tasks.history_title')}</span>
@@ -498,25 +611,45 @@ export default function TaskSidebar({
                         )}
                       </div>
                     )}
-                    {isCollapsed && allGroupChats.length > 0 && (
+                    {isCollapsed && groupTasks.length > 0 && (
                       <div className="border-t border-border my-2" />
                     )}
                     <TaskListSection
-                      tasks={regularTasks}
+                      tasks={personalTasks}
                       title=""
-                      unreadCount={getUnreadCount(regularTasks)}
+                      unreadCount={getUnreadCount(personalTasks)}
                       onTaskClick={() => setIsMobileSidebarOpen(false)}
                       isCollapsed={isCollapsed}
                       showTitle={false}
                       key={`regular-tasks-${viewStatusVersion}`}
                     />
+                    {/* Load more button for personal tasks */}
+                    {hasMorePersonalTasks && !isCollapsed && (
+                      <button
+                        onClick={loadMorePersonalTasks}
+                        disabled={loadingMorePersonalTasks}
+                        className="flex items-center gap-1 px-1 py-1.5 text-xs text-text-muted hover:text-text-primary transition-colors w-full"
+                      >
+                        <ChevronDown className="h-3.5 w-3.5" />
+                        <span>
+                          {loadingMorePersonalTasks
+                            ? t('common:tasks.loading')
+                            : t('common:tasks.load_more')}
+                        </span>
+                      </button>
+                    )}
+                    {loadingMorePersonalTasks && (
+                      <div className="text-center py-2 text-xs text-text-muted">
+                        {t('common:tasks.loading')}
+                      </div>
+                    )}
                   </>
                 )}
               </>
             );
           })()
         )}
-        {loadingMore && (
+        {loadingMore && isSearchResult && (
           <div className="text-center py-2 text-xs text-text-muted">
             {t('common:tasks.loading')}
           </div>
