@@ -53,7 +53,9 @@ extract_settings() {
 find_settings_usage() {
     local settings_name="$1"
     # Use word boundary to ensure exact match (e.g., "settings." not "wiki_settings.")
-    grep -rho "\b${settings_name}\.[A-Z_][A-Z0-9_]*" "$BACKEND_DIR" \
+    # Match complete attribute names including underscores, uppercase, lowercase, and digits
+    # This handles both normal settings (EMAIL_SMTP_HOST) and mapped identifiers (EMAIL_password)
+    grep -rhoE "\b${settings_name}\.[A-Z_][A-Za-z0-9_]*" "$BACKEND_DIR" \
         --include="*.py" \
         --exclude-dir=tests \
         --exclude-dir=alembic \
@@ -111,7 +113,8 @@ check_settings_config() {
         while IFS= read -r undefined_setting; do
             if [ -n "$undefined_setting" ]; then
                 UNDEFINED_COUNT=$((UNDEFINED_COUNT + 1))
-                echo -e "${RED}   - $undefined_setting${NC}"
+                # Show complete attribute name with settings prefix
+                echo -e "${RED}   - ${settings_name}.${undefined_setting}${NC}"
             fi
         done <<< "$UNDEFINED_SETTINGS"
         echo -e "${RED}   Subtotal: ${UNDEFINED_COUNT} undefined setting(s) for ${settings_name}${NC}"
