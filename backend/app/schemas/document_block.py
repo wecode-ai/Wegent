@@ -52,7 +52,7 @@ class DocumentBlockBase(BaseModel):
     source_ref: Optional[Dict[str, Any]] = Field(
         None, description="Source reference (page, line, etc.)"
     )
-    metadata: Optional[Dict[str, Any]] = Field(
+    block_metadata: Optional[Dict[str, Any]] = Field(
         None, description="Additional metadata (image_url, lang, level, etc.)"
     )
 

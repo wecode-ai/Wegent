@@ -78,7 +78,7 @@ class DocumentBlockData:
             "editable": self.editable,
             "order_index": self.order_index,
             "source_ref": self.source_ref,
-            "metadata": self.metadata,
+            "block_metadata": self.metadata,
         }
 
 

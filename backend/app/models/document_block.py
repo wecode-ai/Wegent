@@ -85,7 +85,7 @@ class DocumentBlock(Base):
         nullable=True,
         comment="Source reference: {page, line, offset, bbox, etc.}",
     )
-    metadata = Column(
+    block_metadata = Column(
         JSON,
         nullable=True,
         comment="Block metadata: {image_url, ocr_text, lang, level, etc.}",

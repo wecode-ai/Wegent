@@ -101,7 +101,7 @@ def parse_document_task(
                     editable=block_data.editable,
                     order_index=block_data.order_index,
                     source_ref=block_data.source_ref,
-                    metadata=block_data.metadata,
+                    block_metadata=block_data.metadata,
                     created_at=now,
                     updated_at=now,
                 )

@@ -71,7 +71,7 @@ def upgrade() -> None:
             comment="Source reference: {page, line, offset, bbox, etc.}",
         ),
         sa.Column(
-            "metadata",
+            "block_metadata",
             sa.JSON,
             nullable=True,
             comment="Block metadata: {image_url, ocr_text, lang, level, etc.}",

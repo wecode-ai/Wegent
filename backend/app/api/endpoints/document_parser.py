@@ -14,10 +14,11 @@ import uuid
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_current_user, get_db
+from app.api.dependencies import get_db
+from app.core.security import get_current_user
 from app.models.document_block import DocumentBlock
 from app.models.user import User
 from app.schemas.document_block import (
@@ -108,9 +109,7 @@ async def trigger_parse(
 @router.post("/documents/{document_id}/parse-sync", response_model=ParseDocumentResponse)
 async def parse_document_sync(
     document_id: str,
-    binary_data: bytes = None,
-    filename: str = None,
-    content_type: str = None,
+    file: UploadFile = File(..., description="Document file to parse"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -125,19 +124,22 @@ async def parse_document_sync(
 
     Args:
         document_id: ID of the document to parse
-        binary_data: Document binary content
-        filename: Original filename
-        content_type: MIME type of the document
+        file: Uploaded document file
         db: Database session
         current_user: Current authenticated user
 
     Returns:
         Parsing result with block count
     """
+    # Read file content
+    binary_data = await file.read()
+    filename = file.filename
+    content_type = file.content_type
+
     if not binary_data or not filename:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="binary_data and filename are required for sync parsing",
+            detail="File with valid filename is required for sync parsing",
         )
 
     try:
@@ -171,7 +173,7 @@ async def parse_document_sync(
                 editable=block_data.editable,
                 order_index=block_data.order_index,
                 source_ref=block_data.source_ref,
-                metadata=block_data.metadata,
+                block_metadata=block_data.metadata,
                 created_at=now,
                 updated_at=now,
             )
