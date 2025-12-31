@@ -2,7 +2,42 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from pydantic_settings import BaseSettings
+from pathlib import Path
+from typing import Any, Mapping, Tuple, Type
+
+from dotenv import dotenv_values
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
+from pydantic_settings.sources import DotEnvSettingsSource
+from pydantic_settings.sources.utils import parse_env_vars
+
+
+class NoInterpolationDotEnvSettingsSource(DotEnvSettingsSource):
+    """
+    Custom DotEnvSettingsSource that disables variable interpolation.
+
+    This fixes an issue where dotenv's default interpolation behavior
+    incorrectly parses template variables like ${{user.name}} in JSON strings,
+    turning them into "}".
+    """
+
+    @staticmethod
+    def _static_read_env_file(
+        file_path: Path,
+        *,
+        encoding: str | None = None,
+        case_sensitive: bool = False,
+        ignore_empty: bool = False,
+        parse_none_str: str | None = None,
+    ) -> Mapping[str, str | None]:
+        # Disable interpolation to preserve template variables like ${{user.name}}
+        file_vars: dict[str, str | None] = dotenv_values(
+            file_path, encoding=encoding or "utf8", interpolate=False
+        )
+        return parse_env_vars(file_vars, case_sensitive, ignore_empty, parse_none_str)
 
 
 class Settings(BaseSettings):
@@ -189,10 +224,33 @@ class Settings(BaseSettings):
     # Use: from shared.telemetry.config import get_otel_config
     # All OTEL_* environment variables are read from there
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        extra = "ignore"
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: Type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> Tuple[PydanticBaseSettingsSource, ...]:
+        """
+        Customize settings sources to use NoInterpolationDotEnvSettingsSource.
+
+        This ensures that template variables like ${{user.name}} in .env files
+        are preserved and not incorrectly parsed by dotenv's interpolation.
+        """
+        return (
+            init_settings,
+            env_settings,
+            NoInterpolationDotEnvSettingsSource(settings_cls),
+            file_secret_settings,
+        )
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
 
 # Global configuration instance
