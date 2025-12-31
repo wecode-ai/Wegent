@@ -3,14 +3,16 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Attachment service module for file upload and document parsing.
+Storage backend module for file attachments.
 
 This module provides:
 - StorageBackend: Abstract interface for pluggable storage backends
 - MySQLStorageBackend: Default MySQL-based storage implementation
-- AttachmentService: High-level service for attachment management
 - DocumentParser: Document parsing utilities
 - Registry-based storage backend factory for extensibility
+
+NOTE: The AttachmentService has been deprecated and removed.
+Use app.services.context.ContextService instead for all attachment operations.
 
 Storage Backend Registration:
     External plugins can register custom storage backends without modifying
