@@ -7,18 +7,31 @@ Document parser service for extracting text from various file formats.
 
 Supports: PDF, Word (.doc, .docx), PowerPoint (.ppt, .pptx),
 Excel (.xls, .xlsx, .csv), TXT, Markdown files, and Images (.jpg, .jpeg, .png, .gif, .bmp, .webp).
+
+Features smart truncation that preserves document structure:
+- Excel/CSV: Header + sample rows + ellipsis + tail rows
+- PDF: First pages + middle summary + last pages
+- Word: Opening paragraphs + middle summary + closing paragraphs
+- PowerPoint: First/last slides + middle summary
+- Text/Markdown: Head content + middle summary + tail content
 """
 
 import base64
 import csv
 import io
 import logging
-from dataclasses import dataclass
-from typing import Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple
 
 import chardet
 
 from app.core.config import settings
+from app.services.attachment.smart_truncation import (
+    SmartTruncationConfig,
+    SmartTruncationInfo,
+    SmartTruncationManager,
+    TruncationType,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +43,25 @@ class TruncationInfo:
     is_truncated: bool = False
     original_length: Optional[int] = None
     truncated_length: Optional[int] = None
+
+    # Smart truncation details
+    truncation_type: str = "none"  # "none", "simple", "smart"
+    original_structure: Dict[str, Any] = field(default_factory=dict)
+    kept_structure: Dict[str, Any] = field(default_factory=dict)
+    summary_message: str = ""
+
+    @classmethod
+    def from_smart_info(cls, smart_info: SmartTruncationInfo) -> "TruncationInfo":
+        """Create TruncationInfo from SmartTruncationInfo."""
+        return cls(
+            is_truncated=smart_info.is_truncated,
+            original_length=smart_info.original_length,
+            truncated_length=smart_info.truncated_length,
+            truncation_type=smart_info.truncation_type.value,
+            original_structure=smart_info.original_structure,
+            kept_structure=smart_info.kept_structure,
+            summary_message=smart_info.summary_message,
+        )
 
 
 @dataclass
@@ -71,6 +103,9 @@ class DocumentParser:
     - Plain text (.txt)
     - Markdown (.md)
     - Images (.jpg, .jpeg, .png, .gif, .bmp, .webp)
+
+    Features smart truncation that preserves document structure instead of
+    simple text cutting.
     """
 
     # Supported file extensions and their MIME types
@@ -92,6 +127,16 @@ class DocumentParser:
         ".bmp": "image/bmp",
         ".webp": "image/webp",
     }
+
+    def __init__(self, truncation_config: Optional[SmartTruncationConfig] = None):
+        """
+        Initialize DocumentParser with optional truncation configuration.
+
+        Args:
+            truncation_config: Configuration for smart truncation.
+                              If None, uses default configuration.
+        """
+        self.truncation_manager = SmartTruncationManager(truncation_config)
 
     @classmethod
     def get_max_file_size(cls) -> int:
@@ -125,13 +170,20 @@ class DocumentParser:
         """Check if extracted text length is within limits."""
         return len(text) <= cls.get_max_text_length()
 
-    def parse(self, binary_data: bytes, extension: str) -> ParseResult:
+    def parse(
+        self,
+        binary_data: bytes,
+        extension: str,
+        use_smart_truncation: bool = True,
+    ) -> ParseResult:
         """
-        Parse document and extract text content.
+        Parse document and extract text content with smart truncation.
 
         Args:
             binary_data: File binary data
             extension: File extension (e.g., '.pdf', '.docx')
+            use_smart_truncation: Whether to use smart truncation (default: True).
+                                 If False, falls back to simple text cutting.
 
         Returns:
             ParseResult with extracted text, length, optional image_base64,
@@ -151,40 +203,77 @@ class DocumentParser:
         try:
             image_base64 = None
             truncation_info = None
-
-            if extension == ".pdf":
-                text = self._parse_pdf(binary_data)
-            elif extension in [".doc", ".docx"]:
-                text = self._parse_word(binary_data, extension)
-            elif extension in [".ppt", ".pptx"]:
-                text = self._parse_powerpoint(binary_data, extension)
-            elif extension in [".xls", ".xlsx"]:
-                text = self._parse_excel(binary_data, extension)
-            elif extension == ".csv":
-                text = self._parse_csv(binary_data)
-            elif extension in [".txt", ".md"]:
-                text = self._parse_text(binary_data)
-            elif extension in [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]:
-                text, image_base64 = self._parse_image(binary_data, extension)
-            else:
-                raise DocumentParseError(
-                    f"Unsupported file type: {extension}",
-                    DocumentParseError.UNSUPPORTED_TYPE,
-                )
-
-            # Auto-truncate if text exceeds maximum length
             max_length = self.get_max_text_length()
-            if len(text) > max_length:
-                original_length = len(text)
-                text = text[:max_length]
-                truncation_info = TruncationInfo(
-                    is_truncated=True,
-                    original_length=original_length,
-                    truncated_length=max_length,
-                )
-                logger.info(
-                    f"Text truncated from {original_length} to {max_length} characters"
-                )
+
+            # Parse with smart truncation for supported formats
+            if use_smart_truncation:
+                if extension == ".pdf":
+                    text, truncation_info = self._parse_pdf_smart(
+                        binary_data, max_length
+                    )
+                elif extension in [".doc", ".docx"]:
+                    text, truncation_info = self._parse_word_smart(
+                        binary_data, extension, max_length
+                    )
+                elif extension in [".ppt", ".pptx"]:
+                    text, truncation_info = self._parse_powerpoint_smart(
+                        binary_data, extension, max_length
+                    )
+                elif extension in [".xls", ".xlsx"]:
+                    text, truncation_info = self._parse_excel_smart(
+                        binary_data, extension, max_length
+                    )
+                elif extension == ".csv":
+                    text, truncation_info = self._parse_csv_smart(
+                        binary_data, max_length
+                    )
+                elif extension in [".txt", ".md"]:
+                    text, truncation_info = self._parse_text_smart(
+                        binary_data, max_length
+                    )
+                elif extension in [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]:
+                    # Images don't need truncation
+                    text, image_base64 = self._parse_image(binary_data, extension)
+                else:
+                    raise DocumentParseError(
+                        f"Unsupported file type: {extension}",
+                        DocumentParseError.UNSUPPORTED_TYPE,
+                    )
+            else:
+                # Fallback to simple parsing without smart truncation
+                if extension == ".pdf":
+                    text = self._parse_pdf(binary_data)
+                elif extension in [".doc", ".docx"]:
+                    text = self._parse_word(binary_data, extension)
+                elif extension in [".ppt", ".pptx"]:
+                    text = self._parse_powerpoint(binary_data, extension)
+                elif extension in [".xls", ".xlsx"]:
+                    text = self._parse_excel(binary_data, extension)
+                elif extension == ".csv":
+                    text = self._parse_csv(binary_data)
+                elif extension in [".txt", ".md"]:
+                    text = self._parse_text(binary_data)
+                elif extension in [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]:
+                    text, image_base64 = self._parse_image(binary_data, extension)
+                else:
+                    raise DocumentParseError(
+                        f"Unsupported file type: {extension}",
+                        DocumentParseError.UNSUPPORTED_TYPE,
+                    )
+
+                # Simple truncation for non-smart mode
+                if len(text) > max_length:
+                    original_length = len(text)
+                    text = text[:max_length]
+                    truncation_info = TruncationInfo(
+                        is_truncated=True,
+                        original_length=original_length,
+                        truncated_length=max_length,
+                        truncation_type="simple",
+                    )
+                    logger.info(
+                        f"Text truncated from {original_length} to {max_length} characters"
+                    )
 
             return ParseResult(
                 text=text,
@@ -470,6 +559,302 @@ class DocumentParser:
                 f"Failed to parse image: {str(e)}",
                 DocumentParseError.PARSE_FAILED,
             ) from e
+
+    # ==================== Smart Truncation Methods ====================
+
+    def _parse_pdf_smart(
+        self, binary_data: bytes, max_length: int
+    ) -> Tuple[str, Optional[TruncationInfo]]:
+        """
+        Parse PDF file with smart page-based truncation.
+
+        Keeps first N pages + last M pages, omits middle pages.
+        """
+        try:
+            from PyPDF2 import PdfReader
+
+            pdf_file = io.BytesIO(binary_data)
+            reader = PdfReader(pdf_file)
+
+            if reader.is_encrypted:
+                raise DocumentParseError(
+                    "Cannot parse encrypted PDF file",
+                    DocumentParseError.ENCRYPTED_PDF,
+                )
+
+            # Extract text per page
+            pages_text = []
+            for page in reader.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    pages_text.append(page_text)
+
+            # Apply smart truncation
+            text, smart_info = self.truncation_manager.truncate_pdf(
+                pages_text, max_length
+            )
+
+            truncation_info = None
+            if smart_info.is_truncated:
+                truncation_info = TruncationInfo.from_smart_info(smart_info)
+
+            return text, truncation_info
+
+        except DocumentParseError:
+            raise
+        except Exception as e:
+            logger.error(f"Error parsing PDF with smart truncation: {e}", exc_info=True)
+            raise DocumentParseError(
+                f"Failed to parse PDF: {str(e)}",
+                DocumentParseError.PARSE_FAILED,
+            ) from e
+
+    def _parse_word_smart(
+        self, binary_data: bytes, extension: str, max_length: int
+    ) -> Tuple[str, Optional[TruncationInfo]]:
+        """
+        Parse Word document with smart paragraph-based truncation.
+
+        Keeps first N paragraphs + last M paragraphs, omits middle.
+        """
+        try:
+            if extension == ".doc":
+                raise DocumentParseError(
+                    "Legacy .doc format is not fully supported. Please convert to .docx",
+                    DocumentParseError.LEGACY_DOC,
+                )
+
+            from docx import Document
+
+            doc_file = io.BytesIO(binary_data)
+            doc = Document(doc_file)
+
+            # Extract paragraphs
+            paragraphs = []
+            for paragraph in doc.paragraphs:
+                if paragraph.text.strip():
+                    paragraphs.append(paragraph.text)
+
+            # Also extract text from tables as separate paragraphs
+            for table in doc.tables:
+                for row in table.rows:
+                    row_text = []
+                    for cell in row.cells:
+                        if cell.text.strip():
+                            row_text.append(cell.text.strip())
+                    if row_text:
+                        paragraphs.append(" | ".join(row_text))
+
+            # Apply smart truncation
+            text, smart_info = self.truncation_manager.truncate_word(
+                paragraphs, max_length
+            )
+
+            truncation_info = None
+            if smart_info.is_truncated:
+                truncation_info = TruncationInfo.from_smart_info(smart_info)
+
+            return text, truncation_info
+
+        except DocumentParseError:
+            raise
+        except Exception as e:
+            logger.error(
+                f"Error parsing Word with smart truncation: {e}", exc_info=True
+            )
+            raise DocumentParseError(
+                f"Failed to parse Word document: {str(e)}",
+                DocumentParseError.PARSE_FAILED,
+            ) from e
+
+    def _parse_powerpoint_smart(
+        self, binary_data: bytes, extension: str, max_length: int
+    ) -> Tuple[str, Optional[TruncationInfo]]:
+        """
+        Parse PowerPoint with smart slide-based truncation.
+
+        Keeps first N slides + last M slides, omits middle.
+        """
+        try:
+            if extension == ".ppt":
+                raise DocumentParseError(
+                    "Legacy .ppt format is not fully supported. Please convert to .pptx",
+                    DocumentParseError.LEGACY_PPT,
+                )
+
+            from pptx import Presentation
+
+            ppt_file = io.BytesIO(binary_data)
+            prs = Presentation(ppt_file)
+
+            # Extract text per slide
+            slides_text = []
+            for slide_num, slide in enumerate(prs.slides, 1):
+                slide_content = [f"--- Slide {slide_num} ---"]
+
+                for shape in slide.shapes:
+                    if hasattr(shape, "text") and shape.text.strip():
+                        slide_content.append(shape.text)
+
+                    if shape.has_table:
+                        for row in shape.table.rows:
+                            row_text = []
+                            for cell in row.cells:
+                                if cell.text.strip():
+                                    row_text.append(cell.text.strip())
+                            if row_text:
+                                slide_content.append(" | ".join(row_text))
+
+                if len(slide_content) > 1:
+                    slides_text.append("\n".join(slide_content))
+
+            # Apply smart truncation
+            text, smart_info = self.truncation_manager.truncate_powerpoint(
+                slides_text, max_length
+            )
+
+            truncation_info = None
+            if smart_info.is_truncated:
+                truncation_info = TruncationInfo.from_smart_info(smart_info)
+
+            return text, truncation_info
+
+        except DocumentParseError:
+            raise
+        except Exception as e:
+            logger.error(
+                f"Error parsing PowerPoint with smart truncation: {e}", exc_info=True
+            )
+            raise DocumentParseError(
+                f"Failed to parse PowerPoint: {str(e)}",
+                DocumentParseError.PARSE_FAILED,
+            ) from e
+
+    def _parse_excel_smart(
+        self, binary_data: bytes, extension: str, max_length: int
+    ) -> Tuple[str, Optional[TruncationInfo]]:
+        """
+        Parse Excel file with smart row-based truncation.
+
+        Keeps header rows + sample rows + tail rows, omits middle.
+        """
+        try:
+            if extension == ".xls":
+                raise DocumentParseError(
+                    "Legacy .xls format is not fully supported. Please convert to .xlsx",
+                    DocumentParseError.LEGACY_XLS,
+                )
+
+            from openpyxl import load_workbook
+
+            excel_file = io.BytesIO(binary_data)
+            wb = load_workbook(excel_file, read_only=True, data_only=True)
+
+            # Extract data per sheet
+            sheets_data = []
+            for sheet_name in wb.sheetnames:
+                sheet = wb[sheet_name]
+                rows = []
+
+                for row in sheet.iter_rows():
+                    row_values = []
+                    for cell in row:
+                        row_values.append(cell.value)
+                    # Keep row even if all values are None (to preserve structure)
+                    if any(v is not None for v in row_values):
+                        rows.append(row_values)
+
+                if rows:
+                    sheets_data.append(
+                        {
+                            "name": sheet_name,
+                            "rows": rows,
+                        }
+                    )
+
+            wb.close()
+
+            # Apply smart truncation
+            text, smart_info = self.truncation_manager.truncate_excel(
+                sheets_data, max_length
+            )
+
+            truncation_info = None
+            if smart_info.is_truncated:
+                truncation_info = TruncationInfo.from_smart_info(smart_info)
+
+            return text, truncation_info
+
+        except DocumentParseError:
+            raise
+        except Exception as e:
+            logger.error(
+                f"Error parsing Excel with smart truncation: {e}", exc_info=True
+            )
+            raise DocumentParseError(
+                f"Failed to parse Excel: {str(e)}",
+                DocumentParseError.PARSE_FAILED,
+            ) from e
+
+    def _parse_csv_smart(
+        self, binary_data: bytes, max_length: int
+    ) -> Tuple[str, Optional[TruncationInfo]]:
+        """
+        Parse CSV file with smart row-based truncation.
+
+        Keeps header row + sample rows + tail rows, omits middle.
+        """
+        try:
+            # Detect encoding
+            detected = chardet.detect(binary_data)
+            encoding = detected.get("encoding", "utf-8") or "utf-8"
+
+            text = binary_data.decode(encoding)
+            csv_file = io.StringIO(text)
+
+            reader = csv.reader(csv_file)
+            rows = []
+            for row in reader:
+                if any(cell.strip() for cell in row):
+                    rows.append([cell.strip() for cell in row])
+
+            # Apply smart truncation
+            text, smart_info = self.truncation_manager.truncate_csv(rows, max_length)
+
+            truncation_info = None
+            if smart_info.is_truncated:
+                truncation_info = TruncationInfo.from_smart_info(smart_info)
+
+            return text, truncation_info
+
+        except Exception as e:
+            logger.error(f"Error parsing CSV with smart truncation: {e}", exc_info=True)
+            raise DocumentParseError(
+                f"Failed to parse CSV: {str(e)}",
+                DocumentParseError.PARSE_FAILED,
+            ) from e
+
+    def _parse_text_smart(
+        self, binary_data: bytes, max_length: int
+    ) -> Tuple[str, Optional[TruncationInfo]]:
+        """
+        Parse text/markdown file with smart line-based truncation.
+
+        Keeps first N lines + last M lines, omits middle.
+        """
+        # First decode the text
+        text = self._parse_text(binary_data)
+
+        # Apply smart truncation
+        truncated_text, smart_info = self.truncation_manager.truncate_text(
+            text, max_length
+        )
+
+        truncation_info = None
+        if smart_info.is_truncated:
+            truncation_info = TruncationInfo.from_smart_info(smart_info)
+
+        return truncated_text, truncation_info
 
 
 # Global parser instance

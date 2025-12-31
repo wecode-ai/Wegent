@@ -8,7 +8,7 @@ Responsible for creating knowledge base search tools and enhancing system prompt
 """
 
 import logging
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +18,8 @@ def prepare_knowledge_base_tools(
     user_id: int,
     db: Any,
     base_system_prompt: str,
+    task_id: Optional[int] = None,
+    user_subtask_id: Optional[int] = None,
 ) -> tuple[list, str]:
     """
     Prepare knowledge base tools and enhanced system prompt.
@@ -30,6 +32,8 @@ def prepare_knowledge_base_tools(
         user_id: User ID for access control
         db: Database session
         base_system_prompt: Base system prompt to enhance
+        task_id: Optional task ID for fetching knowledge base meta from history
+        user_subtask_id: Optional user subtask ID for persisting RAG results
 
     Returns:
         Tuple of (extra_tools list, enhanced_system_prompt string)
@@ -38,6 +42,11 @@ def prepare_knowledge_base_tools(
     enhanced_system_prompt = base_system_prompt
 
     if not knowledge_base_ids:
+        # Even without current knowledge bases, check for historical KB meta
+        if task_id:
+            kb_meta_prompt = _build_historical_kb_meta_prompt(db, task_id)
+            if kb_meta_prompt:
+                enhanced_system_prompt = f"{base_system_prompt}{kb_meta_prompt}"
         return extra_tools, enhanced_system_prompt
 
     logger.info(
@@ -50,10 +59,12 @@ def prepare_knowledge_base_tools(
     from app.chat_shell.tools.builtin import KnowledgeBaseTool
 
     # Create KnowledgeBaseTool with the specified knowledge bases
+    # Pass user_subtask_id for persisting RAG results to context database
     kb_tool = KnowledgeBaseTool(
         knowledge_base_ids=knowledge_base_ids,
         user_id=user_id,
         db_session=db,
+        user_subtask_id=user_subtask_id,
     )
     extra_tools.append(kb_tool)
 
@@ -81,8 +92,60 @@ The user expects answers based on the selected knowledge base content only."""
 
     enhanced_system_prompt = f"{base_system_prompt}{kb_instruction}"
 
+    # Add historical knowledge base meta info if available
+    if task_id:
+        kb_meta_prompt = _build_historical_kb_meta_prompt(db, task_id)
+        if kb_meta_prompt:
+            enhanced_system_prompt = f"{enhanced_system_prompt}{kb_meta_prompt}"
+
     logger.info(
         "[knowledge_factory] Enhanced system prompt with REQUIRED knowledge base usage instructions"
     )
 
     return extra_tools, enhanced_system_prompt
+
+
+def _build_historical_kb_meta_prompt(
+    db: Any,
+    task_id: int,
+) -> str:
+    """
+    Build knowledge base meta information from historical contexts.
+
+    Args:
+        db: Database session
+        task_id: Task ID
+
+    Returns:
+        Formatted prompt string with KB meta info, or empty string
+    """
+    from app.chat_shell.history.loader import get_knowledge_base_meta_prompt
+
+    try:
+        return get_knowledge_base_meta_prompt(db, task_id)
+    except Exception as e:
+        logger.warning(f"Failed to get KB meta prompt for task {task_id}: {e}")
+        return ""
+
+
+def get_knowledge_base_meta_list(
+    db: Any,
+    task_id: int,
+) -> List[dict]:
+    """
+    Get list of knowledge base meta information for a task.
+
+    Args:
+        db: Database session
+        task_id: Task ID
+
+    Returns:
+        List of dicts with kb_name and kb_id
+    """
+    from app.services.context import context_service
+
+    try:
+        return context_service.get_knowledge_base_meta_for_task(db, task_id)
+    except Exception as e:
+        logger.warning(f"Failed to get KB meta list for task {task_id}: {e}")
+        return []

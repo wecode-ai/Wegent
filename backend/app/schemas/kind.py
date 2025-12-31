@@ -12,6 +12,19 @@ from typing import Any, Dict, List, Optional
 from pydantic import AliasChoices, BaseModel, Field
 
 
+# API Format Enum for OpenAI-compatible models
+class ApiFormat(str, Enum):
+    """
+    API format for OpenAI-compatible models.
+
+    - CHAT_COMPLETIONS: Traditional /v1/chat/completions API (default)
+    - RESPONSES: New /v1/responses API (recommended for agent scenarios)
+    """
+
+    CHAT_COMPLETIONS = "chat/completions"
+    RESPONSES = "responses"
+
+
 # Model Category Type Enum (different from resource type public/user/group)
 class ModelCategoryType(str, Enum):
     """
@@ -136,6 +149,25 @@ class ModelSpec(BaseModel):
     )
     protocol: Optional[str] = (
         None  # Model protocol type: 'openai', 'claude', etc. Required for custom configs
+    )
+
+    # API format for OpenAI-compatible models
+    apiFormat: Optional[ApiFormat] = Field(
+        None,
+        description="API format for OpenAI-compatible models. "
+        "'chat/completions' for traditional API (default), "
+        "'responses' for new Responses API (recommended for agent scenarios). "
+        "Only applies when protocol is 'openai'.",
+    )
+
+    # Context window and output token limits for LLM models
+    contextWindow: Optional[int] = Field(
+        None,
+        description="Maximum context window size in tokens. Used for message compression.",
+    )
+    maxOutputTokens: Optional[int] = Field(
+        None,
+        description="Maximum output tokens the model can generate per response.",
     )
 
     # New fields for multi-type model support

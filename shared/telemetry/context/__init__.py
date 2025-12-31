@@ -40,6 +40,8 @@ from shared.telemetry.context.span import (
     get_business_context,
     get_current_span,
     get_request_id,
+    get_server_ip,
+    record_stream_error,
     restore_context_vars,
     set_agent_context,
     set_bot_context,
@@ -69,6 +71,7 @@ __all__ = [
     "set_span_error",
     "set_span_ok",
     "create_child_span",
+    "record_stream_error",
     # Context setters
     "set_user_context",
     "set_task_context",
@@ -81,6 +84,7 @@ __all__ = [
     # Context getters (for SpanProcessor and logging)
     "get_business_context",
     "get_request_id",
+    "get_server_ip",
     # Context copy/restore (for new event loops or threads)
     "copy_context_vars",
     "restore_context_vars",

@@ -173,7 +173,8 @@
     "dify_no_parameters": "此应用未配置输入参数。",
     "custom_shell": "自定义",
     "public_model": "公共",
-    "fine_tune_prompt": "微调提示词"
+    "fine_tune_prompt": "微调提示词",
+    "no_model_binding": "不绑定模型"
   },
   "messages": {
     "copy_markdown": "复制 Markdown 内容",
@@ -370,7 +371,7 @@
   "tasks": {
     "history_title": "历史对话",
     "group_chats": "群聊",
-    "group_chats_expand": "展开群聊（+{{count}}）",
+    "group_chats_expand": "展开群聊（+{{count}}{{suffix}}）",
     "group_chats_collapse": "收起群聊",
     "conversations": "对话",
     "search_placeholder": "搜索任务",
@@ -384,6 +385,7 @@
     "this_week": "本周",
     "earlier": "更早",
     "loading": "加载中...",
+    "load_more": "加载更多",
     "no_more_tasks": "没有更多任务",
     "settings": "设置",
     "search_results": "搜索结果",
@@ -574,6 +576,9 @@
     "warning": "警告",
     "cannotUndo": "此操作无法撤销",
     "coming_soon": "即将推出"
+  },
+  "correction": {
+    "result_title": "纠正结果"
   },
   "userSearch": {
     "placeholder": "搜索用户名或邮箱...",
@@ -780,6 +785,11 @@
     "rerank_top_n": "返回结果数",
     "rerank_top_n_hint": "返回前 N 个结果",
     "rerank_return_documents": "返回文档内容",
+    "llm_config_title": "LLM 配置",
+    "context_window": "上下文窗口",
+    "context_window_hint": "最大上下文窗口大小（token 数）。用于消息压缩。",
+    "max_output_tokens": "最大输出 Token",
+    "max_output_tokens_hint": "模型每次响应可生成的最大 token 数。",
     "errors": {
       "load_models_failed": "加载模型列表失败",
       "create_failed": "创建模型失败",
@@ -1028,11 +1038,11 @@
       "legacy_xls_hint": "请将 .xls 文件另存为 .xlsx 格式后上传",
       "network_error": "上传失败",
       "network_error_hint": "网络连接异常，请检查网络后重试",
-      "content_truncated": "文件内容已截断",
+      "content_truncated": "文件内容已压缩",
       "content_truncated_hint": "文件内容过长，已自动保留前 {{length}} 万字符"
     },
     "truncation": {
-      "notice": "⚠️ 文件内容过长，已自动截断（原始 {{original}} 字符 → 截断至 {{truncated}} 字符）"
+      "notice": "⚠️ 文件内容过长，已自动压缩（原始 {{original}} 字符 → 压缩至 {{truncated}} 字符）"
     },
     "supported_types": "PDF、Word、Excel、TXT、Markdown、图片",
     "characters": "字符"

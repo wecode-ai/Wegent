@@ -565,6 +565,7 @@ async def create_task_and_subtasks(
     bot_ids = get_bot_ids_from_team(db, team)
 
     task = None
+    task = None
     # Track the user_id to use for subtasks (owner's ID for group chats)
     subtask_user_id = user.id
 
@@ -573,11 +574,26 @@ async def create_task_and_subtasks(
         task, subtask_user_id = get_task_with_access_check(db, task_id, user.id)
         check_task_status(task)
 
+        # Update modelId in existing task if provided
+        if params.model_id:
+            from sqlalchemy.orm.attributes import flag_modified
+
+            task_crd = Task.model_validate(task.json)
+            if not task_crd.metadata.labels:
+                task_crd.metadata.labels = {}
+            task_crd.metadata.labels["modelId"] = params.model_id
+            if params.force_override_bot_model:
+                task_crd.metadata.labels["forceOverrideBotModel"] = "true"
+            task.json = task_crd.model_dump(mode="json")
+            flag_modified(task, "json")
+            logger.info(
+                f"[create_task_and_subtasks] Updated modelId to {params.model_id} for existing task {task_id}"
+            )
+
     if not task:
         # Create new task
         task = create_new_task(db, user, team, params)
         task_id = task.id
-
     # Get existing subtasks to determine message_id
     existing_subtasks = get_existing_subtasks(db, task_id, subtask_user_id)
 

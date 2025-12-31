@@ -7,6 +7,7 @@
   "go_to_create": "前往创建知识库",
   "fetch_error": "加载知识库失败",
   "documents": "文档",
+  "document_count": "{{count}} 篇文档",
   "documents_count": "{{count}} 篇文档",
   "modules": {
     "title": "我的知识",
