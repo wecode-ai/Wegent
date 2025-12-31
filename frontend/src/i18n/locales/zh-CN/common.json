@@ -370,7 +370,7 @@
   "tasks": {
     "history_title": "历史对话",
     "group_chats": "群聊",
-    "group_chats_expand": "展开群聊（+{{count}}）",
+    "group_chats_expand": "展开群聊（+{{count}}{{suffix}}）",
     "group_chats_collapse": "收起群聊",
     "conversations": "对话",
     "search_placeholder": "搜索任务",

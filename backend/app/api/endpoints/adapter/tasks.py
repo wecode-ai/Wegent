@@ -117,6 +117,40 @@ def get_tasks_lite(
     return {"total": total, "items": items}
 
 
+@router.get("/lite/group", response_model=TaskLiteListResponse)
+def get_group_tasks_lite(
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(50, ge=1, le=100, description="Items per page"),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get current user's group chat task list (paginated) for fast loading.
+    Returns only group chat tasks sorted by updated_at descending (most recent activity first).
+    """
+    skip = (page - 1) * limit
+    items, total = task_kinds_service.get_user_group_tasks_lite(
+        db=db, user_id=current_user.id, skip=skip, limit=limit
+    )
+    return {"total": total, "items": items}
+
+
+@router.get("/lite/personal", response_model=TaskLiteListResponse)
+def get_personal_tasks_lite(
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(50, ge=1, le=100, description="Items per page"),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get current user's personal (non-group-chat) task list (paginated) for fast loading.
+    Returns only personal tasks sorted by created_at descending (newest first).
+    """
+    skip = (page - 1) * limit
+    items, total = task_kinds_service.get_user_personal_tasks_lite(
+        db=db, user_id=current_user.id, skip=skip, limit=limit
+    )
+    return {"total": total, "items": items}
+
+
 @router.get("/lite/new", response_model=TaskLiteListResponse)
 def get_new_tasks_lite(
     since_id: int = Query(..., ge=1, description="Get tasks with ID greater than this"),
