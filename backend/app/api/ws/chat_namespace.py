@@ -620,6 +620,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                     title=task_title,
                     team_id=team.id,
                     team_name=team_name,
+                    is_group_chat=payload.is_group_chat,
                 )
                 logger.info(
                     f"[WS] chat:send emitted task:created event for task_id={task.id}"
