@@ -593,7 +593,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
     ) -> Tuple[List[Dict[str, Any]], int]:
         """
         Get user's group chat task list with pagination (lightweight version for list display).
-        Returns only group chat tasks sorted by updated_at descending (most recent activity first).
+        Returns only group chat tasks sorted by created_at descending (newest first).
         A task is considered a group chat if:
         - task.json.spec.is_group_chat = true, OR
         - task has records in task_members table
@@ -656,8 +656,8 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             if status != "DELETE":
                 valid_tasks.append(t)
 
-        # Sort by updated_at descending (most recent activity first)
-        valid_tasks.sort(key=lambda t: t.updated_at, reverse=True)
+        # Sort by created_at descending (newest first)
+        valid_tasks.sort(key=lambda t: t.created_at, reverse=True)
 
         # Apply pagination
         paginated_tasks = valid_tasks[skip : skip + limit]
