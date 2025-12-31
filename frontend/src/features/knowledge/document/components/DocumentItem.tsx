@@ -4,7 +4,7 @@
 
 'use client';
 
-import { FileText, Trash2, Pencil } from 'lucide-react';
+import { FileText, Trash2, Pencil, Eye } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import type { KnowledgeDocument } from '@/types/knowledge';
@@ -14,6 +14,7 @@ interface DocumentItemProps {
   document: KnowledgeDocument;
   onEdit?: (doc: KnowledgeDocument) => void;
   onDelete?: (doc: KnowledgeDocument) => void;
+  onView?: (doc: KnowledgeDocument) => void;
   canManage?: boolean;
   showBorder?: boolean;
   selected?: boolean;
@@ -24,6 +25,7 @@ export function DocumentItem({
   document,
   onEdit,
   onDelete,
+  onView,
   canManage = true,
   showBorder = true,
   selected = false,
@@ -63,13 +65,24 @@ export function DocumentItem({
     onDelete?.(document);
   };
 
+  const handleRowClick = () => {
+    // Only trigger view when clicking on the row (not on action buttons)
+    onView?.(document);
+  };
+
+  const handleView = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onView?.(document);
+  };
+
   return (
     <div
-      className={`flex items-center gap-4 px-4 py-3 bg-base hover:bg-surface transition-colors group ${showBorder ? 'border-b border-border' : ''}`}
+      className={`flex items-center gap-4 px-4 py-3 bg-base hover:bg-surface transition-colors group cursor-pointer ${showBorder ? 'border-b border-border' : ''}`}
+      onClick={handleRowClick}
     >
       {/* Checkbox for batch selection */}
       {canManage && (
-        <div className="flex-shrink-0">
+        <div className="flex-shrink-0" onClick={e => e.stopPropagation()}>
           <Checkbox
             checked={selected}
             onCheckedChange={handleCheckboxChange}
@@ -88,8 +101,15 @@ export function DocumentItem({
         <span className="text-sm font-medium text-text-primary truncate">{document.name}</span>
       </div>
 
-      {/* Edit button - in the middle area */}
-      <div className="w-48 flex-shrink-0 flex items-center justify-center">
+      {/* View and Edit buttons - in the middle area */}
+      <div className="w-48 flex-shrink-0 flex items-center justify-center gap-2">
+        <button
+          className="p-1 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors"
+          onClick={handleView}
+          title={t('knowledge:document.viewer.title')}
+        >
+          <Eye className="w-3.5 h-3.5" />
+        </button>
         {canManage && (
           <button
             className="p-1 rounded-md text-primary hover:bg-primary/10 transition-colors"
