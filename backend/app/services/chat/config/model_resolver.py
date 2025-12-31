@@ -566,12 +566,28 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
         except Exception as e:
             logger.warning(f"Failed to decrypt API key, using as-is: {e}")
 
+    # Extract API format (for OpenAI-compatible models)
+    # Priority: 1. apiFormat field, 2. protocol field (openai-responses)
+    # Default to None for backward compatibility (will use chat/completions)
+    api_format = model_spec.get("apiFormat")
+    protocol = model_spec.get("protocol")
+
+    # If protocol is "openai-responses", use responses API format
+    if not api_format and protocol == "openai-responses":
+        api_format = "responses"
+        logger.info(
+            f"[model_resolver] _extract_model_config: using responses API from protocol={protocol}"
+        )
+    elif api_format:
+        logger.info(f"[model_resolver] _extract_model_config: apiFormat={api_format}")
+
     return {
         "api_key": api_key,
         "base_url": base_url,
         "model_id": model_id,
         "model": model_type,
         "default_headers": default_headers,
+        "api_format": api_format,
     }
 
 

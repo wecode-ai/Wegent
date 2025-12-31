@@ -60,7 +60,8 @@ const PROTOCOL_BY_CATEGORY: Record<
   { value: string; label: string; hint?: string }[]
 > = {
   llm: [
-    { value: 'openai', label: 'OpenAI', hint: 'Agno' },
+    { value: 'openai', label: 'OpenAI', hint: 'Chat Completions API' },
+    { value: 'openai-responses', label: 'OpenAI Responses', hint: 'Responses API' },
     { value: 'anthropic', label: 'Anthropic', hint: 'Claude Code' },
     { value: 'gemini', label: 'Gemini', hint: 'Google' },
   ],
@@ -166,8 +167,12 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         // Set model category type
         setModelCategoryType(model.spec.modelType || 'llm');
         const modelType = model.spec.modelConfig?.env?.model;
+        const protocol = model.spec.protocol;
         // Map model type to provider type
-        if (modelType === 'claude') {
+        // Check protocol first for openai-responses
+        if (protocol === 'openai-responses') {
+          setProviderType('openai-responses');
+        } else if (modelType === 'claude') {
           setProviderType('anthropic');
         } else if (
           modelType === 'openai' ||
@@ -239,10 +244,11 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
 
   // Determine model options based on model category type and provider
   // For embedding/rerank, only show "Custom..." option since they don't use preset LLM models
+  // For openai-responses, use the same model options as openai
   const modelOptions =
     modelCategoryType === 'embedding' || modelCategoryType === 'rerank'
       ? [{ value: 'custom', label: 'Custom...' }]
-      : providerType === 'openai'
+      : providerType === 'openai' || providerType === 'openai-responses'
         ? OPENAI_MODEL_OPTIONS
         : providerType === 'gemini'
           ? GEMINI_MODEL_OPTIONS
@@ -283,14 +289,13 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
       }
     }
   }, [model, modelOptions]);
-
   const handleProviderChange = (value: string) => {
     setProviderType(value);
     setModelId('');
     setCustomModelId('');
     // Only set default base URL for LLM models
     if (modelCategoryType === 'llm') {
-      if (value === 'openai') {
+      if (value === 'openai' || value === 'openai-responses') {
         setBaseUrl('https://api.openai.com/v1');
       } else if (value === 'gemini') {
         setBaseUrl('https://generativelanguage.googleapis.com');
@@ -474,12 +479,15 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           : undefined;
 
       // Map provider type to model field value
-      // For LLM: openai -> openai, anthropic -> claude, gemini -> gemini
+      // For LLM: openai -> openai, openai-responses -> openai, anthropic -> claude, gemini -> gemini
       // For embedding/rerank: use provider type directly (openai, cohere, jina, custom)
       let modelFieldValue = providerType;
       if (modelCategoryType === 'llm') {
         if (providerType === 'anthropic') {
           modelFieldValue = 'claude';
+        } else if (providerType === 'openai-responses') {
+          // openai-responses uses openai as the model type, protocol distinguishes the API format
+          modelFieldValue = 'openai';
         }
       }
 
@@ -503,6 +511,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             },
           },
           modelType: modelCategoryType,
+          // Save protocol for openai-responses to distinguish from regular openai
+          ...(providerType === 'openai-responses' && { protocol: 'openai-responses' }),
           ...(ttsConfig && { ttsConfig }),
           ...(sttConfig && { sttConfig }),
           ...(embeddingConfig && { embeddingConfig }),
@@ -540,9 +550,13 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   };
 
   const apiKeyPlaceholder =
-    providerType === 'openai' ? 'sk-...' : providerType === 'gemini' ? 'AIza...' : 'sk-ant-...';
+    providerType === 'openai' || providerType === 'openai-responses'
+      ? 'sk-...'
+      : providerType === 'gemini'
+        ? 'AIza...'
+        : 'sk-ant-...';
   const baseUrlPlaceholder =
-    providerType === 'openai'
+    providerType === 'openai' || providerType === 'openai-responses'
       ? 'https://api.openai.com/v1'
       : providerType === 'gemini'
         ? 'https://generativelanguage.googleapis.com'
