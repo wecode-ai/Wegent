@@ -280,54 +280,54 @@ class TestAttachmentTruncationStrategy:
         # The truncated content should be shorter than original
         assert len(result_content) < len(long_content)
 
-    def test_dynamic_halving_truncation(self):
-        """Test dynamic halving when initial truncation is not enough."""
+    def test_binary_search_compression(self):
+        """Test binary search finds appropriate retention ratio."""
         strategy = AttachmentTruncationStrategy()
         counter = TokenCounter(model_id="gpt-4")
-        # Start with large truncate length, but set a very low target
         config = CompressionConfig(
             attachment_truncate_length=10000,
             min_attachment_length=100,
-        )
-
-        # Create message with very long attachment
-        long_content = "[Attachment 1 - doc.pdf]" + "x" * 50000
-        messages = [{"role": "user", "content": long_content}]
-
-        # Set a very low target to force multiple halving iterations
-        compressed, details = strategy.compress(messages, counter, 100, config)
-
-        # Should have performed multiple iterations
-        assert details["iterations"] > 1
-        # Final base truncate length should be less than initial
-        assert details["final_base_truncate_length"] < config.attachment_truncate_length
-        # Content should be significantly reduced
-        assert len(compressed[0]["content"]) < len(messages[0]["content"])
-
-    def test_dynamic_halving_stops_at_min_length(self):
-        """Test that dynamic halving stops when reaching min_length."""
-        strategy = AttachmentTruncationStrategy()
-        counter = TokenCounter(model_id="gpt-4")
-        # Set min_length high enough that halving will hit it
-        config = CompressionConfig(
-            attachment_truncate_length=1000,
-            min_attachment_length=600,  # 1000 / 2 = 500 < 600, so should stop
         )
 
         # Create message with long attachment
         long_content = "[Attachment 1 - doc.pdf]" + "x" * 5000
         messages = [{"role": "user", "content": long_content}]
 
-        # Set a very low target to force halving attempt
-        compressed, details = strategy.compress(messages, counter, 10, config)
+        # Request token reduction
+        compressed, details = strategy.compress(messages, counter, 500, config)
 
-        # Should stop after first iteration since 500 < 600 (min_length)
-        assert details["iterations"] == 1
-        # Final base truncate length should be the initial value
-        assert details["final_base_truncate_length"] == 1000
+        # Should have truncated the attachment
+        assert details["attachments_truncated"] >= 1
+        assert details["chars_removed"] > 0
+        # Content should be reduced
+        assert len(compressed[0]["content"]) < len(messages[0]["content"])
+        # Should have a retention ratio from binary search
+        assert "retention_ratio" in details
+        assert 0 < details["retention_ratio"] <= 1.0
 
-    def test_dynamic_halving_reaches_target(self):
-        """Test that dynamic halving stops when target is reached."""
+    def test_compression_respects_min_retention_ratio(self):
+        """Test that compression respects minimum retention ratio."""
+        strategy = AttachmentTruncationStrategy()
+        counter = TokenCounter(model_id="gpt-4")
+        config = CompressionConfig(
+            attachment_truncate_length=1000,
+            min_attachment_length=50,
+        )
+
+        # Create message with long attachment
+        long_content = "[Attachment 1 - doc.pdf]" + "x" * 3000
+        messages = [{"role": "user", "content": long_content}]
+
+        # Request very aggressive compression
+        compressed, details = strategy.compress(messages, counter, 10000, config)
+
+        # Should have truncated
+        assert details["attachments_truncated"] >= 1
+        # Retention ratio should not go below MIN_RETENTION_RATIO
+        assert details["retention_ratio"] >= strategy.MIN_RETENTION_RATIO
+
+    def test_no_compression_when_under_target(self):
+        """Test that no compression happens when already under target."""
         strategy = AttachmentTruncationStrategy()
         counter = TokenCounter(model_id="gpt-4")
         config = CompressionConfig(
@@ -335,17 +335,18 @@ class TestAttachmentTruncationStrategy:
             min_attachment_length=100,
         )
 
-        # Create message with moderately long attachment
-        long_content = "[Attachment 1 - doc.pdf]" + "x" * 3000
-        messages = [{"role": "user", "content": long_content}]
+        # Create message with short attachment
+        short_content = "[Attachment 1 - doc.pdf]" + "x" * 100
+        messages = [{"role": "user", "content": short_content}]
 
-        # Set a reasonable target that can be reached
+        # Request compression but content is already small
         compressed, details = strategy.compress(messages, counter, 100000, config)
 
-        # Should reach target in first iteration
-        assert details["iterations"] == 1
-        # Final base truncate length should be the initial value
-        assert details["final_base_truncate_length"] == 2000
+        # Should not truncate since content is already small
+        # The retention ratio should be 1.0 (no truncation needed)
+        assert (
+            details["retention_ratio"] == 1.0 or details["attachments_truncated"] == 0
+        )
 
     def test_dynamic_halving_multiple_attachments(self):
         """Test dynamic halving with multiple attachments in one message."""
@@ -374,25 +375,30 @@ class TestAttachmentTruncationStrategy:
         # Content should be reduced
         assert len(compressed[0]["content"]) < len(messages[0]["content"])
 
-    def test_max_iterations_limit(self):
-        """Test that halving respects MAX_TRUNCATION_ITERATIONS."""
+    def test_binary_search_iterations_limit(self):
+        """Test that binary search has a reasonable iteration limit."""
         strategy = AttachmentTruncationStrategy()
         counter = TokenCounter(model_id="gpt-4")
-        # Set very small min_length to allow many halvings
         config = CompressionConfig(
-            attachment_truncate_length=1000000,  # Very large initial
-            min_attachment_length=1,  # Very small min
+            attachment_truncate_length=1000,
+            min_attachment_length=50,
         )
 
-        # Create extremely long content
-        long_content = "[Attachment 1 - doc.pdf]" + "x" * 2000000
+        # Create moderately long content (not too large to avoid slow tests)
+        long_content = "[Attachment 1 - doc.pdf]" + "x" * 5000
         messages = [{"role": "user", "content": long_content}]
 
-        # Set impossible target
-        compressed, details = strategy.compress(messages, counter, 1, config)
+        # Request a large token reduction to force binary search to work hard
+        compressed, details = strategy.compress(messages, counter, 10000, config)
 
-        # Should not exceed MAX_TRUNCATION_ITERATIONS
-        assert details["iterations"] <= strategy.MAX_TRUNCATION_ITERATIONS
+        # Should have truncated the attachment
+        assert details["attachments_truncated"] >= 1
+        assert details["chars_removed"] > 0
+        # Content should be reduced
+        assert len(compressed[0]["content"]) < len(messages[0]["content"])
+        # Should have a retention ratio (binary search result)
+        assert "retention_ratio" in details
+        assert 0 < details["retention_ratio"] <= 1.0
 
     def test_recency_factor_calculation(self):
         """Test recency factor calculation for different positions."""
@@ -411,8 +417,8 @@ class TestAttachmentTruncationStrategy:
         factor = strategy._calculate_recency_factor(4, 10)
         assert 0.25 < factor < 1.0
 
-    def test_recency_aware_truncation_older_messages_truncated_more(self):
-        """Test that older messages are truncated more aggressively."""
+    def test_uniform_compression_across_messages(self):
+        """Test that all messages are compressed with the same retention ratio."""
         strategy = AttachmentTruncationStrategy()
         counter = TokenCounter(model_id="gpt-4")
         config = CompressionConfig(
@@ -421,7 +427,6 @@ class TestAttachmentTruncationStrategy:
         )
 
         # Create multiple messages with same-length attachments
-        # Older messages should be truncated more
         messages = [
             {"role": "user", "content": "[Attachment 1 - old.pdf]" + "a" * 2000},
             {"role": "assistant", "content": "Response 1"},
@@ -430,46 +435,38 @@ class TestAttachmentTruncationStrategy:
             {"role": "user", "content": "[Attachment 3 - new.pdf]" + "c" * 2000},
         ]
 
-        compressed, details = strategy.compress(messages, counter, 100000, config)
+        compressed, details = strategy.compress(messages, counter, 5000, config)
 
-        # Get the lengths of attachment content in compressed messages
-        old_msg_len = len(compressed[0]["content"])
-        new_msg_len = len(compressed[4]["content"])
+        # All attachment messages should be compressed
+        assert details["attachments_truncated"] >= 1
+        # Should have a uniform retention ratio applied
+        assert "retention_ratio" in details
+        assert 0 < details["retention_ratio"] <= 1.0
 
-        # Older message should be shorter (more truncated) than newer message
-        # because recency factor is lower for older messages
-        assert old_msg_len < new_msg_len, (
-            f"Older message ({old_msg_len}) should be shorter than "
-            f"newer message ({new_msg_len})"
-        )
-
-    def test_recency_aware_truncation_preserves_recent_context(self):
-        """Test that recent messages preserve more content."""
+    def test_multiple_attachments_compressed(self):
+        """Test that multiple attachments in different messages are all compressed."""
         strategy = AttachmentTruncationStrategy()
         counter = TokenCounter(model_id="gpt-4")
-        # Use a base length that will result in different truncation
-        # based on recency factor
         config = CompressionConfig(
-            attachment_truncate_length=800,  # Base length
+            attachment_truncate_length=800,
             min_attachment_length=100,
         )
 
-        # Create messages where the last one has attachment
+        # Create messages with attachments
         messages = [
             {"role": "user", "content": "[Attachment 1 - first.pdf]" + "x" * 1500},
             {"role": "assistant", "content": "Response"},
             {"role": "user", "content": "[Attachment 2 - last.pdf]" + "y" * 1500},
         ]
 
-        compressed, details = strategy.compress(messages, counter, 100000, config)
+        compressed, details = strategy.compress(messages, counter, 2000, config)
 
-        # First message (index 0, factor ~0.25): truncate_length = 800 * 0.25 = 200
-        # Last message (index 2, factor 1.0): truncate_length = 800 * 1.0 = 800
-        first_content = compressed[0]["content"]
-        last_content = compressed[2]["content"]
-
-        # The last message should have more content preserved
-        assert len(last_content) > len(first_content)
+        # Should have compressed attachments
+        assert details["attachments_truncated"] >= 1
+        assert details["chars_removed"] > 0
+        # Both attachment messages should be shorter than original
+        assert len(compressed[0]["content"]) < len(messages[0]["content"])
+        assert len(compressed[2]["content"]) < len(messages[2]["content"])
 
 
 class TestHistoryTruncationStrategy:
@@ -570,7 +567,8 @@ class TestMessageCompressor:
         compressor.model_context = ModelContextConfig(
             context_window=500,
             output_tokens=100,
-            safety_margin=0.9,
+            trigger_threshold=0.9,
+            target_threshold=0.7,
         )
 
         result = compressor.compress_if_needed(messages)

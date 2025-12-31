@@ -14,36 +14,97 @@ Chat Shell is a Shell type, similar to Claude Code, Agno, Dify, etc.
 It can be embedded in Backend or deployed independently in the future.
 """
 
-# Agent
-from .agent import AgentConfig, ChatAgent, chat_agent
 
-# Agents
-from .agents import LangGraphAgentBuilder
+def __getattr__(name: str):
+    """Lazy import to avoid loading heavy dependencies when not needed.
 
-# Boundary contracts
-from .api.schemas import ChatEvent, ChatEventType, StreamEvent, StreamEventType
+    This allows submodules like compression to be imported without
+    triggering the full import chain (e.g., langgraph).
+    """
+    # Agent
+    if name in ("AgentConfig", "ChatAgent", "chat_agent"):
+        from .agent import AgentConfig, ChatAgent, chat_agent
 
-# Messages
-from .messages import MessageConverter
+        return {
+            "AgentConfig": AgentConfig,
+            "ChatAgent": ChatAgent,
+            "chat_agent": chat_agent,
+        }[name]
 
-# Models
-from .models import LangChainModelFactory
+    # Agents
+    if name == "LangGraphAgentBuilder":
+        from .agents import LangGraphAgentBuilder
 
-# Skills
-from .skills import SkillToolContext, SkillToolProvider, SkillToolRegistry
+        return LangGraphAgentBuilder
 
-# Streaming
-from .streaming import SSEStreamingHandler
+    # Boundary contracts
+    if name in ("ChatEvent", "ChatEventType", "StreamEvent", "StreamEventType"):
+        from .api.schemas import ChatEvent, ChatEventType, StreamEvent, StreamEventType
 
-# Tools
-from .tools import (
-    FileListSkill,
-    FileReaderSkill,
-    KnowledgeBaseTool,
-    ToolRegistry,
-    WebSearchTool,
-    global_registry,
-)
+        return {
+            "ChatEvent": ChatEvent,
+            "ChatEventType": ChatEventType,
+            "StreamEvent": StreamEvent,
+            "StreamEventType": StreamEventType,
+        }[name]
+
+    # Messages
+    if name == "MessageConverter":
+        from .messages import MessageConverter
+
+        return MessageConverter
+
+    # Models
+    if name == "LangChainModelFactory":
+        from .models import LangChainModelFactory
+
+        return LangChainModelFactory
+
+    # Skills
+    if name in ("SkillToolContext", "SkillToolProvider", "SkillToolRegistry"):
+        from .skills import SkillToolContext, SkillToolProvider, SkillToolRegistry
+
+        return {
+            "SkillToolContext": SkillToolContext,
+            "SkillToolProvider": SkillToolProvider,
+            "SkillToolRegistry": SkillToolRegistry,
+        }[name]
+
+    # Streaming
+    if name == "SSEStreamingHandler":
+        from .streaming import SSEStreamingHandler
+
+        return SSEStreamingHandler
+
+    # Tools
+    if name in (
+        "FileListSkill",
+        "FileReaderSkill",
+        "KnowledgeBaseTool",
+        "ToolRegistry",
+        "WebSearchTool",
+        "global_registry",
+    ):
+        from .tools import (
+            FileListSkill,
+            FileReaderSkill,
+            KnowledgeBaseTool,
+            ToolRegistry,
+            WebSearchTool,
+            global_registry,
+        )
+
+        return {
+            "FileListSkill": FileListSkill,
+            "FileReaderSkill": FileReaderSkill,
+            "KnowledgeBaseTool": KnowledgeBaseTool,
+            "ToolRegistry": ToolRegistry,
+            "WebSearchTool": WebSearchTool,
+            "global_registry": global_registry,
+        }[name]
+
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     # Boundary contracts

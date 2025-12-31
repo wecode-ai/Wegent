@@ -300,10 +300,11 @@ class MessageCompressor:
             CompressionResult with compressed messages and details
         """
         if not self.config.enabled:
+            # Skip token counting when compression is disabled for performance
             return CompressionResult(
                 messages=messages,
-                original_tokens=self.count_tokens(messages),
-                compressed_tokens=self.count_tokens(messages),
+                original_tokens=0,
+                compressed_tokens=0,
             )
 
         original_tokens = self.count_tokens(messages)
