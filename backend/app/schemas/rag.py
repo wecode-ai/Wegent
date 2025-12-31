@@ -237,3 +237,11 @@ class DocumentListResponse(BaseModel):
     page: int
     page_size: int
     knowledge_id: str
+
+
+class IndexNameResponse(BaseModel):
+    """Index name query response."""
+
+    knowledge_id: str = Field(..., description="Knowledge base ID")
+    index_name: str = Field(..., description="Computed index name")
+    index_strategy: str = Field(..., description="Index strategy mode used")

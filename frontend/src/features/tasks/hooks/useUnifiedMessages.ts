@@ -30,7 +30,8 @@ import { useMemo, useEffect, useRef } from 'react';
 import { useChatStreamContext, computeIsStreaming } from '../contexts/chatStreamContext';
 import { useUser } from '@/features/common/UserContext';
 import { useTaskContext } from '../contexts/taskContext';
-import type { Team, Attachment } from '@/types/api';
+import type { Team, Attachment, SubtaskContextBrief } from '@/types/api';
+import type { SourceReference } from '@/types/socket';
 
 /**
  * Message for display - extends UnifiedMessage with additional rendering info
@@ -52,8 +53,10 @@ export interface DisplayMessage {
   messageId?: number;
   /** Error message if status is 'error' */
   error?: string;
-  /** Attachments array */
+  /** Attachments array (deprecated, use contexts) */
   attachments?: Attachment[];
+  /** Unified contexts (attachments, knowledge bases, etc.) */
+  contexts?: SubtaskContextBrief[];
   /** Bot name for AI messages */
   botName?: string;
   /** Sender user name for group chat */
@@ -72,7 +75,10 @@ export interface DisplayMessage {
     thinking?: unknown[];
     workbench?: Record<string, unknown>;
     shell_type?: string; // Shell type for frontend display (Chat, ClaudeCode, Agno, etc.)
+    sources?: SourceReference[]; // RAG knowledge base sources
   };
+  /** Knowledge base source references (for RAG citations) - top-level for backward compatibility */
+  sources?: SourceReference[];
   /** Whether this message is from the current user (for alignment) */
   isCurrentUser?: boolean;
   /** Whether to show the sender avatar/name */
@@ -217,6 +223,9 @@ export function useUnifiedMessages({
         attachments = [msg.attachment as Attachment];
       }
 
+      // Get contexts from message (new unified context system)
+      const contexts = msg.contexts as SubtaskContextBrief[] | undefined;
+
       const displayMsg: DisplayMessage = {
         id: msg.id,
         type: msg.type,
@@ -227,6 +236,7 @@ export function useUnifiedMessages({
         messageId: msg.messageId,
         error: msg.error,
         attachments,
+        contexts,
         botName: msg.botName || team?.name,
         senderUserName: msg.senderUserName,
         senderUserId: msg.senderUserId,
@@ -236,6 +246,8 @@ export function useUnifiedMessages({
         thinking: msg.result?.thinking,
         // Include full result object (contains shell_type and other metadata)
         result: msg.result,
+        // Include sources from both top-level and result for backward compatibility
+        sources: msg.sources || msg.result?.sources,
         isCurrentUser: msg.type === 'user' && (msg.senderUserId === user?.id || !msg.senderUserId),
         showSender: isGroupChat && msg.type === 'user',
       };

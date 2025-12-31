@@ -27,7 +27,21 @@ export function useEmbeddingModels(scope?: 'personal' | 'group' | 'all', groupNa
         groupName, // groupName
         'embedding' // modelCategoryType - filter by embedding models
       );
-      setModels(response?.data || []);
+      const data = response?.data || [];
+      // Sort by type priority based on scope, then by name
+      // - Personal scope: user > public
+      // - Group scope: group > public
+      const typePriority: Record<string, number> =
+        scope === 'group' ? { group: 0, public: 1 } : { user: 0, public: 1 };
+      data.sort((a, b) => {
+        const priorityA = typePriority[a.type] ?? 1;
+        const priorityB = typePriority[b.type] ?? 1;
+        if (priorityA !== priorityB) {
+          return priorityA - priorityB;
+        }
+        return (a.name || '').localeCompare(b.name || '');
+      });
+      setModels(data);
     } catch (err) {
       setError(err as Error);
     } finally {

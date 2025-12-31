@@ -3,6 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { apiClient } from './client';
+import { RetrieverCRD } from './retrievers';
+
+// Re-export RetrieverCRD for backward compatibility
+export type { RetrieverCRD } from './retrievers';
 
 // Admin User Types
 export type UserRole = 'admin' | 'user';
@@ -158,6 +162,25 @@ export interface AdminPersonalKey {
 export interface AdminPersonalKeyListResponse {
   items: AdminPersonalKey[];
   total: number;
+}
+
+// Public Retriever Types
+export interface AdminPublicRetriever {
+  id: number;
+  name: string;
+  namespace: string;
+  displayName: string | null;
+  storageType: string;
+  description: string | null;
+  json: RetrieverCRD;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdminPublicRetrieverListResponse {
+  total: number;
+  items: AdminPublicRetriever[];
 }
 
 // Admin API Services
@@ -373,5 +396,41 @@ export const adminApis = {
    */
   async deletePersonalKey(keyId: number): Promise<void> {
     return apiClient.delete(`/admin/personal-keys/${keyId}`);
+  },
+
+  // ==================== Public Retriever Management ====================
+
+  /**
+   * Get list of all public retrievers with pagination
+   */
+  async getPublicRetrievers(
+    page: number = 1,
+    limit: number = 20
+  ): Promise<AdminPublicRetrieverListResponse> {
+    return apiClient.get(`/admin/public-retrievers?page=${page}&limit=${limit}`);
+  },
+
+  /**
+   * Create a new public retriever
+   */
+  async createPublicRetriever(retrieverData: RetrieverCRD): Promise<AdminPublicRetriever> {
+    return apiClient.post('/admin/public-retrievers', retrieverData);
+  },
+
+  /**
+   * Update a public retriever
+   */
+  async updatePublicRetriever(
+    retrieverId: number,
+    retrieverData: RetrieverCRD
+  ): Promise<AdminPublicRetriever> {
+    return apiClient.put(`/admin/public-retrievers/${retrieverId}`, retrieverData);
+  },
+
+  /**
+   * Delete a public retriever
+   */
+  async deletePublicRetriever(retrieverId: number): Promise<void> {
+    return apiClient.delete(`/admin/public-retrievers/${retrieverId}`);
   },
 };

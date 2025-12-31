@@ -426,6 +426,8 @@
     "description": "Manage retrieval and storage engine configurations for RAG",
     "my_retrievers": "My Retrievers",
     "group_retrievers": "Group Retrievers",
+    "public_retrievers": "Public Retrievers",
+    "public": "Public",
     "create": "Create Retriever",
     "edit": "Edit Retriever",
     "delete": "Delete Retriever",
