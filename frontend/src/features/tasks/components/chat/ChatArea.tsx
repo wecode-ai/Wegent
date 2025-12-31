@@ -55,8 +55,14 @@ export default function ChatArea({
   // Task context
   const { selectedTaskDetail, setSelectedTask, accessDenied, clearAccessDenied } = useTaskContext();
 
-  // Stream context for clearVersion
-  const { clearVersion } = useChatStreamContext();
+  // Stream context for clearVersion and getStreamState
+  // getStreamState is used to access messages (SINGLE SOURCE OF TRUTH per AGENTS.md)
+  const { clearVersion, getStreamState } = useChatStreamContext();
+
+  // Get stream state for current task to check messages
+  const currentStreamState = selectedTaskDetail?.id
+    ? getStreamState(selectedTaskDetail.id)
+    : undefined;
 
   // Chat area state (team, repo, branch, model, input, toggles, etc.)
   const chatState = useChatAreaState({
@@ -70,13 +76,14 @@ export default function ChatArea({
   const lastSubtask = subtaskList.length ? subtaskList[subtaskList.length - 1] : null;
   const lastSubtaskId = lastSubtask?.id ?? null;
   const lastSubtaskUpdatedAt = lastSubtask?.updated_at || lastSubtask?.completed_at || null;
-
   // Determine if there are messages to display (computed early for hooks)
+  // Uses context messages as the single source of truth, not selectedTaskDetail.subtasks
   const hasMessagesForHooks = useMemo(() => {
     const hasSelectedTask = selectedTaskDetail && selectedTaskDetail.id;
-    const hasSubtasks = selectedTaskDetail?.subtasks && selectedTaskDetail.subtasks.length > 0;
-    return Boolean(hasSelectedTask || hasSubtasks);
-  }, [selectedTaskDetail]);
+    // Check messages from context (single source of truth)
+    const hasContextMessages = currentStreamState?.messages && currentStreamState.messages.size > 0;
+    return Boolean(hasSelectedTask || hasContextMessages);
+  }, [selectedTaskDetail, currentStreamState?.messages]);
 
   // Use scroll management hook - consolidates 4 useEffect calls
   const {
