@@ -319,6 +319,8 @@ export default function ChatArea({
     setSelectedModel: chatState.setSelectedModel,
     forceOverride: chatState.forceOverride,
     setForceOverride: chatState.setForceOverride,
+    teamId: chatState.selectedTeam?.id,
+    taskId: selectedTaskDetail?.id,
     showRepositorySelector,
     selectedRepo: chatState.selectedRepo,
     setSelectedRepo: chatState.setSelectedRepo,

@@ -241,22 +241,57 @@ export function useTeamPreferences({
    * This replaces the original useEffect at lines 249-303 in ChatArea.tsx.
    */
   useEffect(() => {
-    if (!selectedTaskDetail?.id || !selectedTeam) return;
+    console.log('[useTeamPreferences] Model sync effect triggered', {
+      taskId: selectedTaskDetail?.id,
+      taskModelId: selectedTaskDetail?.model_id,
+      teamId: selectedTeam?.id,
+      prevTaskId: prevTaskIdForModelRef.current,
+    });
+
+    if (!selectedTaskDetail?.id || !selectedTeam) {
+      console.log('[useTeamPreferences] Skipping: no task or team');
+      return;
+    }
 
     const taskIdChanged = prevTaskIdForModelRef.current !== selectedTaskDetail.id;
-    if (!taskIdChanged) return;
+    if (!taskIdChanged) {
+      console.log('[useTeamPreferences] Skipping: task ID not changed');
+      return;
+    }
 
     const isUserSwitchingTasks =
       prevTaskIdForModelRef.current !== undefined && prevTaskIdForModelRef.current !== null;
 
+    // Check if this is a task creation (prev was undefined/null, now has a task ID)
+    const isTaskCreation =
+      (prevTaskIdForModelRef.current === undefined || prevTaskIdForModelRef.current === null) &&
+      typeof selectedTaskDetail.id === 'number';
+
     prevTaskIdForModelRef.current = selectedTaskDetail.id;
 
-    if (!isUserSwitchingTasks) return;
+    // For task creation, we should set the model from the task's model_id
+    // This ensures the model selector shows the correct model after task creation
+    if (isTaskCreation && selectedTaskDetail.model_id) {
+      console.log(
+        '[useTeamPreferences] Task creation detected, setting model from task:',
+        selectedTaskDetail.model_id
+      );
+      handleExplicitModel(selectedTaskDetail.model_id);
+      setForceOverride(true);
+      return;
+    }
+
+    if (!isUserSwitchingTasks) {
+      console.log('[useTeamPreferences] Skipping: not user switching tasks (initial load)');
+      return;
+    }
 
     const taskModelId = selectedTaskDetail.model_id;
+    console.log('[useTeamPreferences] User switching tasks, taskModelId:', taskModelId);
 
     if (!taskModelId || taskModelId === DEFAULT_MODEL_NAME) {
       const teamModelName = extractTeamModelName(selectedTeam);
+      console.log('[useTeamPreferences] No task model, using team model:', teamModelName);
 
       if (teamModelName) {
         handleExplicitModel(teamModelName);
@@ -267,6 +302,7 @@ export function useTeamPreferences({
       return;
     }
 
+    console.log('[useTeamPreferences] Setting model from task:', taskModelId);
     handleExplicitModel(taskModelId);
     setForceOverride(true);
   }, [

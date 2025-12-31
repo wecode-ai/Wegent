@@ -572,6 +572,9 @@
     "cannotUndo": "This action cannot be undone",
     "coming_soon": "Coming Soon"
   },
+  "correction": {
+    "result_title": "Correction Result"
+  },
   "userSearch": {
     "placeholder": "Search username or email...",
     "selectedUsers": "{{count}} user(s) selected",
