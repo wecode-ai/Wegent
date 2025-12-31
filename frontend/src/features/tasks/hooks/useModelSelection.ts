@@ -370,8 +370,8 @@ export function useModelSelection({
         }
       }
 
-      // Priority 3: Use team's bot bind_model (only if no taskModelId and not new chat)
-      if (!restoredModel && !taskModelId && taskId) {
+      // Priority 3: Use team's bot bind_model as fallback
+      if (!restoredModel && !taskModelId) {
         console.log('[useModelSelection] Priority 3: Checking team bind_model...');
         const teamDefaultModel = getTeamDefaultModel();
         if (teamDefaultModel) {
