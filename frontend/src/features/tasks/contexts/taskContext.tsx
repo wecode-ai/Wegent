@@ -344,18 +344,28 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
       created_at: data.created_at,
       updated_at: data.created_at,
       completed_at: '',
-      is_group_chat: false,
+      is_group_chat: data.is_group_chat ?? false,
     };
 
     // Initialize view status for the new task
     initializeTaskViewStatus([newTask]);
 
-    // Add to personal tasks (new tasks are always personal initially)
-    setPersonalTasks(prev => {
-      const exists = prev.some(task => task.id === data.task_id);
-      if (exists) return prev;
-      return [newTask, ...prev];
-    });
+    // Add to the appropriate list based on is_group_chat flag
+    if (data.is_group_chat) {
+      // Add to group tasks for group chats
+      setGroupTasks(prev => {
+        const exists = prev.some(task => task.id === data.task_id);
+        if (exists) return prev;
+        return [newTask, ...prev];
+      });
+    } else {
+      // Add to personal tasks for non-group chats
+      setPersonalTasks(prev => {
+        const exists = prev.some(task => task.id === data.task_id);
+        if (exists) return prev;
+        return [newTask, ...prev];
+      });
+    }
 
     // Also update combined tasks list for backward compatibility
     setTasks(prev => {
