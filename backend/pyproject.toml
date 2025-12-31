@@ -82,6 +82,9 @@ dependencies = [
     "emoji>=2.9.0",
     "mcp>=1.0.0",
 
+    # Document block parsing (advanced PDF support)
+    "PyMuPDF>=1.23.0",
+
     # WebSocket support
     "python-socketio>=5.10.0",
 
