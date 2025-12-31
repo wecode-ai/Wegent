@@ -185,6 +185,16 @@ class Settings(BaseSettings):
         50  # Default max results when not specified by LLM or engine config
     )
 
+    # Message compression configuration
+    # Enable/disable automatic message compression when context limit is exceeded
+    MESSAGE_COMPRESSION_ENABLED: bool = True
+    # Number of first messages to keep during history truncation (system prompt + initial context)
+    MESSAGE_COMPRESSION_FIRST_MESSAGES: int = 2
+    # Number of last messages to keep during history truncation (recent context)
+    MESSAGE_COMPRESSION_LAST_MESSAGES: int = 10
+    # Maximum length for attachment content after truncation (characters)
+    MESSAGE_COMPRESSION_ATTACHMENT_LENGTH: int = 50000
+
     # Wizard configuration
     # The name of the public model to use for wizard AI features (follow-up questions, prompt generation)
     # If not set or empty, wizard will try to find any available model (user's first, then public)
