@@ -66,7 +66,8 @@ export interface UseChatStreamHandlersOptions {
 
 export interface ChatStreamHandlers {
   // Stream state
-  streamingTaskId: number | null;
+  /** Pending task ID - can be tempTaskId (negative) or taskId (positive) before selectedTaskDetail updates */
+  pendingTaskId: number | null;
   currentStreamState: ReturnType<typeof useChatStreamContext>['getStreamState'] extends (
     id: number
   ) => infer R
@@ -156,7 +157,7 @@ export function useChatStreamHandlers({
   const { retryMessage } = useSocket();
 
   // Local state
-  const [streamingTaskId, setStreamingTaskId] = useState<number | null>(null);
+  const [pendingTaskId, setPendingTaskId] = useState<number | null>(null);
   const [localPendingMessage, setLocalPendingMessage] = useState<string | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
 
@@ -170,7 +171,7 @@ export function useChatStreamHandlers({
   // Unified function to reset streaming-related state
   const resetStreamingState = useCallback(() => {
     setLocalPendingMessage(null);
-    setStreamingTaskId(null);
+    setPendingTaskId(null);
   }, []);
 
   // Get current display task ID
@@ -179,16 +180,16 @@ export function useChatStreamHandlers({
   // Get stream state for the currently displayed task
   const currentStreamState = useMemo(() => {
     if (!currentDisplayTaskId) {
-      if (streamingTaskId) {
-        return getStreamState(streamingTaskId);
+      if (pendingTaskId) {
+        return getStreamState(pendingTaskId);
       }
       return undefined;
     }
     return getStreamState(currentDisplayTaskId);
-  }, [currentDisplayTaskId, streamingTaskId, getStreamState]);
+  }, [currentDisplayTaskId, pendingTaskId, getStreamState]);
 
   // Check streaming states
-  const _isStreamingTaskActive = streamingTaskId ? isTaskStreaming(streamingTaskId) : false;
+  const _isStreamingTaskActive = pendingTaskId ? isTaskStreaming(pendingTaskId) : false;
   const isContextStreaming = computeIsStreaming(currentStreamState?.messages);
 
   const isSubtaskStreaming = useMemo(() => {
@@ -213,7 +214,7 @@ export function useChatStreamHandlers({
 
   // Stop stream wrapper
   const stopStream = useCallback(async () => {
-    const taskIdToStop = currentDisplayTaskId || streamingTaskId;
+    const taskIdToStop = currentDisplayTaskId || pendingTaskId;
 
     if (taskIdToStop && taskIdToStop > 0) {
       const team =
@@ -222,7 +223,7 @@ export function useChatStreamHandlers({
     }
   }, [
     currentDisplayTaskId,
-    streamingTaskId,
+    pendingTaskId,
     contextStopStream,
     selectedTaskDetail?.subtasks,
     selectedTaskDetail?.team,
@@ -252,27 +253,27 @@ export function useChatStreamHandlers({
 
       setIsLoading(false);
       setLocalPendingMessage(null);
-      setStreamingTaskId(null);
+      setPendingTaskId(null);
       previousTaskIdRef.current = undefined;
       prevTaskIdForModelRef.current = undefined;
       setIsCancelling(false);
     }
   }, [clearVersion, setIsLoading]);
 
-  // Clear streamingTaskId when switching to a different task
+  // Clear pendingTaskId when switching to a different task
   useEffect(() => {
-    if (streamingTaskId && selectedTaskDetail?.id && selectedTaskDetail.id !== streamingTaskId) {
-      setStreamingTaskId(null);
+    if (pendingTaskId && selectedTaskDetail?.id && selectedTaskDetail.id !== pendingTaskId) {
+      setPendingTaskId(null);
     }
-  }, [selectedTaskDetail?.id, streamingTaskId]);
+  }, [selectedTaskDetail?.id, pendingTaskId]);
 
   // Reset when navigating to fresh new task state
   useEffect(() => {
-    if (!selectedTaskDetail?.id && !streamingTaskId) {
+    if (!selectedTaskDetail?.id && !pendingTaskId) {
       resetStreamingState();
       setIsLoading(false);
     }
-  }, [selectedTaskDetail?.id, streamingTaskId, resetStreamingState, setIsLoading]);
+  }, [selectedTaskDetail?.id, pendingTaskId, resetStreamingState, setIsLoading]);
 
   // Reset when switching to a DIFFERENT task
   useEffect(() => {
@@ -308,7 +309,7 @@ export function useChatStreamHandlers({
       });
 
       if (resumed) {
-        setStreamingTaskId(taskId);
+        setPendingTaskId(taskId);
       }
     };
 
@@ -508,7 +509,7 @@ export function useChatStreamHandlers({
               _subtaskId: number
             ) => {
               if (completedTaskId > 0) {
-                setStreamingTaskId(completedTaskId);
+                setPendingTaskId(completedTaskId);
               }
 
               if (completedTaskId && !selectedTaskDetail?.id) {
@@ -533,7 +534,7 @@ export function useChatStreamHandlers({
         );
 
         if (tempTaskId !== immediateTaskId && tempTaskId > 0) {
-          setStreamingTaskId(tempTaskId);
+          setPendingTaskId(tempTaskId);
         }
 
         setTimeout(() => scrollToBottom(true), 0);
@@ -701,7 +702,7 @@ export function useChatStreamHandlers({
 
   return {
     // Stream state
-    streamingTaskId,
+    pendingTaskId,
     currentStreamState,
     isStreaming,
     isSubtaskStreaming,

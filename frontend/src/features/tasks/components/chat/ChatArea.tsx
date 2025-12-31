@@ -139,7 +139,7 @@ export default function ChatArea({
   const hasMessages = useMemo(() => {
     const hasSelectedTask = selectedTaskDetail && selectedTaskDetail.id;
     const hasNewTaskStream =
-      !selectedTaskDetail?.id && streamHandlers.streamingTaskId && streamHandlers.isStreaming;
+      !selectedTaskDetail?.id && streamHandlers.pendingTaskId && streamHandlers.isStreaming;
     const hasSubtasks = selectedTaskDetail?.subtasks && selectedTaskDetail.subtasks.length > 0;
     const hasLocalPending = streamHandlers.localPendingMessage !== null;
     const hasUnifiedMessages =
@@ -162,7 +162,7 @@ export default function ChatArea({
     selectedTaskDetail,
     streamHandlers.hasPendingUserMessage,
     streamHandlers.isStreaming,
-    streamHandlers.streamingTaskId,
+    streamHandlers.pendingTaskId,
     streamHandlers.localPendingMessage,
     streamHandlers.currentStreamState?.messages,
   ]);
@@ -401,6 +401,8 @@ export default function ChatArea({
               enableCorrectionMode={chatState.enableCorrectionMode}
               correctionModelId={chatState.correctionModelId}
               enableCorrectionWebSearch={chatState.enableCorrectionWebSearch}
+              hasMessages={hasMessages}
+              pendingTaskId={streamHandlers.pendingTaskId}
             />
           </div>
         </div>
@@ -440,22 +442,15 @@ export default function ChatArea({
         {hasMessages && (
           <div
             ref={floatingInputRef}
-            className="fixed bottom-0 z-50 bg-gradient-to-t from-base via-base/95 to-base/0 transition-opacity duration-150"
-            style={
-              floatingMetrics.width
-                ? {
-                    left: floatingMetrics.left,
-                    width: floatingMetrics.width,
-                    opacity: 1,
-                  }
-                : {
-                    left: 0,
-                    right: 0,
-                    opacity: 0,
-                  }
-            }
+            className="fixed bottom-0 z-50"
+            style={{
+              left: floatingMetrics.left,
+              width: floatingMetrics.width,
+            }}
           >
-            <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 py-4">
+            {/* Gradient background - contained within the floating input bounds */}
+            <div className="absolute inset-0 bg-gradient-to-t from-base via-base/95 to-base/0 pointer-events-none" />
+            <div className="relative z-10 w-full max-w-4xl mx-auto px-4 sm:px-6 py-4">
               <ChatInputCard {...inputCardProps} />
             </div>
           </div>

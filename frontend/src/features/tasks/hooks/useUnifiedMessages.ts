@@ -96,6 +96,13 @@ interface UseUnifiedMessagesOptions {
   team: Team | null;
   /** Whether this is a group chat */
   isGroupChat: boolean;
+  /**
+   * Pending task ID - used when selectedTaskDetail.id is not yet available.
+   * Can be either:
+   * - tempTaskId (negative number like -Date.now()) for new tasks before backend responds
+   * - taskId (positive number) after backend responds but before selectedTaskDetail updates
+   */
+  pendingTaskId?: number | null;
 }
 
 interface UseUnifiedMessagesResult {
@@ -127,6 +134,7 @@ interface UseUnifiedMessagesResult {
 export function useUnifiedMessages({
   team,
   isGroupChat,
+  pendingTaskId,
 }: UseUnifiedMessagesOptions): UseUnifiedMessagesResult {
   const { getStreamState, syncBackendMessages } = useChatStreamContext();
   const { selectedTaskDetail } = useTaskContext();
@@ -138,9 +146,14 @@ export function useUnifiedMessages({
   // Track the last synced task to avoid unnecessary syncs
   const lastSyncedTaskIdRef = useRef<number | undefined>(undefined);
 
+  // Determine effective task ID for querying streamState:
+  // - Use taskId (from selectedTaskDetail) if available
+  // - Otherwise use pendingTaskId (tempTaskId or taskId before selectedTaskDetail updates)
+  const effectiveTaskId = taskId || pendingTaskId || undefined;
+
   // Get stream state for current task - this will update when streamStates changes
   // because getStreamState depends on streamStates via useCallback
-  const streamState = taskId ? getStreamState(taskId) : undefined;
+  const streamState = effectiveTaskId ? getStreamState(effectiveTaskId) : undefined;
 
   // Sync backend subtasks to streamState.messages when task changes
   // This initializes the message list from backend data
@@ -186,8 +199,8 @@ export function useUnifiedMessages({
   // NOTE: streamState is obtained outside useMemo to ensure proper reactivity
   // when streamStates changes in the context
   const result = useMemo<UseUnifiedMessagesResult>(() => {
-    // If no taskId or no streamState, return empty result
-    if (!taskId || !streamState?.messages) {
+    // If no effectiveTaskId or no streamState, return empty result
+    if (!effectiveTaskId || !streamState?.messages) {
       return {
         messages: [],
         isStreaming: false,
@@ -303,7 +316,7 @@ export function useUnifiedMessages({
       subtasksMap,
       pendingMessages,
     };
-  }, [taskId, streamState, team?.name, isGroupChat, user?.id]);
+  }, [effectiveTaskId, streamState, team?.name, isGroupChat, user?.id]);
 
   return result;
 }

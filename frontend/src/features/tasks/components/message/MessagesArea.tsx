@@ -132,6 +132,14 @@ interface MessagesAreaProps {
   enableCorrectionMode?: boolean;
   correctionModelId?: string | null;
   enableCorrectionWebSearch?: boolean;
+  // Whether there are messages to display (from parent ChatArea)
+  // This ensures MessagesArea shows content when ChatArea's hasMessages is true
+  hasMessages?: boolean;
+  /**
+   * Pending task ID - used when selectedTaskDetail.id is not yet available.
+   * Can be either tempTaskId (negative) or taskId (positive) before selectedTaskDetail updates.
+   */
+  pendingTaskId?: number | null;
 }
 
 export default function MessagesArea({
@@ -146,6 +154,8 @@ export default function MessagesArea({
   enableCorrectionMode = false,
   correctionModelId = null,
   enableCorrectionWebSearch = false,
+  hasMessages: hasMessagesFromParent,
+  pendingTaskId,
 }: MessagesAreaProps) {
   const { t } = useTranslation();
   const { toast } = useToast();
@@ -157,9 +167,11 @@ export default function MessagesArea({
   const { registerCorrectionHandlers } = useSocket();
 
   // Use unified messages hook - SINGLE SOURCE OF TRUTH
+  // Pass pendingTaskId to query messages when selectedTaskDetail.id is not yet available
   const { messages, streamingSubtaskIds } = useUnifiedMessages({
     team: selectedTeam || null,
     isGroupChat,
+    pendingTaskId,
   });
 
   // Task share modal state
@@ -723,7 +735,10 @@ export default function MessagesArea({
       translate="no"
     >
       {/* Messages Area */}
-      {(messages.length > 0 || streamingSubtaskIds.length > 0 || selectedTaskDetail?.id) && (
+      {(messages.length > 0 ||
+        streamingSubtaskIds.length > 0 ||
+        selectedTaskDetail?.id ||
+        hasMessagesFromParent) && (
         <div className="flex-1 space-y-8 messages-container">
           {messages.map((msg, index) => {
             const messageKey = msg.subtaskId
