@@ -108,9 +108,9 @@ async def trigger_ai_response(
     task_room: str,
     supports_direct_chat: bool,
     namespace: Any,  # ChatNamespace instance for emitting events
-    knowledge_base_ids: Optional[
-        list[int]
-    ] = None,  # Knowledge base IDs for tool-based RAG
+    user_subtask_id: Optional[
+        int
+    ] = None,  # User subtask ID for unified context processing
 ) -> None:
     """
     Trigger AI response for a chat message.
@@ -136,14 +136,16 @@ async def trigger_ai_response(
         task_room: Task room name for WebSocket events
         supports_direct_chat: Whether team supports direct chat
         namespace: ChatNamespace instance for emitting events
-        knowledge_base_ids: Optional list of knowledge base IDs for tool-based RAG
+        user_subtask_id: Optional user subtask ID for unified context processing
+            (attachments and knowledge bases are retrieved from this subtask's contexts)
     """
     logger.info(
         "[ai_trigger] Triggering AI response: task_id=%d, "
-        "subtask_id=%d, supports_direct_chat=%s",
+        "subtask_id=%d, supports_direct_chat=%s, user_subtask_id=%s",
         task.id,
         assistant_subtask.id,
         supports_direct_chat,
+        user_subtask_id,
     )
 
     if supports_direct_chat:
@@ -157,7 +159,7 @@ async def trigger_ai_response(
             payload=payload,
             task_room=task_room,
             namespace=namespace,
-            knowledge_base_ids=knowledge_base_ids,
+            user_subtask_id=user_subtask_id,
         )
     else:
         # Executor-based (ClaudeCode, Agno, etc.)
@@ -177,7 +179,7 @@ async def _trigger_direct_chat(
     payload: Any,
     task_room: str,
     namespace: Any,
-    knowledge_base_ids: Optional[list[int]] = None,
+    user_subtask_id: Optional[int] = None,
 ) -> None:
     """
     Trigger direct chat (Chat Shell) AI response using ChatService.
@@ -193,7 +195,8 @@ async def _trigger_direct_chat(
         payload: Chat payload with feature flags
         task_room: WebSocket room name
         namespace: ChatNamespace instance
-        knowledge_base_ids: Optional list of knowledge base IDs for tool-based RAG
+        user_subtask_id: Optional user subtask ID for unified context processing
+            (attachments and knowledge bases are retrieved from this subtask's contexts)
     """
     # Extract data from ORM objects before starting background task
     # This prevents DetachedInstanceError when the session is closed
@@ -224,7 +227,7 @@ async def _trigger_direct_chat(
             namespace=namespace,
             trace_context=trace_context,
             otel_context=otel_context,
-            knowledge_base_ids=knowledge_base_ids,
+            user_subtask_id=user_subtask_id,
         )
     )
     namespace._active_streams[assistant_subtask.id] = stream_task
@@ -240,13 +243,17 @@ async def _stream_chat_response(
     namespace: Any,
     trace_context: Optional[Dict[str, Any]] = None,
     otel_context: Optional[Any] = None,
-    knowledge_base_ids: Optional[list[int]] = None,
+    user_subtask_id: Optional[int] = None,
 ) -> None:
     """
     Stream chat response using ChatService.
 
     Uses ChatConfigBuilder to prepare configuration and delegates
     streaming to ChatService.stream_to_websocket().
+
+    Now uses unified context processing based on user_subtask_id,
+    which retrieves both attachments and knowledge bases from the
+    subtask's associated contexts.
 
     Args:
         stream_data: StreamTaskData containing all extracted ORM data
@@ -256,7 +263,8 @@ async def _stream_chat_response(
         namespace: ChatNamespace instance
         trace_context: Copied ContextVars for logging
         otel_context: OpenTelemetry context for tracing
-        knowledge_base_ids: Optional list of knowledge base IDs for tool-based RAG
+        user_subtask_id: Optional user subtask ID for unified context processing
+            (attachments and knowledge bases are retrieved from this subtask's contexts)
     """
     # Restore trace context at the start of background task
     # This ensures logging uses the correct request_id and user context
@@ -350,21 +358,29 @@ async def _stream_chat_response(
         # Add model info to span
         span_manager.set_model_attributes(chat_config.model_config)
 
-        # Handle attachments (supports both single and multiple)
-        # Convert single attachment_id to list for unified processing
-        attachment_ids_to_process = []
-        if payload.attachment_ids:
-            attachment_ids_to_process = payload.attachment_ids
-        elif payload.attachment_id:
-            # Backward compatibility: convert single attachment_id to list
-            attachment_ids_to_process = [payload.attachment_id]
-
+        # Unified context processing: process both attachments and knowledge bases
+        # from the user subtask's associated contexts
         final_message = message
-        if attachment_ids_to_process:
-            from app.services.chat.preprocessing import process_attachments
+        enhanced_system_prompt = chat_config.system_prompt
+        extra_tools = []
 
-            final_message = await process_attachments(
-                db, attachment_ids_to_process, stream_data.user_id, message
+        if user_subtask_id:
+            from app.services.chat.preprocessing import prepare_contexts_for_chat
+
+            final_message, enhanced_system_prompt, extra_tools = (
+                await prepare_contexts_for_chat(
+                    db=db,
+                    user_subtask_id=user_subtask_id,
+                    user_id=stream_data.user_id,
+                    message=message,
+                    base_system_prompt=chat_config.system_prompt,
+                    task_id=stream_data.task_id,
+                )
+            )
+            logger.info(
+                f"[ai_trigger] Unified context processing completed: "
+                f"user_subtask_id={user_subtask_id}, "
+                f"extra_tools_count={len(extra_tools)}"
             )
 
         # Emit chat:start event with shell_type using global emitter for cross-worker broadcasting
@@ -382,16 +398,6 @@ async def _stream_chat_response(
             shell_type=chat_config.shell_type,
         )
         logger.info("[ai_trigger] chat:start emitted")
-
-        # Prepare knowledge base tools and enhanced system prompt
-        from app.chat_shell.tools.knowledge_factory import prepare_knowledge_base_tools
-
-        extra_tools, enhanced_system_prompt = prepare_knowledge_base_tools(
-            knowledge_base_ids=knowledge_base_ids,
-            user_id=stream_data.user_id,
-            db=db,
-            base_system_prompt=chat_config.system_prompt,
-        )
 
         # Prepare load_skill tool if skills are configured
         # Pass task_id to preload previously used skills for follow-up messages

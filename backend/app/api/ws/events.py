@@ -265,7 +265,10 @@ class ChatMessagePayload(BaseModel):
         None, description="Single attachment info (for backward compatibility)"
     )
     attachments: Optional[List[Dict[str, Any]]] = Field(
-        None, description="Multiple attachments info"
+        None, description="Multiple attachments info (legacy)"
+    )
+    contexts: Optional[List[Dict[str, Any]]] = Field(
+        None, description="Subtask contexts (attachments, knowledge bases, etc.)"
     )
 
 

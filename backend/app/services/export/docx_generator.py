@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.subtask import Subtask
-from app.models.subtask_attachment import SubtaskAttachment
+from app.models.subtask_context import SubtaskContext
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -205,8 +205,17 @@ def _add_message(doc: Document, subtask: Subtask, task: Kind, user: User, db: Se
     time_run.font.color.rgb = RGBColor(160, 160, 160)
 
     # Attachments (for user messages)
-    if is_user and subtask.attachments:
-        _add_attachments(doc, subtask.attachments, db)
+    if is_user and subtask.contexts:
+        # Filter only attachment type contexts
+        from app.models.subtask_context import ContextType
+
+        attachment_contexts = [
+            ctx
+            for ctx in subtask.contexts
+            if ctx.context_type == ContextType.ATTACHMENT.value
+        ]
+        if attachment_contexts:
+            _add_attachments(doc, attachment_contexts, db)
 
     # Message content
     content = subtask.prompt if is_user else _extract_result_value(subtask.result)
@@ -269,10 +278,13 @@ def _convert_emoji_to_text(text: str) -> str:
     return text
 
 
-def _add_attachments(doc: Document, attachments: List[SubtaskAttachment], db: Session):
+def _add_attachments(doc: Document, attachments: List[SubtaskContext], db: Session):
     """Add attachment section (images embedded, files as info cards)"""
     for attachment in attachments:
-        if _is_image_extension(attachment.file_extension):
+        # Get file extension from type_data
+        type_data = attachment.type_data or {}
+        file_extension = type_data.get("file_extension", "")
+        if _is_image_extension(file_extension):
             _add_image_attachment(doc, attachment, db)
         else:
             _add_file_attachment(doc, attachment)
@@ -284,7 +296,7 @@ def _is_image_extension(extension: str) -> bool:
     return extension.lower() in image_exts
 
 
-def _add_image_attachment(doc: Document, attachment: SubtaskAttachment, db: Session):
+def _add_image_attachment(doc: Document, attachment: SubtaskContext, db: Session):
     """Embed image attachment in document"""
     try:
         from app.services.attachment.storage_factory import get_storage_backend
@@ -292,12 +304,17 @@ def _add_image_attachment(doc: Document, attachment: SubtaskAttachment, db: Sess
         # Get storage backend
         storage_backend = get_storage_backend(db)
 
+        # Get storage info from type_data
+        type_data = attachment.type_data or {}
+        storage_backend_type = type_data.get("storage_backend", "mysql")
+
         # Get image data based on storage backend
-        if attachment.storage_backend == "mysql":
+        if storage_backend_type == "mysql":
             image_data = attachment.binary_data
         else:
             # External storage (S3/MinIO)
-            image_data = storage_backend.get(attachment.storage_key)
+            storage_key = type_data.get("storage_key", "")
+            image_data = storage_backend.get(storage_key)
 
         if image_data:
             # Save to temporary buffer
@@ -309,7 +326,7 @@ def _add_image_attachment(doc: Document, attachment: SubtaskAttachment, db: Sess
             # Add caption
             caption = doc.add_paragraph()
             caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            run = caption.add_run(attachment.original_filename)
+            run = caption.add_run(attachment.name)
             run.font.size = Pt(8)
             run.font.italic = True
             run.font.color.rgb = RGBColor(150, 150, 150)
@@ -321,23 +338,28 @@ def _add_image_attachment(doc: Document, attachment: SubtaskAttachment, db: Sess
         _add_file_attachment(doc, attachment)
 
 
-def _add_file_attachment(doc: Document, attachment: SubtaskAttachment):
+def _add_file_attachment(doc: Document, attachment: SubtaskContext):
     """Add file attachment info card"""
     p = doc.add_paragraph()
 
+    # Get file info from type_data
+    type_data = attachment.type_data or {}
+    file_extension = type_data.get("file_extension", "")
+    file_size = type_data.get("file_size", 0)
+
     # File type label
-    file_type = _get_file_type_label(attachment.file_extension)
+    file_type = _get_file_type_label(file_extension)
     type_run = p.add_run(f"{file_type} ")
     type_run.font.bold = True
     type_run.font.size = Pt(9)
     type_run.font.color.rgb = RGBColor(100, 100, 100)
 
     # Filename
-    name_run = p.add_run(attachment.original_filename)
+    name_run = p.add_run(attachment.name)
     name_run.font.size = Pt(10)
 
     # File size
-    size_run = p.add_run(f" ({_format_file_size(attachment.file_size)})")
+    size_run = p.add_run(f" ({_format_file_size(file_size)})")
     size_run.font.size = Pt(9)
     size_run.font.color.rgb = RGBColor(150, 150, 150)
 

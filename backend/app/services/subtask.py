@@ -135,12 +135,12 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
             return []
 
         # Phase 2: Load full subtask data for the selected IDs
-        # Use subqueryload for attachments to avoid JOIN issues
+        # Use subqueryload for contexts to avoid JOIN issues
         # Use undefer to explicitly load the deferred columns
         subtasks = (
             db.query(Subtask)
             .options(
-                subqueryload(Subtask.attachments),
+                subqueryload(Subtask.contexts),
                 undefer(Subtask.prompt),
                 undefer(Subtask.result),
                 undefer(Subtask.error_message),

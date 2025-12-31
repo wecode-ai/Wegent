@@ -97,6 +97,8 @@ function StreamingMessageBubble({
     thinking: message.thinking as Message['thinking'],
     // Pass result with shell_type for component selection
     result: message.result,
+    // Pass sources for RAG knowledge base citations
+    sources: message.sources,
   };
 
   return (
@@ -697,11 +699,13 @@ export default function MessagesArea({
         subtaskStatus: msg.subtaskStatus,
         subtaskId: msg.subtaskId,
         attachments: msg.attachments,
+        contexts: msg.contexts, // Add contexts for unified context system
         senderUserName: msg.senderUserName,
         senderUserId: msg.senderUserId,
         shouldShowSender: msg.shouldShowSender,
         thinking: msg.thinking as Message['thinking'],
         result: msg.result, // Include result with shell_type for component selection
+        sources: msg.sources, // Include sources for RAG knowledge base citations
         recoveredContent: msg.recoveredContent,
         isRecovered: msg.isRecovered,
         isIncomplete: msg.isIncomplete,

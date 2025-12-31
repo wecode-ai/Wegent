@@ -14,9 +14,9 @@ from typing import Dict, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
-from app.models.subtask_attachment import AttachmentStatus, SubtaskAttachment
+from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.schemas.rag import SplitterConfig
-from app.services.attachment import attachment_service
+from app.services.context import context_service
 from app.services.rag.embedding.factory import create_embedding_model_from_crd
 from app.services.rag.index import DocumentIndexer
 from app.services.rag.storage.base import BaseStorageBackend
@@ -43,59 +43,64 @@ class DocumentService:
         self, db: Session, attachment_id: int
     ) -> Tuple[bytes, str, str]:
         """
-        Get original binary data and metadata from attachment.
+        Get original binary data and metadata from context (attachment type).
 
         This method retrieves the original binary data from storage (MySQL or
         external storage like S3/MinIO) for RAG indexing.
 
         Args:
             db: Database session
-            attachment_id: Attachment ID
+            attachment_id: Context ID (for attachment type contexts)
 
         Returns:
             Tuple of (binary_data, filename, file_extension)
 
         Raises:
-            ValueError: If attachment not found, not ready, or binary data unavailable
+            ValueError: If context not found, not ready, or binary data unavailable
         """
-        # Query attachment
-        attachment = (
-            db.query(SubtaskAttachment)
-            .filter(SubtaskAttachment.id == attachment_id)
+        # Query context (attachment type)
+        context = (
+            db.query(SubtaskContext)
+            .filter(
+                SubtaskContext.id == attachment_id,
+                SubtaskContext.context_type == ContextType.ATTACHMENT.value,
+            )
             .first()
         )
 
-        if not attachment:
-            raise ValueError(f"Attachment {attachment_id} not found")
+        if not context:
+            raise ValueError(f"Attachment context {attachment_id} not found")
 
-        # Check attachment status
-        if attachment.status != AttachmentStatus.READY:
+        # Check context status
+        if context.status != ContextStatus.READY.value:
             raise ValueError(
-                f"Attachment {attachment_id} is not ready (status: {attachment.status})"
+                f"Attachment context {attachment_id} is not ready (status: {context.status})"
             )
 
         # Get original binary data from storage (supports MySQL and external storage)
-        binary_data = attachment_service.get_attachment_binary_data(
+        binary_data = context_service.get_attachment_binary_data(
             db=db,
-            attachment=attachment,
+            context=context,
         )
 
         if binary_data is None:
             logger.error(
-                f"Failed to retrieve binary data for attachment {attachment_id}, "
-                f"storage_backend={attachment.storage_backend}, "
-                f"storage_key={attachment.storage_key}"
+                f"Failed to retrieve binary data for attachment context {attachment_id}, "
+                f"storage_backend={context.storage_backend}, "
+                f"storage_key={context.storage_key}"
             )
-            raise ValueError(f"Attachment {attachment_id} has no binary data available")
+            raise ValueError(
+                f"Attachment context {attachment_id} has no binary data available"
+            )
 
         logger.info(
-            f"Retrieved binary data for attachment {attachment_id}: "
-            f"filename={attachment.original_filename}, "
+            f"Retrieved binary data for attachment context {attachment_id}: "
+            f"filename={context.original_filename}, "
             f"size={len(binary_data)} bytes, "
-            f"extension={attachment.file_extension}"
+            f"extension={context.file_extension}"
         )
 
-        return binary_data, attachment.original_filename, attachment.file_extension
+        return binary_data, context.original_filename, context.file_extension
 
     def _index_document_sync(
         self,

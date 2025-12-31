@@ -33,7 +33,6 @@ Storage Backend Registration:
     ```
 """
 
-from app.services.attachment.attachment_service import attachment_service
 from app.services.attachment.mysql_storage import MySQLStorageBackend
 from app.services.attachment.parser import DocumentParser
 from app.services.attachment.storage_backend import (
@@ -57,8 +56,6 @@ __all__ = [
     "StorageError",
     "MySQLStorageBackend",
     "DocumentParser",
-    # Services
-    "attachment_service",
     # Factory functions
     "get_storage_backend",
     "is_external_storage_configured",

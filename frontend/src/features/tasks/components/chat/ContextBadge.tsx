@@ -5,10 +5,11 @@
 'use client';
 
 import React from 'react';
-import { X, FileText } from 'lucide-react';
+import { X, Database } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useTranslation } from '@/hooks/useTranslation';
 import type { ContextItem } from '@/types/context';
+import { formatDocumentCount } from '@/lib/i18n-helpers';
 
 interface ContextBadgeProps {
   context: ContextItem;
@@ -21,17 +22,18 @@ interface ContextBadgeProps {
 const getContextIcon = (type: ContextItem['type']) => {
   switch (type) {
     case 'knowledge_base':
-      return FileText;
+      return Database;
     // Future context types will be added here
     // case 'person': return User;
     // case 'bot': return Bot;
     // case 'team': return Users;
     default:
-      return FileText;
+      return Database;
   }
 };
+
 export default function ContextBadge({ context, onRemove }: ContextBadgeProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation('knowledge');
   const Icon = getContextIcon(context.type);
 
   return (
@@ -43,7 +45,7 @@ export default function ContextBadge({ context, onRemove }: ContextBadgeProps) {
         </span>
         {context.type === 'knowledge_base' && context.document_count !== undefined && (
           <span className="text-xs text-primary/70">
-            {t('knowledge:documents_count', { count: context.document_count })}
+            {formatDocumentCount(context.document_count, t)}
           </span>
         )}
       </div>

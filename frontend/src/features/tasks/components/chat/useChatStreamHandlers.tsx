@@ -61,6 +61,7 @@ export interface UseChatStreamHandlersOptions {
 
   // Context selection (knowledge bases)
   selectedContexts?: ContextItem[];
+  resetContexts?: () => void;
 }
 
 export interface ChatStreamHandlers {
@@ -131,6 +132,7 @@ export function useChatStreamHandlers({
   shouldHideChatInput,
   scrollToBottom,
   selectedContexts = [],
+  resetContexts,
 }: UseChatStreamHandlersOptions): ChatStreamHandlers {
   const { toast } = useToast();
   const { t } = useTranslation();
@@ -393,6 +395,7 @@ export function useChatStreamHandlers({
       setLocalPendingMessage(message);
       setTaskInputMessage('');
       resetAttachment();
+      resetContexts?.();
 
       // Model ID handling
       const modelId = selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.name;
@@ -411,17 +414,16 @@ export function useChatStreamHandlers({
         // Each context item contains type and data fields
         const contextItems = selectedContexts.map(ctx => {
           if (ctx.type === 'knowledge_base') {
-            // Type assertion for knowledge base context with retriever info
+            // Type assertion for knowledge base context with document_count
             const kbContext = ctx as ContextItem & {
-              retriever_name?: string;
-              retriever_namespace?: string;
+              document_count?: number;
             };
             return {
               type: 'knowledge_base',
               data: {
                 knowledge_id: ctx.id,
-                retriever_name: kbContext.retriever_name || '',
-                retriever_namespace: kbContext.retriever_namespace || 'default',
+                name: ctx.name,
+                document_count: kbContext.document_count,
               },
             };
           }
@@ -431,6 +433,46 @@ export function useChatStreamHandlers({
             data: { id: ctx.id, name: ctx.name },
           };
         });
+
+        // Build pending contexts for immediate display (SubtaskContextBrief format)
+        // This includes both attachments and knowledge bases
+        const pendingContexts: Array<{
+          id: number;
+          context_type: 'attachment' | 'knowledge_base';
+          name: string;
+          status: 'pending' | 'ready';
+          file_extension?: string;
+          file_size?: number;
+          mime_type?: string;
+          document_count?: number;
+        }> = [];
+
+        // Add attachments as contexts
+        for (const attachment of attachments) {
+          pendingContexts.push({
+            id: attachment.id,
+            context_type: 'attachment',
+            name: attachment.filename,
+            status: attachment.status === 'ready' ? 'ready' : 'pending',
+            file_extension: attachment.file_extension,
+            file_size: attachment.file_size,
+            mime_type: attachment.mime_type,
+          });
+        }
+
+        // Add knowledge bases as contexts
+        for (const ctx of selectedContexts) {
+          if (ctx.type === 'knowledge_base') {
+            const kbContext = ctx as typeof ctx & { document_count?: number };
+            pendingContexts.push({
+              id: typeof ctx.id === 'number' ? ctx.id : parseInt(String(ctx.id), 10),
+              context_type: 'knowledge_base',
+              name: ctx.name,
+              status: 'ready',
+              document_count: kbContext.document_count,
+            });
+          }
+        }
 
         const tempTaskId = await contextSendMessage(
           {
@@ -456,6 +498,7 @@ export function useChatStreamHandlers({
           {
             pendingUserMessage: message,
             pendingAttachments: attachments,
+            pendingContexts: pendingContexts.length > 0 ? pendingContexts : undefined,
             immediateTaskId: immediateTaskId,
             currentUserId: user?.id,
             currentUserName: user?.user_name,
@@ -508,6 +551,8 @@ export function useChatStreamHandlers({
       selectedTeam,
       attachments,
       resetAttachment,
+      selectedContexts,
+      resetContexts,
       selectedModel?.name,
       selectedTaskDetail,
       contextSendMessage,

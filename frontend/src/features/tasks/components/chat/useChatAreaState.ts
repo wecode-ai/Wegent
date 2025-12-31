@@ -105,6 +105,7 @@ export interface ChatAreaState {
   // Context selection state (knowledge bases)
   selectedContexts: ContextItem[];
   setSelectedContexts: (contexts: ContextItem[]) => void;
+  resetContexts: () => void;
 
   // Refs
   initialTeamIdRef: React.MutableRefObject<number | null>;
@@ -178,6 +179,11 @@ export function useChatAreaState({
 
   // Context selection state (knowledge bases)
   const [selectedContexts, setSelectedContexts] = useState<ContextItem[]>([]);
+
+  // Reset contexts helper
+  const resetContexts = useCallback(() => {
+    setSelectedContexts([]);
+  }, []);
 
   // Media query
   const isMobile = useMediaQuery('(max-width: 640px)');
@@ -412,6 +418,7 @@ export function useChatAreaState({
     // Context selection state (knowledge bases)
     selectedContexts,
     setSelectedContexts,
+    resetContexts,
 
     // Refs
     initialTeamIdRef,

@@ -197,6 +197,17 @@ export interface ChatMessageAttachment {
   status?: string;
 }
 
+export interface ChatMessageContext {
+  id: number;
+  context_type: 'attachment' | 'knowledge_base';
+  name: string;
+  status: string;
+  file_extension?: string;
+  file_size?: number;
+  mime_type?: string;
+  document_count?: number;
+}
+
 export interface ChatMessagePayload {
   subtask_id: number;
   task_id: number;
@@ -214,6 +225,8 @@ export interface ChatMessagePayload {
   attachment?: ChatMessageAttachment;
   /** Multiple attachments */
   attachments?: ChatMessageAttachment[];
+  /** Unified contexts (attachments, knowledge bases, etc.) */
+  contexts?: ChatMessageContext[];
 }
 
 export interface ChatBotCompletePayload {

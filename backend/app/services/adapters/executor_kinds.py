@@ -23,6 +23,7 @@ from app.models.user import User
 from app.schemas.kind import Bot, Ghost, Model, Shell, Task, Team, Workspace
 from app.schemas.subtask import SubtaskExecutorUpdate
 from app.services.base import BaseService
+from app.services.context import context_service
 from app.services.webhook_notification import Notification, webhook_notification_service
 
 logger = logging.getLogger(__name__)
@@ -969,32 +970,31 @@ class ExecutorKindsService(
                         f"Failed to generate auth token for user {user.id}: {e}"
                     )
 
-            # Query attachments for this subtask
-            from app.models.subtask_attachment import (
-                AttachmentStatus,
-                SubtaskAttachment,
-            )
-
+            # Query attachments for this subtask using context service
             attachments_data = []
-            subtask_attachments = (
-                db.query(SubtaskAttachment)
-                .filter(
-                    SubtaskAttachment.subtask_id == user_subtask.id,
-                    SubtaskAttachment.status == AttachmentStatus.READY,
+            if user_subtask:
+                attachment_contexts = context_service.get_attachments_by_subtask(
+                    db=db,
+                    subtask_id=user_subtask.id,
                 )
-                .all()
-            )
+            else:
+                # No USER subtask found, skip attachment query
+                attachment_contexts = []
 
             # Note: We don't include download_url here.
             # The executor will construct the download URL using TASK_API_DOMAIN env var,
             # similar to how skill downloads work. This decouples backend from knowing its own URL.
-            for att in subtask_attachments:
+            for ctx in attachment_contexts:
+                # Only include ready attachments
+                if ctx.status != "ready":
+                    continue
+
                 att_data = {
-                    "id": att.id,
-                    "original_filename": att.original_filename,
-                    "file_extension": att.file_extension,
-                    "file_size": att.file_size,
-                    "mime_type": att.mime_type,
+                    "id": ctx.id,
+                    "original_filename": ctx.original_filename,
+                    "file_extension": ctx.file_extension,
+                    "file_size": ctx.file_size,
+                    "mime_type": ctx.mime_type,
                 }
                 # Note: We intentionally don't include image_base64 here to avoid
                 # large task JSON payloads. The executor will download attachments
