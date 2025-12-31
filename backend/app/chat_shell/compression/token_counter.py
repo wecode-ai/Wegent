@@ -225,9 +225,7 @@ class TokenCounter:
         used = self.count_messages(messages)
         return max(0, context_limit - used)
 
-    def is_over_limit(
-        self, messages: list[dict[str, Any]], context_limit: int
-    ) -> bool:
+    def is_over_limit(self, messages: list[dict[str, Any]], context_limit: int) -> bool:
         """Check if messages exceed the context limit.
 
         Args:
