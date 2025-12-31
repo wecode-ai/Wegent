@@ -334,6 +334,8 @@ export function useModelSelection({
           setSelectedModel(foundModel);
           setForceOverrideState(preference.forceOverride);
           userSelectedModelRef.current = foundModel;
+          // Mark as user selected since we restored from session preference
+          userHasSelectedInSessionRef.current = true;
           setTimeout(() => {
             isTaskSwitchingRef.current = false;
           }, 100);
@@ -342,12 +344,17 @@ export function useModelSelection({
       }
 
       if (taskModelId && taskModelId !== DEFAULT_MODEL_NAME) {
-        const foundModel = filteredModels.find(m => m.name === taskModelId);
+        // Match by name or displayName since taskModelId could be either
+        const foundModel = filteredModels.find(
+          m => m.name === taskModelId || m.displayName === taskModelId
+        );
         if (foundModel) {
           console.log('[useModelSelection] Restored model from taskModelId:', foundModel.name);
           setSelectedModel(foundModel);
           setForceOverrideState(true);
           userSelectedModelRef.current = foundModel;
+          // Mark as user selected since we restored from taskModelId
+          userHasSelectedInSessionRef.current = true;
           setTimeout(() => {
             isTaskSwitchingRef.current = false;
           }, 100);
@@ -407,12 +414,17 @@ export function useModelSelection({
             setSelectedModel(foundModel);
             setForceOverrideState(sessionPreference.forceOverride);
             userSelectedModelRef.current = foundModel;
+            // Mark as user selected since we restored from session preference
+            userHasSelectedInSessionRef.current = true;
             return;
           }
         }
 
         if (taskModelId && taskModelId !== DEFAULT_MODEL_NAME) {
-          const foundModel = filteredModels.find(m => m.name === taskModelId);
+          // Match by name or displayName since taskModelId could be either
+          const foundModel = filteredModels.find(
+            m => m.name === taskModelId || m.displayName === taskModelId
+          );
           if (foundModel) {
             console.log('[useModelSelection] Restored model from taskModelId:', foundModel.name);
             isTaskSwitchingRef.current = true;
@@ -422,11 +434,45 @@ export function useModelSelection({
             setSelectedModel(foundModel);
             setForceOverrideState(true);
             userSelectedModelRef.current = foundModel;
+            // Mark as user selected since we restored from taskModelId
+            userHasSelectedInSessionRef.current = true;
             return;
           }
         }
 
-        console.log('[useModelSelection] No session preference and no taskModelId');
+        // Fallback: try to get default model from team's bot bind_model
+        if (selectedTeam?.bots && selectedTeam.bots.length > 0) {
+          const firstBot = selectedTeam.bots[0];
+          const botConfig = firstBot.bot?.agent_config as Record<string, unknown> | undefined;
+          if (botConfig) {
+            const bindModel = getModelFromConfig(botConfig);
+            if (bindModel) {
+              // Match by name or displayName since bind_model could be either
+              const foundModel = filteredModels.find(
+                m => m.name === bindModel || m.displayName === bindModel
+              );
+              if (foundModel) {
+                console.log(
+                  '[useModelSelection] Restored model from team bot bind_model:',
+                  foundModel.name
+                );
+                isTaskSwitchingRef.current = true;
+                setTimeout(() => {
+                  isTaskSwitchingRef.current = false;
+                }, 100);
+                setSelectedModel(foundModel);
+                setForceOverrideState(true);
+                userSelectedModelRef.current = foundModel;
+                userHasSelectedInSessionRef.current = true;
+                return;
+              }
+            }
+          }
+        }
+
+        console.log(
+          '[useModelSelection] No session preference, no taskModelId, and no team bot bind_model'
+        );
         return;
       }
 
