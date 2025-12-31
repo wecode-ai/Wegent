@@ -339,9 +339,7 @@ export default function ExportPdfButton({
                         ? msg.userName || 'User'
                         : msg.teamName || msg.botName || 'AI'}
                     </span>
-                    <span className="text-xs text-text-muted">
-                      {formatDateTime(msg.timestamp)}
-                    </span>
+                    <span className="text-xs text-text-muted">{formatDateTime(msg.timestamp)}</span>
                   </div>
                   <p className="text-sm text-text-primary line-clamp-2">
                     {msg.content.slice(0, 200)}

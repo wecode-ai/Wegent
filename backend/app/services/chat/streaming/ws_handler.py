@@ -199,9 +199,16 @@ class WebSocketStreamingHandler:
             )
 
             # Build messages (prompt enhancements applied internally based on config)
+            # Pass model_id for automatic compression when context limit is exceeded
             username = config.get_username_for_message()
+            model_id = model_config.get("model_id", "")
             messages = self.agent.build_messages(
-                history, message, system_prompt, username=username, config=agent_config
+                history,
+                message,
+                system_prompt,
+                username=username,
+                config=agent_config,
+                model_id=model_id,
             )
 
             # Log messages sent to model for debugging
