@@ -246,7 +246,10 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     }
 
     // Combine both lists for backward compatibility
-    const allTasks = [...(groupResult.error ? groupTasks : groupResult.items), ...(personalResult.error ? personalTasks : personalResult.items)];
+    const allTasks = [
+      ...(groupResult.error ? groupTasks : groupResult.items),
+      ...(personalResult.error ? personalTasks : personalResult.items),
+    ];
     setTasks(allTasks);
 
     // Initialize task view status on first load

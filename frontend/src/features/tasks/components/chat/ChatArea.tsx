@@ -56,8 +56,14 @@ export default function ChatArea({
   // Task context
   const { selectedTaskDetail, setSelectedTask, accessDenied, clearAccessDenied } = useTaskContext();
 
-  // Stream context for clearVersion
-  const { clearVersion } = useChatStreamContext();
+  // Stream context for clearVersion and getStreamState
+  // getStreamState is used to access messages (SINGLE SOURCE OF TRUTH per AGENTS.md)
+  const { clearVersion, getStreamState } = useChatStreamContext();
+
+  // Get stream state for current task to check messages
+  const currentStreamState = selectedTaskDetail?.id
+    ? getStreamState(selectedTaskDetail.id)
+    : undefined;
 
   // Chat area state (team, repo, branch, model, input, toggles, etc.)
   const chatState = useChatAreaState({
@@ -71,13 +77,14 @@ export default function ChatArea({
   const lastSubtask = subtaskList.length ? subtaskList[subtaskList.length - 1] : null;
   const lastSubtaskId = lastSubtask?.id ?? null;
   const lastSubtaskUpdatedAt = lastSubtask?.updated_at || lastSubtask?.completed_at || null;
-
   // Determine if there are messages to display (computed early for hooks)
+  // Uses context messages as the single source of truth, not selectedTaskDetail.subtasks
   const hasMessagesForHooks = useMemo(() => {
     const hasSelectedTask = selectedTaskDetail && selectedTaskDetail.id;
-    const hasSubtasks = selectedTaskDetail?.subtasks && selectedTaskDetail.subtasks.length > 0;
-    return Boolean(hasSelectedTask || hasSubtasks);
-  }, [selectedTaskDetail]);
+    // Check messages from context (single source of truth)
+    const hasContextMessages = currentStreamState?.messages && currentStreamState.messages.size > 0;
+    return Boolean(hasSelectedTask || hasContextMessages);
+  }, [selectedTaskDetail, currentStreamState?.messages]);
 
   // Use scroll management hook - consolidates 4 useEffect calls
   const {
@@ -133,7 +140,7 @@ export default function ChatArea({
   const hasMessages = useMemo(() => {
     const hasSelectedTask = selectedTaskDetail && selectedTaskDetail.id;
     const hasNewTaskStream =
-      !selectedTaskDetail?.id && streamHandlers.streamingTaskId && streamHandlers.isStreaming;
+      !selectedTaskDetail?.id && streamHandlers.pendingTaskId && streamHandlers.isStreaming;
     const hasSubtasks = selectedTaskDetail?.subtasks && selectedTaskDetail.subtasks.length > 0;
     const hasLocalPending = streamHandlers.localPendingMessage !== null;
     const hasUnifiedMessages =
@@ -156,7 +163,7 @@ export default function ChatArea({
     selectedTaskDetail,
     streamHandlers.hasPendingUserMessage,
     streamHandlers.isStreaming,
-    streamHandlers.streamingTaskId,
+    streamHandlers.pendingTaskId,
     streamHandlers.localPendingMessage,
     streamHandlers.currentStreamState?.messages,
   ]);
@@ -395,6 +402,8 @@ export default function ChatArea({
               enableCorrectionMode={chatState.enableCorrectionMode}
               correctionModelId={chatState.correctionModelId}
               enableCorrectionWebSearch={chatState.enableCorrectionWebSearch}
+              hasMessages={hasMessages}
+              pendingTaskId={streamHandlers.pendingTaskId}
             />
           </div>
         </div>
@@ -441,22 +450,15 @@ export default function ChatArea({
         {hasMessages && (
           <div
             ref={floatingInputRef}
-            className="fixed bottom-0 z-50 bg-gradient-to-t from-base via-base/95 to-base/0 transition-opacity duration-150"
-            style={
-              floatingMetrics.width
-                ? {
-                    left: floatingMetrics.left,
-                    width: floatingMetrics.width,
-                    opacity: 1,
-                  }
-                : {
-                    left: 0,
-                    right: 0,
-                    opacity: 0,
-                  }
-            }
+            className="fixed bottom-0 z-50"
+            style={{
+              left: floatingMetrics.left,
+              width: floatingMetrics.width,
+            }}
           >
-            <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 py-4">
+            {/* Gradient background - contained within the floating input bounds */}
+            <div className="absolute inset-0 bg-gradient-to-t from-base via-base/95 to-base/0 pointer-events-none" />
+            <div className="relative z-10 w-full max-w-4xl mx-auto px-4 sm:px-6 py-4">
               <ChatInputCard {...inputCardProps} />
             </div>
           </div>

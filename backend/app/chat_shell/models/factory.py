@@ -154,6 +154,7 @@ class LangChainModelFactory:
                 - base_url: Optional custom API endpoint
                 - default_headers: Optional custom headers
                 - api_format: Optional API format for OpenAI ("chat/completions" or "responses")
+                - max_output_tokens: Optional max output tokens from Model CRD spec
             **kwargs: Additional parameters (temperature, max_tokens, streaming)
 
         Returns:
