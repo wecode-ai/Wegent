@@ -71,12 +71,21 @@ def setup_chat_session(
     )
 
     enable_deep_thinking = tool_settings.get("enable_deep_thinking", False)
+    disable_wegent_extend_message = tool_settings.get(
+        "disable_wegent_extend_message", False
+    )
+
+    # If disable_wegent_extend_message is set, disable deep thinking prompt
+    effective_enable_deep_thinking = (
+        enable_deep_thinking and not disable_wegent_extend_message
+    )
+
     try:
         chat_config = config_builder.build(
             override_model_name=model_info.get("model_id"),
             force_override=model_info.get("model_id") is not None,
             enable_clarification=False,
-            enable_deep_thinking=enable_deep_thinking,
+            enable_deep_thinking=effective_enable_deep_thinking,
             task_id=task_id or 0,
         )
     except ValueError as e:

@@ -18,6 +18,8 @@ class WegentTool(BaseModel):
     Supported tool types:
     - wegent_deep_thinking: Enable deep thinking mode with web search
       (web search requires WEB_SEARCH_ENABLED=true in system config)
+    - disable_wegent_tools: Disable all wecode-added tools (MCP, WebSearch)
+    - disable_wegent_extend_message: Disable all auto-injected content (datetime, prompts)
 
     Note:
     - MCP tools are controlled by CHAT_MCP_ENABLED system config (no user tool needed)
@@ -25,7 +27,7 @@ class WegentTool(BaseModel):
 
     type: str = Field(
         ...,
-        description="Tool type: 'wegent_deep_thinking'",
+        description="Tool type: 'wegent_deep_thinking', 'disable_wegent_tools', 'disable_wegent_extend_message'",
     )
 
 

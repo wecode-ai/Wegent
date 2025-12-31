@@ -49,6 +49,7 @@ Technical documentation for Wegent developers:
 Detailed technical references:
 
 - [YAML Specification](./reference/yaml-specification.md) - Complete YAML configuration format
+- [OpenAPI Responses API](./reference/openapi-responses.md) - Responses API reference
 
 ### 📝 Configuration Examples
 
