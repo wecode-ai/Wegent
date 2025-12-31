@@ -4,6 +4,7 @@
   "tabs": {
     "users": "用户管理",
     "public_models": "公共模型",
+    "public_retrievers": "公共检索引擎",
     "public_skills": "公共技能",
     "api_keys": "密钥管理",
     "system_config": "系统配置"
@@ -196,6 +197,56 @@
       "delete_failed": "删除公共技能失败",
       "download_failed": "下载公共技能失败",
       "view_content_failed": "获取技能内容失败"
+    }
+  },
+  "public_retrievers": {
+    "title": "公共检索引擎管理",
+    "description": "管理系统级公共检索引擎，所有用户可用",
+    "loading": "加载检索引擎中...",
+    "no_retrievers": "暂无公共检索引擎",
+    "create_retriever": "创建检索引擎",
+    "edit_retriever": "编辑检索引擎",
+    "delete_retriever": "删除检索引擎",
+    "form": {
+      "name": "名称",
+      "name_placeholder": "请输入检索引擎名称",
+      "display_name": "显示名称",
+      "display_name_placeholder": "请输入显示名称（可选）",
+      "storage_type": "存储类型",
+      "storage_type_placeholder": "请选择存储类型",
+      "url": "连接地址",
+      "url_placeholder": "例如: http://localhost:9200",
+      "username": "用户名",
+      "username_placeholder": "请输入用户名（可选）",
+      "api_key": "API 密钥",
+      "api_key_placeholder": "请输入 API 密钥（可选）",
+      "index_strategy": "索引策略",
+      "index_strategy_placeholder": "请选择索引策略",
+      "per_user": "按用户分索引",
+      "fixed": "固定索引",
+      "fixed_name": "固定索引名",
+      "fixed_name_placeholder": "请输入固定索引名",
+      "prefix": "索引前缀",
+      "prefix_placeholder": "默认: kb_",
+      "description": "描述",
+      "description_placeholder": "请输入描述（可选）"
+    },
+    "confirm": {
+      "delete_title": "删除检索引擎",
+      "delete_message": "确定要删除公共检索引擎 \"{{name}}\" 吗？此操作无法撤销。"
+    },
+    "success": {
+      "created": "公共检索引擎创建成功",
+      "updated": "公共检索引擎更新成功",
+      "deleted": "公共检索引擎删除成功"
+    },
+    "errors": {
+      "load_failed": "加载公共检索引擎失败",
+      "create_failed": "创建公共检索引擎失败",
+      "update_failed": "更新公共检索引擎失败",
+      "delete_failed": "删除公共检索引擎失败",
+      "name_required": "检索引擎名称不能为空",
+      "url_required": "连接地址不能为空"
     }
   },
   "access_denied": {

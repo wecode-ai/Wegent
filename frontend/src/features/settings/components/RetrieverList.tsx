@@ -10,7 +10,13 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Tag } from '@/components/ui/tag';
 import { ResourceListItem } from '@/components/common/ResourceListItem';
-import { CircleStackIcon, PencilIcon, TrashIcon, BeakerIcon } from '@heroicons/react/24/outline';
+import {
+  CircleStackIcon,
+  PencilIcon,
+  TrashIcon,
+  BeakerIcon,
+  GlobeAltIcon,
+} from '@heroicons/react/24/outline';
 import { Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -74,13 +80,16 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
   }, [fetchRetrievers, scope, groupName]);
 
   // Categorize retrievers by type
-  const { groupRetrievers, userRetrievers } = React.useMemo(() => {
+  const { groupRetrievers, userRetrievers, publicRetrievers } = React.useMemo(() => {
     const group: UnifiedRetriever[] = [];
     const user: UnifiedRetriever[] = [];
+    const publicList: UnifiedRetriever[] = [];
 
     for (const retriever of retrievers) {
       if (retriever.type === 'group') {
         group.push(retriever);
+      } else if (retriever.type === 'public') {
+        publicList.push(retriever);
       } else {
         user.push(retriever);
       }
@@ -89,10 +98,11 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
     return {
       groupRetrievers: group,
       userRetrievers: user,
+      publicRetrievers: publicList,
     };
   }, [retrievers]);
 
-  const totalRetrievers = groupRetrievers.length + userRetrievers.length;
+  const totalRetrievers = groupRetrievers.length + userRetrievers.length + publicRetrievers.length;
 
   // Helper function to check permissions for a specific group resource
   const canEditGroupResource = (namespace: string) => {
@@ -364,6 +374,42 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
                               </Button>
                             )}
                           </div>
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Public Retrievers Section */}
+              {publicRetrievers.length > 0 && (
+                <div className="space-y-2">
+                  <h3 className="text-sm font-medium text-text-secondary px-2">
+                    {t('retrievers.public_retrievers')} ({publicRetrievers.length})
+                  </h3>
+                  <div className="space-y-3">
+                    {publicRetrievers.map(retriever => (
+                      <Card
+                        key={`public-${retriever.name}`}
+                        className="p-4 bg-base hover:bg-hover transition-colors border-l-2 border-l-primary"
+                      >
+                        <div className="flex items-center justify-between min-w-0">
+                          <ResourceListItem
+                            name={retriever.name}
+                            displayName={retriever.displayName || undefined}
+                            showId={true}
+                            isPublic={true}
+                            publicLabel={t('retrievers.public')}
+                            icon={<GlobeAltIcon className="w-5 h-5 text-primary" />}
+                            tags={[
+                              {
+                                key: 'storage-type',
+                                label: getStorageTypeLabel(retriever.storageType),
+                                variant: 'default',
+                                className: 'capitalize',
+                              },
+                            ]}
+                          />
                         </div>
                       </Card>
                     ))}

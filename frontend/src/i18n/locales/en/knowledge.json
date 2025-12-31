@@ -129,7 +129,13 @@
       "hybridWeights": "Hybrid Weights",
       "semanticWeight": "Semantic Weight",
       "keywordWeight": "Keyword Weight",
-      "weightSum": "Weights must sum to 1.0"
+      "weightSum": "Weights must sum to 1.0",
+      "sourceType": {
+        "user": "Personal",
+        "public": "Public",
+        "group": "Group"
+      },
+      "searchPlaceholder": "Search..."
     },
     "splitter": {
       "title": "Chunking Settings",

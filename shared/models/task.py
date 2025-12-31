@@ -2,9 +2,9 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
-from pydantic import Field
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, Field
 
 
 class User(BaseModel):
@@ -61,25 +61,28 @@ class Task(BaseModel):
 
 class ThinkingStep(BaseModel):
     """Thinking step model for recording agent reasoning process"""
+
     title: str = Field(..., description="Title of thinking step")
     next_action: str = Field(default="continue", description="Next action to take")
-    details: Optional[Dict[str, Any]] = Field(default=None, description="Detailed structured data for this step")
-    
+    details: Optional[Dict[str, Any]] = Field(
+        default=None, description="Detailed structured data for this step"
+    )
+
     def dict(self, **kwargs) -> Dict[str, Any]:
         """Override dict method to exclude None values"""
         # Exclude None values by default
-        kwargs.setdefault('exclude_none', True)
+        kwargs.setdefault("exclude_none", True)
         return super().dict(**kwargs)
 
 
 class ExecutionResult(BaseModel):
     value: Optional[str] = None
     thinking: List[ThinkingStep] = []
-    
+
     def dict(self, **kwargs) -> Dict[str, Any]:
         """Override dict method to exclude None values"""
         # Exclude None values by default
-        kwargs.setdefault('exclude_none', True)
+        kwargs.setdefault("exclude_none", True)
         return super().dict(**kwargs)
 
 

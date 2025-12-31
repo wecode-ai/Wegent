@@ -129,7 +129,13 @@
       "hybridWeights": "混合检索权重",
       "semanticWeight": "语义权重",
       "keywordWeight": "关键词权重",
-      "weightSum": "权重之和必须等于 1.0"
+      "weightSum": "权重之和必须等于 1.0",
+      "sourceType": {
+        "user": "个人",
+        "public": "公共",
+        "group": "组"
+      },
+      "searchPlaceholder": "搜索..."
     },
     "splitter": {
       "title": "分段设置",
