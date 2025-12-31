@@ -164,6 +164,7 @@ export default function ChatArea({
   useTeamPreferences({
     teams,
     hasMessages,
+    taskType,
     selectedTaskDetail,
     selectedTeam: chatState.selectedTeam,
     setSelectedTeam: chatState.setSelectedTeam,
