@@ -4,6 +4,8 @@
 
 """
 Attachment API endpoints for file upload and management.
+
+Uses the unified context service for managing attachments as subtask contexts.
 """
 
 import logging
@@ -16,14 +18,15 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
+from app.models.subtask_context import ContextType
 from app.models.user import User
-from app.schemas.attachment import (
+from app.schemas.subtask_context import (
     AttachmentDetailResponse,
     AttachmentResponse,
     TruncationInfo,
 )
-from app.services.attachment import attachment_service
 from app.services.attachment.parser import DocumentParseError, DocumentParser
+from app.services.context import context_service
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +83,7 @@ async def upload_attachment(
         )
 
     try:
-        attachment, truncation_info = attachment_service.upload_attachment(
+        context, truncation_info = context_service.upload_attachment(
             db=db,
             user_id=current_user.id,
             filename=file.filename,
@@ -98,14 +101,20 @@ async def upload_attachment(
             )
 
         return AttachmentResponse(
-            id=attachment.id,
-            filename=attachment.original_filename,
-            file_size=attachment.file_size,
-            mime_type=attachment.mime_type,
-            status=attachment.status.value,
-            text_length=attachment.text_length,
-            error_message=attachment.error_message,
+            id=context.id,
+            filename=context.original_filename,
+            file_size=context.file_size,
+            mime_type=context.mime_type,
+            status=(
+                context.status
+                if isinstance(context.status, str)
+                else context.status.value
+            ),
+            file_extension=context.file_extension,
+            text_length=context.text_length,
+            error_message=context.error_message,
             truncation_info=response_truncation_info,
+            created_at=context.created_at,
         )
 
     except ValueError as e:
@@ -139,28 +148,32 @@ async def get_attachment(
     Returns:
         Attachment details including status and metadata
     """
-    # Get attachment without user_id filter first
-    attachment = attachment_service.get_attachment(
+    # Get context without user_id filter first
+    context = context_service.get_context_optional(
         db=db,
-        attachment_id=attachment_id,
+        context_id=attachment_id,
     )
 
-    if attachment is None:
+    if context is None:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    # Verify it's an attachment type
+    if context.context_type != ContextType.ATTACHMENT.value:
         raise HTTPException(status_code=404, detail="Attachment not found")
 
     # Check access permission:
     # 1. User is the uploader
     # 2. User is the task owner
     # 3. User is a member of the task that contains this attachment
-    has_access = attachment.user_id == current_user.id
+    has_access = context.user_id == current_user.id
 
-    if not has_access and attachment.subtask_id > 0:
+    if not has_access and context.subtask_id > 0:
         # Check if user is a task owner or member
         from app.models.subtask import Subtask
         from app.models.task import TaskResource
         from app.models.task_member import MemberStatus, TaskMember
 
-        subtask = db.query(Subtask).filter(Subtask.id == attachment.subtask_id).first()
+        subtask = db.query(Subtask).filter(Subtask.id == context.subtask_id).first()
         if subtask:
             # Check if user is the task owner
             task = (
@@ -190,18 +203,7 @@ async def get_attachment(
     if not has_access:
         raise HTTPException(status_code=404, detail="Attachment not found")
 
-    return AttachmentDetailResponse(
-        id=attachment.id,
-        filename=attachment.original_filename,
-        file_size=attachment.file_size,
-        mime_type=attachment.mime_type,
-        status=attachment.status.value,
-        text_length=attachment.text_length,
-        error_message=attachment.error_message,
-        subtask_id=attachment.subtask_id,
-        file_extension=attachment.file_extension,
-        created_at=attachment.created_at.isoformat() if attachment.created_at else "",
-    )
+    return AttachmentDetailResponse.from_context(context)
 
 
 @router.get("/{attachment_id}/download")
@@ -216,27 +218,31 @@ async def download_attachment(
     Returns:
         File binary data with appropriate content type
     """
-    # Get attachment without user_id filter first
-    attachment = attachment_service.get_attachment(
+    # Get context without user_id filter first
+    context = context_service.get_context_optional(
         db=db,
-        attachment_id=attachment_id,
+        context_id=attachment_id,
     )
-    if attachment is None:
+    if context is None:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    # Verify it's an attachment type
+    if context.context_type != ContextType.ATTACHMENT.value:
         raise HTTPException(status_code=404, detail="Attachment not found")
 
     # Check access permission:
     # 1. User is the uploader
     # 2. User is the task owner
     # 3. User is a member of the task that contains this attachment
-    has_access = attachment.user_id == current_user.id
+    has_access = context.user_id == current_user.id
 
-    if not has_access and attachment.subtask_id > 0:
+    if not has_access and context.subtask_id > 0:
         # Check if user is a task owner or member
         from app.models.subtask import Subtask
         from app.models.task import TaskResource
         from app.models.task_member import MemberStatus, TaskMember
 
-        subtask = db.query(Subtask).filter(Subtask.id == attachment.subtask_id).first()
+        subtask = db.query(Subtask).filter(Subtask.id == context.subtask_id).first()
         if subtask:
             # Check if user is the task owner
             task = (
@@ -267,18 +273,16 @@ async def download_attachment(
         raise HTTPException(status_code=404, detail="Attachment not found")
 
     # Get binary data from the appropriate storage backend
-    # For MySQL storage, this returns attachment.binary_data
-    # For external storage (MinIO/S3), this retrieves from the storage backend
-    binary_data = attachment_service.get_attachment_binary_data(
+    binary_data = context_service.get_attachment_binary_data(
         db=db,
-        attachment=attachment,
+        context=context,
     )
 
     if binary_data is None:
         logger.error(
             f"Failed to retrieve binary data for attachment {attachment_id}, "
-            f"storage_backend={attachment.storage_backend}, "
-            f"storage_key={attachment.storage_key}"
+            f"storage_backend={context.storage_backend}, "
+            f"storage_key={context.storage_key}"
         )
         raise HTTPException(
             status_code=500, detail="Failed to retrieve attachment data"
@@ -286,11 +290,11 @@ async def download_attachment(
 
     # Encode filename for Content-Disposition header to support non-ASCII characters
     # Use RFC 5987 encoding: filename*=UTF-8''encoded_filename
-    encoded_filename = quote(attachment.original_filename)
+    encoded_filename = quote(context.original_filename)
 
     return Response(
         content=binary_data,
-        media_type=attachment.mime_type,
+        media_type=context.mime_type,
         headers={
             "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
         },
@@ -313,38 +317,42 @@ async def executor_download_attachment(
     Returns:
         File binary data with appropriate content type
     """
-    # Get attachment and verify ownership
-    attachment = attachment_service.get_attachment(
+    # Get context and verify ownership
+    context = context_service.get_context_optional(
         db=db,
-        attachment_id=attachment_id,
+        context_id=attachment_id,
         user_id=current_user.id,
     )
 
-    if attachment is None:
+    if context is None:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    # Verify it's an attachment type
+    if context.context_type != ContextType.ATTACHMENT.value:
         raise HTTPException(status_code=404, detail="Attachment not found")
 
     # Get binary data from the appropriate storage backend
-    binary_data = attachment_service.get_attachment_binary_data(
+    binary_data = context_service.get_attachment_binary_data(
         db=db,
-        attachment=attachment,
+        context=context,
     )
 
     if binary_data is None:
         logger.error(
             f"Failed to retrieve binary data for attachment {attachment_id}, "
-            f"storage_backend={attachment.storage_backend}, "
-            f"storage_key={attachment.storage_key}"
+            f"storage_backend={context.storage_backend}, "
+            f"storage_key={context.storage_key}"
         )
         raise HTTPException(
             status_code=500, detail="Failed to retrieve attachment data"
         )
 
     # Encode filename for Content-Disposition header
-    encoded_filename = quote(attachment.original_filename)
+    encoded_filename = quote(context.original_filename)
 
     return Response(
         content=binary_data,
-        media_type=attachment.mime_type,
+        media_type=context.mime_type,
         headers={
             "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
         },
@@ -365,25 +373,29 @@ async def delete_attachment(
     Returns:
         Success message
     """
-    attachment = attachment_service.get_attachment(
+    context = context_service.get_context_optional(
         db=db,
-        attachment_id=attachment_id,
+        context_id=attachment_id,
         user_id=current_user.id,
     )
 
-    if attachment is None:
+    if context is None:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    # Verify it's an attachment type
+    if context.context_type != ContextType.ATTACHMENT.value:
         raise HTTPException(status_code=404, detail="Attachment not found")
 
     # subtask_id == 0 means unlinked, > 0 means linked to a subtask
-    if attachment.subtask_id > 0:
+    if context.subtask_id > 0:
         raise HTTPException(
             status_code=400,
             detail="Cannot delete attachment that is linked to a message",
         )
 
-    success = attachment_service.delete_attachment(
+    success = context_service.delete_context(
         db=db,
-        attachment_id=attachment_id,
+        context_id=attachment_id,
         user_id=current_user.id,
     )
 
@@ -405,27 +417,16 @@ async def get_attachment_by_subtask(
     Returns:
         Attachment details or null if no attachment exists
     """
-    attachment = attachment_service.get_attachment_by_subtask(
+    context = context_service.get_attachment_by_subtask(
         db=db,
         subtask_id=subtask_id,
     )
 
-    if attachment is None:
+    if context is None:
         return None
 
     # Verify ownership
-    if attachment.user_id != current_user.id:
+    if context.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    return AttachmentDetailResponse(
-        id=attachment.id,
-        filename=attachment.original_filename,
-        file_size=attachment.file_size,
-        mime_type=attachment.mime_type,
-        status=attachment.status.value,
-        text_length=attachment.text_length,
-        error_message=attachment.error_message,
-        subtask_id=attachment.subtask_id,
-        file_extension=attachment.file_extension,
-        created_at=attachment.created_at.isoformat() if attachment.created_at else "",
-    )
+    return AttachmentDetailResponse.from_context(context)

@@ -175,12 +175,6 @@ class LangChainModelFactory:
         if cfg.get("api_format") == "responses":
             api_format_log = ", api_format=responses"
 
-        # Determine max_tokens: kwargs takes priority, then model_config, then defaults
-        if "max_tokens" not in kwargs:
-            max_output_tokens = model_config.get("max_output_tokens")
-            if max_output_tokens:
-                kwargs["max_tokens"] = max_output_tokens
-
         logger.info(
             "Creating LangChain model: %s, type=%s, key=%s%s",
             cfg["model_id"],

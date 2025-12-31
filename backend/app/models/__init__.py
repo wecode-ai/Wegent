@@ -17,9 +17,7 @@ from app.models.shared_task import SharedTask
 from app.models.shared_team import SharedTeam
 from app.models.skill_binary import SkillBinary
 from app.models.subtask import Subtask
-
-# Import SubtaskAttachment before Subtask to ensure relationship can be resolved
-from app.models.subtask_attachment import SubtaskAttachment
+from app.models.subtask_context import SubtaskContext
 from app.models.system_config import SystemConfig
 from app.models.task import TaskResource
 from app.models.task_member import TaskMember
@@ -34,7 +32,8 @@ __all__ = [
     "Kind",
     "TaskResource",
     "Subtask",
-    "SubtaskAttachment",
+    "SubtaskContext",
+    "SharedTask",
     "SharedTeam",
     "SharedTask",
     "SkillBinary",

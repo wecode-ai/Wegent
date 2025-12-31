@@ -92,7 +92,7 @@ def fetch_retry_context(
         # This works for both single chat and group chat
         user_subtask = (
             db.query(Subtask)
-            .options(joinedload(Subtask.attachments))  # Preload attachments
+            .options(joinedload(Subtask.contexts))  # Preload contexts
             .filter(
                 Subtask.task_id == failed_ai_subtask.task_id,
                 Subtask.message_id == failed_ai_subtask.parent_id,

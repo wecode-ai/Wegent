@@ -4,6 +4,19 @@
 
 """
 Attachment service for managing file uploads and document parsing.
+
+DEPRECATED: This module is deprecated and will be removed in a future version.
+Use app.services.context.ContextService instead.
+
+All functionality has been migrated to the unified ContextService:
+- upload_attachment() -> context_service.upload_attachment()
+- get_attachment() -> context_service.get_context_optional()
+- get_attachment_binary_data() -> context_service.get_attachment_binary_data()
+- get_attachment_url() -> context_service.get_attachment_url()
+- is_image_attachment() -> context_service.is_image_context()
+- build_vision_content_block() -> context_service.build_vision_content_block()
+- build_document_text_prefix() -> context_service.build_document_text_prefix()
+- build_message_with_attachment() -> context_service.build_message_with_attachment()
 """
 
 import logging

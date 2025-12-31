@@ -54,6 +54,10 @@ class KnowledgeBaseTool(BaseTool):
     # Database session (will be set when tool is created)
     db_session: Optional[Session] = None
 
+    # User subtask ID for persisting RAG results to context database
+    # This is the subtask_id of the user message that triggered the AI response
+    user_subtask_id: Optional[int] = None
+
     def _run(
         self,
         query: str,
@@ -114,10 +118,16 @@ class KnowledgeBaseTool(BaseTool):
                         f"[KnowledgeBaseTool] Retrieved {len(records)} chunks from KB {kb_id}"
                     )
 
+                    # Collect content and sources for this KB (for persistence)
+                    kb_content_parts = []
+                    kb_sources = []
+
                     # Format results for AI consumption and collect source references
                     for record in records:
                         source_file = record.get("title", "Unknown")
                         source_key = (kb_id, source_file)
+                        content = record.get("content", "")
+                        score = record.get("score", 0.0)
 
                         # Track unique sources for citation
                         if source_key not in seen_sources:
@@ -134,14 +144,33 @@ class KnowledgeBaseTool(BaseTool):
                         # Add source index to result
                         all_results.append(
                             {
-                                "content": record.get("content", ""),
+                                "content": content,
                                 "source": source_file,
                                 "source_index": seen_sources[
                                     source_key
                                 ],  # Add reference index
-                                "score": record.get("score", 0.0),
+                                "score": score,
                                 "knowledge_base_id": kb_id,
                             }
+                        )
+
+                        # Collect for persistence
+                        kb_content_parts.append(
+                            f"[Document: {source_file}] (score: {score:.2f})\n{content}"
+                        )
+                        kb_sources.append(
+                            {
+                                "document_name": source_file,
+                                "score": score,
+                            }
+                        )
+
+                    # Persist RAG results to context database if user_subtask_id is available
+                    if self.user_subtask_id and kb_content_parts:
+                        await self._persist_rag_results(
+                            kb_id=kb_id,
+                            extracted_text="\n\n".join(kb_content_parts),
+                            sources=kb_sources,
                         )
 
                 except ValueError as e:
@@ -191,3 +220,58 @@ class KnowledgeBaseTool(BaseTool):
         except Exception as e:
             logger.error(f"[KnowledgeBaseTool] Search failed: {e}", exc_info=True)
             return json.dumps({"error": f"Knowledge base search failed: {str(e)}"})
+
+    async def _persist_rag_results(
+        self,
+        kb_id: int,
+        extracted_text: str,
+        sources: list[dict],
+    ) -> None:
+        """
+        Persist RAG retrieval results to context database.
+
+        This method finds the knowledge base context record associated with the
+        user subtask and updates it with the retrieved content and sources.
+
+        Args:
+            kb_id: Knowledge base ID
+            extracted_text: Concatenated retrieval text from RAG
+            sources: List of source info dicts with document_name, score
+        """
+        if not self.user_subtask_id or not self.db_session:
+            return
+
+        try:
+            from app.services.context import context_service
+
+            # Find the context record for this KB and subtask
+            context = context_service.get_knowledge_base_context_by_subtask_and_kb_id(
+                db=self.db_session,
+                subtask_id=self.user_subtask_id,
+                knowledge_id=kb_id,
+            )
+
+            if context:
+                # Update the context with RAG results
+                context_service.update_knowledge_base_retrieval_result(
+                    db=self.db_session,
+                    context_id=context.id,
+                    extracted_text=extracted_text,
+                    sources=sources,
+                )
+                logger.info(
+                    f"[KnowledgeBaseTool] ✅ Persisted RAG results for KB {kb_id} "
+                    f"to context {context.id} (subtask {self.user_subtask_id})"
+                )
+            else:
+                logger.warning(
+                    f"[KnowledgeBaseTool] No context found for KB {kb_id} "
+                    f"and subtask {self.user_subtask_id}, skipping persistence"
+                )
+
+        except Exception as e:
+            # Log error but don't fail the retrieval
+            logger.error(
+                f"[KnowledgeBaseTool] Failed to persist RAG results for KB {kb_id}: {e}",
+                exc_info=True,
+            )
