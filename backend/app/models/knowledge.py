@@ -43,9 +43,9 @@ class KnowledgeDocument(Base):
     """
     Knowledge document model for storing document metadata.
 
-    Links to subtask_attachments table for actual file storage.
+    Links to subtask_contexts table for actual file storage.
     Note: kind_id references kinds.id (Kind='KnowledgeBase')
-    Note: attachment_id references subtask_attachments.id but without FK constraint
+    Note: attachment_id references subtask_contexts.id but without FK constraint
           (referential integrity is managed at the application layer)
     """
 
@@ -55,7 +55,7 @@ class KnowledgeDocument(Base):
     # References kinds.id (Kind='KnowledgeBase') but without FK constraint
     # Referential integrity is managed at the application layer
     kind_id = Column(Integer, nullable=False, index=True)
-    # References subtask_attachments.id but without FK constraint
+    # References subtask_contexts.id (context_type='attachment') but without FK constraint
     # Referential integrity is managed at the application layer
     attachment_id = Column(Integer, nullable=True)
     name = Column(String(255), nullable=False)

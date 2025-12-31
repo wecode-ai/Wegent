@@ -5,7 +5,14 @@
 """
 Subtask attachment model for storing uploaded document files.
 
-Stores file binary data and extracted text content for chat attachments.
+DEPRECATED: This model is deprecated and will be removed in a future version.
+Use app.models.subtask_context.SubtaskContext instead.
+
+The subtask_attachments table has been replaced by subtask_contexts table
+which provides unified context management for attachments, knowledge bases,
+and other context types.
+
+Migration: All data should be migrated to subtask_contexts table before removal.
 """
 from datetime import datetime
 from enum import Enum as PyEnum

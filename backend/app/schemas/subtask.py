@@ -69,7 +69,15 @@ class SubtaskCreate(SubtaskBase):
 
 
 class SubtaskAttachment(BaseModel):
-    """Subtask attachment schema"""
+    """
+    Subtask attachment schema.
+
+    DEPRECATED: This schema is deprecated and will be removed in a future version.
+    Use SubtaskContextBrief instead for unified context management.
+
+    Migration: Replace all usage with SubtaskContextBrief which supports
+    both attachments and knowledge base contexts.
+    """
 
     id: int
     filename: str = Field(validation_alias="original_filename")
@@ -82,6 +90,62 @@ class SubtaskAttachment(BaseModel):
     class Config:
         from_attributes = True
         populate_by_name = True
+
+
+class SubtaskContextBrief(BaseModel):
+    """Brief context info for message list display"""
+
+    id: int
+    context_type: str
+    name: str
+    status: str
+    # Attachment fields (from type_data)
+    file_extension: Optional[str] = None
+    file_size: Optional[int] = None
+    mime_type: Optional[str] = None
+    # Knowledge base fields (from type_data)
+    document_count: Optional[int] = None
+
+    class Config:
+        from_attributes = True
+
+    @classmethod
+    def from_model(cls, context) -> "SubtaskContextBrief":
+        """
+        Create brief from SubtaskContext model.
+        Only includes type-specific fields based on context_type.
+        """
+        type_data = context.type_data or {}
+
+        # Base fields for all context types
+        base_data = {
+            "id": context.id,
+            "context_type": context.context_type,
+            "name": context.name,
+            "status": (
+                context.status
+                if isinstance(context.status, str)
+                else context.status.value
+            ),
+        }
+
+        # Add type-specific fields
+        if context.context_type == "attachment":
+            base_data.update(
+                {
+                    "file_extension": type_data.get("file_extension"),
+                    "file_size": type_data.get("file_size"),
+                    "mime_type": type_data.get("mime_type"),
+                }
+            )
+        elif context.context_type == "knowledge_base":
+            base_data.update(
+                {
+                    "document_count": type_data.get("document_count"),
+                }
+            )
+
+        return cls(**base_data)
 
 
 class SubtaskUpdate(BaseModel):
@@ -108,6 +172,11 @@ class SubtaskInDB(SubtaskBase):
     updated_at: datetime
     completed_at: Optional[datetime] = None
     executor_deleted_at: Optional[bool] = False
+    # Contexts replace attachments for unified context management
+    contexts: List[SubtaskContextBrief] = []
+    # DEPRECATED: Backward compatibility field (derived from contexts)
+    # This field is populated from contexts where context_type='attachment'
+    # Use 'contexts' field instead for new code
     attachments: List[SubtaskAttachment] = []
     # Group chat fields
     sender_type: Optional[SenderType] = None  # USER or TEAM

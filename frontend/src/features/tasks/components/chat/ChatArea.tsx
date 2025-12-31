@@ -126,6 +126,7 @@ export default function ChatArea({
     shouldHideChatInput: chatState.shouldHideChatInput,
     scrollToBottom,
     selectedContexts: chatState.selectedContexts,
+    resetContexts: chatState.resetContexts,
   });
 
   // Determine if there are messages to display (full computation)

@@ -220,3 +220,30 @@ class WelcomeConfigResponse(BaseModel):
         default_factory=list, description="List of slogans"
     )
     tips: List[ChatTipItem] = Field(default_factory=list, description="List of tips")
+
+
+# Public Retriever Management Schemas
+class PublicRetrieverResponse(BaseModel):
+    """Public retriever response model"""
+
+    id: int
+    name: str
+    namespace: str
+    displayName: Optional[str] = None
+    storageType: str
+    description: Optional[str] = None
+    retriever_json: dict = Field(..., alias="json", serialization_alias="json")
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+        populate_by_name = True
+
+
+class PublicRetrieverListResponse(BaseModel):
+    """Public retriever list response model"""
+
+    total: int
+    items: List[PublicRetrieverResponse]

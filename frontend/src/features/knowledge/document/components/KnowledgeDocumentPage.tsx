@@ -148,12 +148,22 @@ export function KnowledgeDocumentPage() {
   const handleUpdate = async (data: Parameters<typeof personalKb.update>[1]) => {
     if (!editingKb) return;
     await personalKb.update(editingKb.id, data);
+    // Refresh the appropriate list based on whether it's a group or personal knowledge base
+    if (editingKb.namespace !== 'default') {
+      // Group knowledge base - trigger refresh via refreshKey
+      setGroupRefreshKey(prev => prev + 1);
+    }
     setEditingKb(null);
   };
 
   const handleDelete = async () => {
     if (!deletingKb) return;
     await personalKb.remove(deletingKb.id);
+    // Refresh the appropriate list based on whether it's a group or personal knowledge base
+    if (deletingKb.namespace !== 'default') {
+      // Group knowledge base - trigger refresh via refreshKey
+      setGroupRefreshKey(prev => prev + 1);
+    }
     setDeletingKb(null);
   };
 

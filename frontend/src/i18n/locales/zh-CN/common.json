@@ -427,6 +427,8 @@
     "description": "管理 RAG 使用的检索和存储引擎配置",
     "my_retrievers": "我的检索引擎",
     "group_retrievers": "组检索引擎",
+    "public_retrievers": "公共检索引擎",
+    "public": "公共",
     "create": "创建检索引擎",
     "edit": "编辑检索引擎",
     "delete": "删除检索引擎",

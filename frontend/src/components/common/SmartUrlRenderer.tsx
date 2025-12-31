@@ -46,10 +46,7 @@ interface SmartLinkProps {
  * Note: LinkCard rendering is disabled to prevent layout issues in tables and
  * other constrained containers. All links are rendered as simple styled links.
  */
-export function SmartLink({
-  href,
-  children,
-}: SmartLinkProps) {
+export function SmartLink({ href, children }: SmartLinkProps) {
   // For non-absolute HTTP(S) URLs (relative links, anchors, mailto:, tel:, etc.),
   // render without target="_blank"
   if (!isAbsoluteHttpUrl(href)) {
@@ -102,9 +99,7 @@ export function SmartImage({ src, alt }: SmartImageProps) {
  * (especially in tables). Links are rendered as styled plain links instead.
  * Image preview with Lightbox is still supported.
  */
-export function createSmartMarkdownComponents(options?: {
-  enableImagePreview?: boolean;
-}) {
+export function createSmartMarkdownComponents(options?: { enableImagePreview?: boolean }) {
   const { enableImagePreview = true } = options || {};
 
   return {
