@@ -236,3 +236,26 @@ class AccessibleKnowledgeResponse(BaseModel):
 
     personal: list[AccessibleKnowledgeBase]
     team: list[TeamKnowledgeGroup]
+
+
+# ============== Document Content Schemas ==============
+
+
+class DocumentContentResponse(BaseModel):
+    """Schema for document content response."""
+
+    id: int
+    name: str
+    file_extension: str
+    mime_type: str
+    content: str = Field(..., description="Text content or base64 encoded binary for PDF")
+    is_editable: bool = Field(
+        ..., description="Whether the document can be edited (text files: true, PDF: false)"
+    )
+    updated_at: datetime
+
+
+class DocumentContentUpdate(BaseModel):
+    """Schema for updating document content."""
+
+    content: str = Field(..., min_length=0, description="New content for the document")

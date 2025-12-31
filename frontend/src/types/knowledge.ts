@@ -149,3 +149,18 @@ export interface AccessibleKnowledgeResponse {
   personal: AccessibleKnowledgeBase[];
   team: TeamKnowledgeGroup[];
 }
+
+// Document Content types for preview/edit functionality
+export interface DocumentContent {
+  id: number;
+  name: string;
+  file_extension: string;
+  mime_type: string;
+  content: string;
+  is_editable: boolean;
+  updated_at: string;
+}
+
+export interface DocumentContentUpdate {
+  content: string;
+}

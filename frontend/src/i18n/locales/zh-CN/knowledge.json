@@ -99,6 +99,20 @@
         "delete": "批量删除"
       }
     },
+    "viewer": {
+      "title": "文档预览",
+      "edit_mode": "编辑",
+      "preview_mode": "预览",
+      "saving": "保存中...",
+      "saved": "已保存",
+      "save": "保存",
+      "save_failed": "保存失败",
+      "unsaved": "有未保存的更改",
+      "last_updated": "上次更新",
+      "pdf_readonly": "PDF 文档不支持在线编辑",
+      "loading": "加载中...",
+      "load_failed": "文档加载失败"
+    },
     "permission": {
       "noAccess": "您没有操作权限"
     },

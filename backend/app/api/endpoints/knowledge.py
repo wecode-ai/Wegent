@@ -22,6 +22,8 @@ from app.schemas.knowledge import (
     AccessibleKnowledgeResponse,
     BatchDocumentIds,
     BatchOperationResult,
+    DocumentContentResponse,
+    DocumentContentUpdate,
     KnowledgeBaseCreate,
     KnowledgeBaseListResponse,
     KnowledgeBaseResponse,
@@ -685,3 +687,375 @@ def batch_disable_documents(
             detail="Only Owner or Maintainer can update documents in this knowledge base",
         )
     return result
+
+
+# ============== Document Content Endpoints ==============
+
+
+# Editable file extensions (text-based files)
+EDITABLE_EXTENSIONS = frozenset([".md", ".txt", ".json", ".yaml", ".yml", ".xml", ".csv"])
+
+# MIME type mapping for document content
+EXTENSION_TO_MIME_TYPE = {
+    ".md": "text/markdown",
+    ".txt": "text/plain",
+    ".json": "application/json",
+    ".yaml": "text/yaml",
+    ".yml": "text/yaml",
+    ".xml": "application/xml",
+    ".csv": "text/csv",
+    ".pdf": "application/pdf",
+}
+
+
+@document_router.get("/{document_id}/content", response_model=DocumentContentResponse)
+def get_document_content(
+    document_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get the original content of a document.
+
+    For text-based files (md, txt, json, yaml, etc.), returns the text content.
+    For PDF files, returns base64-encoded binary data.
+    """
+    from base64 import b64encode
+
+    from app.models.subtask_attachment import SubtaskAttachment
+    from app.services.attachment import attachment_service
+
+    # Get document with permission check
+    doc = KnowledgeService.get_document(db, document_id, current_user.id)
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found or access denied",
+        )
+
+    # Get attachment
+    if not doc.attachment_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document has no associated attachment",
+        )
+
+    attachment = (
+        db.query(SubtaskAttachment)
+        .filter(SubtaskAttachment.id == doc.attachment_id)
+        .first()
+    )
+
+    if not attachment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Attachment not found",
+        )
+
+    # Determine if file is editable
+    file_extension = doc.file_extension.lower()
+    if not file_extension.startswith("."):
+        file_extension = f".{file_extension}"
+
+    is_editable = file_extension in EDITABLE_EXTENSIONS
+    mime_type = EXTENSION_TO_MIME_TYPE.get(file_extension, "application/octet-stream")
+
+    # Get content based on file type
+    if is_editable:
+        # For text files, return extracted_text or decode binary_data
+        if attachment.extracted_text:
+            content = attachment.extracted_text
+        else:
+            # Try to decode binary data as UTF-8
+            binary_data = attachment_service.get_attachment_binary_data(db, attachment)
+            if binary_data:
+                try:
+                    content = binary_data.decode("utf-8")
+                except UnicodeDecodeError:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail="Cannot decode file content as UTF-8",
+                    )
+            else:
+                content = ""
+    else:
+        # For non-editable files (like PDF), return base64-encoded binary
+        binary_data = attachment_service.get_attachment_binary_data(db, attachment)
+        if binary_data:
+            content = b64encode(binary_data).decode("ascii")
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Binary data not available",
+            )
+
+    return DocumentContentResponse(
+        id=doc.id,
+        name=doc.name,
+        file_extension=doc.file_extension,
+        mime_type=mime_type,
+        content=content,
+        is_editable=is_editable,
+        updated_at=doc.updated_at,
+    )
+
+
+@document_router.put("/{document_id}/content", response_model=DocumentContentResponse)
+async def update_document_content(
+    document_id: int,
+    data: DocumentContentUpdate,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Update the content of a document.
+
+    Only text-based files (md, txt, json, yaml, etc.) can be updated.
+    After updating, automatically re-indexes the document if the knowledge base
+    has retrieval_config configured.
+    """
+    from app.models.kind import Kind
+    from app.models.subtask_attachment import SubtaskAttachment
+    from app.services.attachment.storage_factory import get_storage_backend
+
+    # Get document with permission check
+    doc = KnowledgeService.get_document(db, document_id, current_user.id)
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found or access denied",
+        )
+
+    # Check permission for team knowledge base
+    kb = (
+        db.query(Kind)
+        .filter(Kind.id == doc.kind_id, Kind.kind == "KnowledgeBase")
+        .first()
+    )
+    if kb and kb.namespace != "default":
+        from app.schemas.namespace import GroupRole
+        from app.services.group_permission import check_group_permission
+
+        if not check_group_permission(
+            db, current_user.id, kb.namespace, GroupRole.Maintainer
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only Owner or Maintainer can update documents in this knowledge base",
+            )
+
+    # Get attachment
+    if not doc.attachment_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document has no associated attachment",
+        )
+
+    attachment = (
+        db.query(SubtaskAttachment)
+        .filter(SubtaskAttachment.id == doc.attachment_id)
+        .first()
+    )
+
+    if not attachment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Attachment not found",
+        )
+
+    # Check if file is editable
+    file_extension = doc.file_extension.lower()
+    if not file_extension.startswith("."):
+        file_extension = f".{file_extension}"
+
+    if file_extension not in EDITABLE_EXTENSIONS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File type {file_extension} is not editable",
+        )
+
+    # Encode content to bytes
+    try:
+        new_binary_data = data.content.encode("utf-8")
+    except UnicodeEncodeError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Content encoding error: {str(e)}",
+        )
+
+    # Update binary data in storage backend
+    storage_backend = get_storage_backend(db)
+
+    if attachment.storage_key:
+        try:
+            metadata = {
+                "filename": attachment.original_filename,
+                "mime_type": attachment.mime_type,
+                "file_size": len(new_binary_data),
+                "user_id": current_user.id,
+            }
+            storage_backend.save(attachment.storage_key, new_binary_data, metadata)
+        except Exception as e:
+            logger.error(f"Failed to update attachment storage: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to save document content",
+            )
+
+    # Update attachment record
+    attachment.extracted_text = data.content
+    attachment.text_length = len(data.content)
+    attachment.file_size = len(new_binary_data)
+
+    # Update document file_size
+    doc.file_size = len(new_binary_data)
+
+    # Commit changes
+    db.commit()
+    db.refresh(doc)
+    db.refresh(attachment)
+
+    # Re-index document if knowledge base has retrieval_config
+    if kb:
+        spec = kb.json.get("spec", {})
+        retrieval_config = spec.get("retrievalConfig")
+
+        if retrieval_config:
+            retriever_name = retrieval_config.get("retriever_name")
+            retriever_namespace = retrieval_config.get("retriever_namespace", "default")
+            embedding_config = retrieval_config.get("embedding_config")
+
+            if retriever_name and embedding_config:
+                embedding_model_name = embedding_config.get("model_name")
+                embedding_model_namespace = embedding_config.get(
+                    "model_namespace", "default"
+                )
+
+                # Schedule re-indexing in background
+                background_tasks.add_task(
+                    _reindex_document_background,
+                    knowledge_base_id=str(doc.kind_id),
+                    attachment_id=doc.attachment_id,
+                    retriever_name=retriever_name,
+                    retriever_namespace=retriever_namespace,
+                    embedding_model_name=embedding_model_name,
+                    embedding_model_namespace=embedding_model_namespace,
+                    user_id=current_user.id,
+                    splitter_config=doc.splitter_config,
+                    document_id=doc.id,
+                    kb_user_id=kb.user_id,
+                    kb_namespace=kb.namespace,
+                )
+                logger.info(
+                    f"Scheduled re-indexing for document {doc.id} after content update"
+                )
+
+    mime_type = EXTENSION_TO_MIME_TYPE.get(file_extension, "text/plain")
+
+    return DocumentContentResponse(
+        id=doc.id,
+        name=doc.name,
+        file_extension=doc.file_extension,
+        mime_type=mime_type,
+        content=data.content,
+        is_editable=True,
+        updated_at=doc.updated_at,
+    )
+
+
+def _reindex_document_background(
+    knowledge_base_id: str,
+    attachment_id: int,
+    retriever_name: str,
+    retriever_namespace: str,
+    embedding_model_name: str,
+    embedding_model_namespace: str,
+    user_id: int,
+    splitter_config: Optional[dict] = None,
+    document_id: Optional[int] = None,
+    kb_user_id: Optional[int] = None,
+    kb_namespace: Optional[str] = None,
+):
+    """
+    Background task for re-indexing document after content update.
+
+    This function deletes the old index and creates a new one with updated content.
+    """
+    logger.info(
+        f"Background task started: re-indexing document {document_id} for knowledge base {knowledge_base_id}"
+    )
+
+    db = SessionLocal()
+    try:
+        # Determine index owner user_id
+        if kb_namespace == "default":
+            index_owner_user_id = user_id
+        else:
+            index_owner_user_id = kb_user_id if kb_user_id else user_id
+
+        # Get retriever from database
+        retriever_crd = retriever_kinds_service.get_retriever(
+            db=db,
+            user_id=user_id,
+            name=retriever_name,
+            namespace=retriever_namespace,
+        )
+
+        if not retriever_crd:
+            logger.error(
+                f"Retriever {retriever_name} (namespace: {retriever_namespace}) not found"
+            )
+            return
+
+        # Create storage backend from retriever
+        storage_backend = create_storage_backend(retriever_crd)
+
+        # Create document service
+        doc_service = DocumentService(storage_backend=storage_backend)
+
+        # Delete old index
+        if document_id:
+            try:
+                asyncio.run(
+                    doc_service.delete_document(
+                        knowledge_id=knowledge_base_id,
+                        doc_ref=str(document_id),
+                        user_id=index_owner_user_id,
+                    )
+                )
+                logger.info(f"Deleted old index for document {document_id}")
+            except Exception as e:
+                logger.warning(f"Failed to delete old index: {e}")
+
+        # Convert splitter_config dict to SplitterConfig if needed
+        splitter_config_obj = None
+        if splitter_config:
+            splitter_config_obj = SplitterConfig(**splitter_config)
+
+        # Re-index document
+        result = asyncio.run(
+            doc_service.index_document(
+                knowledge_id=knowledge_base_id,
+                embedding_model_name=embedding_model_name,
+                embedding_model_namespace=embedding_model_namespace,
+                user_id=index_owner_user_id,
+                db=db,
+                attachment_id=attachment_id,
+                splitter_config=splitter_config_obj,
+                document_id=document_id,
+            )
+        )
+
+        logger.info(
+            f"Successfully re-indexed document {document_id} for knowledge base {knowledge_base_id}: {result}"
+        )
+
+    except Exception as e:
+        logger.error(
+            f"Failed to re-index document {document_id}: {str(e)}",
+            exc_info=True,
+        )
+    finally:
+        db.close()
+        logger.info(f"Background re-indexing task completed for document {document_id}")

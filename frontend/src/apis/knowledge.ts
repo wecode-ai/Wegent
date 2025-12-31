@@ -9,6 +9,8 @@
 import { apiClient } from './client';
 import type {
   AccessibleKnowledgeResponse,
+  DocumentContent,
+  DocumentContentUpdate,
   KnowledgeBase,
   KnowledgeBaseCreate,
   KnowledgeBaseListResponse,
@@ -136,4 +138,23 @@ export async function batchDeleteDocuments(documentIds: number[]): Promise<Batch
  */
 export async function getAccessibleKnowledge(): Promise<AccessibleKnowledgeResponse> {
   return apiClient.get<AccessibleKnowledgeResponse>('/knowledge-bases/accessible');
+}
+
+// ============== Document Content APIs ==============
+
+/**
+ * Get document content for preview/editing
+ */
+export async function getDocumentContent(documentId: number): Promise<DocumentContent> {
+  return apiClient.get<DocumentContent>(`/knowledge-documents/${documentId}/content`);
+}
+
+/**
+ * Update document content
+ */
+export async function updateDocumentContent(
+  documentId: number,
+  data: DocumentContentUpdate
+): Promise<DocumentContent> {
+  return apiClient.put<DocumentContent>(`/knowledge-documents/${documentId}/content`, data);
 }

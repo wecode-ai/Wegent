@@ -99,6 +99,20 @@
         "delete": "Delete"
       }
     },
+    "viewer": {
+      "title": "Document Preview",
+      "edit_mode": "Edit",
+      "preview_mode": "Preview",
+      "saving": "Saving...",
+      "saved": "Saved",
+      "save": "Save",
+      "save_failed": "Save failed",
+      "unsaved": "Unsaved changes",
+      "last_updated": "Last updated",
+      "pdf_readonly": "PDF documents cannot be edited online",
+      "loading": "Loading...",
+      "load_failed": "Failed to load document"
+    },
     "permission": {
       "noAccess": "You do not have permission to perform this action"
     },
