@@ -216,6 +216,14 @@ interface SyncBackendMessagesOptions {
   currentUserId?: number;
   /** Current user name for display (fallback when sender_user_name is empty) */
   currentUserName?: string;
+  /**
+   * Active streaming subtask ID from WebSocket joinTask response.
+   * When provided, only this subtask will be shown as 'streaming'.
+   * Other RUNNING subtasks will be shown as 'completed' if they have content.
+   * This fixes the issue where new group chat members see infinite spinner
+   * when there's no active stream for a RUNNING message.
+   */
+  activeStreamingSubtaskId?: number | null;
 }
 
 /**
@@ -1631,13 +1639,23 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     (taskId: number, subtasks: TaskDetailSubtask[], options?: SyncBackendMessagesOptions): void => {
       if (!subtasks || subtasks.length === 0) return;
 
-      const { teamName, isGroupChat, currentUserId, currentUserName } = options || {};
+      const { teamName, isGroupChat, currentUserId, currentUserName, activeStreamingSubtaskId } =
+        options || {};
 
       setStreamStates(prev => {
         const newMap = new Map(prev);
         const currentState = newMap.get(taskId) || { ...defaultStreamState };
         // Start with existing messages, don't create new Map
         const messages = new Map(currentState.messages);
+
+        // Determine the effective active streaming subtask ID:
+        // 1. If explicitly provided via options (from joinTask response), use it
+        // 2. Otherwise, use currentState.subtaskId (set by resumeStream or chat:start)
+        // 3. If neither available, no active stream
+        const effectiveActiveStreamingId =
+          activeStreamingSubtaskId !== undefined
+            ? activeStreamingSubtaskId
+            : currentState.subtaskId;
 
         // Build a set of existing subtaskIds to check for duplicates
         // This handles the case where user message has temp ID but same subtaskId
@@ -1693,8 +1711,9 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
 
           // For RUNNING/PENDING AI messages:
           // - If we already have a streaming message for this subtask (from chat:start), skip
-          // - Otherwise, create a streaming placeholder so the message is visible
-          // This handles the page refresh case where chat:start was missed
+          // - If this subtask is the active streaming one (matches effectiveActiveStreamingId), show as streaming
+          // - Otherwise, mark as completed to prevent infinite spinner for new group chat members
+          // This handles the page refresh case and group chat member join case
           if (!isUserMessage && (subtask.status === 'RUNNING' || subtask.status === 'PENDING')) {
             // Check if we already have this AI message (created by chat:start)
             const existingAiMessage = messages.get(messageId);
@@ -1702,13 +1721,33 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
               // Already have this message, skip
               continue;
             }
-            // Create a streaming placeholder for this RUNNING message
-            // This ensures the message is visible after page refresh
+
             const content = typeof subtask.result?.value === 'string' ? subtask.result.value : '';
+
+            // Check if this is the active streaming message
+            const isActiveStream = subtask.id === effectiveActiveStreamingId;
+
+            // Determine status:
+            // - Error takes precedence
+            // - Active stream shows as streaming
+            // - Inactive with content shows as completed (content already available)
+            // - Inactive without content shows as completed (stuck state, prevent spinner)
+            let status: MessageStatus;
+            if (hasFrontendError) {
+              status = 'error';
+            } else if (isActiveStream) {
+              status = 'streaming';
+            } else {
+              // Not active stream - show as completed to prevent infinite spinner
+              // This is the key fix: new group chat members who join after AI started
+              // won't see the infinite spinner because they don't have an active stream
+              status = 'completed';
+            }
+
             messages.set(messageId, {
               id: messageId,
               type: 'ai',
-              status: hasFrontendError ? 'error' : 'streaming', // Preserve error state if exists
+              status,
               content,
               timestamp: new Date(subtask.created_at).getTime(),
               subtaskId: subtask.id,
