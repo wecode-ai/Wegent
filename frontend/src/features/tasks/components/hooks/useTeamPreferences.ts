@@ -30,6 +30,12 @@ export interface UseTeamPreferencesOptions {
   hasMessages: boolean;
 
   /**
+   * The current task type/mode of the page ('chat' or 'code').
+   * Used to verify if selectedTaskDetail matches the current page mode.
+   */
+  taskType: 'chat' | 'code';
+
+  /**
    * Currently selected task detail.
    */
   selectedTaskDetail: TaskDetail | null;
@@ -98,6 +104,7 @@ function extractTeamId(team: TaskDetail['team']): number | null {
 export function useTeamPreferences({
   teams,
   hasMessages,
+  taskType,
   selectedTaskDetail,
   selectedTeam,
   setSelectedTeam,
@@ -159,9 +166,25 @@ export function useTeamPreferences({
 
   /**
    * Effect: Sync team selection when viewing existing task.
+   * Only syncs if the task's type matches the current page mode.
    */
   useEffect(() => {
     if (!detailTeamId) return;
+
+    // Don't sync team if the task type doesn't match the current page mode
+    // This prevents showing chat task's team on the code page and vice versa
+    // For tasks without task_type (legacy tasks), infer from git information
+    let taskDetailType = selectedTaskDetail?.task_type;
+    if (!taskDetailType && selectedTaskDetail) {
+      // Backward compatibility: infer type from git information
+      // If task has git repo info, assume it's a code task
+      const gitRepo = selectedTaskDetail.git_repo;
+      taskDetailType = gitRepo && gitRepo.trim() !== '' ? 'code' : 'chat';
+    }
+
+    if (taskDetailType && taskDetailType !== taskType) {
+      return;
+    }
 
     if (!selectedTeam?.id || selectedTeam.id !== detailTeamId) {
       const matchedTeam = teams.find(team => team.id === detailTeamId) || null;
@@ -181,6 +204,9 @@ export function useTeamPreferences({
     teams,
     selectedTeam?.id,
     selectedTaskDetail?.team,
+    selectedTaskDetail?.task_type,
+    selectedTaskDetail?.git_repo,
+    taskType,
     setSelectedTeam,
     setHasRestoredPreferences,
   ]);
