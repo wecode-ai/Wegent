@@ -13,6 +13,8 @@ tools:
     provider: mermaid
     config:
       timeout: 30
+  - name: read_mermaid_reference
+    provider: mermaid
 dependencies:
   - app.chat_shell.tools.pending_requests
 ---
@@ -29,6 +31,7 @@ To create mermaid diagrams, follow this two-step workflow:
 2. **Step 2: Output mermaid code block** - After successful validation, output the mermaid code block in your response
 
 This ensures:
+
 - Syntax is validated before displaying to the user
 - The diagram is automatically saved in the conversation history
 - The diagram can be referenced later in the conversation
@@ -37,11 +40,11 @@ This ensures:
 
 Call the `render_mermaid` tool with the following parameters:
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `code` | string | Yes | The mermaid diagram code (without the ```mermaid wrapper) |
-| `diagram_type` | string | No | Diagram type hint (flowchart, sequence, etc.) |
-| `title` | string | No | Optional title for the diagram |
+| Parameter      | Type   | Required | Description                                               |
+| -------------- | ------ | -------- | --------------------------------------------------------- |
+| `code`         | string | Yes      | The mermaid diagram code (without the ```mermaid wrapper) |
+| `diagram_type` | string | No       | Diagram type hint (flowchart, sequence, etc.)             |
+| `title`        | string | No       | Optional title for the diagram                            |
 
 ### Example Tool Call
 
@@ -69,6 +72,7 @@ flowchart TD
 ```
 
 This mermaid code block will be:
+
 - Rendered as a diagram for the user to see
 - Saved in the conversation history
 - Available for future reference
@@ -76,11 +80,13 @@ This mermaid code block will be:
 ### Error Handling and Retry
 
 If the diagram has syntax errors, the tool will return detailed error information including:
+
 - Error message from the mermaid parser
 - Line number where the error occurred (if available)
 - Suggestions for fixing the error
 
 **When you receive an error, you should:**
+
 1. Read the error message carefully
 2. Identify the problematic line
 3. Fix the syntax issue
@@ -88,6 +94,7 @@ If the diagram has syntax errors, the tool will return detailed error informatio
 5. Only output the mermaid code block after successful validation
 
 Example error response:
+
 ```
 Mermaid diagram rendering failed.
 
@@ -108,6 +115,7 @@ Please fix the error and try again.
 ### Automatic Correction System
 
 The `render_mermaid` tool includes an **automatic correction system** that:
+
 1. Detects syntax errors in your Mermaid code
 2. Automatically attempts to fix common issues using AI
 3. Retries rendering up to **3 times**
@@ -117,6 +125,7 @@ This means most syntax errors will be automatically corrected without your inter
 ### When All Retries Fail
 
 If you receive a response containing `"final_instruction"`, this means:
+
 - All automatic correction attempts have **FAILED**
 - The syntax error is too complex for automatic fixing
 - The system has exhausted all retry attempts
@@ -173,245 +182,63 @@ Would you like me to help you troubleshoot the specific syntax issue?
 
 **IMPORTANT**: Only output the mermaid code block AFTER successful validation with the `render_mermaid` tool.
 
-## Supported Diagram Types
+---
 
-- **architecture-beta**: Architecture diagrams
-- **block**: Block diagrams
-- **C4Context**: C4 System Context diagrams (and other C4 types)
-- **classDiagram**: Class structures and relationships
-- **erDiagram**: Entity-relationship diagrams
-- **flowchart**: Process flows, decision trees, workflows
-- **gantt**: Project timelines and schedules
-- **gitGraph**: Git branch visualizations
-- **kanban**: Kanban boards
-- **mindmap**: Hierarchical idea organization
-- **packet-beta**: Network packet structure
-- **pie**: Proportional data distribution
-- **quadrantChart**: Strategic planning matrices
-- **radar-beta**: Radar charts
-- **requirementDiagram**: Requirement visualization
-- **sankey-beta**: Flow visualizations
-- **sequenceDiagram**: Interaction sequences
-- **stateDiagram-v2**: State machines
-- **timeline**: Chronological events
-- **treemap-beta**: Hierarchical data treemaps
-- **journey**: User journeys and user flows
-- **xychart-beta**: Bar and line charts
-- **zenuml**: ZenUML sequence diagrams
+## Diagram Types & References
 
-## Syntax Guidelines
+Use the `read_mermaid_reference` tool to read the specific documentation for syntax details and examples. Pass the filename (e.g., `flowchart.md`) as the `reference` argument.
 
-1. Always wrap diagram code in ```mermaid code blocks
-2. Use clear, descriptive node labels
-3. Keep diagrams simple - split complex diagrams into multiple smaller ones
-4. Use consistent naming conventions for nodes
-5. Avoid special characters in node IDs (use alphanumeric and underscores)
-6. **IMPORTANT: Use English for node IDs and labels** - Chinese characters may cause parsing errors in some Mermaid renderers. If you must use Chinese labels, wrap them in quotes and use English node IDs:
-   - ❌ Bad: `张三 --> 李四`
-   - ✅ Good: `A["张三"] --> B["李四"]`
+### Core Structure & Logic
 
-## Examples
+- **Flowchart** (`flowchart.md`): Process flows, decision trees, workflows
+- **Sequence** (`sequenceDiagram.md`): Interaction sequences between participants
+- **Class** (`classDiagram.md`): Class structures and object-oriented relationships
+- **State** (`stateDiagram.md`): State machines and state transitions
+- **Entity Relationship** (`erDiagram.md`): Database schemas and relationships
+- **Block** (`block.md`): Block diagrams for high-level structure
+- **ZenUML** (`zenuml.md`): Alternative sequence diagram syntax
 
-### Architecture (`architecture-beta`)
-```mermaid
-architecture-beta
-    group api(cloud)[API]
-    service db(database)[Database] in api
-    service server(server)[Server] in api
-    db:L -- R:server
-```
+### Project & Planning
 
-### Block (`block-beta`)
-```mermaid
-block-beta
-    columns 3
-    A["Block A"] B["Block B"] C["Block C"]
-    A --> B
-```
+- **Gantt** (`gantt.md`): Project timelines and schedules
+- **Kanban** (`kanban.md`): Work items and project status boards
+- **Timeline** (`timeline.md`): Chronological events visualization
+- **User Journey** (`journey.md`): User flows and experience mapping
+- **Requirement** (`requirementDiagram.md`): Requirements traceability and risk
+- **GitGraph** (`gitgraph.md`): Git branching and merging visualization
 
-### C4 (`C4Context`)
-```mermaid
-C4Context
-    Person(user, "User")
-    System(sys, "System")
-    Rel(user, sys, "Uses")
-```
+### Data & Statistics
 
-### Class (`classDiagram`)
-```mermaid
-classDiagram
-    class Animal {
-        +String name
-        +eat()
-    }
-    Animal <|-- Dog
-```
+- **Pie Chart** (`pie.md`): Proportional data distribution
+- **XY Chart** (`xyChart.md`): Bar and line charts
+- **Quadrant** (`quadrantChart.md`): Strategic planning matrices (2x2)
+- **Radar** (`radar.md`): Multivariate data comparison
+- **Sankey** (`sankey.md`): Flow volume visualization
+- **Treemap** (`treemap.md`): Hierarchical data treemaps
 
-### Entity Relationship (`erDiagram`)
-```mermaid
-erDiagram
-    CUSTOMER ||--o{ ORDER : places
-    ORDER ||--|{ LINE-ITEM : contains
-```
+### System & Architecture
 
-### Flowchart (`flowchart`)
-```mermaid
-flowchart TD
-    Start --> Decision{Is it?}
-    Decision -->|Yes| End
-    Decision -->|No| Start
-```
+- **Architecture** (`architecture.md`): Cloud and system architecture diagrams
+- **C4 Context** (`c4.md`): C4 model for software architecture
+- **Packet** (`packet.md`): Network packet structure visualization
 
-### Gantt (`gantt`)
-```mermaid
-gantt
-    title Project Schedule
-    section Dev
-    Task A :a1, 2024-01-01, 30d
-    Task B :after a1, 20d
-```
+### General
 
-### GitGraph (`gitGraph`)
-```mermaid
-gitGraph
-    commit
-    branch develop
-    commit
-    checkout main
-    merge develop
-```
+- **Common Examples** (`examples.md`): Collection of various diagram examples
 
-### Kanban (`kanban`)
-```mermaid
-kanban
-    Todo
-        [Task 1]
-    Done
-        [Task 2]
-```
-
-### Mindmap (`mindmap`)
-```mermaid
-mindmap
-  root((Main))
-    Topic A
-    Topic B
-```
-
-### Packet (`packet-beta`)
-```mermaid
-packet-beta
-    0-15: "Source Port"
-    16-31: "Dest Port"
-    32-63: "Sequence Number"
-```
-
-### Pie (`pie`)
-```mermaid
-pie
-    "Category A" : 40
-    "Category B" : 60
-```
-
-### Quadrant (`quadrantChart`)
-```mermaid
-quadrantChart
-    x-axis Low --> High
-    y-axis Bad --> Good
-    Item A: [0.3, 0.6]
-    Item B: [0.8, 0.2]
-```
-
-### Radar (`radar-beta`)
-```mermaid
-radar-beta
-    axis A, B, C, D
-    curve Item1 [50, 60, 90, 80]
-```
-
-### Requirement (`requirementDiagram`)
-```mermaid
-requirementDiagram
-    requirement test_req {
-        id: 1
-        text: "Must pass tests"
-        risk: high
-    }
-```
-
-### Sankey (`sankey-beta`)
-```mermaid
-sankey-beta
-    Source, Target, 10
-    Source, Other, 5
-```
-
-### Sequence (`sequenceDiagram`)
-```mermaid
-sequenceDiagram
-    Alice->>John: Hello
-    John-->>Alice: Hi
-```
-
-### State (`stateDiagram-v2`)
-```mermaid
-stateDiagram-v2
-    [*] --> Active
-    Active --> Inactive
-    Inactive --> [*]
-```
-
-### Timeline (`timeline`)
-```mermaid
-timeline
-    2023 : Event A
-    2024 : Event B : Event C
-```
-
-### Treemap (`treemap-beta`)
-```mermaid
-treemap-beta
-    "Root"
-        "Branch 1": 10
-        "Branch 2": 20
-```
-
-### User Journey (`journey`)
-```mermaid
-journey
-    title My Day
-    section Morning
-      Wake up: 5: Me
-      Breakfast: 4: Me, Cat
-```
-
-### XY Chart (`xychart-beta`)
-```mermaid
-xychart-beta
-    x-axis [Jan, Feb, Mar]
-    bar [10, 20, 15]
-    line [10, 20, 15]
-```
-
-### ZenUML (`zenuml`)
-```mermaid
-zenuml
-    Alice->Bob: Hi
-    Bob->Alice: Hello
-```
+---
 
 ## Best Practices
 
-- Keep diagrams focused on one concept
-- Use meaningful labels and descriptions
-- Test that diagrams render correctly
-- Consider using subgraphs for complex flowcharts
-- Use notes and comments for clarification
-- For complex systems, break into multiple diagrams
+- **Focus**: Keep diagrams focused on one concept or workflow.
+- **Labels**: Use meaningful labels. For Chinese characters, always wrap in quotes (e.g., `A["用户"]`).
+- **Complexity**: Split complex diagrams into multiple smaller ones.
+- **IDs**: Use English alphanumeric characters for node IDs (e.g., `Start`, `User`, `DB`) to avoid parsing errors.
+- **Testing**: Always validate with the `render_mermaid` tool.
 
 ## Common Issues
 
-1. **Syntax errors**: Check for missing arrows, brackets, or quotes
-2. **Large diagrams**: Split into multiple smaller diagrams
-3. **Special characters**: Escape or avoid special characters in node IDs
-4. **Rendering issues**: Simplify the diagram structure
+1. **Syntax Errors**: Missing arrows, brackets, or unquoted special characters.
+2. **Large Diagrams**: Hard to read and render; break them down.
+3. **Node IDs**: Using Chinese or special characters in IDs can cause failures. Use `ID["Label"]` format.
+4. **Rendering**: If a diagram fails to render, try simplifying the structure or checking for valid syntax versions.
