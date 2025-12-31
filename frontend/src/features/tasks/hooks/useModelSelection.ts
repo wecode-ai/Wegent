@@ -22,8 +22,6 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { isPredefinedModel, getModelFromConfig } from '@/features/settings/services/bots';
 import {
   saveGlobalModelPreference,
-  saveSessionModelPreference,
-  getSessionModelPreference,
   getGlobalModelPreference,
   type ModelPreference,
 } from '@/utils/modelPreferences';
@@ -165,9 +163,7 @@ export function useModelSelection({
   const prevTeamIdRef = useRef<number | null>(null);
   const prevTaskIdRef = useRef<number | null | undefined>(undefined);
   const hasInitializedRef = useRef(false);
-  const userSelectedModelRef = useRef<Model | null>(null);
-  const isTaskSwitchingRef = useRef(false);
-  const userHasSelectedInSessionRef = useRef(false);
+  const isRestoringRef = useRef(false);
 
   // -------------------------------------------------------------------------
   // Derived State
@@ -207,6 +203,27 @@ export function useModelSelection({
   const isModelRequired = !showDefaultOption && !selectedModel;
 
   // -------------------------------------------------------------------------
+  // Helper: Get default model from team's bot bind_model
+  // -------------------------------------------------------------------------
+  const getTeamDefaultModel = useCallback((): Model | null => {
+    if (!selectedTeam?.bots || selectedTeam.bots.length === 0) {
+      return null;
+    }
+    const firstBot = selectedTeam.bots[0];
+    const botConfig = firstBot.bot?.agent_config as Record<string, unknown> | undefined;
+    if (botConfig) {
+      const bindModel = getModelFromConfig(botConfig);
+      if (bindModel) {
+        const foundModel = filteredModels.find(
+          m => m.name === bindModel || m.displayName === bindModel
+        );
+        return foundModel || null;
+      }
+    }
+    return null;
+  }, [selectedTeam?.bots, filteredModels]);
+
+  // -------------------------------------------------------------------------
   // Model Fetching
   // -------------------------------------------------------------------------
 
@@ -240,360 +257,192 @@ export function useModelSelection({
   }, [showDefaultOption, disabled]);
 
   // -------------------------------------------------------------------------
-  // Model Selection Logic (Unified)
+  // Model Selection Logic (Simplified)
+  // Priority: 1. taskModelId (from API) -> 2. team's bind_model -> 3. global preference
   // -------------------------------------------------------------------------
   useEffect(() => {
     const currentTeamId = selectedTeam?.id ?? null;
     const teamChanged = prevTeamIdRef.current !== null && prevTeamIdRef.current !== currentTeamId;
-    const isTaskCreation =
-      (prevTaskIdRef.current === undefined || prevTaskIdRef.current === null) &&
-      typeof taskId === 'number';
     const taskChanged =
       hasInitializedRef.current &&
       prevTaskIdRef.current !== taskId &&
-      typeof prevTaskIdRef.current === 'number' &&
-      typeof taskId === 'number';
+      (typeof prevTaskIdRef.current === 'number' || typeof taskId === 'number');
 
-    console.log('[useModelSelection] Init effect triggered', {
+    console.log('[useModelSelection] Selection effect triggered', {
       currentTeamId,
-      prevTeamId: prevTeamIdRef.current,
       teamChanged,
-      teamId,
       taskId,
-      prevTaskId: prevTaskIdRef.current,
-      isTaskCreation,
       taskChanged,
+      taskModelId,
       hasInitialized: hasInitializedRef.current,
-      selectedModel: selectedModel?.name,
-      showDefaultOption,
+      modelsCount: models.length,
       filteredModelsCount: filteredModels.length,
-      disabled,
+      showDefaultOption,
+      currentSelectedModel: selectedModel?.name,
     });
+
+    // Debug: Log all model names and displayNames
+    if (models.length > 0 && taskModelId) {
+      console.log('[useModelSelection] Looking for taskModelId:', taskModelId);
+      console.log(
+        '[useModelSelection] Available models:',
+        models.map(m => ({
+          name: m.name,
+          displayName: m.displayName,
+          provider: m.provider,
+          type: m.type,
+        }))
+      );
+    }
 
     prevTeamIdRef.current = currentTeamId;
     prevTaskIdRef.current = taskId;
 
-    // Case 1: Team changed - re-validate model selection
-    if (teamChanged) {
-      console.log('[useModelSelection] Case 1: Team changed', { taskId, hasTaskId: !!taskId });
-
-      if (taskId) {
-        console.log('[useModelSelection] Skipping team change handling: taskId exists');
-        userSelectedModelRef.current = null;
-        return;
-      }
-
-      userSelectedModelRef.current = null;
-
-      if (showDefaultOption) {
-        console.log('[useModelSelection] Setting to default (team has predefined models)');
-        setSelectedModel({ name: DEFAULT_MODEL_NAME, provider: '', modelId: '' });
-        setForceOverrideState(false);
-      } else if (selectedModel && selectedModel.name !== DEFAULT_MODEL_NAME) {
-        const isStillCompatible = filteredModels.some(
-          m => m.name === selectedModel.name && m.type === selectedModel.type
-        );
-        if (!isStillCompatible) {
-          console.log('[useModelSelection] Current model not compatible, clearing');
-          setSelectedModel(null);
-        }
-      } else {
-        console.log('[useModelSelection] Clearing selection for non-default team');
-        setSelectedModel(null);
-      }
+    // Skip if no models loaded yet
+    if (models.length === 0) {
+      console.log('[useModelSelection] Skipping: no models loaded yet');
       return;
     }
 
-    // Case 2: Task changed - restore from session preference or taskModelId
-    if (taskChanged && taskId && teamId && filteredModels.length > 0 && !showDefaultOption) {
-      console.log('[useModelSelection] Case 2: Task changed, restoring from session preference', {
-        taskModelId,
-      });
-      isTaskSwitchingRef.current = true;
-
-      const preference = getSessionModelPreference(taskId, teamId);
-      console.log('[useModelSelection] Task switch preference', {
-        teamId,
+    // Case 1: Initial load or team/task changed - restore model
+    if (!hasInitializedRef.current || teamChanged || taskChanged) {
+      console.log('[useModelSelection] Case 1: Initial load or team/task changed', {
+        hasInitialized: hasInitializedRef.current,
+        teamChanged,
+        taskChanged,
         taskId,
-        preference,
         taskModelId,
+        showDefaultOption,
       });
+      isRestoringRef.current = true;
+      let restoredModel: Model | null = null;
 
-      if (preference && preference.modelName !== DEFAULT_MODEL_NAME) {
-        const foundModel = filteredModels.find(m => {
-          if (preference.modelType) {
-            return m.name === preference.modelName && m.type === preference.modelType;
-          }
-          return m.name === preference.modelName;
-        });
-        if (foundModel) {
-          console.log(
-            '[useModelSelection] Restored model from session preference:',
-            foundModel.name
-          );
-          setSelectedModel(foundModel);
-          setForceOverrideState(preference.forceOverride);
-          userSelectedModelRef.current = foundModel;
-          // Mark as user selected since we restored from session preference
-          userHasSelectedInSessionRef.current = true;
-          setTimeout(() => {
-            isTaskSwitchingRef.current = false;
-          }, 100);
-          return;
-        }
-      }
-
+      // Priority 1: Use taskModelId from API (if exists and not default)
+      // Search in ALL models, not just filtered ones, since task already has a recorded model
       if (taskModelId && taskModelId !== DEFAULT_MODEL_NAME) {
-        // Match by name or displayName since taskModelId could be either
-        const foundModel = filteredModels.find(
+        console.log('[useModelSelection] Priority 1: Searching for taskModelId in all models...');
+        const foundModel = models.find(
           m => m.name === taskModelId || m.displayName === taskModelId
         );
         if (foundModel) {
-          console.log('[useModelSelection] Restored model from taskModelId:', foundModel.name);
-          setSelectedModel(foundModel);
-          setForceOverrideState(true);
-          userSelectedModelRef.current = foundModel;
-          // Mark as user selected since we restored from taskModelId
-          userHasSelectedInSessionRef.current = true;
-          setTimeout(() => {
-            isTaskSwitchingRef.current = false;
-          }, 100);
-          return;
-        }
-      }
-
-      isTaskSwitchingRef.current = false;
-    }
-
-    // Case 3: Initial load - restore from localStorage or set default
-    if (!hasInitializedRef.current && filteredModels.length > 0) {
-      console.log('[useModelSelection] Case 3: Initial load', {
-        isTaskCreation,
-        taskId,
-        selectedModel: selectedModel?.name,
-      });
-      hasInitializedRef.current = true;
-
-      if (showDefaultOption) {
-        if (!selectedModel || selectedModel.name !== DEFAULT_MODEL_NAME) {
+          console.log('[useModelSelection] Priority 1: Found model by taskModelId:', {
+            name: foundModel.name,
+            displayName: foundModel.displayName,
+            provider: foundModel.provider,
+          });
+          restoredModel = foundModel;
+        } else {
           console.log(
-            '[useModelSelection] Setting to default (initial, team has predefined models)'
+            '[useModelSelection] Priority 1: taskModelId NOT found in models:',
+            taskModelId
           );
-          setSelectedModel({ name: DEFAULT_MODEL_NAME, provider: '', modelId: '' });
         }
-        return;
-      }
-
-      if (taskId && teamId) {
-        const sessionPreference = getSessionModelPreference(taskId, teamId);
-        console.log('[useModelSelection] Task exists, checking session preference', {
-          teamId,
-          taskId,
-          sessionPreference,
+      } else {
+        console.log('[useModelSelection] Priority 1: Skipped (no taskModelId or is default)', {
           taskModelId,
         });
-
-        if (sessionPreference && sessionPreference.modelName !== DEFAULT_MODEL_NAME) {
-          const foundModel = filteredModels.find(m => {
-            if (sessionPreference.modelType) {
-              return (
-                m.name === sessionPreference.modelName && m.type === sessionPreference.modelType
-              );
-            }
-            return m.name === sessionPreference.modelName;
-          });
-          if (foundModel) {
-            console.log(
-              '[useModelSelection] Restored model from session preference:',
-              foundModel.name
-            );
-            isTaskSwitchingRef.current = true;
-            setTimeout(() => {
-              isTaskSwitchingRef.current = false;
-            }, 100);
-            setSelectedModel(foundModel);
-            setForceOverrideState(sessionPreference.forceOverride);
-            userSelectedModelRef.current = foundModel;
-            // Mark as user selected since we restored from session preference
-            userHasSelectedInSessionRef.current = true;
-            return;
-          }
-        }
-
-        if (taskModelId && taskModelId !== DEFAULT_MODEL_NAME) {
-          // Match by name or displayName since taskModelId could be either
-          const foundModel = filteredModels.find(
-            m => m.name === taskModelId || m.displayName === taskModelId
-          );
-          if (foundModel) {
-            console.log('[useModelSelection] Restored model from taskModelId:', foundModel.name);
-            isTaskSwitchingRef.current = true;
-            setTimeout(() => {
-              isTaskSwitchingRef.current = false;
-            }, 100);
-            setSelectedModel(foundModel);
-            setForceOverrideState(true);
-            userSelectedModelRef.current = foundModel;
-            // Mark as user selected since we restored from taskModelId
-            userHasSelectedInSessionRef.current = true;
-            return;
-          }
-        }
-
-        // Fallback: try to get default model from team's bot bind_model
-        if (selectedTeam?.bots && selectedTeam.bots.length > 0) {
-          const firstBot = selectedTeam.bots[0];
-          const botConfig = firstBot.bot?.agent_config as Record<string, unknown> | undefined;
-          if (botConfig) {
-            const bindModel = getModelFromConfig(botConfig);
-            if (bindModel) {
-              // Match by name or displayName since bind_model could be either
-              const foundModel = filteredModels.find(
-                m => m.name === bindModel || m.displayName === bindModel
-              );
-              if (foundModel) {
-                console.log(
-                  '[useModelSelection] Restored model from team bot bind_model:',
-                  foundModel.name
-                );
-                isTaskSwitchingRef.current = true;
-                setTimeout(() => {
-                  isTaskSwitchingRef.current = false;
-                }, 100);
-                setSelectedModel(foundModel);
-                setForceOverrideState(true);
-                userSelectedModelRef.current = foundModel;
-                userHasSelectedInSessionRef.current = true;
-                return;
-              }
-            }
-          }
-        }
-
-        console.log(
-          '[useModelSelection] No session preference, no taskModelId, and no team bot bind_model'
-        );
-        return;
       }
 
-      if (teamId && !taskId) {
+      // Priority 2: Use global preference (for new chat only, i.e. no taskId)
+      if (!restoredModel && teamId && !taskId) {
+        console.log('[useModelSelection] Priority 2: Checking global preference (new chat)...');
         const preference = getGlobalModelPreference(teamId);
-        console.log('[useModelSelection] New chat, restoring from global preference', {
-          teamId,
-          preference,
-          currentModel: selectedModel?.name,
-        });
-
+        console.log('[useModelSelection] Priority 2: Global preference:', preference);
         if (preference && preference.modelName !== DEFAULT_MODEL_NAME) {
-          const foundModel = filteredModels.find(m => {
+          const foundModel = models.find(m => {
             if (preference.modelType) {
               return m.name === preference.modelName && m.type === preference.modelType;
             }
             return m.name === preference.modelName;
           });
           if (foundModel) {
-            if (!selectedModel || selectedModel.name !== foundModel.name) {
-              console.log(
-                '[useModelSelection] Restored model from global preference:',
-                foundModel.name
-              );
-              setSelectedModel(foundModel);
-              setForceOverrideState(preference.forceOverride);
-              userSelectedModelRef.current = foundModel;
-            }
+            console.log(
+              '[useModelSelection] Priority 2: Using global preference:',
+              foundModel.name
+            );
+            restoredModel = foundModel;
+            setForceOverrideState(preference.forceOverride);
           } else {
-            console.log('[useModelSelection] Preference model not found in filtered models');
+            console.log(
+              '[useModelSelection] Priority 2: Global preference model not found in models'
+            );
           }
         }
       }
-      return;
-    }
 
-    // Mark as initialized when disabled (already has a model from task)
-    if (!hasInitializedRef.current && disabled && selectedModel) {
-      console.log('[useModelSelection] Marking as initialized (disabled with model)');
-      hasInitializedRef.current = true;
-      return;
-    }
-
-    // Case 4: Preserve user's explicit selection
-    if (
-      hasInitializedRef.current &&
-      userSelectedModelRef.current &&
-      !teamChanged &&
-      !taskChanged &&
-      !isTaskCreation &&
-      filteredModels.length > 0 &&
-      !disabled
-    ) {
-      const userModel = userSelectedModelRef.current;
-      const isUserModelValid =
-        userModel.name === DEFAULT_MODEL_NAME ||
-        filteredModels.some(m => {
-          if (userModel.type) {
-            return m.name === userModel.name && m.type === userModel.type;
-          }
-          return m.name === userModel.name;
-        });
-
-      if (isUserModelValid && selectedModel?.name !== userModel.name) {
-        console.log('[useModelSelection] Case 4: Restoring user selection:', userModel.name);
-        setSelectedModel(userModel);
-        return;
+      // Priority 3: Use team's bot bind_model (only if no taskModelId and not new chat)
+      if (!restoredModel && !taskModelId && taskId) {
+        console.log('[useModelSelection] Priority 3: Checking team bind_model...');
+        const teamDefaultModel = getTeamDefaultModel();
+        if (teamDefaultModel) {
+          console.log(
+            '[useModelSelection] Priority 3: Using team bind_model:',
+            teamDefaultModel.name
+          );
+          restoredModel = teamDefaultModel;
+        } else {
+          console.log('[useModelSelection] Priority 3: No team bind_model found');
+        }
       }
+
+      // Priority 4: Use default if showDefaultOption and no model found
+      if (!restoredModel && showDefaultOption) {
+        console.log('[useModelSelection] Priority 4: Using default model (showDefaultOption=true)');
+        restoredModel = { name: DEFAULT_MODEL_NAME, provider: '', modelId: '' };
+        setForceOverrideState(false);
+      }
+
+      console.log('[useModelSelection] Final restoredModel:', restoredModel?.name ?? 'null');
+
+      if (restoredModel) {
+        setSelectedModel(restoredModel);
+        if (restoredModel.name !== DEFAULT_MODEL_NAME) {
+          setForceOverrideState(true);
+        }
+      } else if (teamChanged) {
+        // Clear selection on team change if no model found
+        console.log('[useModelSelection] Clearing selection (team changed, no model found)');
+        setSelectedModel(null);
+      }
+
+      hasInitializedRef.current = true;
+      setTimeout(() => {
+        isRestoringRef.current = false;
+      }, 100);
+      return;
     }
 
-    // Case 5: Model list changed - check compatibility
-    if (
-      hasInitializedRef.current &&
-      selectedModel &&
-      selectedModel.name !== DEFAULT_MODEL_NAME &&
-      !isTaskCreation &&
-      !disabled
-    ) {
+    // Case 2: Model list changed - check compatibility
+    if (selectedModel && selectedModel.name !== DEFAULT_MODEL_NAME) {
       const isStillCompatible = filteredModels.some(m => {
         if (selectedModel.type) {
           return m.name === selectedModel.name && m.type === selectedModel.type;
         }
         return m.name === selectedModel.name;
       });
-      if (!isStillCompatible && filteredModels.length > 0) {
-        console.log('[useModelSelection] Case 5: Model no longer compatible, clearing');
+      if (!isStillCompatible) {
+        console.log('[useModelSelection] Case 2: Model no longer compatible, clearing');
         setSelectedModel(null);
-        userSelectedModelRef.current = null;
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTeam?.id, showDefaultOption, filteredModels, teamId, taskId, disabled]);
+  }, [selectedTeam?.id, showDefaultOption, models, filteredModels, teamId, taskId, taskModelId]);
 
   // -------------------------------------------------------------------------
-  // Save Model Preference
+  // Save Model Preference (Always save to global when user changes model)
   // -------------------------------------------------------------------------
   useEffect(() => {
-    console.log('[useModelSelection] Save effect triggered', {
-      selectedModel: selectedModel?.name,
-      selectedModelType: selectedModel?.type,
-      teamId,
-      taskId,
-      forceOverride,
-      isTaskSwitching: isTaskSwitchingRef.current,
-      userHasSelectedInSession: userHasSelectedInSessionRef.current,
-    });
-
-    if (isTaskSwitchingRef.current) {
-      console.log('[useModelSelection] Skipping save: task switching in progress');
+    // Skip during restore
+    if (isRestoringRef.current) {
       return;
     }
 
     if (!selectedModel || !teamId) {
-      console.log('[useModelSelection] Skipping save: no model or teamId');
       return;
     }
 
-    if (taskId && !userHasSelectedInSessionRef.current) {
-      console.log(
-        '[useModelSelection] Skipping save to session: user has not selected model in this session'
-      );
+    // Skip if not initialized (initial load)
+    if (!hasInitializedRef.current) {
       return;
     }
 
@@ -604,18 +453,10 @@ export function useModelSelection({
       updatedAt: Date.now(),
     };
 
-    if (taskId) {
-      console.log('[useModelSelection] Saving to session dimension', {
-        taskId,
-        teamId,
-        preference,
-      });
-      saveSessionModelPreference(taskId, teamId, preference);
-    } else {
-      console.log('[useModelSelection] Saving to global dimension', { teamId, preference });
-      saveGlobalModelPreference(teamId, preference);
-    }
-  }, [selectedModel, forceOverride, teamId, taskId]);
+    // Always save to global when model changes
+    console.log('[useModelSelection] Saving to global', { teamId, preference });
+    saveGlobalModelPreference(teamId, preference);
+  }, [selectedModel, forceOverride, teamId]);
 
   // -------------------------------------------------------------------------
   // Actions
@@ -623,22 +464,15 @@ export function useModelSelection({
 
   /** Select a model directly */
   const selectModel = useCallback((model: Model | null) => {
-    userHasSelectedInSessionRef.current = true;
     setSelectedModel(model);
-    if (model) {
-      userSelectedModelRef.current = model;
-    }
   }, []);
 
   /** Select model by key (format: "modelName:modelType") */
   const selectModelByKey = useCallback(
     (key: string) => {
-      userHasSelectedInSessionRef.current = true;
-
       if (key === DEFAULT_MODEL_NAME) {
         const defaultModel = { name: DEFAULT_MODEL_NAME, provider: '', modelId: '' };
         setSelectedModel(defaultModel);
-        userSelectedModelRef.current = defaultModel;
         return;
       }
 
@@ -646,7 +480,6 @@ export function useModelSelection({
       const model = filteredModels.find(m => m.name === modelName && m.type === modelType);
       if (model) {
         setSelectedModel(model);
-        userSelectedModelRef.current = model;
       }
     },
     [filteredModels]
@@ -654,10 +487,8 @@ export function useModelSelection({
 
   /** Select default model */
   const selectDefaultModel = useCallback(() => {
-    userHasSelectedInSessionRef.current = true;
     const defaultModel = { name: DEFAULT_MODEL_NAME, provider: '', modelId: '' };
     setSelectedModel(defaultModel);
-    userSelectedModelRef.current = defaultModel;
   }, []);
 
   /** Set force override flag */
