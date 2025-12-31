@@ -382,10 +382,14 @@ export default function TaskSidebar({
               // Separate group chats and regular tasks from search results
               const allGroupChats = tasks
                 .filter(task => task.is_group_chat)
-                .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+                .sort(
+                  (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+                );
               const regularTasks = tasks
                 .filter(task => !task.is_group_chat)
-                .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+                .sort(
+                  (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+                );
 
               return (
                 <>
@@ -514,7 +518,10 @@ export default function TaskSidebar({
                           <>
                             <ChevronDown className="h-3.5 w-3.5" />
                             <span>
-                              {t('common:tasks.group_chats_expand', { count: collapsedReadCount + (hasMoreGroupTasks ? '+' : '') })}
+                              {t('common:tasks.group_chats_expand', {
+                                count: collapsedReadCount,
+                                suffix: hasMoreGroupTasks ? '+' : '',
+                              })}
                             </span>
                           </>
                         )}
@@ -547,6 +554,7 @@ export default function TaskSidebar({
                                 ? t('common:tasks.group_chats_collapse')
                                 : t('common:tasks.group_chats_expand', {
                                     count: collapsedReadCount,
+                                    suffix: '',
                                   })}
                             </p>
                           </TooltipContent>
@@ -623,7 +631,11 @@ export default function TaskSidebar({
                         className="flex items-center gap-1 px-1 py-1.5 text-xs text-text-muted hover:text-text-primary transition-colors w-full"
                       >
                         <ChevronDown className="h-3.5 w-3.5" />
-                        <span>{loadingMorePersonalTasks ? t('common:tasks.loading') : t('common:tasks.load_more')}</span>
+                        <span>
+                          {loadingMorePersonalTasks
+                            ? t('common:tasks.loading')
+                            : t('common:tasks.load_more')}
+                        </span>
                       </button>
                     )}
                     {loadingMorePersonalTasks && (

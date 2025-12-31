@@ -370,7 +370,7 @@
   "tasks": {
     "history_title": "History",
     "group_chats": "Group Chats",
-    "group_chats_expand": "Show {{count}} more",
+    "group_chats_expand": "Show {{count}}{{suffix}} more",
     "group_chats_collapse": "Show less",
     "conversations": "Conversations",
     "search_placeholder": "Search task",
