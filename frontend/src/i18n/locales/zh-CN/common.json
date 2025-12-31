@@ -1037,7 +1037,6 @@
       "legacy_xls": "文件格式过旧",
       "legacy_xls_hint": "请将 .xls 文件另存为 .xlsx 格式后上传",
       "network_error": "上传失败",
-      "network_error": "上传失败",
       "network_error_hint": "网络连接异常，请检查网络后重试",
       "content_truncated": "文件内容已压缩",
       "content_truncated_hint": "文件内容过长，已自动保留前 {{length}} 万字符"

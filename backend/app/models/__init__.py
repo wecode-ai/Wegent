@@ -35,7 +35,6 @@ __all__ = [
     "SubtaskContext",
     "SharedTask",
     "SharedTeam",
-    "SharedTask",
     "SkillBinary",
     "SystemConfig",
     "Namespace",
