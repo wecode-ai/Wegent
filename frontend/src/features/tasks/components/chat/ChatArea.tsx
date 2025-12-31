@@ -159,15 +159,14 @@ export default function ChatArea({
     streamHandlers.currentStreamState?.messages,
   ]);
 
-  // Use team preferences hook - consolidates 4 useEffect calls
+  // Use team preferences hook - consolidates team preference logic
+  // Note: Model selection is now handled by useModelSelection hook in ModelSelector
   useTeamPreferences({
     teams,
     hasMessages,
     selectedTaskDetail,
     selectedTeam: chatState.selectedTeam,
     setSelectedTeam: chatState.setSelectedTeam,
-    setSelectedModel: chatState.setSelectedModel,
-    setForceOverride: chatState.setForceOverride,
     hasRestoredPreferences: chatState.hasRestoredPreferences,
     setHasRestoredPreferences: chatState.setHasRestoredPreferences,
     isTeamCompatibleWithMode: chatState.isTeamCompatibleWithMode,

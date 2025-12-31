@@ -2,10 +2,20 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useRef, useCallback } from 'react';
+/**
+ * useTeamPreferences Hook
+ *
+ * Manages team preference and synchronization logic:
+ * - Restoring team preferences from localStorage
+ * - Syncing team selection when viewing existing tasks
+ * - Resetting state when clearVersion changes (New Chat)
+ *
+ * NOTE: Model selection logic has been moved to useModelSelection hook.
+ * This hook now focuses solely on team preferences.
+ */
+
+import { useEffect, useRef } from 'react';
 import type { Team, TaskDetail } from '@/types/api';
-import type { Model } from '../selector/ModelSelector';
-import { DEFAULT_MODEL_NAME } from '../selector/ModelSelector';
 
 export interface UseTeamPreferencesOptions {
   /**
@@ -33,16 +43,6 @@ export interface UseTeamPreferencesOptions {
    * Function to set the selected team.
    */
   setSelectedTeam: (team: Team | null) => void;
-
-  /**
-   * Function to set the selected model.
-   */
-  setSelectedModel: (model: Model | null) => void;
-
-  /**
-   * Function to set the force override flag.
-   */
-  setForceOverride: (value: boolean) => void;
 
   /**
    * Whether preferences have been restored.
@@ -88,14 +88,12 @@ function extractTeamId(team: TaskDetail['team']): number | null {
 /**
  * useTeamPreferences Hook
  *
- * Consolidates all team preference and model synchronization logic:
+ * Consolidates team preference logic:
  * - Restoring team preferences from localStorage
  * - Syncing team selection when viewing existing tasks
- * - Setting model when viewing existing tasks
  * - Resetting state when clearVersion changes (New Chat)
  *
- * This hook extracts multiple useEffect calls from ChatArea into a single,
- * cohesive unit that manages team and model preferences.
+ * Model selection is now handled by useModelSelection hook in ModelSelector.
  */
 export function useTeamPreferences({
   teams,
@@ -103,8 +101,6 @@ export function useTeamPreferences({
   selectedTaskDetail,
   selectedTeam,
   setSelectedTeam,
-  setSelectedModel,
-  setForceOverride,
   hasRestoredPreferences,
   setHasRestoredPreferences,
   isTeamCompatibleWithMode,
@@ -112,53 +108,23 @@ export function useTeamPreferences({
   clearVersion,
 }: UseTeamPreferencesOptions): void {
   // Refs for tracking previous values
-  const prevTaskIdForModelRef = useRef<number | null | undefined>(undefined);
   const prevClearVersionRef = useRef(clearVersion);
 
   // Compute detailTeamId
   const detailTeamId = selectedTaskDetail ? extractTeamId(selectedTaskDetail.team) : null;
 
   /**
-   * Helper: Set model to default.
-   */
-  const handleDefaultModel = useCallback(() => {
-    setSelectedModel({ name: DEFAULT_MODEL_NAME, provider: '', modelId: '' });
-    setForceOverride(false);
-  }, [setSelectedModel, setForceOverride]);
-
-  /**
-   * Helper: Set model to explicit value.
-   */
-  const handleExplicitModel = useCallback(
-    (modelName: string) => {
-      setSelectedModel({
-        name: modelName,
-        provider: '',
-        modelId: modelName,
-        displayName: null,
-        type: undefined,
-      });
-    },
-    [setSelectedModel]
-  );
-
-  /**
    * Effect: Reset state when clearVersion changes (New Chat).
-   *
-   * This replaces the original useEffect at lines 306-313 in ChatArea.tsx.
    */
   useEffect(() => {
     if (clearVersion !== prevClearVersionRef.current) {
       prevClearVersionRef.current = clearVersion;
-      prevTaskIdForModelRef.current = undefined;
       setHasRestoredPreferences(false);
     }
   }, [clearVersion, setHasRestoredPreferences]);
 
   /**
    * Effect: Restore team preferences from localStorage.
-   *
-   * This replaces the original useEffect at lines 206-227 in ChatArea.tsx.
    * Only runs when there are no messages and preferences haven't been restored.
    */
   useEffect(() => {
@@ -193,8 +159,6 @@ export function useTeamPreferences({
 
   /**
    * Effect: Sync team selection when viewing existing task.
-   *
-   * This replaces the original useEffect at lines 230-246 in ChatArea.tsx.
    */
   useEffect(() => {
     if (!detailTeamId) return;
@@ -219,51 +183,6 @@ export function useTeamPreferences({
     selectedTaskDetail?.team,
     setSelectedTeam,
     setHasRestoredPreferences,
-  ]);
-
-  /**
-   * Effect: Set model when viewing existing task.
-   *
-   * This replaces the original useEffect at lines 249-303 in ChatArea.tsx.
-   */
-  useEffect(() => {
-    console.log('[useTeamPreferences] Model sync effect triggered', {
-      taskId: selectedTaskDetail?.id,
-      taskModelId: selectedTaskDetail?.model_id,
-      teamId: selectedTeam?.id,
-      prevTaskId: prevTaskIdForModelRef.current,
-    });
-
-    if (!selectedTaskDetail?.id || !selectedTeam) {
-      console.log('[useTeamPreferences] Skipping: no task or team');
-      return;
-    }
-
-    const taskIdChanged = prevTaskIdForModelRef.current !== selectedTaskDetail.id;
-    if (!taskIdChanged) {
-      console.log('[useTeamPreferences] Skipping: task ID not changed');
-      return;
-    }
-
-    // IMPORTANT: We no longer set model from task.model_id here.
-    // Model selection is now handled by ModelSelector using localStorage preferences.
-    // This hook only tracks task ID changes for team synchronization purposes.
-    //
-    // The model preference priority is:
-    // 1. Session preference (localStorage: wegent_model_pref_{taskId}_{teamId})
-    // 2. Task's model_id (only as fallback when no session preference exists)
-    //
-    // ModelSelector handles this logic in its init effect.
-    console.log('[useTeamPreferences] Task changed, letting ModelSelector handle model preference');
-
-    prevTaskIdForModelRef.current = selectedTaskDetail.id;
-  }, [
-    selectedTaskDetail?.id,
-    selectedTaskDetail?.model_id,
-    selectedTeam,
-    handleDefaultModel,
-    handleExplicitModel,
-    setForceOverride,
   ]);
 }
 

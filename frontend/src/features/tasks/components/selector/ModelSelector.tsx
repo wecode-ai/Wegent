@@ -1,16 +1,28 @@
-// SPDX-FileCopyrightText: 2025 Weibo, Inc.
+// SPDX-FileCopyrightText: 2025 WeCode, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
+/**
+ * ModelSelector Component
+ *
+ * A component for displaying and selecting AI models.
+ * Supports two usage patterns:
+ *
+ * 1. Legacy mode (backward compatible): Pass selectedModel, setSelectedModel, etc.
+ *    The component will use useModelSelection hook internally.
+ *
+ * 2. New mode: Use useModelSelection hook externally and pass the returned values.
+ *
+ * This design allows gradual migration from the old API to the new API.
+ */
+
 'use client';
 
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Cog6ToothIcon } from '@heroicons/react/24/outline';
 import { Check, Brain, ChevronDown } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Team, BotSummary } from '@/types/api';
-import { modelApis, UnifiedModel, ModelTypeEnum } from '@/apis/models';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { Tag } from '@/components/ui/tag';
@@ -26,33 +38,25 @@ import {
 } from '@/components/ui/command';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { isPredefinedModel, getModelFromConfig } from '@/features/settings/services/bots';
-import {
-  saveGlobalModelPreference,
-  saveSessionModelPreference,
-  getSessionModelPreference,
-  getGlobalModelPreference,
-  type ModelPreference,
-} from '@/utils/modelPreferences';
+import { useModelSelection } from '@/features/tasks/hooks/useModelSelection';
+import type { Team, BotSummary } from '@/types/api';
 
-// Region type for model deployment location
-export type ModelRegion = 'domestic' | 'overseas' | undefined;
+// Re-export types and constants from useModelSelection for backward compatibility
+export {
+  DEFAULT_MODEL_NAME,
+  allBotsHavePredefinedModel,
+} from '@/features/tasks/hooks/useModelSelection';
+export type { Model, ModelRegion } from '@/features/tasks/hooks/useModelSelection';
 
-// Model type for component props (extended with type information)
-export interface Model {
-  name: string;
-  provider: string; // 'openai' | 'claude'
-  modelId: string;
-  displayName?: string | null; // Human-readable display name
-  type?: ModelTypeEnum; // 'public' | 'user' - identifies model source
-  region?: ModelRegion; // 'domestic' | 'overseas' - deployment region
-}
+import type { Model } from '@/features/tasks/hooks/useModelSelection';
+import { DEFAULT_MODEL_NAME } from '@/features/tasks/hooks/useModelSelection';
 
-// Special constant for default model option
-export const DEFAULT_MODEL_NAME = '__default__';
+// ============================================================================
+// Types
+// ============================================================================
 
-// Extended Team type with bot details (using BotSummary for agent_config)
-interface TeamWithBotDetails extends Team {
+/** Extended Team type with bot details */
+export interface TeamWithBotDetails extends Team {
   bots: Array<{
     bot_id: number;
     bot_prompt: string;
@@ -61,7 +65,8 @@ interface TeamWithBotDetails extends Team {
   }>;
 }
 
-interface ModelSelectorProps {
+/** Legacy props interface (backward compatible) */
+export interface ModelSelectorProps {
   selectedModel: Model | null;
   setSelectedModel: (model: Model | null) => void;
   forceOverride: boolean;
@@ -79,48 +84,29 @@ interface ModelSelectorProps {
   taskModelId?: string | null;
 }
 
-// Helper function to convert UnifiedModel to Model
-function unifiedToModel(unified: UnifiedModel): Model {
-  return {
-    name: unified.name,
-    provider: unified.provider || 'claude',
-    modelId: unified.modelId || '',
-    displayName: unified.displayName,
-    type: unified.type,
-  };
-}
+// ============================================================================
+// Helper Functions
+// ============================================================================
 
-// Helper function to get display text for a model: displayName or name
+/** Get display text for a model: displayName or name */
 function getModelDisplayText(model: Model): string {
   return model.displayName || model.name;
 }
 
-// Helper function to check if all bots in a team have predefined models
-// Exported for use in ChatArea to determine if model selection is required
-export function allBotsHavePredefinedModel(team: TeamWithBotDetails | null): boolean {
-  if (!team || !team.bots || team.bots.length === 0) {
-    return false;
-  }
-
-  return team.bots.every(botInfo => {
-    const bot = botInfo.bot;
-    // If bot summary is not available, we can't determine if it has a predefined model
-    if (!bot) {
-      return false;
-    }
-    // If agent_config is not available or empty, it's not a predefined model
-    if (!bot.agent_config) {
-      return false;
-    }
-    return isPredefinedModel(bot.agent_config as Record<string, unknown>);
-  });
+/** Get unique key for model (name + type) */
+function getModelKey(model: Model): string {
+  return `${model.name}:${model.type || ''}`;
 }
 
+// ============================================================================
+// Component
+// ============================================================================
+
 export default function ModelSelector({
-  selectedModel,
-  setSelectedModel,
-  forceOverride,
-  setForceOverride,
+  selectedModel: externalSelectedModel,
+  setSelectedModel: externalSetSelectedModel,
+  forceOverride: externalForceOverride,
+  setForceOverride: externalSetForceOverride,
   selectedTeam,
   disabled,
   isLoading: externalLoading,
@@ -132,508 +118,35 @@ export default function ModelSelector({
   const { t } = useTranslation();
   const router = useRouter();
   const isMobile = useMediaQuery('(max-width: 767px)');
-  const [models, setModels] = useState<Model[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+
+  // Use the centralized model selection hook
+  const modelSelection = useModelSelection({
+    teamId: teamId ?? null,
+    taskId: taskId ?? null,
+    taskModelId,
+    selectedTeam,
+    disabled,
+  });
+
+  // Sync external state with internal hook state
+  // This allows the component to work with both legacy and new APIs
+  useEffect(() => {
+    if (modelSelection.selectedModel !== externalSelectedModel) {
+      if (modelSelection.selectedModel) {
+        externalSetSelectedModel(modelSelection.selectedModel);
+      }
+    }
+  }, [modelSelection.selectedModel, externalSelectedModel, externalSetSelectedModel]);
+
+  useEffect(() => {
+    if (modelSelection.forceOverride !== externalForceOverride) {
+      externalSetForceOverride(modelSelection.forceOverride);
+    }
+  }, [modelSelection.forceOverride, externalForceOverride, externalSetForceOverride]);
+
+  // Local UI state
   const [isOpen, setIsOpen] = useState(false);
   const [searchValue, setSearchValue] = useState('');
-
-  // Use backend-calculated is_mix_team flag
-  const isMixedTeam = selectedTeam?.is_mix_team ?? false;
-
-  // Check if all bots have predefined models (show "Default" option)
-  const showDefaultOption = useMemo(() => {
-    return allBotsHavePredefinedModel(selectedTeam);
-  }, [selectedTeam]);
-
-  // Auto-enable force override when team has predefined models (showDefaultOption is true)
-  // This ensures that when a team already has bound models, the override option is checked by default
-  useEffect(() => {
-    if (showDefaultOption && !disabled) {
-      setForceOverride(true);
-    }
-    // Note: setForceOverride is a stable setter from parent component, safe to include
-  }, [showDefaultOption, setForceOverride, disabled]);
-
-  // Get compatible provider based on team agent_type
-  // agent_type 'agno' -> provider 'openai', agent_type 'claude'/'claudecode' -> provider 'claude'
-  const compatibleProvider = useMemo((): string | null => {
-    if (!selectedTeam?.agent_type) return null;
-    const agentType = selectedTeam.agent_type.toLowerCase();
-    if (agentType === 'agno') return 'openai';
-    if (agentType === 'claude' || agentType === 'claudecode') return 'claude';
-    return null;
-  }, [selectedTeam?.agent_type]);
-
-  // Fetch all models using unified API
-  const fetchModels = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      // Use unified API to get public, user, and group models
-      // Filter by 'llm' category type - only LLM models can be used for chat
-      const response = await modelApis.getUnifiedModels(undefined, false, 'all', undefined, 'llm');
-      const modelList = (response.data || []).map(unifiedToModel);
-      setModels(modelList);
-    } catch (err) {
-      console.error('Failed to fetch models:', err);
-      setError(t('common:models.errors.load_models_failed'));
-    } finally {
-      setIsLoading(false);
-    }
-  }, [t]);
-
-  // Filter models by compatible provider when team is selected, and sort by display name
-  const filteredModels = useMemo(() => {
-    let result = models;
-    if (compatibleProvider) {
-      result = models.filter(model => model.provider === compatibleProvider);
-    }
-    // Sort by display name (displayName or name) alphabetically
-    return result.slice().sort((a, b) => {
-      const displayA = getModelDisplayText(a).toLowerCase();
-      const displayB = getModelDisplayText(b).toLowerCase();
-      return displayA.localeCompare(displayB);
-    });
-  }, [models, compatibleProvider]);
-
-  // Reset selected model when team changes and current selection is not compatible
-  // Load models on mount
-  useEffect(() => {
-    fetchModels();
-  }, [fetchModels]);
-
-  // Track previous team ID to detect team changes
-  const prevTeamIdRef = React.useRef<number | null>(null);
-  // Track previous task ID to detect task changes
-  const prevTaskIdRef = React.useRef<number | null | undefined>(undefined);
-  // Track if initial model selection has been done
-  const hasInitializedRef = React.useRef(false);
-  // Track user's explicit model selection to preserve after task send
-  const userSelectedModelRef = React.useRef<Model | null>(null);
-  // Track if we're in the middle of a task switch (to prevent save effect from overwriting)
-  const isTaskSwitchingRef = React.useRef(false);
-  // Track if user has explicitly selected a model in this session (to prevent auto-save on mount)
-  const userHasSelectedInSessionRef = React.useRef(false);
-
-  // Unified model selection logic:
-  // 1. On initial load: restore from localStorage or set default
-  // 2. On team change: re-validate model selection
-  // 3. On task change: restore from session preference
-  // 4. On model list change: check compatibility
-  // 5. Preserve user selection after task sends (when team ID doesn't actually change)
-  // 6. Skip auto-initialization when disabled (viewing existing task)
-  useEffect(() => {
-    const currentTeamId = selectedTeam?.id ?? null;
-    const teamChanged = prevTeamIdRef.current !== null && prevTeamIdRef.current !== currentTeamId;
-    // Task changed: detect when switching between different existing tasks
-    // This should NOT trigger when:
-    // - Initial load (prevTaskIdRef is undefined)
-    // - Task just created (prevTaskIdRef is undefined or null, taskId becomes a number)
-    // This SHOULD trigger when:
-    // - Switching from one existing task to another (both are numbers)
-    const isTaskCreation =
-      (prevTaskIdRef.current === undefined || prevTaskIdRef.current === null) &&
-      typeof taskId === 'number';
-    const taskChanged =
-      hasInitializedRef.current && // Only after initialization
-      prevTaskIdRef.current !== taskId && // Task ID actually changed
-      typeof prevTaskIdRef.current === 'number' && // Previous was an existing task
-      typeof taskId === 'number'; // Current is also an existing task
-
-    console.log('[ModelSelector] Init effect triggered', {
-      currentTeamId,
-      prevTeamId: prevTeamIdRef.current,
-      teamChanged,
-      teamId,
-      taskId,
-      prevTaskId: prevTaskIdRef.current,
-      isTaskCreation,
-      taskChanged,
-      hasInitialized: hasInitializedRef.current,
-      selectedModel: selectedModel?.name,
-      showDefaultOption,
-      filteredModelsCount: filteredModels.length,
-      disabled,
-    });
-
-    prevTeamIdRef.current = currentTeamId;
-    prevTaskIdRef.current = taskId;
-
-    // Case 1: Team changed - re-validate model selection
-    // IMPORTANT: If taskId exists (viewing existing task), skip this case and let useTeamPreferences handle it
-    // This prevents clearing the model when switching between tasks that belong to different teams
-    if (teamChanged) {
-      console.log('[ModelSelector] Case 1: Team changed', { taskId, hasTaskId: !!taskId });
-
-      // If we have a taskId, let useTeamPreferences handle the model from task.model_id
-      if (taskId) {
-        console.log(
-          '[ModelSelector] Skipping team change handling: taskId exists, letting useTeamPreferences handle'
-        );
-        userSelectedModelRef.current = null;
-        return;
-      }
-
-      // Clear user selection on team change (only for new chat)
-      userSelectedModelRef.current = null;
-
-      if (showDefaultOption) {
-        // New team supports default option, set to default
-        console.log('[ModelSelector] Setting to default (team has predefined models)');
-        setSelectedModel({ name: DEFAULT_MODEL_NAME, provider: '', modelId: '' });
-        setForceOverride(false);
-      } else if (selectedModel && selectedModel.name !== DEFAULT_MODEL_NAME) {
-        // Check if current model is still compatible
-        const isStillCompatible = filteredModels.some(
-          m => m.name === selectedModel.name && m.type === selectedModel.type
-        );
-        if (!isStillCompatible) {
-          console.log('[ModelSelector] Current model not compatible, clearing');
-          setSelectedModel(null);
-        }
-      } else {
-        // Clear selection for non-default teams
-        console.log('[ModelSelector] Clearing selection for non-default team');
-        setSelectedModel(null);
-      }
-      return;
-    }
-
-    // Case 2: Task changed (user switching between tasks) - restore from session preference or taskModelId
-    if (taskChanged && taskId && teamId && filteredModels.length > 0 && !showDefaultOption) {
-      console.log('[ModelSelector] Case 2: Task changed, restoring from session preference', {
-        taskModelId,
-      });
-      isTaskSwitchingRef.current = true;
-
-      // Use getSessionModelPreference to avoid fallback to global preference
-      const preference = getSessionModelPreference(taskId, teamId);
-      console.log('[ModelSelector] Task switch preference', {
-        teamId,
-        taskId,
-        preference,
-        taskModelId,
-      });
-
-      if (preference && preference.modelName !== DEFAULT_MODEL_NAME) {
-        const foundModel = filteredModels.find(m => {
-          if (preference.modelType) {
-            return m.name === preference.modelName && m.type === preference.modelType;
-          }
-          return m.name === preference.modelName;
-        });
-        if (foundModel) {
-          console.log('[ModelSelector] Restored model from session preference:', foundModel.name);
-          setSelectedModel(foundModel);
-          setForceOverride(preference.forceOverride);
-          userSelectedModelRef.current = foundModel;
-          // Reset task switching flag after a short delay to allow save effect to skip
-          setTimeout(() => {
-            isTaskSwitchingRef.current = false;
-          }, 100);
-          return;
-        }
-      }
-
-      // No session preference found, fallback to taskModelId (from task.model_id)
-      if (taskModelId && taskModelId !== DEFAULT_MODEL_NAME) {
-        const foundModel = filteredModels.find(m => m.name === taskModelId);
-        if (foundModel) {
-          console.log('[ModelSelector] Restored model from taskModelId:', foundModel.name);
-          setSelectedModel(foundModel);
-          setForceOverride(true);
-          userSelectedModelRef.current = foundModel;
-          // Reset task switching flag after a short delay to allow save effect to skip
-          setTimeout(() => {
-            isTaskSwitchingRef.current = false;
-          }, 100);
-          return;
-        }
-      }
-
-      // No session preference and no taskModelId, reset flag
-      isTaskSwitchingRef.current = false;
-    }
-
-    // Case 3: Initial load - restore from localStorage or set default
-    // IMPORTANT: Skip auto-initialization when disabled (viewing existing task with model already set)
-    if (!hasInitializedRef.current && filteredModels.length > 0) {
-      console.log('[ModelSelector] Case 3: Initial load', {
-        isTaskCreation,
-        taskId,
-        selectedModel: selectedModel?.name,
-      });
-      hasInitializedRef.current = true;
-
-      if (showDefaultOption) {
-        // If all bots have predefined models, auto-select "Default"
-        if (!selectedModel || selectedModel.name !== DEFAULT_MODEL_NAME) {
-          console.log('[ModelSelector] Setting to default (initial, team has predefined models)');
-          setSelectedModel({ name: DEFAULT_MODEL_NAME, provider: '', modelId: '' });
-        }
-        return;
-      }
-
-      // IMPORTANT: If taskId is provided (viewing existing task or task just created),
-      // restore from session preference first, then fallback to taskModelId.
-      if (taskId && teamId) {
-        // Use getSessionModelPreference to avoid fallback to global preference
-        const sessionPreference = getSessionModelPreference(taskId, teamId);
-        console.log('[ModelSelector] Task exists, checking session preference', {
-          teamId,
-          taskId,
-          sessionPreference,
-          taskModelId,
-        });
-
-        if (sessionPreference && sessionPreference.modelName !== DEFAULT_MODEL_NAME) {
-          const foundModel = filteredModels.find(m => {
-            if (sessionPreference.modelType) {
-              return (
-                m.name === sessionPreference.modelName && m.type === sessionPreference.modelType
-              );
-            }
-            return m.name === sessionPreference.modelName;
-          });
-          if (foundModel) {
-            console.log('[ModelSelector] Restored model from session preference:', foundModel.name);
-            isTaskSwitchingRef.current = true;
-            setTimeout(() => {
-              isTaskSwitchingRef.current = false;
-            }, 100);
-            setSelectedModel(foundModel);
-            setForceOverride(sessionPreference.forceOverride);
-            userSelectedModelRef.current = foundModel;
-            return;
-          }
-        }
-
-        // No session preference found, fallback to taskModelId (from task.model_id)
-        if (taskModelId && taskModelId !== DEFAULT_MODEL_NAME) {
-          const foundModel = filteredModels.find(m => m.name === taskModelId);
-          if (foundModel) {
-            console.log('[ModelSelector] Restored model from taskModelId:', foundModel.name);
-            isTaskSwitchingRef.current = true;
-            setTimeout(() => {
-              isTaskSwitchingRef.current = false;
-            }, 100);
-            setSelectedModel(foundModel);
-            setForceOverride(true);
-            userSelectedModelRef.current = foundModel;
-            return;
-          }
-        }
-
-        // No session preference and no taskModelId, leave model unset
-        console.log('[ModelSelector] No session preference and no taskModelId');
-        return;
-      }
-
-      // For new chat (no taskId), restore from global preference
-      if (teamId && !taskId) {
-        const preference = getGlobalModelPreference(teamId);
-        console.log('[ModelSelector] New chat, restoring from global preference', {
-          teamId,
-          preference,
-          currentModel: selectedModel?.name,
-        });
-
-        if (preference && preference.modelName !== DEFAULT_MODEL_NAME) {
-          const foundModel = filteredModels.find(m => {
-            if (preference.modelType) {
-              return m.name === preference.modelName && m.type === preference.modelType;
-            }
-            return m.name === preference.modelName;
-          });
-          if (foundModel) {
-            if (!selectedModel || selectedModel.name !== foundModel.name) {
-              console.log(
-                '[ModelSelector] Restored model from global preference:',
-                foundModel.name
-              );
-              setSelectedModel(foundModel);
-              setForceOverride(preference.forceOverride);
-              userSelectedModelRef.current = foundModel;
-            }
-          } else {
-            console.log('[ModelSelector] Preference model not found in filtered models');
-          }
-        }
-      }
-      return;
-    }
-
-    // Mark as initialized when disabled (already has a model from task)
-    if (!hasInitializedRef.current && disabled && selectedModel) {
-      console.log('[ModelSelector] Marking as initialized (disabled with model)');
-      hasInitializedRef.current = true;
-      return;
-    }
-
-    // Case 4: Preserve user's explicit selection (e.g., after sending a task)
-    // If user has explicitly selected a model and it's compatible, keep it
-    // IMPORTANT: Skip this case if task just created (isTaskCreation) - let useTeamPreferences handle it
-    if (
-      hasInitializedRef.current &&
-      userSelectedModelRef.current &&
-      !teamChanged &&
-      !taskChanged &&
-      !isTaskCreation && // Don't restore user selection when task is just created
-      filteredModels.length > 0 &&
-      !disabled
-    ) {
-      const userModel = userSelectedModelRef.current;
-      // Check if user's model is still valid (ignore type if undefined)
-      const isUserModelValid =
-        userModel.name === DEFAULT_MODEL_NAME ||
-        filteredModels.some(m => {
-          if (userModel.type) {
-            return m.name === userModel.name && m.type === userModel.type;
-          }
-          return m.name === userModel.name;
-        });
-
-      if (isUserModelValid && selectedModel?.name !== userModel.name) {
-        console.log('[ModelSelector] Case 4: Restoring user selection:', userModel.name);
-        setSelectedModel(userModel);
-        return;
-      }
-    }
-
-    // Case 5: Model list changed after initialization - check compatibility
-    // IMPORTANT: Skip compatibility check when disabled (viewing existing task)
-    // IMPORTANT: Skip this case if task just created (isTaskCreation) - let useTeamPreferences handle it
-    if (
-      hasInitializedRef.current &&
-      selectedModel &&
-      selectedModel.name !== DEFAULT_MODEL_NAME &&
-      !isTaskCreation && // Don't check compatibility when task is just created
-      !disabled
-    ) {
-      // Check compatibility (ignore type if undefined)
-      const isStillCompatible = filteredModels.some(m => {
-        if (selectedModel.type) {
-          return m.name === selectedModel.name && m.type === selectedModel.type;
-        }
-        return m.name === selectedModel.name;
-      });
-      if (!isStillCompatible && filteredModels.length > 0) {
-        console.log('[ModelSelector] Case 5: Model no longer compatible, clearing');
-        setSelectedModel(null);
-        userSelectedModelRef.current = null;
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    selectedTeam?.id,
-    showDefaultOption,
-    filteredModels,
-    teamId,
-    taskId,
-    // NOTE: selectedModel is intentionally excluded to prevent infinite loops
-    // The effect only needs to run when team/models change, not when selectedModel changes
-    setSelectedModel,
-    setForceOverride,
-    disabled,
-  ]);
-
-  // Save selected model to model preferences (global or session dimension)
-  useEffect(() => {
-    console.log('[ModelSelector] Save effect triggered', {
-      selectedModel: selectedModel?.name,
-      selectedModelType: selectedModel?.type,
-      teamId,
-      taskId,
-      forceOverride,
-      isTaskSwitching: isTaskSwitchingRef.current,
-      userHasSelectedInSession: userHasSelectedInSessionRef.current,
-    });
-
-    // Skip saving during task switch to avoid overwriting correct session preference
-    if (isTaskSwitchingRef.current) {
-      console.log('[ModelSelector] Skipping save: task switching in progress');
-      return;
-    }
-
-    if (!selectedModel || !teamId) {
-      console.log('[ModelSelector] Skipping save: no model or teamId');
-      return;
-    }
-
-    // Only save to session dimension if user has explicitly selected a model
-    // This prevents auto-save on component mount from overwriting existing session preferences
-    if (taskId && !userHasSelectedInSessionRef.current) {
-      console.log(
-        '[ModelSelector] Skipping save to session: user has not selected model in this session'
-      );
-      return;
-    }
-
-    const preference: ModelPreference = {
-      modelName: selectedModel.name,
-      modelType: selectedModel.type,
-      forceOverride,
-      updatedAt: Date.now(),
-    };
-
-    if (taskId) {
-      // Session dimension: update both global and session preferences
-      console.log('[ModelSelector] Saving to session dimension', { taskId, teamId, preference });
-      saveSessionModelPreference(taskId, teamId, preference);
-      // Verify save
-      const savedKey = `wegent_model_pref_${taskId}_${teamId}`;
-      console.log('[ModelSelector] Verified session save:', {
-        key: savedKey,
-        value: localStorage.getItem(savedKey),
-      });
-    } else {
-      // Global dimension: only update global preference (new chat)
-      console.log('[ModelSelector] Saving to global dimension', { teamId, preference });
-      saveGlobalModelPreference(teamId, preference);
-      // Verify save
-      const savedKey = `wegent_model_pref_${teamId}`;
-      console.log('[ModelSelector] Verified global save:', {
-        key: savedKey,
-        value: localStorage.getItem(savedKey),
-      });
-    }
-  }, [selectedModel, forceOverride, teamId, taskId]);
-
-  // Get unique key for model (name + type)
-  const getModelKey = (model: Model): string => {
-    return `${model.name}:${model.type || ''}`;
-  };
-
-  // Handle model selection
-  // Value format: "modelName:modelType" to uniquely identify models
-  const handleModelSelect = (value: string) => {
-    // Mark that user has explicitly selected a model in this session
-    userHasSelectedInSessionRef.current = true;
-
-    if (value === DEFAULT_MODEL_NAME) {
-      const defaultModel = { name: DEFAULT_MODEL_NAME, provider: '', modelId: '' };
-      setSelectedModel(defaultModel);
-      // Save user's explicit selection
-      userSelectedModelRef.current = defaultModel;
-      setIsOpen(false);
-      return;
-    }
-    // Parse value format: "modelName:modelType"
-    const [modelName, modelType] = value.split(':');
-    const model = filteredModels.find(m => m.name === modelName && m.type === modelType);
-    if (model) {
-      setSelectedModel(model);
-      // Save user's explicit selection
-      userSelectedModelRef.current = model;
-    }
-    setIsOpen(false);
-  };
-
-  // Handle force override checkbox
-  const handleForceOverrideChange = (checked: boolean | 'indeterminate') => {
-    setForceOverride(checked === true);
-  };
 
   // Reset search when popover closes
   useEffect(() => {
@@ -643,67 +156,24 @@ export default function ModelSelector({
   }, [isOpen]);
 
   // Determine if selector should be disabled
-  const isDisabled = disabled || externalLoading || isLoading || isMixedTeam;
+  const isDisabled =
+    disabled || externalLoading || modelSelection.isLoading || modelSelection.isMixedTeam;
 
-  // Check if model selection is required (for legacy teams without predefined models)
-  const isModelRequired = !showDefaultOption && !selectedModel;
+  // Handle model selection
+  const handleModelSelect = (value: string) => {
+    modelSelection.selectModelByKey(value);
+    setIsOpen(false);
+  };
 
-  // Get bound model display names from team bots for display
-  // Returns displayName if available, otherwise falls back to model name
-  const getBoundModelDisplayNames = useCallback((): string[] => {
-    if (!selectedTeam?.bots || selectedTeam.bots.length === 0) {
-      return [];
-    }
-    return selectedTeam.bots
-      .map(botInfo => {
-        const config = botInfo.bot?.agent_config;
-        if (!config) return '';
-        const modelName = getModelFromConfig(config as Record<string, unknown>);
-        if (!modelName) return '';
-        // Try to find the model in the loaded models list to get displayName
-        const foundModel = models.find(m => m.name === modelName);
-        return foundModel?.displayName || modelName;
-      })
-      .filter(Boolean);
-  }, [selectedTeam?.bots, models]);
-
-  // Get display text for trigger
-  const getTriggerDisplayText = () => {
-    if (!selectedModel) {
-      if (isLoading) {
-        return t('common:actions.loading');
-      }
-      // Show required hint for legacy teams without predefined models
-      if (isModelRequired) {
-        return t('common:task_submit.model_required', '请选择模型');
-      }
-      return t('common:task_submit.select_model', '选择模型');
-    }
-    if (selectedModel.name === DEFAULT_MODEL_NAME) {
-      const boundModelDisplayNames = getBoundModelDisplayNames();
-
-      if (boundModelDisplayNames.length === 1) {
-        // Single bot - show model displayName directly without "default" label
-        return boundModelDisplayNames[0];
-      } else if (boundModelDisplayNames.length > 1) {
-        // Multiple bots - show first model displayName + count of others
-        return `${boundModelDisplayNames[0]} +${boundModelDisplayNames.length - 1}`;
-      }
-      // Fallback to default label when no bound models found
-      return t('common:task_submit.default_model', '默认');
-    }
-    const displayText = getModelDisplayText(selectedModel);
-    if (forceOverride && !isMixedTeam) {
-      return `${displayText}(${t('common:task_submit.override_short', '覆盖')})`;
-    }
-    return displayText;
+  // Handle force override checkbox
+  const handleForceOverrideChange = (checked: boolean | 'indeterminate') => {
+    modelSelection.setForceOverride(checked === true);
   };
 
   // Tooltip content for model selector
-  // In compact mode, show selected model name in tooltip
   const tooltipContent =
-    compact && selectedModel
-      ? `${t('common:task_submit.model_tooltip', '选择用于对话的 AI 模型')}: ${getTriggerDisplayText()}`
+    compact && modelSelection.selectedModel
+      ? `${t('common:task_submit.model_tooltip', '选择用于对话的 AI 模型')}: ${modelSelection.getDisplayText()}`
       : t('common:task_submit.model_tooltip', '选择用于对话的 AI 模型');
 
   return (
@@ -725,17 +195,19 @@ export default function ModelSelector({
                   className={cn(
                     'flex items-center gap-1 min-w-0 rounded-full pl-2.5 pr-3 py-2.5 h-9',
                     'border transition-colors',
-                    isModelRequired
+                    modelSelection.isModelRequired
                       ? 'border-error text-error bg-error/5 hover:bg-error/10'
                       : 'border-border bg-base text-text-primary hover:bg-hover',
-                    isLoading || externalLoading ? 'animate-pulse' : '',
+                    modelSelection.isLoading || externalLoading ? 'animate-pulse' : '',
                     'focus:outline-none focus:ring-0',
                     'disabled:cursor-not-allowed disabled:opacity-50'
                   )}
                 >
                   <Brain className="h-4 w-4 flex-shrink-0" />
                   {!compact && (
-                    <span className="truncate text-xs min-w-0">{getTriggerDisplayText()}</span>
+                    <span className="truncate text-xs min-w-0">
+                      {modelSelection.getDisplayText()}
+                    </span>
                   )}
                   <ChevronDown className="h-2.5 w-2.5 flex-shrink-0 opacity-60" />
                 </button>
@@ -771,11 +243,13 @@ export default function ModelSelector({
               )}
             />
             <CommandList className="min-h-[36px] max-h-[200px] overflow-y-auto flex-1">
-              {error ? (
-                <div className="py-4 px-3 text-center text-sm text-error">{error}</div>
-              ) : filteredModels.length === 0 ? (
+              {modelSelection.error ? (
+                <div className="py-4 px-3 text-center text-sm text-error">
+                  {modelSelection.error}
+                </div>
+              ) : modelSelection.filteredModels.length === 0 ? (
                 <CommandEmpty className="py-4 text-center text-sm text-text-muted">
-                  {isLoading ? 'Loading...' : t('common:models.no_models')}
+                  {modelSelection.isLoading ? 'Loading...' : t('common:models.no_models')}
                 </CommandEmpty>
               ) : (
                 <>
@@ -784,7 +258,7 @@ export default function ModelSelector({
                   </CommandEmpty>
                   <CommandGroup>
                     {/* Default option - only show when all bots have predefined models */}
-                    {showDefaultOption && (
+                    {modelSelection.showDefaultOption && (
                       <CommandItem
                         key={DEFAULT_MODEL_NAME}
                         value={`${DEFAULT_MODEL_NAME} ${t('common:task_submit.default_model', '默认')} ${t('common:task_submit.use_bot_model', '使用 Bot 预设模型')}`}
@@ -817,14 +291,14 @@ export default function ModelSelector({
                         <Check
                           className={cn(
                             'h-3.5 w-3.5 shrink-0',
-                            selectedModel?.name === DEFAULT_MODEL_NAME
+                            modelSelection.selectedModel?.name === DEFAULT_MODEL_NAME
                               ? 'opacity-100 text-primary'
                               : 'opacity-0'
                           )}
                         />
                       </CommandItem>
                     )}
-                    {filteredModels.map(model => (
+                    {modelSelection.filteredModels.map(model => (
                       <CommandItem
                         key={getModelKey(model)}
                         value={`${model.name} ${model.displayName || ''} ${model.provider} ${model.modelId} ${model.type}`}
@@ -867,7 +341,8 @@ export default function ModelSelector({
                         <Check
                           className={cn(
                             'h-3.5 w-3.5 shrink-0',
-                            selectedModel?.name === model.name && selectedModel?.type === model.type
+                            modelSelection.selectedModel?.name === model.name &&
+                              modelSelection.selectedModel?.type === model.type
                               ? 'opacity-100 text-primary'
                               : 'opacity-0'
                           )}
@@ -881,17 +356,17 @@ export default function ModelSelector({
             {/* Footer options - override and settings */}
             <div className="border-t border-border">
               {/* Force override checkbox - always show when model is selected */}
-              {selectedModel && !isMixedTeam && (
+              {modelSelection.selectedModel && !modelSelection.isMixedTeam && (
                 <div
                   className="flex items-center gap-2 px-3 py-2.5 cursor-pointer hover:bg-hover transition-colors duration-150"
                   onClick={e => {
                     e.stopPropagation();
-                    handleForceOverrideChange(!forceOverride);
+                    handleForceOverrideChange(!modelSelection.forceOverride);
                   }}
                 >
                   <Checkbox
                     id="force-override-model-dropdown"
-                    checked={forceOverride}
+                    checked={modelSelection.forceOverride}
                     onCheckedChange={handleForceOverrideChange}
                     disabled={disabled || externalLoading}
                     className="h-4 w-4"
