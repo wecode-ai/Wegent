@@ -125,7 +125,7 @@ def get_group_tasks_lite(
     db: Session = Depends(get_db),
 ):
     """Get current user's group chat task list (paginated) for fast loading.
-    Returns only group chat tasks sorted by updated_at descending (most recent activity first).
+    Returns only group chat tasks sorted by created_at descending (newest first).
     """
     skip = (page - 1) * limit
     items, total = task_kinds_service.get_user_group_tasks_lite(
