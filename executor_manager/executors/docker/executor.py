@@ -31,6 +31,8 @@ from executor_manager.executors.docker.constants import (
     DEFAULT_TASK_ID,
     DEFAULT_TIMEZONE,
     DOCKER_SOCKET_PATH,
+    GIT_CACHE_MOUNT_PATH,
+    GIT_CACHE_VOLUME,
     WORKSPACE_MOUNT_PATH,
 )
 from executor_manager.executors.docker.utils import (
@@ -145,12 +147,14 @@ class DockerExecutor(Executor):
         task_id = task.get("task_id", DEFAULT_TASK_ID)
         subtask_id = task.get("subtask_id", DEFAULT_TASK_ID)
         user_config = task.get("user") or {}
+        user_id = user_config.get("id")
         user_name = user_config.get("name", "unknown")
         executor_name = task.get("executor_name")
 
         return {
             "task_id": task_id,
             "subtask_id": subtask_id,
+            "user_id": user_id,
             "user_name": user_name,
             "executor_name": executor_name,
         }
@@ -493,7 +497,8 @@ class DockerExecutor(Executor):
 
         task_id = task_info["task_id"]
         subtask_id = task_info["subtask_id"]
-        user_name = task_info["user_name"]
+        user_id = task_info.get("user_id")
+        user_name = task_info.get("user_name", "unknown")
 
         # Convert task to JSON string
         task_str = json.dumps(task)
@@ -556,6 +561,9 @@ class DockerExecutor(Executor):
         # Add workspace mount
         self._add_workspace_mount(cmd)
 
+        # Add git cache mount if enabled
+        self._add_git_cache_mount(cmd, user_name)
+
         # Add network configuration
         self._add_network_config(cmd)
 
@@ -590,6 +598,52 @@ class DockerExecutor(Executor):
         executor_workspace = os.getenv("EXECUTOR_WORKSPACE", "")  # Fix spelling error
         if executor_workspace:
             cmd.extend(["-v", f"{executor_workspace}:{WORKSPACE_MOUNT_PATH}"])
+
+    def _add_git_cache_mount(self, cmd: List[str], user_id: int = None) -> None:
+        """
+        Add git cache volume mount and environment variables.
+
+        If git cache is enabled in environment, mount the cache volume
+        and pass related environment variables to the container.
+
+        Args:
+            cmd: Docker command list to modify
+            user_id: Real user ID for cache isolation (required when cache is enabled)
+
+        Raises:
+            ValueError: If cache is enabled but user_id is not provided
+        """
+        git_cache_enabled = os.getenv("GIT_CACHE_ENABLED", "false").lower() == "true"
+
+        if git_cache_enabled:
+            if user_id is None:
+                raise ValueError(
+                    "GIT_CACHE_ENABLED is true but user_id is not available. "
+                    "Cannot enable git cache without user_id for isolation."
+                )
+
+            # Mount the git cache volume
+            cmd.extend(["-v", f"{GIT_CACHE_VOLUME}:{GIT_CACHE_MOUNT_PATH}"])
+            logger.info(f"Adding git cache mount: {GIT_CACHE_VOLUME}:{GIT_CACHE_MOUNT_PATH}")
+
+            # Pass git cache environment variables to container
+            git_cache_dir = os.getenv("GIT_CACHE_DIR", GIT_CACHE_MOUNT_PATH)
+            git_cache_auto_update = os.getenv("GIT_CACHE_AUTO_UPDATE", "true")
+
+            cmd.extend([
+                "-e", f"GIT_CACHE_ENABLED=true",
+                "-e", f"GIT_CACHE_DIR={git_cache_dir}",
+                "-e", f"GIT_CACHE_AUTO_UPDATE={git_cache_auto_update}",
+                "-e", f"GIT_CACHE_USER_ID={user_id}"  # Pass real user ID for cache isolation
+            ])
+
+            logger.info(
+                f"Git cache enabled: DIR={git_cache_dir}, AUTO_UPDATE={git_cache_auto_update}, USER_ID={user_id}"
+            )
+        else:
+            # Explicitly disable cache in container
+            cmd.extend(["-e", "GIT_CACHE_ENABLED=false"])
+            logger.debug("Git cache disabled")
 
     def _add_network_config(self, cmd: List[str]) -> None:
         """Add network configuration"""

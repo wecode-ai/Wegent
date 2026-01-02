@@ -7,6 +7,13 @@ from urllib.parse import quote, urlparse
 
 from shared.logger import setup_logger
 from shared.utils.crypto import decrypt_git_token, is_token_encrypted
+from shared.utils.git_cache import (
+    ensure_cache_repo,
+    get_cache_dir,
+    get_cache_repo_path,
+    get_reference_path,
+    is_cache_enabled,
+)
 
 logger = setup_logger(__name__)
 
@@ -95,7 +102,25 @@ def is_gerrit_url(url):
 
 
 def clone_repo_with_token(project_url, branch, project_path, username, token):
+    """
+    Clone repository with optional local cache support using --reference mode.
 
+    If cache is enabled (GIT_CACHE_ENABLED=true), the function will:
+    1. Create or update a local cache repository
+    2. Use git clone --reference to reuse objects from cache
+    3. Fall back to regular clone if cache fails
+
+    Args:
+        project_url: Repository URL
+        branch: Branch to clone (optional)
+        project_path: Local destination path
+        username: Git username
+        token: Git access token
+
+    Returns:
+        Tuple (success, error_message)
+    """
+    # Build authenticated URL
     if project_url.startswith("https://") or project_url.startswith("http://"):
         protocol, rest = project_url.split("://", 1)
 
@@ -119,28 +144,147 @@ def clone_repo_with_token(project_url, branch, project_path, username, token):
         f"Git clone {auth_url} to {project_path}, branch: {branch if branch else '(default)'}"
     )
 
-    # Build basic command
-    cmd = ["git", "clone"]
+    # Try with cache if enabled
+    if is_cache_enabled():
+        logger.info(f"Git cache is enabled, attempting clone with cache")
+        cache_path = get_cache_repo_path(project_url)
 
-    # Add branch parameter only if branch is specified and not empty
-    # When branch is empty/None, git will clone the repository's default branch
-    if branch and branch.strip():
-        cmd.extend(["--branch", branch, "--single-branch"])
+        # Ensure cache repository exists and is up-to-date
+        success, error = ensure_cache_repo(cache_path, auth_url, branch)
+        if not success:
+            logger.warning(
+                f"Failed to prepare cache repository: {error}, falling back to regular clone"
+            )
+            return _clone_without_cache(
+                project_url, branch, project_path, auth_url, username, token
+            )
 
-    # Add URL and path
-    cmd.extend([auth_url, project_path])
+        # Try clone with --reference
+        success, error = _clone_with_reference(
+            project_url, branch, project_path, auth_url, cache_path
+        )
+
+        if success:
+            # Setup git hooks after successful clone
+            setup_git_hooks(project_path)
+            return True, None
+        else:
+            logger.warning(
+                f"Clone with reference failed: {error}, falling back to regular clone"
+            )
+            # Fall back to regular clone if --reference fails
+            return _clone_without_cache(
+                project_url, branch, project_path, auth_url, username, token
+            )
+    else:
+        # Cache not enabled, do regular clone
+        logger.info("Git cache is disabled, using regular clone")
+        return _clone_without_cache(
+            project_url, branch, project_path, auth_url, username, token
+        )
+
+
+def _clone_with_reference(
+    project_url, branch, project_path, auth_url, cache_path
+):
+    """
+    Clone repository using --reference to reuse objects from cache.
+
+    Args:
+        project_url: Original repository URL
+        branch: Branch to clone
+        project_path: Local destination path
+        auth_url: Authenticated URL
+        cache_path: Path to cache repository
+
+    Returns:
+        Tuple (success, error_message)
+    """
     try:
-        # Use subprocess.run to capture output and errors
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        logger.info(f"Cloning with reference from cache: {cache_path}")
+
+        # Build basic command with --reference
+        cmd = ["git", "clone", "--reference", cache_path]
+
+        # Add branch parameter only if branch is specified and not empty
+        if branch and branch.strip():
+            cmd.extend(["--branch", branch, "--single-branch"])
+
+        # Add URL and path
+        cmd.extend([auth_url, project_path])
+
+        # Execute clone command
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, check=True, timeout=600
+        )
+
+        logger.info(
+            f"Successfully cloned with reference from cache: {project_url} -> {project_path}"
+        )
+        return True, None
+
+    except subprocess.CalledProcessError as e:
+        error_msg = e.stderr if e.stderr else str(e)
+        logger.error(f"Clone with reference failed: {error_msg}")
+        return False, error_msg
+    except subprocess.TimeoutExpired:
+        error_msg = "Clone with reference timed out after 600 seconds"
+        logger.error(error_msg)
+        return False, error_msg
+    except Exception as e:
+        logger.error(f"Clone with reference failed with unexpected error: {e}")
+        return False, str(e)
+
+
+def _clone_without_cache(
+    project_url, branch, project_path, auth_url, username, token
+):
+    """
+    Clone repository without using cache (regular clone).
+
+    Args:
+        project_url: Original repository URL
+        branch: Branch to clone
+        project_path: Local destination path
+        auth_url: Authenticated URL
+        username: Git username (for SSH fallback)
+        token: Git token (for SSH fallback)
+
+    Returns:
+        Tuple (success, error_message)
+    """
+    try:
+        logger.info("Performing regular clone without cache")
+
+        # Build basic command
+        cmd = ["git", "clone"]
+
+        # Add branch parameter only if branch is specified and not empty
+        if branch and branch.strip():
+            cmd.extend(["--branch", branch, "--single-branch"])
+
+        # Add URL and path
+        cmd.extend([auth_url, project_path])
+
+        # Execute clone command
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, check=True, timeout=600
+        )
+
         logger.info(f"git clone url: {project_url}, code: {result.returncode}")
 
         # Setup git hooks after successful clone
         setup_git_hooks(project_path)
 
         return True, None
+
     except subprocess.CalledProcessError as e:
         error_msg = e.stderr if e.stderr else str(e)
         logger.error(f"git clone failed: {error_msg}")
+        return False, error_msg
+    except subprocess.TimeoutExpired:
+        error_msg = "Clone timed out after 600 seconds"
+        logger.error(error_msg)
         return False, error_msg
     except Exception as e:
         logger.error(f"git clone failed with unexpected error: {e}")

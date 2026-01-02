@@ -55,6 +55,11 @@ EXECUTOR_DISPATCHER_MODE = os.getenv("EXECUTOR_DISPATCHER_MODE", "docker")
 EXECUTOR_CONFIG = os.getenv("EXECUTOR_CONFIG", "{\"docker\":\"executor_manager.executors.docker.DockerExecutor\"}")
 EXECUTOR_ENV = os.environ.get("EXECUTOR_ENV", "{}")
 
+# Git Cache Configuration
+GIT_CACHE_ENABLED = os.getenv("GIT_CACHE_ENABLED", "false")
+GIT_CACHE_DIR = os.getenv("GIT_CACHE_DIR", "/git-cache")
+GIT_CACHE_AUTO_UPDATE = os.getenv("GIT_CACHE_AUTO_UPDATE", "true")
+
 # OpenTelemetry configuration is centralized in shared/telemetry/config.py
 # Use: from shared.telemetry.config import get_otel_config
 # All OTEL_* environment variables are read from there

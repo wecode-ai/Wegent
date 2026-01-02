@@ -146,6 +146,10 @@ services:
       - EXECUTOR_PORT_RANGE_MIN=10001
       - EXECUTOR_PORT_RANGE_MAX=10100
       - EXECUTOR_WORKSPCE=${HOME}/wecode-bot
+      # Git Cache Configuration (uncomment to enable)
+      # - GIT_CACHE_ENABLED=true
+      # - GIT_CACHE_DIR=/git-cache
+      # - GIT_CACHE_AUTO_UPDATE=true
       # OpenTelemetry Configuration (uncomment to enable)
       # - OTEL_ENABLED=true
       # - OTEL_SERVICE_NAME=wegent-executor-manager
@@ -153,6 +157,7 @@ services:
       # - OTEL_TRACES_SAMPLER_ARG=1.0
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - git_cache_data:/git-cache
     depends_on:
       - backend
     networks:
@@ -164,6 +169,8 @@ volumes:
   redis_data:
     driver: local
   es_data:
+    driver: local
+  git_cache_data:
     driver: local
 
 networks:
