@@ -28,6 +28,7 @@ ENV_CACHE_ENABLED = "GIT_CACHE_ENABLED"
 ENV_CACHE_DIR = "GIT_CACHE_DIR"
 ENV_CACHE_AUTO_UPDATE = "GIT_CACHE_AUTO_UPDATE"
 ENV_CACHE_USER_ID = "GIT_CACHE_USER_ID"
+ENV_CACHE_USER_BASE_DIR = "GIT_CACHE_USER_BASE_DIR"
 
 
 def is_cache_enabled() -> bool:
@@ -48,6 +49,28 @@ def get_cache_dir() -> str:
         Cache directory path.
     """
     return os.getenv(ENV_CACHE_DIR, DEFAULT_CACHE_DIR)
+
+
+def get_user_cache_base_dir() -> str:
+    """
+    Get the user-specific cache base directory from environment variable.
+
+    In the new secure design, each container only mounts its own user subdirectory:
+    - Volume mounted as: /git-cache/user_{user_id}
+    - This function returns: /git-cache/user_{user_id}
+
+    Returns:
+        User-specific cache base directory path.
+    """
+    user_base_dir = os.getenv(ENV_CACHE_USER_BASE_DIR)
+    if user_base_dir:
+        return user_base_dir
+
+    # Fallback to old behavior if GIT_CACHE_USER_BASE_DIR not set
+    # This maintains backward compatibility
+    cache_dir = get_cache_dir()
+    user_id = get_cache_user_id()
+    return f"{cache_dir}/user_{user_id}"
 
 
 def is_auto_update_enabled() -> bool:
@@ -93,15 +116,52 @@ def get_cache_user_id() -> int:
         )
 
 
+def _validate_cache_path(cache_path: str, allowed_base_dir: str) -> bool:
+    """
+    Validate that cache path is within the allowed base directory.
+
+    This prevents path traversal attacks and ensures cache isolation.
+
+    Args:
+        cache_path: Path to validate
+        allowed_base_dir: Base directory that cache_path must be within
+
+    Returns:
+        True if path is valid
+
+    Raises:
+        ValueError: If path is outside allowed directory
+    """
+    # Resolve to absolute paths
+    abs_cache_path = os.path.abspath(cache_path)
+    abs_base_dir = os.path.abspath(allowed_base_dir)
+
+    # Ensure cache path is within allowed base directory
+    if not abs_cache_path.startswith(abs_base_dir + os.sep) and abs_cache_path != abs_base_dir:
+        raise ValueError(
+            f"Security violation: cache path {abs_cache_path} "
+            f"is outside allowed base directory {abs_base_dir}"
+        )
+
+    logger.debug(f"Cache path validation passed: {abs_cache_path} within {abs_base_dir}")
+    return True
+
+
 def get_cache_repo_path(url: str, cache_dir: str = None) -> str:
     """
     Calculate the cache repository path for a given URL with user ID isolation.
 
-    The cache path is structured as: {cache_dir}/user_{user_id}/{domain}/{path}.git
+    In the new secure design:
+    - cache_dir is typically /git-cache (or from GIT_CACHE_DIR)
+    - The actual base directory is /git-cache/user_{user_id} (from GIT_CACHE_USER_BASE_DIR)
+    - Final path: /git-cache/user_{user_id}/{domain}/{path}.git
+
+    This ensures each user's cache is in their own isolated directory.
 
     Args:
         url: Git repository URL
-        cache_dir: Cache directory (uses default if not provided)
+        cache_dir: Legacy cache directory parameter (kept for backward compatibility,
+                  but now uses GIT_CACHE_USER_BASE_DIR if available)
 
     Returns:
         Path to the cache repository
@@ -110,20 +170,25 @@ def get_cache_repo_path(url: str, cache_dir: str = None) -> str:
         ValueError: If GIT_CACHE_USER_ID is not set
 
     Examples:
+        >>> # With GIT_CACHE_USER_BASE_DIR=/git-cache/user_123
         >>> get_cache_repo_path("https://github.com/user/repo.git")
         "/git-cache/user_123/github.com/user/repo.git"
 
+        >>> # With GIT_CACHE_USER_BASE_DIR=/git-cache/user_456
         >>> get_cache_repo_path("git@gitlab.com:group/project.git")
         "/git-cache/user_456/gitlab.com/group/project.git"
     """
-    if cache_dir is None:
-        cache_dir = get_cache_dir()
-
     # Get user ID (required, will raise ValueError if not set)
     user_id = get_cache_user_id()
 
-    # Use user_id for isolation: user_{user_id}
-    user_dir = f"user_{user_id}"
+    # Use user-specific base directory for security
+    # This is /git-cache/user_{user_id} in the new design
+    if cache_dir is None:
+        user_base_dir = get_user_cache_base_dir()
+    else:
+        # Backward compatibility: if cache_dir is explicitly provided,
+        # append user_{user_id} to it
+        user_base_dir = f"{cache_dir}/user_{user_id}"
 
     # Normalize URL to get the path components
     # Handle SSH format: git@domain.com:path/repo.git
@@ -146,9 +211,17 @@ def get_cache_repo_path(url: str, cache_dir: str = None) -> str:
     if path.startswith("/"):
         path = path[1:]
 
-    # Construct cache path with user_id isolation
-    cache_path = os.path.join(cache_dir, user_dir, domain, f"{path}.git")
+    # Construct cache path: /git-cache/user_{user_id}/{domain}/{path}.git
+    cache_path = os.path.join(user_base_dir, domain, f"{path}.git")
 
+    # Validate the path is within allowed base directory
+    try:
+        _validate_cache_path(cache_path, user_base_dir)
+    except ValueError as e:
+        logger.error(f"Cache path validation failed: {e}")
+        raise
+
+    logger.debug(f"Calculated cache path for user_{user_id}: {cache_path}")
     return cache_path
 
 
@@ -176,6 +249,17 @@ def ensure_cache_repo(
     except ValueError as e:
         logger.error(f"Cache user ID error: {e}")
         return False, str(e)
+
+    # Security: Validate cache path is within allowed base directory
+    try:
+        user_base_dir = get_user_cache_base_dir()
+        _validate_cache_path(cache_path, user_base_dir)
+        logger.debug(
+            f"Cache path security validation passed for user_{user_id}: {cache_path}"
+        )
+    except ValueError as e:
+        logger.error(f"Cache path security validation failed: {e}")
+        return False, f"Security error: {e}"
 
     try:
         # Check if cache directory exists

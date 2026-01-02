@@ -11,6 +11,7 @@ from shared.utils.git_cache import (
     get_cache_dir,
     get_cache_repo_path,
     get_cache_user_id,
+    get_user_cache_base_dir,
     is_auto_update_enabled,
     is_cache_enabled,
 )
@@ -22,7 +23,13 @@ class TestGitCacheUserId:
     def setup_method(self):
         """Setup test environment before each test"""
         # Clear environment variables before each test
-        for key in ["GIT_CACHE_ENABLED", "GIT_CACHE_DIR", "GIT_CACHE_AUTO_UPDATE", "GIT_CACHE_USER_ID"]:
+        for key in [
+            "GIT_CACHE_ENABLED",
+            "GIT_CACHE_DIR",
+            "GIT_CACHE_AUTO_UPDATE",
+            "GIT_CACHE_USER_ID",
+            "GIT_CACHE_USER_BASE_DIR",
+        ]:
             if key in os.environ:
                 del os.environ[key]
 
@@ -107,7 +114,13 @@ class TestGitCache:
     def setup_method(self):
         """Setup test environment before each test"""
         # Clear environment variables before each test
-        for key in ["GIT_CACHE_ENABLED", "GIT_CACHE_DIR", "GIT_CACHE_AUTO_UPDATE", "GIT_CACHE_USER_ID"]:
+        for key in [
+            "GIT_CACHE_ENABLED",
+            "GIT_CACHE_DIR",
+            "GIT_CACHE_AUTO_UPDATE",
+            "GIT_CACHE_USER_ID",
+            "GIT_CACHE_USER_BASE_DIR",
+        ]:
             if key in os.environ:
                 del os.environ[key]
 
@@ -369,3 +382,149 @@ class TestGitCacheEdgeCases:
         cache_path = get_cache_repo_path(url)
 
         assert cache_path == "/git-cache/user_1/github.com/user/repo.git"
+
+
+class TestGitCacheSecureIsolation:
+    """Test cases for new secure user isolation feature"""
+
+    def setup_method(self):
+        """Setup test environment before each test"""
+        for key in [
+            "GIT_CACHE_ENABLED",
+            "GIT_CACHE_DIR",
+            "GIT_CACHE_AUTO_UPDATE",
+            "GIT_CACHE_USER_ID",
+            "GIT_CACHE_USER_BASE_DIR",
+        ]:
+            if key in os.environ:
+                del os.environ[key]
+
+    def test_get_user_cache_base_dir_with_env_var(self):
+        """Test get_user_cache_base_dir with GIT_CACHE_USER_BASE_DIR set"""
+        os.environ["GIT_CACHE_USER_ID"] = "123"
+        os.environ["GIT_CACHE_USER_BASE_DIR"] = "/git-cache/user_123"
+
+        base_dir = get_user_cache_base_dir()
+
+        assert base_dir == "/git-cache/user_123"
+
+    def test_get_user_cache_base_dir_fallback(self):
+        """Test get_user_cache_base_dir fallback without GIT_CACHE_USER_BASE_DIR"""
+        os.environ["GIT_CACHE_USER_ID"] = "456"
+
+        base_dir = get_user_cache_base_dir()
+
+        # Should construct path from GIT_CACHE_DIR and user_id
+        assert base_dir == "/git-cache/user_456"
+
+    def test_get_user_cache_base_dir_with_custom_cache_dir(self):
+        """Test get_user_cache_base_dir with custom GIT_CACHE_DIR"""
+        os.environ["GIT_CACHE_USER_ID"] = "789"
+        os.environ["GIT_CACHE_DIR"] = "/custom/cache"
+
+        base_dir = get_user_cache_base_dir()
+
+        assert base_dir == "/custom/cache/user_789"
+
+    def test_cache_repo_path_with_user_base_dir(self):
+        """Test cache repo path respects GIT_CACHE_USER_BASE_DIR"""
+        os.environ["GIT_CACHE_USER_ID"] = "100"
+        os.environ["GIT_CACHE_USER_BASE_DIR"] = "/git-cache/user_100"
+        url = "https://github.com/user/repo.git"
+
+        cache_path = get_cache_repo_path(url)
+
+        # Should use GIT_CACHE_USER_BASE_DIR
+        assert cache_path == "/git-cache/user_100/github.com/user/repo.git"
+
+    def test_secure_isolation_different_users(self):
+        """Test that secure design properly isolates different users"""
+        url = "https://github.com/sensitive-org/private-repo.git"
+
+        # User 123 - sees only /git-cache/user_123
+        os.environ["GIT_CACHE_USER_ID"] = "123"
+        os.environ["GIT_CACHE_USER_BASE_DIR"] = "/git-cache/user_123"
+        cache_123 = get_cache_repo_path(url)
+
+        # User 456 - sees only /git-cache/user_456
+        os.environ["GIT_CACHE_USER_ID"] = "456"
+        os.environ["GIT_CACHE_USER_BASE_DIR"] = "/git-cache/user_456"
+        cache_456 = get_cache_repo_path(url)
+
+        # Verify complete isolation
+        assert cache_123 == "/git-cache/user_123/github.com/sensitive-org/private-repo.git"
+        assert cache_456 == "/git-cache/user_456/github.com/sensitive-org/private-repo.git"
+        assert cache_123 != cache_456
+
+        # User 123 cannot access user 456's cache
+        assert "/user_456/" not in cache_123
+        # User 456 cannot access user 123's cache
+        assert "/user_123/" not in cache_456
+
+
+class TestGitCachePathValidation:
+    """Test cases for cache path validation"""
+
+    def setup_method(self):
+        """Setup test environment before each test"""
+        for key in [
+            "GIT_CACHE_ENABLED",
+            "GIT_CACHE_DIR",
+            "GIT_CACHE_AUTO_UPDATE",
+            "GIT_CACHE_USER_ID",
+            "GIT_CACHE_USER_BASE_DIR",
+        ]:
+            if key in os.environ:
+                del os.environ[key]
+
+    def test_cache_path_within_allowed_directory(self):
+        """Test that cache paths are validated correctly"""
+        from shared.utils.git_cache import _validate_cache_path
+
+        os.environ["GIT_CACHE_USER_ID"] = "123"
+        os.environ["GIT_CACHE_USER_BASE_DIR"] = "/git-cache/user_123"
+
+        allowed_base = "/git-cache/user_123"
+        valid_path = "/git-cache/user_123/github.com/repo.git"
+
+        # Should not raise
+        result = _validate_cache_path(valid_path, allowed_base)
+        assert result is True
+
+    def test_cache_path_outside_allowed_directory_raises_error(self):
+        """Test that paths outside allowed directory raise ValueError"""
+        from shared.utils.git_cache import _validate_cache_path
+
+        allowed_base = "/git-cache/user_123"
+        malicious_path = "/git-cache/user_456/github.com/repo.git"
+
+        with pytest.raises(ValueError) as exc_info:
+            _validate_cache_path(malicious_path, allowed_base)
+
+        assert "Security violation" in str(exc_info.value)
+        assert "outside allowed base directory" in str(exc_info.value)
+
+    def test_cache_path_traversal_attack_prevented(self):
+        """Test that path traversal attacks are prevented"""
+        from shared.utils.git_cache import _validate_cache_path
+
+        allowed_base = "/git-cache/user_123"
+        traversal_path = "/git-cache/user_123/../user_456/repo.git"
+
+        with pytest.raises(ValueError) as exc_info:
+            _validate_cache_path(traversal_path, allowed_base)
+
+        assert "Security violation" in str(exc_info.value)
+
+    def test_cache_path_absolute_validation(self):
+        """Test that both relative and absolute paths are handled correctly"""
+        from shared.utils.git_cache import _validate_cache_path
+
+        os.environ["GIT_CACHE_USER_ID"] = "123"
+
+        allowed_base = "/git-cache/user_123"
+        valid_path = "/git-cache/user_123/github.com/repo.git"
+
+        # Should not raise
+        result = _validate_cache_path(valid_path, allowed_base)
+        assert result is True
