@@ -57,12 +57,13 @@ class TestVolumeManager:
 
         assert success is True
         assert error is None
-        mock_run.assert_called_once()
-        # Verify labels are included
-        call_args = mock_run.call_args[0][0]
-        assert "wegent.user-id=123" in call_args
-        assert "wegent.created-at=" in call_args
-        assert "wegent.last-used=" in call_args
+        # Expect 3 calls: 1 for volume create, 2 for initializing metadata files
+        assert mock_run.call_count == 3
+        # Verify labels are included in first call (volume create)
+        first_call_args = mock_run.call_args_list[0][0][0]
+        assert "wegent.user-id=123" in first_call_args
+        assert any("wegent.created-at=" in arg for arg in first_call_args)
+        assert any("wegent.last-used=" in arg for arg in first_call_args)
 
     @patch("executor_manager.executors.docker.git_cache_volume_manager.volume_exists")
     @patch("executor_manager.executors.docker.git_cache_volume_manager.subprocess.run")
