@@ -15,6 +15,12 @@ from executor_manager.executors.docker.git_cache_volume_manager import (
     list_user_volumes,
     get_volume_size,
     get_all_user_volume_names,
+    _read_last_used_from_volume,
+    _read_metadata_from_volume,
+    _write_last_used_to_volume,
+    _write_metadata_to_volume,
+    _initialize_volume_metadata,
+    _read_volume_files,
 )
 
 
@@ -105,26 +111,29 @@ class TestVolumeManager:
 
         assert metadata is None
 
-    @patch("executor_manager.executors.docker.git_cache_volume_manager.get_volume_metadata")
-    @patch("executor_manager.executors.docker.git_cache_volume_manager.subprocess.run")
-    def test_update_volume_last_used_success(self, mock_run, mock_metadata):
-        """Test updating volume last-used timestamp"""
-        mock_metadata.return_value = {"wegent.user-id": "123", "wegent.created-at": "2025-01-03T10:00:00", "wegent.last-used": "2025-01-03T10:00:00"}
-        mock_run.return_value = MagicMock(returncode=0)
+    @patch("executor_manager.executors.docker.git_cache_volume_manager._write_last_used_to_volume")
+    def test_update_volume_last_used_success(self, mock_write):
+        """Test updating volume last-used timestamp via touch file"""
+        mock_write.return_value = True
 
         result = update_volume_last_used("wegent_git_cache_user_123")
 
         assert result is True
-        mock_run.assert_called_once()
+        mock_write.assert_called_once()
+        # Verify the timestamp format
+        call_args = mock_write.call_args[0]
+        assert call_args[0] == "wegent_git_cache_user_123"
+        assert len(call_args[1]) > 0  # timestamp should not be empty
 
-    @patch("executor_manager.executors.docker.git_cache_volume_manager.get_volume_metadata")
-    def test_update_volume_last_used_not_found(self, mock_metadata):
-        """Test updating metadata when volume doesn't exist"""
-        mock_metadata.return_value = None
+    @patch("executor_manager.executors.docker.git_cache_volume_manager._write_last_used_to_volume")
+    def test_update_volume_last_used_failure(self, mock_write):
+        """Test updating volume last-used when write fails"""
+        mock_write.return_value = False
 
         result = update_volume_last_used("wegent_git_cache_user_123")
 
         assert result is False
+        mock_write.assert_called_once()
 
     @patch("executor_manager.executors.docker.git_cache_volume_manager.subprocess.run")
     def test_delete_volume_success(self, mock_run):
@@ -146,14 +155,14 @@ class TestVolumeManager:
         assert success is False
         assert "Error deleting volume" in error
 
-    @patch("executor_manager.executors.docker.git_cache_volume_manager.get_volume_metadata")
+    @patch("executor_manager.executors.docker.git_cache_volume_manager._read_volume_files")
     @patch("executor_manager.executors.docker.git_cache_volume_manager.subprocess.run")
-    def test_list_user_volumes(self, mock_run, mock_metadata):
-        """Test listing user volumes"""
+    def test_list_user_volumes(self, mock_run, mock_read_files):
+        """Test listing user volumes from touch files"""
         mock_run.return_value = MagicMock(returncode=0, stdout="wegent_git_cache_user_123\nwegent_git_cache_user_456\nother_volume\n")
-        mock_metadata.side_effect = [
-            {"wegent.user-id": "123", "wegent.created-at": "2025-01-03T10:00:00", "wegent.last-used": "2025-01-03T15:30:00"},
-            {"wegent.user-id": "456", "wegent.created-at": "2025-01-02T10:00:00", "wegent.last-used": "2025-01-02T15:30:00"},
+        mock_read_files.side_effect = [
+            {"user_id": "123", "created_at": "2025-01-03T10:00:00", "last_used": "2025-01-03T15:30:00"},
+            {"user_id": "456", "created_at": "2025-01-02T10:00:00", "last_used": "2025-01-02T15:30:00"},
             None,
         ]
 
@@ -203,3 +212,157 @@ class TestVolumeManager:
         names = get_all_user_volume_names()
 
         assert len(names) == 0
+
+
+class TestTouchFileOperations:
+    """Test cases for touch file operations"""
+
+    @patch("executor_manager.executors.docker.git_cache_volume_manager.subprocess.run")
+    def test_read_last_used_from_volume_success(self, mock_run):
+        """Test reading .last_used file from volume"""
+        mock_run.return_value = MagicMock(returncode=0, stdout="2025-01-03T15:30:45.123456")
+
+        result = _read_last_used_from_volume("wegent_git_cache_user_123")
+
+        assert result == "2025-01-03T15:30:45.123456"
+
+    @patch("executor_manager.executors.docker.git_cache_volume_manager.subprocess.run")
+    def test_read_last_used_from_volume_not_found(self, mock_run):
+        """Test reading .last_used when file doesn't exist"""
+        mock_run.side_effect = subprocess.CalledProcessError(1, "cmd")
+
+        result = _read_last_used_from_volume("wegent_git_cache_user_123")
+
+        assert result is None
+
+    @patch("executor_manager.executors.docker.git_cache_volume_manager.subprocess.run")
+    def test_read_last_used_from_volume_invalid_format(self, mock_run):
+        """Test reading .last_used with invalid timestamp format"""
+        mock_run.return_value = MagicMock(returncode=0, stdout="invalid-timestamp")
+
+        result = _read_last_used_from_volume("wegent_git_cache_user_123")
+
+        assert result is None
+
+    @patch("executor_manager.executors.docker.git_cache_volume_manager.subprocess.run")
+    def test_read_metadata_from_volume_success(self, mock_run):
+        """Test reading .metadata file from volume"""
+        metadata_json = '{"user_id": 123, "created_at": "2025-01-03T10:00:00", "volume_name": "wegent_git_cache_user_123"}'
+        mock_run.return_value = MagicMock(returncode=0, stdout=metadata_json)
+
+        result = _read_metadata_from_volume("wegent_git_cache_user_123")
+
+        assert result is not None
+        assert result["user_id"] == 123
+        assert result["created_at"] == "2025-01-03T10:00:00"
+
+    @patch("executor_manager.executors.docker.git_cache_volume_manager.subprocess.run")
+    def test_read_metadata_from_volume_not_found(self, mock_run):
+        """Test reading .metadata when file doesn't exist"""
+        mock_run.side_effect = subprocess.CalledProcessError(1, "cmd")
+
+        result = _read_metadata_from_volume("wegent_git_cache_user_123")
+
+        assert result is None
+
+    @patch("executor_manager.executors.docker.git_cache_volume_manager.subprocess.run")
+    def test_write_last_used_to_volume_success(self, mock_run):
+        """Test writing timestamp to .last_used file"""
+        mock_run.return_value = MagicMock(returncode=0)
+
+        result = _write_last_used_to_volume("wegent_git_cache_user_123", "2025-01-03T15:30:45")
+
+        assert result is True
+        mock_run.assert_called_once()
+        # Verify the docker run command
+        call_args = mock_run.call_args[0][0]
+        assert "docker" in call_args
+        assert "run" in call_args
+        assert "--rm" in call_args
+        assert "wegent_git_cache_user_123:/cache:rw" in call_args
+        assert "echo" in " ".join(call_args)
+        assert ".last_used" in " ".join(call_args)
+
+    @patch("executor_manager.executors.docker.git_cache_volume_manager.subprocess.run")
+    def test_write_last_used_to_volume_failure(self, mock_run):
+        """Test writing .last_used when docker fails"""
+        mock_run.return_value = MagicMock(returncode=1, stderr="volume not found")
+
+        result = _write_last_used_to_volume("nonexistent_volume", "2025-01-03T15:30:45")
+
+        assert result is False
+
+    @patch("executor_manager.executors.docker.git_cache_volume_manager.subprocess.run")
+    def test_write_metadata_to_volume_success(self, mock_run):
+        """Test writing .metadata file to volume"""
+        mock_run.return_value = MagicMock(returncode=0)
+
+        result = _write_metadata_to_volume("wegent_git_cache_user_123", 123, "2025-01-03T10:00:00")
+
+        assert result is True
+
+    @patch("executor_manager.executors.docker.git_cache_volume_manager._write_last_used_to_volume")
+    @patch("executor_manager.executors.docker.git_cache_volume_manager._write_metadata_to_volume")
+    def test_initialize_volume_metadata_success(self, mock_write_meta, mock_write_last):
+        """Test initializing both metadata files"""
+        mock_write_last.return_value = True
+        mock_write_meta.return_value = True
+
+        result = _initialize_volume_metadata("wegent_git_cache_user_123", 123, "2025-01-03T10:00:00")
+
+        assert result is True
+        mock_write_last.assert_called_once()
+        mock_write_meta.assert_called_once()
+
+    @patch("executor_manager.executors.docker.git_cache_volume_manager._write_last_used_to_volume")
+    @patch("executor_manager.executors.docker.git_cache_volume_manager._write_metadata_to_volume")
+    def test_initialize_volume_metadata_failure(self, mock_write_meta, mock_write_last):
+        """Test initializing metadata when write fails"""
+        mock_write_last.return_value = False
+
+        result = _initialize_volume_metadata("wegent_git_cache_user_123", 123, "2025-01-03T10:00:00")
+
+        assert result is False
+
+    @patch("executor_manager.executors.docker.git_cache_volume_manager._read_metadata_from_volume")
+    @patch("executor_manager.executors.docker.git_cache_volume_manager._read_last_used_from_volume")
+    def test_read_volume_files_success(self, mock_read_last, mock_read_meta):
+        """Test reading both metadata files from volume"""
+        mock_read_meta.return_value = {
+            "user_id": 123,
+            "created_at": "2025-01-03T10:00:00",
+            "volume_name": "wegent_git_cache_user_123",
+        }
+        mock_read_last.return_value = "2025-01-03T15:30:45"
+
+        result = _read_volume_files("wegent_git_cache_user_123")
+
+        assert result is not None
+        assert result["user_id"] == 123
+        assert result["created_at"] == "2025-01-03T10:00:00"
+        assert result["last_used"] == "2025-01-03T15:30:45"
+
+    @patch("executor_manager.executors.docker.git_cache_volume_manager._read_metadata_from_volume")
+    @patch("executor_manager.executors.docker.git_cache_volume_manager._read_last_used_from_volume")
+    def test_read_volume_files_no_last_used(self, mock_read_last, mock_read_meta):
+        """Test reading volume when .last_used doesn't exist (uses created_at as fallback)"""
+        mock_read_meta.return_value = {
+            "user_id": 123,
+            "created_at": "2025-01-03T10:00:00",
+            "volume_name": "wegent_git_cache_user_123",
+        }
+        mock_read_last.return_value = None
+
+        result = _read_volume_files("wegent_git_cache_user_123")
+
+        assert result is not None
+        assert result["last_used"] == "2025-01-03T10:00:00"  # Should fallback to created_at
+
+    @patch("executor_manager.executors.docker.git_cache_volume_manager._read_metadata_from_volume")
+    def test_read_volume_files_no_metadata(self, mock_read_meta):
+        """Test reading volume when .metadata doesn't exist (returns None)"""
+        mock_read_meta.return_value = None
+
+        result = _read_volume_files("wegent_git_cache_user_123")
+
+        assert result is None

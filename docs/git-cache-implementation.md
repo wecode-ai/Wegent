@@ -39,20 +39,37 @@
 ```
 Docker Volumes:
 ├── wegent_git_cache_user_123/     (用户 123 的专属 volume)
+│   ├── .last_used                 (最后使用时间戳)
+│   ├── .metadata                  (卷元数据 JSON)
 │   └── github.com/
 │       ├── user1/
 │       │   └── repo1.git/         (bare repository)
 │       └── user2/
 │           └── repo2.git/
 ├── wegent_git_cache_user_456/     (用户 456 的专属 volume)
+│   ├── .last_used                 (最后使用时间戳)
+│   ├── .metadata                  (卷元数据 JSON)
 │   └── github.com/
 │       └── user/
 │           └── repo.git/          (与 user_123 的缓存完全隔离)
 └── wegent_git_cache_user_789/     (用户 789 的专属 volume)
+    ├── .last_used                 (最后使用时间戳)
+    ├── .metadata                  (卷元数据 JSON)
     └── github.com/
         └── sensitive-org/
             └── private-repo.git/  (私有仓库完全隔离)
 ```
+
+**元数据文件说明**：
+- **`.last_used`**：ISO 8601 格式的时间戳，记录卷的最后使用时间
+- **`.metadata`**：JSON 格式的元数据，包含 `user_id`、`created_at`、`volume_name`
+
+**为什么使用 Touch Files？**
+Docker 的本地驱动不支持更新已存在卷的标签（labels）。Touch files 方案：
+- ✅ 可以随时更新（即使卷正在被使用）
+- ✅ 可靠的时间戳追踪
+- ✅ 支持并发访问
+- ✅ 与容器运行状态无关
 
 **容器内视图（物理隔离）**：
 
@@ -154,13 +171,22 @@ volume_mount = f"{volume_name}:/git-cache"
 
 - **`get_user_volume_name(user_id)`**：生成用户专属 volume 名称（`wegent_git_cache_user_{id}`）
 - **`volume_exists(volume_name)`**：检查 volume 是否存在
-- **`create_user_volume(user_id)`**：创建用户专属 volume（带元数据标签）
+- **`create_user_volume(user_id)`**：创建用户专属 volume（初始化元数据文件）
 - **`delete_volume(volume_name)`**：删除指定 volume
-- **`get_volume_metadata(volume_name)`**：获取 volume 的元数据标签
-- **`update_volume_last_used(volume_name)`**：更新 volume 的最后使用时间
-- **`list_user_volumes()`**：列出所有用户 volume 及元数据
+- **`get_volume_metadata(volume_name)`**：获取 volume 的元数据标签（兼容旧版本）
+- **`update_volume_last_used(volume_name)`**：更新 volume 的最后使用时间（写入 touch file）
+- **`list_user_volumes()`**：列出所有用户 volume 及元数据（从 touch files 读取）
 - **`get_volume_size(volume_name)`**：获取 volume 的磁盘占用大小
 - **`get_all_user_volume_names()`**：获取所有用户 volume 名称列表
+
+**Touch File 辅助函数**（内部使用）：
+- **`_read_last_used_from_volume(volume_name)`**：读取 `.last_used` 文件
+- **`_read_metadata_from_volume(volume_name)`**：读取 `.metadata` 文件
+- **`_write_last_used_to_volume(volume_name, timestamp)`**：写入 `.last_used` 文件
+- **`_write_metadata_to_volume(volume_name, user_id, created_at)`**：写入 `.metadata` 文件
+- **`_initialize_volume_metadata(volume_name, user_id, created_at)`**：初始化元数据文件
+- **`_read_volume_files(volume_name)`**：读取卷的元数据文件（支持降级到 Docker labels）
+- **`_fallback_to_docker_inspect(volume_name)`**：降级到 Docker labels（用于旧卷迁移）
 
 #### git_cache.py
 
@@ -185,10 +211,15 @@ volume_mount = f"{volume_name}:/git-cache"
   - **`_load_protected_users()`**：加载保护用户列表
 
 **清理策略**：
-- 基于 `last-used` 时间标签判断不活跃 volume
+- 基于 `.last_used` touch file 判断不活跃 volume（替代不可靠的 Docker labels）
 - 默认清理 30 天未使用的 volume（可配置）
 - 支持保护用户列表（不会被清理）
 - 支持试运行模式（仅报告，不实际删除）
+
+**元数据读取**：
+- 优先从 touch files (`.last_used`, `.metadata`) 读取
+- 自动降级到 Docker labels（兼容旧卷）
+- 自动迁移旧卷到 touch file 系统
 
 #### git_util.py
 
@@ -829,10 +860,66 @@ environment:
 ## 贡献者
 
 - 实现日期：2025-01
-- 版本：v2.0.0（物理隔离实现）
+- 版本：v2.1.0（Touch File 元数据追踪）
 - 维护者：Wegent Team
 
 ## 版本历史
+
+### v2.1.0 (2025-01-03)
+
+**Touch File 元数据追踪** - 修复 Docker labels 不可更新问题，实现可靠的元数据追踪
+
+#### 问题背景
+- **Docker 限制**：本地驱动不支持更新已存在卷的 labels
+- **原有问题**：`update_volume_last_used()` 调用 `docker volume create` 更新标签，命令返回成功但标签从未更新
+- **影响**：清理功能无法正确识别不活跃卷，核心缓存追踪功能失效
+
+#### 解决方案：Touch Files
+- ✅ **`.last_used` 文件**：ISO 8601 时间戳，可随时更新
+- ✅ **`.metadata` 文件**：JSON 格式元数据（user_id, created_at, volume_name）
+- ✅ **自动迁移**：旧卷自动从 labels 迁移到 touch files
+- ✅ **并发安全**：支持多个容器同时访问同一卷
+
+#### 核心优势
+| 特性 | Docker Labels | Touch Files |
+|------|---------------|-------------|
+| 更新已存在卷 | ❌ 不支持 | ✅ 完全支持 |
+| Volume 使用中 | ❌ 无法更新 | ✅ 可以更新 |
+| 可靠性 | ⚠️ 假成功 | ✅ 真实更新 |
+| 并发访问 | ❌ 不支持 | ✅ 完全支持 |
+
+#### 代码变更
+- `git_cache_volume_manager.py`：
+  - 添加 touch file 辅助函数（`_read_last_used_from_volume`, `_write_last_used_to_volume` 等）
+  - 重写 `update_volume_last_used()` 使用 touch files
+  - 更新 `create_user_volume()` 初始化元数据文件
+  - 更新 `list_user_volumes()` 从 touch files 读取
+  - 添加 `_fallback_to_docker_inspect()` 自动迁移旧卷
+
+- `tests/executors/docker/test_git_cache_volume_manager.py`：
+  - 添加 `TestTouchFileOperations` 测试类（12 个新测试）
+  - 更新现有测试以正确 mock touch file 操作
+
+#### 文件结构
+```
+wegent_git_cache_user_123/
+├── .last_used          # "2025-01-03T15:30:45.123456"
+├── .metadata           # {"user_id": 123, "created_at": "...", "volume_name": "..."}
+└── github.com/
+    └── ...
+```
+
+#### 测试覆盖
+- Touch file 读取测试（3 个用例）
+- Touch file 写入测试（4 个用例）
+- 元数据文件测试（2 个用例）
+- 迁移降级测试（3 个用例）
+- 总计新增 12 个测试用例
+
+#### 向后兼容
+- ✅ 旧卷自动迁移到 touch file 系统
+- ✅ Docker labels 作为降级备份
+- ✅ 无需手动干预，平滑升级
 
 ### v2.0.0 (2025-01-03)
 
@@ -898,4 +985,4 @@ Apache-2.0
 
 ---
 
-**最后更新**：2025-01-03（v2.0.0 物理隔离实现）
+**最后更新**：2025-01-03（v2.1.0 Touch File 元数据追踪）

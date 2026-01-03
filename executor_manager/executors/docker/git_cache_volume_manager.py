@@ -23,6 +23,11 @@ from shared.logger import setup_logger
 
 logger = setup_logger(__name__)
 
+# Touch file paths inside volumes
+TOUCH_FILE_LAST_USED = ".last_used"
+TOUCH_FILE_METADATA = ".metadata"
+MOUNT_POINT = "/cache"
+
 # Volume naming convention
 VOLUME_PREFIX = "wegent_git_cache_user_"
 
@@ -114,6 +119,16 @@ def create_user_volume(user_id: int) -> Tuple[bool, Optional[str]]:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=True)
 
         logger.info(f"Successfully created volume: {volume_name}")
+
+        # Initialize metadata files in the volume
+        logger.info(f"Initializing metadata files in {volume_name}")
+        if not _initialize_volume_metadata(volume_name, user_id, created_at):
+            logger.warning(
+                f"Volume {volume_name} created but metadata files failed to initialize. "
+                f"Tracking will work but may be degraded."
+            )
+            # Don't fail - volume is still usable, just tracking might be degraded
+
         return True, None
 
     except subprocess.CalledProcessError as e:
@@ -163,6 +178,9 @@ def update_volume_last_used(volume_name: str) -> bool:
     """
     Update the last-used timestamp for a volume.
 
+    This function writes the current timestamp to a .last_used file inside the volume,
+    which can be reliably updated (unlike Docker labels which are immutable).
+
     This is called whenever a volume is mounted to track usage.
 
     Args:
@@ -172,41 +190,19 @@ def update_volume_last_used(volume_name: str) -> bool:
         True if successful, False otherwise
     """
     try:
-        # Get current metadata
-        metadata = get_volume_metadata(volume_name)
-        if not metadata:
-            logger.warning(f"Cannot update metadata: volume {volume_name} not found")
-            return False
-
-        user_id = metadata.get(LABEL_USER_ID)
-        created_at = metadata.get(LABEL_CREATED_AT)
+        # Get current timestamp
         last_used = datetime.utcnow().isoformat()
 
-        # Update labels by recreating the volume with new labels
-        # Note: Docker doesn't support direct label updates, so we recreate
-        cmd = [
-            "docker",
-            "volume",
-            "create",
-            "--label",
-            f"{LABEL_USER_ID}={user_id}",
-            "--label",
-            f"{LABEL_CREATED_AT}={created_at}",
-            "--label",
-            f"{LABEL_LAST_USED}={last_used}",
-            volume_name,
-        ]
+        # Write timestamp to .last_used file in volume
+        # This works even when the volume is mounted by other containers
+        success = _write_last_used_to_volume(volume_name, last_used)
 
-        # This will fail if volume is in use, which is fine
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-
-        if result.returncode == 0:
-            logger.debug(f"Volume {volume_name} last used: {last_used}")
-            return True
+        if success:
+            logger.debug(f"Updated last_used for {volume_name}: {last_used}")
         else:
-            # Volume is in use or other error - log but don't fail
-            logger.debug(f"Could not update last-used label for {volume_name}: {result.stderr}")
-            return False
+            logger.debug(f"Failed to update last_used for {volume_name}")
+
+        return success
 
     except Exception as e:
         logger.warning(f"Error updating volume last-used timestamp: {e}")
@@ -249,6 +245,9 @@ def list_user_volumes() -> Dict[int, Dict[str, str]]:
     """
     List all git cache user volumes with their metadata.
 
+    Reads metadata from .metadata and .last_used files inside volumes,
+    which are more reliable than Docker labels.
+
     Returns:
         Dictionary mapping user_id to volume metadata:
         {
@@ -277,19 +276,18 @@ def list_user_volumes() -> Dict[int, Dict[str, str]]:
             if not volume_name:
                 continue
             if volume_name.startswith(VOLUME_PREFIX):
-                metadata = get_volume_metadata(volume_name)
-                if metadata:
-                    user_id_str = metadata.get(LABEL_USER_ID)
-                    if user_id_str:
-                        try:
-                            user_id = int(user_id_str)
-                            user_volumes[user_id] = {
-                                "volume_name": volume_name,
-                                "created_at": metadata.get(LABEL_CREATED_AT, ""),
-                                "last_used": metadata.get(LABEL_LAST_USED, ""),
-                            }
-                        except ValueError:
-                            logger.warning(f"Invalid user ID in volume labels: {user_id_str}")
+                # Read metadata from touch files (with fallback to labels)
+                metadata = _read_volume_files(volume_name)
+                if metadata and metadata.get("user_id"):
+                    try:
+                        user_id = int(metadata["user_id"])
+                        user_volumes[user_id] = {
+                            "volume_name": volume_name,
+                            "created_at": metadata.get("created_at", ""),
+                            "last_used": metadata.get("last_used", ""),
+                        }
+                    except (ValueError, TypeError):
+                        logger.warning(f"Invalid user ID in volume metadata: {metadata.get('user_id')}")
 
         return user_volumes
 
@@ -355,3 +353,286 @@ def get_all_user_volume_names() -> List[str]:
     except Exception as e:
         logger.error(f"Error listing volumes: {e}")
         return []
+
+
+def _read_last_used_from_volume(volume_name: str) -> Optional[str]:
+    """
+    Read the .last_used timestamp file from a volume.
+
+    Args:
+        volume_name: Name of the volume
+
+    Returns:
+        ISO timestamp string or None if file doesn't exist/read fails
+    """
+    try:
+        cmd = [
+            "docker",
+            "run",
+            "--rm",
+            "-v",
+            f"{volume_name}:{MOUNT_POINT}:ro",
+            "alpine:latest",
+            "cat",
+            f"{MOUNT_POINT}/{TOUCH_FILE_LAST_USED}",
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10, check=True)
+        timestamp = result.stdout.strip()
+
+        # Validate ISO format
+        datetime.fromisoformat(timestamp)
+        return timestamp
+
+    except subprocess.CalledProcessError:
+        # File doesn't exist or volume not found
+        logger.debug(f"No .last_used file in {volume_name}")
+        return None
+    except ValueError:
+        logger.warning(f"Invalid timestamp format in {volume_name}/{TOUCH_FILE_LAST_USED}")
+        return None
+    except Exception as e:
+        logger.warning(f"Error reading last_used from {volume_name}: {e}")
+        return None
+
+
+def _read_metadata_from_volume(volume_name: str) -> Optional[Dict[str, any]]:
+    """
+    Read the .metadata JSON file from a volume.
+
+    Args:
+        volume_name: Name of the volume
+
+    Returns:
+        Dictionary with user_id, created_at, volume_name or None
+    """
+    try:
+        cmd = [
+            "docker",
+            "run",
+            "--rm",
+            "-v",
+            f"{volume_name}:{MOUNT_POINT}:ro",
+            "alpine:latest",
+            "cat",
+            f"{MOUNT_POINT}/{TOUCH_FILE_METADATA}",
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10, check=True)
+        metadata = json.loads(result.stdout)
+        return metadata
+
+    except subprocess.CalledProcessError:
+        # File doesn't exist or volume not found
+        logger.debug(f"No .metadata file in {volume_name}")
+        return None
+    except json.JSONDecodeError as e:
+        logger.warning(f"Invalid JSON in {volume_name}/{TOUCH_FILE_METADATA}: {e}")
+        return None
+    except Exception as e:
+        logger.warning(f"Error reading metadata from {volume_name}: {e}")
+        return None
+
+
+def _write_last_used_to_volume(volume_name: str, timestamp: str) -> bool:
+    """
+    Write timestamp to the .last_used file in a volume.
+
+    Args:
+        volume_name: Name of the volume
+        timestamp: ISO timestamp string to write
+
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        cmd = [
+            "docker",
+            "run",
+            "--rm",
+            "-v",
+            f"{volume_name}:{MOUNT_POINT}:rw",
+            "alpine:latest",
+            "sh",
+            "-c",
+            f"echo '{timestamp}' > {MOUNT_POINT}/{TOUCH_FILE_LAST_USED}",
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+
+        if result.returncode == 0:
+            return True
+        else:
+            logger.debug(f"Failed to write .last_used to {volume_name}: {result.stderr}")
+            return False
+
+    except subprocess.TimeoutExpired:
+        logger.warning(f"Timeout writing .last_used to {volume_name}")
+        return False
+    except Exception as e:
+        logger.warning(f"Error writing last_used to {volume_name}: {e}")
+        return False
+
+
+def _write_metadata_to_volume(volume_name: str, user_id: int, created_at: str) -> bool:
+    """
+    Write the .metadata JSON file to a volume.
+
+    Args:
+        volume_name: Name of the volume
+        user_id: User ID
+        created_at: Creation timestamp (ISO format)
+
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        metadata = {
+            "user_id": user_id,
+            "created_at": created_at,
+            "volume_name": volume_name,
+        }
+        metadata_json = json.dumps(metadata, indent=2)
+
+        cmd = [
+            "docker",
+            "run",
+            "--rm",
+            "-v",
+            f"{volume_name}:{MOUNT_POINT}:rw",
+            "alpine:latest",
+            "sh",
+            "-c",
+            f"cat > {MOUNT_POINT}/{TOUCH_FILE_METADATA} << 'METADATA_EOF'\n{metadata_json}\nMETADATA_EOF",
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+
+        if result.returncode == 0:
+            return True
+        else:
+            logger.warning(f"Failed to write .metadata to {volume_name}: {result.stderr}")
+            return False
+
+    except subprocess.TimeoutExpired:
+        logger.warning(f"Timeout writing .metadata to {volume_name}")
+        return False
+    except Exception as e:
+        logger.warning(f"Error writing metadata to {volume_name}: {e}")
+        return False
+
+
+def _initialize_volume_metadata(volume_name: str, user_id: int, created_at: str) -> bool:
+    """
+    Initialize metadata files (.last_used and .metadata) in a newly created volume.
+
+    Args:
+        volume_name: Name of the volume
+        user_id: User ID
+        created_at: Creation timestamp (ISO format)
+
+    Returns:
+        True if both files created successfully, False otherwise
+    """
+    try:
+        # Write .last_used file
+        if not _write_last_used_to_volume(volume_name, created_at):
+            logger.error(f"Failed to create .last_used file in {volume_name}")
+            return False
+
+        # Write .metadata file
+        if not _write_metadata_to_volume(volume_name, user_id, created_at):
+            logger.error(f"Failed to create .metadata file in {volume_name}")
+            return False
+
+        logger.info(f"Initialized metadata files in {volume_name}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Error initializing metadata in {volume_name}: {e}")
+        return False
+
+
+def _read_volume_files(volume_name: str) -> Optional[Dict[str, str]]:
+    """
+    Read .metadata and .last_used files from a volume.
+
+    This is the primary method for getting volume metadata.
+    Falls back to Docker labels for volumes created before touch file system.
+
+    Args:
+        volume_name: Name of the volume
+
+    Returns:
+        Dict with user_id, created_at, last_used or None if unavailable
+    """
+    # Try to read from files
+    metadata = _read_metadata_from_volume(volume_name)
+    if metadata:
+        last_used = _read_last_used_from_volume(volume_name)
+        if not last_used:
+            # .last_used doesn't exist, use created_at as fallback
+            last_used = metadata.get("created_at")
+
+        return {
+            "user_id": metadata.get("user_id"),
+            "created_at": metadata.get("created_at"),
+            "last_used": last_used,
+        }
+
+    # Files don't exist - try fallback to Docker labels (for old volumes)
+    logger.info(f"No metadata files in {volume_name}, trying Docker labels fallback")
+    return _fallback_to_docker_inspect(volume_name)
+
+
+def _fallback_to_docker_inspect(volume_name: str) -> Optional[Dict[str, str]]:
+    """
+    Fallback to Docker labels when metadata files don't exist.
+
+    This handles migration of existing volumes that were created
+    before the touch file system was implemented. Also migrates
+    the volume to use files.
+
+    Args:
+        volume_name: Name of the volume
+
+    Returns:
+        Dict with user_id, created_at, last_used or None
+    """
+    try:
+        result = subprocess.run(
+            ["docker", "volume", "inspect", "--format", "json", volume_name],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+
+        data = json.loads(result.stdout)
+        if data and len(data) > 0:
+            labels = data[0].get("Labels", {})
+            user_id = labels.get(LABEL_USER_ID)
+            created_at = labels.get(LABEL_CREATED_AT)
+            last_used = labels.get(LABEL_LAST_USED)
+
+            if user_id and created_at:
+                # Found labels - migrate to files
+                logger.info(f"Migrating {volume_name} from labels to touch files")
+
+                # Initialize metadata files (will be used on next access)
+                try:
+                    _initialize_volume_metadata(volume_name, int(user_id), created_at)
+                except Exception as e:
+                    logger.warning(f"Migration failed for {volume_name}: {e}")
+
+                return {
+                    "user_id": user_id,
+                    "created_at": created_at,
+                    "last_used": last_used or created_at,
+                }
+
+        return None
+
+    except Exception as e:
+        logger.warning(f"Docker inspect fallback failed for {volume_name}: {e}")
+        return None
