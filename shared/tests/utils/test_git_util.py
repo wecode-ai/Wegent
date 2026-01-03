@@ -16,7 +16,7 @@ class TestGitUtilWithCache:
     def setup_method(self):
         """Setup test environment before each test"""
         # Clear environment variables before each test
-        for key in ["GIT_CACHE_ENABLED", "GIT_CACHE_DIR", "GIT_CACHE_AUTO_UPDATE"]:
+        for key in ["GIT_CACHE_ENABLED", "GIT_CACHE_AUTO_UPDATE"]:
             if key in os.environ:
                 del os.environ[key]
 
@@ -234,28 +234,6 @@ class TestGitUtilWithCache:
         assert auth_url in cmd
         assert project_path in cmd
 
-    @patch("shared.utils.git_util._clone_without_cache")
-    @patch("shared.utils.git_util.is_cache_enabled")
-    def test_cache_uses_user_id_not_git_username(self, mock_is_cache_enabled, mock_clone_without):
-        """Test that cache uses user_id (not git username)"""
-        # Setup mocks
-        mock_is_cache_enabled.return_value = False
-        mock_clone_without.return_value = (True, None)
-
-        # Execute with different git usernames - but cache will use user_id
-        project_url = "https://github.com/user/repo.git"
-
-        # These calls use different git usernames for authentication
-        clone_repo_with_token(project_url, "main", "/tmp/repo1", "alice", "token_alice")
-        clone_repo_with_token(project_url, "main", "/tmp/repo2", "bob", "token_bob")
-
-        # Both calls should succeed
-        assert mock_clone_without.call_count == 2
-
-        # When cache is enabled, both would use the same user_id for cache path
-        # Git usernames are only used for authentication, not cache isolation
-        # user_id comes from database user.id, passed by executor_manager
-
 
 class TestGitUtil:
     """Test cases for git_util module (existing tests)"""
@@ -446,7 +424,7 @@ class TestGitUtilCacheEdgeCases:
 
     def setup_method(self):
         """Setup test environment before each test"""
-        for key in ["GIT_CACHE_ENABLED", "GIT_CACHE_DIR", "GIT_CACHE_AUTO_UPDATE"]:
+        for key in ["GIT_CACHE_ENABLED", "GIT_CACHE_AUTO_UPDATE"]:
             if key in os.environ:
                 del os.environ[key]
 

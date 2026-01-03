@@ -8,7 +8,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from shared.utils.git_cache import (
-    get_cache_dir,
     get_cache_repo_path,
     get_cache_user_id,
     get_user_cache_base_dir,
@@ -25,7 +24,6 @@ class TestGitCacheUserId:
         # Clear environment variables before each test
         for key in [
             "GIT_CACHE_ENABLED",
-            "GIT_CACHE_DIR",
             "GIT_CACHE_AUTO_UPDATE",
             "GIT_CACHE_USER_ID",
             "GIT_CACHE_USER_BASE_DIR",
@@ -116,7 +114,6 @@ class TestGitCache:
         # Clear environment variables before each test
         for key in [
             "GIT_CACHE_ENABLED",
-            "GIT_CACHE_DIR",
             "GIT_CACHE_AUTO_UPDATE",
             "GIT_CACHE_USER_ID",
             "GIT_CACHE_USER_BASE_DIR",
@@ -148,15 +145,6 @@ class TestGitCache:
 
         os.environ["GIT_CACHE_ENABLED"] = "FALSE"
         assert is_cache_enabled() is False
-
-    def test_get_cache_dir_default(self):
-        """Test default cache directory"""
-        assert get_cache_dir() == "/git-cache"
-
-    def test_get_cache_dir_custom(self):
-        """Test custom cache directory"""
-        os.environ["GIT_CACHE_DIR"] = "/custom/cache/path"
-        assert get_cache_dir() == "/custom/cache/path"
 
     def test_is_auto_update_enabled_default(self):
         """Test that auto-update is enabled by default"""
@@ -202,16 +190,6 @@ class TestGitCache:
         cache_path = get_cache_repo_path(url)
 
         assert cache_path == "/git-cache/user_100/github.com/user/repo.git"
-
-    def test_get_cache_repo_path_with_custom_cache_dir(self):
-        """Test cache path with custom cache directory"""
-        os.environ["GIT_CACHE_USER_ID"] = "200"
-        url = "https://github.com/user/repo.git"
-        custom_cache_dir = "/custom/cache"
-
-        cache_path = get_cache_repo_path(url, cache_dir=custom_cache_dir)
-
-        assert cache_path == "/custom/cache/user_200/github.com/user/repo.git"
 
     def test_get_cache_repo_path_without_git_suffix(self):
         """Test cache path for URL without .git suffix"""
@@ -269,7 +247,7 @@ class TestGitCacheSecurity:
 
     def setup_method(self):
         """Setup test environment before each test"""
-        for key in ["GIT_CACHE_ENABLED", "GIT_CACHE_DIR", "GIT_CACHE_AUTO_UPDATE", "GIT_CACHE_USER_ID"]:
+        for key in ["GIT_CACHE_ENABLED", "GIT_CACHE_AUTO_UPDATE", "GIT_CACHE_USER_ID"]:
             if key in os.environ:
                 del os.environ[key]
 
@@ -327,7 +305,7 @@ class TestGitCacheEdgeCases:
 
     def setup_method(self):
         """Setup test environment before each test"""
-        for key in ["GIT_CACHE_ENABLED", "GIT_CACHE_DIR", "GIT_CACHE_AUTO_UPDATE", "GIT_CACHE_USER_ID"]:
+        for key in ["GIT_CACHE_ENABLED", "GIT_CACHE_AUTO_UPDATE", "GIT_CACHE_USER_ID"]:
             if key in os.environ:
                 del os.environ[key]
 
@@ -391,7 +369,6 @@ class TestGitCacheSecureIsolation:
         """Setup test environment before each test"""
         for key in [
             "GIT_CACHE_ENABLED",
-            "GIT_CACHE_DIR",
             "GIT_CACHE_AUTO_UPDATE",
             "GIT_CACHE_USER_ID",
             "GIT_CACHE_USER_BASE_DIR",
@@ -408,23 +385,15 @@ class TestGitCacheSecureIsolation:
 
         assert base_dir == "/git-cache/user_123"
 
-    def test_get_user_cache_base_dir_fallback(self):
-        """Test get_user_cache_base_dir fallback without GIT_CACHE_USER_BASE_DIR"""
+    def test_get_user_cache_base_dir_raises_error_without_env_var(self):
+        """Test get_user_cache_base_dir raises error without GIT_CACHE_USER_BASE_DIR"""
         os.environ["GIT_CACHE_USER_ID"] = "456"
+        # Don't set GIT_CACHE_USER_BASE_DIR
 
-        base_dir = get_user_cache_base_dir()
+        with pytest.raises(ValueError) as exc_info:
+            get_user_cache_base_dir()
 
-        # Should construct path from GIT_CACHE_DIR and user_id
-        assert base_dir == "/git-cache/user_456"
-
-    def test_get_user_cache_base_dir_with_custom_cache_dir(self):
-        """Test get_user_cache_base_dir with custom GIT_CACHE_DIR"""
-        os.environ["GIT_CACHE_USER_ID"] = "789"
-        os.environ["GIT_CACHE_DIR"] = "/custom/cache"
-
-        base_dir = get_user_cache_base_dir()
-
-        assert base_dir == "/custom/cache/user_789"
+        assert "GIT_CACHE_USER_BASE_DIR environment variable is required" in str(exc_info.value)
 
     def test_cache_repo_path_with_user_base_dir(self):
         """Test cache repo path respects GIT_CACHE_USER_BASE_DIR"""
@@ -469,7 +438,6 @@ class TestGitCachePathValidation:
         """Setup test environment before each test"""
         for key in [
             "GIT_CACHE_ENABLED",
-            "GIT_CACHE_DIR",
             "GIT_CACHE_AUTO_UPDATE",
             "GIT_CACHE_USER_ID",
             "GIT_CACHE_USER_BASE_DIR",

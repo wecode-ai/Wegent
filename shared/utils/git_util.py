@@ -9,9 +9,7 @@ from shared.logger import setup_logger
 from shared.utils.crypto import decrypt_git_token, is_token_encrypted
 from shared.utils.git_cache import (
     ensure_cache_repo,
-    get_cache_dir,
     get_cache_repo_path,
-    get_reference_path,
     is_cache_enabled,
 )
 

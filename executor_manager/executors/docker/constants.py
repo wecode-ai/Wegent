@@ -31,7 +31,7 @@ WORKSPACE_MOUNT_PATH = "/workspace"
 
 # Git cache configuration
 GIT_CACHE_MOUNT_PATH = "/git-cache"
-GIT_CACHE_VOLUME = "git_cache_data"
+GIT_CACHE_VOLUME = "wegent_git_cache_data"
 
 # Task progress status
 DEFAULT_PROGRESS_RUNNING = 30

@@ -645,14 +645,12 @@ class DockerExecutor(Executor):
             )
 
             # Pass git cache environment variables to container
-            git_cache_dir = os.getenv("GIT_CACHE_DIR", GIT_CACHE_MOUNT_PATH)
             git_cache_auto_update = os.getenv("GIT_CACHE_AUTO_UPDATE", "true")
 
             # GIT_CACHE_USER_BASE_DIR tells the container where its cache root is mounted
             # This is /git-cache/user_{user_id} inside the container
             cmd.extend([
                 "-e", f"GIT_CACHE_ENABLED=true",
-                "-e", f"GIT_CACHE_DIR={git_cache_dir}",
                 "-e", f"GIT_CACHE_USER_BASE_DIR={user_cache_subdir}",
                 "-e", f"GIT_CACHE_AUTO_UPDATE={git_cache_auto_update}",
                 "-e", f"GIT_CACHE_USER_ID={user_id_int}"  # Pass real user ID for cache isolation

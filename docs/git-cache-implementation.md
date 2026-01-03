@@ -141,13 +141,12 @@ volume_mount = f"{GIT_CACHE_VOLUME}:/git-cache/user_{user_id}"
 提供缓存管理的核心功能：
 
 - **`get_cache_user_id()`**：从环境变量获取并验证 user_id（必需，无默认值）
-- **`get_user_cache_base_dir()`**：获取用户专属缓存基础目录（从 `GIT_CACHE_USER_BASE_DIR` 或自动计算）
-- **`get_cache_repo_path(url, cache_dir)`**：计算缓存仓库路径（自动使用 user_id 并验证）
+- **`get_user_cache_base_dir()`**：获取用户专属缓存基础目录（必须设置 `GIT_CACHE_USER_BASE_DIR`）
+- **`get_cache_repo_path(url)`**：计算缓存仓库路径（自动使用 user_id 并验证）
 - **`_validate_cache_path(cache_path, allowed_base_dir)`**：验证缓存路径在允许的目录内（防路径遍历）
 - **`ensure_cache_repo(cache_path, auth_url, branch)`**：确保缓存存在并更新（包含路径验证）
 - **`update_cache_repo(cache_path, branch, auth_url)`**：更新缓存仓库（使用当前用户的 token）
 - **`is_cache_enabled()`**：检查缓存是否启用
-- **`get_cache_dir()`**：获取缓存目录
 - **`is_auto_update_enabled()`**：检查自动更新是否启用
 
 #### git_util.py
@@ -228,7 +227,6 @@ graph TD
 | 变量名 | 默认值 | 说明 |
 |--------|--------|------|
 | `GIT_CACHE_ENABLED` | `false` | 是否启用缓存 |
-| `GIT_CACHE_DIR` | `/git-cache` | 缓存目录路径（宿主机或容器内的基础路径） |
 | `GIT_CACHE_USER_BASE_DIR` | 自动计算 | 用户专属缓存基础目录（容器内：`/git-cache/user_{user_id}`） |
 | `GIT_CACHE_AUTO_UPDATE` | `true` | 是否自动更新缓存 |
 | `GIT_CACHE_USER_ID` | **必需** | 数据库用户 ID（task.user.id），用于缓存隔离 |
@@ -237,12 +235,10 @@ graph TD
 ```bash
 # executor_manager 容器环境
 GIT_CACHE_ENABLED=true
-GIT_CACHE_DIR=/git-cache
 GIT_CACHE_AUTO_UPDATE=true
 
 # executor 容器环境（自动设置）
 GIT_CACHE_ENABLED=true
-GIT_CACHE_DIR=/git-cache
 GIT_CACHE_USER_ID=123                    # 从 task.user.id 提取
 GIT_CACHE_USER_BASE_DIR=/git-cache/user_123  # 自动计算
 GIT_CACHE_AUTO_UPDATE=true
@@ -258,7 +254,6 @@ services:
     environment:
       # Git Cache Configuration
       - GIT_CACHE_ENABLED=true
-      - GIT_CACHE_DIR=/git-cache
       - GIT_CACHE_AUTO_UPDATE=true
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -276,7 +271,6 @@ volumes:
 ```python
 # Git Cache Configuration
 GIT_CACHE_ENABLED = os.getenv("GIT_CACHE_ENABLED", "false")
-GIT_CACHE_DIR = os.getenv("GIT_CACHE_DIR", "/git-cache")
 GIT_CACHE_AUTO_UPDATE = os.getenv("GIT_CACHE_AUTO_UPDATE", "true")
 ```
 
@@ -285,7 +279,7 @@ GIT_CACHE_AUTO_UPDATE = os.getenv("GIT_CACHE_AUTO_UPDATE", "true")
 ```python
 # Git cache configuration
 GIT_CACHE_MOUNT_PATH = "/git-cache"
-GIT_CACHE_VOLUME = "git_cache_data"
+GIT_CACHE_VOLUME = "wegent_git_cache_data"
 ```
 
 ## 使用指南

@@ -148,7 +148,6 @@ services:
       - EXECUTOR_WORKSPCE=${HOME}/wecode-bot
       # Git Cache Configuration (uncomment to enable)
       # - GIT_CACHE_ENABLED=true
-      # - GIT_CACHE_DIR=/git-cache
       # - GIT_CACHE_AUTO_UPDATE=true
       # OpenTelemetry Configuration (uncomment to enable)
       # - OTEL_ENABLED=true

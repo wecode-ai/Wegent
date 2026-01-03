@@ -57,7 +57,6 @@ EXECUTOR_ENV = os.environ.get("EXECUTOR_ENV", "{}")
 
 # Git Cache Configuration
 GIT_CACHE_ENABLED = os.getenv("GIT_CACHE_ENABLED", "false")
-GIT_CACHE_DIR = os.getenv("GIT_CACHE_DIR", "/git-cache")
 GIT_CACHE_AUTO_UPDATE = os.getenv("GIT_CACHE_AUTO_UPDATE", "true")
 
 # OpenTelemetry configuration is centralized in shared/telemetry/config.py

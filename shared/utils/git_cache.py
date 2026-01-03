@@ -20,12 +20,8 @@ from shared.logger import setup_logger
 
 logger = setup_logger(__name__)
 
-# Default cache directory
-DEFAULT_CACHE_DIR = "/git-cache"
-
 # Environment variables
 ENV_CACHE_ENABLED = "GIT_CACHE_ENABLED"
-ENV_CACHE_DIR = "GIT_CACHE_DIR"
 ENV_CACHE_AUTO_UPDATE = "GIT_CACHE_AUTO_UPDATE"
 ENV_CACHE_USER_ID = "GIT_CACHE_USER_ID"
 ENV_CACHE_USER_BASE_DIR = "GIT_CACHE_USER_BASE_DIR"
@@ -41,16 +37,6 @@ def is_cache_enabled() -> bool:
     return os.getenv(ENV_CACHE_ENABLED, "false").lower() == "true"
 
 
-def get_cache_dir() -> str:
-    """
-    Get the cache directory from environment variable or use default.
-
-    Returns:
-        Cache directory path.
-    """
-    return os.getenv(ENV_CACHE_DIR, DEFAULT_CACHE_DIR)
-
-
 def get_user_cache_base_dir() -> str:
     """
     Get the user-specific cache base directory from environment variable.
@@ -59,18 +45,21 @@ def get_user_cache_base_dir() -> str:
     - Volume mounted as: /git-cache/user_{user_id}
     - This function returns: /git-cache/user_{user_id}
 
+    GIT_CACHE_USER_BASE_DIR must be set by executor_manager when starting the container.
+
     Returns:
         User-specific cache base directory path.
+
+    Raises:
+        ValueError: If GIT_CACHE_USER_BASE_DIR is not set
     """
     user_base_dir = os.getenv(ENV_CACHE_USER_BASE_DIR)
-    if user_base_dir:
-        return user_base_dir
-
-    # Fallback to old behavior if GIT_CACHE_USER_BASE_DIR not set
-    # This maintains backward compatibility
-    cache_dir = get_cache_dir()
-    user_id = get_cache_user_id()
-    return f"{cache_dir}/user_{user_id}"
+    if not user_base_dir:
+        raise ValueError(
+            "GIT_CACHE_USER_BASE_DIR environment variable is required. "
+            "This should be set by executor_manager when starting the container."
+        )
+    return user_base_dir
 
 
 def is_auto_update_enabled() -> bool:
@@ -147,21 +136,18 @@ def _validate_cache_path(cache_path: str, allowed_base_dir: str) -> bool:
     return True
 
 
-def get_cache_repo_path(url: str, cache_dir: str = None) -> str:
+def get_cache_repo_path(url: str) -> str:
     """
     Calculate the cache repository path for a given URL with user ID isolation.
 
     In the new secure design:
-    - cache_dir is typically /git-cache (or from GIT_CACHE_DIR)
-    - The actual base directory is /git-cache/user_{user_id} (from GIT_CACHE_USER_BASE_DIR)
+    - The base directory is from GIT_CACHE_USER_BASE_DIR (e.g., /git-cache/user_{user_id})
     - Final path: /git-cache/user_{user_id}/{domain}/{path}.git
 
     This ensures each user's cache is in their own isolated directory.
 
     Args:
         url: Git repository URL
-        cache_dir: Legacy cache directory parameter (kept for backward compatibility,
-                  but now uses GIT_CACHE_USER_BASE_DIR if available)
 
     Returns:
         Path to the cache repository
@@ -183,12 +169,7 @@ def get_cache_repo_path(url: str, cache_dir: str = None) -> str:
 
     # Use user-specific base directory for security
     # This is /git-cache/user_{user_id} in the new design
-    if cache_dir is None:
-        user_base_dir = get_user_cache_base_dir()
-    else:
-        # Backward compatibility: if cache_dir is explicitly provided,
-        # append user_{user_id} to it
-        user_base_dir = f"{cache_dir}/user_{user_id}"
+    user_base_dir = get_user_cache_base_dir()
 
     # Normalize URL to get the path components
     # Handle SSH format: git@domain.com:path/repo.git
@@ -373,46 +354,3 @@ def update_cache_repo(
         logger.warning(f"Unexpected error updating cache: {e}")
         # Don't fail the operation if cache update fails
         return True, None
-
-
-def get_reference_path(url: str) -> tuple[str | None, str | None]:
-    """
-    Get the reference path for --reference mode if cache is enabled.
-
-    This is the main entry point for cache functionality.
-
-    Args:
-        url: Git repository URL
-
-    Returns:
-        Tuple (cache_path, auth_url):
-        - cache_path: Path to cache repository if enabled and valid, None otherwise
-        - auth_url: None if cache should be used (caller will skip auth), original URL if cache disabled
-
-    Examples:
-        >>> # Cache disabled
-        >>> get_reference_path("https://github.com/user/repo.git")
-        (None, "https://github.com/user/repo.git")
-
-        >>> # Cache enabled
-        >>> get_reference_path("https://github.com/user/repo.git")
-        ("/git-cache/github.com/user/repo.git", None)
-    """
-    if not is_cache_enabled():
-        logger.debug("Git cache is disabled")
-        return None, url
-
-    cache_dir = get_cache_dir()
-
-    # Ensure cache directory exists
-    try:
-        os.makedirs(cache_dir, exist_ok=True)
-    except Exception as e:
-        logger.warning(f"Failed to create cache directory {cache_dir}: {e}")
-        return None, url
-
-    cache_path = get_cache_repo_path(url, cache_dir)
-
-    logger.info(f"Git cache enabled, cache path: {cache_path}")
-
-    return cache_path, None
