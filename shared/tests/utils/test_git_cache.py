@@ -158,6 +158,7 @@ class TestGitCache:
     def test_get_cache_repo_path_github_https(self):
         """Test cache path for GitHub HTTPS URL with user_id"""
         os.environ["GIT_CACHE_USER_ID"] = "123"
+        os.environ["GIT_CACHE_USER_BASE_DIR"] = "/git-cache/user_123"
         url = "https://github.com/user/repo.git"
 
         cache_path = get_cache_repo_path(url)
@@ -167,6 +168,7 @@ class TestGitCache:
     def test_get_cache_repo_path_gitlab_https(self):
         """Test cache path for GitLab HTTPS URL with user_id"""
         os.environ["GIT_CACHE_USER_ID"] = "456"
+        os.environ["GIT_CACHE_USER_BASE_DIR"] = "/git-cache/user_456"
         url = "https://gitlab.com/group/project.git"
 
         cache_path = get_cache_repo_path(url)
@@ -176,6 +178,7 @@ class TestGitCache:
     def test_get_cache_repo_path_gerrit(self):
         """Test cache path for Gerrit URL with user_id"""
         os.environ["GIT_CACHE_USER_ID"] = "789"
+        os.environ["GIT_CACHE_USER_BASE_DIR"] = "/git-cache/user_789"
         url = "https://gerrit.example.com/project"
 
         cache_path = get_cache_repo_path(url)
@@ -185,6 +188,7 @@ class TestGitCache:
     def test_get_cache_repo_path_ssh(self):
         """Test cache path for SSH URL with user_id"""
         os.environ["GIT_CACHE_USER_ID"] = "100"
+        os.environ["GIT_CACHE_USER_BASE_DIR"] = "/git-cache/user_100"
         url = "git@github.com:user/repo.git"
 
         cache_path = get_cache_repo_path(url)
@@ -194,6 +198,7 @@ class TestGitCache:
     def test_get_cache_repo_path_without_git_suffix(self):
         """Test cache path for URL without .git suffix"""
         os.environ["GIT_CACHE_USER_ID"] = "300"
+        os.environ["GIT_CACHE_USER_BASE_DIR"] = "/git-cache/user_300"
         url = "https://github.com/user/repo"
 
         cache_path = get_cache_repo_path(url)
@@ -203,6 +208,7 @@ class TestGitCache:
     def test_get_cache_repo_path_with_nested_path(self):
         """Test cache path for repository with nested path"""
         os.environ["GIT_CACHE_USER_ID"] = "400"
+        os.environ["GIT_CACHE_USER_BASE_DIR"] = "/git-cache/user_400"
         url = "https://github.com/org/subgroup/project.git"
 
         cache_path = get_cache_repo_path(url)
@@ -228,10 +234,12 @@ class TestGitCache:
 
         # User 123
         os.environ["GIT_CACHE_USER_ID"] = "123"
+        os.environ["GIT_CACHE_USER_BASE_DIR"] = "/git-cache/user_123"
         cache_123 = get_cache_repo_path(url)
 
         # User 456
         os.environ["GIT_CACHE_USER_ID"] = "456"
+        os.environ["GIT_CACHE_USER_BASE_DIR"] = "/git-cache/user_456"
         cache_456 = get_cache_repo_path(url)
 
         # Verify paths are completely isolated
@@ -247,7 +255,7 @@ class TestGitCacheSecurity:
 
     def setup_method(self):
         """Setup test environment before each test"""
-        for key in ["GIT_CACHE_ENABLED", "GIT_CACHE_AUTO_UPDATE", "GIT_CACHE_USER_ID"]:
+        for key in ["GIT_CACHE_ENABLED", "GIT_CACHE_AUTO_UPDATE", "GIT_CACHE_USER_ID", "GIT_CACHE_USER_BASE_DIR"]:
             if key in os.environ:
                 del os.environ[key]
 
@@ -257,10 +265,12 @@ class TestGitCacheSecurity:
 
         # User 1 (admin)
         os.environ["GIT_CACHE_USER_ID"] = "1"
+        os.environ["GIT_CACHE_USER_BASE_DIR"] = "/git-cache/user_1"
         admin_cache = get_cache_repo_path(url)
 
         # User 2 (regular user)
         os.environ["GIT_CACHE_USER_ID"] = "2"
+        os.environ["GIT_CACHE_USER_BASE_DIR"] = "/git-cache/user_2"
         user_cache = get_cache_repo_path(url)
 
         # Verify paths are completely isolated
@@ -273,6 +283,7 @@ class TestGitCacheSecurity:
     def test_cache_path_traversal_protection(self):
         """Test that cache paths are safe from traversal attacks"""
         os.environ["GIT_CACHE_USER_ID"] = "123"
+        os.environ["GIT_CACHE_USER_BASE_DIR"] = "/git-cache/user_123"
         url = "https://github.com/user/repo.git"
 
         cache_path = get_cache_repo_path(url)
@@ -305,13 +316,14 @@ class TestGitCacheEdgeCases:
 
     def setup_method(self):
         """Setup test environment before each test"""
-        for key in ["GIT_CACHE_ENABLED", "GIT_CACHE_AUTO_UPDATE", "GIT_CACHE_USER_ID"]:
+        for key in ["GIT_CACHE_ENABLED", "GIT_CACHE_AUTO_UPDATE", "GIT_CACHE_USER_ID", "GIT_CACHE_USER_BASE_DIR"]:
             if key in os.environ:
                 del os.environ[key]
 
     def test_get_cache_repo_path_url_with_port(self):
         """Test cache path for URL with port number"""
         os.environ["GIT_CACHE_USER_ID"] = "500"
+        os.environ["GIT_CACHE_USER_BASE_DIR"] = "/git-cache/user_500"
         url = "https://git.example.com:8443/repo.git"
 
         cache_path = get_cache_repo_path(url)
@@ -322,6 +334,7 @@ class TestGitCacheEdgeCases:
     def test_get_cache_repo_path_multiple_repos_same_user(self):
         """Test that a single user can cache multiple repositories"""
         os.environ["GIT_CACHE_USER_ID"] = "600"
+        os.environ["GIT_CACHE_USER_BASE_DIR"] = "/git-cache/user_600"
 
         repo1 = get_cache_repo_path("https://github.com/user/repo1.git")
         repo2 = get_cache_repo_path("https://github.com/user/repo2.git")
@@ -345,6 +358,7 @@ class TestGitCacheEdgeCases:
     def test_large_user_id(self):
         """Test cache path with very large user_id"""
         os.environ["GIT_CACHE_USER_ID"] = "2147483647"  # Max int32
+        os.environ["GIT_CACHE_USER_BASE_DIR"] = "/git-cache/user_2147483647"
         url = "https://github.com/user/repo.git"
 
         cache_path = get_cache_repo_path(url)
@@ -355,6 +369,7 @@ class TestGitCacheEdgeCases:
     def test_minimal_user_id(self):
         """Test cache path with minimal user_id (1)"""
         os.environ["GIT_CACHE_USER_ID"] = "1"
+        os.environ["GIT_CACHE_USER_BASE_DIR"] = "/git-cache/user_1"
         url = "https://github.com/user/repo.git"
 
         cache_path = get_cache_repo_path(url)
