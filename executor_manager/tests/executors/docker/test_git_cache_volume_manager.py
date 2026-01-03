@@ -215,6 +215,58 @@ class TestVolumeManager:
         assert len(names) == 0
 
 
+class TestIntegration:
+    """Integration tests (require RUN_DOCKER_TESTS env var)"""
+
+    @pytest.mark.skipif(not os.getenv("RUN_DOCKER_TESTS"), reason="Docker tests not enabled")
+    def test_volume_creation_and_deletion(self):
+        """Test actual volume creation and deletion"""
+        test_user_id = 9999  # Use unique test ID
+        volume_name = get_user_volume_name(test_user_id)
+
+        # Ensure volume doesn't exist
+        if volume_exists(volume_name):
+            success, _ = delete_volume(volume_name)
+            assert success
+
+        # Create volume
+        success, error = create_user_volume(test_user_id)
+        assert success is True
+        assert error is None
+        assert volume_exists(volume_name) is True
+
+        # Create again (should be idempotent)
+        success, error = create_user_volume(test_user_id)
+        assert success is True
+        assert error is None
+
+        # Delete volume
+        success, error = delete_volume(volume_name)
+        assert success is True
+        assert error is None
+        assert volume_exists(volume_name) is False
+
+    @pytest.mark.skipif(not os.getenv("RUN_DOCKER_TESTS"), reason="Docker tests not enabled")
+    def test_volume_metadata_labels(self):
+        """Test volume metadata labels"""
+        test_user_id = 9998
+        volume_name = get_user_volume_name(test_user_id)
+
+        # Create volume
+        success, _ = create_user_volume(test_user_id)
+        assert success
+
+        # Get metadata
+        metadata = get_volume_metadata(volume_name)
+        assert metadata is not None
+        assert metadata.get("wegent.user-id") == str(test_user_id)
+        assert "wegent.created-at" in metadata
+        assert "wegent.last-used" in metadata
+
+        # Cleanup
+        delete_volume(volume_name)
+
+
 class TestTouchFileOperations:
     """Test cases for touch file operations"""
 

@@ -235,3 +235,27 @@ class TestGitCacheCleanupManager:
         # Should skip volumes with invalid dates
         assert len(result["deleted_volumes"]) == 0
         mock_delete.assert_not_called()
+
+    def test_cleanup_manager_configuration(self):
+        """Test cleanup manager reads configuration correctly including dry_run"""
+        # Test with custom configuration
+        os.environ["GIT_CACHE_CLEANUP_ENABLED"] = "true"
+        os.environ["GIT_CACHE_INACTIVE_DAYS"] = "60"
+        os.environ["GIT_CACHE_PROTECTED_USERS"] = "10,20,30"
+        os.environ["GIT_CACHE_CLEANUP_DRY_RUN"] = "true"
+
+        manager = GitCacheCleanupManager()
+
+        assert manager.enabled is True
+        assert manager.inactive_days == 60
+        assert manager.protected_users == {10, 20, 30}
+        assert manager.dry_run is True
+
+        # Cleanup
+        for key in [
+            "GIT_CACHE_CLEANUP_ENABLED",
+            "GIT_CACHE_INACTIVE_DAYS",
+            "GIT_CACHE_PROTECTED_USERS",
+            "GIT_CACHE_CLEANUP_DRY_RUN",
+        ]:
+            os.environ.pop(key, None)
