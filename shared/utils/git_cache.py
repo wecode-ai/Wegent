@@ -41,14 +41,15 @@ def get_user_cache_base_dir() -> str:
     """
     Get the user-specific cache base directory from environment variable.
 
-    In the new secure design, each container only mounts its own user subdirectory:
-    - Volume mounted as: /git-cache/user_{user_id}
-    - This function returns: /git-cache/user_{user_id}
+    In the physical isolation design:
+    - Each user has their own volume mounted at: /git-cache
+    - The volume itself provides isolation (no user subdirectory needed)
+    - This function returns: /git-cache
 
     GIT_CACHE_USER_BASE_DIR must be set by executor_manager when starting the container.
 
     Returns:
-        User-specific cache base directory path.
+        User-specific cache base directory path (always /git-cache in the new design).
 
     Raises:
         ValueError: If GIT_CACHE_USER_BASE_DIR is not set
@@ -138,13 +139,15 @@ def _validate_cache_path(cache_path: str, allowed_base_dir: str) -> bool:
 
 def get_cache_repo_path(url: str) -> str:
     """
-    Calculate the cache repository path for a given URL with user ID isolation.
+    Calculate the cache repository path for a given URL with physical isolation.
 
-    In the new secure design:
-    - The base directory is from GIT_CACHE_USER_BASE_DIR (e.g., /git-cache/user_{user_id})
-    - Final path: /git-cache/user_{user_id}/{domain}/{path}.git
+    In the physical isolation design:
+    - Each user has their own volume mounted at: /git-cache
+    - The base directory is from GIT_CACHE_USER_BASE_DIR (now just /git-cache)
+    - Final path: /git-cache/{domain}/{path}.git
 
-    This ensures each user's cache is in their own isolated directory.
+    This is simpler than the previous design because the volume itself provides
+    isolation - no user_{id} subdirectory needed.
 
     Args:
         url: Git repository URL
@@ -156,20 +159,20 @@ def get_cache_repo_path(url: str) -> str:
         ValueError: If GIT_CACHE_USER_ID is not set
 
     Examples:
-        >>> # With GIT_CACHE_USER_BASE_DIR=/git-cache/user_123
+        >>> # With GIT_CACHE_USER_BASE_DIR=/git-cache
         >>> get_cache_repo_path("https://github.com/user/repo.git")
-        "/git-cache/user_123/github.com/user/repo.git"
+        "/git-cache/github.com/user/repo.git"
 
-        >>> # With GIT_CACHE_USER_BASE_DIR=/git-cache/user_456
+        >>> # With GIT_CACHE_USER_BASE_DIR=/git-cache
         >>> get_cache_repo_path("git@gitlab.com:group/project.git")
-        "/git-cache/user_456/gitlab.com/group/project.git"
+        "/git-cache/gitlab.com/group/project.git"
     """
     # Get user ID (required, will raise ValueError if not set)
     user_id = get_cache_user_id()
 
-    # Use user-specific base directory for security
-    # This is /git-cache/user_{user_id} in the new design
-    user_base_dir = get_user_cache_base_dir()
+    # With physical isolation, base directory is just the mount point
+    # No user subdirectory needed - each user has their own volume
+    user_base_dir = get_user_cache_base_dir()  # Returns /git-cache
 
     # Normalize URL to get the path components
     # Handle SSH format: git@domain.com:path/repo.git
@@ -192,10 +195,11 @@ def get_cache_repo_path(url: str) -> str:
     if path.startswith("/"):
         path = path[1:]
 
-    # Construct cache path: /git-cache/user_{user_id}/{domain}/{path}.git
+    # Construct cache path: /git-cache/{domain}/{path}.git
+    # Note: No user_{id} prefix - the volume itself provides isolation
     cache_path = os.path.join(user_base_dir, domain, f"{path}.git")
 
-    # Validate the path is within allowed base directory
+    # Validate the path is within allowed base directory (still important for security)
     try:
         _validate_cache_path(cache_path, user_base_dir)
     except ValueError as e:

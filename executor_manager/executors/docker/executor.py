@@ -601,21 +601,28 @@ class DockerExecutor(Executor):
 
     def _add_git_cache_mount(self, cmd: List[str], user_id: int = None) -> None:
         """
-        Add git cache volume mount and environment variables with secure user isolation.
+        Add git cache volume mount and environment variables with physical user isolation.
 
-        If git cache is enabled in environment, mount ONLY the user's subdirectory
-        from the cache volume to prevent cross-user access.
+        Creates and mounts a user-specific Docker volume for complete physical isolation.
+        Each user gets their own volume: wegent_git_cache_user_{id}
 
-        Security improvement: Each container only sees its own /git-cache/user_{user_id}
-        directory, not other users' cache directories.
+        Security model: Each container receives its own volume mounted at /git-cache.
+        The volume only contains that user's cache data, providing physical isolation
+        at the container level in addition to application-level path validation.
 
         Args:
             cmd: Docker command list to modify
             user_id: Real user ID for cache isolation (required when cache is enabled)
 
         Raises:
-            ValueError: If cache is enabled but user_id is not provided
+            ValueError: If cache is enabled but user_id is not available or volume creation fails
         """
+        from executor_manager.executors.docker.git_cache_volume_manager import (
+            create_user_volume,
+            get_user_volume_name,
+            update_volume_last_used,
+        )
+
         git_cache_enabled = os.getenv("GIT_CACHE_ENABLED", "false").lower() == "true"
 
         if git_cache_enabled:
@@ -633,32 +640,44 @@ class DockerExecutor(Executor):
             except (ValueError, TypeError) as e:
                 raise ValueError(f"Invalid user_id for git cache: {e}")
 
-            # Mount only the user's subdirectory for security isolation
-            # Instead of mounting the entire volume as /git-cache,
-            # we mount it as /git-cache/user_{user_id} so each container
-            # can only see its own cache directory
-            user_cache_subdir = f"{GIT_CACHE_MOUNT_PATH}/user_{user_id_int}"
-            cmd.extend(["-v", f"{GIT_CACHE_VOLUME}:{user_cache_subdir}"])
-            logger.info(
-                f"Adding git cache mount for user {user_id_int}: "
-                f"{GIT_CACHE_VOLUME}:{user_cache_subdir}"
-            )
+            # Get or create user-specific volume
+            volume_name = get_user_volume_name(user_id_int)
+
+            # Dynamically create volume if it doesn't exist
+            success, error_msg = create_user_volume(user_id_int)
+            if not success:
+                # Volume creation failed - this is a critical error
+                # Per requirements: no fallback, fail fast
+                raise ValueError(
+                    f"Failed to create git cache volume for user {user_id_int}: {error_msg}. "
+                    f"Git cache cannot be enabled without user volume."
+                )
+
+            # Update last-used timestamp
+            update_volume_last_used(volume_name)
+
+            # Mount the user-specific volume at /git-cache
+            # With physical isolation, there's no user subdirectory - the volume root IS the user's cache
+            cmd.extend(["-v", f"{volume_name}:{GIT_CACHE_MOUNT_PATH}"])
+            logger.info(f"Adding user-specific git cache mount: {volume_name}:{GIT_CACHE_MOUNT_PATH}")
 
             # Pass git cache environment variables to container
             git_cache_auto_update = os.getenv("GIT_CACHE_AUTO_UPDATE", "true")
 
-            # GIT_CACHE_USER_BASE_DIR tells the container where its cache root is mounted
-            # This is /git-cache/user_{user_id} inside the container
+            # With physical isolation, the base directory is simply the mount point
+            # No user_{id} subdirectory needed - the volume only contains this user's data
+            user_cache_dir = GIT_CACHE_MOUNT_PATH  # Simply /git-cache
+
             cmd.extend([
                 "-e", f"GIT_CACHE_ENABLED=true",
-                "-e", f"GIT_CACHE_USER_BASE_DIR={user_cache_subdir}",
+                "-e", f"GIT_CACHE_USER_BASE_DIR={user_cache_dir}",
                 "-e", f"GIT_CACHE_AUTO_UPDATE={git_cache_auto_update}",
                 "-e", f"GIT_CACHE_USER_ID={user_id_int}"  # Pass real user ID for cache isolation
             ])
 
             logger.info(
-                f"Git cache enabled for user {user_id_int}: "
-                f"BASE_DIR={user_cache_subdir}, AUTO_UPDATE={git_cache_auto_update}"
+                f"Git cache enabled for user {user_id_int} with physical isolation: "
+                f"VOLUME={volume_name}, BASE_DIR={user_cache_dir}, AUTO_UPDATE={git_cache_auto_update}"
             )
         else:
             # Explicitly disable cache in container
