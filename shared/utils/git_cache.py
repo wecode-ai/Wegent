@@ -251,7 +251,7 @@ def ensure_cache_repo(
 
             # Auto-update if enabled
             if is_auto_update_enabled():
-                return update_cache_repo(cache_path, branch, auth_url)
+                return update_cache_repo(cache_path, auth_url)
             else:
                 logger.info("Cache auto-update is disabled, skipping update")
                 return True, None
@@ -292,14 +292,13 @@ def ensure_cache_repo(
 
 
 def update_cache_repo(
-    cache_path: str, branch: str = None, auth_url: str = None
+    cache_path: str, auth_url: str = None
 ) -> tuple[bool, str]:
     """
     Update an existing cache repository by fetching from remote.
 
     Args:
         cache_path: Path to the cache repository
-        branch: Branch to fetch (optional, fetches all if not specified)
         auth_url: Authenticated git URL for fetching (optional, uses existing remote if not provided)
 
     Returns:
