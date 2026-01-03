@@ -31,6 +31,7 @@ WORKSPACE_MOUNT_PATH = "/workspace"
 
 # Git cache configuration
 GIT_CACHE_MOUNT_PATH = "/git-cache"
+# Use the same volume name as docker-compose (with project prefix)
 GIT_CACHE_VOLUME = "wegent_git_cache_data"
 
 # Task progress status
