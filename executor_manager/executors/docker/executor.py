@@ -562,7 +562,7 @@ class DockerExecutor(Executor):
         self._add_workspace_mount(cmd)
 
         # Add git cache mount if enabled
-        self._add_git_cache_mount(cmd, user_name)
+        self._add_git_cache_mount(cmd, user_id)
 
         # Add network configuration
         self._add_network_config(cmd)
