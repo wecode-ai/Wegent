@@ -91,7 +91,7 @@ class TestGitCacheCleanupManager:
         assert "wegent_git_cache_user_123" in result["deleted_volumes"]
         assert "wegent_git_cache_user_1" not in result["deleted_volumes"]
         assert "wegent_git_cache_user_1" in result["protected_volumes"]
-        assert 0 == mock_delete.call_count  # delete should not be called for protected user
+        assert 1 == mock_delete.call_count  # delete only called for user 123, not for protected user 1
 
     @patch("executor_manager.git_cache_cleanup.list_user_volumes")
     @patch("executor_manager.git_cache_cleanup.delete_volume")

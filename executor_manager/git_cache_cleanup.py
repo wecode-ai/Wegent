@@ -14,7 +14,7 @@ Periodically cleans up inactive user volumes to free disk space.
 
 import os
 from datetime import datetime, timedelta
-from typing import Dict, Set
+from typing import Any, Dict, Set
 
 from shared.logger import setup_logger
 
@@ -46,9 +46,10 @@ class GitCacheCleanupManager:
 
     def _load_protected_users(self) -> Set[int]:
         """
-        Load list of protected user IDs that should never have their volumes deleted.
+        Load list of protected user IDs from environment variable.
 
         Reads from GIT_CACHE_PROTECTED_USERS environment variable (comma-separated).
+        Invalid entries are logged and skipped.
 
         Returns:
             Set of protected user IDs
@@ -65,7 +66,7 @@ class GitCacheCleanupManager:
             logger.warning(f"Invalid GIT_CACHE_PROTECTED_USERS value: {e}")
             return set()
 
-    def cleanup_inactive_volumes(self) -> Dict[str, any]:
+    def cleanup_inactive_volumes(self) -> Dict[str, Any]:
         """
         Clean up volumes that haven't been used in configured days.
 
@@ -174,12 +175,17 @@ class GitCacheCleanupManager:
 
         return result
 
-    def get_volume_stats(self) -> Dict[str, any]:
+    def get_volume_stats(self) -> Dict[str, Any]:
         """
         Get statistics about git cache volumes.
 
         Returns:
-            Dictionary with volume statistics
+            Dictionary with volume statistics including:
+            - total_volumes: Total number of user volumes
+            - total_size_bytes: Total size in bytes
+            - total_size_mb: Total size in megabytes
+            - inactive_volumes: Count of volumes past inactive threshold
+            - inactive_threshold_days: Configured inactive days threshold
         """
         from executor_manager.executors.docker.git_cache_volume_manager import (
             list_user_volumes,
