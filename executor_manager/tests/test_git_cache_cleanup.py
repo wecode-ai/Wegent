@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import os
 import pytest
 from unittest.mock import patch, MagicMock
 from datetime import datetime, timedelta
@@ -12,7 +13,7 @@ class TestGitCacheCleanupManager:
     """Test cases for git cache cleanup manager"""
 
     @patch.dict("os.environ", {"GIT_CACHE_CLEANUP_ENABLED": "true", "GIT_CACHE_INACTIVE_DAYS": "30", "GIT_CACHE_PROTECTED_USERS": "1,2,3"})
-    def test_initialization(self):
+    def test_initialization(self) -> None:
         """Test cleanup manager initialization"""
         manager = GitCacheCleanupManager()
 
@@ -21,7 +22,7 @@ class TestGitCacheCleanupManager:
         assert manager.protected_users == {1, 2, 3}
 
     @patch.dict("os.environ", {"GIT_CACHE_CLEANUP_ENABLED": "false"})
-    def test_cleanup_disabled(self):
+    def test_cleanup_disabled(self) -> None:
         """Test cleanup when disabled"""
         manager = GitCacheCleanupManager()
 
@@ -35,7 +36,7 @@ class TestGitCacheCleanupManager:
     @patch("executor_manager.executors.docker.git_cache_volume_manager.list_user_volumes")
     @patch("executor_manager.executors.docker.git_cache_volume_manager.delete_volume")
     @patch("executor_manager.executors.docker.git_cache_volume_manager.get_volume_size")
-    def test_cleanup_inactive_volumes(self, mock_size, mock_delete, mock_list):
+    def test_cleanup_inactive_volumes(self, mock_size, mock_delete, mock_list) -> None:
         """Test cleanup of inactive volumes"""
         # Mock data
         mock_list.return_value = {
@@ -64,7 +65,7 @@ class TestGitCacheCleanupManager:
     @patch("executor_manager.executors.docker.git_cache_volume_manager.list_user_volumes")
     @patch("executor_manager.executors.docker.git_cache_volume_manager.delete_volume")
     @patch("executor_manager.executors.docker.git_cache_volume_manager.get_volume_size")
-    def test_cleanup_respects_protected_users(self, mock_size, mock_delete, mock_list):
+    def test_cleanup_respects_protected_users(self, mock_size, mock_delete, mock_list) -> None:
         """Test that protected users are not cleaned up"""
         # Mock data
         mock_list.return_value = {
@@ -97,7 +98,7 @@ class TestGitCacheCleanupManager:
     @patch("executor_manager.executors.docker.git_cache_volume_manager.delete_volume")
     @patch("executor_manager.executors.docker.git_cache_volume_manager.get_volume_size")
     @patch.dict("os.environ", {"GIT_CACHE_CLEANUP_DRY_RUN": "true"})
-    def test_cleanup_dry_run(self, mock_size, mock_delete, mock_list):
+    def test_cleanup_dry_run(self, mock_size, mock_delete, mock_list) -> None:
         """Test cleanup in dry run mode"""
         # Mock data
         mock_list.return_value = {
@@ -121,7 +122,7 @@ class TestGitCacheCleanupManager:
     @patch("executor_manager.executors.docker.git_cache_volume_manager.list_user_volumes")
     @patch("executor_manager.executors.docker.git_cache_volume_manager.delete_volume")
     @patch("executor_manager.executors.docker.git_cache_volume_manager.get_volume_size")
-    def test_cleanup_handles_errors(self, mock_size, mock_delete, mock_list):
+    def test_cleanup_handles_errors(self, mock_size, mock_delete, mock_list) -> None:
         """Test that cleanup handles deletion errors gracefully"""
         # Mock data
         mock_list.return_value = {
@@ -145,7 +146,7 @@ class TestGitCacheCleanupManager:
 
     @patch("executor_manager.executors.docker.git_cache_volume_manager.list_user_volumes")
     @patch("executor_manager.executors.docker.git_cache_volume_manager.get_volume_size")
-    def test_get_volume_stats(self, mock_size, mock_list):
+    def test_get_volume_stats(self, mock_size, mock_list) -> None:
         """Test getting volume statistics"""
         # Mock data
         mock_list.return_value = {
@@ -173,7 +174,7 @@ class TestGitCacheCleanupManager:
         assert stats["inactive_threshold_days"] == 30
 
     @patch.dict("os.environ", {"GIT_CACHE_PROTECTED_USERS": "1,2,invalid,4"})
-    def test_load_protected_users_invalid_format(self):
+    def test_load_protected_users_invalid_format(self) -> None:
         """Test loading protected users with invalid format"""
         manager = GitCacheCleanupManager()
 
@@ -185,7 +186,7 @@ class TestGitCacheCleanupManager:
     @patch("executor_manager.executors.docker.git_cache_volume_manager.list_user_volumes")
     @patch("executor_manager.executors.docker.git_cache_volume_manager.delete_volume")
     @patch("executor_manager.executors.docker.git_cache_volume_manager.get_volume_size")
-    def test_cleanup_handles_missing_dates(self, mock_size, mock_delete, mock_list):
+    def test_cleanup_handles_missing_dates(self, mock_size, mock_delete, mock_list) -> None:
         """Test cleanup handles volumes with missing date labels"""
         # Mock data
         mock_list.return_value = {
@@ -216,7 +217,7 @@ class TestGitCacheCleanupManager:
     @patch("executor_manager.executors.docker.git_cache_volume_manager.list_user_volumes")
     @patch("executor_manager.executors.docker.git_cache_volume_manager.delete_volume")
     @patch("executor_manager.executors.docker.git_cache_volume_manager.get_volume_size")
-    def test_cleanup_handles_invalid_dates(self, mock_size, mock_delete, mock_list):
+    def test_cleanup_handles_invalid_dates(self, mock_size, mock_delete, mock_list) -> None:
         """Test cleanup handles volumes with invalid date formats"""
         # Mock data
         mock_list.return_value = {
@@ -236,7 +237,7 @@ class TestGitCacheCleanupManager:
         assert len(result["deleted_volumes"]) == 0
         mock_delete.assert_not_called()
 
-    def test_cleanup_manager_configuration(self):
+    def test_cleanup_manager_configuration(self) -> None:
         """Test cleanup manager reads configuration correctly including dry_run"""
         # Test with custom configuration
         os.environ["GIT_CACHE_CLEANUP_ENABLED"] = "true"
