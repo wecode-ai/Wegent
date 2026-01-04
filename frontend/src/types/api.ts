@@ -574,3 +574,59 @@ export type {
   KnowledgeBase,
   KnowledgeBaseListResponse as KnowledgeBasesResponse,
 } from './knowledge';
+
+// Meeting Booking Types
+export interface MeetingRoom {
+  id: string;
+  name: string;
+  capacity: number;
+  location: string;
+  available: boolean;
+  facilities?: string[];
+}
+
+export interface MeetingParticipant {
+  id: string;
+  name: string;
+  department?: string;
+  email?: string;
+  title?: string;
+}
+
+export interface MeetingBookingFormData {
+  type: 'meeting_booking';
+  title: string;
+  startTime: string; // ISO format
+  endTime: string; // ISO format
+  duration: number; // minutes
+  roomId: string;
+  roomName: string;
+  participantIds: string[];
+  participantNames: string[];
+  // Available options for selection
+  availableRooms?: Array<{
+    id: string;
+    name: string;
+    recommended: boolean;
+  }>;
+  availableParticipants?: Array<{
+    id: string;
+    name: string;
+    recommended: boolean;
+  }>;
+}
+
+export interface MeetingBookingResponse {
+  success: boolean;
+  meetingId?: string;
+  error?: string;
+  message?: string;
+}
+
+export interface CreateMeetingRequest {
+  title: string;
+  start_time: string;
+  end_time: string;
+  room_id: string;
+  participant_ids: string[];
+}

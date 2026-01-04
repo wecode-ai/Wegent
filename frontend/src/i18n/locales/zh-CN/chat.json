@@ -386,5 +386,29 @@
       "summary": "总结评价",
       "improved_answer": "改进后的回答"
     }
+  },
+  "meeting": {
+    "title": "会议预约确认",
+    "show_raw": "显示原文",
+    "show_form": "显示表单",
+    "meeting_title": "会议名称",
+    "title_placeholder": "请输入会议标题...",
+    "meeting_time": "会议时间",
+    "start_time": "开始时间",
+    "end_time": "结束时间",
+    "duration": "会议时长",
+    "minutes": "分钟",
+    "meeting_location": "会议地点",
+    "participants": "参会人员",
+    "recommended": "推荐",
+    "selected_count": "已选择 {{count}} 人",
+    "confirm_booking": "确认预约",
+    "booking": "预约中...",
+    "validation_error": "验证错误",
+    "title_required": "请输入会议名称",
+    "room_required": "请选择会议室",
+    "booking_success": "会议预约成功",
+    "booking_success_desc": "您的会议已成功预约",
+    "booking_failed": "预约失败"
   }
 }
