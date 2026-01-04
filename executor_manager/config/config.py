@@ -46,6 +46,13 @@ OFFLINE_TASK_MORNING_HOURS = os.getenv("OFFLINE_TASK_MORNING_HOURS", "0-8")
 PORT_RANGE_MIN = int(os.getenv("EXECUTOR_PORT_RANGE_MIN", 10000))
 PORT_RANGE_MAX = int(os.getenv("EXECUTOR_PORT_RANGE_MAX", 10100))
 
+# Preview port range for dev servers (separate from executor ports)
+PREVIEW_PORT_RANGE_MIN = int(os.getenv("PREVIEW_PORT_RANGE_MIN", 10200))
+PREVIEW_PORT_RANGE_MAX = int(os.getenv("PREVIEW_PORT_RANGE_MAX", 10300))
+
+# Default preview port inside container (can be overridden by .wegent.yaml)
+DEFAULT_PREVIEW_CONTAINER_PORT = int(os.getenv("DEFAULT_PREVIEW_CONTAINER_PORT", 3000))
+
 # GitHub App Configuration
 GITHUB_APP_ID = os.getenv("GITHUB_APP_ID")
 GITHUB_PRIVATE_KEY_PATH = os.getenv("GITHUB_PRIVATE_KEY_PATH")

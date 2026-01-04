@@ -33,7 +33,7 @@ import { calculateOpenLinks } from '@/utils/openLinks';
 import { useUser } from '@/features/common/UserContext';
 import { paths } from '@/config/paths';
 import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut';
-import { Workbench } from '@/features/tasks/components';
+import { WorkbenchWithPreview } from '@/features/tasks/components';
 import { ChatArea } from '@/features/tasks/components/chat';
 
 export default function CodePage() {
@@ -318,9 +318,9 @@ export default function CodePage() {
               />
             </div>
 
-            {/* Workbench component - only show if there's a taskId and not on mobile */}
+            {/* Workbench component with Preview Panel - only show if there's a taskId and not on mobile */}
             {hasTaskId && !isMobile && (
-              <Workbench
+              <WorkbenchWithPreview
                 isOpen={isWorkbenchOpen}
                 onClose={() => setIsWorkbenchOpen(false)}
                 onOpen={() => setIsWorkbenchOpen(true)}
@@ -334,6 +334,7 @@ export default function CodePage() {
                 }
                 taskTitle={selectedTaskDetail?.title}
                 taskNumber={selectedTaskDetail ? `#${selectedTaskDetail.id}` : undefined}
+                taskId={selectedTaskDetail?.id}
                 thinking={thinkingData}
               />
             )}

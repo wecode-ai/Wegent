@@ -20,7 +20,12 @@ from urllib.parse import urlparse
 from shared.logger import setup_logger
 from shared.utils.ip_util import get_host_ip, is_ip_address
 
-from executor_manager.config.config import PORT_RANGE_MAX, PORT_RANGE_MIN
+from executor_manager.config.config import (
+    PORT_RANGE_MAX,
+    PORT_RANGE_MIN,
+    PREVIEW_PORT_RANGE_MAX,
+    PREVIEW_PORT_RANGE_MIN,
+)
 
 logger = setup_logger(__name__)
 
@@ -143,6 +148,41 @@ def get_docker_used_ports() -> Set[int]:
         )
 
     return docker_used_ports
+
+
+def find_container_for_task(task_id: int) -> str | None:
+    """
+    Find the running container for a task.
+
+    Searches for containers with the task_id label and owner=executor_manager.
+
+    Args:
+        task_id: Task ID to search for
+
+    Returns:
+        Container name if found, None otherwise
+    """
+    try:
+        cmd = [
+            "docker",
+            "ps",
+            "--filter",
+            f"label=task_id={task_id}",
+            "--filter",
+            "label=owner=executor_manager",
+            "--format",
+            "{{.Names}}",
+        ]
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+
+        containers = [c.strip() for c in result.stdout.strip().split("\n") if c.strip()]
+        if containers:
+            return containers[0]
+        return None
+
+    except subprocess.CalledProcessError as e:
+        logger.exception(f"Error finding container for task {task_id}")
+        return None
 
 
 def check_container_ownership(container_name: str) -> bool:
@@ -407,6 +447,72 @@ def get_container_ports(container_name: str) -> dict:
             "error_msg": f"Error: {e}",
             "ports": []
         }
+
+
+def find_available_preview_port() -> int:
+    """
+    Find an available port in the preview port range for dev server preview.
+
+    Returns:
+        int: An available port number in the preview range
+
+    Raises:
+        RuntimeError: If no ports are available in the preview range
+    """
+    try:
+        # Get ports used by Docker containers with specific label
+        docker_used_ports = get_docker_used_ports()
+        logger.info(
+            "Docker ports in use by executor_manager: %s", sorted(docker_used_ports)
+        )
+
+        # Find first available port in preview range
+        for port in range(PREVIEW_PORT_RANGE_MIN, PREVIEW_PORT_RANGE_MAX + 1):
+            if port not in docker_used_ports:
+                logger.info("Selected available preview port: %d", port)
+                return port
+
+        raise RuntimeError(
+            f"No available ports in preview range {PREVIEW_PORT_RANGE_MIN}-{PREVIEW_PORT_RANGE_MAX}"
+        )
+
+    except subprocess.CalledProcessError as e:
+        logger.error("Error checking Docker ports: %s", e.stderr or e)
+        raise
+    except Exception:
+        logger.exception("Unexpected error while finding available preview port")
+        raise
+
+
+def get_host_port_for_container(container_name: str, container_port: int) -> int | None:
+    """
+    Get the host port mapped to a specific container port.
+
+    Args:
+        container_name: Name of the Docker container
+        container_port: Port number inside the container
+
+    Returns:
+        int: Host port number if mapping exists, None otherwise
+    """
+    try:
+        cmd = ["docker", "port", container_name, str(container_port)]
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+
+        # Output format: "0.0.0.0:10200" or ":::10200"
+        output = result.stdout.strip()
+        if output:
+            # Extract port from output like "0.0.0.0:10200"
+            port_str = output.split(":")[-1]
+            return int(port_str)
+        return None
+
+    except subprocess.CalledProcessError:
+        # No mapping found
+        return None
+    except Exception as e:
+        logger.exception(f"Error getting host port for {container_name}:{container_port}: {e}")
+        return None
 
 
 if __name__ == "__main__":

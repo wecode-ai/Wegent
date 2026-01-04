@@ -91,5 +91,27 @@
     "analyzing": "Analyzing in depth",
     "generating_response": "Please wait, generating response",
     "longer_than_usual": "Response is taking longer than usual"
+  },
+  "preview": {
+    "title": "Preview",
+    "refresh": "Refresh",
+    "close": "Close preview",
+    "start": "Start Preview",
+    "stop": "Stop Preview",
+    "retry": "Retry",
+    "not_configured": "Preview Not Configured",
+    "not_configured_desc": "Add a .wegent.yaml file to your project root to enable live preview. Configure the startCommand, port, and readyPattern.",
+    "error_title": "Preview Error",
+    "start_server": "Start Dev Server",
+    "start_server_desc": "Click the button below to start the development server and preview your application.",
+    "starting": "Starting Server...",
+    "starting_desc": "The development server is starting up. This may take a moment.",
+    "status": {
+      "disabled": "Disabled",
+      "starting": "Starting",
+      "ready": "Ready",
+      "error": "Error",
+      "stopped": "Stopped"
+    }
   }
 }
