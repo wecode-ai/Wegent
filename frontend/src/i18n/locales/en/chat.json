@@ -393,5 +393,29 @@
       "summary": "Summary",
       "improved_answer": "Improved Answer"
     }
+  },
+  "meeting": {
+    "title": "Meeting Booking Confirmation",
+    "show_raw": "Show Raw",
+    "show_form": "Show Form",
+    "meeting_title": "Meeting Title",
+    "title_placeholder": "Enter meeting title...",
+    "meeting_time": "Meeting Time",
+    "start_time": "Start",
+    "end_time": "End",
+    "duration": "Duration",
+    "minutes": "minutes",
+    "meeting_location": "Meeting Location",
+    "participants": "Participants",
+    "recommended": "Recommended",
+    "selected_count": "{{count}} selected",
+    "confirm_booking": "Confirm Booking",
+    "booking": "Booking...",
+    "validation_error": "Validation Error",
+    "title_required": "Meeting title is required",
+    "room_required": "Please select a meeting room",
+    "booking_success": "Meeting Booked",
+    "booking_success_desc": "Your meeting has been booked successfully",
+    "booking_failed": "Booking Failed"
   }
 }

@@ -34,12 +34,13 @@ import { ThinkingDisplay, ReasoningDisplay } from './thinking';
 import ClarificationForm from '../clarification/ClarificationForm';
 import FinalPromptMessage from './FinalPromptMessage';
 import ClarificationAnswerSummary from '../clarification/ClarificationAnswerSummary';
+import { MeetingBookingForm } from '../meeting';
 import ContextBadgeList from './ContextBadgeList';
 import StreamingWaitIndicator from './StreamingWaitIndicator';
 import BubbleTools, { CopyButton } from './BubbleTools';
 import { SourceReferences } from '../chat/SourceReferences';
 import CollapsibleMessage from './CollapsibleMessage';
-import type { ClarificationData, FinalPromptData, ClarificationAnswer } from '@/types/api';
+import type { ClarificationData, FinalPromptData, ClarificationAnswer, MeetingBookingFormData } from '@/types/api';
 import type { SourceReference } from '@/types/socket';
 import { useTraceAction } from '@/hooks/useTraceAction';
 import { useMessageFeedback } from '@/hooks/useMessageFeedback';
@@ -1001,6 +1002,143 @@ const MessageBubble = memo(
         final_prompt: promptContent,
       };
     };
+
+    // Helper function to parse meeting booking form from Markdown
+    // Detects "## 📅 会议预约确认" header and extracts form fields
+    const parseMeetingBookingForm = (content: string): MeetingBookingFormData | null => {
+      // Detect meeting booking header
+      // Matches: ## 📅 会议预约确认, ## Meeting Booking Confirmation, etc.
+      const meetingHeaderRegex =
+        /#{1,6}\s*(?:📅\s*)?(?:会议预约确认|meeting\s*booking\s*confirmation)/im;
+      const headerMatch = content.match(meetingHeaderRegex);
+
+      if (!headerMatch) {
+        return null;
+      }
+
+      try {
+        // Extract content from header onwards
+        const headerIndex = headerMatch.index!;
+        const formContent = content.substring(headerIndex);
+
+        // Initialize form data
+        const formData: MeetingBookingFormData = {
+          type: 'meeting_booking',
+          title: '',
+          startTime: '',
+          endTime: '',
+          duration: 30,
+          roomId: '',
+          roomName: '',
+          participantIds: [],
+          participantNames: [],
+          availableRooms: [],
+          availableParticipants: [],
+        };
+
+        // Parse Meeting Title
+        // Pattern: **Value**: `title text`
+        const titleMatch = formContent.match(
+          /###\s*(?:会议名称|Meeting Title)[^]*?\*\*Value\*\*:\s*`([^`]+)`/im
+        );
+        if (titleMatch) {
+          formData.title = titleMatch[1].trim();
+        }
+
+        // Parse Meeting Time
+        const startTimeMatch = formContent.match(/\*\*Start\*\*:\s*`([^`]+)`/i);
+        const endTimeMatch = formContent.match(/\*\*End\*\*:\s*`([^`]+)`/i);
+        const durationMatch = formContent.match(/\*\*Duration\*\*:\s*`?(\d+)`?/i);
+
+        if (startTimeMatch) {
+          formData.startTime = startTimeMatch[1].trim();
+        }
+        if (endTimeMatch) {
+          formData.endTime = endTimeMatch[1].trim();
+        }
+        if (durationMatch) {
+          formData.duration = parseInt(durationMatch[1], 10);
+        }
+
+        // Parse Meeting Room options
+        // Pattern: - [✓] `room_id` - Room Name (Recommended)
+        //          - [ ] `room_id` - Room Name
+        // Use [\s\S] instead of . with s flag for cross-line matching (ES2017 compatible)
+        const roomSectionMatch = formContent.match(
+          /###\s*(?:会议地点|Meeting Location)[\s\S]*?(?=###|$)/i
+        );
+        if (roomSectionMatch) {
+          const roomSection = roomSectionMatch[0];
+          const roomOptionRegex = /-\s*\[([✓xX* ]?)\]\s*`([^`]+)`\s*-\s*([^\n(]+)(?:\s*\((?:Recommended|推荐)\))?/g;
+          let roomMatch;
+
+          while ((roomMatch = roomOptionRegex.exec(roomSection)) !== null) {
+            const isSelected =
+              roomMatch[1].trim() === '✓' ||
+              roomMatch[1].toLowerCase().trim() === 'x' ||
+              roomMatch[1].trim() === '*';
+            const roomId = roomMatch[2].trim();
+            const roomName = roomMatch[3].trim();
+
+            formData.availableRooms!.push({
+              id: roomId,
+              name: roomName,
+              recommended: isSelected,
+            });
+
+            // Set first selected room as default
+            if (isSelected && !formData.roomId) {
+              formData.roomId = roomId;
+              formData.roomName = roomName;
+            }
+          }
+        }
+
+        // Parse Participants options
+        // Use [\s\S] instead of . with s flag for cross-line matching (ES2017 compatible)
+        const participantsSectionMatch = formContent.match(
+          /###\s*(?:参会人员|Participants)[\s\S]*?(?=###|$)/i
+        );
+        if (participantsSectionMatch) {
+          const participantsSection = participantsSectionMatch[0];
+          const participantOptionRegex =
+            /-\s*\[([✓xX* ]?)\]\s*`([^`]+)`\s*-\s*([^\n(]+)(?:\s*\((?:Recommended|推荐)\))?/g;
+          let participantMatch;
+
+          while ((participantMatch = participantOptionRegex.exec(participantsSection)) !== null) {
+            const isSelected =
+              participantMatch[1].trim() === '✓' ||
+              participantMatch[1].toLowerCase().trim() === 'x' ||
+              participantMatch[1].trim() === '*';
+            const participantId = participantMatch[2].trim();
+            const participantName = participantMatch[3].trim();
+
+            formData.availableParticipants!.push({
+              id: participantId,
+              name: participantName,
+              recommended: isSelected,
+            });
+
+            // Add selected participants to the default list
+            if (isSelected) {
+              formData.participantIds.push(participantId);
+              formData.participantNames.push(participantName);
+            }
+          }
+        }
+
+        // Validate we have minimum required data
+        if (!formData.title && !formData.startTime) {
+          return null;
+        }
+
+        return formData;
+      } catch (error) {
+        console.error('Failed to parse meeting booking form:', error);
+        return null;
+      }
+    };
+
     const renderAiMessage = (message: Message, messageIndex: number) => {
       const content = message.content ?? '';
 
@@ -1088,6 +1226,20 @@ const MessageBubble = memo(
               selectedTeam={selectedTeam}
               selectedRepo={selectedRepo}
               selectedBranch={selectedBranch}
+            />
+          );
+        }
+
+        // Check for meeting booking form
+        const meetingBookingData = parseMeetingBookingForm(contentToParse);
+        if (meetingBookingData) {
+          return (
+            <MeetingBookingForm
+              data={meetingBookingData}
+              taskId={selectedTaskDetail?.id || 0}
+              currentMessageIndex={messageIndex}
+              rawContent={contentToParse}
+              onSubmit={onSendMessage}
             />
           );
         }
