@@ -215,7 +215,7 @@ class TaskScheduler:
     def setup_schedule(self):
         """Setup schedule plan"""
         logger.info(f"Set task fetch interval to {TASK_FETCH_INTERVAL} seconds")
-        
+
         self.scheduler.add_job(
             self.fetch_online_and_process_tasks,
             'interval',
@@ -223,7 +223,7 @@ class TaskScheduler:
             id='fetch_online_tasks',
             name='fetch_online_tasks'
         )
-        
+
         # Evening time range, execute every TASK_FETCH_INTERVAL seconds
         self.scheduler.add_job(
             self.fetch_offline_and_process_tasks,
@@ -239,7 +239,7 @@ class TaskScheduler:
             id='fetch_offline_tasks_morning',
             name='fetch_offline_tasks_morning'
         )
-        
+
         self.scheduler.add_job(
             self.fetch_subtasks,
             'interval',
@@ -247,6 +247,24 @@ class TaskScheduler:
             id='fetch_subtasks',
             name='fetch_subtasks'
         )
+
+        # Add git cache cleanup job if enabled
+        if os.getenv("GIT_CACHE_CLEANUP_ENABLED", "false").lower() == "true":
+            from executor_manager.git_cache_cleanup import GitCacheCleanupManager
+
+            cleanup_manager = GitCacheCleanupManager()
+
+            # Schedule cleanup to run daily at 2 AM
+            self.scheduler.add_job(
+                cleanup_manager.cleanup_inactive_volumes,
+                trigger=CronTrigger(hour=2, minute=0),
+                id='git_cache_cleanup',
+                name='Git Cache Volume Cleanup',
+                replace_existing=True
+            )
+
+            logger.info("Git cache cleanup job scheduled for daily 2 AM")
+
     
     def start(self):
         """Start scheduler"""
