@@ -100,6 +100,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             "task:leave": "on_task_leave",
             "history:sync": "on_history_sync",
             "skill:response": "on_skill_response",
+            "canvas:selection:edit:request": "on_canvas_selection_edit_request",
         }
 
     @trace_websocket_event(
@@ -1386,6 +1387,103 @@ class ChatNamespace(socketio.AsyncNamespace):
 
         logger.info(f"[WS] skill:response resolved request {request_id}")
         return {"success": True}
+
+    # ============================================================
+    # Canvas Events
+    # ============================================================
+
+    @trace_websocket_event(extract_event_data=True)
+    @auto_task_context(require_access=True)
+    async def on_canvas_selection_edit_request(self, sid: str, data: dict):
+        """
+        Handle canvas:selection:edit:request event.
+
+        Client sends this when user selects text in canvas and requests an edit.
+        This triggers the AI to process the selection edit request.
+
+        Args:
+            sid: Socket ID
+            data: Request payload with task_id, selection range, text, and instruction
+        """
+        from app.api.ws.events import CanvasSelectionEditRequest
+        from app.services.chat.ws_emitter import get_ws_emitter
+
+        try:
+            # Validate payload
+            request = CanvasSelectionEditRequest(**data)
+        except Exception as e:
+            logger.error(f"[WS] Invalid canvas:selection:edit:request payload: {e}")
+            return {"error": f"Invalid payload: {str(e)}"}
+
+        task_id = request.task_id
+        selection_start = request.selection_start
+        selection_end = request.selection_end
+        selected_text = request.selected_text
+        instruction = request.instruction
+
+        logger.info(
+            f"[WS] canvas:selection:edit:request task={task_id} "
+            f"range={selection_start}-{selection_end} instruction={instruction[:50]}..."
+        )
+
+        # Get WebSocket emitter
+        ws_emitter = get_ws_emitter()
+        if not ws_emitter:
+            logger.error("[WS] WebSocket emitter not initialized")
+            return {"error": "WebSocket emitter not available"}
+
+        # Get database session
+        db: Session = SessionLocal()
+        try:
+            # Get task from database
+            task_resource = (
+                db.query(TaskResource)
+                .filter(TaskResource.id == task_id, TaskResource.is_active == True)
+                .first()
+            )
+
+            if not task_resource:
+                logger.error(f"[WS] Task {task_id} not found")
+                return {"error": "Task not found"}
+
+            # Get current canvas content
+            canvas_content = task_resource.canvas_content or ""
+
+            # Extract the selected portion from canvas content
+            if selection_end > len(canvas_content):
+                logger.error(
+                    f"[WS] Invalid selection range: {selection_start}-{selection_end}, "
+                    f"content length: {len(canvas_content)}"
+                )
+                return {"error": "Invalid selection range"}
+
+            # For now, we'll emit a simple response
+            # In a full implementation, this would trigger an AI agent to process the edit
+            # and call emit_canvas_selection_edit with the modified content
+
+            # Placeholder: Echo back the instruction as explanation
+            # Real implementation would call AI agent with EditCanvasSelectionTool
+            await ws_emitter.emit_canvas_selection_edit(
+                task_id=task_id,
+                selection_start=selection_start,
+                selection_end=selection_end,
+                modified_content=selected_text,  # Placeholder: no actual modification
+                explanation=f"Received instruction: {instruction}",
+            )
+
+            logger.info(
+                f"[WS] canvas:selection:edit:request processed for task={task_id}"
+            )
+            return {"success": True}
+
+        except Exception as e:
+            logger.error(
+                f"[WS] Error processing canvas:selection:edit:request: {e}",
+                exc_info=True,
+            )
+            return {"error": f"Failed to process request: {str(e)}"}
+        finally:
+            db.close()
 
 
 def register_chat_namespace(sio: socketio.AsyncServer):

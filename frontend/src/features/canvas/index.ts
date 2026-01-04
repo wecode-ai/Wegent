@@ -9,3 +9,4 @@
 export { CanvasPanel } from './components/CanvasPanel'
 export { CanvasToggle } from './components/CanvasToggle'
 export { useCanvasState } from './hooks/useCanvasState'
+export { useCanvasSocket } from './hooks/useCanvasSocket'

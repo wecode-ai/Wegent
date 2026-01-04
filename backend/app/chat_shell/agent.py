@@ -82,6 +82,10 @@ class ChatAgent:
         enable_skills: bool = False,
         enable_web_search: bool = False,
         enable_checkpointing: bool = False,
+        enable_canvas: bool = False,
+        task_id: int | None = None,
+        db_session: Any = None,
+        ws_emitter: Any = None,
     ):
         """Initialize Chat Agent.
 
@@ -90,6 +94,10 @@ class ChatAgent:
             enable_skills: Enable built-in file skills
             enable_web_search: Enable web search tool (global default)
             enable_checkpointing: Enable state checkpointing
+            enable_canvas: Enable canvas tools for code/document editing
+            task_id: Task ID for canvas operations
+            db_session: Database session for canvas operations
+            ws_emitter: WebSocket emitter for canvas real-time sync
         """
         self.workspace_root = workspace_root
         self.tool_registry = ToolRegistry()
@@ -110,6 +118,18 @@ class ChatAgent:
                     default_max_results=settings.WEB_SEARCH_DEFAULT_MAX_RESULTS
                 )
             )
+
+        # Register canvas tools if enabled
+        if enable_canvas and task_id is not None:
+            from .tools.builtin.canvas_tools import UpdateCanvasTool
+
+            update_canvas_tool = UpdateCanvasTool()
+            update_canvas_tool.task_id = task_id
+            update_canvas_tool.db_session = db_session
+            update_canvas_tool.ws_emitter = ws_emitter
+            self.tool_registry.register(update_canvas_tool)
+
+            logger.info(f"Canvas tools registered for task {task_id}")
 
     def create_agent_builder(self, config: AgentConfig) -> LangGraphAgentBuilder:
         """Create a LangGraph agent builder with the given configuration.
