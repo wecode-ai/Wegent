@@ -1060,8 +1060,9 @@ const MessageBubble = memo(
         // Parse Meeting Room options
         // Pattern: - [✓] `room_id` - Room Name (Recommended)
         //          - [ ] `room_id` - Room Name
+        // Use [\s\S] instead of . with s flag for cross-line matching (ES2017 compatible)
         const roomSectionMatch = formContent.match(
-          /###\s*(?:会议地点|Meeting Location)[^]*?(?=###|$)/is
+          /###\s*(?:会议地点|Meeting Location)[\s\S]*?(?=###|$)/i
         );
         if (roomSectionMatch) {
           const roomSection = roomSectionMatch[0];
@@ -1091,8 +1092,9 @@ const MessageBubble = memo(
         }
 
         // Parse Participants options
+        // Use [\s\S] instead of . with s flag for cross-line matching (ES2017 compatible)
         const participantsSectionMatch = formContent.match(
-          /###\s*(?:参会人员|Participants)[^]*?(?=###|$)/is
+          /###\s*(?:参会人员|Participants)[\s\S]*?(?=###|$)/i
         );
         if (participantsSectionMatch) {
           const participantsSection = participantsSectionMatch[0];
