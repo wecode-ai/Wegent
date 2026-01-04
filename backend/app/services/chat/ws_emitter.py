@@ -697,6 +697,155 @@ class WebSocketEmitter:
             f"[WS] emit correction:error task={task_id} subtask={subtask_id} error={error}"
         )
 
+    # ============================================================
+    # Canvas Events (to task room)
+    # ============================================================
+
+    async def emit_canvas_enable(
+        self,
+        task_id: int,
+        content: str,
+        file_type: str,
+        title: str,
+    ) -> None:
+        """
+        Emit canvas:enable event to task room.
+
+        Args:
+            task_id: Task ID
+            content: Initial canvas content
+            file_type: File type
+            title: Canvas title
+        """
+        await self.sio.emit(
+            ServerEvents.CANVAS_ENABLE,
+            {
+                "task_id": task_id,
+                "content": content,
+                "file_type": file_type,
+                "title": title,
+            },
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(f"[WS] emit canvas:enable task={task_id}")
+
+    async def emit_canvas_disable(
+        self,
+        task_id: int,
+    ) -> None:
+        """
+        Emit canvas:disable event to task room.
+
+        Args:
+            task_id: Task ID
+        """
+        await self.sio.emit(
+            ServerEvents.CANVAS_DISABLE,
+            {
+                "task_id": task_id,
+            },
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(f"[WS] emit canvas:disable task={task_id}")
+
+    async def emit_canvas_update(
+        self,
+        task_id: int,
+        content: str,
+        file_type: Optional[str] = None,
+        title: Optional[str] = None,
+    ) -> None:
+        """
+        Emit canvas:update event to task room.
+
+        Args:
+            task_id: Task ID
+            content: Updated canvas content
+            file_type: Optional file type
+            title: Optional canvas title
+        """
+        payload = {
+            "task_id": task_id,
+            "content": content,
+        }
+        if file_type:
+            payload["file_type"] = file_type
+        if title:
+            payload["title"] = title
+
+        await self.sio.emit(
+            ServerEvents.CANVAS_UPDATE,
+            payload,
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(f"[WS] emit canvas:update task={task_id}")
+
+    async def emit_canvas_selection_edit(
+        self,
+        task_id: int,
+        selection_start: int,
+        selection_end: int,
+        modified_content: str,
+        explanation: Optional[str] = None,
+    ) -> None:
+        """
+        Emit canvas:selection:edit event to task room.
+
+        Args:
+            task_id: Task ID
+            selection_start: Start position of selection
+            selection_end: End position of selection
+            modified_content: Modified content for the selection
+            explanation: Optional explanation of changes
+        """
+        await self.sio.emit(
+            ServerEvents.CANVAS_SELECTION_EDIT,
+            {
+                "task_id": task_id,
+                "selection_start": selection_start,
+                "selection_end": selection_end,
+                "modified_content": modified_content,
+                "explanation": explanation,
+            },
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(
+            f"[WS] emit canvas:selection:edit task={task_id} range={selection_start}-{selection_end}"
+        )
+
+    async def emit_canvas_sync(
+        self,
+        task_id: int,
+        content: str,
+        file_type: str,
+        title: str,
+    ) -> None:
+        """
+        Emit canvas:sync event to task room for full state sync.
+
+        Args:
+            task_id: Task ID
+            content: Current canvas content
+            file_type: File type
+            title: Canvas title
+        """
+        await self.sio.emit(
+            ServerEvents.CANVAS_SYNC,
+            {
+                "task_id": task_id,
+                "content": content,
+                "file_type": file_type,
+                "title": title,
+            },
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(f"[WS] emit canvas:sync task={task_id}")
+
 
 # Global emitter instance (lazy initialized)
 _ws_emitter: Optional[WebSocketEmitter] = None

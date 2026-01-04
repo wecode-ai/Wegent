@@ -17,6 +17,7 @@ from sqlalchemy import (
     DateTime,
     Integer,
     String,
+    Text,
     UniqueConstraint,
 )
 
@@ -67,6 +68,21 @@ class TaskResource(Base):
         default=datetime.now,
         onupdate=datetime.now,
         comment="Update time",
+    )
+
+    # Canvas-related fields
+    canvas_enabled = Column(
+        Boolean, nullable=False, default=False, comment="Whether canvas mode is enabled"
+    )
+    canvas_content = Column(Text, nullable=True, comment="Canvas content")
+    canvas_file_type = Column(
+        String(50), nullable=True, default="text", comment="Canvas file type"
+    )
+    canvas_title = Column(
+        String(255), nullable=True, default="Untitled", comment="Canvas title"
+    )
+    canvas_updated_at = Column(
+        DateTime, nullable=True, comment="Last canvas update time"
     )
 
     __table_args__ = (

@@ -1,0 +1,11 @@
+{
+  "title": "Canvas",
+  "toggle": "Canvas",
+  "placeholder": "Start writing...",
+  "enable": "Enable Canvas",
+  "disable": "Close Canvas",
+  "saving": "Saving...",
+  "saved": "Saved",
+  "error": "Failed to save",
+  "untitled": "Untitled"
+}

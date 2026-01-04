@@ -1,0 +1,11 @@
+{
+  "title": "画布",
+  "toggle": "画布",
+  "placeholder": "开始编写...",
+  "enable": "启用画布",
+  "disable": "关闭画布",
+  "saving": "保存中...",
+  "saved": "已保存",
+  "error": "保存失败",
+  "untitled": "未命名"
+}
