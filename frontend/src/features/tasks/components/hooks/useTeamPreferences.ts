@@ -15,6 +15,7 @@
  */
 
 import { useEffect, useRef } from 'react';
+import { useSearchParams } from 'next/navigation';
 import type { Team, TaskDetail } from '@/types/api';
 
 export interface UseTeamPreferencesOptions {
@@ -110,6 +111,10 @@ export function useTeamPreferences({
   // Refs for tracking previous values
   const prevClearVersionRef = useRef(clearVersion);
 
+  // Get taskId from URL to check if we're waiting for task detail to load
+  const searchParams = useSearchParams();
+  const urlTaskId = searchParams.get('taskId');
+
   // Compute detailTeamId
   const detailTeamId = selectedTaskDetail ? extractTeamId(selectedTaskDetail.team) : null;
 
@@ -126,9 +131,19 @@ export function useTeamPreferences({
   /**
    * Effect: Restore team preferences from localStorage.
    * Only runs when there are no messages and preferences haven't been restored.
+   *
+   * IMPORTANT: If URL has taskId but selectedTaskDetail hasn't loaded yet,
+   * we should wait for the task detail to load before restoring preferences.
+   * This prevents showing the wrong team when navigating between chat/code pages.
    */
   useEffect(() => {
     if (hasRestoredPreferences || !teams.length || (!selectedTaskDetail && hasMessages)) return;
+
+    // If URL has taskId but task detail hasn't loaded yet, wait for it
+    // This prevents restoring localStorage team when we should show the task's team
+    if (urlTaskId && !selectedTaskDetail) {
+      return;
+    }
 
     const lastTeamId = initialTeamIdRef.current;
 
@@ -155,6 +170,7 @@ export function useTeamPreferences({
     initialTeamIdRef,
     setSelectedTeam,
     setHasRestoredPreferences,
+    urlTaskId,
   ]);
 
   /**
