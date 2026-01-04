@@ -561,8 +561,12 @@ class DockerExecutor(Executor):
         # Add workspace mount
         self._add_workspace_mount(cmd)
 
-        # Add git cache mount if enabled
-        self._add_git_cache_mount(cmd, user_id)
+        # Add git cache mount if enabled (skip for validation tasks)
+        is_validation_task = task.get("type") == "validation"
+        if not is_validation_task:
+            self._add_git_cache_mount(cmd, user_id)
+        else:
+            logger.info("Skipping git cache mount for validation task")
 
         # Add network configuration
         self._add_network_config(cmd)
