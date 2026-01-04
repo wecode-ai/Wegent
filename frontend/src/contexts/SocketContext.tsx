@@ -197,7 +197,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         console.log('[Socket.IO] Rejoining tasks:', tasksToRejoin);
 
         tasksToRejoin.forEach(taskId => {
-          newSocket.emit('task:join', { task_id: taskId }, (response: any) => {
+          newSocket.emit('task:join', { task_id: taskId }, (response: { error?: string }) => {
             if (response?.error) {
               console.error(`[Socket.IO] Failed to rejoin task ${taskId}:`, response.error);
             } else {
@@ -236,7 +236,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       console.log('[Socket.IO] Rejoining tasks:', tasksToRejoin);
 
       tasksToRejoin.forEach(taskId => {
-        newSocket.emit('task:join', { task_id: taskId }, (response: any) => {
+        newSocket.emit('task:join', { task_id: taskId }, (response: { error?: string }) => {
           if (response?.error) {
             console.error(`[Socket.IO] Failed to rejoin task ${taskId}:`, response.error);
           } else {
