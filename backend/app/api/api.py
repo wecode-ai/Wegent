@@ -6,6 +6,7 @@ from app.api.endpoints import (
     admin,
     api_keys,
     auth,
+    document_parser,
     groups,
     health,
     knowledge,
@@ -78,4 +79,7 @@ api_router.include_router(
 )
 api_router.include_router(rag.router, prefix="/rag", tags=["rag"])
 api_router.include_router(utils.router, prefix="/utils", tags=["utils"])
+api_router.include_router(
+    document_parser.router, prefix="/document-parser", tags=["document-parser"]
+)
 api_router.include_router(k_router)
