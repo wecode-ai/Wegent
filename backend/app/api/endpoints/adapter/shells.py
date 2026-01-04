@@ -536,6 +536,33 @@ def update_shell(
     # Parse existing CRD
     shell_crd = ShellCRD.model_validate(shell.json)
 
+    # Re-inherit shellType and supportModel from base shell
+    # This ensures custom shells stay in sync with their base shell's configuration
+    if shell_crd.spec.baseShellRef:
+        base_shell = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == 0,
+                Kind.kind == "Shell",
+                Kind.name == shell_crd.spec.baseShellRef,
+                Kind.namespace == "default",
+                Kind.is_active == True,  # noqa: E712
+            )
+            .first()
+        )
+        if base_shell and isinstance(base_shell.json, dict):
+            try:
+                base_shell_crd = ShellCRD.model_validate(base_shell.json)
+                # Re-inherit shellType and supportModel from base shell
+                shell_crd.spec.shellType = base_shell_crd.spec.shellType
+                shell_crd.spec.supportModel = base_shell_crd.spec.supportModel or []
+                logger.info(
+                    f"Re-inherited shellType={shell_crd.spec.shellType} and "
+                    f"supportModel={shell_crd.spec.supportModel} from base shell '{shell_crd.spec.baseShellRef}'"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to re-inherit from base shell: {e}")
+
     # Update fields
     if request.displayName is not None:
         shell_crd.metadata.displayName = request.displayName
