@@ -170,7 +170,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
         } else if (recMode === 'code') {
           setBindMode(['code']);
         } else {
-          setBindMode(['chat', 'code']);
+          setBindMode([]); // Default to empty array instead of ['chat', 'code']
         }
       }
       const ids = formTeam.bots.map(b => String(b.bot_id));
@@ -182,7 +182,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setDescription('');
       setIcon(null);
       setMode('solo');
-      setBindMode(['chat', 'code']);
+      setBindMode([]);
       setSelectedBotKeys([]);
       setLeaderBotId(null);
     }
