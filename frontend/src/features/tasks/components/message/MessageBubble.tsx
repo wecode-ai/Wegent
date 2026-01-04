@@ -1359,7 +1359,7 @@ const MessageBubble = memo(
                 reasoningContent={
                   msg.reasoningContent || msg.result?.reasoning_content || ''
                 }
-                isStreaming={msg.status === 'streaming'}
+                isStreaming={msg.subtaskStatus === 'RUNNING' || msg.status === 'streaming'}
               />
             )}
           <div

@@ -18,21 +18,40 @@ interface ReasoningDisplayProps {
 /**
  * Component to display reasoning/thinking content from models like DeepSeek R1.
  * Shows a collapsible panel with the model's chain-of-thought reasoning.
+ * Auto-collapses when streaming ends.
  */
 const ReasoningDisplay = memo(function ReasoningDisplay({
   reasoningContent,
   isStreaming = false,
 }: ReasoningDisplayProps) {
   const { t } = useTranslation();
-  const [isExpanded, setIsExpanded] = useState(true);
   const contentRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom when streaming
+  // Track if component mounted during active streaming
+  // This helps distinguish between live streaming and historical messages
+  const mountedDuringStreamingRef = useRef(isStreaming);
+  const hasAutoCollapsedRef = useRef(false);
+
+  // Initialize expanded state based on whether we're streaming
+  // - Streaming messages: start expanded to show live reasoning
+  // - Historical messages (not streaming): start collapsed
+  const [isExpanded, setIsExpanded] = useState(isStreaming);
+
+  // Auto-scroll to bottom when streaming and expanded
   useEffect(() => {
     if (isStreaming && isExpanded && contentRef.current) {
       contentRef.current.scrollTop = contentRef.current.scrollHeight;
     }
   }, [reasoningContent, isStreaming, isExpanded]);
+
+  // Auto-collapse when streaming ends
+  // Only applies to messages that were streaming when this component mounted
+  useEffect(() => {
+    if (mountedDuringStreamingRef.current && !isStreaming && !hasAutoCollapsedRef.current) {
+      setIsExpanded(false);
+      hasAutoCollapsedRef.current = true;
+    }
+  }, [isStreaming]);
 
   if (!reasoningContent) {
     return null;
