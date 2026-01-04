@@ -102,9 +102,12 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
 
       // Use ChatStreamContext to send the message
       // This ensures the stream is registered globally and the task page can display it
+      // Use a special system marker message for group chat creation
+      // This message will be filtered out in useUnifiedMessages to avoid showing
+      // an initial "Group chat created" message to users
       void sendMessage(
         {
-          message: t('groupChat.create.initialMessage'),
+          message: '__SYSTEM_GROUP_CREATED__',
           team_id: selectedTeam.id,
           task_id: undefined, // Let streaming API create the task
           title: title, // Pass custom title for the group chat
