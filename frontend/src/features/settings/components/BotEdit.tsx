@@ -12,7 +12,7 @@ import React, {
 } from 'react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
-import { Loader2, XIcon, SettingsIcon, Edit } from 'lucide-react';
+import { Loader2, XIcon, SettingsIcon, Edit, Wand2 } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -23,6 +23,7 @@ import {
 import McpConfigImportModal from './McpConfigImportModal';
 import SkillManagementModal from './skills/SkillManagementModal';
 import DifyBotConfig from './DifyBotConfig';
+import { PromptFineTuneDialog } from './prompt-fine-tune';
 
 import { Bot } from '@/types/api';
 import { botApis, CreateBotRequest, UpdateBotRequest } from '@/apis/bots';
@@ -35,7 +36,7 @@ import {
 } from '@/features/settings/services/bots';
 import { modelApis, UnifiedModel, ModelTypeEnum } from '@/apis/models';
 import { shellApis, UnifiedShell } from '@/apis/shells';
-import { fetchSkillsList } from '@/apis/skills';
+import { fetchUnifiedSkillsList, UnifiedSkill } from '@/apis/skills';
 import { useTranslation } from 'react-i18next';
 import { adaptMcpConfigForAgent, isValidAgentType } from '../utils/mcpTypeAdapter';
 
@@ -111,7 +112,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   },
   ref
 ) => {
-  const { t, i18n } = useTranslation('common');
+  const { t, i18n } = useTranslation();
 
   const [botSaving, setBotSaving] = useState(false);
   const [shells, setShells] = useState<UnifiedShell[]>([]);
@@ -158,13 +159,15 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     baseBot?.mcp_servers ? JSON.stringify(baseBot.mcp_servers, null, 2) : ''
   );
   const [selectedSkills, setSelectedSkills] = useState<string[]>(baseBot?.skills || []);
-  const [availableSkills, setAvailableSkills] = useState<string[]>([]);
+  const [allSkills, setAllSkills] = useState<UnifiedSkill[]>([]);
+  const [availableSkills, setAvailableSkills] = useState<UnifiedSkill[]>([]);
   const [loadingSkills, setLoadingSkills] = useState(false);
   const [agentConfigError, setAgentConfigError] = useState(false);
   const [mcpConfigError, setMcpConfigError] = useState(false);
   const [importModalVisible, setImportModalVisible] = useState(false);
   const [templateSectionExpanded, setTemplateSectionExpanded] = useState(false);
   const [skillManagementModalOpen, setSkillManagementModalOpen] = useState(false);
+  const [promptFineTuneOpen, setPromptFineTuneOpen] = useState(false);
 
   // Check if current agent is Dify
   const isDifyAgent = useMemo(() => agentName === 'Dify', [agentName]);
@@ -183,7 +186,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       } catch {
         toast({
           variant: 'destructive',
-          title: t('bot.errors.agent_config_json'),
+          title: t('common:bot.errors.agent_config_json'),
         });
         setAgentConfigError(true);
         return prev;
@@ -205,7 +208,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       } catch {
         toast({
           variant: 'destructive',
-          title: t('bot.errors.mcp_config_json'),
+          title: t('common:bot.errors.mcp_config_json'),
         });
         setMcpConfigError(true);
         return prev;
@@ -227,7 +230,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           // Replace mode: directly use new configuration
           setMcpConfig(JSON.stringify(config, null, 2));
           toast({
-            title: t('bot.import_success'),
+            title: t('common:bot.import_success'),
           });
         } else {
           // Append mode: merge existing configuration with new configuration
@@ -236,12 +239,12 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
             const mergedConfig = { ...currentConfig, ...config };
             setMcpConfig(JSON.stringify(mergedConfig, null, 2));
             toast({
-              title: t('bot.append_success'),
+              title: t('common:bot.append_success'),
             });
           } catch {
             toast({
               variant: 'destructive',
-              title: t('bot.errors.mcp_config_json'),
+              title: t('common:bot.errors.mcp_config_json'),
             });
             return;
           }
@@ -250,7 +253,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       } catch {
         toast({
           variant: 'destructive',
-          title: t('bot.errors.mcp_config_json'),
+          title: t('common:bot.errors.mcp_config_json'),
         });
       }
     },
@@ -271,8 +274,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     setAgentConfig(JSON.stringify(template, null, 2));
     setAgentConfigError(false);
     toast({
-      title: t('bot.template_applied'),
-      description: t('bot.please_update_api_key'),
+      title: t('common:bot.template_applied'),
+      description: t('common:bot.please_update_api_key'),
     });
   }, [toast, t]);
 
@@ -287,8 +290,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     setAgentConfig(JSON.stringify(template, null, 2));
     setAgentConfigError(false);
     toast({
-      title: t('bot.template_applied'),
-      description: t('bot.please_update_api_key'),
+      title: t('common:bot.template_applied'),
+      description: t('common:bot.please_update_api_key'),
     });
   }, [toast, t]);
 
@@ -329,7 +332,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         console.error('Failed to fetch shells:', error);
         toast({
           variant: 'destructive',
-          title: t('bot.errors.fetch_agents_failed'),
+          title: t('common:bot.errors.fetch_agents_failed'),
         });
       } finally {
         setLoadingShells(false);
@@ -338,9 +341,41 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
     fetchShells();
   }, [toast, t, allowedAgents, scope, groupName]);
+  // Check if current agent supports skills (ClaudeCode only, Chat shell is hidden)
+  const supportsSkills = useMemo(() => {
+    // Get shell type from the selected shell
+    const selectedShell = shells.find(s => s.name === agentName);
+    const shellType = selectedShell?.shellType || agentName;
+    // Skills are supported for ClaudeCode shell type only
+    // Chat shell skills selection is hidden (but skills still work if configured)
+    return shellType === 'ClaudeCode';
+  }, [agentName, shells]);
+
+  // Get current shell type for skill filtering
+  const currentShellType = useMemo(() => {
+    const selectedShell = shells.find(s => s.name === agentName);
+    return selectedShell?.shellType || agentName;
+  }, [agentName, shells]);
+
+  // Filter skills based on current shell type
+  const filterSkillsByShellType = useCallback(
+    (skills: UnifiedSkill[]): UnifiedSkill[] => {
+      return skills.filter(skill => {
+        // If bindShells is not specified or empty, skill is NOT available (must explicitly bind to shells)
+        if (!skill.bindShells || skill.bindShells.length === 0) {
+          return false;
+        }
+        // Check if current shell type is in the bindShells list
+        return skill.bindShells.includes(currentShellType);
+      });
+    },
+    [currentShellType]
+  );
+
   useEffect(() => {
-    // Only fetch skills when agent is ClaudeCode
-    if (agentName !== 'ClaudeCode') {
+    // Only fetch skills when agent supports skills (ClaudeCode or Chat)
+    if (!supportsSkills) {
+      setAllSkills([]);
       setAvailableSkills([]);
       setLoadingSkills(false);
       return;
@@ -349,19 +384,28 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     const fetchSkills = async () => {
       setLoadingSkills(true);
       try {
-        const skillsData = await fetchSkillsList();
-        setAvailableSkills(skillsData.map(skill => skill.metadata.name));
+        const skillsData = await fetchUnifiedSkillsList();
+        setAllSkills(skillsData);
+        // Filter skills based on current shell type
+        setAvailableSkills(filterSkillsByShellType(skillsData));
       } catch {
         toast({
           variant: 'destructive',
-          title: t('skills.loading_failed'),
+          title: t('common:skills.loading_failed'),
         });
       } finally {
         setLoadingSkills(false);
       }
     };
     fetchSkills();
-  }, [agentName, toast, t]);
+  }, [supportsSkills, toast, t, filterSkillsByShellType]);
+
+  // Re-filter available skills when shell type changes
+  useEffect(() => {
+    if (allSkills.length > 0) {
+      setAvailableSkills(filterSkillsByShellType(allSkills));
+    }
+  }, [allSkills, filterSkillsByShellType]);
 
   // Fetch corresponding model list when agentName changes
   useEffect(() => {
@@ -426,7 +470,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         console.error('Failed to fetch models:', error);
         toast({
           variant: 'destructive',
-          title: t('bot.errors.fetch_models_failed'),
+          title: t('common:bot.errors.fetch_models_failed'),
         });
         setModels([]);
         setSelectedModel('');
@@ -507,36 +551,36 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   // Validate bot form data
   const validateBot = useCallback((): BotValidationResult => {
     if (!botName.trim() || !agentName.trim()) {
-      return { isValid: false, error: t('bot.errors.required') };
+      return { isValid: false, error: t('common:bot.errors.required') };
     }
 
     // For Dify agent, validate config
     if (isDifyAgent) {
       const trimmedConfig = agentConfig.trim();
       if (!trimmedConfig) {
-        return { isValid: false, error: t('bot.errors.agent_config_json') };
+        return { isValid: false, error: t('common:bot.errors.agent_config_json') };
       }
       try {
         const parsed = JSON.parse(trimmedConfig);
         const env = (parsed as Record<string, unknown>)?.env as Record<string, unknown> | undefined;
         if (!env?.DIFY_API_KEY || !env?.DIFY_BASE_URL) {
-          return { isValid: false, error: t('bot.errors.dify_required_fields') };
+          return { isValid: false, error: t('common:bot.errors.dify_required_fields') };
         }
       } catch {
-        return { isValid: false, error: t('bot.errors.agent_config_json') };
+        return { isValid: false, error: t('common:bot.errors.agent_config_json') };
       }
     } else if (isCustomModel) {
       if (!selectedProtocol) {
-        return { isValid: false, error: t('bot.errors.protocol_required') };
+        return { isValid: false, error: t('common:bot.errors.protocol_required') };
       }
       const trimmedConfig = agentConfig.trim();
       if (!trimmedConfig) {
-        return { isValid: false, error: t('bot.errors.agent_config_json') };
+        return { isValid: false, error: t('common:bot.errors.agent_config_json') };
       }
       try {
         JSON.parse(trimmedConfig);
       } catch {
-        return { isValid: false, error: t('bot.errors.agent_config_json') };
+        return { isValid: false, error: t('common:bot.errors.agent_config_json') };
       }
     }
 
@@ -545,7 +589,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       try {
         JSON.parse(mcpConfig);
       } catch {
-        return { isValid: false, error: t('bot.errors.mcp_config_json') };
+        return { isValid: false, error: t('common:bot.errors.mcp_config_json') };
       }
     }
 
@@ -645,7 +689,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     } catch (error) {
       toast({
         variant: 'destructive',
-        title: (error as Error)?.message || t('bot.errors.save_failed'),
+        title: (error as Error)?.message || t('common:bot.errors.save_failed'),
       });
       return null;
     } finally {
@@ -669,7 +713,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     if (!botName.trim() || !agentName.trim()) {
       toast({
         variant: 'destructive',
-        title: t('bot.errors.required'),
+        title: t('common:bot.errors.required'),
       });
       return;
     }
@@ -683,7 +727,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         setAgentConfigError(true);
         toast({
           variant: 'destructive',
-          title: t('bot.errors.agent_config_json'),
+          title: t('common:bot.errors.agent_config_json'),
         });
         return;
       }
@@ -698,7 +742,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         if (!env?.DIFY_API_KEY || !env?.DIFY_BASE_URL) {
           toast({
             variant: 'destructive',
-            title: t('bot.errors.dify_required_fields'),
+            title: t('common:bot.errors.dify_required_fields'),
           });
           return;
         }
@@ -706,7 +750,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         setAgentConfigError(true);
         toast({
           variant: 'destructive',
-          title: t('bot.errors.agent_config_json'),
+          title: t('common:bot.errors.agent_config_json'),
         });
         return;
       }
@@ -716,7 +760,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       if (!selectedProtocol) {
         toast({
           variant: 'destructive',
-          title: t('bot.errors.protocol_required'),
+          title: t('common:bot.errors.protocol_required'),
         });
         return;
       }
@@ -726,7 +770,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         setAgentConfigError(true);
         toast({
           variant: 'destructive',
-          title: t('bot.errors.agent_config_json'),
+          title: t('common:bot.errors.agent_config_json'),
         });
         return;
       }
@@ -739,7 +783,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         setAgentConfigError(true);
         toast({
           variant: 'destructive',
-          title: t('bot.errors.agent_config_json'),
+          title: t('common:bot.errors.agent_config_json'),
         });
         return;
       }
@@ -771,7 +815,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         setMcpConfigError(true);
         toast({
           variant: 'destructive',
-          title: t('bot.errors.mcp_config_json'),
+          title: t('common:bot.errors.mcp_config_json'),
         });
         return;
       }
@@ -804,7 +848,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     } catch (error) {
       toast({
         variant: 'destructive',
-        title: (error as Error)?.message || t('bot.errors.save_failed'),
+        title: (error as Error)?.message || t('common:bot.errors.save_failed'),
       });
     } finally {
       setBotSaving(false);
@@ -820,7 +864,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           <button
             onClick={handleBack}
             className="flex items-center text-text-muted hover:text-text-primary text-base"
-            title={t('common.back')}
+            title={t('common:common.back')}
           >
             <svg
               width="24"
@@ -832,7 +876,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
             >
               <path d="M15 6l-6 6 6 6" />
             </svg>
-            {t('common.back')}
+            {t('common:common.back')}
           </button>
         ) : (
           <div /> /* Placeholder for flex spacing */
@@ -841,18 +885,18 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           (readOnly ? (
             <Button onClick={onEditClick} variant="outline">
               <Edit className="mr-2 h-4 w-4" />
-              {t('actions.edit')}
+              {t('common:actions.edit')}
             </Button>
           ) : (
             <div className="flex items-center gap-2">
               {embedded && onCancelEdit && (
                 <Button onClick={onCancelEdit} variant="outline">
-                  {t('common.cancel')}
+                  {t('common:common.cancel')}
                 </Button>
               )}
               <Button onClick={handleSave} disabled={botSaving} variant="primary">
                 {botSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {botSaving ? t('actions.saving') : t('actions.save')}
+                {botSaving ? t('common:actions.saving') : t('common:actions.save')}
               </Button>
             </div>
           ))}
@@ -867,14 +911,14 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
             <div className="flex flex-col flex-1">
               <div className="flex items-center mb-1">
                 <label className="block text-lg font-semibold text-text-primary">
-                  {t('bot.name')} <span className="text-red-400">*</span>
+                  {t('common:bot.name')} <span className="text-red-400">*</span>
                 </label>
               </div>
               <input
                 type="text"
                 value={botName}
                 onChange={e => setBotName(e.target.value)}
-                placeholder={t('bot.name_placeholder')}
+                placeholder={t('common:bot.name_placeholder')}
                 disabled={readOnly}
                 className={`w-full px-4 py-1 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary text-base ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
               />
@@ -884,14 +928,14 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
             <div className="flex flex-col flex-1">
               <div className="flex items-center mb-1">
                 <label className="block text-lg font-semibold text-text-primary">
-                  {t('bot.agent')} <span className="text-red-400">*</span>
+                  {t('common:bot.agent')} <span className="text-red-400">*</span>
                 </label>
                 {/* Help Icon */}
                 <button
                   type="button"
                   onClick={() => handleOpenShellDocs()}
                   className="ml-2 text-text-muted hover:text-primary transition-colors"
-                  title={t('bot.view_shell_config_guide')}
+                  title={t('common:bot.view_shell_config_guide')}
                 >
                   <svg
                     xmlns="http://www.w3.org/2000/svg"
@@ -945,7 +989,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                 disabled={loadingShells || readOnly}
               >
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder={t('bot.agent_select')} />
+                  <SelectValue placeholder={t('common:bot.agent_select')} />
                 </SelectTrigger>
                 <SelectContent>
                   {shells.map(shell => (
@@ -953,7 +997,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                       {shell.displayName || shell.name}
                       {shell.type === 'user' && (
                         <span className="ml-1 text-xs text-text-muted">
-                          [{t('bot.custom_shell', '自定义')}]
+                          [{t('common:bot.custom_shell', '自定义')}]
                         </span>
                       )}
                     </SelectItem>
@@ -980,14 +1024,14 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                 <div className="flex items-center justify-between mb-1">
                   <div className="flex items-center gap-2">
                     <label className="block text-base font-medium text-text-primary">
-                      {t('bot.agent_config')}
+                      {t('common:bot.agent_config')}
                     </label>
                     {/* Help Icon */}
                     <button
                       type="button"
                       onClick={() => handleOpenModelDocs()}
                       className="text-text-muted hover:text-primary transition-colors"
-                      title={t('bot.view_model_config_guide')}
+                      title={t('common:bot.view_model_config_guide')}
                     >
                       <svg
                         xmlns="http://www.w3.org/2000/svg"
@@ -1010,15 +1054,17 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                         type="button"
                         onClick={() => setTemplateSectionExpanded(!templateSectionExpanded)}
                         className="flex items-center gap-1 text-xs text-text-muted hover:text-primary transition-colors"
-                        title={t('bot.quick_templates')}
+                        title={t('common:bot.quick_templates')}
                       >
                         <span className="text-sm">📋</span>
-                        <span>{t('bot.template')}</span>
+                        <span>{t('common:bot.template')}</span>
                       </button>
                     )}
                   </div>
                   <div className="flex items-center">
-                    <span className="text-xs text-text-muted mr-2">{t('bot.advanced_mode')}</span>
+                    <span className="text-xs text-text-muted mr-2">
+                      {t('common:bot.advanced_mode')}
+                    </span>
                     <Switch
                       checked={isCustomModel}
                       disabled={readOnly}
@@ -1053,7 +1099,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                         className="text-xs"
                         type="button"
                       >
-                        Claude Sonnet 4 {t('bot.template')}
+                        Claude Sonnet 4 {t('common:bot.template')}
                       </Button>
                       <Button
                         size="sm"
@@ -1062,10 +1108,10 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                         className="text-xs"
                         type="button"
                       >
-                        OpenAI GPT-4 {t('bot.template')}
+                        OpenAI GPT-4 {t('common:bot.template')}
                       </Button>
                     </div>
-                    <p className="text-xs text-text-muted">⚠️ {t('bot.template_hint')}</p>
+                    <p className="text-xs text-text-muted">⚠️ {t('common:bot.template_hint')}</p>
                   </div>
                 )}
 
@@ -1073,7 +1119,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                 {isCustomModel && (
                   <div className="mb-3">
                     <label className="block text-sm font-medium text-text-primary mb-1">
-                      {t('bot.protocol')} <span className="text-red-400">*</span>
+                      {t('common:bot.protocol')} <span className="text-red-400">*</span>
                     </label>
                     <Select
                       value={selectedProtocol}
@@ -1081,7 +1127,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                       disabled={readOnly}
                     >
                       <SelectTrigger className="w-full">
-                        <SelectValue placeholder={t('bot.protocol_select')} />
+                        <SelectValue placeholder={t('common:bot.protocol_select')} />
                       </SelectTrigger>
                       <SelectContent>
                         {/* Filter protocol options based on agent type */}
@@ -1104,7 +1150,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                         )}
                       </SelectContent>
                     </Select>
-                    <p className="text-xs text-text-muted mt-1">{t('bot.protocol_hint')}</p>
+                    <p className="text-xs text-text-muted mt-1">{t('common:bot.protocol_hint')}</p>
                   </div>
                 )}
 
@@ -1150,32 +1196,41 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                     value={
                       selectedModel
                         ? `${selectedModel}:${selectedModelType || ''}:${selectedModelNamespace || 'default'}`
-                        : ''
+                        : '__none__'
                     }
                     onValueChange={value => {
+                      if (value === '__none__') {
+                        // Clear model selection
+                        setSelectedModel('');
+                        setSelectedModelType(undefined);
+                        setSelectedModelNamespace(undefined);
+                        return;
+                      }
                       // Value format: "modelName:modelType:namespace"
                       const [modelName, modelType, modelNamespace] = value.split(':');
                       setSelectedModel(modelName);
                       setSelectedModelType((modelType as ModelTypeEnum) || undefined);
                       setSelectedModelNamespace(modelNamespace || 'default');
                     }}
-                    disabled={loadingModels || !agentName || models.length === 0 || readOnly}
+                    disabled={loadingModels || !agentName || readOnly}
                   >
                     <SelectTrigger className="w-full">
                       <SelectValue
                         placeholder={
                           !agentName
-                            ? t('bot.select_executor_first')
-                            : models.length === 0
-                              ? t('bot.no_available_models')
-                              : t('bot.model_select')
+                            ? t('common:bot.select_executor_first')
+                            : t('common:bot.model_select')
                         }
                       />
                     </SelectTrigger>
                     <SelectContent>
+                      {/* Option to unbind model */}
+                      <SelectItem value="__none__">
+                        <span className="text-text-muted">{t('common:bot.no_model_binding')}</span>
+                      </SelectItem>
                       {models.length === 0 ? (
                         <div className="py-2 px-3 text-sm text-text-muted text-center">
-                          {t('bot.no_available_models')}
+                          {t('common:bot.no_available_models')}
                         </div>
                       ) : (
                         models.map(model => (
@@ -1186,7 +1241,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                             {model.displayName || model.name}
                             {model.type === 'public' && (
                               <span className="ml-1 text-xs text-text-muted">
-                                [{t('bot.public_model', '公共')}]
+                                [{t('common:bot.public_model', '公共')}]
                               </span>
                             )}
                           </SelectItem>
@@ -1197,16 +1252,16 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                 )}
               </div>
 
-              {/* Skills Selection - Only show for ClaudeCode agent */}
-              {agentName === 'ClaudeCode' && (
+              {/* Skills Selection - Show for agents that support skills (ClaudeCode, Chat) */}
+              {supportsSkills && (
                 <div className="flex flex-col">
                   <div className="flex items-center justify-between mb-1">
                     <div className="flex items-center">
                       <label className="block text-base font-medium text-text-primary">
-                        {t('skills.skills_section')}
+                        {t('common:skills.skills_section')}
                       </label>
                       <span className="text-xs text-text-muted ml-2">
-                        {t('skills.skills_optional')}
+                        {t('common:skills.skills_optional')}
                       </span>
                       {/* Help Icon for Skills */}
                       <a
@@ -1239,15 +1294,17 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                       className="text-xs"
                     >
                       <SettingsIcon className="w-3 h-3 mr-1" />
-                      {t('skills.manage_skills_button')}
+                      {t('common:skills.manage_skills_button')}
                     </Button>
                   </div>
                   <div className="bg-base rounded-md p-2 min-h-[80px]">
                     {loadingSkills ? (
-                      <div className="text-sm text-text-muted">{t('skills.loading_skills')}</div>
+                      <div className="text-sm text-text-muted">
+                        {t('common:skills.loading_skills')}
+                      </div>
                     ) : availableSkills.length === 0 ? (
                       <div className="text-sm text-text-muted">
-                        {t('skills.no_skills_available')}
+                        {t('common:skills.no_skills_available')}
                       </div>
                     ) : (
                       <div className="space-y-2">
@@ -1262,14 +1319,14 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                           disabled={readOnly}
                         >
                           <SelectTrigger className="w-full">
-                            <SelectValue placeholder={t('skills.select_skill_to_add')} />
+                            <SelectValue placeholder={t('common:skills.select_skill_to_add')} />
                           </SelectTrigger>
                           <SelectContent>
                             {availableSkills
-                              .filter(skill => !selectedSkills.includes(skill))
+                              .filter(skill => !selectedSkills.includes(skill.name))
                               .map(skill => (
-                                <SelectItem key={skill} value={skill}>
-                                  {skill}
+                                <SelectItem key={skill.name} value={skill.name}>
+                                  {skill.displayName || skill.name}
                                 </SelectItem>
                               ))}
                           </SelectContent>
@@ -1277,24 +1334,29 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
                         {selectedSkills.length > 0 && (
                           <div className="flex flex-wrap gap-1.5">
-                            {selectedSkills.map(skill => (
-                              <div
-                                key={skill}
-                                className="inline-flex items-center gap-1 px-2 py-1 bg-muted rounded-md text-sm"
-                              >
-                                <span>{skill}</span>
-                                <button
-                                  onClick={() => {
-                                    if (readOnly) return;
-                                    setSelectedSkills(selectedSkills.filter(s => s !== skill));
-                                  }}
-                                  disabled={readOnly}
-                                  className={`text-text-muted hover:text-text-primary ${readOnly ? 'cursor-not-allowed opacity-50' : ''}`}
+                            {selectedSkills.map(skillName => {
+                              const skill = availableSkills.find(s => s.name === skillName);
+                              return (
+                                <div
+                                  key={skillName}
+                                  className="inline-flex items-center gap-1 px-2 py-1 bg-muted rounded-md text-sm"
                                 >
-                                  <XIcon className="w-3 h-3" />
-                                </button>
-                              </div>
-                            ))}
+                                  <span>{skill?.displayName || skillName}</span>
+                                  <button
+                                    onClick={() => {
+                                      if (readOnly) return;
+                                      setSelectedSkills(
+                                        selectedSkills.filter(s => s !== skillName)
+                                      );
+                                    }}
+                                    disabled={readOnly}
+                                    className={`text-text-muted hover:text-text-primary ${readOnly ? 'cursor-not-allowed opacity-50' : ''}`}
+                                  >
+                                    <XIcon className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              );
+                            })}
                           </div>
                         )}
                       </div>
@@ -1308,11 +1370,11 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                 <div className="flex items-center justify-between mb-1">
                   <div className="flex items-center">
                     <label className="block text-base font-medium text-text-primary">
-                      {t('bot.mcp_config')}
+                      {t('common:bot.mcp_config')}
                     </label>
                   </div>
                   <Button size="sm" onClick={() => handleImportMcpConfig()} className="text-xs">
-                    {t('bot.import_mcp_button')}
+                    {t('common:bot.import_mcp_button')}
                   </Button>
                 </div>
                 <textarea
@@ -1360,11 +1422,25 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         {!isDifyAgent && (
           <div className="w-full flex flex-col min-h-0">
             <div className="mb-1 flex-shrink-0">
-              <div className="flex items-center">
-                <label className="block text-base font-medium text-text-primary">
-                  {t('bot.prompt')}
-                </label>
-                <span className="text-xs text-text-muted ml-2">AI prompt</span>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center">
+                  <label className="block text-base font-medium text-text-primary">
+                    {t('common:bot.prompt')}
+                  </label>
+                  <span className="text-xs text-text-muted ml-2">AI prompt</span>
+                </div>
+                {/* Fine-tune button */}
+                {!readOnly && prompt.trim() && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setPromptFineTuneOpen(true)}
+                    className="text-xs gap-1.5"
+                  >
+                    <Wand2 className="w-3.5 h-3.5" />
+                    {t('common:bot.fine_tune_prompt')}
+                  </Button>
+                )}
               </div>
             </div>
 
@@ -1376,7 +1452,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                 setPrompt(e.target.value);
               }}
               disabled={readOnly}
-              placeholder={t('bot.prompt_placeholder')}
+              placeholder={t('common:bot.prompt_placeholder')}
               className={`w-full h-full px-4 py-2 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary text-base resize-none custom-scrollbar min-h-[200px] flex-grow ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
             />
           </div>
@@ -1400,17 +1476,30 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           // Reload skills list when skills are changed
           const fetchSkills = async () => {
             try {
-              const skillsData = await fetchSkillsList();
-              setAvailableSkills(skillsData.map(skill => skill.metadata.name));
+              const skillsData = await fetchUnifiedSkillsList();
+              setAllSkills(skillsData);
+              // Filter skills based on current shell type
+              setAvailableSkills(filterSkillsByShellType(skillsData));
             } catch {
               toast({
                 variant: 'destructive',
-                title: t('skills.loading_failed'),
+                title: t('common:skills.loading_failed'),
               });
             }
           };
           fetchSkills();
         }}
+      />
+
+      {/* Prompt Fine-tune Dialog */}
+      <PromptFineTuneDialog
+        open={promptFineTuneOpen}
+        onOpenChange={setPromptFineTuneOpen}
+        initialPrompt={prompt}
+        onSave={newPrompt => {
+          setPrompt(newPrompt);
+        }}
+        modelName={selectedModel}
       />
 
       {/* Mobile responsive styles */}

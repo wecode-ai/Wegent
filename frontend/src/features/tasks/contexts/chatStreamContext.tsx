@@ -37,7 +37,7 @@ import React, {
   useEffect,
   ReactNode,
 } from 'react';
-import { useSocket, ChatEventHandlers } from '@/contexts/SocketContext';
+import { useSocket, ChatEventHandlers, SkillEventHandlers } from '@/contexts/SocketContext';
 import {
   ChatSendPayload,
   ChatStartPayload,
@@ -46,8 +46,11 @@ import {
   ChatErrorPayload,
   ChatCancelledPayload,
   ChatMessagePayload,
+  SkillRequestPayload,
+  SkillResponsePayload,
 } from '@/types/socket';
 import type { TaskDetailSubtask, Team } from '@/types/api';
+import DOMPurify from 'dompurify';
 
 /**
  * Message type enum
@@ -74,8 +77,10 @@ export interface UnifiedMessage {
   content: string;
   /** Attachment if any (for pending messages) */
   attachment?: unknown;
-  /** Attachments array (for confirmed messages) */
+  /** Attachments array (for confirmed messages, deprecated - use contexts) */
   attachments?: unknown[];
+  /** Unified contexts (attachments, knowledge bases, etc.) */
+  contexts?: unknown[];
   /** Timestamp when message was created */
   timestamp: number;
   /** Subtask ID from backend (set when confirmed) */
@@ -235,6 +240,8 @@ interface ChatStreamContextType {
       pendingUserMessage?: string;
       pendingAttachment?: unknown;
       pendingAttachments?: unknown[];
+      /** Pending contexts for immediate display (attachments, knowledge bases, etc.) */
+      pendingContexts?: unknown[];
       onError?: (error: Error) => void;
       /** Callback when message is sent, passes back localMessageId for precise update */
       onMessageSent?: (localMessageId: string, taskId: number, subtaskId: number) => void;
@@ -310,8 +317,15 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
   const [clearVersion, setClearVersion] = useState(0);
 
   // Get socket context
-  const { isConnected, sendChatMessage, cancelChatStream, registerChatHandlers, joinTask } =
-    useSocket();
+  const {
+    isConnected,
+    sendChatMessage,
+    cancelChatStream,
+    registerChatHandlers,
+    registerSkillHandlers,
+    sendSkillResponse,
+    joinTask,
+  } = useSocket();
 
   // Refs for callbacks (don't need to trigger re-renders)
   const callbacksRef = useRef<
@@ -523,18 +537,32 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       const existingMessage = newMessages.get(aiMessageId);
       if (existingMessage) {
         // For executor tasks, result contains full data (thinking, workbench, sources)
-        // Content is accumulated, but result is replaced with latest
+        // IMPORTANT: Merge result instead of replacing to preserve thinking data
         const updatedMessage: UnifiedMessage = {
           ...existingMessage,
           content: existingMessage.content + content,
         };
-        // If result is provided (executor tasks), update it
+        // If result is provided (executor tasks), merge it with existing result
+        // This prevents losing thinking data when result is partially updated
         if (result) {
-          updatedMessage.result = result as UnifiedMessage['result'];
+          const newResult = result as UnifiedMessage['result'];
+          updatedMessage.result = {
+            ...existingMessage.result,
+            ...newResult,
+            // Special handling for thinking array:
+            // If new result has thinking, use it (backend sends full array)
+            // Otherwise keep existing thinking to prevent data loss
+            thinking:
+              newResult && newResult.thinking
+                ? newResult.thinking
+                : existingMessage.result?.thinking,
+          };
         }
-        // If sources are provided directly (chat v2), update them
-        if (sources) {
-          updatedMessage.sources = sources;
+        // Extract sources from either top-level or result.sources
+        // Backend may send sources inside result object
+        const chunkSources = sources || (result?.sources as typeof sources);
+        if (chunkSources) {
+          updatedMessage.sources = chunkSources;
         }
 
         newMessages.set(aiMessageId, updatedMessage);
@@ -555,6 +583,10 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
    */
   const handleChatDone = useCallback((data: ChatDonePayload) => {
     const { task_id: eventTaskId, subtask_id, result, message_id, sources } = data;
+
+    // Extract sources from either top-level or result.sources
+    // Backend may send sources inside result object
+    const finalSources = sources || (result?.sources as typeof sources);
 
     // Find task ID from subtask mapping, or use task_id from event (for group chat members)
     let taskId = subtaskToTaskRef.current.get(subtask_id);
@@ -622,8 +654,16 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           error: hasError ? (result.error as string) : existingMessage.error,
           // Set messageId from backend for proper sorting
           messageId: message_id,
-          // Set sources if provided
-          sources: sources || existingMessage.sources,
+          // Set sources if provided (check both top-level and result.sources)
+          sources: finalSources || existingMessage.sources,
+          // IMPORTANT: Update result field to preserve thinking data from incremental updates
+          // Merge with existing result to keep accumulated thinking data
+          result: result
+            ? {
+                ...existingMessage.result,
+                ...(result as UnifiedMessage['result']),
+              }
+            : existingMessage.result,
         });
       }
 
@@ -788,8 +828,17 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
    * Adds the message to the unified messages Map for real-time display
    */
   const handleChatMessage = useCallback((data: ChatMessagePayload) => {
-    const { task_id, subtask_id, message_id, role, content, sender, created_at, attachments } =
-      data;
+    const {
+      task_id,
+      subtask_id,
+      message_id,
+      role,
+      content,
+      sender,
+      created_at,
+      attachments,
+      contexts,
+    } = data;
 
     // Generate message ID based on role
     const isUserMessage = role === 'user' || role?.toUpperCase() === 'USER';
@@ -822,6 +871,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         senderUserId: sender?.user_id,
         shouldShowSender: isUserMessage, // Show sender for user messages in group chat
         attachments: attachments,
+        contexts: contexts,
       };
 
       newMessages.set(msgId, newMessage);
@@ -858,6 +908,199 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
   ]);
 
   /**
+   * Handle skill:request event from WebSocket
+   * Routes skill requests to appropriate handlers based on skill_name and action
+   */
+  const handleSkillRequest = useCallback(
+    async (data: SkillRequestPayload) => {
+      const { request_id, skill_name, action } = data;
+
+      // Build base response payload
+      const basePayload: Pick<SkillResponsePayload, 'request_id' | 'skill_name' | 'action'> = {
+        request_id,
+        skill_name,
+        action,
+      };
+
+      // Route to appropriate handler based on skill_name and action
+      if (skill_name === 'mermaid-diagram' && action === 'render') {
+        // Handle mermaid diagram rendering
+        const { code, diagram_type, title } = data.data as {
+          code: string;
+          diagram_type?: string;
+          title?: string;
+        };
+
+        try {
+          // Dynamically import mermaid to avoid SSR issues
+          const mermaid = (await import('mermaid')).default;
+
+          // Initialize mermaid with configuration matching MermaidDiagram.tsx
+          // Using 'base' theme with custom variables and 'strict' security level
+          // to ensure validation results match final rendering
+          mermaid.initialize({
+            startOnLoad: false,
+            suppressErrorRendering: true,
+            theme: 'base' as const,
+            themeVariables: {
+              // Light theme variables (validation uses light theme as default)
+              primaryColor: '#f8fafc',
+              primaryTextColor: '#0f172a',
+              primaryBorderColor: '#94a3b8',
+              lineColor: '#64748b',
+              secondaryColor: '#f1f5f9',
+              tertiaryColor: '#e2e8f0',
+              background: '#ffffff',
+              mainBkg: '#f8fafc',
+              secondBkg: '#f1f5f9',
+              mainContrastColor: '#0f172a',
+              darkTextColor: '#0f172a',
+              textColor: '#0f172a',
+              labelTextColor: '#0f172a',
+              signalTextColor: '#0f172a',
+              actorBkg: '#f8fafc',
+              actorBorder: '#14b8a6',
+              actorTextColor: '#0f172a',
+              actorLineColor: '#cbd5e1',
+              noteBkgColor: '#fef9c3',
+              noteBorderColor: '#fbbf24',
+              noteTextColor: '#1e293b',
+              activationBkgColor: '#e0f2fe',
+              activationBorderColor: '#0ea5e9',
+              sequenceNumberColor: '#ffffff',
+            },
+            securityLevel: 'strict' as const,
+            flowchart: {
+              useMaxWidth: true,
+              htmlLabels: true,
+              curve: 'basis' as const,
+              padding: 15,
+            },
+            sequence: {
+              diagramMarginX: 50,
+              diagramMarginY: 20,
+              actorMargin: 80,
+              width: 180,
+              height: 65,
+              boxMargin: 10,
+              boxTextMargin: 5,
+              noteMargin: 15,
+              messageMargin: 45,
+              mirrorActors: true,
+              useMaxWidth: true,
+              actorFontSize: 14,
+              actorFontWeight: 600,
+              noteFontSize: 13,
+              messageFontSize: 13,
+            },
+            fontSize: 14,
+            fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+          });
+
+          // Generate unique ID for rendering
+          const renderElementId = `mermaid-render-${request_id}-${Date.now()}`;
+
+          // Render the diagram
+          const { svg } = await mermaid.render(renderElementId, code);
+
+          // Sanitize the SVG output
+          const sanitizedSvg = DOMPurify.sanitize(svg, {
+            USE_PROFILES: { svg: true, svgFilters: true },
+            ADD_TAGS: ['foreignObject'],
+          });
+
+          // Send success result
+          const successPayload: SkillResponsePayload = {
+            ...basePayload,
+            success: true,
+            result: { svg: sanitizedSvg },
+          };
+
+          sendSkillResponse(successPayload);
+        } catch (error) {
+          // Extract error details
+          const errorMessage = error instanceof Error ? error.message : String(error);
+
+          // Try to extract line number from mermaid error message
+          let lineNumber: number | undefined;
+          let columnNumber: number | undefined;
+          let errorDetails: string | undefined;
+
+          const lineMatch = errorMessage.match(/line\s+(\d+)/i);
+          if (lineMatch) {
+            lineNumber = parseInt(lineMatch[1], 10);
+          }
+
+          const columnMatch = errorMessage.match(/column\s+(\d+)/i);
+          if (columnMatch) {
+            columnNumber = parseInt(columnMatch[1], 10);
+          }
+
+          // Extract more detailed error info if available
+          if (error instanceof Error && 'hash' in error) {
+            const hashError = error as Error & {
+              hash?: { line?: number; loc?: { first_column?: number } };
+            };
+            if (hashError.hash?.line) {
+              lineNumber = hashError.hash.line;
+            }
+            if (hashError.hash?.loc?.first_column) {
+              columnNumber = hashError.hash.loc.first_column;
+            }
+          }
+
+          // Build detailed error message for AI
+          errorDetails = `Diagram type: ${diagram_type || 'unknown'}`;
+          if (title) {
+            errorDetails += `\nTitle: ${title}`;
+          }
+          errorDetails += `\nCode:\n${code}`;
+
+          // Send error result
+          const errorPayload: SkillResponsePayload = {
+            ...basePayload,
+            success: false,
+            error: {
+              message: errorMessage,
+              line: lineNumber,
+              column: columnNumber,
+              details: errorDetails,
+            },
+          };
+
+          sendSkillResponse(errorPayload);
+        }
+      } else {
+        // Unknown skill or action - send error response
+        console.warn('[ChatStreamContext][skill:request] Unknown skill or action:', {
+          skill_name,
+          action,
+        });
+
+        const errorPayload: SkillResponsePayload = {
+          ...basePayload,
+          success: false,
+          error: {
+            message: `Unknown skill or action: ${skill_name}/${action}`,
+          },
+        };
+        sendSkillResponse(errorPayload);
+      }
+    },
+    [sendSkillResponse]
+  );
+
+  // Register skill event handlers
+  useEffect(() => {
+    const handlers: SkillEventHandlers = {
+      onSkillRequest: handleSkillRequest,
+    };
+
+    const cleanup = registerSkillHandlers(handlers);
+    return cleanup;
+  }, [registerSkillHandlers, handleSkillRequest]);
+
+  /**
    * Send a chat message via WebSocket
    *
    * Flow:
@@ -877,6 +1120,8 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         pendingUserMessage?: string;
         pendingAttachment?: unknown;
         pendingAttachments?: unknown[];
+        /** Pending contexts for immediate display (attachments, knowledge bases, etc.) */
+        pendingContexts?: unknown[];
         onError?: (error: Error) => void;
         /** Callback when message is sent, passes back localMessageId for precise update */
         onMessageSent?: (localMessageId: string, taskId: number, subtaskId: number) => void;
@@ -915,6 +1160,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         content: options?.pendingUserMessage || request.message,
         attachment: options?.pendingAttachment,
         attachments: options?.pendingAttachments,
+        contexts: options?.pendingContexts,
         timestamp: Date.now(),
         // Add sender info for group chat
         senderUserName: options?.currentUserName,
@@ -1468,6 +1714,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
               subtaskId: subtask.id,
               messageId: subtask.message_id,
               attachments: subtask.attachments,
+              contexts: subtask.contexts,
               botName: subtask.bots?.[0]?.name || teamName,
               subtaskStatus: subtask.status,
               result: subtask.result as UnifiedMessage['result'],
@@ -1509,6 +1756,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
             subtaskId: subtask.id,
             messageId: subtask.message_id,
             attachments: subtask.attachments,
+            contexts: subtask.contexts,
             botName: !isUserMessage && subtask.bots?.[0]?.name ? subtask.bots[0].name : teamName,
             senderUserName:
               subtask.sender_user_name ||

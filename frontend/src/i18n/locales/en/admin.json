@@ -4,6 +4,9 @@
   "tabs": {
     "users": "Users",
     "public_models": "Public Models",
+    "public_retrievers": "Public Retrievers",
+    "public_skills": "Public Skills",
+    "api_keys": "API Keys",
     "system_config": "System Config"
   },
   "stats": {
@@ -156,6 +159,96 @@
       "config_invalid_json": "Model configuration must be valid JSON"
     }
   },
+  "public_skills": {
+    "title": "Public Skill Management",
+    "description": "Manage system-level public skills visible to all users",
+    "loading": "Loading skills...",
+    "no_skills": "No public skills found",
+    "upload_skill": "Upload Skill",
+    "update_skill": "Update Skill",
+    "download_skill": "Download Skill",
+    "delete_skill": "Delete Skill",
+    "view_content": "View Content",
+    "skill_content": "Skill Content",
+    "view_content_description": "Full content of the SKILL.md file",
+    "no_content": "Unable to load content",
+    "columns": {
+      "name": "Name",
+      "description": "Description",
+      "version": "Version",
+      "author": "Author",
+      "tags": "Tags",
+      "created_at": "Created At",
+      "actions": "Actions"
+    },
+    "confirm": {
+      "delete_title": "Delete Skill",
+      "delete_message": "Are you sure you want to delete public skill \"{{name}}\"? This action cannot be undone."
+    },
+    "success": {
+      "uploaded": "Public skill uploaded successfully",
+      "updated": "Public skill updated successfully",
+      "deleted": "Public skill deleted successfully"
+    },
+    "errors": {
+      "load_failed": "Failed to load public skills",
+      "upload_failed": "Failed to upload public skill",
+      "update_failed": "Failed to update public skill",
+      "delete_failed": "Failed to delete public skill",
+      "download_failed": "Failed to download public skill",
+      "view_content_failed": "Failed to get skill content"
+    }
+  },
+  "public_retrievers": {
+    "title": "Public Retriever Management",
+    "description": "Manage system-level public retrievers available to all users",
+    "loading": "Loading retrievers...",
+    "no_retrievers": "No public retrievers found",
+    "create_retriever": "Create Retriever",
+    "edit_retriever": "Edit Retriever",
+    "delete_retriever": "Delete Retriever",
+    "form": {
+      "name": "Name",
+      "name_placeholder": "Enter retriever name",
+      "display_name": "Display Name",
+      "display_name_placeholder": "Enter display name (optional)",
+      "storage_type": "Storage Type",
+      "storage_type_placeholder": "Select storage type",
+      "url": "Connection URL",
+      "url_placeholder": "e.g., http://localhost:9200",
+      "username": "Username",
+      "username_placeholder": "Enter username (optional)",
+      "api_key": "API Key",
+      "api_key_placeholder": "Enter API key (optional)",
+      "index_strategy": "Index Strategy",
+      "index_strategy_placeholder": "Select index strategy",
+      "per_user": "Per User Index",
+      "fixed": "Fixed Index",
+      "fixed_name": "Fixed Index Name",
+      "fixed_name_placeholder": "Enter fixed index name",
+      "prefix": "Index Prefix",
+      "prefix_placeholder": "Default: kb_",
+      "description": "Description",
+      "description_placeholder": "Enter description (optional)"
+    },
+    "confirm": {
+      "delete_title": "Delete Retriever",
+      "delete_message": "Are you sure you want to delete public retriever \"{{name}}\"? This action cannot be undone."
+    },
+    "success": {
+      "created": "Public retriever created successfully",
+      "updated": "Public retriever updated successfully",
+      "deleted": "Public retriever deleted successfully"
+    },
+    "errors": {
+      "load_failed": "Failed to load public retrievers",
+      "create_failed": "Failed to create public retriever",
+      "update_failed": "Failed to update public retriever",
+      "delete_failed": "Failed to delete public retriever",
+      "name_required": "Retriever name is required",
+      "url_required": "Connection URL is required"
+    }
+  },
   "access_denied": {
     "title": "Access Denied",
     "message": "You do not have permission to access this page. Only administrators can view this content.",
@@ -199,6 +292,70 @@
       "save_failed": "Failed to save configuration",
       "slogan_required": "Both Chinese and English slogan are required",
       "tip_required": "Both Chinese and English tip text are required"
+    }
+  },
+  "api_keys": {
+    "title": "API Key Management",
+    "description": "Manage service keys and personal API keys",
+    "service_keys": "Service Keys",
+    "personal_keys": "Personal Keys"
+  },
+  "service_keys": {
+    "title": "Service Key Management",
+    "description": "Manage trusted keys for service-to-service calls",
+    "no_keys": "No service keys found",
+    "create": "Create Service Key",
+    "name": "Key Name",
+    "name_placeholder": "Enter key name",
+    "description_label": "Description",
+    "description_placeholder": "Enter key description (optional)",
+    "key": "Key",
+    "created_by": "Created By",
+    "created_at": "Created At",
+    "last_used": "Last Used",
+    "expires_at": "Expires At",
+    "never_expires": "Never expires",
+    "create_success": "Service key created successfully",
+    "delete_success": "Service key deleted successfully",
+    "enabled_success": "Service key enabled",
+    "disabled_success": "Service key disabled",
+    "warning_save_key": "Please save this key securely. It will only be shown once!",
+    "delete_confirm_title": "Confirm Deletion",
+    "delete_confirm_message": "Are you sure you want to delete service key \"{{name}}\"? Related services will no longer be able to use this key.",
+    "status_disabled": "Disabled",
+    "enable": "Enable",
+    "disable": "Disable",
+    "errors": {
+      "load_failed": "Failed to load service keys",
+      "create_failed": "Failed to create service key",
+      "delete_failed": "Failed to delete service key",
+      "toggle_failed": "Failed to toggle service key status",
+      "name_required": "Key name is required"
+    }
+  },
+  "personal_keys": {
+    "title": "Personal Key Management",
+    "description": "View and manage all users' personal API keys",
+    "no_keys": "No personal keys found",
+    "search_placeholder": "Search username or key name...",
+    "name": "Key Name",
+    "owner": "Owner",
+    "created_at": "Created At",
+    "last_used": "Last Used",
+    "expires_at": "Expires At",
+    "never_expires": "Never expires",
+    "delete_success": "Personal key deleted successfully",
+    "enabled_success": "Personal key enabled",
+    "disabled_success": "Personal key disabled",
+    "delete_confirm_title": "Confirm Deletion",
+    "delete_confirm_message": "Are you sure you want to delete user \"{{owner}}\"'s key \"{{name}}\"? The user will no longer be able to use this key for API calls.",
+    "status_disabled": "Disabled",
+    "enable": "Enable",
+    "disable": "Disable",
+    "errors": {
+      "load_failed": "Failed to load personal keys",
+      "delete_failed": "Failed to delete personal key",
+      "toggle_failed": "Failed to toggle personal key status"
     }
   }
 }

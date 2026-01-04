@@ -9,7 +9,6 @@ import { CircleStop } from 'lucide-react';
 import ModelSelector, { Model } from '../selector/ModelSelector';
 import RepositorySelector from '../selector/RepositorySelector';
 import BranchSelector from '../selector/BranchSelector';
-import DeepThinkingToggle from './DeepThinkingToggle';
 import ClarificationToggle from '../clarification/ClarificationToggle';
 import CorrectionModeToggle from '../CorrectionModeToggle';
 import ChatContextInput from '../chat/ChatContextInput';
@@ -17,7 +16,7 @@ import AttachmentButton from '../AttachmentButton';
 import SendButton from './SendButton';
 import LoadingDots from '../message/LoadingDots';
 import QuotaUsage from '../params/QuotaUsage';
-import { Button } from '@/components/ui/button';
+import { ActionButton } from '@/components/ui/action-button';
 import type {
   Team,
   GitRepoInfo,
@@ -27,6 +26,7 @@ import type {
 } from '@/types/api';
 import type { ContextItem } from '@/types/context';
 import { isChatShell } from '../../service/messageService';
+import { supportsAttachments } from '../../service/attachmentService';
 
 export interface ChatInputControlsProps {
   // Team and Model
@@ -35,6 +35,12 @@ export interface ChatInputControlsProps {
   setSelectedModel: (model: Model | null) => void;
   forceOverride: boolean;
   setForceOverride: (value: boolean) => void;
+  /** Current team ID for model preference storage */
+  teamId?: number | null;
+  /** Current task ID for session-level model preference storage (null for new chat) */
+  taskId?: number | null;
+  /** Task's model_id from backend - used as fallback when no session preference exists */
+  taskModelId?: string | null;
 
   // Repository and Branch
   showRepositorySelector: boolean;
@@ -104,14 +110,15 @@ export function ChatInputControls({
   setSelectedModel,
   forceOverride,
   setForceOverride,
+  teamId,
+  taskId,
+  taskModelId,
   showRepositorySelector,
   selectedRepo,
   setSelectedRepo,
   selectedBranch,
   setSelectedBranch,
   selectedTaskDetail,
-  enableDeepThinking,
-  setEnableDeepThinking,
   enableClarification,
   setEnableClarification,
   enableCorrectionMode = false,
@@ -151,22 +158,24 @@ export function ChatInputControls({
     if (isStreaming || isStopping) {
       if (isStopping) {
         return (
-          <div className="relative h-6 w-6 flex items-center justify-center flex-shrink-0 translate-y-0.5">
-            <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
-            <CircleStop className="h-4 w-4 text-orange-500" />
-          </div>
+          <ActionButton
+            variant="loading"
+            icon={
+              <>
+                <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
+                <CircleStop className="h-4 w-4 text-orange-500" />
+              </>
+            }
+          />
         );
       }
       return (
-        <Button
-          variant="ghost"
-          size="icon"
+        <ActionButton
           onClick={onStopStream}
-          className="h-6 w-6 rounded-full hover:bg-orange-100 flex-shrink-0 translate-y-0.5"
           title="Stop generating"
-        >
-          <CircleStop className="h-5 w-5 text-orange-500" />
-        </Button>
+          icon={<CircleStop className="h-4 w-4 text-orange-500" />}
+          className="hover:bg-orange-100"
+        />
       );
     }
 
@@ -182,25 +191,21 @@ export function ChatInputControls({
 
     // For non-group-chat tasks with PENDING status, show loading animation
     if (selectedTaskDetail?.status === 'PENDING') {
-      return (
-        <Button
-          variant="ghost"
-          size="icon"
-          disabled
-          className="h-6 w-6 rounded-full flex-shrink-0 translate-y-0.5"
-        >
-          <LoadingDots />
-        </Button>
-      );
+      return <ActionButton disabled variant="loading" icon={<LoadingDots />} />;
     }
 
     // CANCELLING status
     if (selectedTaskDetail?.status === 'CANCELLING') {
       return (
-        <div className="relative h-6 w-6 flex items-center justify-center flex-shrink-0 translate-y-0.5">
-          <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
-          <CircleStop className="h-5 w-5 text-orange-500" />
-        </div>
+        <ActionButton
+          variant="loading"
+          icon={
+            <>
+              <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
+              <CircleStop className="h-4 w-4 text-orange-500" />
+            </>
+          }
+        />
       );
     }
 
@@ -224,8 +229,8 @@ export function ChatInputControls({
           />
         )}
 
-        {/* File Upload Button - always show for chat shell */}
-        {isChatShell(selectedTeam) && (
+        {/* File Upload Button - show for shells that support attachments (Chat, ClaudeCode) */}
+        {supportsAttachments(selectedTeam) && (
           <AttachmentButton onFileSelect={onFileSelect} disabled={isLoading || isStreaming} />
         )}
 
@@ -245,6 +250,7 @@ export function ChatInputControls({
             onToggle={onCorrectionModeToggle}
             disabled={isLoading || isStreaming}
             correctionModelName={correctionModelName}
+            taskId={selectedTaskDetail?.id ?? null}
           />
         )}
 
@@ -258,6 +264,9 @@ export function ChatInputControls({
             selectedTeam={selectedTeam}
             disabled={isLoading || isStreaming || (hasMessages && !isChatShell(selectedTeam))}
             compact={shouldCollapseSelectors}
+            teamId={teamId}
+            taskId={taskId}
+            taskModelId={taskModelId}
           />
         )}
 
@@ -291,14 +300,14 @@ export function ChatInputControls({
           <QuotaUsage className="flex-shrink-0" compact={shouldUseCompactQuota} />
         )}
 
-        {/* Deep Thinking Toggle Button - only show for chat shell */}
-        {isChatShell(selectedTeam) && (
+        {/* Deep Thinking Toggle Button - hidden for now */}
+        {/* {isChatShell(selectedTeam) && (
           <DeepThinkingToggle
             enabled={enableDeepThinking}
             onToggle={setEnableDeepThinking}
             disabled={isLoading || isStreaming}
           />
-        )}
+        )} */}
 
         {/* Send/Stop Button */}
         {renderSendButton()}

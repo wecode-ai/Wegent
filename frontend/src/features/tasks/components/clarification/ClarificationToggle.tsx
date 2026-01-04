@@ -6,7 +6,7 @@
 
 import React from 'react';
 import { MessageCircleQuestion } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { ActionButton } from '@/components/ui/action-button';
 import { useTranslation } from '@/hooks/useTranslation';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -28,7 +28,7 @@ export default function ClarificationToggle({
   onToggle,
   disabled = false,
 }: ClarificationToggleProps) {
-  const { t } = useTranslation('chat');
+  const { t } = useTranslation();
 
   const handleToggle = () => {
     onToggle(!enabled);
@@ -38,23 +38,27 @@ export default function ClarificationToggle({
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={handleToggle}
-            disabled={disabled}
-            className={cn(
-              'h-9 w-9 rounded-full flex-shrink-0 transition-colors',
-              enabled
-                ? 'border-primary bg-primary/10 text-primary hover:bg-primary/20'
-                : 'border-border bg-base text-text-primary hover:bg-hover'
-            )}
-          >
-            <MessageCircleQuestion className="h-4 w-4" />
-          </Button>
+          <div>
+            <ActionButton
+              variant="outline"
+              onClick={handleToggle}
+              disabled={disabled}
+              icon={<MessageCircleQuestion className="h-4 w-4" />}
+              className={cn(
+                'transition-colors',
+                enabled
+                  ? 'border-primary bg-primary/10 text-primary hover:bg-primary/20'
+                  : 'border-border bg-base text-text-primary hover:bg-hover'
+              )}
+            />
+          </div>
         </TooltipTrigger>
         <TooltipContent side="top">
-          <p>{enabled ? t('clarification_toggle.disable') : t('clarification_toggle.enable')}</p>
+          <p>
+            {enabled
+              ? t('chat:clarification_toggle.disable')
+              : t('chat:clarification_toggle.enable')}
+          </p>
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>

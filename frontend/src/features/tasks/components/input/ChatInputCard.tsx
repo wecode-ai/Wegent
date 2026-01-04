@@ -12,7 +12,6 @@ import ExternalApiParamsInput from '../params/ExternalApiParamsInput';
 import { SelectedTeamBadge } from '../selector/SelectedTeamBadge';
 import ChatInputControls, { ChatInputControlsProps } from './ChatInputControls';
 import type { Team, ChatTipItem } from '@/types/api';
-import { isChatShell } from '../../service/messageService';
 
 export interface ChatInputCardProps extends Omit<ChatInputControlsProps, 'taskInputMessage'> {
   // Input message
@@ -92,6 +91,8 @@ export function ChatInputCard({
   setSelectedModel,
   forceOverride,
   setForceOverride,
+  teamId,
+  taskId,
   showRepositorySelector,
   selectedRepo,
   setSelectedRepo,
@@ -180,7 +181,7 @@ export function ChatInputCard({
               badge={selectedTeam ? <SelectedTeamBadge team={selectedTeam} /> : undefined}
               isGroupChat={isGroupChat}
               team={selectedTeam}
-              onPasteFile={isChatShell(selectedTeam) ? onPasteFile : undefined}
+              onPasteFile={onPasteFile}
             />
           </div>
         )}
@@ -200,6 +201,9 @@ export function ChatInputCard({
             setSelectedModel={setSelectedModel}
             forceOverride={forceOverride}
             setForceOverride={setForceOverride}
+            teamId={teamId}
+            taskId={taskId}
+            taskModelId={selectedTaskDetail?.model_id}
             showRepositorySelector={showRepositorySelector}
             selectedRepo={selectedRepo}
             setSelectedRepo={setSelectedRepo}

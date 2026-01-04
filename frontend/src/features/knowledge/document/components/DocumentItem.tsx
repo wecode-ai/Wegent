@@ -4,7 +4,7 @@
 
 'use client';
 
-import { FileText, Trash2, ToggleLeft, ToggleRight, Pencil } from 'lucide-react';
+import { FileText, Trash2, Pencil } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import type { KnowledgeDocument } from '@/types/knowledge';
@@ -12,7 +12,6 @@ import { useTranslation } from '@/hooks/useTranslation';
 
 interface DocumentItemProps {
   document: KnowledgeDocument;
-  onToggleStatus?: (doc: KnowledgeDocument) => void;
   onEdit?: (doc: KnowledgeDocument) => void;
   onDelete?: (doc: KnowledgeDocument) => void;
   canManage?: boolean;
@@ -23,7 +22,6 @@ interface DocumentItemProps {
 
 export function DocumentItem({
   document,
-  onToggleStatus,
   onEdit,
   onDelete,
   canManage = true,
@@ -31,7 +29,7 @@ export function DocumentItem({
   selected = false,
   onSelect,
 }: DocumentItemProps) {
-  const { t } = useTranslation('knowledge');
+  const { t } = useTranslation();
 
   const formatFileSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`;
@@ -53,11 +51,6 @@ export function DocumentItem({
 
   const handleCheckboxChange = (checked: boolean) => {
     onSelect?.(document, checked);
-  };
-
-  const handleToggleStatus = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onToggleStatus?.(document);
   };
 
   const handleEdit = (e: React.MouseEvent) => {
@@ -127,38 +120,14 @@ export function DocumentItem({
       <div className="w-16 flex-shrink-0 text-center">
         <Badge variant={document.is_active ? 'success' : 'warning'} size="sm">
           {document.is_active
-            ? t('document.document.indexStatus.available')
-            : t('document.document.indexStatus.unavailable')}
+            ? t('knowledge:document.document.indexStatus.available')
+            : t('knowledge:document.document.indexStatus.unavailable')}
         </Badge>
       </div>
 
-      {/* Status badge */}
-      <div className="w-16 flex-shrink-0 text-center">
-        <Badge variant={document.status === 'enabled' ? 'success' : 'secondary'} size="sm">
-          {document.status === 'enabled'
-            ? t('document.document.status.enabled')
-            : t('document.document.status.disabled')}
-        </Badge>
-      </div>
-
-      {/* Action buttons - toggle status and delete */}
+      {/* Action button - delete only */}
       {canManage && (
-        <div className="w-20 flex-shrink-0 flex items-center justify-center gap-2">
-          <button
-            className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors"
-            onClick={handleToggleStatus}
-            title={
-              document.status === 'enabled'
-                ? t('document.document.disable')
-                : t('document.document.enable')
-            }
-          >
-            {document.status === 'enabled' ? (
-              <ToggleLeft className="w-4 h-4" />
-            ) : (
-              <ToggleRight className="w-4 h-4" />
-            )}
-          </button>
+        <div className="w-16 flex-shrink-0 flex items-center justify-center">
           <button
             className="p-1.5 rounded-md text-text-muted hover:text-error hover:bg-error/10 transition-colors"
             onClick={handleDelete}

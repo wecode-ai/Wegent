@@ -35,7 +35,7 @@ import { apiKeyApis, ApiKey, ApiKeyCreated } from '@/apis/api-keys';
 import UnifiedAddButton from '@/components/common/UnifiedAddButton';
 
 const ApiKeyList: React.FC = () => {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const { toast } = useToast();
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
   const [loading, setLoading] = useState(true);
@@ -61,7 +61,7 @@ const ApiKeyList: React.FC = () => {
       console.error('Failed to fetch API keys:', error);
       toast({
         variant: 'destructive',
-        title: t('api_keys.errors.load_failed'),
+        title: t('common:api_keys.errors.load_failed'),
       });
     } finally {
       setLoading(false);
@@ -92,7 +92,7 @@ const ApiKeyList: React.FC = () => {
     if (!keyName.trim()) {
       toast({
         variant: 'destructive',
-        title: t('api_keys.errors.name_required'),
+        title: t('common:api_keys.errors.name_required'),
       });
       return;
     }
@@ -105,13 +105,13 @@ const ApiKeyList: React.FC = () => {
       setKeyName('');
       setShowCreatedDialog(true);
       toast({
-        title: t('api_keys.create_success'),
+        title: t('common:api_keys.create_success'),
       });
       fetchApiKeys();
     } catch (error) {
       toast({
         variant: 'destructive',
-        title: t('api_keys.errors.create_failed'),
+        title: t('common:api_keys.errors.create_failed'),
         description: (error as Error).message,
       });
     } finally {
@@ -126,14 +126,14 @@ const ApiKeyList: React.FC = () => {
     try {
       await apiKeyApis.deleteApiKey(deleteConfirmKey.id);
       toast({
-        title: t('api_keys.delete_success'),
+        title: t('common:api_keys.delete_success'),
       });
       setDeleteConfirmKey(null);
       fetchApiKeys();
     } catch (error) {
       toast({
         variant: 'destructive',
-        title: t('api_keys.errors.delete_failed'),
+        title: t('common:api_keys.errors.delete_failed'),
         description: (error as Error).message,
       });
     } finally {
@@ -165,8 +165,10 @@ const ApiKeyList: React.FC = () => {
     <div className="space-y-3">
       {/* Header */}
       <div>
-        <h2 className="text-xl font-semibold text-text-primary mb-1">{t('api_keys.title')}</h2>
-        <p className="text-sm text-text-muted mb-1">{t('api_keys.description')}</p>
+        <h2 className="text-xl font-semibold text-text-primary mb-1">
+          {t('common:api_keys.title')}
+        </h2>
+        <p className="text-sm text-text-muted mb-1">{t('common:api_keys.description')}</p>
       </div>
 
       {/* Content Container */}
@@ -181,8 +183,10 @@ const ApiKeyList: React.FC = () => {
         {!loading && apiKeys.length === 0 && (
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <KeyIcon className="w-12 h-12 text-text-muted mb-4" />
-            <p className="text-text-muted">{t('api_keys.no_keys')}</p>
-            <p className="text-sm text-text-muted mt-1">{t('api_keys.no_keys_description')}</p>
+            <p className="text-text-muted">{t('common:api_keys.no_keys')}</p>
+            <p className="text-sm text-text-muted mt-1">
+              {t('common:api_keys.no_keys_description')}
+            </p>
           </div>
         )}
 
@@ -193,39 +197,46 @@ const ApiKeyList: React.FC = () => {
               <Card key={apiKey.id} className="p-4 bg-base hover:bg-hover transition-colors">
                 <div className="flex items-center justify-between min-w-0">
                   <div className="flex items-center gap-3 min-w-0 flex-1">
-                    <KeyIcon className="w-5 h-5 text-primary flex-shrink-0" />
+                    <KeyIcon className="w-5 h-5 flex-shrink-0 text-primary" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="font-medium text-text-primary truncate">
+                        <span
+                          className={`font-medium truncate ${apiKey.is_active ? 'text-text-primary' : 'text-text-muted'}`}
+                        >
                           {apiKey.name}
                         </span>
                         <code className="text-xs bg-muted px-1.5 py-0.5 rounded text-text-secondary">
                           {apiKey.key_prefix}
                         </code>
+                        {!apiKey.is_active && (
+                          <span className="text-xs px-1.5 py-0.5 rounded bg-error/10 text-error">
+                            {t('common:api_keys.status_disabled')}
+                          </span>
+                        )}
                       </div>
                       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-muted mt-1">
                         <span>
-                          {t('api_keys.created_at')}: {formatDate(apiKey.created_at)}
+                          {t('common:api_keys.created_at')}: {formatDate(apiKey.created_at)}
                         </span>
                         <span>
-                          {t('api_keys.last_used')}: {formatDate(apiKey.last_used_at)}
+                          {t('common:api_keys.last_used')}: {formatDate(apiKey.last_used_at)}
                         </span>
                         <span>
-                          {t('api_keys.expires_at')}:{' '}
+                          {t('common:api_keys.expires_at')}:{' '}
                           {isNeverExpires(apiKey.expires_at)
-                            ? t('api_keys.never_expires')
+                            ? t('common:api_keys.never_expires')
                             : formatDate(apiKey.expires_at)}
                         </span>
                       </div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-1 flex-shrink-0 ml-3">
+                  <div className="flex items-center gap-2 flex-shrink-0 ml-3">
                     <Button
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8 hover:text-error"
                       onClick={() => setDeleteConfirmKey(apiKey)}
-                      title={t('actions.delete')}
+                      title={t('common:actions.delete')}
                     >
                       <TrashIcon className="w-4 h-4" />
                     </Button>
@@ -241,7 +252,7 @@ const ApiKeyList: React.FC = () => {
           <div className="border-t border-border pt-3 mt-3 bg-base">
             <div className="flex justify-center">
               <UnifiedAddButton onClick={() => setCreateDialogOpen(true)}>
-                {t('api_keys.create')}
+                {t('common:api_keys.create')}
               </UnifiedAddButton>
             </div>
           </div>
@@ -252,14 +263,16 @@ const ApiKeyList: React.FC = () => {
       <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{t('api_keys.create')}</DialogTitle>
-            <DialogDescription>{t('api_keys.description')}</DialogDescription>
+            <DialogTitle>{t('common:api_keys.create')}</DialogTitle>
+            <DialogDescription>{t('common:api_keys.description')}</DialogDescription>
           </DialogHeader>
           <div className="py-4">
-            <label className="text-sm font-medium text-text-primary">{t('api_keys.name')}</label>
+            <label className="text-sm font-medium text-text-primary">
+              {t('common:api_keys.name')}
+            </label>
             <Input
               className="mt-2"
-              placeholder={t('api_keys.name_placeholder')}
+              placeholder={t('common:api_keys.name_placeholder')}
               value={keyName}
               onChange={e => setKeyName(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleCreate()}
@@ -271,16 +284,16 @@ const ApiKeyList: React.FC = () => {
               onClick={() => setCreateDialogOpen(false)}
               disabled={isCreating}
             >
-              {t('actions.cancel')}
+              {t('common:actions.cancel')}
             </Button>
             <Button onClick={handleCreate} disabled={isCreating || !keyName.trim()}>
               {isCreating ? (
                 <div className="flex items-center">
                   <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                  {t('actions.creating')}
+                  {t('common:actions.creating')}
                 </div>
               ) : (
-                t('actions.create')
+                t('common:actions.create')
               )}
             </Button>
           </DialogFooter>
@@ -291,13 +304,15 @@ const ApiKeyList: React.FC = () => {
       <Dialog open={showCreatedDialog} onOpenChange={handleCloseCreatedDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{t('api_keys.create_success')}</DialogTitle>
+            <DialogTitle>{t('common:api_keys.create_success')}</DialogTitle>
             <DialogDescription className="text-warning font-medium">
-              {t('api_keys.warning_save_key')}
+              {t('common:api_keys.warning_save_key')}
             </DialogDescription>
           </DialogHeader>
           <div className="py-4">
-            <label className="text-sm font-medium text-text-primary">{t('api_keys.key')}</label>
+            <label className="text-sm font-medium text-text-primary">
+              {t('common:api_keys.key')}
+            </label>
             <div className="mt-2 flex items-center gap-2">
               <code className="flex-1 bg-muted p-3 rounded text-sm font-mono break-all">
                 {createdKey?.key}
@@ -306,7 +321,7 @@ const ApiKeyList: React.FC = () => {
                 variant="outline"
                 size="icon"
                 onClick={handleCopyKey}
-                title={t('api_keys.copy')}
+                title={t('common:api_keys.copy')}
               >
                 {copied ? (
                   <CheckIcon className="w-4 h-4 text-success" />
@@ -317,7 +332,7 @@ const ApiKeyList: React.FC = () => {
             </div>
           </div>
           <DialogFooter>
-            <Button onClick={handleCloseCreatedDialog}>{t('actions.close')}</Button>
+            <Button onClick={handleCloseCreatedDialog}>{t('common:actions.close')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -329,13 +344,15 @@ const ApiKeyList: React.FC = () => {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t('api_keys.delete_confirm_title')}</AlertDialogTitle>
+            <AlertDialogTitle>{t('common:api_keys.delete_confirm_title')}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t('api_keys.delete_confirm_message', { name: deleteConfirmKey?.name })}
+              {t('common:api_keys.delete_confirm_message', { name: deleteConfirmKey?.name })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={isDeleting}>{t('actions.cancel')}</AlertDialogCancel>
+            <AlertDialogCancel disabled={isDeleting}>
+              {t('common:actions.cancel')}
+            </AlertDialogCancel>
             <AlertDialogAction
               onClick={handleDelete}
               disabled={isDeleting}
@@ -344,10 +361,10 @@ const ApiKeyList: React.FC = () => {
               {isDeleting ? (
                 <div className="flex items-center">
                   <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                  {t('actions.deleting')}
+                  {t('common:actions.deleting')}
                 </div>
               ) : (
-                t('actions.delete')
+                t('common:actions.delete')
               )}
             </AlertDialogAction>
           </AlertDialogFooter>

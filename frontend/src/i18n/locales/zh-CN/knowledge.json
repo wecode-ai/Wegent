@@ -7,6 +7,7 @@
   "go_to_create": "前往创建知识库",
   "fetch_error": "加载知识库失败",
   "documents": "文档",
+  "document_count": "{{count}} 篇文档",
   "documents_count": "{{count}} 篇文档",
   "modules": {
     "title": "我的知识",
@@ -129,7 +130,13 @@
       "hybridWeights": "混合检索权重",
       "semanticWeight": "语义权重",
       "keywordWeight": "关键词权重",
-      "weightSum": "权重之和必须等于 1.0"
+      "weightSum": "权重之和必须等于 1.0",
+      "sourceType": {
+        "user": "个人",
+        "public": "公共",
+        "group": "组"
+      },
+      "searchPlaceholder": "搜索..."
     },
     "splitter": {
       "title": "分段设置",
@@ -202,5 +209,6 @@
   "access_denied_description": "Wiki任务用户没有访问此仓库的权限。请将该用户添加到GitLab项目或配置其他用户。",
   "no_bound_model_warning": "Wiki生成功能暂不可用。默认Wiki智能体未配置模型，请联系管理员。",
   "regenerate": "重新生成",
-  "view_detail": "查看详情"
+  "view_detail": "查看详情",
+  "coming_soon": "即将推出"
 }

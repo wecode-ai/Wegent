@@ -13,6 +13,9 @@ import { AdminTabNav, AdminTabId } from '@/features/admin/components/AdminTabNav
 import { ShieldExclamationIcon } from '@heroicons/react/24/outline';
 import UserList from '@/features/admin/components/UserList';
 import PublicModelList from '@/features/admin/components/PublicModelList';
+import PublicRetrieverList from '@/features/admin/components/PublicRetrieverList';
+import PublicSkillList from '@/features/admin/components/PublicSkillList';
+import ApiKeyManagement from '@/features/admin/components/ApiKeyManagement';
 import SystemConfigPanel from '@/features/admin/components/SystemConfigPanel';
 import { UserProvider, useUser } from '@/features/common/UserContext';
 import { TaskContextProvider } from '@/features/tasks/contexts/taskContext';
@@ -27,15 +30,17 @@ import '@/app/tasks/tasks.css';
 import '@/features/common/scrollbar.css';
 
 function AccessDenied() {
-  const { t } = useTranslation('admin');
+  const { t } = useTranslation();
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
       <ShieldExclamationIcon className="w-16 h-16 text-text-muted mb-4" />
-      <h1 className="text-2xl font-semibold text-text-primary mb-2">{t('access_denied.title')}</h1>
-      <p className="text-text-muted mb-6 max-w-md">{t('access_denied.message')}</p>
+      <h1 className="text-2xl font-semibold text-text-primary mb-2">
+        {t('admin:access_denied.title')}
+      </h1>
+      <p className="text-text-muted mb-6 max-w-md">{t('admin:access_denied.message')}</p>
       <Link href="/">
-        <Button>{t('access_denied.go_home')}</Button>
+        <Button>{t('admin:access_denied.go_home')}</Button>
       </Link>
     </div>
   );
@@ -44,7 +49,7 @@ function AccessDenied() {
 function AdminContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { t } = useTranslation('admin');
+  const { t } = useTranslation();
   const { user, isLoading } = useUser();
   const isMobile = useIsMobile();
 
@@ -54,7 +59,17 @@ function AdminContent() {
   // Get initial tab from URL
   const getInitialTab = (): AdminTabId => {
     const tab = searchParams.get('tab');
-    if (tab && ['users', 'public-models', 'system-config'].includes(tab)) {
+    if (
+      tab &&
+      [
+        'users',
+        'public-models',
+        'public-retrievers',
+        'public-skills',
+        'api-keys',
+        'system-config',
+      ].includes(tab)
+    ) {
       return tab as AdminTabId;
     }
     return 'users';
@@ -100,6 +115,12 @@ function AdminContent() {
         return <UserList />;
       case 'public-models':
         return <PublicModelList />;
+      case 'public-retrievers':
+        return <PublicRetrieverList />;
+      case 'public-skills':
+        return <PublicSkillList />;
+      case 'api-keys':
+        return <ApiKeyManagement />;
       case 'system-config':
         return <SystemConfigPanel />;
       default:
@@ -136,7 +157,7 @@ function AdminContent() {
           <TopNavigation
             activePage="dashboard"
             variant="with-sidebar"
-            title={t('title')}
+            title={t('admin:title')}
             onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
           >
             {isMobile ? <ThemeToggle /> : <GithubStarButton />}
@@ -166,7 +187,7 @@ function AdminContent() {
         <TopNavigation
           activePage="dashboard"
           variant="with-sidebar"
-          title={t('title')}
+          title={t('admin:title')}
           onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
         >
           {isMobile ? <ThemeToggle /> : <GithubStarButton />}

@@ -105,6 +105,7 @@ export interface ChatAreaState {
   // Context selection state (knowledge bases)
   selectedContexts: ContextItem[];
   setSelectedContexts: (contexts: ContextItem[]) => void;
+  resetContexts: () => void;
 
   // Refs
   initialTeamIdRef: React.MutableRefObject<number | null>;
@@ -178,6 +179,11 @@ export function useChatAreaState({
 
   // Context selection state (knowledge bases)
   const [selectedContexts, setSelectedContexts] = useState<ContextItem[]>([]);
+
+  // Reset contexts helper
+  const resetContexts = useCallback(() => {
+    setSelectedContexts([]);
+  }, []);
 
   // Media query
   const isMobile = useMediaQuery('(max-width: 640px)');
@@ -268,14 +274,15 @@ export function useChatAreaState({
       setCorrectionModelId(modelId || null);
       setCorrectionModelName(modelName || null);
       // When correction mode is enabled, read web search settings from localStorage
+      const taskId = selectedTaskDetail?.id ?? null;
       if (enabled) {
-        const savedState = correctionApis.getCorrectionModeState();
+        const savedState = correctionApis.getCorrectionModeState(taskId);
         setEnableCorrectionWebSearch(savedState.enableWebSearch ?? true);
       } else {
         setEnableCorrectionWebSearch(false);
       }
     },
-    []
+    [selectedTaskDetail?.id]
   );
 
   // Check if a team is compatible with the current mode
@@ -411,6 +418,7 @@ export function useChatAreaState({
     // Context selection state (knowledge bases)
     selectedContexts,
     setSelectedContexts,
+    resetContexts,
 
     // Refs
     initialTeamIdRef,

@@ -15,7 +15,6 @@ import { useChatStreamHandlers } from './useChatStreamHandlers';
 import { allBotsHavePredefinedModel } from '../selector/ModelSelector';
 import type { Team } from '@/types/api';
 import { useTranslation } from '@/hooks/useTranslation';
-import { isChatShell } from '../../service/messageService';
 import { useRouter } from 'next/navigation';
 import { useTaskContext } from '../../contexts/taskContext';
 import { useChatStreamContext } from '../../contexts/chatStreamContext';
@@ -23,6 +22,7 @@ import { Button } from '@/components/ui/button';
 import { useScrollManagement } from '../hooks/useScrollManagement';
 import { useFloatingInput } from '../hooks/useFloatingInput';
 import { useTeamPreferences } from '../hooks/useTeamPreferences';
+import { useAttachmentUpload } from '../hooks/useAttachmentUpload';
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
@@ -49,14 +49,20 @@ export default function ChatArea({
   onShareButtonRender,
   onRefreshTeams,
 }: ChatAreaProps) {
-  const { t } = useTranslation('chat');
+  const { t } = useTranslation();
   const router = useRouter();
 
   // Task context
   const { selectedTaskDetail, setSelectedTask, accessDenied, clearAccessDenied } = useTaskContext();
 
-  // Stream context for clearVersion
-  const { clearVersion } = useChatStreamContext();
+  // Stream context for clearVersion and getStreamState
+  // getStreamState is used to access messages (SINGLE SOURCE OF TRUTH per AGENTS.md)
+  const { clearVersion, getStreamState } = useChatStreamContext();
+
+  // Get stream state for current task to check messages
+  const currentStreamState = selectedTaskDetail?.id
+    ? getStreamState(selectedTaskDetail.id)
+    : undefined;
 
   // Chat area state (team, repo, branch, model, input, toggles, etc.)
   const chatState = useChatAreaState({
@@ -70,13 +76,14 @@ export default function ChatArea({
   const lastSubtask = subtaskList.length ? subtaskList[subtaskList.length - 1] : null;
   const lastSubtaskId = lastSubtask?.id ?? null;
   const lastSubtaskUpdatedAt = lastSubtask?.updated_at || lastSubtask?.completed_at || null;
-
   // Determine if there are messages to display (computed early for hooks)
+  // Uses context messages as the single source of truth, not selectedTaskDetail.subtasks
   const hasMessagesForHooks = useMemo(() => {
     const hasSelectedTask = selectedTaskDetail && selectedTaskDetail.id;
-    const hasSubtasks = selectedTaskDetail?.subtasks && selectedTaskDetail.subtasks.length > 0;
-    return Boolean(hasSelectedTask || hasSubtasks);
-  }, [selectedTaskDetail]);
+    // Check messages from context (single source of truth)
+    const hasContextMessages = currentStreamState?.messages && currentStreamState.messages.size > 0;
+    return Boolean(hasSelectedTask || hasContextMessages);
+  }, [selectedTaskDetail, currentStreamState?.messages]);
 
   // Use scroll management hook - consolidates 4 useEffect calls
   const {
@@ -125,13 +132,14 @@ export default function ChatArea({
     shouldHideChatInput: chatState.shouldHideChatInput,
     scrollToBottom,
     selectedContexts: chatState.selectedContexts,
+    resetContexts: chatState.resetContexts,
   });
 
   // Determine if there are messages to display (full computation)
   const hasMessages = useMemo(() => {
     const hasSelectedTask = selectedTaskDetail && selectedTaskDetail.id;
     const hasNewTaskStream =
-      !selectedTaskDetail?.id && streamHandlers.streamingTaskId && streamHandlers.isStreaming;
+      !selectedTaskDetail?.id && streamHandlers.pendingTaskId && streamHandlers.isStreaming;
     const hasSubtasks = selectedTaskDetail?.subtasks && selectedTaskDetail.subtasks.length > 0;
     const hasLocalPending = streamHandlers.localPendingMessage !== null;
     const hasUnifiedMessages =
@@ -154,20 +162,19 @@ export default function ChatArea({
     selectedTaskDetail,
     streamHandlers.hasPendingUserMessage,
     streamHandlers.isStreaming,
-    streamHandlers.streamingTaskId,
+    streamHandlers.pendingTaskId,
     streamHandlers.localPendingMessage,
     streamHandlers.currentStreamState?.messages,
   ]);
 
-  // Use team preferences hook - consolidates 4 useEffect calls
+  // Use team preferences hook - consolidates team preference logic
+  // Note: Model selection is now handled by useModelSelection hook in ModelSelector
   useTeamPreferences({
     teams,
     hasMessages,
     selectedTaskDetail,
     selectedTeam: chatState.selectedTeam,
     setSelectedTeam: chatState.setSelectedTeam,
-    setSelectedModel: chatState.setSelectedModel,
-    setForceOverride: chatState.setForceOverride,
     hasRestoredPreferences: chatState.hasRestoredPreferences,
     setHasRestoredPreferences: chatState.setHasRestoredPreferences,
     isTeamCompatibleWithMode: chatState.isTeamCompatibleWithMode,
@@ -223,48 +230,16 @@ export default function ChatArea({
     }
   }, [hasMessages, chatState]);
 
-  // Drag and drop handlers
-  const handleDragEnter = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (!chatState.selectedTeam || !isChatShell(chatState.selectedTeam)) return;
-      if (chatState.isLoading || streamHandlers.isStreaming) return;
-      chatState.setIsDragging(true);
-    },
-    [chatState, streamHandlers.isStreaming]
-  );
-
-  const handleDragLeave = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (e.currentTarget.contains(e.relatedTarget as Node)) return;
-      chatState.setIsDragging(false);
-    },
-    [chatState]
-  );
-
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-  }, []);
-
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      chatState.setIsDragging(false);
-      if (!chatState.selectedTeam || !isChatShell(chatState.selectedTeam)) return;
-      if (chatState.isLoading || streamHandlers.isStreaming) return;
-
-      const files = e.dataTransfer.files;
-      if (files && files.length > 0) {
-        chatState.handleFileSelect(Array.from(files));
-      }
-    },
-    [chatState, streamHandlers.isStreaming]
-  );
+  // Use attachment upload hook - centralizes all attachment upload logic
+  const { handleDragEnter, handleDragLeave, handleDragOver, handleDrop, handlePasteFile } =
+    useAttachmentUpload({
+      team: chatState.selectedTeam,
+      isLoading: chatState.isLoading,
+      isStreaming: streamHandlers.isStreaming,
+      attachmentState: chatState.attachmentState,
+      onFileSelect: chatState.handleFileSelect,
+      setIsDragging: chatState.setIsDragging,
+    });
 
   // Callback for MessagesArea content changes - enhanced with streaming check
   const handleMessagesContentChange = useCallback(() => {
@@ -306,10 +281,10 @@ export default function ChatArea({
               </div>
             </div>
             <h1 className="text-2xl font-semibold text-center mb-3 text-text-primary">
-              {t('tasks.access_denied_title')}
+              {t('tasks:access_denied_title')}
             </h1>
             <p className="text-center text-text-muted mb-8 leading-relaxed">
-              {t('tasks.access_denied_description')}
+              {t('tasks:access_denied_description')}
             </p>
             <div className="flex justify-center">
               <Button
@@ -318,7 +293,7 @@ export default function ChatArea({
                 size="default"
                 className="min-w-[160px]"
               >
-                {t('tasks.access_denied_go_home')}
+                {t('tasks:access_denied_go_home')}
               </Button>
             </div>
           </div>
@@ -345,12 +320,14 @@ export default function ChatArea({
     onDrop: handleDrop,
     canSubmit,
     handleSendMessage: streamHandlers.handleSendMessage,
-    onPasteFile: chatState.handleFileSelect,
+    onPasteFile: handlePasteFile,
     // ChatInputControls props
     selectedModel: chatState.selectedModel,
     setSelectedModel: chatState.setSelectedModel,
     forceOverride: chatState.forceOverride,
     setForceOverride: chatState.setForceOverride,
+    teamId: chatState.selectedTeam?.id,
+    taskId: selectedTaskDetail?.id,
     showRepositorySelector,
     selectedRepo: chatState.selectedRepo,
     setSelectedRepo: chatState.setSelectedRepo,
@@ -424,6 +401,8 @@ export default function ChatArea({
               enableCorrectionMode={chatState.enableCorrectionMode}
               correctionModelId={chatState.correctionModelId}
               enableCorrectionWebSearch={chatState.enableCorrectionWebSearch}
+              hasMessages={hasMessages}
+              pendingTaskId={streamHandlers.pendingTaskId}
             />
           </div>
         </div>
@@ -463,14 +442,15 @@ export default function ChatArea({
         {hasMessages && (
           <div
             ref={floatingInputRef}
-            className="fixed bottom-0 z-50 bg-gradient-to-t from-base via-base/95 to-base/0"
+            className="fixed bottom-0 z-50"
             style={{
-              left: floatingMetrics.width ? floatingMetrics.left : 0,
-              width: floatingMetrics.width || '100%',
-              right: floatingMetrics.width ? undefined : 0,
+              left: floatingMetrics.left,
+              width: floatingMetrics.width,
             }}
           >
-            <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 py-4">
+            {/* Gradient background - contained within the floating input bounds */}
+            <div className="absolute inset-0 bg-gradient-to-t from-base via-base/95 to-base/0 pointer-events-none" />
+            <div className="relative z-10 w-full max-w-4xl mx-auto px-4 sm:px-6 py-4">
               <ChatInputCard {...inputCardProps} />
             </div>
           </div>

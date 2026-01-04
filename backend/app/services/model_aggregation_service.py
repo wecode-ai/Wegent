@@ -22,6 +22,7 @@ from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.kind import Model, ModelCategoryType, Shell
 from app.services.adapters.public_model import public_model_service
+from app.services.adapters.shell_utils import find_shell_json
 from app.services.kind import kind_service
 
 logger = logging.getLogger(__name__)
@@ -206,33 +207,35 @@ class ModelAggregationService:
         # No filter, allow all
         return True
 
-    def _get_shell_support_model(self, db: Session, shell_type: str) -> List[str]:
+    def _get_shell_support_model(
+        self, db: Session, shell_name: str, current_user: Optional[User] = None
+    ) -> tuple[List[str], str]:
         """
-        Get supported model list from shell configuration.
+        Get supported model list and shellType from shell configuration.
 
         Args:
             db: Database session
-            shell_type: Shell type
+            shell_name: Shell name (can be public shell name or custom shell name)
+            current_user: Current user (optional, for looking up user-defined shells)
 
         Returns:
-            List of supported model providers
+            Tuple of (supported model list, shell type)
         """
+        user_id = current_user.id if current_user else None
+        shell_json = find_shell_json(db, shell_name, user_id)
+        if not shell_json:
+            return ([], shell_name)
 
-        shell_row = (
-            db.query(Kind.json)
-            .filter(Kind.user_id == 0, Kind.kind == "Shell", Kind.name == shell_type)
-            .first()
-        )
-
-        if shell_row and isinstance(shell_row[0], dict):
-            try:
-                shell_crd = Shell.model_validate(shell_row[0])
-                support_model = shell_crd.spec.supportModel or []
-                return [str(x) for x in support_model if x]
-            except (ValueError, KeyError, AttributeError) as e:
-                logger.warning("Failed to parse shell config: %s", e)
-
-        return []
+        try:
+            shell_crd = Shell.model_validate(shell_json)
+            support_model = shell_crd.spec.supportModel or []
+            return (
+                [str(x) for x in support_model if x],
+                shell_crd.spec.shellType,
+            )
+        except (ValueError, KeyError, AttributeError) as e:
+            logger.warning("Failed to parse shell config: %s", e)
+            return ([], shell_name)
 
     def _is_custom_model(self, model_data: Dict[str, Any]) -> bool:
         """
@@ -303,10 +306,12 @@ class ModelAggregationService:
         """
         from app.services.group_permission import get_user_groups
 
-        # Get shell configuration if shell_type is provided
         support_model: List[str] = []
+        actual_shell_type: str = shell_type or ""
         if shell_type:
-            support_model = self._get_shell_support_model(db, shell_type)
+            support_model, actual_shell_type = self._get_shell_support_model(
+                db, shell_type, current_user
+            )
 
         result: List[UnifiedModel] = []
         seen_names: Dict[str, ModelType] = {}  # Track names to handle duplicates
@@ -365,9 +370,8 @@ class ModelAggregationService:
                     continue
                 info = self._extract_model_info_from_crd(model_data)
 
-                # Filter by shell compatibility if shell_type is provided
                 if shell_type and not self._is_model_compatible_with_shell(
-                    info["provider"], shell_type, support_model
+                    info["provider"], actual_shell_type, support_model
                 ):
                     continue
 
@@ -417,9 +421,8 @@ class ModelAggregationService:
             if isinstance(config, dict):
                 public_model_category_type = config.get("modelType", "llm")
 
-            # Filter by shell compatibility if shell_type is provided
             if shell_type and not self._is_model_compatible_with_shell(
-                provider, shell_type, support_model
+                provider, actual_shell_type, support_model
             ):
                 continue
 

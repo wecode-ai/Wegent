@@ -117,6 +117,40 @@ def get_tasks_lite(
     return {"total": total, "items": items}
 
 
+@router.get("/lite/group", response_model=TaskLiteListResponse)
+def get_group_tasks_lite(
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(50, ge=1, le=100, description="Items per page"),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get current user's group chat task list (paginated) for fast loading.
+    Returns only group chat tasks sorted by updated_at descending (most recent activity first).
+    """
+    skip = (page - 1) * limit
+    items, total = task_kinds_service.get_user_group_tasks_lite(
+        db=db, user_id=current_user.id, skip=skip, limit=limit
+    )
+    return {"total": total, "items": items}
+
+
+@router.get("/lite/personal", response_model=TaskLiteListResponse)
+def get_personal_tasks_lite(
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(50, ge=1, le=100, description="Items per page"),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get current user's personal (non-group-chat) task list (paginated) for fast loading.
+    Returns only personal tasks sorted by created_at descending (newest first).
+    """
+    skip = (page - 1) * limit
+    items, total = task_kinds_service.get_user_personal_tasks_lite(
+        db=db, user_id=current_user.id, skip=skip, limit=limit
+    )
+    return {"total": total, "items": items}
+
+
 @router.get("/lite/new", response_model=TaskLiteListResponse)
 def get_new_tasks_lite(
     since_id: int = Query(..., ge=1, description="Get tasks with ID greater than this"),
@@ -326,6 +360,10 @@ def sanitize_filename(name: str) -> str:
 @router.get("/{task_id}/export/docx", summary="Export task as DOCX")
 async def export_task_docx(
     task_id: int,
+    message_ids: Optional[str] = Query(
+        None,
+        description="Comma-separated list of message IDs to export. If not provided, exports all messages.",
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
@@ -334,7 +372,7 @@ async def export_task_docx(
 
     Returns a downloadable DOCX file containing:
     - Task title and metadata
-    - All subtask messages (user prompts and AI responses)
+    - All subtask messages (user prompts and AI responses), or filtered by message_ids
     - Formatted markdown content
     - Embedded images and attachment info
     """
@@ -359,9 +397,22 @@ async def export_task_docx(
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
+    # Parse message_ids if provided
+    filter_message_ids: Optional[list[int]] = None
+    if message_ids:
+        try:
+            filter_message_ids = [
+                int(id.strip()) for id in message_ids.split(",") if id.strip()
+            ]
+        except ValueError as e:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid message_ids format. Must be comma-separated integers.",
+            ) from e
+
     try:
-        # Generate DOCX document
-        docx_buffer = generate_task_docx(task, db)
+        # Generate DOCX document with optional message filter
+        docx_buffer = generate_task_docx(task, db, message_ids=filter_message_ids)
 
         # Get task title for filename
         task_data = task.json.get("spec", {})

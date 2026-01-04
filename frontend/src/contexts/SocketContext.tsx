@@ -25,6 +25,7 @@ import { io, Socket } from 'socket.io-client';
 import { getToken } from '@/apis/user';
 import {
   ServerEvents,
+  ClientSkillEvents,
   ChatStartPayload,
   ChatChunkPayload,
   ChatDonePayload,
@@ -36,6 +37,13 @@ import {
   TaskCreatedPayload,
   TaskStatusPayload,
   TaskInvitedPayload,
+  SkillRequestPayload,
+  SkillResponsePayload,
+  CorrectionStartPayload,
+  CorrectionProgressPayload,
+  CorrectionChunkPayload,
+  CorrectionDonePayload,
+  CorrectionErrorPayload,
 } from '@/types/socket';
 
 import { fetchRuntimeConfig, getSocketUrl } from '@/lib/runtime-config';
@@ -86,6 +94,12 @@ interface SocketContextType {
   registerChatHandlers: (handlers: ChatEventHandlers) => () => void;
   /** Register task event handlers */
   registerTaskHandlers: (handlers: TaskEventHandlers) => () => void;
+  /** Register skill event handlers */
+  registerSkillHandlers: (handlers: SkillEventHandlers) => () => void;
+  /** Send skill response back to server */
+  sendSkillResponse: (payload: SkillResponsePayload) => void;
+  /** Register correction event handlers */
+  registerCorrectionHandlers: (handlers: CorrectionEventHandlers) => () => void;
 }
 
 /** Chat event handlers for streaming */
@@ -106,6 +120,21 @@ export interface TaskEventHandlers {
   onTaskStatus?: (data: TaskStatusPayload) => void;
 }
 
+/** Skill event handlers for generic skill requests */
+export interface SkillEventHandlers {
+  /** Handler for skill:request event (server requests frontend to perform a skill action) */
+  onSkillRequest?: (data: SkillRequestPayload) => void;
+}
+
+/** Correction event handlers for cross-validation progress */
+export interface CorrectionEventHandlers {
+  onCorrectionStart?: (data: CorrectionStartPayload) => void;
+  onCorrectionProgress?: (data: CorrectionProgressPayload) => void;
+  onCorrectionChunk?: (data: CorrectionChunkPayload) => void;
+  onCorrectionDone?: (data: CorrectionDonePayload) => void;
+  onCorrectionError?: (data: CorrectionErrorPayload) => void;
+}
+
 const SocketContext = createContext<SocketContextType | undefined>(undefined);
 
 export function SocketProvider({ children }: { children: ReactNode }) {
@@ -118,13 +147,13 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   const joinedTasksRef = useRef<Set<number>>(new Set());
   // Use ref for socket to avoid dependency issues in connect callback
   const socketRef = useRef<Socket | null>(null);
+  // Track reconnection attempts for rejoining tasks
+  const hasReconnectedRef = useRef<boolean>(false);
 
   /**
    * Internal function to create socket connection
    */
   const createSocketConnection = useCallback((token: string, socketUrl: string) => {
-    console.log('[Socket.IO] Connecting to server...', socketUrl + '/chat');
-
     // Create new socket connection
     // Transport strategy:
     // 1. Try WebSocket first (preferred for load-balanced environments without sticky sessions)
@@ -155,15 +184,34 @@ export function SocketProvider({ children }: { children: ReactNode }) {
 
     // Connection event handlers
     newSocket.on('connect', () => {
-      console.log('[Socket.IO] Connected:', newSocket.id);
+      console.log('[Socket.IO] Connected to server');
       setIsConnected(true);
       setConnectionError(null);
       setReconnectAttempts(0);
+
+      // If we were previously connected and this is a reconnect, rejoin tasks
+      // This handles both manual reconnects and transport upgrade scenarios
+      if (socketRef.current && joinedTasksRef.current.size > 0) {
+        console.log('[Socket.IO] Connection restored, rejoining task rooms...');
+        const tasksToRejoin = Array.from(joinedTasksRef.current);
+        console.log('[Socket.IO] Rejoining tasks:', tasksToRejoin);
+
+        tasksToRejoin.forEach(taskId => {
+          newSocket.emit('task:join', { task_id: taskId }, (response: { error?: string }) => {
+            if (response?.error) {
+              console.error(`[Socket.IO] Failed to rejoin task ${taskId}:`, response.error);
+            } else {
+              console.log(`[Socket.IO] Successfully rejoined task ${taskId}`);
+            }
+          });
+        });
+      }
     });
 
     newSocket.on('disconnect', (reason: string) => {
-      console.log('[Socket.IO] Disconnected:', reason);
+      console.log('[Socket.IO] Disconnected from server, reason:', reason);
       setIsConnected(false);
+      // Don't clear joinedTasksRef here - we need it for rejoining after reconnect
     });
 
     newSocket.on('connect_error', (error: Error) => {
@@ -173,19 +221,28 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     });
 
     newSocket.io.on('reconnect_attempt', (attempt: number) => {
-      console.log('[Socket.IO] Reconnect attempt:', attempt);
       setReconnectAttempts(attempt);
     });
 
-    newSocket.io.on('reconnect', (attempt: number) => {
-      console.log('[Socket.IO] Reconnected after', attempt, 'attempts');
+    newSocket.io.on('reconnect', (_attempt: number) => {
+      console.log('[Socket.IO] Reconnected successfully, rejoining task rooms...');
       setIsConnected(true);
       setConnectionError(null);
       setReconnectAttempts(0);
+      hasReconnectedRef.current = true;
 
       // Rejoin all previously joined task rooms
-      joinedTasksRef.current.forEach(taskId => {
-        newSocket.emit('task:join', { task_id: taskId });
+      const tasksToRejoin = Array.from(joinedTasksRef.current);
+      console.log('[Socket.IO] Rejoining tasks:', tasksToRejoin);
+
+      tasksToRejoin.forEach(taskId => {
+        newSocket.emit('task:join', { task_id: taskId }, (response: { error?: string }) => {
+          if (response?.error) {
+            console.error(`[Socket.IO] Failed to rejoin task ${taskId}:`, response.error);
+          } else {
+            console.log(`[Socket.IO] Successfully rejoined task ${taskId}`);
+          }
+        });
       });
     });
 
@@ -205,13 +262,11 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     (token: string) => {
       // Check if already connected using ref
       if (socketRef.current?.connected) {
-        console.log('[Socket.IO] Already connected, skipping');
         return;
       }
 
       // Disconnect existing socket if any
       if (socketRef.current) {
-        console.log('[Socket.IO] Disconnecting existing socket');
         socketRef.current.disconnect();
         socketRef.current = null;
       }
@@ -241,6 +296,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   /**
    * Join a task room
    * Prevents duplicate joins by checking if already joined
+   * If reconnected, always rejoin to ensure backend state is synced
    */
   const joinTask = useCallback(
     async (
@@ -258,10 +314,14 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       }
 
       // Check if already joined this task room to prevent duplicate joins
-      // This check happens BEFORE adding to the set to handle concurrent calls
-      if (joinedTasksRef.current.has(taskId)) {
-        console.log('[Socket.IO] Already joined task room, skipping:', taskId);
+      // Exception: If we just reconnected, always rejoin to sync backend state
+      if (joinedTasksRef.current.has(taskId) && !hasReconnectedRef.current) {
         return {};
+      }
+
+      // Clear reconnected flag after first join
+      if (hasReconnectedRef.current) {
+        hasReconnectedRef.current = false;
       }
 
       // Add to set IMMEDIATELY to prevent concurrent duplicate joins
@@ -314,13 +374,6 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       // Use socketRef for reliable access (socket state may be stale)
       const currentSocket = socketRef.current;
 
-      console.log('[Socket.IO] sendChatMessage called', {
-        hasSocket: !!currentSocket,
-        isConnected: currentSocket?.connected,
-        socketId: currentSocket?.id,
-        payload: { ...payload, message: payload.message?.substring(0, 50) + '...' },
-      });
-
       if (!currentSocket?.connected) {
         console.error('[Socket.IO] sendChatMessage failed: not connected', {
           hasSocket: !!currentSocket,
@@ -330,13 +383,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       }
 
       return new Promise(resolve => {
-        console.log('[Socket.IO] Emitting chat:send event, payload:', {
-          ...payload,
-          attachment_ids: payload.attachment_ids,
-          attachment_ids_length: payload.attachment_ids?.length || 0,
-        });
         currentSocket.emit('chat:send', payload, (response: ChatSendAck) => {
-          console.log('[Socket.IO] chat:send response received', response);
           resolve(response);
         });
       });
@@ -399,21 +446,11 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         use_model_override: forceOverride,
       };
 
-      console.log('[Socket.IO] Emitting chat:retry event', {
-        taskId,
-        subtaskId,
-        modelId,
-        modelType,
-        forceOverride,
-      });
-
       return new Promise(resolve => {
         socket.emit(
           'chat:retry',
           payload,
           (response: { success?: boolean; error?: string } | undefined) => {
-            console.log('[Socket.IO] chat:retry response:', response);
-
             // Handle undefined response (backend error or no acknowledgment)
             if (!response) {
               console.error('[Socket.IO] chat:retry received undefined response');
@@ -494,6 +531,82 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     [socket]
   );
 
+  /**
+   * Register correction event handlers for cross-validation progress
+   * Returns a cleanup function to unregister handlers
+   */
+  const registerCorrectionHandlers = useCallback(
+    (handlers: CorrectionEventHandlers): (() => void) => {
+      if (!socket) {
+        return () => {};
+      }
+
+      const {
+        onCorrectionStart,
+        onCorrectionProgress,
+        onCorrectionChunk,
+        onCorrectionDone,
+        onCorrectionError,
+      } = handlers;
+
+      if (onCorrectionStart) socket.on(ServerEvents.CORRECTION_START, onCorrectionStart);
+      if (onCorrectionProgress) socket.on(ServerEvents.CORRECTION_PROGRESS, onCorrectionProgress);
+      if (onCorrectionChunk) socket.on(ServerEvents.CORRECTION_CHUNK, onCorrectionChunk);
+      if (onCorrectionDone) socket.on(ServerEvents.CORRECTION_DONE, onCorrectionDone);
+      if (onCorrectionError) socket.on(ServerEvents.CORRECTION_ERROR, onCorrectionError);
+
+      // Return cleanup function
+      return () => {
+        if (onCorrectionStart) socket.off(ServerEvents.CORRECTION_START, onCorrectionStart);
+        if (onCorrectionProgress)
+          socket.off(ServerEvents.CORRECTION_PROGRESS, onCorrectionProgress);
+        if (onCorrectionChunk) socket.off(ServerEvents.CORRECTION_CHUNK, onCorrectionChunk);
+        if (onCorrectionDone) socket.off(ServerEvents.CORRECTION_DONE, onCorrectionDone);
+        if (onCorrectionError) socket.off(ServerEvents.CORRECTION_ERROR, onCorrectionError);
+      };
+    },
+    [socket]
+  );
+
+  /**
+   * Register skill event handlers for generic skill requests
+   * Returns a cleanup function to unregister handlers
+   */
+  const registerSkillHandlers = useCallback(
+    (handlers: SkillEventHandlers): (() => void) => {
+      if (!socket) {
+        return () => {};
+      }
+
+      const { onSkillRequest } = handlers;
+
+      if (onSkillRequest) socket.on(ServerEvents.SKILL_REQUEST, onSkillRequest);
+
+      // Return cleanup function
+      return () => {
+        if (onSkillRequest) socket.off(ServerEvents.SKILL_REQUEST, onSkillRequest);
+      };
+    },
+    [socket]
+  );
+
+  /**
+   * Send skill response back to server
+   */
+  const sendSkillResponse = useCallback(
+    (payload: SkillResponsePayload): void => {
+      const currentSocket = socketRef.current;
+
+      if (!currentSocket?.connected) {
+        console.error('[Socket.IO] sendSkillResponse failed: not connected');
+        return;
+      }
+
+      currentSocket.emit(ClientSkillEvents.SKILL_RESPONSE, payload);
+    },
+    [] // No dependencies - use socketRef
+  );
+
   // Auto-connect when component mounts if token is available
   useEffect(() => {
     // Only run on client side
@@ -508,10 +621,9 @@ export function SocketProvider({ children }: { children: ReactNode }) {
 
     const token = getToken();
     if (token) {
-      console.log('[Socket.IO] Auto-connecting with token from localStorage');
       connect(token);
     } else {
-      console.log('[Socket.IO] No token found, skipping auto-connect');
+      console.error('[Socket.IO] No token found, skipping auto-connect');
     }
   }, [connect]);
 
@@ -523,11 +635,9 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       if (e.key === 'auth_token') {
         if (e.newValue) {
           // Token was set (login from another tab)
-          console.log('[Socket.IO] Token changed in another tab, connecting');
           connect(e.newValue);
         } else {
           // Token was removed (logout from another tab)
-          console.log('[Socket.IO] Token removed in another tab, disconnecting');
           disconnect();
         }
       }
@@ -564,6 +674,9 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         retryMessage,
         registerChatHandlers,
         registerTaskHandlers,
+        registerSkillHandlers,
+        sendSkillResponse,
+        registerCorrectionHandlers,
       }}
     >
       {children}

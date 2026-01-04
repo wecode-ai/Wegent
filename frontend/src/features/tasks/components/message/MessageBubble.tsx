@@ -5,7 +5,14 @@
 'use client';
 
 import React, { memo, useState } from 'react';
-import type { TaskDetail, Team, GitRepoInfo, GitBranch, Attachment } from '@/types/api';
+import type {
+  TaskDetail,
+  Team,
+  GitRepoInfo,
+  GitBranch,
+  Attachment,
+  SubtaskContextBrief,
+} from '@/types/api';
 import {
   Bot,
   Download,
@@ -27,14 +34,17 @@ import { ThinkingDisplay } from './thinking';
 import ClarificationForm from '../clarification/ClarificationForm';
 import FinalPromptMessage from './FinalPromptMessage';
 import ClarificationAnswerSummary from '../clarification/ClarificationAnswerSummary';
-import AttachmentPreview from '../input/AttachmentPreview';
+import ContextBadgeList from './ContextBadgeList';
 import StreamingWaitIndicator from './StreamingWaitIndicator';
 import BubbleTools, { CopyButton } from './BubbleTools';
 import { SourceReferences } from '../chat/SourceReferences';
+import CollapsibleMessage from './CollapsibleMessage';
 import type { ClarificationData, FinalPromptData, ClarificationAnswer } from '@/types/api';
 import type { SourceReference } from '@/types/socket';
 import { useTraceAction } from '@/hooks/useTraceAction';
 import { useMessageFeedback } from '@/hooks/useMessageFeedback';
+import { SmartLink, SmartImage, SmartTextLine } from '@/components/common/SmartUrlRenderer';
+import { formatDateTime } from '@/utils/dateTime';
 export interface Message {
   type: 'user' | 'ai';
   content: string;
@@ -60,7 +70,10 @@ export interface Message {
     shell_type?: string; // Shell type (Chat, ClaudeCode, Agno, etc.)
     sources?: SourceReference[]; // RAG knowledge base sources
   };
+  /** @deprecated Use contexts instead */
   attachments?: Attachment[];
+  /** Unified contexts (attachments, knowledge bases, etc.) */
+  contexts?: SubtaskContextBrief[];
   /** Recovered content from Redis/DB when user refreshes during streaming */
   recoveredContent?: string;
   /** Flag indicating this message has recovered content */
@@ -123,6 +136,8 @@ export interface MessageBubbleProps {
   onRetry?: (message: Message) => void;
   /** Message type for feedback storage key differentiation */
   feedbackMessageType?: 'original' | 'correction';
+  /** Whether this is a group chat (for enabling message collapsing) */
+  isGroupChat?: boolean;
 }
 
 // Component for rendering a paragraph with hover action button
@@ -234,6 +249,7 @@ const MessageBubble = memo(
     isCurrentUserMessage,
     onRetry,
     feedbackMessageType,
+    isGroupChat,
   }: MessageBubbleProps) {
     // Use trace hook for telemetry (auto-includes user and task context)
     const { trace } = useTraceAction();
@@ -267,18 +283,12 @@ const MessageBubble = memo(
       : '';
 
     const formatTimestamp = (timestamp: number | undefined) => {
-      if (typeof timestamp !== 'number' || Number.isNaN(timestamp)) return '';
-      return new Date(timestamp).toLocaleTimeString(navigator.language, {
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        hour12: false,
-        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      });
+      return formatDateTime(timestamp);
     };
 
     const timestampLabel = formatTimestamp(msg.timestamp);
-    const headerIcon = isUserTypeMessage ? null : msg.botName === t('correction.result_title') ? (
+    const headerIcon = isUserTypeMessage ? null : msg.botName ===
+      t('chat:correction.result_title') ? (
       <svg
         xmlns="http://www.w3.org/2000/svg"
         width="24"
@@ -299,6 +309,15 @@ const MessageBubble = memo(
       <Bot className="w-4 h-4" />
     );
     const headerLabel = isUserTypeMessage ? '' : msg.botName || t('messages.bot') || 'Bot';
+
+    // Determine if message is currently streaming (to disable URL metadata fetching)
+    // During streaming, we show simple links to avoid excessive API calls
+    const isStreaming =
+      msg.subtaskStatus === 'RUNNING' ||
+      msg.subtaskStatus === 'PENDING' ||
+      msg.subtaskStatus === 'PROCESSING' ||
+      isWaiting ||
+      msg.isWaiting;
 
     const renderProgressBar = (status: string, progress: number) => {
       const normalizedStatus = (status ?? '').toUpperCase();
@@ -447,59 +466,93 @@ const MessageBubble = memo(
         );
       };
 
+      // Check if message should be collapsible (only for completed AI messages in group chat, not streaming)
+      // Only enable collapsing for group chat messages
+      const shouldEnableCollapse = !isStreaming && msg.subtaskStatus !== 'RUNNING' && isGroupChat;
+
+      const markdownContent = (
+        <MarkdownWithMermaid
+          source={normalizedResult}
+          theme={theme}
+          components={
+            paragraphAction
+              ? {
+                  a: ({ href, children }) => {
+                    if (!href) {
+                      return <span>{children}</span>;
+                    }
+                    return (
+                      <SmartLink href={href} disabled={isStreaming}>
+                        {children}
+                      </SmartLink>
+                    );
+                  },
+                  img: ({ src, alt }) => {
+                    if (!src || typeof src !== 'string') return null;
+                    return <SmartImage src={src} alt={alt} />;
+                  },
+                  p: ({ children }) => {
+                    const text = extractText(children);
+                    return wrapWithAction(<p>{children}</p>, text);
+                  },
+                  h1: ({ children }) => {
+                    const text = extractText(children);
+                    return wrapWithAction(<h1>{children}</h1>, text);
+                  },
+                  h2: ({ children }) => {
+                    const text = extractText(children);
+                    return wrapWithAction(<h2>{children}</h2>, text);
+                  },
+                  h3: ({ children }) => {
+                    const text = extractText(children);
+                    return wrapWithAction(<h3>{children}</h3>, text);
+                  },
+                  h4: ({ children }) => {
+                    const text = extractText(children);
+                    return wrapWithAction(<h4>{children}</h4>, text);
+                  },
+                  h5: ({ children }) => {
+                    const text = extractText(children);
+                    return wrapWithAction(<h5>{children}</h5>, text);
+                  },
+                  h6: ({ children }) => {
+                    const text = extractText(children);
+                    return wrapWithAction(<h6>{children}</h6>, text);
+                  },
+                  li: ({ children }) => {
+                    const text = extractText(children);
+                    return wrapWithAction(<li>{children}</li>, text);
+                  },
+                  blockquote: ({ children }) => {
+                    const text = extractText(children);
+                    return wrapWithAction(<blockquote>{children}</blockquote>, text);
+                  },
+                }
+              : {
+                  a: ({ href, children }) => {
+                    if (!href) {
+                      return <span>{children}</span>;
+                    }
+                    return (
+                      <SmartLink href={href} disabled={isStreaming}>
+                        {children}
+                      </SmartLink>
+                    );
+                  },
+                  img: ({ src, alt }) => {
+                    if (!src || typeof src !== 'string') return null;
+                    return <SmartImage src={src} alt={alt} />;
+                  },
+                }
+          }
+        />
+      );
+
       return (
         <>
-          <MarkdownWithMermaid
-            source={normalizedResult}
-            theme={theme}
-            components={
-              paragraphAction
-                ? {
-                    a: ({ href, children, ...props }) => (
-                      <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                        {children}
-                      </a>
-                    ),
-                    p: ({ children }) => {
-                      const text = extractText(children);
-                      return wrapWithAction(<p>{children}</p>, text);
-                    },
-                    h1: ({ children }) => {
-                      const text = extractText(children);
-                      return wrapWithAction(<h1>{children}</h1>, text);
-                    },
-                    h2: ({ children }) => {
-                      const text = extractText(children);
-                      return wrapWithAction(<h2>{children}</h2>, text);
-                    },
-                    h3: ({ children }) => {
-                      const text = extractText(children);
-                      return wrapWithAction(<h3>{children}</h3>, text);
-                    },
-                    h4: ({ children }) => {
-                      const text = extractText(children);
-                      return wrapWithAction(<h4>{children}</h4>, text);
-                    },
-                    h5: ({ children }) => {
-                      const text = extractText(children);
-                      return wrapWithAction(<h5>{children}</h5>, text);
-                    },
-                    h6: ({ children }) => {
-                      const text = extractText(children);
-                      return wrapWithAction(<h6>{children}</h6>, text);
-                    },
-                    li: ({ children }) => {
-                      const text = extractText(children);
-                      return wrapWithAction(<li>{children}</li>, text);
-                    },
-                    blockquote: ({ children }) => {
-                      const text = extractText(children);
-                      return wrapWithAction(<blockquote>{children}</blockquote>, text);
-                    },
-                  }
-                : undefined
-            }
-          />
+          <CollapsibleMessage content={normalizedResult} enabled={shouldEnableCollapse}>
+            {markdownContent}
+          </CollapsibleMessage>
           <SourceReferences sources={msg.sources || msg.result?.sources || []} />
           <BubbleTools
             contentToCopy={`${promptPart ? promptPart + '\n\n' : ''}${normalizedResult}`}
@@ -527,8 +580,8 @@ const MessageBubble = memo(
             onLike={handleLike}
             onDislike={handleDislike}
             feedbackLabels={{
-              like: t('messages.like') || 'Like',
-              dislike: t('messages.dislike') || 'Dislike',
+              like: t('chat:messages.like') || 'Like',
+              dislike: t('chat:messages.dislike') || 'Dislike',
             }}
           />
         </>
@@ -661,12 +714,9 @@ const MessageBubble = memo(
           return <React.Fragment key={idx}>{renderProgressBar(status, progress)}</React.Fragment>;
         }
 
-        // Use non-breaking space for empty lines to preserve line height
-        return (
-          <div key={idx} className="text-sm break-all min-h-[1.25em]">
-            {line || '\u00A0'}
-          </div>
-        );
+        // Use SmartTextLine to detect and render URLs (images and links) in plain text
+        // Pass disabled={isStreaming} to avoid metadata fetching during streaming
+        return <SmartTextLine key={idx} text={line} disabled={isStreaming} />;
       });
     };
     // Helper function to parse Markdown clarification questions
@@ -972,11 +1022,20 @@ const MessageBubble = memo(
                   style={{ background: 'transparent' }}
                   wrapperElement={{ 'data-color-mode': theme }}
                   components={{
-                    a: ({ href, children, ...props }) => (
-                      <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                        {children}
-                      </a>
-                    ),
+                    a: ({ href, children }) => {
+                      if (!href) {
+                        return <span>{children}</span>;
+                      }
+                      return (
+                        <SmartLink href={href} disabled={isStreaming}>
+                          {children}
+                        </SmartLink>
+                      );
+                    },
+                    img: ({ src, alt }) => {
+                      if (!src || typeof src !== 'string') return null;
+                      return <SmartImage src={src} alt={alt} />;
+                    },
                   }}
                 />
               )}
@@ -996,11 +1055,20 @@ const MessageBubble = memo(
                     style={{ background: 'transparent' }}
                     wrapperElement={{ 'data-color-mode': theme }}
                     components={{
-                      a: ({ href, children, ...props }) => (
-                        <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                          {children}
-                        </a>
-                      ),
+                      a: ({ href, children }) => {
+                        if (!href) {
+                          return <span>{children}</span>;
+                        }
+                        return (
+                          <SmartLink href={href} disabled={isStreaming}>
+                            {children}
+                          </SmartLink>
+                        );
+                      },
+                      img: ({ src, alt }) => {
+                        if (!src || typeof src !== 'string') return null;
+                        return <SmartImage src={src} alt={alt} />;
+                      },
                     }}
                   />
                 </div>
@@ -1040,23 +1108,6 @@ const MessageBubble = memo(
 
     const renderMessageBody = (message: Message, messageIndex: number) =>
       message.type === 'ai' ? renderAiMessage(message, messageIndex) : renderPlainMessage(message);
-
-    const renderAttachments = (attachments?: Attachment[]) => {
-      if (!attachments || attachments.length === 0) return null;
-
-      return (
-        <div className="flex flex-wrap gap-2 mb-3">
-          {attachments.map((attachment, idx) => (
-            <AttachmentPreview
-              key={`attachment-${attachment.id}-${idx}`}
-              attachment={attachment}
-              compact={false}
-              showDownload={true}
-            />
-          ))}
-        </div>
-      );
-    };
 
     // Render recovered content notice
     const renderRecoveryNotice = () => {
@@ -1106,11 +1157,20 @@ const MessageBubble = memo(
                 style={{ background: 'transparent' }}
                 wrapperElement={{ 'data-color-mode': theme }}
                 components={{
-                  a: ({ href, children, ...props }) => (
-                    <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                      {children}
-                    </a>
-                  ),
+                  a: ({ href, children }) => {
+                    if (!href) {
+                      return <span>{children}</span>;
+                    }
+                    return (
+                      <SmartLink href={href} disabled={isStreaming}>
+                        {children}
+                      </SmartLink>
+                    );
+                  },
+                  img: ({ src, alt }) => {
+                    if (!src || typeof src !== 'string') return null;
+                    return <SmartImage src={src} alt={alt} />;
+                  },
                 }}
               />
             )}
@@ -1130,11 +1190,20 @@ const MessageBubble = memo(
                   style={{ background: 'transparent' }}
                   wrapperElement={{ 'data-color-mode': theme }}
                   components={{
-                    a: ({ href, children, ...props }) => (
-                      <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                        {children}
-                      </a>
-                    ),
+                    a: ({ href, children }) => {
+                      if (!href) {
+                        return <span>{children}</span>;
+                      }
+                      return (
+                        <SmartLink href={href} disabled={isStreaming}>
+                          {children}
+                        </SmartLink>
+                      );
+                    },
+                    img: ({ src, alt }) => {
+                      if (!src || typeof src !== 'string') return null;
+                      return <SmartImage src={src} alt={alt} />;
+                    },
                   }}
                 />
               </div>
@@ -1167,8 +1236,8 @@ const MessageBubble = memo(
               onLike={handleLike}
               onDislike={handleDislike}
               feedbackLabels={{
-                like: t('messages.like') || 'Like',
-                dislike: t('messages.dislike') || 'Dislike',
+                like: t('chat:messages.like') || 'Like',
+                dislike: t('chat:messages.dislike') || 'Dislike',
               }}
             />
           </div>
@@ -1193,7 +1262,26 @@ const MessageBubble = memo(
         <div className="space-y-2">
           {contentToRender ? (
             <>
-              <MarkdownWithMermaid source={contentToRender} theme={theme} />
+              <MarkdownWithMermaid
+                source={contentToRender}
+                theme={theme}
+                components={{
+                  a: ({ href, children }) => {
+                    if (!href) {
+                      return <span>{children}</span>;
+                    }
+                    return (
+                      <SmartLink href={href} disabled={isStreaming}>
+                        {children}
+                      </SmartLink>
+                    );
+                  },
+                  img: ({ src, alt }) => {
+                    if (!src || typeof src !== 'string') return null;
+                    return <SmartImage src={src} alt={alt} />;
+                  },
+                }}
+              />
               {/* Show copy and download buttons during streaming */}
               <SourceReferences sources={msg.sources || msg.result?.sources || []} />
               <BubbleTools
@@ -1222,8 +1310,8 @@ const MessageBubble = memo(
                 onLike={handleLike}
                 onDislike={handleDislike}
                 feedbackLabels={{
-                  like: t('messages.like') || 'Like',
-                  dislike: t('messages.dislike') || 'Dislike',
+                  like: t('chat:messages.like') || 'Like',
+                  dislike: t('chat:messages.dislike') || 'Dislike',
                 }}
               />
             </>
@@ -1296,7 +1384,7 @@ const MessageBubble = memo(
                 {timestampLabel && <span>{timestampLabel}</span>}
               </div>
             )}
-            {isUserTypeMessage && renderAttachments(msg.attachments)}
+            {isUserTypeMessage && <ContextBadgeList contexts={msg.contexts || undefined} />}
             {/* Show waiting indicator when streaming but no content yet */}
             {isWaiting || msg.isWaiting ? (
               <StreamingWaitIndicator isWaiting={true} />
@@ -1319,7 +1407,9 @@ const MessageBubble = memo(
                   <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
                   <div className="flex-1">
                     <p className="text-sm text-red-800 dark:text-red-200">
-                      {onRetry ? t('errors.request_failed_retry') : t('errors.model_unsupported')}
+                      {onRetry
+                        ? t('chat:errors.request_failed_retry')
+                        : t('chat:errors.model_unsupported')}
                     </p>
                   </div>
                 </div>

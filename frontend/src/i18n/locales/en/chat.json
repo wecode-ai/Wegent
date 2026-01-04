@@ -63,7 +63,10 @@
     "tool_completed": "Tool completed",
     "query": "Query",
     "search_completed": "Search completed",
-    "found": "Found"
+    "found": "Found",
+    "expand_content": "Expand",
+    "collapse_content": "Collapse",
+    "lines": "lines"
   },
   "shared_task": {
     "share_task": "Share",
@@ -142,7 +145,8 @@
     "execution_failed": "❌ Execution Failed",
     "error_message": "Error Message",
     "execution_type": "Execution Type",
-    "mcp_init_fail": "❌ MCP initialization failed. "
+    "mcp_init_fail": "❌ MCP initialization failed. ",
+    "attachments_downloaded": "📎 Attachments Downloaded"
   },
   "send_button": {
     "shortcut_title": "Send Shortcut",
@@ -211,7 +215,7 @@
     "select_all": "Select All",
     "deselect_all": "Deselect All",
     "cancel": "Cancel",
-    "confirm": "Export PDF",
+    "confirm": "Confirm Export",
     "exporting": "Exporting...",
     "exporting_docx": "Exporting DOCX...",
     "success": "PDF exported successfully",
@@ -219,7 +223,11 @@
     "failed": "Failed to export PDF",
     "docx_failed": "Failed to export DOCX",
     "select_from_here": "Select from here",
-    "select_below": "Select below"
+    "select_below": "Select below",
+    "attachments": "attachment(s)",
+    "preparing": "Preparing export...",
+    "font_load_failed": "Failed to load font, please retry",
+    "retry": "Retry"
   },
   "web_search": {
     "enable": "Enable web search",
@@ -229,6 +237,9 @@
   "deep_thinking": {
     "enable": "Enable deep thinking",
     "disable": "Disable deep thinking"
+  },
+  "upload": {
+    "tooltip": "Supported file types: PDF, Word, PPT, Excel, TXT, Markdown, Images(JPG, PNG, GIF, BMP, WebP)\nMax file size: {{maxSize}} MB\nSupports multiple file uploads"
   },
   "clarification_toggle": {
     "enable": "Enable smart follow-up mode",
@@ -364,6 +375,16 @@
     "apply_failed": "Failed to apply the improved answer",
     "no_improvement_needed": "No improved answer provided",
     "show_details": "Show Evaluation Details",
-    "hide_details": "Hide Evaluation Details"
+    "hide_details": "Hide Evaluation Details",
+    "progress": {
+      "starting": "Starting cross-validation",
+      "verifying_facts": "Verifying facts",
+      "evaluating": "Evaluating response quality",
+      "generating_improvement": "Generating improvement suggestions"
+    },
+    "streaming": {
+      "summary": "Summary",
+      "improved_answer": "Improved Answer"
+    }
   }
 }

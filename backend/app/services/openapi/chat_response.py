@@ -44,7 +44,7 @@ async def create_streaming_response(
     input_text: str,
     tool_settings: Dict[str, Any],
     task_id: Optional[int] = None,
-    api_trusted_source: Optional[str] = None,
+    api_key_name: Optional[str] = None,
 ) -> StreamingResponse:
     """
     Create a streaming response for Chat Shell type teams.
@@ -60,7 +60,7 @@ async def create_streaming_response(
         input_text: Extracted input text
         tool_settings: Parsed tool settings (enable_mcp, enable_web_search, search_engine)
         task_id: Optional existing task ID for follow-up conversations
-        api_trusted_source: Optional API trusted source name (from wegent-source header)
+        api_key_name: Optional API key name
 
     Returns:
         StreamingResponse with SSE events
@@ -76,7 +76,7 @@ async def create_streaming_response(
         input_text,
         tool_settings,
         task_id,
-        api_trusted_source,
+        api_key_name,
     )
 
     response_id = f"resp_{setup.task_id}"
@@ -96,10 +96,10 @@ async def create_streaming_response(
         from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
         from app.api.dependencies import get_db as get_db_session
+        from app.chat_shell.messages import MessageConverter
+        from app.chat_shell.models import LangChainModelFactory
         from app.core.config import settings
-        from app.services.chat_v2.messages import MessageConverter
-        from app.services.chat_v2.models import LangChainModelFactory
-        from app.services.chat_v2.storage import db_handler, session_manager
+        from app.services.chat.storage import db_handler, session_manager
 
         accumulated_content = ""
         db_gen = next(get_db_session())
@@ -137,7 +137,7 @@ async def create_streaming_response(
             # Add web search tool if deep thinking enabled and system config allows
             if enable_deep_thinking and settings.WEB_SEARCH_ENABLED:
                 try:
-                    from app.services.chat_v2.tools import WebSearchTool
+                    from app.chat_shell.tools import WebSearchTool
 
                     extra_tools.append(WebSearchTool())
                     logger.info(
@@ -151,8 +151,8 @@ async def create_streaming_response(
 
             if use_agent:
                 # Use LangGraph agent for tool support
-                from app.services.chat_v2.agents import LangGraphAgentBuilder
-                from app.services.chat_v2.tools import ToolRegistry
+                from app.chat_shell.agents import LangGraphAgentBuilder
+                from app.chat_shell.tools import ToolRegistry
 
                 llm = LangChainModelFactory.create_from_config(
                     setup.model_config, streaming=True
@@ -359,7 +359,7 @@ async def create_sync_response(
     input_text: str,
     tool_settings: Dict[str, Any],
     task_id: Optional[int] = None,
-    api_trusted_source: Optional[str] = None,
+    api_key_name: Optional[str] = None,
 ) -> ResponseObject:
     """
     Create a synchronous (blocking) response for Chat Shell type teams.
@@ -375,7 +375,7 @@ async def create_sync_response(
         input_text: Extracted input text
         tool_settings: Parsed tool settings (enable_mcp, enable_web_search, search_engine)
         task_id: Optional existing task ID for follow-up conversations
-        api_trusted_source: Optional API trusted source name (from wegent-source header)
+        api_key_name: Optional API key name
 
     Returns:
         ResponseObject with completed status and output
@@ -383,10 +383,10 @@ async def create_sync_response(
     from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
     from sqlalchemy.orm.attributes import flag_modified
 
+    from app.chat_shell.messages import MessageConverter
+    from app.chat_shell.models import LangChainModelFactory
     from app.core.config import settings
-    from app.services.chat_v2.messages import MessageConverter
-    from app.services.chat_v2.models import LangChainModelFactory
-    from app.services.chat_v2.storage import db_handler, session_manager
+    from app.services.chat.storage import db_handler, session_manager
 
     # Set up chat session (config, task, subtasks)
     setup = setup_chat_session(
@@ -397,7 +397,7 @@ async def create_sync_response(
         input_text,
         tool_settings,
         task_id,
-        api_trusted_source,
+        api_key_name,
     )
 
     response_id = f"resp_{setup.task_id}"
@@ -442,7 +442,7 @@ async def create_sync_response(
         # Add web search tool if deep thinking enabled and system config allows
         if enable_deep_thinking and settings.WEB_SEARCH_ENABLED:
             try:
-                from app.services.chat_v2.tools import WebSearchTool
+                from app.chat_shell.tools import WebSearchTool
 
                 extra_tools.append(WebSearchTool())
                 logger.info(
@@ -456,8 +456,8 @@ async def create_sync_response(
 
         if use_agent:
             # Use LangGraph agent for tool support
-            from app.services.chat_v2.agents import LangGraphAgentBuilder
-            from app.services.chat_v2.tools import ToolRegistry
+            from app.chat_shell.agents import LangGraphAgentBuilder
+            from app.chat_shell.tools import ToolRegistry
 
             llm = LangChainModelFactory.create_from_config(
                 setup.model_config, streaming=True

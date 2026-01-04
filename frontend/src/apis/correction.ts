@@ -44,6 +44,7 @@ export interface CorrectionResponse {
   summary: string;
   improved_answer: string;
   is_correct: boolean;
+  applied?: boolean; // Whether the correction has been applied to the original message
 }
 
 /**
@@ -58,8 +59,10 @@ export interface CorrectionData {
   improved_answer: string;
   is_correct: boolean;
   corrected_at?: string;
+  applied?: boolean; // Whether the correction has been applied to the original message
+  applied_at?: string; // Timestamp when the correction was applied
+  original_value?: string; // Original message content before correction was applied
 }
-
 /**
  * Correction mode state stored in localStorage
  */
@@ -70,8 +73,18 @@ export interface CorrectionModeState {
   enableWebSearch?: boolean; // Enable web search for fact verification
 }
 
-// LocalStorage key for correction mode state
-const CORRECTION_MODE_KEY = 'wegent_correction_mode';
+// LocalStorage key prefix for correction mode state (per-task)
+const CORRECTION_MODE_KEY_PREFIX = 'wegent_correction_mode_task_';
+
+/**
+ * Get the localStorage key for a specific task's correction mode state
+ */
+function getCorrectionModeKey(taskId: number | null): string {
+  if (taskId === null) {
+    return `${CORRECTION_MODE_KEY_PREFIX}new`;
+  }
+  return `${CORRECTION_MODE_KEY_PREFIX}${taskId}`;
+}
 
 /**
  * Extract correction data from subtask.result
@@ -100,6 +113,7 @@ export function correctionDataToResponse(
     summary: data.summary,
     improved_answer: data.improved_answer,
     is_correct: data.is_correct,
+    applied: data.applied,
   };
 }
 
@@ -139,9 +153,10 @@ export const correctionApis = {
   },
 
   /**
-   * Get correction mode state from localStorage
+   * Get correction mode state from localStorage for a specific task
+   * @param taskId - The task ID, or null for new tasks
    */
-  getCorrectionModeState(): CorrectionModeState {
+  getCorrectionModeState(taskId: number | null): CorrectionModeState {
     if (typeof window === 'undefined') {
       return {
         enabled: false,
@@ -151,7 +166,8 @@ export const correctionApis = {
       };
     }
     try {
-      const stored = localStorage.getItem(CORRECTION_MODE_KEY);
+      const key = getCorrectionModeKey(taskId);
+      const stored = localStorage.getItem(key);
       if (stored) {
         const parsed = JSON.parse(stored);
         // Ensure new fields have default values for backward compatibility
@@ -174,26 +190,62 @@ export const correctionApis = {
   },
 
   /**
-   * Save correction mode state to localStorage
+   * Save correction mode state to localStorage for a specific task
+   * @param taskId - The task ID, or null for new tasks
+   * @param state - The correction mode state to save
    */
-  saveCorrectionModeState(state: CorrectionModeState): void {
+  saveCorrectionModeState(taskId: number | null, state: CorrectionModeState): void {
     if (typeof window === 'undefined') return;
     try {
-      localStorage.setItem(CORRECTION_MODE_KEY, JSON.stringify(state));
+      const key = getCorrectionModeKey(taskId);
+      localStorage.setItem(key, JSON.stringify(state));
     } catch (e) {
       console.error('Failed to save correction mode state:', e);
     }
   },
 
   /**
-   * Clear correction mode state from localStorage
+   * Clear correction mode state from localStorage for a specific task
+   * @param taskId - The task ID, or null for new tasks
    */
-  clearCorrectionModeState(): void {
+  clearCorrectionModeState(taskId: number | null): void {
     if (typeof window === 'undefined') return;
     try {
-      localStorage.removeItem(CORRECTION_MODE_KEY);
+      const key = getCorrectionModeKey(taskId);
+      localStorage.removeItem(key);
     } catch (e) {
       console.error('Failed to clear correction mode state:', e);
     }
+  },
+
+  /**
+   * Migrate correction mode state from one task to another.
+   * This is used when a new task is created and we need to transfer
+   * the correction mode state from the "new" task to the real task ID.
+   * @param fromTaskId - The source task ID (null for new tasks)
+   * @param toTaskId - The destination task ID
+   * @returns The migrated state, or null if no state was found
+   */
+  migrateCorrectionModeState(
+    fromTaskId: number | null,
+    toTaskId: number
+  ): CorrectionModeState | null {
+    if (typeof window === 'undefined') return null;
+    try {
+      const fromKey = getCorrectionModeKey(fromTaskId);
+      const stored = localStorage.getItem(fromKey);
+      if (stored) {
+        const state = JSON.parse(stored) as CorrectionModeState;
+        // Save to new task ID
+        const toKey = getCorrectionModeKey(toTaskId);
+        localStorage.setItem(toKey, stored);
+        // Remove from old key
+        localStorage.removeItem(fromKey);
+        return state;
+      }
+    } catch (e) {
+      console.error('Failed to migrate correction mode state:', e);
+    }
+    return null;
   },
 };

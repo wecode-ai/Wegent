@@ -17,7 +17,7 @@ type QuotaUsageProps = {
 };
 
 export default function QuotaUsage({ className, compact = false }: QuotaUsageProps) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation();
   const { toast } = useToast();
   const isMobile = useIsMobile();
   const [quota, setQuota] = useState<QuotaData | null>(null);
@@ -33,10 +33,10 @@ export default function QuotaUsage({ className, compact = false }: QuotaUsagePro
         setQuota(data);
       })
       .catch(() => {
-        setError(t('quota.load_failed'));
+        setError(t('common:quota.load_failed'));
         toast({
           variant: 'destructive',
-          title: t('quota.load_failed'),
+          title: t('common:quota.load_failed'),
         });
       })
       .finally(() => {
@@ -81,7 +81,7 @@ export default function QuotaUsage({ className, compact = false }: QuotaUsagePro
     }
     return (
       <div className={`text-xs text-text-muted mt-1 mb-2 ${className ?? ''}`}>
-        {error || t('quota.load_failed')}
+        {error || t('common:quota.load_failed')}
       </div>
     );
   }
@@ -89,7 +89,7 @@ export default function QuotaUsage({ className, compact = false }: QuotaUsagePro
   const { monthly_quota, monthly_usage, permanent_quota, permanent_usage } =
     quota.user_quota_detail;
 
-  const brief = t('quota.brief', {
+  const brief = t('common:quota.brief', {
     quota_source: quota.quota_source,
     monthly_usage,
     monthly_quota: monthly_quota.toLocaleString(),
@@ -99,14 +99,14 @@ export default function QuotaUsage({ className, compact = false }: QuotaUsagePro
   const detail = (
     <div>
       <div>
-        {t('quota.detail_monthly', {
+        {t('common:quota.detail_monthly', {
           monthly_quota,
           monthly_usage,
           monthly_left: monthly_quota - monthly_usage,
         })}
       </div>
       <div>
-        {t('quota.detail_permanent', {
+        {t('common:quota.detail_permanent', {
           permanent_quota,
           permanent_usage,
           permanent_left: permanent_quota - permanent_usage,

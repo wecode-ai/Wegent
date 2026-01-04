@@ -128,24 +128,6 @@ export async function batchDeleteDocuments(documentIds: number[]): Promise<Batch
   });
 }
 
-/**
- * Batch enable multiple documents
- */
-export async function batchEnableDocuments(documentIds: number[]): Promise<BatchOperationResult> {
-  return apiClient.post<BatchOperationResult>('/knowledge-documents/batch/enable', {
-    document_ids: documentIds,
-  });
-}
-
-/**
- * Batch disable multiple documents
- */
-export async function batchDisableDocuments(documentIds: number[]): Promise<BatchOperationResult> {
-  return apiClient.post<BatchOperationResult>('/knowledge-documents/batch/disable', {
-    document_ids: documentIds,
-  });
-}
-
 // ============== Accessible Knowledge API ==============
 
 /**

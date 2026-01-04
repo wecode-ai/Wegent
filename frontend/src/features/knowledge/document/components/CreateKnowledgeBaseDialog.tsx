@@ -4,7 +4,7 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -24,8 +24,6 @@ import {
 } from '@/components/ui/accordion';
 import { useTranslation } from '@/hooks/useTranslation';
 import { RetrievalSettingsSection, type RetrievalConfig } from './RetrievalSettingsSection';
-import { useRetrievers } from '../hooks/useRetrievers';
-import { useEmbeddingModels } from '../hooks/useEmbeddingModels';
 
 interface CreateKnowledgeBaseDialogProps {
   open: boolean;
@@ -48,7 +46,7 @@ export function CreateKnowledgeBaseDialog({
   scope,
   groupName,
 }: CreateKnowledgeBaseDialogProps) {
-  const { t } = useTranslation('knowledge');
+  const { t } = useTranslation();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [retrievalConfig, setRetrievalConfig] = useState<Partial<RetrievalConfig>>({
@@ -63,78 +61,31 @@ export function CreateKnowledgeBaseDialog({
   const [error, setError] = useState('');
   const [accordionValue, setAccordionValue] = useState<string>('');
 
-  // Load data when dialog opens
-  const {
-    retrievers,
-    loading: loadingRetrievers,
-    refetch: refetchRetrievers,
-  } = useRetrievers(scope, groupName);
-  const {
-    models: embeddingModels,
-    loading: loadingModels,
-    refetch: refetchModels,
-  } = useEmbeddingModels(scope, groupName);
-
-  useEffect(() => {
-    if (open) {
-      refetchRetrievers();
-      refetchModels();
-    }
-  }, [open, refetchRetrievers, refetchModels]);
-
-  // Auto-select default retriever when data is loaded and no selection exists
-  useEffect(() => {
-    if (!loadingRetrievers && retrievers.length > 0 && !retrievalConfig.retriever_name) {
-      const firstRetriever = retrievers[0];
-      setRetrievalConfig(prev => ({
-        ...prev,
-        retriever_name: firstRetriever.name,
-        retriever_namespace: firstRetriever.namespace,
-      }));
-    }
-  }, [loadingRetrievers, retrievers, retrievalConfig.retriever_name]);
-
-  // Auto-select default embedding model when data is loaded and no selection exists
-  useEffect(() => {
-    if (
-      !loadingModels &&
-      embeddingModels.length > 0 &&
-      !retrievalConfig.embedding_config?.model_name
-    ) {
-      const firstModel = embeddingModels[0];
-      setRetrievalConfig(prev => ({
-        ...prev,
-        embedding_config: {
-          model_name: firstModel.name,
-          model_namespace: firstModel.namespace || 'default',
-        },
-      }));
-    }
-  }, [loadingModels, embeddingModels, retrievalConfig.embedding_config?.model_name]);
+  // Note: Auto-selection of retriever and embedding model is handled by RetrievalSettingsSection
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
     if (!name.trim()) {
-      setError(t('document.knowledgeBase.nameRequired'));
+      setError(t('knowledge:document.knowledgeBase.nameRequired'));
       return;
     }
 
     if (name.length > 100) {
-      setError(t('document.knowledgeBase.nameTooLong'));
+      setError(t('knowledge:document.knowledgeBase.nameTooLong'));
       return;
     }
 
     // Validate retrieval config - retriever and embedding model are required
     if (!retrievalConfig.retriever_name) {
-      setError(t('document.retrieval.noRetriever'));
+      setError(t('knowledge:document.retrieval.noRetriever'));
       setAccordionValue('advanced');
       return;
     }
 
     if (!retrievalConfig.embedding_config?.model_name) {
-      setError(t('document.retrieval.noEmbeddingModel'));
+      setError(t('knowledge:document.retrieval.noEmbeddingModel'));
       setAccordionValue('advanced');
       return;
     }
@@ -184,27 +135,29 @@ export function CreateKnowledgeBaseDialog({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{t('document.knowledgeBase.create')}</DialogTitle>
+          <DialogTitle>{t('knowledge:document.knowledgeBase.create')}</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="max-h-[80vh] overflow-y-auto">
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="name">{t('document.knowledgeBase.name')}</Label>
+              <Label htmlFor="name">{t('knowledge:document.knowledgeBase.name')}</Label>
               <Input
                 id="name"
                 value={name}
                 onChange={e => setName(e.target.value)}
-                placeholder={t('document.knowledgeBase.namePlaceholder')}
+                placeholder={t('knowledge:document.knowledgeBase.namePlaceholder')}
                 maxLength={100}
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="description">{t('document.knowledgeBase.description')}</Label>
+              <Label htmlFor="description">
+                {t('knowledge:document.knowledgeBase.description')}
+              </Label>
               <Textarea
                 id="description"
                 value={description}
                 onChange={e => setDescription(e.target.value)}
-                placeholder={t('document.knowledgeBase.descriptionPlaceholder')}
+                placeholder={t('knowledge:document.knowledgeBase.descriptionPlaceholder')}
                 maxLength={500}
                 rows={3}
               />
@@ -220,12 +173,15 @@ export function CreateKnowledgeBaseDialog({
             >
               <AccordionItem value="advanced" className="border-none">
                 <AccordionTrigger className="text-sm font-medium hover:no-underline">
-                  {t('document.advancedSettings.title')}
+                  {t('knowledge:document.advancedSettings.title')}
                 </AccordionTrigger>
-                <AccordionContent>
+                <AccordionContent
+                  forceMount
+                  className={accordionValue !== 'advanced' ? 'hidden' : ''}
+                >
                   <div className="space-y-4 pt-2">
                     <p className="text-xs text-text-muted">
-                      {t('document.advancedSettings.collapsed')}
+                      {t('knowledge:document.advancedSettings.collapsed')}
                     </p>
                     <RetrievalSettingsSection
                       config={retrievalConfig}

@@ -15,9 +15,15 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
-import { Users, Cpu, Settings } from 'lucide-react';
+import { Users, Cpu, Settings, Sparkles, KeyRound, Database } from 'lucide-react';
 
-export type AdminTabId = 'users' | 'public-models' | 'system-config';
+export type AdminTabId =
+  | 'users'
+  | 'public-models'
+  | 'public-retrievers'
+  | 'public-skills'
+  | 'api-keys'
+  | 'system-config';
 
 interface AdminTabNavProps {
   activeTab: AdminTabId;
@@ -31,7 +37,7 @@ interface TabItem {
 }
 
 export function AdminTabNav({ activeTab, onTabChange }: AdminTabNavProps) {
-  const { t } = useTranslation('admin');
+  const { t } = useTranslation();
   const isMobile = useIsMobile();
   const indicatorContainerRef = useRef<HTMLDivElement | null>(null);
   const itemRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -39,9 +45,12 @@ export function AdminTabNav({ activeTab, onTabChange }: AdminTabNavProps) {
 
   // Tab items
   const tabs: TabItem[] = [
-    { id: 'users', label: t('tabs.users'), icon: Users },
-    { id: 'public-models', label: t('tabs.public_models'), icon: Cpu },
-    { id: 'system-config', label: t('tabs.system_config'), icon: Settings },
+    { id: 'users', label: t('admin:tabs.users'), icon: Users },
+    { id: 'public-models', label: t('admin:tabs.public_models'), icon: Cpu },
+    { id: 'public-retrievers', label: t('admin:tabs.public_retrievers'), icon: Database },
+    { id: 'public-skills', label: t('admin:tabs.public_skills'), icon: Sparkles },
+    { id: 'api-keys', label: t('admin:tabs.api_keys'), icon: KeyRound },
+    { id: 'system-config', label: t('admin:tabs.system_config'), icon: Settings },
   ];
 
   // Update the indicator position when the active tab changes
@@ -79,7 +88,7 @@ export function AdminTabNav({ activeTab, onTabChange }: AdminTabNavProps) {
       <div className="px-4 py-2 border-t border-border bg-base">
         <Select value={activeTab} onValueChange={value => onTabChange(value as AdminTabId)}>
           <SelectTrigger className="w-full">
-            <SelectValue placeholder={t('tabs.users')} />
+            <SelectValue placeholder={t('admin:tabs.users')} />
           </SelectTrigger>
           <SelectContent>
             <SelectGroup>

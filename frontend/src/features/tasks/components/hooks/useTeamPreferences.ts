@@ -2,10 +2,21 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useRef, useCallback } from 'react';
+/**
+ * useTeamPreferences Hook
+ *
+ * Manages team preference and synchronization logic:
+ * - Restoring team preferences from localStorage
+ * - Syncing team selection when viewing existing tasks
+ * - Resetting state when clearVersion changes (New Chat)
+ *
+ * NOTE: Model selection logic has been moved to useModelSelection hook.
+ * This hook now focuses solely on team preferences.
+ */
+
+import { useEffect, useRef } from 'react';
+import { useSearchParams } from 'next/navigation';
 import type { Team, TaskDetail } from '@/types/api';
-import type { Model } from '../selector/ModelSelector';
-import { DEFAULT_MODEL_NAME } from '../selector/ModelSelector';
 
 export interface UseTeamPreferencesOptions {
   /**
@@ -33,16 +44,6 @@ export interface UseTeamPreferencesOptions {
    * Function to set the selected team.
    */
   setSelectedTeam: (team: Team | null) => void;
-
-  /**
-   * Function to set the selected model.
-   */
-  setSelectedModel: (model: Model | null) => void;
-
-  /**
-   * Function to set the force override flag.
-   */
-  setForceOverride: (value: boolean) => void;
 
   /**
    * Whether preferences have been restored.
@@ -86,30 +87,14 @@ function extractTeamId(team: TaskDetail['team']): number | null {
 }
 
 /**
- * Extracts the model name from a team's first bot configuration.
- */
-function extractTeamModelName(team: Team): string | null {
-  if (!team.bots || team.bots.length === 0) return null;
-  const firstBotConfig = team.bots[0]?.bot?.agent_config;
-  if (!firstBotConfig) return null;
-  try {
-    return ((firstBotConfig as Record<string, unknown>).bind_model as string | undefined) ?? null;
-  } catch {
-    return null;
-  }
-}
-
-/**
  * useTeamPreferences Hook
  *
- * Consolidates all team preference and model synchronization logic:
+ * Consolidates team preference logic:
  * - Restoring team preferences from localStorage
  * - Syncing team selection when viewing existing tasks
- * - Setting model when viewing existing tasks
  * - Resetting state when clearVersion changes (New Chat)
  *
- * This hook extracts multiple useEffect calls from ChatArea into a single,
- * cohesive unit that manages team and model preferences.
+ * Model selection is now handled by useModelSelection hook in ModelSelector.
  */
 export function useTeamPreferences({
   teams,
@@ -117,8 +102,6 @@ export function useTeamPreferences({
   selectedTaskDetail,
   selectedTeam,
   setSelectedTeam,
-  setSelectedModel,
-  setForceOverride,
   hasRestoredPreferences,
   setHasRestoredPreferences,
   isTeamCompatibleWithMode,
@@ -126,74 +109,91 @@ export function useTeamPreferences({
   clearVersion,
 }: UseTeamPreferencesOptions): void {
   // Refs for tracking previous values
-  const prevTaskIdForModelRef = useRef<number | null | undefined>(undefined);
   const prevClearVersionRef = useRef(clearVersion);
+
+  // Get taskId from URL to check if we're waiting for task detail to load
+  // Support multiple parameter formats for backward compatibility
+  const searchParams = useSearchParams();
+  const taskIdFromUrl =
+    searchParams.get('taskId') || searchParams.get('task_id') || searchParams.get('taskid');
+
+  // Track the taskId we're waiting for to detect if it changes
+  const waitingForTaskIdRef = useRef<string | null>(null);
 
   // Compute detailTeamId
   const detailTeamId = selectedTaskDetail ? extractTeamId(selectedTaskDetail.team) : null;
 
   /**
-   * Helper: Set model to default.
-   */
-  const handleDefaultModel = useCallback(() => {
-    setSelectedModel({ name: DEFAULT_MODEL_NAME, provider: '', modelId: '' });
-    setForceOverride(false);
-  }, [setSelectedModel, setForceOverride]);
-
-  /**
-   * Helper: Set model to explicit value.
-   */
-  const handleExplicitModel = useCallback(
-    (modelName: string) => {
-      setSelectedModel({
-        name: modelName,
-        provider: '',
-        modelId: modelName,
-        displayName: null,
-        type: undefined,
-      });
-    },
-    [setSelectedModel]
-  );
-
-  /**
    * Effect: Reset state when clearVersion changes (New Chat).
-   *
-   * This replaces the original useEffect at lines 306-313 in ChatArea.tsx.
    */
   useEffect(() => {
     if (clearVersion !== prevClearVersionRef.current) {
       prevClearVersionRef.current = clearVersion;
-      prevTaskIdForModelRef.current = undefined;
       setHasRestoredPreferences(false);
     }
   }, [clearVersion, setHasRestoredPreferences]);
 
   /**
    * Effect: Restore team preferences from localStorage.
-   *
-   * This replaces the original useEffect at lines 206-227 in ChatArea.tsx.
    * Only runs when there are no messages and preferences haven't been restored.
+   *
+   * IMPORTANT: If URL has taskId but selectedTaskDetail hasn't loaded yet,
+   * we should wait for the task detail to load before restoring preferences.
+   * This prevents showing the wrong team when navigating between chat/code pages.
+   *
+   * A timeout (3 seconds) is used as a fallback in case task detail fails to load.
    */
   useEffect(() => {
-    if (hasRestoredPreferences || !teams.length || (!selectedTaskDetail && hasMessages)) return;
+    if (hasRestoredPreferences || !teams.length || (!selectedTaskDetail && hasMessages)) {
+      return;
+    }
 
-    const lastTeamId = initialTeamIdRef.current;
+    // Helper function to restore from localStorage
+    const restoreFromLocalStorage = () => {
+      const lastTeamId = initialTeamIdRef.current;
 
-    if (lastTeamId) {
-      const lastTeam = teams.find(team => team.id === lastTeamId);
-      if (lastTeam && isTeamCompatibleWithMode(lastTeam)) {
-        setSelectedTeam(lastTeam);
-        setHasRestoredPreferences(true);
-        return;
+      if (lastTeamId) {
+        const lastTeam = teams.find(team => team.id === lastTeamId);
+        if (lastTeam && isTeamCompatibleWithMode(lastTeam)) {
+          setSelectedTeam(lastTeam);
+          setHasRestoredPreferences(true);
+          return;
+        }
       }
+
+      const compatibleTeam = teams.find(team => isTeamCompatibleWithMode(team));
+      if (compatibleTeam) {
+        setSelectedTeam(compatibleTeam);
+      }
+      setHasRestoredPreferences(true);
+    };
+
+    // If URL has taskId but task detail hasn't loaded yet, wait for it
+    // Use a timeout (3s) as fallback in case task detail fails to load
+    if (taskIdFromUrl && !selectedTaskDetail) {
+      // Start waiting for this taskId
+      if (waitingForTaskIdRef.current !== taskIdFromUrl) {
+        waitingForTaskIdRef.current = taskIdFromUrl;
+      }
+
+      const timeoutId = setTimeout(() => {
+        // Only fallback if we're still waiting for the same taskId and preferences not restored
+        if (waitingForTaskIdRef.current === taskIdFromUrl && !hasRestoredPreferences) {
+          console.warn(
+            '[useTeamPreferences] Task detail load timeout, falling back to localStorage'
+          );
+          restoreFromLocalStorage();
+        }
+      }, 3000);
+
+      return () => clearTimeout(timeoutId);
     }
 
-    const compatibleTeam = teams.find(team => isTeamCompatibleWithMode(team));
-    if (compatibleTeam) {
-      setSelectedTeam(compatibleTeam);
-    }
-    setHasRestoredPreferences(true);
+    // Clear waiting state when task detail is loaded
+    waitingForTaskIdRef.current = null;
+
+    // Normal restoration logic
+    restoreFromLocalStorage();
   }, [
     teams,
     hasRestoredPreferences,
@@ -203,15 +203,22 @@ export function useTeamPreferences({
     initialTeamIdRef,
     setSelectedTeam,
     setHasRestoredPreferences,
+    taskIdFromUrl,
   ]);
 
   /**
    * Effect: Sync team selection when viewing existing task.
-   *
-   * This replaces the original useEffect at lines 230-246 in ChatArea.tsx.
    */
   useEffect(() => {
-    if (!detailTeamId) return;
+    if (!detailTeamId) {
+      return;
+    }
+
+    // Skip sync if there's no taskId in URL
+    // This means user switched modes without a specific task, so we should use localStorage preference
+    if (!taskIdFromUrl) {
+      return;
+    }
 
     if (!selectedTeam?.id || selectedTeam.id !== detailTeamId) {
       const matchedTeam = teams.find(team => team.id === detailTeamId) || null;
@@ -233,49 +240,7 @@ export function useTeamPreferences({
     selectedTaskDetail?.team,
     setSelectedTeam,
     setHasRestoredPreferences,
-  ]);
-
-  /**
-   * Effect: Set model when viewing existing task.
-   *
-   * This replaces the original useEffect at lines 249-303 in ChatArea.tsx.
-   */
-  useEffect(() => {
-    if (!selectedTaskDetail?.id || !selectedTeam) return;
-
-    const taskIdChanged = prevTaskIdForModelRef.current !== selectedTaskDetail.id;
-    if (!taskIdChanged) return;
-
-    const isUserSwitchingTasks =
-      prevTaskIdForModelRef.current !== undefined && prevTaskIdForModelRef.current !== null;
-
-    prevTaskIdForModelRef.current = selectedTaskDetail.id;
-
-    if (!isUserSwitchingTasks) return;
-
-    const taskModelId = selectedTaskDetail.model_id;
-
-    if (!taskModelId || taskModelId === DEFAULT_MODEL_NAME) {
-      const teamModelName = extractTeamModelName(selectedTeam);
-
-      if (teamModelName) {
-        handleExplicitModel(teamModelName);
-        setForceOverride(false);
-      } else {
-        handleDefaultModel();
-      }
-      return;
-    }
-
-    handleExplicitModel(taskModelId);
-    setForceOverride(true);
-  }, [
-    selectedTaskDetail?.id,
-    selectedTaskDetail?.model_id,
-    selectedTeam,
-    handleDefaultModel,
-    handleExplicitModel,
-    setForceOverride,
+    taskIdFromUrl,
   ]);
 }
 

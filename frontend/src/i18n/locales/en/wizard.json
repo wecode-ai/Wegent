@@ -83,6 +83,7 @@
   "iterate_hint": "Not happy with the response? Tell me what to change and I'll improve the prompt",
   "iterate_placeholder": "e.g., The response is too long, I'd like it more concise...",
   "iterate_button": "Improve",
+  "iterate_need_test_first": "Please test the prompt first before iterating",
   "preview_adjust_title": "Test Your Assistant",
   "preview_adjust_hint": "Send a real task to see how your assistant responds. If you're not satisfied, tell me how to improve it.",
   "preview_adjust_empty_hint": "Click send to see AI response with test data, or use your own task to test.",

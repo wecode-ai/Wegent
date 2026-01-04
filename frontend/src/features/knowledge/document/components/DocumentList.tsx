@@ -14,8 +14,6 @@ import {
   ChevronDown,
   FolderOpen,
   Trash2,
-  ToggleLeft,
-  ToggleRight,
   Target,
   FileUp,
   RefreshCw,
@@ -40,22 +38,12 @@ interface DocumentListProps {
 
 type SortField = 'name' | 'size' | 'date';
 type SortOrder = 'asc' | 'desc';
-type StatusFilter = 'all' | 'enabled' | 'disabled';
 
 export function DocumentList({ knowledgeBase, onBack, canManage = true }: DocumentListProps) {
   const { t } = useTranslation('knowledge');
-  const {
-    documents,
-    loading,
-    error,
-    create,
-    toggleStatus,
-    remove,
-    refresh,
-    batchDelete,
-    batchEnable,
-    batchDisable,
-  } = useDocuments({ knowledgeBaseId: knowledgeBase.id });
+  const { documents, loading, error, create, remove, refresh, batchDelete } = useDocuments({
+    knowledgeBaseId: knowledgeBase.id,
+  });
 
   // Only show error on page for initial load failures (when documents list is empty)
   // Operation errors are shown via toast notifications
@@ -66,7 +54,6 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
   const [editingDoc, setEditingDoc] = useState<KnowledgeDocument | null>(null);
   const [deletingDoc, setDeletingDoc] = useState<KnowledgeDocument | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [sortField, setSortField] = useState<SortField>('date');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -75,12 +62,7 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
   const filteredAndSortedDocuments = useMemo(() => {
     let result = [...documents];
 
-    // Filter by status
-    if (statusFilter !== 'all') {
-      result = result.filter(doc => doc.status === statusFilter);
-    }
-
-    // Filter by search query
+    // Filter by search query (name-based frontend search)
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
       result = result.filter(doc => doc.name.toLowerCase().includes(query));
@@ -104,7 +86,7 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
     });
 
     return result;
-  }, [documents, searchQuery, statusFilter, sortField, sortOrder]);
+  }, [documents, searchQuery, sortField, sortOrder]);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -194,32 +176,6 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
     }
   };
 
-  const handleBatchEnable = async () => {
-    if (selectedIds.size === 0) return;
-    setBatchLoading(true);
-    try {
-      await batchEnable(Array.from(selectedIds));
-      setSelectedIds(new Set());
-    } catch {
-      // Error handled by hook
-    } finally {
-      setBatchLoading(false);
-    }
-  };
-
-  const handleBatchDisable = async () => {
-    if (selectedIds.size === 0) return;
-    setBatchLoading(true);
-    try {
-      await batchDisable(Array.from(selectedIds));
-      setSelectedIds(new Set());
-    } catch {
-      // Error handled by hook
-    } finally {
-      setBatchLoading(false);
-    }
-  };
-
   return (
     <div className="space-y-4">
       {/* Header - Wegent style */}
@@ -241,20 +197,9 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
         </div>
       </div>
 
-      {/* Filter and Search bar */}
+      {/* Search bar */}
       <div className="flex items-center gap-3 flex-wrap">
-        {/* Status filter */}
-        <select
-          value={statusFilter}
-          onChange={e => setStatusFilter(e.target.value as StatusFilter)}
-          className="h-9 px-3 text-sm bg-surface border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
-        >
-          <option value="all">{t('document.document.filter.all')}</option>
-          <option value="enabled">{t('document.document.filter.enabled')}</option>
-          <option value="disabled">{t('document.document.filter.disabled')}</option>
-        </select>
-
-        {/* Search */}
+        {/* Search by name */}
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
           <input
@@ -309,24 +254,6 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
                 {t('document.document.batch.selected', { count: selectedIds.size })}
               </span>
               <div className="flex-1" />
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleBatchEnable}
-                disabled={batchLoading}
-              >
-                <ToggleRight className="w-4 h-4 mr-1" />
-                {t('document.document.batch.enable')}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleBatchDisable}
-                disabled={batchLoading}
-              >
-                <ToggleLeft className="w-4 h-4 mr-1" />
-                {t('document.document.batch.disable')}
-              </Button>
               <Button
                 variant="destructive"
                 size="sm"
@@ -383,11 +310,8 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
               <div className="w-16 flex-shrink-0 text-center">
                 {t('document.document.columns.indexStatus')}
               </div>
-              <div className="w-16 flex-shrink-0 text-center">
-                {t('document.document.columns.status')}
-              </div>
               {canManage && (
-                <div className="w-20 flex-shrink-0 text-center">
+                <div className="w-16 flex-shrink-0 text-center">
                   {t('document.document.columns.actions')}
                 </div>
               )}
@@ -397,7 +321,6 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
               <DocumentItem
                 key={doc.id}
                 document={doc}
-                onToggleStatus={toggleStatus}
                 onEdit={setEditingDoc}
                 onDelete={setDeletingDoc}
                 canManage={canManage}
@@ -408,7 +331,7 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
             ))}
           </div>
         </>
-      ) : searchQuery || statusFilter !== 'all' ? (
+      ) : searchQuery ? (
         <div className="flex flex-col items-center justify-center py-12 text-text-secondary">
           <FileText className="w-12 h-12 mb-4 opacity-50" />
           <p>{t('document.document.noResults')}</p>

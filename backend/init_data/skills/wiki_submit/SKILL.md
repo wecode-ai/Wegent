@@ -3,6 +3,7 @@ description: "Submit wiki documentation sections to Wegent backend API. Simplifi
 version: "1.1.0"
 author: "Wegent Team"
 tags: ["wiki", "documentation", "api", "submission"]
+bindShells: ["ClaudeCode"]
 ---
 
 # Wiki Submit Skill
