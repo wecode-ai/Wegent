@@ -12,6 +12,7 @@ from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.kind import Model, Shell
 from app.schemas.model import ModelBulkCreateItem, ModelCreate, ModelUpdate
+from app.services.adapters.shell_utils import find_shell_json
 from app.services.base import BaseService
 
 
@@ -233,23 +234,10 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
 
         Returns list of dicts with 'name' and 'displayName' fields.
         """
-        # Get shell configuration from kinds table (public shells)
-        shell_row = (
-            db.query(Kind.json)
-            .filter(
-                Kind.user_id == 0,
-                Kind.kind == "Shell",
-                Kind.name == shell_type,
-                Kind.namespace == "default",
-            )
-            .first()
-        )
-        if not shell_row:
+        shell_json = find_shell_json(db, shell_type, current_user.id)
+        if not shell_json:
             raise HTTPException(status_code=400, detail="Shell type not found")
 
-        shell_json = shell_row[0] if isinstance(shell_row[0], dict) else {}
-
-        # Extract supportModel from shell spec
         supportModel: List[str] = []
         if isinstance(shell_json, dict):
             shell_crd = Shell.model_validate(shell_json)
