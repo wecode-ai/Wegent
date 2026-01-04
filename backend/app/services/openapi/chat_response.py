@@ -30,7 +30,7 @@ from app.services.openapi.chat_session import (
     build_chat_history,
     setup_chat_session,
 )
-from app.services.openapi.mcp import load_mcp_tools
+from app.services.openapi.mcp import load_bot_mcp_tools, load_server_mcp_tools
 
 logger = logging.getLogger(__name__)
 
@@ -110,13 +110,20 @@ async def create_streaming_response(
             cancel_event = await session_manager.register_stream(assistant_subtask_id)
             await db_handler.update_subtask_status(assistant_subtask_id, "RUNNING")
 
+            # Build system prompt with optional deep thinking enhancement
+            from app.chat_shell.prompts import append_deep_thinking_prompt
+
+            final_system_prompt = append_deep_thinking_prompt(
+                setup.system_prompt, enable_deep_thinking
+            )
+
             # Build messages with history
             # inject_datetime is controlled by enable_extend_message (default: False for clean API)
             history = build_chat_history(setup.existing_subtasks)
             messages = MessageConverter.build_messages(
                 history=history,
                 current_message=input_text,
-                system_prompt=setup.system_prompt,
+                system_prompt=final_system_prompt,
                 inject_datetime=enable_extend_message,
             )
 
@@ -124,27 +131,34 @@ async def create_streaming_response(
             extra_tools = []
             mcp_clients = []  # Track all MCP clients for cleanup
 
-            # Load MCP tools based on tool settings
-            # Bot MCP is always loaded by default (when CHAT_MCP_ENABLED)
-            # Server MCP requires explicit enable_extend_tool
-            if settings.CHAT_MCP_ENABLED:
-                try:
-                    mcp_client = await load_mcp_tools(
-                        task_kind_id,
-                        bot_name,
-                        bot_namespace,
-                        enable_server_mcp=enable_extend_tool,
-                        enable_bot_mcp=True,  # Bot MCP always enabled
+            # 1. Bot MCP (always available when bot has MCP configured)
+            # No CHAT_MCP_ENABLED check - bot MCP is user-controlled via bot config
+            try:
+                bot_mcp_client = await load_bot_mcp_tools(
+                    task_kind_id, bot_name, bot_namespace
+                )
+                if bot_mcp_client:
+                    mcp_clients.append(bot_mcp_client)
+                    extra_tools.extend(bot_mcp_client.get_tools())
+                    logger.info(
+                        f"[OPENAPI] Loaded {len(bot_mcp_client.get_tools())} bot MCP tools for task {task_kind_id}"
                     )
-                    if mcp_client:
-                        mcp_clients.append(mcp_client)
-                        extra_tools.extend(mcp_client.get_tools())
+            except Exception as e:
+                logger.warning(f"[OPENAPI] Failed to load bot MCP tools: {e}")
+
+            # 2. Server MCP (requires explicit wegent_extend_tool)
+            # Only loaded when user explicitly requests via tools parameter
+            if enable_extend_tool:
+                try:
+                    server_mcp_client = await load_server_mcp_tools(task_kind_id)
+                    if server_mcp_client:
+                        mcp_clients.append(server_mcp_client)
+                        extra_tools.extend(server_mcp_client.get_tools())
                         logger.info(
-                            f"[OPENAPI] Loaded {len(mcp_client.get_tools())} MCP tools for task {task_kind_id} "
-                            f"(server_mcp={enable_extend_tool}, bot_mcp=True)"
+                            f"[OPENAPI] Loaded {len(server_mcp_client.get_tools())} server MCP tools for task {task_kind_id}"
                         )
                 except Exception as e:
-                    logger.warning(f"[OPENAPI] Failed to load MCP tools: {e}")
+                    logger.warning(f"[OPENAPI] Failed to load server MCP tools: {e}")
 
             # Add web search tool if deep thinking enabled and system config allows
             if enable_deep_thinking and settings.WEB_SEARCH_ENABLED:
@@ -428,40 +442,54 @@ async def create_sync_response(
     mcp_clients = []  # Track all MCP clients for cleanup
 
     try:
+        # Build system prompt with optional deep thinking enhancement
+        from app.chat_shell.prompts import append_deep_thinking_prompt
+
+        final_system_prompt = append_deep_thinking_prompt(
+            setup.system_prompt, enable_deep_thinking
+        )
+
         # Build messages with history
         # inject_datetime is controlled by enable_extend_message (default: False for clean API)
         history = build_chat_history(setup.existing_subtasks)
         messages = MessageConverter.build_messages(
             history=history,
             current_message=input_text,
-            system_prompt=setup.system_prompt,
+            system_prompt=final_system_prompt,
             inject_datetime=enable_extend_message,
         )
 
         # Prepare extra tools (MCP and web search)
         extra_tools = []
 
-        # Load MCP tools based on tool settings
-        # Bot MCP is always loaded by default (when CHAT_MCP_ENABLED)
-        # Server MCP requires explicit enable_extend_tool
-        if settings.CHAT_MCP_ENABLED:
-            try:
-                mcp_client = await load_mcp_tools(
-                    setup.task_id,
-                    setup.bot_name,
-                    setup.bot_namespace,
-                    enable_server_mcp=enable_extend_tool,
-                    enable_bot_mcp=True,  # Bot MCP always enabled
+        # 1. Bot MCP (always available when bot has MCP configured)
+        # No CHAT_MCP_ENABLED check - bot MCP is user-controlled via bot config
+        try:
+            bot_mcp_client = await load_bot_mcp_tools(
+                setup.task_id, setup.bot_name, setup.bot_namespace
+            )
+            if bot_mcp_client:
+                mcp_clients.append(bot_mcp_client)
+                extra_tools.extend(bot_mcp_client.get_tools())
+                logger.info(
+                    f"[OPENAPI_SYNC] Loaded {len(bot_mcp_client.get_tools())} bot MCP tools for task {setup.task_id}"
                 )
-                if mcp_client:
-                    mcp_clients.append(mcp_client)
-                    extra_tools.extend(mcp_client.get_tools())
+        except Exception as e:
+            logger.warning(f"[OPENAPI_SYNC] Failed to load bot MCP tools: {e}")
+
+        # 2. Server MCP (requires explicit wegent_extend_tool)
+        # Only loaded when user explicitly requests via tools parameter
+        if enable_extend_tool:
+            try:
+                server_mcp_client = await load_server_mcp_tools(setup.task_id)
+                if server_mcp_client:
+                    mcp_clients.append(server_mcp_client)
+                    extra_tools.extend(server_mcp_client.get_tools())
                     logger.info(
-                        f"[OPENAPI_SYNC] Loaded {len(mcp_client.get_tools())} MCP tools for task {setup.task_id} "
-                        f"(server_mcp={enable_extend_tool}, bot_mcp=True)"
+                        f"[OPENAPI_SYNC] Loaded {len(server_mcp_client.get_tools())} server MCP tools for task {setup.task_id}"
                     )
             except Exception as e:
-                logger.warning(f"[OPENAPI_SYNC] Failed to load MCP tools: {e}")
+                logger.warning(f"[OPENAPI_SYNC] Failed to load server MCP tools: {e}")
 
         # Add web search tool if deep thinking enabled and system config allows
         if enable_deep_thinking and settings.WEB_SEARCH_ENABLED:
