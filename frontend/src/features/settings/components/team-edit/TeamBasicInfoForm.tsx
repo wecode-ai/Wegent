@@ -65,9 +65,8 @@ export default function TeamBasicInfoForm({
                   type="button"
                   onClick={() => {
                     if (isSelected) {
-                      if (bindMode.length > 1) {
-                        setBindMode(bindMode.filter(m => m !== opt));
-                      }
+                      // Allow deselecting even if it's the last one (can be empty)
+                      setBindMode(bindMode.filter(m => m !== opt));
                     } else {
                       setBindMode([...bindMode, opt]);
                     }
