@@ -36,6 +36,7 @@ env/
 .vscode/
 *.swp
 *.swo
+*.iml
 
 # Environment variables
 .env
