@@ -31,6 +31,7 @@ import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContex
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 import { ModelSelector, type Model } from '@/features/tasks/components/selector';
 import { useUser } from '@/features/common/UserContext';
+import { SYSTEM_MESSAGE_MARKERS } from '@/features/tasks/constants/systemMessages';
 
 interface CreateGroupChatDialogProps {
   open: boolean;
@@ -107,7 +108,7 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
       // an initial "Group chat created" message to users
       void sendMessage(
         {
-          message: '__SYSTEM_GROUP_CREATED__',
+          message: SYSTEM_MESSAGE_MARKERS.GROUP_CHAT_CREATED,
           team_id: selectedTeam.id,
           task_id: undefined, // Let streaming API create the task
           title: title, // Pass custom title for the group chat

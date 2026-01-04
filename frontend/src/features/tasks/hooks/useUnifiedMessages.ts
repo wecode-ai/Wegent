@@ -30,20 +30,9 @@ import { useMemo, useEffect, useRef } from 'react';
 import { useChatStreamContext, computeIsStreaming } from '../contexts/chatStreamContext';
 import { useUser } from '@/features/common/UserContext';
 import { useTaskContext } from '../contexts/taskContext';
+import { isSystemMessage } from '../constants/systemMessages';
 import type { Team, Attachment, SubtaskContextBrief } from '@/types/api';
 import type { SourceReference } from '@/types/socket';
-
-// System message marker used for group chat creation
-// Messages with this content should be hidden from the UI
-const SYSTEM_GROUP_CREATED_MARKER = '__SYSTEM_GROUP_CREATED__';
-
-/**
- * Check if a message should be hidden from display
- * Currently used to filter out system markers like group chat creation
- */
-function isSystemMessage(content: string): boolean {
-  return content === SYSTEM_GROUP_CREATED_MARKER;
-}
 
 /**
  * Message for display - extends UnifiedMessage with additional rendering info
