@@ -1339,16 +1339,6 @@ const MessageBubble = memo(
       }
     };
 
-    // DEBUG: Log shell_type check
-    if (msg.thinking) {
-      console.log('[MessageBubble] Checking shell_type:', {
-        subtaskId: msg.subtaskId,
-        hasResult: !!msg.result,
-        shell_type: msg.result?.shell_type,
-        isChat: msg.result?.shell_type === 'Chat',
-      });
-    }
-
     return (
       <div className={`flex ${shouldAlignRight ? 'justify-end' : 'justify-start'}`} translate="no">
         <div
@@ -1480,6 +1470,16 @@ const MessageBubble = memo(
     const nextSourcesLen =
       nextProps.msg.sources?.length || nextProps.msg.result?.sources?.length || 0;
 
+    // Compare reasoning content length for streaming updates
+    const prevReasoningLen =
+      prevProps.msg.reasoningContent?.length ||
+      prevProps.msg.result?.reasoning_content?.length ||
+      0;
+    const nextReasoningLen =
+      nextProps.msg.reasoningContent?.length ||
+      nextProps.msg.result?.reasoning_content?.length ||
+      0;
+
     const shouldSkipRender =
       prevProps.msg.content === nextProps.msg.content &&
       prevProps.msg.subtaskStatus === nextProps.msg.subtaskStatus &&
@@ -1496,7 +1496,9 @@ const MessageBubble = memo(
       prevProps.isCurrentUserMessage === nextProps.isCurrentUserMessage &&
       prevProps.onRetry === nextProps.onRetry &&
       prevThinkingLen === nextThinkingLen &&
-      prevSourcesLen === nextSourcesLen;
+      prevSourcesLen === nextSourcesLen &&
+      prevReasoningLen === nextReasoningLen &&
+      prevProps.msg.status === nextProps.msg.status;
 
     return shouldSkipRender;
   }

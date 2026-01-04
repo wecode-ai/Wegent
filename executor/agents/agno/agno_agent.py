@@ -693,6 +693,12 @@ class AgnoAgent(Agent):
                 if time_since_last >= self._content_report_interval:
                     self._last_content_report_time = current_time
                     logger.info(f"Sending streaming update, content_length={len(result_content)}")
+                    # Include accumulated reasoning_content in streaming updates
+                    reasoning_content = (
+                        self.accumulated_reasoning_content
+                        if self.accumulated_reasoning_content
+                        else None
+                    )
                     self.report_progress(
                         85,
                         TaskStatus.RUNNING.value,
@@ -700,6 +706,7 @@ class AgnoAgent(Agent):
                         result=ExecutionResult(
                             value=result_content,
                             thinking=self.thinking_manager.get_thinking_steps(),
+                            reasoning_content=reasoning_content,
                         ).dict(),
                     )
 
@@ -723,6 +730,19 @@ class AgnoAgent(Agent):
                     report_immediately=True,
                     details=reasoning_details,
                 )
+                # IMPORTANT: Also send accumulated reasoning_content in the result
+                # This enables streaming display of reasoning during the thinking phase
+                # (before content generation starts)
+                self.report_progress(
+                    70,  # Keep progress at 70 during reasoning phase
+                    TaskStatus.RUNNING.value,
+                    "${{thinking.model_reasoning}}",
+                    result=ExecutionResult(
+                        value=result_content,  # May be empty during reasoning phase
+                        thinking=self.thinking_manager.get_thinking_steps(),
+                        reasoning_content=self.accumulated_reasoning_content,
+                    ).dict(),
+                )
 
         # Handle reasoning step events (for models that support structured reasoning)
         if run_response_event.event in [RunEvent.reasoning_step]:
@@ -741,6 +761,18 @@ class AgnoAgent(Agent):
                     title_key="thinking.model_reasoning",
                     report_immediately=True,
                     details=reasoning_details,
+                )
+                # IMPORTANT: Also send accumulated reasoning_content in the result
+                # This enables streaming display of reasoning during the thinking phase
+                self.report_progress(
+                    70,  # Keep progress at 70 during reasoning phase
+                    TaskStatus.RUNNING.value,
+                    "${{thinking.model_reasoning}}",
+                    result=ExecutionResult(
+                        value=result_content,  # May be empty during reasoning phase
+                        thinking=self.thinking_manager.get_thinking_steps(),
+                        reasoning_content=self.accumulated_reasoning_content,
+                    ).dict(),
                 )
 
         return result_content
@@ -1232,6 +1264,12 @@ class AgnoAgent(Agent):
                 if time_since_last >= self._content_report_interval:
                     self._last_content_report_time = current_time
                     logger.info(f"[Team] Sending streaming update, content_length={len(result_content)}")
+                    # Include accumulated reasoning_content in streaming updates
+                    reasoning_content_update = (
+                        self.accumulated_reasoning_content
+                        if self.accumulated_reasoning_content
+                        else None
+                    )
                     self.report_progress(
                         85,
                         TaskStatus.RUNNING.value,
@@ -1239,6 +1277,7 @@ class AgnoAgent(Agent):
                         result=ExecutionResult(
                             value=result_content,
                             thinking=self.thinking_manager.get_thinking_steps(),
+                            reasoning_content=reasoning_content_update,
                         ).dict(),
                     )
 
