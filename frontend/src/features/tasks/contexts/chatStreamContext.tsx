@@ -1723,6 +1723,35 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
             continue;
           }
 
+          // FIX: Handle the case where frontend has a streaming message but backend has completed
+          // This fixes infinite spinner for new group chat members who join mid-stream
+          if (!isUserMessage) {
+            const existingAiMessage = messages.get(messageId);
+            if (
+              existingAiMessage &&
+              existingAiMessage.status === 'streaming' &&
+              subtask.status !== 'RUNNING' &&
+              subtask.status !== 'PENDING'
+            ) {
+              // Backend has completed but frontend still shows streaming
+              // Update the message with final content and status
+              const finalContent =
+                typeof subtask.result?.value === 'string' ? subtask.result.value : '';
+              const finalStatus: MessageStatus =
+                subtask.status === 'FAILED' ? 'error' : 'completed';
+              messages.set(messageId, {
+                ...existingAiMessage,
+                status: finalStatus,
+                content: finalContent || existingAiMessage.content,
+                subtaskStatus: subtask.status,
+                result: subtask.result as UnifiedMessage['result'],
+                error: subtask.error_message || undefined,
+                messageId: subtask.message_id,
+              });
+              continue;
+            }
+          }
+
           // Determine status
           let status: MessageStatus = 'completed';
           if (subtask.status === 'FAILED' || subtask.status === 'CANCELLED') {
