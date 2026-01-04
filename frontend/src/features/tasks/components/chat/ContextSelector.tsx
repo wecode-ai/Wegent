@@ -5,7 +5,7 @@
 'use client';
 
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
-import { Check, FileText, ArrowRight } from 'lucide-react';
+import { Check, Database, ArrowRight } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import Link from 'next/link';
 import {
@@ -21,6 +21,7 @@ import type { KnowledgeBase } from '@/types/api';
 import type { ContextItem, KnowledgeBaseContext } from '@/types/context';
 import { useTranslation } from '@/hooks/useTranslation';
 import { cn } from '@/lib/utils';
+import { formatDocumentCount } from '@/lib/i18n-helpers';
 
 interface ContextSelectorProps {
   open: boolean;
@@ -35,13 +36,16 @@ interface KnowledgeBaseItemProps {
   kb: KnowledgeBase;
   isSelected: boolean;
   onSelect: () => void;
-  t: (key: string) => string;
 }
 
 /**
  * Knowledge base item component for the selector list
  */
-function KnowledgeBaseItem({ kb, isSelected, onSelect, t }: KnowledgeBaseItemProps) {
+function KnowledgeBaseItem({ kb, isSelected, onSelect }: KnowledgeBaseItemProps) {
+  const { t } = useTranslation('knowledge');
+  const documentCount = kb.document_count || 0;
+  const documentText = formatDocumentCount(documentCount, t);
+
   return (
     <CommandItem
       key={kb.id}
@@ -57,7 +61,7 @@ function KnowledgeBaseItem({ kb, isSelected, onSelect, t }: KnowledgeBaseItemPro
       )}
     >
       <div className="flex items-start gap-2 min-w-0 flex-1">
-        <FileText className="w-4 h-4 text-text-muted flex-shrink-0 mt-0.5" />
+        <Database className="w-4 h-4 text-text-muted flex-shrink-0 mt-0.5" />
         <div className="flex flex-col min-w-0 flex-1">
           <span className="font-medium text-sm text-text-primary truncate" title={kb.name}>
             {kb.name}
@@ -67,9 +71,7 @@ function KnowledgeBaseItem({ kb, isSelected, onSelect, t }: KnowledgeBaseItemPro
               {kb.description}
             </span>
           )}
-          <span className="text-xs text-text-muted mt-0.5">
-            {kb.document_count || 0} {t('knowledge:documents')}
-          </span>
+          <span className="text-xs text-text-muted mt-0.5">{documentText}</span>
         </div>
       </div>
       <Check
@@ -220,7 +222,6 @@ export default function ContextSelector({
                       kb={kb}
                       isSelected={isSelected(kb.id)}
                       onSelect={() => handleSelect(kb)}
-                      t={t}
                     />
                   ))}
                 </CommandGroup>

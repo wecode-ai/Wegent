@@ -149,7 +149,9 @@
     "dify_parameters_refresh": "Refresh parameters",
     "dify_no_parameters": "No parameters configured for this application.",
     "custom_shell": "Custom",
-    "public_model": "Public"
+    "public_model": "Public",
+    "fine_tune_prompt": "Fine-tune Prompt",
+    "no_model_binding": "No model binding"
   },
   "bots": {
     "title": "AI Assistant",
@@ -369,7 +371,7 @@
   "tasks": {
     "history_title": "History",
     "group_chats": "Group Chats",
-    "group_chats_expand": "Show {{count}} more",
+    "group_chats_expand": "Show {{count}}{{suffix}} more",
     "group_chats_collapse": "Show less",
     "conversations": "Conversations",
     "search_placeholder": "Search task",
@@ -383,6 +385,7 @@
     "this_week": "This Week",
     "earlier": "Earlier",
     "loading": "Loading...",
+    "load_more": "Load more",
     "no_more_tasks": "No more tasks",
     "settings": "Settings",
     "search_results": "Search Results",
@@ -424,6 +427,8 @@
     "description": "Manage retrieval and storage engine configurations for RAG",
     "my_retrievers": "My Retrievers",
     "group_retrievers": "Group Retrievers",
+    "public_retrievers": "Public Retrievers",
+    "public": "Public",
     "create": "Create Retriever",
     "edit": "Edit Retriever",
     "delete": "Delete Retriever",
@@ -570,6 +575,14 @@
     "warning": "Warning",
     "cannotUndo": "This action cannot be undone",
     "coming_soon": "Coming Soon"
+  },
+  "correction": {
+    "result_title": "Correction Result"
+  },
+  "userSearch": {
+    "placeholder": "Search username or email...",
+    "selectedUsers": "{{count}} user(s) selected",
+    "noResults": "No users found"
   },
   "quota": {
     "load_failed": "Failed to fetch quota info",
@@ -771,6 +784,11 @@
     "rerank_top_n": "Top N Results",
     "rerank_top_n_hint": "Number of top results to return",
     "rerank_return_documents": "Return Documents",
+    "llm_config_title": "LLM Configuration",
+    "context_window": "Context Window",
+    "context_window_hint": "Maximum context window size in tokens. Used for message compression.",
+    "max_output_tokens": "Max Output Tokens",
+    "max_output_tokens_hint": "Maximum output tokens the model can generate per response.",
     "errors": {
       "load_models_failed": "Failed to load models",
       "create_failed": "Failed to create model",
@@ -924,13 +942,19 @@
     "delete_confirm_message": "Are you sure you want to delete the API key \"{{name}}\"? This action cannot be undone.",
     "create_success": "API key created successfully",
     "delete_success": "API key deleted successfully",
+    "enabled_success": "API key enabled",
+    "disabled_success": "API key disabled",
     "warning_save_key": "Please save this key now. You won't be able to see it again!",
     "no_keys": "No API keys yet",
     "no_keys_description": "Create an API key to access Wegent programmatically",
+    "status_disabled": "Disabled",
+    "enable": "Enable",
+    "disable": "Disable",
     "errors": {
       "load_failed": "Failed to load API keys",
       "create_failed": "Failed to create API key",
       "delete_failed": "Failed to delete API key",
+      "toggle_failed": "Failed to toggle API key status",
       "name_required": "Key name is required"
     }
   },

@@ -60,7 +60,8 @@ const PROTOCOL_BY_CATEGORY: Record<
   { value: string; label: string; hint?: string }[]
 > = {
   llm: [
-    { value: 'openai', label: 'OpenAI', hint: 'Agno' },
+    { value: 'openai', label: 'OpenAI', hint: 'Chat Completions API' },
+    { value: 'openai-responses', label: 'OpenAI Responses', hint: 'Responses API' },
     { value: 'anthropic', label: 'Anthropic', hint: 'Claude Code' },
     { value: 'gemini', label: 'Gemini', hint: 'Google' },
   ],
@@ -137,6 +138,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   const [showApiKey, setShowApiKey] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  // LLM-specific config state
+  const [contextWindow, setContextWindow] = useState<number | undefined>(undefined);
+  const [maxOutputTokens, setMaxOutputTokens] = useState<number | undefined>(undefined);
 
   // Type-specific config state
   // TTS
@@ -166,8 +170,12 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         // Set model category type
         setModelCategoryType(model.spec.modelType || 'llm');
         const modelType = model.spec.modelConfig?.env?.model;
+        const protocol = model.spec.protocol;
         // Map model type to provider type
-        if (modelType === 'claude') {
+        // Check protocol first for openai-responses
+        if (protocol === 'openai-responses') {
+          setProviderType('openai-responses');
+        } else if (modelType === 'claude') {
           setProviderType('anthropic');
         } else if (
           modelType === 'openai' ||
@@ -210,6 +218,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           setRerankTopN(model.spec.rerankConfig.top_n);
           setRerankReturnDocuments(model.spec.rerankConfig.return_documents ?? true);
         }
+        // Load LLM-specific configs
+        setContextWindow(model.spec.contextWindow);
+        setMaxOutputTokens(model.spec.maxOutputTokens);
       } else {
         // Reset for new model
         setModelIdName('');
@@ -231,6 +242,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         setEmbeddingEncodingFormat('float');
         setRerankTopN(undefined);
         setRerankReturnDocuments(true);
+        // Reset LLM-specific configs
+        setContextWindow(undefined);
+        setMaxOutputTokens(undefined);
       }
       setCustomHeadersError('');
       setShowApiKey(false);
@@ -239,10 +253,11 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
 
   // Determine model options based on model category type and provider
   // For embedding/rerank, only show "Custom..." option since they don't use preset LLM models
+  // For openai-responses, use the same model options as openai
   const modelOptions =
     modelCategoryType === 'embedding' || modelCategoryType === 'rerank'
       ? [{ value: 'custom', label: 'Custom...' }]
-      : providerType === 'openai'
+      : providerType === 'openai' || providerType === 'openai-responses'
         ? OPENAI_MODEL_OPTIONS
         : providerType === 'gemini'
           ? GEMINI_MODEL_OPTIONS
@@ -283,14 +298,13 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
       }
     }
   }, [model, modelOptions]);
-
   const handleProviderChange = (value: string) => {
     setProviderType(value);
     setModelId('');
     setCustomModelId('');
     // Only set default base URL for LLM models
     if (modelCategoryType === 'llm') {
-      if (value === 'openai') {
+      if (value === 'openai' || value === 'openai-responses') {
         setBaseUrl('https://api.openai.com/v1');
       } else if (value === 'gemini') {
         setBaseUrl('https://generativelanguage.googleapis.com');
@@ -474,12 +488,15 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           : undefined;
 
       // Map provider type to model field value
-      // For LLM: openai -> openai, anthropic -> claude, gemini -> gemini
+      // For LLM: openai -> openai, openai-responses -> openai, anthropic -> claude, gemini -> gemini
       // For embedding/rerank: use provider type directly (openai, cohere, jina, custom)
       let modelFieldValue = providerType;
       if (modelCategoryType === 'llm') {
         if (providerType === 'anthropic') {
           modelFieldValue = 'claude';
+        } else if (providerType === 'openai-responses') {
+          // openai-responses uses openai as the model type, protocol distinguishes the API format
+          modelFieldValue = 'openai';
         }
       }
 
@@ -503,6 +520,11 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             },
           },
           modelType: modelCategoryType,
+          // Save protocol for openai-responses to distinguish from regular openai
+          ...(providerType === 'openai-responses' && { protocol: 'openai-responses' }),
+          // LLM-specific fields
+          ...(modelCategoryType === 'llm' && contextWindow && { contextWindow }),
+          ...(modelCategoryType === 'llm' && maxOutputTokens && { maxOutputTokens }),
           ...(ttsConfig && { ttsConfig }),
           ...(sttConfig && { sttConfig }),
           ...(embeddingConfig && { embeddingConfig }),
@@ -540,9 +562,13 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   };
 
   const apiKeyPlaceholder =
-    providerType === 'openai' ? 'sk-...' : providerType === 'gemini' ? 'AIza...' : 'sk-ant-...';
+    providerType === 'openai' || providerType === 'openai-responses'
+      ? 'sk-...'
+      : providerType === 'gemini'
+        ? 'AIza...'
+        : 'sk-ant-...';
   const baseUrlPlaceholder =
-    providerType === 'openai'
+    providerType === 'openai' || providerType === 'openai-responses'
       ? 'https://api.openai.com/v1'
       : providerType === 'gemini'
         ? 'https://generativelanguage.googleapis.com'
@@ -727,6 +753,42 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             {customHeadersError && <p className="text-xs text-error">{customHeadersError}</p>}
             <p className="text-xs text-text-muted">{t('common:models.custom_headers_hint')}</p>
           </div>
+
+          {/* LLM-specific fields - Context Window and Max Output Tokens */}
+          {modelCategoryType === 'llm' && (
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="context_window" className="text-sm font-medium">
+                  {t('common:models.context_window')}
+                </Label>
+                <Input
+                  id="context_window"
+                  type="number"
+                  value={contextWindow || ''}
+                  onChange={e => setContextWindow(parseInt(e.target.value) || undefined)}
+                  placeholder="128000"
+                  className="bg-base"
+                />
+                <p className="text-xs text-text-muted">{t('common:models.context_window_hint')}</p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="max_output_tokens" className="text-sm font-medium">
+                  {t('common:models.max_output_tokens')}
+                </Label>
+                <Input
+                  id="max_output_tokens"
+                  type="number"
+                  value={maxOutputTokens || ''}
+                  onChange={e => setMaxOutputTokens(parseInt(e.target.value) || undefined)}
+                  placeholder="8192"
+                  className="bg-base"
+                />
+                <p className="text-xs text-text-muted">
+                  {t('common:models.max_output_tokens_hint')}
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* TTS-specific fields */}
           {modelCategoryType === 'tts' && (

@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import { createApiClient, ApiClient } from '../../utils/api-client';
 import { DataBuilders } from '../../fixtures/data-builders';
 import { ADMIN_USER } from '../../config/test-users';
+import { waitForPageStable, waitForLoadingComplete } from '../../utils/helpers';
 
 test.describe('Tasks Page - Layout and Navigation', () => {
   let apiClient: ApiClient;
@@ -21,7 +22,7 @@ test.describe('Tasks Page - Layout and Navigation', () => {
   });
 
   test('should display main layout components', async ({ page }) => {
-    await page.waitForTimeout(2000);
+    await waitForPageStable(page);
 
     // Check sidebar
     const sidebar = page.locator('[data-testid="task-sidebar"], aside');
@@ -73,7 +74,7 @@ test.describe('Tasks Page - Layout and Navigation', () => {
   });
 
   test('should display team selector', async ({ page }) => {
-    await page.waitForTimeout(2000);
+    await waitForPageStable(page);
     const teamSelector = page.locator('[data-testid="team-selector"], [role="combobox"], select');
 
     const count = await teamSelector.count();
@@ -90,7 +91,7 @@ test.describe('Tasks Page - Layout and Navigation', () => {
   });
 
   test('should have message input area', async ({ page }) => {
-    await page.waitForTimeout(2000);
+    await waitForPageStable(page);
     const messageInput = page.locator(
       'textarea[placeholder*="message"], textarea[placeholder*="消息"], [data-testid="message-input"], textarea'
     );
@@ -103,7 +104,7 @@ test.describe('Tasks Page - Layout and Navigation', () => {
   });
 
   test('should have send button', async ({ page }) => {
-    await page.waitForTimeout(2000);
+    await waitForPageStable(page);
     const sendButton = page.locator(
       'button[type="submit"], button:has-text("Send"), button:has-text("发送")'
     );
@@ -173,7 +174,7 @@ test.describe('Tasks Page - Task Management', () => {
     if (count > 0) {
       // Click first task
       await taskItems.first().click();
-      await page.waitForTimeout(1000);
+      await waitForLoadingComplete(page);
 
       // URL should contain taskId
       expect(page.url()).toContain('taskId');
@@ -192,13 +193,12 @@ test.describe('Tasks Page - Task Management', () => {
     if (count > 0) {
       // Hover over first task
       await taskItems.first().hover();
-      await page.waitForTimeout(500);
 
       // Look for menu button
       const menuButton = taskItems.first().locator('button[title*="Menu"], button:has-text("⋮")');
       if (await menuButton.isVisible({ timeout: 2000 }).catch(() => false)) {
         await menuButton.click();
-        await page.waitForTimeout(500);
+        await waitForLoadingComplete(page);
 
         // Check for menu options
         const shareOption = page.locator('button:has-text("Share"), button:has-text("分享")');
@@ -234,12 +234,12 @@ test.describe('Tasks Page - Task Management', () => {
 
     if (await teamSelector.isVisible({ timeout: 5000 }).catch(() => false)) {
       await teamSelector.click({ force: true });
-      await page.waitForTimeout(500);
+      await waitForLoadingComplete(page);
 
       const teamOption = page.locator(`[role="option"]:has-text("${testTeamName}")`);
       if (await teamOption.isVisible({ timeout: 3000 }).catch(() => false)) {
         await teamOption.click();
-        await page.waitForTimeout(1000);
+        await waitForLoadingComplete(page);
 
         // Send a message to create task
         const messageInput = page.locator('textarea').first();
@@ -249,7 +249,7 @@ test.describe('Tasks Page - Task Management', () => {
           const sendButton = page.locator('button[type="submit"]').first();
           if (await sendButton.isEnabled({ timeout: 3000 }).catch(() => false)) {
             await sendButton.click();
-            await page.waitForTimeout(2000);
+            await waitForPageStable(page);
 
             // Task should appear in sidebar
             const newTask = page.locator('text=Test task from tasks page');
@@ -268,12 +268,12 @@ test.describe('Tasks Page - Task Management', () => {
     if (count > 1) {
       // Click first task
       await taskItems.first().click();
-      await page.waitForTimeout(500);
+      await waitForLoadingComplete(page);
       const firstUrl = page.url();
 
       // Click second task
       await taskItems.nth(1).click();
-      await page.waitForTimeout(500);
+      await waitForLoadingComplete(page);
       const secondUrl = page.url();
 
       // URLs should be different
@@ -317,7 +317,7 @@ test.describe('Tasks Page - Sidebar Interactions', () => {
 
     if (await mobileMenuButton.isVisible({ timeout: 3000 }).catch(() => false)) {
       await mobileMenuButton.click();
-      await page.waitForTimeout(500);
+      await waitForLoadingComplete(page);
 
       // Sidebar should be visible
       const sidebar = page.locator('[data-testid="task-sidebar"], aside');
@@ -332,7 +332,7 @@ test.describe('Tasks Page - Sidebar Interactions', () => {
 
     if (await searchInput.isVisible({ timeout: 3000 }).catch(() => false)) {
       await searchInput.fill('test');
-      await page.waitForTimeout(500);
+      await waitForLoadingComplete(page);
 
       // Task list should update
       expect(true).toBe(true);
@@ -376,7 +376,7 @@ test.describe('Tasks Page - Chat Interactions', () => {
 
     if (count > 0) {
       await taskItems.first().click();
-      await page.waitForTimeout(1000);
+      await waitForLoadingComplete(page);
 
       // Check for messages
       const messages = page.locator('[data-testid="message"], .message');
@@ -396,7 +396,7 @@ test.describe('Tasks Page - Chat Interactions', () => {
 
       if (isEnabled) {
         await sendButton.click();
-        await page.waitForTimeout(1000);
+        await waitForLoadingComplete(page);
 
         // Message should be sent
         expect(true).toBe(true);
@@ -410,7 +410,7 @@ test.describe('Tasks Page - Chat Interactions', () => {
 
     if (count > 0) {
       await taskItems.first().click();
-      await page.waitForTimeout(1000);
+      await waitForLoadingComplete(page);
 
       // Look for streaming/loading indicators
       const streamingIndicator = page.locator(
@@ -427,7 +427,7 @@ test.describe('Tasks Page - Chat Interactions', () => {
 
     if (count > 0) {
       await taskItems.first().click();
-      await page.waitForTimeout(1000);
+      await waitForLoadingComplete(page);
 
       // Look for cancel button
       const cancelButton = page.locator(

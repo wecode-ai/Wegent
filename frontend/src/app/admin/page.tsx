@@ -13,7 +13,9 @@ import { AdminTabNav, AdminTabId } from '@/features/admin/components/AdminTabNav
 import { ShieldExclamationIcon } from '@heroicons/react/24/outline';
 import UserList from '@/features/admin/components/UserList';
 import PublicModelList from '@/features/admin/components/PublicModelList';
+import PublicRetrieverList from '@/features/admin/components/PublicRetrieverList';
 import PublicSkillList from '@/features/admin/components/PublicSkillList';
+import ApiKeyManagement from '@/features/admin/components/ApiKeyManagement';
 import SystemConfigPanel from '@/features/admin/components/SystemConfigPanel';
 import { UserProvider, useUser } from '@/features/common/UserContext';
 import { TaskContextProvider } from '@/features/tasks/contexts/taskContext';
@@ -57,7 +59,17 @@ function AdminContent() {
   // Get initial tab from URL
   const getInitialTab = (): AdminTabId => {
     const tab = searchParams.get('tab');
-    if (tab && ['users', 'public-models', 'public-skills', 'system-config'].includes(tab)) {
+    if (
+      tab &&
+      [
+        'users',
+        'public-models',
+        'public-retrievers',
+        'public-skills',
+        'api-keys',
+        'system-config',
+      ].includes(tab)
+    ) {
       return tab as AdminTabId;
     }
     return 'users';
@@ -103,8 +115,12 @@ function AdminContent() {
         return <UserList />;
       case 'public-models':
         return <PublicModelList />;
+      case 'public-retrievers':
+        return <PublicRetrieverList />;
       case 'public-skills':
         return <PublicSkillList />;
+      case 'api-keys':
+        return <ApiKeyManagement />;
       case 'system-config':
         return <SystemConfigPanel />;
       default:

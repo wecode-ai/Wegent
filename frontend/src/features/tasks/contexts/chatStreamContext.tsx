@@ -77,8 +77,10 @@ export interface UnifiedMessage {
   content: string;
   /** Attachment if any (for pending messages) */
   attachment?: unknown;
-  /** Attachments array (for confirmed messages) */
+  /** Attachments array (for confirmed messages, deprecated - use contexts) */
   attachments?: unknown[];
+  /** Unified contexts (attachments, knowledge bases, etc.) */
+  contexts?: unknown[];
   /** Timestamp when message was created */
   timestamp: number;
   /** Subtask ID from backend (set when confirmed) */
@@ -238,6 +240,8 @@ interface ChatStreamContextType {
       pendingUserMessage?: string;
       pendingAttachment?: unknown;
       pendingAttachments?: unknown[];
+      /** Pending contexts for immediate display (attachments, knowledge bases, etc.) */
+      pendingContexts?: unknown[];
       onError?: (error: Error) => void;
       /** Callback when message is sent, passes back localMessageId for precise update */
       onMessageSent?: (localMessageId: string, taskId: number, subtaskId: number) => void;
@@ -533,18 +537,32 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       const existingMessage = newMessages.get(aiMessageId);
       if (existingMessage) {
         // For executor tasks, result contains full data (thinking, workbench, sources)
-        // Content is accumulated, but result is replaced with latest
+        // IMPORTANT: Merge result instead of replacing to preserve thinking data
         const updatedMessage: UnifiedMessage = {
           ...existingMessage,
           content: existingMessage.content + content,
         };
-        // If result is provided (executor tasks), update it
+        // If result is provided (executor tasks), merge it with existing result
+        // This prevents losing thinking data when result is partially updated
         if (result) {
-          updatedMessage.result = result as UnifiedMessage['result'];
+          const newResult = result as UnifiedMessage['result'];
+          updatedMessage.result = {
+            ...existingMessage.result,
+            ...newResult,
+            // Special handling for thinking array:
+            // If new result has thinking, use it (backend sends full array)
+            // Otherwise keep existing thinking to prevent data loss
+            thinking:
+              newResult && newResult.thinking
+                ? newResult.thinking
+                : existingMessage.result?.thinking,
+          };
         }
-        // If sources are provided directly (chat v2), update them
-        if (sources) {
-          updatedMessage.sources = sources;
+        // Extract sources from either top-level or result.sources
+        // Backend may send sources inside result object
+        const chunkSources = sources || (result?.sources as typeof sources);
+        if (chunkSources) {
+          updatedMessage.sources = chunkSources;
         }
 
         newMessages.set(aiMessageId, updatedMessage);
@@ -565,6 +583,10 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
    */
   const handleChatDone = useCallback((data: ChatDonePayload) => {
     const { task_id: eventTaskId, subtask_id, result, message_id, sources } = data;
+
+    // Extract sources from either top-level or result.sources
+    // Backend may send sources inside result object
+    const finalSources = sources || (result?.sources as typeof sources);
 
     // Find task ID from subtask mapping, or use task_id from event (for group chat members)
     let taskId = subtaskToTaskRef.current.get(subtask_id);
@@ -632,8 +654,16 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           error: hasError ? (result.error as string) : existingMessage.error,
           // Set messageId from backend for proper sorting
           messageId: message_id,
-          // Set sources if provided
-          sources: sources || existingMessage.sources,
+          // Set sources if provided (check both top-level and result.sources)
+          sources: finalSources || existingMessage.sources,
+          // IMPORTANT: Update result field to preserve thinking data from incremental updates
+          // Merge with existing result to keep accumulated thinking data
+          result: result
+            ? {
+                ...existingMessage.result,
+                ...(result as UnifiedMessage['result']),
+              }
+            : existingMessage.result,
         });
       }
 
@@ -798,8 +828,17 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
    * Adds the message to the unified messages Map for real-time display
    */
   const handleChatMessage = useCallback((data: ChatMessagePayload) => {
-    const { task_id, subtask_id, message_id, role, content, sender, created_at, attachments } =
-      data;
+    const {
+      task_id,
+      subtask_id,
+      message_id,
+      role,
+      content,
+      sender,
+      created_at,
+      attachments,
+      contexts,
+    } = data;
 
     // Generate message ID based on role
     const isUserMessage = role === 'user' || role?.toUpperCase() === 'USER';
@@ -832,6 +871,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         senderUserId: sender?.user_id,
         shouldShowSender: isUserMessage, // Show sender for user messages in group chat
         attachments: attachments,
+        contexts: contexts,
       };
 
       newMessages.set(msgId, newMessage);
@@ -1080,6 +1120,8 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         pendingUserMessage?: string;
         pendingAttachment?: unknown;
         pendingAttachments?: unknown[];
+        /** Pending contexts for immediate display (attachments, knowledge bases, etc.) */
+        pendingContexts?: unknown[];
         onError?: (error: Error) => void;
         /** Callback when message is sent, passes back localMessageId for precise update */
         onMessageSent?: (localMessageId: string, taskId: number, subtaskId: number) => void;
@@ -1118,6 +1160,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         content: options?.pendingUserMessage || request.message,
         attachment: options?.pendingAttachment,
         attachments: options?.pendingAttachments,
+        contexts: options?.pendingContexts,
         timestamp: Date.now(),
         // Add sender info for group chat
         senderUserName: options?.currentUserName,
@@ -1671,6 +1714,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
               subtaskId: subtask.id,
               messageId: subtask.message_id,
               attachments: subtask.attachments,
+              contexts: subtask.contexts,
               botName: subtask.bots?.[0]?.name || teamName,
               subtaskStatus: subtask.status,
               result: subtask.result as UnifiedMessage['result'],
@@ -1712,6 +1756,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
             subtaskId: subtask.id,
             messageId: subtask.message_id,
             attachments: subtask.attachments,
+            contexts: subtask.contexts,
             botName: !isUserMessage && subtask.bots?.[0]?.name ? subtask.bots[0].name : teamName,
             senderUserName:
               subtask.sender_user_name ||

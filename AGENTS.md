@@ -54,10 +54,15 @@ Task = Team + Workspace (代码仓库)
 
 **Always run tests before committing.** Target coverage: 40-60% minimum.
 
+**⚠️ Python modules use [uv](https://docs.astral.sh/uv/) for dependency management. Always use `uv run` to execute Python commands.**
+
 ```bash
-cd backend && pytest --cov=app     # Backend
-cd frontend && npm test            # Frontend
-cd frontend && npm run test:e2e    # E2E tests (Playwright)
+cd backend && uv run pytest --cov=app           # Backend
+cd executor && uv run pytest                    # Executor
+cd executor_manager && uv run pytest            # Executor Manager
+cd shared && uv run pytest                      # Shared
+cd frontend && npm test                         # Frontend
+cd frontend && npm run test:e2e                 # E2E tests (Playwright)
 ```
 
 **Test principles:**
@@ -336,9 +341,9 @@ team = db.query(Kind).filter(Kind.kind == "Team", ...).first()
 **Database Migrations:**
 ```bash
 cd backend
-alembic revision --autogenerate -m "description"  # Create
-alembic upgrade head                               # Apply
-alembic downgrade -1                               # Rollback
+uv run alembic revision --autogenerate -m "description"  # Create
+uv run alembic upgrade head                               # Apply
+uv run alembic downgrade -1                               # Rollback
 ```
 
 **Web Search Configuration:**
@@ -347,6 +352,13 @@ alembic downgrade -1                               # Rollback
 - `WEB_SEARCH_DEFAULT_MAX_RESULTS`: Default max results when LLM doesn't specify (default: `100`)
   - Can be overridden by per-engine `max_results` in `WEB_SEARCH_ENGINES` config
   - LLM can override by passing `max_results` parameter to the tool
+
+**MCP (Model Context Protocol) Configuration:**
+- `CHAT_MCP_ENABLED`: Enable/disable MCP tools in Chat Shell mode (default: `false`)
+- `CHAT_MCP_SERVERS`: JSON config for MCP servers (see config.py comments for format)
+  - Supports `${{path}}` variable substitution in config values (headers, urls, etc.)
+  - Available variables: `user.name`, `user.id`
+  - Example: `"headers": {"X-User": "${{user.name}}"}` will be replaced with actual username
 
 ### Frontend
 
@@ -359,13 +371,86 @@ alembic downgrade -1                               # Rollback
 - `SocketContext` - Socket.IO connection
 - `ThemeContext` - Theme (light/dark)
 
+**Message Data Flow (Chat/Task Messages):**
+
+⚠️ **CRITICAL: Single Source of Truth for Messages**
+
+When working with chat messages, always use `messages` from `useUnifiedMessages` - this is the **ONLY** source of truth for displayed messages.
+
+```typescript
+// ✅ CORRECT - Use messages from useUnifiedMessages
+const { messages } = useUnifiedMessages({ team, isGroupChat });
+
+// ❌ WRONG - Do NOT use selectedTaskDetail.subtasks for display/export
+// This is stale backend data that doesn't include WebSocket updates
+```
+
+**Message Data Sources:**
+
+| Source | Contains | Use Case |
+|--------|----------|----------|
+| `messages` (from `useUnifiedMessages`) | Real-time messages via WebSocket | ✅ Display, export, UI rendering |
+| `selectedTaskDetail.subtasks` | Backend cached data | ❌ NEVER use for display/export |
+
+**Message Flow:**
+
+```
+1. Initial Load:
+   selectedTaskDetail.subtasks → syncBackendMessages() → streamState.messages
+
+2. New Message (Self):
+   sendMessage() → streamState.messages (pending)
+   WebSocket chat:start → Add AI message
+   WebSocket chat:chunk → Update AI content
+   WebSocket chat:done → Mark complete
+
+3. New Message (Other User in Group Chat):
+   WebSocket chat:message → streamState.messages (completed)
+
+4. Page Refresh / Task Switch:
+   selectedTaskDetail.subtasks → Re-sync to streamState.messages
+```
+
+**Key Points:**
+- `streamState.messages` is updated by WebSocket events in real-time
+- `selectedTaskDetail.subtasks` is only updated when explicitly refreshing task detail
+- When exporting/displaying messages, ALWAYS use `messages` from `useUnifiedMessages`
+- This ensures all real-time updates (self, other users, AI) are included
+
+**Common Pitfall:**
+```typescript
+// ❌ BAD - Missing latest WebSocket messages
+const exportMessages = selectedTaskDetail.subtasks.map(...)
+
+// ✅ GOOD - Includes all real-time updates
+const { messages } = useUnifiedMessages(...)
+const exportMessages = messages
+  .filter(msg => msg.status === 'completed')
+  .map(...)
+```
+
 **i18n Rules:**
 
 1. **Always import from `@/hooks/useTranslation`**, not from `react-i18next`
 2. **Use single namespace** matching your feature (e.g., `useTranslation('groups')` for groups feature)
-3. **Always add namespace prefix** when accessing keys from other namespaces (e.g., `t('common:actions.save')`)
+3. **Translation key format:**
+   - Within current namespace: `t('key.subkey')` (e.g., `t('title')`, `t('actions.save')`)
+   - From other namespace: `t('namespace:key.subkey')` (e.g., `t('common:actions.save')`, `t('chat:export.title')`)
 4. **Never use array with `common` first** - `useTranslation(['common', 'groups'])` will break feature-specific keys
 5. **Add new translation keys** to the appropriate namespace file in `src/i18n/locales/{lang}/`
+
+**Examples:**
+```typescript
+// ✅ CORRECT
+const { t } = useTranslation('groups');
+t('title')                    // Access current namespace key
+t('common:actions.save')      // Access common namespace key
+t('chat:export.no_messages')  // Access chat namespace key
+
+// ❌ WRONG
+const { t } = useTranslation(['common', 'groups']); // Breaks feature keys
+t('actions.save')             // Ambiguous - which namespace?
+```
 
 ### Executor
 
@@ -395,8 +480,11 @@ alembic downgrade -1                               # Rollback
 # Start services
 docker-compose up -d
 
-# Run tests
-cd backend && pytest
+# Run tests (Python modules use uv)
+cd backend && uv run pytest
+cd executor && uv run pytest
+cd executor_manager && uv run pytest
+cd shared && uv run pytest
 cd frontend && npm test
 
 # Format code
@@ -404,7 +492,7 @@ cd backend && black . && isort .
 cd frontend && npm run format
 
 # Database migration
-cd backend && alembic revision --autogenerate -m "msg" && alembic upgrade head
+cd backend && uv run alembic revision --autogenerate -m "msg" && uv run alembic upgrade head
 ```
 
 **Ports:** 3000 (frontend), 8000 (backend), 8001 (executor manager), 3306 (MySQL), 6379 (Redis)

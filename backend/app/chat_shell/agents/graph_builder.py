@@ -17,15 +17,21 @@ from collections.abc import AsyncGenerator
 from typing import Any, Callable
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.messages.utils import convert_to_messages
 from langchain_core.tools.base import BaseTool
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.errors import GraphRecursionError
 from langgraph.prebuilt import create_react_agent
 
 from ..tools.base import ToolRegistry
 
 logger = logging.getLogger(__name__)
+
+# Message to send to model when tool call limit is reached
+TOOL_LIMIT_REACHED_MESSAGE = """[SYSTEM NOTICE] Tool call limit reached. You have made too many tool calls in this conversation.
+
+Please provide your final response to the user based on the information you have gathered so far. Do NOT attempt to call any more tools - simply summarize your findings and provide a helpful response."""
 
 
 class LangGraphAgentBuilder:
@@ -93,7 +99,7 @@ class LangGraphAgentBuilder:
                 content = msg.content if hasattr(msg, "content") else str(msg)
                 content_str = content if isinstance(content, str) else str(content)
                 # Print FULL content without truncation
-                logger.info("[prompt_modifier] " + content_str)
+                # logger.info("[prompt_modifier] " + content_str)
 
             logger.info("[prompt_modifier] ========== MODEL INPUT END ==========")
 
@@ -442,8 +448,94 @@ class LangGraphAgentBuilder:
                 streamed_content,
             )
 
-        except Exception:
+        except GraphRecursionError as e:
+            # Tool call limit reached - ask model to provide final response
+            from shared.telemetry.context import (
+                TelemetryEventNames,
+                add_span_event,
+                record_stream_error,
+                set_span_error,
+            )
+
+            logger.warning(
+                "[stream_tokens] GraphRecursionError: Tool call limit reached (max_iterations=%d). "
+                "Asking model to provide final response.",
+                self.max_iterations,
+            )
+
+            # Record recursion limit error in OpenTelemetry trace using unified function
+            add_span_event(
+                TelemetryEventNames.RECURSION_LIMIT_ERROR,
+                {
+                    "max_iterations": self.max_iterations,
+                    "recursion_limit": self.max_iterations * 2 + 1,
+                    "event_count": event_count,
+                    "streamed_content": streamed_content,
+                    "error.message": str(e),
+                },
+            )
+
+            # Build messages with the limit reached notice
+            # Add a human message to prompt the model to provide final response
+            limit_messages = list(lc_messages) + [
+                HumanMessage(content=TOOL_LIMIT_REACHED_MESSAGE)
+            ]
+
+            # Call the LLM directly (without tools) to get final response
+            try:
+                async for chunk in self.llm.astream(limit_messages):
+                    if hasattr(chunk, "content"):
+                        content = chunk.content
+                        if isinstance(content, str) and content:
+                            yield content
+                        elif isinstance(content, list):
+                            for part in content:
+                                if isinstance(part, str) and part:
+                                    yield part
+                                elif isinstance(part, dict):
+                                    text = part.get("text", "")
+                                    if text:
+                                        yield text
+
+                logger.info(
+                    "[stream_tokens] Final response generated after tool limit reached"
+                )
+            except Exception as recovery_error:
+                logger.exception(
+                    "Error generating final response after tool limit reached"
+                )
+                # Record recovery failure in trace
+                set_span_error(
+                    recovery_error,
+                    description="Failed to generate final response after recursion limit",
+                )
+                add_span_event(
+                    TelemetryEventNames.AGENT_ERROR,
+                    {
+                        "error.type": type(recovery_error).__name__,
+                        "error.message": str(recovery_error),
+                        "context": "recursion_limit_recovery",
+                    },
+                )
+                raise
+
+        except Exception as e:
+            from shared.telemetry.context import (
+                TelemetryEventNames,
+                record_stream_error,
+            )
+
             logger.exception("Error in stream_tokens")
+
+            # Record error in OpenTelemetry trace using unified function
+            record_stream_error(
+                error=e,
+                event_name=TelemetryEventNames.AGENT_ERROR,
+                extra_attributes={
+                    "event_count": event_count,
+                    "streamed_content": streamed_content,
+                },
+            )
             raise
 
     def get_final_content(self, state: dict[str, Any]) -> str:
@@ -590,6 +682,51 @@ class LangGraphAgentBuilder:
             )
 
             return final_state, all_events
+
+        except GraphRecursionError:
+            # Tool call limit reached - ask model to provide final response
+            logger.warning(
+                "[stream_events_with_state] GraphRecursionError: Tool call limit reached (max_iterations=%d). "
+                "Asking model to provide final response.",
+                self.max_iterations,
+            )
+
+            # Build messages with the limit reached notice
+            limit_messages = list(lc_messages) + [
+                HumanMessage(content=TOOL_LIMIT_REACHED_MESSAGE)
+            ]
+
+            # Call the LLM directly (without tools) to get final response
+            try:
+                response = await self.llm.ainvoke(limit_messages)
+                final_content = ""
+                if hasattr(response, "content"):
+                    if isinstance(response.content, str):
+                        final_content = response.content
+                    elif isinstance(response.content, list):
+                        text_parts = []
+                        for part in response.content:
+                            if isinstance(part, str):
+                                text_parts.append(part)
+                            elif isinstance(part, dict) and part.get("type") == "text":
+                                text_parts.append(part.get("text", ""))
+                        final_content = "".join(text_parts)
+
+                # Create a final state with the response
+                final_state = {
+                    "messages": list(lc_messages) + [AIMessage(content=final_content)]
+                }
+
+                logger.info(
+                    "[stream_events_with_state] Final response generated after tool limit reached"
+                )
+                return final_state, all_events
+
+            except Exception:
+                logger.exception(
+                    "Error generating final response after tool limit reached"
+                )
+                raise
 
         except Exception:
             logger.exception("Error in stream_events_with_state")

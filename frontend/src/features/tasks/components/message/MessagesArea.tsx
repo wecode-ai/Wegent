@@ -6,7 +6,7 @@
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { useTaskContext } from '../../contexts/taskContext';
-import type { TaskDetail, TaskDetailSubtask, Team, GitRepoInfo, GitBranch } from '@/types/api';
+import type { TaskDetail, Team, GitRepoInfo, GitBranch } from '@/types/api';
 import { Share2, FileText, ChevronDown, Download, MessageSquare, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -56,6 +56,7 @@ interface StreamingMessageBubbleProps {
   t: (key: string) => string;
   onSendMessage?: (content: string) => void;
   index: number;
+  isGroupChat?: boolean;
 }
 
 function StreamingMessageBubble({
@@ -68,6 +69,7 @@ function StreamingMessageBubble({
   t,
   onSendMessage,
   index,
+  isGroupChat,
 }: StreamingMessageBubbleProps) {
   // Use typewriter effect for streaming content
   const displayContent = useTypewriter(message.content || '');
@@ -95,6 +97,8 @@ function StreamingMessageBubble({
     thinking: message.thinking as Message['thinking'],
     // Pass result with shell_type for component selection
     result: message.result,
+    // Pass sources for RAG knowledge base citations
+    sources: message.sources,
   };
 
   return (
@@ -110,6 +114,7 @@ function StreamingMessageBubble({
       t={t}
       isWaiting={Boolean(isStreaming && !hasContent && !hasThinking)}
       onSendMessage={onSendMessage}
+      isGroupChat={isGroupChat}
     />
   );
 }
@@ -127,6 +132,14 @@ interface MessagesAreaProps {
   enableCorrectionMode?: boolean;
   correctionModelId?: string | null;
   enableCorrectionWebSearch?: boolean;
+  // Whether there are messages to display (from parent ChatArea)
+  // This ensures MessagesArea shows content when ChatArea's hasMessages is true
+  hasMessages?: boolean;
+  /**
+   * Pending task ID - used when selectedTaskDetail.id is not yet available.
+   * Can be either tempTaskId (negative) or taskId (positive) before selectedTaskDetail updates.
+   */
+  pendingTaskId?: number | null;
 }
 
 export default function MessagesArea({
@@ -141,6 +154,8 @@ export default function MessagesArea({
   enableCorrectionMode = false,
   correctionModelId = null,
   enableCorrectionWebSearch = false,
+  hasMessages: hasMessagesFromParent,
+  pendingTaskId,
 }: MessagesAreaProps) {
   const { t } = useTranslation();
   const { toast } = useToast();
@@ -152,9 +167,11 @@ export default function MessagesArea({
   const { registerCorrectionHandlers } = useSocket();
 
   // Use unified messages hook - SINGLE SOURCE OF TRUTH
+  // Pass pendingTaskId to query messages when selectedTaskDetail.id is not yet available
   const { messages, streamingSubtaskIds } = useUnifiedMessages({
     team: selectedTeam || null,
     isGroupChat,
+    pendingTaskId,
   });
 
   // Task share modal state
@@ -490,44 +507,35 @@ export default function MessagesArea({
         return;
       }
 
-      // Convert subtasks to selectable messages
-      const messages: SelectableMessage[] = selectedTaskDetail.subtasks
-        ? selectedTaskDetail.subtasks.map((sub: TaskDetailSubtask) => {
-            const isUser = sub.role === 'USER';
-            let content = sub.prompt || '';
+      // Use the messages from useUnifiedMessages which includes WebSocket updates
+      // This is the SAME data that's displayed in the UI
+      const exportableMessages: SelectableMessage[] = messages
+        .filter(msg => msg.status === 'completed') // Only export completed messages
+        .map(msg => {
+          // Remove markdown prefix from AI messages if present
+          let content = msg.content;
+          if (msg.type === 'ai' && content.startsWith('${$$}$')) {
+            content = content.substring(6);
+          }
 
-            if (!isUser && sub.result) {
-              if (typeof sub.result === 'object' && 'value' in sub.result) {
-                const value = (sub.result as { value?: unknown }).value;
-                if (typeof value === 'string') {
-                  content = value;
-                } else if (value !== null && value !== undefined) {
-                  content = JSON.stringify(value);
-                }
-              } else if (typeof sub.result === 'string') {
-                content = sub.result;
-              }
-            }
+          return {
+            id: msg.subtaskId?.toString() || msg.id,
+            type: msg.type,
+            content,
+            timestamp: msg.timestamp,
+            botName: msg.botName || selectedTaskDetail?.team?.name || 'Bot',
+            userName: msg.senderUserName || selectedTaskDetail?.user?.user_name,
+            teamName: selectedTaskDetail?.team?.name,
+            attachments: msg.attachments?.map(att => ({
+              id: att.id,
+              filename: att.filename,
+              file_size: att.file_size,
+              file_extension: att.file_extension,
+            })),
+          };
+        });
 
-            return {
-              id: sub.id,
-              type: isUser ? ('user' as const) : ('ai' as const),
-              content,
-              timestamp: new Date(sub.updated_at).getTime(),
-              botName: sub.bots?.[0]?.name || 'Bot',
-              userName: sub.sender_user_name || selectedTaskDetail?.user?.user_name,
-              teamName: selectedTaskDetail?.team?.name,
-              attachments: sub.attachments?.map(att => ({
-                id: att.id,
-                filename: att.filename,
-                file_size: att.file_size,
-                file_extension: att.file_extension,
-              })),
-            };
-          })
-        : [];
-
-      const validMessages = messages.filter(msg => msg.content.trim() !== '');
+      const validMessages = exportableMessages.filter(msg => msg.content.trim() !== '');
 
       if (validMessages.length === 0) {
         toast({
@@ -541,7 +549,7 @@ export default function MessagesArea({
       setExportFormat(format);
       setShowExportModal(true);
     },
-    [selectedTaskDetail, toast, t]
+    [selectedTaskDetail, messages, toast, t]
   );
 
   // Handle PDF export - open modal
@@ -703,11 +711,13 @@ export default function MessagesArea({
         subtaskStatus: msg.subtaskStatus,
         subtaskId: msg.subtaskId,
         attachments: msg.attachments,
+        contexts: msg.contexts, // Add contexts for unified context system
         senderUserName: msg.senderUserName,
         senderUserId: msg.senderUserId,
         shouldShowSender: msg.shouldShowSender,
         thinking: msg.thinking as Message['thinking'],
         result: msg.result, // Include result with shell_type for component selection
+        sources: msg.sources, // Include sources for RAG knowledge base citations
         recoveredContent: msg.recoveredContent,
         isRecovered: msg.isRecovered,
         isIncomplete: msg.isIncomplete,
@@ -725,7 +735,10 @@ export default function MessagesArea({
       translate="no"
     >
       {/* Messages Area */}
-      {(messages.length > 0 || streamingSubtaskIds.length > 0 || selectedTaskDetail?.id) && (
+      {(messages.length > 0 ||
+        streamingSubtaskIds.length > 0 ||
+        selectedTaskDetail?.id ||
+        hasMessagesFromParent) && (
         <div className="flex-1 space-y-8 messages-container">
           {messages.map((msg, index) => {
             const messageKey = msg.subtaskId
@@ -763,6 +776,7 @@ export default function MessagesArea({
                   t={t}
                   onSendMessage={onSendMessage}
                   index={index}
+                  isGroupChat={isGroupChat}
                 />
               );
             }
@@ -790,6 +804,7 @@ export default function MessagesArea({
                     t={t}
                     onSendMessage={onSendMessage}
                     isCurrentUserMessage={isCurrentUserMessage}
+                    isGroupChat={isGroupChat}
                   />
                   <div className="flex flex-col gap-2">
                     {/* Show progress indicator when correction is in progress */}
@@ -848,6 +863,7 @@ export default function MessagesArea({
                 onSendMessage={onSendMessage}
                 isCurrentUserMessage={isCurrentUserMessage}
                 onRetry={onRetry}
+                isGroupChat={isGroupChat}
               />
             );
           })}

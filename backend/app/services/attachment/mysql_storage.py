@@ -6,7 +6,7 @@
 MySQL storage backend implementation.
 
 This module provides a MySQL-based storage backend that stores
-binary data directly in the database using the SubtaskAttachment model.
+binary data directly in the database using the SubtaskContext model.
 This is the default storage backend when no external storage is configured.
 """
 
@@ -14,8 +14,9 @@ import logging
 from typing import Dict, Optional
 
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
-from app.models.subtask_attachment import SubtaskAttachment
+from app.models.subtask_context import SubtaskContext
 from app.services.attachment.storage_backend import StorageBackend, StorageError
 
 logger = logging.getLogger(__name__)
@@ -25,7 +26,7 @@ class MySQLStorageBackend(StorageBackend):
     """
     MySQL storage backend implementation.
 
-    Stores binary data directly in the SubtaskAttachment.binary_data column.
+    Stores binary data directly in the SubtaskContext.binary_data column.
     This is the default storage backend for backward compatibility.
     """
 
@@ -50,11 +51,11 @@ class MySQLStorageBackend(StorageBackend):
         Save file data to MySQL.
 
         For MySQL backend, this updates the binary_data column of an existing
-        attachment record. The attachment record should already exist with
+        context record. The context record should already exist with
         the ID extracted from the key.
 
         Args:
-            key: Storage key (format: attachments/{attachment_id})
+            key: Storage key (format: attachments/{context_id})
             data: File binary data
             metadata: Additional metadata (not used for MySQL backend)
 
@@ -62,25 +63,32 @@ class MySQLStorageBackend(StorageBackend):
             The storage key
 
         Raises:
-            StorageError: If attachment not found or save fails
+            StorageError: If context not found or save fails
         """
         try:
-            attachment_id = self._extract_attachment_id(key)
-            attachment = (
-                self._db.query(SubtaskAttachment)
-                .filter(SubtaskAttachment.id == attachment_id)
+            context_id = self._extract_attachment_id(key)
+            context = (
+                self._db.query(SubtaskContext)
+                .filter(SubtaskContext.id == context_id)
                 .first()
             )
 
-            if attachment is None:
-                raise StorageError(f"Attachment not found: {attachment_id}", key)
+            if context is None:
+                raise StorageError(f"Context not found: {context_id}", key)
 
-            attachment.binary_data = data
-            attachment.storage_backend = self.BACKEND_TYPE
-            attachment.storage_key = key
+            context.binary_data = data
+            # Update storage_backend and storage_key in type_data
+            if context.type_data and isinstance(context.type_data, dict):
+                context.type_data = {
+                    **context.type_data,
+                    "storage_backend": self.BACKEND_TYPE,
+                    "storage_key": key,
+                }
+                # Mark JSON field as modified so SQLAlchemy detects the change
+                flag_modified(context, "type_data")
             self._db.flush()
 
-            logger.debug(f"Saved binary data to MySQL for attachment {attachment_id}")
+            logger.debug(f"Saved binary data to MySQL for context {context_id}")
             return key
 
         except StorageError:
@@ -94,23 +102,23 @@ class MySQLStorageBackend(StorageBackend):
         Get file data from MySQL.
 
         Args:
-            key: Storage key (format: attachments/{attachment_id})
+            key: Storage key (format: attachments/{context_id})
 
         Returns:
             File binary data, or None if not found
         """
         try:
-            attachment_id = self._extract_attachment_id(key)
-            attachment = (
-                self._db.query(SubtaskAttachment)
-                .filter(SubtaskAttachment.id == attachment_id)
+            context_id = self._extract_attachment_id(key)
+            context = (
+                self._db.query(SubtaskContext)
+                .filter(SubtaskContext.id == context_id)
                 .first()
             )
 
-            if attachment is None:
+            if context is None:
                 return None
 
-            return attachment.binary_data
+            return context.binary_data
 
         except Exception as e:
             logger.error(f"Failed to get from MySQL storage: {e}")
@@ -121,32 +129,30 @@ class MySQLStorageBackend(StorageBackend):
         Delete file data from MySQL.
 
         For MySQL backend, this sets binary_data to empty bytes (b'') but doesn't
-        delete the attachment record (that's handled by AttachmentService).
+        delete the context record (that's handled by ContextService).
 
         Args:
-            key: Storage key (format: attachments/{attachment_id})
+            key: Storage key (format: attachments/{context_id})
 
         Returns:
             True if deleted successfully, False otherwise
         """
         try:
-            attachment_id = self._extract_attachment_id(key)
-            attachment = (
-                self._db.query(SubtaskAttachment)
-                .filter(SubtaskAttachment.id == attachment_id)
+            context_id = self._extract_attachment_id(key)
+            context = (
+                self._db.query(SubtaskContext)
+                .filter(SubtaskContext.id == context_id)
                 .first()
             )
 
-            if attachment is None:
+            if context is None:
                 return False
 
             # Set to empty bytes instead of None (NOT NULL constraint)
-            attachment.binary_data = b""
+            context.binary_data = b""
             self._db.flush()
 
-            logger.debug(
-                f"Deleted binary data from MySQL for attachment {attachment_id}"
-            )
+            logger.debug(f"Deleted binary data from MySQL for context {context_id}")
             return True
 
         except Exception as e:
@@ -158,26 +164,24 @@ class MySQLStorageBackend(StorageBackend):
         Check if file exists in MySQL.
 
         Args:
-            key: Storage key (format: attachments/{attachment_id})
+            key: Storage key (format: attachments/{context_id})
 
         Returns:
             True if file exists and has binary data, False otherwise
         """
         try:
-            attachment_id = self._extract_attachment_id(key)
-            attachment = (
-                self._db.query(SubtaskAttachment)
-                .filter(SubtaskAttachment.id == attachment_id)
+            context_id = self._extract_attachment_id(key)
+            context = (
+                self._db.query(SubtaskContext)
+                .filter(SubtaskContext.id == context_id)
                 .first()
             )
 
-            if attachment is None:
+            if context is None:
                 return False
 
             # Check if binary_data exists and is not empty
-            return (
-                attachment.binary_data is not None and len(attachment.binary_data) > 0
-            )
+            return context.binary_data is not None and len(context.binary_data) > 0
 
         except Exception as e:
             logger.error(f"Failed to check existence in MySQL storage: {e}")
@@ -200,32 +204,32 @@ class MySQLStorageBackend(StorageBackend):
 
     def _extract_attachment_id(self, key: str) -> int:
         """
-        Extract attachment ID from storage key.
+        Extract context ID from storage key.
 
         Args:
-            key: Storage key (format: attachments/{uuid}_{timestamp}_{user_id}_{attachment_id})
+            key: Storage key (format: attachments/{uuid}_{timestamp}_{user_id}_{context_id})
 
         Returns:
-            Attachment ID
+            Context ID
 
         Raises:
             StorageError: If key format is invalid
         """
         try:
-            # Key format: attachments/{uuid}_{timestamp}_{user_id}_{attachment_id}
+            # Key format: attachments/{uuid}_{timestamp}_{user_id}_{context_id}
             parts = key.split("/")
             if len(parts) != 2 or parts[0] != "attachments":
                 raise ValueError("Invalid key format")
 
-            # Extract attachment_id from the last part of the key
-            # Format: {uuid}_{timestamp}_{user_id}_{attachment_id}
+            # Extract context_id from the last part of the key
+            # Format: {uuid}_{timestamp}_{user_id}_{context_id}
             key_parts = parts[1].split("_")
             if len(key_parts) < 4:
                 raise ValueError(
-                    "Invalid key format: expected uuid_timestamp_userid_attachmentid"
+                    "Invalid key format: expected uuid_timestamp_userid_contextid"
                 )
 
-            # The attachment_id is the last part
+            # The context_id is the last part
             return int(key_parts[-1])
         except (ValueError, IndexError) as e:
             raise StorageError(f"Invalid storage key format: {key}", key)

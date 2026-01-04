@@ -20,6 +20,13 @@ export interface UserPreferences {
 export type UserRole = 'admin' | 'user';
 export type AuthSource = 'password' | 'oidc' | 'unknown';
 
+/** User type for search results (used in member search dropdowns) */
+export interface SearchUser {
+  id: number;
+  user_name: string;
+  email?: string;
+}
+
 export interface User {
   id: number;
   user_name: string;
@@ -310,7 +317,10 @@ export interface TaskDetailSubtask {
   updated_at: string;
   completed_at: string;
   bots: Bot[];
+  /** @deprecated Use contexts instead */
   attachments?: Attachment[];
+  /** Unified contexts (attachments, knowledge bases, etc.) */
+  contexts?: SubtaskContextBrief[];
   // Group chat fields
   sender_type?: 'USER' | 'TEAM';
   sender_user_id?: number;
@@ -487,6 +497,23 @@ export interface MultiAttachmentUploadState {
   attachments: Attachment[];
   uploadingFiles: Map<string, { file: File; progress: number }>;
   errors: Map<string, string>;
+}
+
+// Subtask Context Types (unified context system)
+export type ContextType = 'attachment' | 'knowledge_base';
+export type ContextStatus = 'pending' | 'uploading' | 'parsing' | 'ready' | 'failed';
+
+export interface SubtaskContextBrief {
+  id: number;
+  context_type: ContextType;
+  name: string;
+  status: ContextStatus;
+  // Attachment fields (from type_data)
+  file_extension?: string | null;
+  file_size?: number | null;
+  mime_type?: string | null;
+  // Knowledge base fields (from type_data)
+  document_count?: number | null;
 }
 
 // Quick Access Types

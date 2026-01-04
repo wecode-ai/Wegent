@@ -13,8 +13,6 @@ import {
   updateDocument,
   deleteDocument,
   batchDeleteDocuments,
-  batchEnableDocuments,
-  batchDisableDocuments,
   type BatchOperationResult,
 } from '@/apis/knowledge';
 import type {
@@ -108,14 +106,6 @@ export function useDocuments(options: UseDocumentsOptions) {
     }
   }, []);
 
-  const toggleStatus = useCallback(
-    async (doc: KnowledgeDocument) => {
-      const newStatus = doc.status === 'enabled' ? 'disabled' : 'enabled';
-      return update(doc.id, { status: newStatus });
-    },
-    [update]
-  );
-
   // Batch operations
   const batchDelete = useCallback(async (ids: number[]): Promise<BatchOperationResult> => {
     setLoading(true);
@@ -129,52 +119,6 @@ export function useDocuments(options: UseDocumentsOptions) {
       return result;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to batch delete documents';
-      toast({ title: message, variant: 'destructive' });
-      throw err;
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  const batchEnable = useCallback(async (ids: number[]): Promise<BatchOperationResult> => {
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await batchEnableDocuments(ids);
-      // Update status for successfully enabled documents
-      setDocuments(prev =>
-        prev.map(doc =>
-          ids.includes(doc.id) && !result.failed_ids.includes(doc.id)
-            ? { ...doc, status: 'enabled' as const }
-            : doc
-        )
-      );
-      return result;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to batch enable documents';
-      toast({ title: message, variant: 'destructive' });
-      throw err;
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  const batchDisable = useCallback(async (ids: number[]): Promise<BatchOperationResult> => {
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await batchDisableDocuments(ids);
-      // Update status for successfully disabled documents
-      setDocuments(prev =>
-        prev.map(doc =>
-          ids.includes(doc.id) && !result.failed_ids.includes(doc.id)
-            ? { ...doc, status: 'disabled' as const }
-            : doc
-        )
-      );
-      return result;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to batch disable documents';
       toast({ title: message, variant: 'destructive' });
       throw err;
     } finally {
@@ -196,9 +140,6 @@ export function useDocuments(options: UseDocumentsOptions) {
     create,
     update,
     remove,
-    toggleStatus,
     batchDelete,
-    batchEnable,
-    batchDisable,
   };
 }
