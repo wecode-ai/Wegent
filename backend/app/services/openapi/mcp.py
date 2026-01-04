@@ -4,29 +4,30 @@
 
 """
 MCP (Model Context Protocol) tools loading for OpenAPI v1/responses endpoint.
+
+This module provides separate functions for loading:
+- Server-side MCP tools (from CHAT_MCP_SERVERS config)
+- Bot MCP tools (from Bot/Ghost mcpServers config)
 """
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
 
-async def load_mcp_tools(
-    task_id: int, bot_name: str = "", bot_namespace: str = "default"
-) -> Any:
+async def load_server_mcp_tools(task_id: int) -> Any:
     """
-    Load MCP tools for a task, merging backend and bot configurations.
+    Load server-side MCP tools from CHAT_MCP_SERVERS configuration.
 
-    This function is adapted from ChatService._load_mcp_tools for use in OpenAPI responses.
+    This function loads MCP tools configured at the server level via
+    the CHAT_MCP_SERVERS environment variable.
 
     Args:
-        task_id: Task ID for session management
-        bot_name: Bot name to query Ghost MCP configuration
-        bot_namespace: Bot namespace for Ghost query
+        task_id: Task ID for session management and logging
 
     Returns:
-        MCPClient instance or None
+        MCPClient instance or None if no server MCP configured
     """
     import asyncio
     import json
@@ -36,7 +37,7 @@ async def load_mcp_tools(
     try:
         from app.chat_shell.tools.mcp import MCPClient
 
-        # Step 1: Load backend MCP configuration
+        # Load backend MCP configuration
         backend_servers = {}
         mcp_servers_config = getattr(settings, "CHAT_MCP_SERVERS", "")
         if mcp_servers_config:
@@ -46,13 +47,171 @@ async def load_mcp_tools(
             except json.JSONDecodeError as e:
                 logger.warning(f"[OPENAPI_MCP] Failed to parse CHAT_MCP_SERVERS: {e}")
 
-        # Step 2: Load bot's MCP configuration from Ghost CRD
+        if not backend_servers:
+            logger.debug(
+                f"[OPENAPI_MCP] No server-side MCP servers configured for task {task_id}"
+            )
+            return None
+
+        # Create MCP client with server configuration
+        client = MCPClient(backend_servers)
+        try:
+            await asyncio.wait_for(client.connect(), timeout=30.0)
+            logger.info(
+                f"[OPENAPI_MCP] Loaded {len(client.get_tools())} server-side MCP tools "
+                f"from {len(backend_servers)} servers for task {task_id}"
+            )
+            return client
+        except asyncio.TimeoutError:
+            logger.error(
+                f"[OPENAPI_MCP] Timeout connecting to server MCP servers for task {task_id}"
+            )
+            return None
+        except Exception as e:
+            logger.error(
+                f"[OPENAPI_MCP] Failed to connect to server MCP servers for task {task_id}: {e}"
+            )
+            return None
+
+    except Exception:
+        logger.exception(
+            f"[OPENAPI_MCP] Unexpected error loading server MCP tools for task {task_id}"
+        )
+        return None
+
+
+async def load_bot_mcp_tools(
+    task_id: int, bot_name: str, bot_namespace: str = "default"
+) -> Any:
+    """
+    Load bot-specific MCP tools from Bot/Ghost mcpServers configuration.
+
+    This function loads MCP tools configured for a specific bot via
+    its Ghost CRD's mcpServers field.
+
+    Args:
+        task_id: Task ID for session management and logging
+        bot_name: Bot name to query Ghost MCP configuration
+        bot_namespace: Bot namespace for Ghost query
+
+    Returns:
+        MCPClient instance or None if no bot MCP configured
+    """
+    import asyncio
+
+    try:
+        from app.chat_shell.tools.mcp import MCPClient
+
+        if not bot_name:
+            logger.debug(
+                f"[OPENAPI_MCP] No bot name provided for task {task_id}, skipping bot MCP"
+            )
+            return None
+
+        # Load bot's MCP configuration from Ghost CRD
         bot_servers = {}
-        if bot_name and bot_namespace:
+        try:
+            bot_servers = await asyncio.wait_for(
+                _get_bot_mcp_servers(bot_name, bot_namespace), timeout=5.0
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"[OPENAPI_MCP] Timeout querying bot MCP servers for {bot_namespace}/{bot_name}"
+            )
+        except Exception as e:
+            logger.warning(
+                f"[OPENAPI_MCP] Failed to load bot MCP servers for {bot_namespace}/{bot_name}: {e}"
+            )
+
+        if not bot_servers:
+            logger.debug(
+                f"[OPENAPI_MCP] No bot MCP servers configured for task {task_id} "
+                f"(bot={bot_namespace}/{bot_name})"
+            )
+            return None
+
+        # Create MCP client with bot configuration
+        client = MCPClient(bot_servers)
+        try:
+            await asyncio.wait_for(client.connect(), timeout=30.0)
+            logger.info(
+                f"[OPENAPI_MCP] Loaded {len(client.get_tools())} bot MCP tools "
+                f"from {len(bot_servers)} servers for task {task_id} (bot={bot_namespace}/{bot_name})"
+            )
+            return client
+        except asyncio.TimeoutError:
+            logger.error(
+                f"[OPENAPI_MCP] Timeout connecting to bot MCP servers for task {task_id}"
+            )
+            return None
+        except Exception as e:
+            logger.error(
+                f"[OPENAPI_MCP] Failed to connect to bot MCP servers for task {task_id}: {e}"
+            )
+            return None
+
+    except Exception:
+        logger.exception(
+            f"[OPENAPI_MCP] Unexpected error loading bot MCP tools for task {task_id}"
+        )
+        return None
+
+
+async def load_mcp_tools(
+    task_id: int,
+    bot_name: str = "",
+    bot_namespace: str = "default",
+    enable_server_mcp: bool = True,
+    enable_bot_mcp: bool = True,
+) -> Any:
+    """
+    Load MCP tools for a task, optionally merging server and bot configurations.
+
+    This function provides flexible control over which MCP sources to load:
+    - Server-side MCP (from CHAT_MCP_SERVERS config)
+    - Bot MCP (from Bot/Ghost mcpServers config)
+
+    Args:
+        task_id: Task ID for session management
+        bot_name: Bot name to query Ghost MCP configuration
+        bot_namespace: Bot namespace for Ghost query
+        enable_server_mcp: Whether to load server-side MCP tools (default: True)
+        enable_bot_mcp: Whether to load bot MCP tools (default: True)
+
+    Returns:
+        MCPClient instance or None if no MCP configured
+    """
+    import asyncio
+    import json
+
+    from app.core.config import settings
+
+    try:
+        from app.chat_shell.tools.mcp import MCPClient
+
+        merged_servers: Dict[str, Any] = {}
+
+        # Step 1: Load server-side MCP configuration if enabled
+        if enable_server_mcp:
+            mcp_servers_config = getattr(settings, "CHAT_MCP_SERVERS", "")
+            if mcp_servers_config:
+                try:
+                    config_data = json.loads(mcp_servers_config)
+                    backend_servers = config_data.get("mcpServers", config_data)
+                    merged_servers.update(backend_servers)
+                except json.JSONDecodeError as e:
+                    logger.warning(
+                        f"[OPENAPI_MCP] Failed to parse CHAT_MCP_SERVERS: {e}"
+                    )
+
+        # Step 2: Load bot's MCP configuration from Ghost CRD if enabled
+        if enable_bot_mcp and bot_name and bot_namespace:
             try:
                 bot_servers = await asyncio.wait_for(
                     _get_bot_mcp_servers(bot_name, bot_namespace), timeout=5.0
                 )
+                # Bot config takes precedence (overwrites server config for same keys)
+                merged_servers.update(bot_servers)
             except asyncio.TimeoutError:
                 logger.warning(
                     f"[OPENAPI_MCP] Timeout querying bot MCP servers for {bot_namespace}/{bot_name}"
@@ -62,21 +221,20 @@ async def load_mcp_tools(
                     f"[OPENAPI_MCP] Failed to load bot MCP servers for {bot_namespace}/{bot_name}: {e}"
                 )
 
-        # Step 3: Merge configurations (bot config takes precedence)
-        merged_servers = {**backend_servers, **bot_servers}
-
         if not merged_servers:
             logger.info(
-                f"[OPENAPI_MCP] No MCP servers configured for task {task_id} (bot={bot_namespace}/{bot_name})"
+                f"[OPENAPI_MCP] No MCP servers configured for task {task_id} "
+                f"(bot={bot_namespace}/{bot_name}, server_mcp={enable_server_mcp}, bot_mcp={enable_bot_mcp})"
             )
             return None
 
-        # Step 4: Create MCP client with merged configuration
+        # Step 3: Create MCP client with merged configuration
         client = MCPClient(merged_servers)
         try:
             await asyncio.wait_for(client.connect(), timeout=30.0)
             logger.info(
-                f"[OPENAPI_MCP] Loaded {len(client.get_tools())} tools from {len(merged_servers)} MCP servers for task {task_id}"
+                f"[OPENAPI_MCP] Loaded {len(client.get_tools())} tools from {len(merged_servers)} "
+                f"MCP servers for task {task_id}"
             )
             return client
         except asyncio.TimeoutError:

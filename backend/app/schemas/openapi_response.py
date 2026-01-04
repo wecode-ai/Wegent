@@ -18,14 +18,17 @@ class WegentTool(BaseModel):
     Supported tool types:
     - wegent_deep_thinking: Enable deep thinking mode with web search
       (web search requires WEB_SEARCH_ENABLED=true in system config)
+    - wegent_extend_tool: Enable server-side MCP tools (CHAT_MCP_SERVERS config)
+    - wegent_extend_message: Enable message enhancement (Current time injection)
 
     Note:
-    - MCP tools are controlled by CHAT_MCP_ENABLED system config (no user tool needed)
+    - Bot/Ghost MCP tools are always available by default (no user tool needed)
+    - Server-side MCP tools require explicit activation via wegent_extend_tool
     """
 
     type: str = Field(
         ...,
-        description="Tool type: 'wegent_deep_thinking'",
+        description="Tool type: 'wegent_deep_thinking', 'wegent_extend_tool', 'wegent_extend_message'",
     )
 
 
@@ -61,7 +64,7 @@ class ResponseCreateInput(BaseModel):
     )
     tools: Optional[List[WegentTool]] = Field(
         default=None,
-        description="Wegent custom tools, e.g., [{'type': 'wegent_deep_thinking'}]",
+        description="Wegent custom tools: [{'type': 'wegent_deep_thinking'}, {'type': 'wegent_extend_tool'}, {'type': 'wegent_extend_message'}]",
     )
 
 

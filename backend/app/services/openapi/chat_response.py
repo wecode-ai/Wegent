@@ -86,6 +86,8 @@ async def create_streaming_response(
 
     # Capture tool settings for use in generator
     enable_deep_thinking = tool_settings.get("enable_deep_thinking", False)
+    enable_extend_tool = tool_settings.get("enable_extend_tool", False)
+    enable_extend_message = tool_settings.get("enable_extend_message", False)
     bot_name = setup.bot_name
     bot_namespace = setup.bot_namespace
 
@@ -103,33 +105,43 @@ async def create_streaming_response(
 
         accumulated_content = ""
         db_gen = next(get_db_session())
-        mcp_client = None
 
         try:
             cancel_event = await session_manager.register_stream(assistant_subtask_id)
             await db_handler.update_subtask_status(assistant_subtask_id, "RUNNING")
 
             # Build messages with history
+            # inject_datetime is controlled by enable_extend_message (default: False for clean API)
             history = build_chat_history(setup.existing_subtasks)
             messages = MessageConverter.build_messages(
                 history=history,
                 current_message=input_text,
                 system_prompt=setup.system_prompt,
+                inject_datetime=enable_extend_message,
             )
 
             # Prepare extra tools (MCP and web search)
             extra_tools = []
+            mcp_clients = []  # Track all MCP clients for cleanup
 
-            # Load MCP tools if system config enabled
+            # Load MCP tools based on tool settings
+            # Bot MCP is always loaded by default (when CHAT_MCP_ENABLED)
+            # Server MCP requires explicit enable_extend_tool
             if settings.CHAT_MCP_ENABLED:
                 try:
                     mcp_client = await load_mcp_tools(
-                        task_kind_id, bot_name, bot_namespace
+                        task_kind_id,
+                        bot_name,
+                        bot_namespace,
+                        enable_server_mcp=enable_extend_tool,
+                        enable_bot_mcp=True,  # Bot MCP always enabled
                     )
                     if mcp_client:
+                        mcp_clients.append(mcp_client)
                         extra_tools.extend(mcp_client.get_tools())
                         logger.info(
-                            f"[OPENAPI] Loaded {len(mcp_client.get_tools())} MCP tools for task {task_kind_id}"
+                            f"[OPENAPI] Loaded {len(mcp_client.get_tools())} MCP tools for task {task_kind_id} "
+                            f"(server_mcp={enable_extend_tool}, bot_mcp=True)"
                         )
                 except Exception as e:
                     logger.warning(f"[OPENAPI] Failed to load MCP tools: {e}")
@@ -318,10 +330,10 @@ async def create_streaming_response(
                 pass
             raise
         finally:
-            # Cleanup MCP client if used
-            if mcp_client:
+            # Cleanup MCP clients if used
+            for client in mcp_clients:
                 try:
-                    await mcp_client.disconnect()
+                    await client.disconnect()
                 except Exception as e:
                     logger.warning(f"[OPENAPI] Failed to disconnect MCP client: {e}")
 
@@ -406,35 +418,47 @@ async def create_sync_response(
 
     # Extract tool settings
     enable_deep_thinking = tool_settings.get("enable_deep_thinking", False)
+    enable_extend_tool = tool_settings.get("enable_extend_tool", False)
+    enable_extend_message = tool_settings.get("enable_extend_message", False)
 
     # Update subtask status to RUNNING
     await db_handler.update_subtask_status(assistant_subtask_id, "RUNNING")
 
     accumulated_content = ""
-    mcp_client = None
+    mcp_clients = []  # Track all MCP clients for cleanup
 
     try:
         # Build messages with history
+        # inject_datetime is controlled by enable_extend_message (default: False for clean API)
         history = build_chat_history(setup.existing_subtasks)
         messages = MessageConverter.build_messages(
             history=history,
             current_message=input_text,
             system_prompt=setup.system_prompt,
+            inject_datetime=enable_extend_message,
         )
 
         # Prepare extra tools (MCP and web search)
         extra_tools = []
 
-        # Load MCP tools if system config enabled
+        # Load MCP tools based on tool settings
+        # Bot MCP is always loaded by default (when CHAT_MCP_ENABLED)
+        # Server MCP requires explicit enable_extend_tool
         if settings.CHAT_MCP_ENABLED:
             try:
                 mcp_client = await load_mcp_tools(
-                    setup.task_id, setup.bot_name, setup.bot_namespace
+                    setup.task_id,
+                    setup.bot_name,
+                    setup.bot_namespace,
+                    enable_server_mcp=enable_extend_tool,
+                    enable_bot_mcp=True,  # Bot MCP always enabled
                 )
                 if mcp_client:
+                    mcp_clients.append(mcp_client)
                     extra_tools.extend(mcp_client.get_tools())
                     logger.info(
-                        f"[OPENAPI_SYNC] Loaded {len(mcp_client.get_tools())} MCP tools for task {setup.task_id}"
+                        f"[OPENAPI_SYNC] Loaded {len(mcp_client.get_tools())} MCP tools for task {setup.task_id} "
+                        f"(server_mcp={enable_extend_tool}, bot_mcp=True)"
                     )
             except Exception as e:
                 logger.warning(f"[OPENAPI_SYNC] Failed to load MCP tools: {e}")
@@ -545,10 +569,10 @@ async def create_sync_response(
             detail=f"LLM request failed: {error_message}",
         )
     finally:
-        # Cleanup MCP client if used
-        if mcp_client:
+        # Cleanup MCP clients if used
+        for client in mcp_clients:
             try:
-                await mcp_client.disconnect()
+                await client.disconnect()
             except Exception as e:
                 logger.warning(f"[OPENAPI_SYNC] Failed to disconnect MCP client: {e}")
 
