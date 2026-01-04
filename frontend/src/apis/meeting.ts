@@ -77,20 +77,20 @@ export async function createMeeting(
  * Mock implementation for development/testing.
  * This simulates a successful meeting booking response.
  */
-function mockCreateMeeting(request: CreateMeetingRequest): MeetingBookingResponse {
+async function mockCreateMeeting(
+  request: CreateMeetingRequest
+): Promise<MeetingBookingResponse> {
   // Simulate a network delay
-  return new Promise(resolve => {
-    setTimeout(() => {
-      // Generate a mock meeting ID
-      const meetingId = `MTG-${Date.now().toString(36).toUpperCase()}`;
+  await new Promise(resolve => setTimeout(resolve, 500));
 
-      resolve({
-        success: true,
-        meetingId,
-        message: `Meeting "${request.title}" has been successfully booked.`,
-      });
-    }, 500);
-  }) as unknown as MeetingBookingResponse;
+  // Generate a mock meeting ID
+  const meetingId = `MTG-${Date.now().toString(36).toUpperCase()}`;
+
+  return {
+    success: true,
+    meetingId,
+    message: `Meeting "${request.title}" has been successfully booked.`,
+  };
 }
 
 /**

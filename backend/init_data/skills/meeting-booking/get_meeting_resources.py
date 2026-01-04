@@ -80,10 +80,22 @@ and participant options.
         start_time: Optional[str] = None,
         end_time: Optional[str] = None,
     ) -> str:
-        """Synchronous execution - uses asyncio.run for compatibility."""
+        """Synchronous execution - handles both sync and async contexts."""
         import asyncio
+        import concurrent.futures
 
-        return asyncio.run(self._arun(date, start_time, end_time))
+        try:
+            # Check if we're already in an async context
+            asyncio.get_running_loop()
+            # Already in async context - run in a thread pool to avoid blocking
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(
+                    asyncio.run, self._arun(date, start_time, end_time)
+                )
+                return future.result()
+        except RuntimeError:
+            # No running loop - safe to use asyncio.run directly
+            return asyncio.run(self._arun(date, start_time, end_time))
 
     async def _arun(
         self,
