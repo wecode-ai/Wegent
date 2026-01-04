@@ -124,6 +124,7 @@
     "tool_call": "🔧 工具调用",
     "tool_use": "🔧 工具使用",
     "tool_result": "🔧 工具结果",
+    "model_reasoning": "💭 模型思考",
     "text_response": "文本响应",
     "expand": "展开",
     "collapse": "折叠",
@@ -146,7 +147,8 @@
     "error_message": "错误信息",
     "execution_type": "执行类型",
     "mcp_init_fail": "❌ MCP 初始化失败。",
-    "attachments_downloaded": "📎 已下载附件"
+    "attachments_downloaded": "📎 已下载附件",
+    "generating_content": "✨ 正在生成内容"
   },
   "send_button": {
     "shortcut_title": "发送快捷键",
@@ -237,6 +239,11 @@
   "deep_thinking": {
     "enable": "启用深度思考",
     "disable": "禁用深度思考"
+  },
+  "reasoning": {
+    "thinking": "思考中...",
+    "thought_process": "思考过程",
+    "chars": "字符"
   },
   "upload": {
     "tooltip": "支持的文件类型: PDF, Word, PPT, Excel, TXT, Markdown, 图片(JPG, PNG, GIF, BMP, WebP)\n最大文件大小: {{maxSize}} MB\n支持多文件同时上传"

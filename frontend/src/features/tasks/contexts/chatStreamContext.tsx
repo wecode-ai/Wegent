@@ -99,6 +99,8 @@ export interface UnifiedMessage {
   shouldShowSender?: boolean;
   /** Subtask status from backend (RUNNING, COMPLETED, etc.) */
   subtaskStatus?: string;
+  /** Reasoning content from models like DeepSeek R1 */
+  reasoningContent?: string;
   /** Full result data from backend (for executor tasks) */
   result?: {
     value?: string;
@@ -110,6 +112,8 @@ export interface UnifiedMessage {
       title: string;
       kb_id: number;
     }>;
+    /** Reasoning content from models like DeepSeek R1 */
+    reasoning_content?: string;
   };
   /** Knowledge base source references (for RAG citations) */
   sources?: Array<{
@@ -389,15 +393,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
   const handleChatStart = useCallback((data: ChatStartPayload) => {
     const { task_id, subtask_id, shell_type } = data;
 
-    // DEBUG: Log the complete chat:start event payload
-    console.log('[ChatStreamContext][chat:start] Received event:', {
-      full_data: data,
-      task_id,
-      subtask_id,
-      shell_type,
-      has_shell_type: !!shell_type,
-    });
-
     // Track subtask to task mapping
     if (subtask_id) {
       subtaskToTaskRef.current.set(subtask_id, task_id);
@@ -407,7 +402,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
 
     // Build initial result object with shell_type if available
     const initialResult = shell_type ? { shell_type } : undefined;
-    console.log('[ChatStreamContext][chat:start] Initial result:', initialResult);
 
     setStreamStates(prev => {
       const newMap = new Map(prev);
@@ -542,6 +536,21 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           ...existingMessage,
           content: existingMessage.content + content,
         };
+
+        // Handle reasoning content from DeepSeek R1 and similar models
+        // Two modes:
+        // 1. reasoning_chunk: incremental chunks from Chat Shell (LangChain) - accumulate
+        // 2. reasoning_content: full accumulated content from Agno executor - use directly
+        if (result?.reasoning_chunk) {
+          // Chat Shell sends incremental chunks - accumulate them
+          updatedMessage.reasoningContent =
+            (existingMessage.reasoningContent || '') + result.reasoning_chunk;
+        } else if (result?.reasoning_content) {
+          // Agno executor sends full accumulated reasoning_content - use directly
+          // This enables streaming display of thinking during the reasoning phase
+          updatedMessage.reasoningContent = result.reasoning_content;
+        }
+
         // If result is provided (executor tasks), merge it with existing result
         // This prevents losing thinking data when result is partially updated
         if (result) {
@@ -556,6 +565,10 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
               newResult && newResult.thinking
                 ? newResult.thinking
                 : existingMessage.result?.thinking,
+            // Keep accumulated reasoning_content
+            reasoning_content:
+              newResult?.reasoning_content ||
+              existingMessage.result?.reasoning_content,
           };
         }
         // Extract sources from either top-level or result.sources

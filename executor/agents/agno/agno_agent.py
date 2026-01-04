@@ -9,6 +9,7 @@
 import asyncio
 import json
 import os
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from agno.agent import Agent as AgnoSDKAgent
@@ -77,6 +78,13 @@ class AgnoAgent(Agent):
 
         self.mode = task_data.get("mode", "")
         self.task_data = task_data
+
+        # Accumulated reasoning content from DeepSeek R1 and similar models
+        self.accumulated_reasoning_content: str = ""
+
+        # Streaming throttle control - avoid sending too many HTTP callbacks
+        self._last_content_report_time: float = 0
+        self._content_report_interval: float = 0.5  # Report at most every 500ms
 
         # Initialize thinking step manager first
         self.thinking_manager = ThinkingStepManager(
@@ -507,6 +515,12 @@ class AgnoAgent(Agent):
             logger.info(
                 f"{execution_type} completed with content length: {len(result_content)}"
             )
+            # Include accumulated reasoning content in the final result
+            reasoning_content = (
+                self.accumulated_reasoning_content
+                if self.accumulated_reasoning_content
+                else None
+            )
             self.report_progress(
                 100,
                 TaskStatus.COMPLETED.value,
@@ -514,6 +528,7 @@ class AgnoAgent(Agent):
                 result=ExecutionResult(
                     value=result_content,
                     thinking=self.thinking_manager.get_thinking_steps(),
+                    reasoning_content=reasoning_content,
                 ).dict(),
             )
             return TaskStatus.COMPLETED
@@ -668,6 +683,97 @@ class AgnoAgent(Agent):
             content_chunk = run_response_event.content
             if content_chunk:
                 result_content += str(content_chunk)
+                # Throttled report progress - only send if enough time has passed
+                current_time = time.time()
+                time_since_last = current_time - self._last_content_report_time
+                logger.info(
+                    f"Content chunk received, length={len(content_chunk)}, "
+                    f"total_length={len(result_content)}, time_since_last={time_since_last:.3f}s"
+                )
+                if time_since_last >= self._content_report_interval:
+                    self._last_content_report_time = current_time
+                    logger.info(f"Sending streaming update, content_length={len(result_content)}")
+                    # Include accumulated reasoning_content in streaming updates
+                    reasoning_content = (
+                        self.accumulated_reasoning_content
+                        if self.accumulated_reasoning_content
+                        else None
+                    )
+                    self.report_progress(
+                        85,
+                        TaskStatus.RUNNING.value,
+                        "${{thinking.generating_content}}",
+                        result=ExecutionResult(
+                            value=result_content,
+                            thinking=self.thinking_manager.get_thinking_steps(),
+                            reasoning_content=reasoning_content,
+                        ).dict(),
+                    )
+
+            # Check for reasoning_content (DeepSeek R1 and similar models)
+            # RunContentEvent has reasoning_content field directly
+            reasoning_content = getattr(run_response_event, "reasoning_content", None)
+
+            if reasoning_content:
+                logger.info(
+                    f"Found reasoning_content in run_content event: {reasoning_content[:100] if len(reasoning_content) > 100 else reasoning_content}..."
+                )
+                # Accumulate reasoning content for final result
+                self.accumulated_reasoning_content += reasoning_content
+                # Add reasoning as a thinking step with special type for frontend display
+                reasoning_details = {
+                    "type": "reasoning",
+                    "content": reasoning_content,
+                }
+                self.add_thinking_step_by_key(
+                    title_key="thinking.model_reasoning",
+                    report_immediately=True,
+                    details=reasoning_details,
+                )
+                # IMPORTANT: Also send accumulated reasoning_content in the result
+                # This enables streaming display of reasoning during the thinking phase
+                # (before content generation starts)
+                self.report_progress(
+                    70,  # Keep progress at 70 during reasoning phase
+                    TaskStatus.RUNNING.value,
+                    "${{thinking.model_reasoning}}",
+                    result=ExecutionResult(
+                        value=result_content,  # May be empty during reasoning phase
+                        thinking=self.thinking_manager.get_thinking_steps(),
+                        reasoning_content=self.accumulated_reasoning_content,
+                    ).dict(),
+                )
+
+        # Handle reasoning step events (for models that support structured reasoning)
+        if run_response_event.event in [RunEvent.reasoning_step]:
+            reasoning_content = getattr(run_response_event, "reasoning_content", None)
+            if reasoning_content:
+                logger.info(
+                    f"Found reasoning_step event: {reasoning_content[:100] if len(reasoning_content) > 100 else reasoning_content}..."
+                )
+                # Accumulate reasoning content for final result
+                self.accumulated_reasoning_content += reasoning_content
+                reasoning_details = {
+                    "type": "reasoning",
+                    "content": reasoning_content,
+                }
+                self.add_thinking_step_by_key(
+                    title_key="thinking.model_reasoning",
+                    report_immediately=True,
+                    details=reasoning_details,
+                )
+                # IMPORTANT: Also send accumulated reasoning_content in the result
+                # This enables streaming display of reasoning during the thinking phase
+                self.report_progress(
+                    70,  # Keep progress at 70 during reasoning phase
+                    TaskStatus.RUNNING.value,
+                    "${{thinking.model_reasoning}}",
+                    result=ExecutionResult(
+                        value=result_content,  # May be empty during reasoning phase
+                        thinking=self.thinking_manager.get_thinking_steps(),
+                        reasoning_content=self.accumulated_reasoning_content,
+                    ).dict(),
+                )
 
         return result_content
 
@@ -1148,6 +1254,53 @@ class AgnoAgent(Agent):
             content_chunk = run_response_event.content
             if content_chunk:
                 result_content += str(content_chunk)
+                # Throttled report progress - only send if enough time has passed
+                current_time = time.time()
+                time_since_last = current_time - self._last_content_report_time
+                logger.info(
+                    f"[Team] Content chunk received, length={len(content_chunk)}, "
+                    f"total_length={len(result_content)}, time_since_last={time_since_last:.3f}s"
+                )
+                if time_since_last >= self._content_report_interval:
+                    self._last_content_report_time = current_time
+                    logger.info(f"[Team] Sending streaming update, content_length={len(result_content)}")
+                    # Include accumulated reasoning_content in streaming updates
+                    reasoning_content_update = (
+                        self.accumulated_reasoning_content
+                        if self.accumulated_reasoning_content
+                        else None
+                    )
+                    self.report_progress(
+                        85,
+                        TaskStatus.RUNNING.value,
+                        "${{thinking.generating_content}}",
+                        result=ExecutionResult(
+                            value=result_content,
+                            thinking=self.thinking_manager.get_thinking_steps(),
+                            reasoning_content=reasoning_content_update,
+                        ).dict(),
+                    )
+
+            # Check for reasoning_content (DeepSeek R1 and similar models)
+            # TeamRunEvent.run_content also has reasoning_content field
+            reasoning_content = getattr(run_response_event, "reasoning_content", None)
+
+            if reasoning_content:
+                logger.info(
+                    f"Found reasoning_content in team run_content event: {reasoning_content[:100] if len(reasoning_content) > 100 else reasoning_content}..."
+                )
+                # Accumulate reasoning content for final result
+                self.accumulated_reasoning_content += reasoning_content
+                # Add reasoning as a thinking step with special type for frontend display
+                reasoning_details = {
+                    "type": "reasoning",
+                    "content": reasoning_content,
+                }
+                self.add_thinking_step_by_key(
+                    title_key="thinking.model_reasoning",
+                    report_immediately=True,
+                    details=reasoning_details,
+                )
 
         return result_content, reasoning
 

@@ -76,6 +76,7 @@ export interface DisplayMessage {
     workbench?: Record<string, unknown>;
     shell_type?: string; // Shell type for frontend display (Chat, ClaudeCode, Agno, etc.)
     sources?: SourceReference[]; // RAG knowledge base sources
+    reasoning_content?: string; // DeepSeek R1 reasoning content
   };
   /** Knowledge base source references (for RAG citations) - top-level for backward compatibility */
   sources?: SourceReference[];
@@ -89,6 +90,8 @@ export interface DisplayMessage {
   isRecovered?: boolean;
   /** Whether content is incomplete */
   isIncomplete?: boolean;
+  /** Reasoning/thinking content from DeepSeek R1 and similar models */
+  reasoningContent?: string;
 }
 
 interface UseUnifiedMessagesOptions {
@@ -263,6 +266,8 @@ export function useUnifiedMessages({
         sources: msg.sources || msg.result?.sources,
         isCurrentUser: msg.type === 'user' && (msg.senderUserId === user?.id || !msg.senderUserId),
         showSender: isGroupChat && msg.type === 'user',
+        // Reasoning content from DeepSeek R1 and similar models
+        reasoningContent: msg.reasoningContent || msg.result?.reasoning_content,
       };
 
       messages.push(displayMsg);

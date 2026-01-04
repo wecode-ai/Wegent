@@ -723,6 +723,7 @@ export default function MessagesArea({
         isIncomplete: msg.isIncomplete,
         status: msg.status,
         error: msg.error,
+        reasoningContent: msg.reasoningContent, // DeepSeek R1 reasoning content
       };
     },
     [appliedCorrections]

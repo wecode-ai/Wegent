@@ -117,11 +117,16 @@ class StreamingState:
     sources: list[dict[str, Any]] = field(
         default_factory=list
     )  # Knowledge base sources for citation
+    reasoning_content: str = ""  # Reasoning/thinking content from DeepSeek R1 etc.
 
     def append_content(self, token: str) -> None:
         """Append token to accumulated response."""
         self.full_response += token
         self.offset += len(token)
+
+    def append_reasoning(self, content: str) -> None:
+        """Append reasoning content (from DeepSeek R1 and similar models)."""
+        self.reasoning_content += content
 
     def add_thinking_step(self, step: dict[str, Any]) -> None:
         """Add a thinking step (tool call)."""
@@ -187,6 +192,9 @@ class StreamingState:
                     result["thinking"] = self.thinking
             if self.sources:
                 result["sources"] = self.sources  # Include sources for citation display
+        # Include reasoning_content if present (DeepSeek R1 and similar reasoning models)
+        if self.reasoning_content:
+            result["reasoning_content"] = self.reasoning_content
         return result
 
     def _slim_thinking_data(
@@ -391,6 +399,7 @@ class StreamingCore:
 
         Handles:
         - Content accumulation
+        - Reasoning content extraction (DeepSeek R1 format)
         - Emitting chunk to client
         - Periodic saves to Redis and DB
 
@@ -431,7 +440,36 @@ class StreamingCore:
             )
             return False
 
-        # Accumulate content
+        # Check for reasoning content marker (DeepSeek R1 format)
+        # Format: __REASONING__<content>__END_REASONING__
+        reasoning_start = "__REASONING__"
+        reasoning_end = "__END_REASONING__"
+
+        if token.startswith(reasoning_start) and token.endswith(reasoning_end):
+            # Extract reasoning content
+            reasoning_text = token[len(reasoning_start) : -len(reasoning_end)]
+            self.state.append_reasoning(reasoning_text)
+
+            # Emit reasoning chunk to client
+            is_chat_mode = self.state.shell_type == "Chat"
+            result = self.state.get_current_result(
+                include_value=False,
+                include_thinking=not is_chat_mode,
+            )
+            # Add reasoning_chunk flag to indicate this is reasoning content
+            result["reasoning_chunk"] = reasoning_text
+            await self.emitter.emit_chunk(
+                "",  # No content chunk for reasoning
+                self.state.offset,
+                self.state.subtask_id,
+                result=result,
+            )
+
+            # Periodic saves
+            await self._periodic_save()
+            return True
+
+        # Regular content - Accumulate content
         self.state.append_content(token)
 
         # Emit chunk to client with result data

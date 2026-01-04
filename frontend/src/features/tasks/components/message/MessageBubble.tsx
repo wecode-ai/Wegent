@@ -30,7 +30,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import MarkdownEditor from '@uiw/react-markdown-editor';
 import MarkdownWithMermaid from '@/components/common/MarkdownWithMermaid';
-import { ThinkingDisplay } from './thinking';
+import { ThinkingDisplay, ReasoningDisplay } from './thinking';
 import ClarificationForm from '../clarification/ClarificationForm';
 import FinalPromptMessage from './FinalPromptMessage';
 import ClarificationAnswerSummary from '../clarification/ClarificationAnswerSummary';
@@ -69,6 +69,7 @@ export interface Message {
     workbench?: Record<string, unknown>;
     shell_type?: string; // Shell type (Chat, ClaudeCode, Agno, etc.)
     sources?: SourceReference[]; // RAG knowledge base sources
+    reasoning_content?: string; // Reasoning content from DeepSeek R1 etc.
   };
   /** @deprecated Use contexts instead */
   attachments?: Attachment[];
@@ -94,6 +95,8 @@ export interface Message {
   error?: string;
   /** RAG knowledge base sources (top-level for backward compatibility) */
   sources?: SourceReference[];
+  /** Reasoning/thinking content from DeepSeek R1 and similar models */
+  reasoningContent?: string;
 }
 
 /** Configuration for paragraph-level action button */
@@ -1336,16 +1339,6 @@ const MessageBubble = memo(
       }
     };
 
-    // DEBUG: Log shell_type check
-    if (msg.thinking) {
-      console.log('[MessageBubble] Checking shell_type:', {
-        subtaskId: msg.subtaskId,
-        hasResult: !!msg.result,
-        shell_type: msg.result?.shell_type,
-        isChat: msg.result?.shell_type === 'Chat',
-      });
-    }
-
     return (
       <div className={`flex ${shouldAlignRight ? 'justify-end' : 'justify-start'}`} translate="no">
         <div
@@ -1359,6 +1352,16 @@ const MessageBubble = memo(
               shellType={msg.result?.shell_type}
             />
           )}
+          {/* Show reasoning display for DeepSeek R1 and similar models */}
+          {!isUserTypeMessage &&
+            (msg.reasoningContent || msg.result?.reasoning_content) && (
+              <ReasoningDisplay
+                reasoningContent={
+                  msg.reasoningContent || msg.result?.reasoning_content || ''
+                }
+                isStreaming={msg.subtaskStatus === 'RUNNING' || msg.status === 'streaming'}
+              />
+            )}
           <div
             className={`${bubbleBaseClasses} ${bubbleTypeClasses}`}
             onMouseUp={handleTextSelection}
@@ -1467,6 +1470,16 @@ const MessageBubble = memo(
     const nextSourcesLen =
       nextProps.msg.sources?.length || nextProps.msg.result?.sources?.length || 0;
 
+    // Compare reasoning content length for streaming updates
+    const prevReasoningLen =
+      prevProps.msg.reasoningContent?.length ||
+      prevProps.msg.result?.reasoning_content?.length ||
+      0;
+    const nextReasoningLen =
+      nextProps.msg.reasoningContent?.length ||
+      nextProps.msg.result?.reasoning_content?.length ||
+      0;
+
     const shouldSkipRender =
       prevProps.msg.content === nextProps.msg.content &&
       prevProps.msg.subtaskStatus === nextProps.msg.subtaskStatus &&
@@ -1483,7 +1496,9 @@ const MessageBubble = memo(
       prevProps.isCurrentUserMessage === nextProps.isCurrentUserMessage &&
       prevProps.onRetry === nextProps.onRetry &&
       prevThinkingLen === nextThinkingLen &&
-      prevSourcesLen === nextSourcesLen;
+      prevSourcesLen === nextSourcesLen &&
+      prevReasoningLen === nextReasoningLen &&
+      prevProps.msg.status === nextProps.msg.status;
 
     return shouldSkipRender;
   }

@@ -309,6 +309,32 @@ class LangGraphAgentBuilder:
                             ),
                         )
 
+                    # Check for reasoning_content (DeepSeek R1 and similar reasoning models)
+                    # reasoning_content may be in additional_kwargs or as a direct attribute
+                    if chunk:
+                        reasoning_content = None
+                        # Try additional_kwargs first (LangChain's standard location for extra data)
+                        if hasattr(chunk, "additional_kwargs"):
+                            reasoning_content = chunk.additional_kwargs.get(
+                                "reasoning_content"
+                            )
+                        # Also check direct attribute (some providers may use this)
+                        if not reasoning_content and hasattr(chunk, "reasoning_content"):
+                            reasoning_content = chunk.reasoning_content
+
+                        if reasoning_content:
+                            logger.debug(
+                                "[stream_tokens] Yielding reasoning_content: %s...",
+                                (
+                                    reasoning_content[:50]
+                                    if len(reasoning_content) > 50
+                                    else reasoning_content
+                                ),
+                            )
+                            # Use special prefix to mark reasoning content
+                            # Format: __REASONING__<content>__END_REASONING__
+                            yield f"__REASONING__{reasoning_content}__END_REASONING__"
+
                     if chunk and hasattr(chunk, "content"):
                         content = chunk.content
                         # Handle different content types
