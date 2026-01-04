@@ -398,7 +398,7 @@ class StreamingCore:
             token: The token to process
 
         Returns:
-            True if processing should continue, False if cancelled/shutdown
+            True if processing should continue, False if cancelled
         """
         logger.debug(
             "[STREAMING] process_token: subtask_id=%d, token_len=%d",
@@ -406,10 +406,12 @@ class StreamingCore:
             len(token),
         )
 
-        # Check for cancellation or shutdown
-        if self.is_cancelled() or self.is_shutting_down():
+        # Check for user-initiated cancellation only
+        # Note: During graceful shutdown, we let existing streams complete
+        # The shutdown manager will wait for all streams to finish
+        if self.is_cancelled():
             logger.info(
-                "[STREAMING] Cancelled or shutting down: subtask_id=%d",
+                "[STREAMING] Cancelled by user: subtask_id=%d",
                 self.state.subtask_id,
             )
             await self.emitter.emit_cancelled(self.state.subtask_id)

@@ -154,19 +154,78 @@ def get_task_with_access_check(
     raise HTTPException(status_code=404, detail="Task not found")
 
 
-def check_task_status(task: TaskResource) -> None:
+async def cancel_running_subtasks(db: Session, task: TaskResource) -> None:
+    """
+    Cancel any running subtasks for a task.
+
+    This is called when a user sends a new message while the previous
+    message is still being processed. Instead of rejecting the new message,
+    we cancel the running subtask and allow the new message to proceed.
+
+    Args:
+        db: Database session
+        task: Task resource
+    """
+    from app.services.chat.operations.cancel import (
+        cancel_chat_stream,
+        update_subtask_on_cancel,
+        update_task_on_cancel,
+    )
+
+    # Find running subtasks
+    running_subtasks = (
+        db.query(Subtask)
+        .filter(
+            Subtask.task_id == task.id,
+            Subtask.status.in_([SubtaskStatus.PENDING, SubtaskStatus.RUNNING]),
+        )
+        .all()
+    )
+
+    if not running_subtasks:
+        return
+
+    logger.info(
+        f"[check_task_status] Auto-cancelling {len(running_subtasks)} running subtasks for task {task.id}"
+    )
+
+    for subtask in running_subtasks:
+        try:
+            # Cancel the stream (this sets the cancellation flag)
+            await cancel_chat_stream(subtask.id)
+
+            # Update subtask status
+            update_subtask_on_cancel(db, subtask)
+
+            logger.info(
+                f"[check_task_status] Cancelled subtask {subtask.id} for task {task.id}"
+            )
+        except Exception as e:
+            logger.error(
+                f"[check_task_status] Failed to cancel subtask {subtask.id}: {e}"
+            )
+            # Continue with other subtasks even if one fails
+
+    # Update task status
+    update_task_on_cancel(db, task)
+    db.commit()
+
+
+async def check_task_status(db: Session, task: TaskResource) -> None:
     """
     Check if task is in a valid state for new messages.
 
-    Args:
-        task: Task resource to check
+    If the task is still running, automatically cancel the running subtasks
+    to allow the new message to proceed.
 
-    Raises:
-        HTTPException: If task is still running
+    Args:
+        db: Database session
+        task: Task resource to check
     """
     task_crd = Task.model_validate(task.json)
     if task_crd.status and task_crd.status.status == "RUNNING":
-        raise HTTPException(status_code=400, detail="Task is still running")
+        # Auto-cancel running subtasks instead of rejecting the new message
+        await cancel_running_subtasks(db, task)
 
 
 def create_new_task(
@@ -570,10 +629,10 @@ async def create_task_and_subtasks(
     subtask_user_id = user.id
 
     if task_id:
-        # Get existing task with access check
-        task, subtask_user_id = get_task_with_access_check(db, task_id, user.id)
-        check_task_status(task)
-
+        if task_id:
+            # Get existing task with access check
+            task, subtask_user_id = get_task_with_access_check(db, task_id, user.id)
+            await check_task_status(db, task)
         # Update modelId in existing task if provided
         if params.model_id:
             from sqlalchemy.orm.attributes import flag_modified
