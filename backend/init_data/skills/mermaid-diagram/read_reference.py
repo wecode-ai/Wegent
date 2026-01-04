@@ -897,25 +897,37 @@ A radar diagram (or spider chart) plots multivariate data in a circular format.
 
 ```mermaid-example
 radar-beta
-  axis Label1, Label2, Label3
-  curve Title1 { val1, val2, val3 }
-  curve Title2 { val1, val2, val3 }
+  title Chart Title
+  axis id1["Label1"], id2["Label2"], id3["Label3"]
+  axis id4["Label4"], id5["Label5"], id6["Label6"]
+  curve curveId1["Series 1"]{val1, val2, val3, val4, val5, val6}
+  curve curveId2["Series 2"]{val1, val2, val3, val4, val5, val6}
+  max 100
+  min 0
 ```
 
-- **Axis**: Define axes using `axis`.
-- **Curve**: Define data series using `curve Title { values }`.
+- **Title (optional)**: `title Chart Title`
+- **Axis**: Define axes using `axis id["Label"], id2["Label2"]...`
+  - Can be defined in multiple lines
+  - Each axis needs an ID and a label in quotes
+  - Axes are separated by commas
+- **Curve**: Define data series using `curve id["Name"]{val1, val2, val3...}`
+  - Each curve needs an ID and a name in quotes
+  - Values are in curly braces, separated by commas
+  - Number of values must match the number of axes
+- **Max/Min (optional)**: `max 100` and `min 0` to set the scale
 
 ## Example
 
 ```mermaid-example
 radar-beta
-  title Restaurant Comparison
-  axis Food, Service, Ambience, Price
-
-  curve "Rest A" { 9, 8, 7, 8 }
-  curve "Rest B" { 6, 7, 8, 6 }
-
-  max 10
+  title Student Performance
+  axis m["Math"], s["Science"], e["English"]
+  axis h["History"], g["Geography"], a["Art"]
+  curve alice["Alice"]{85, 90, 80, 70, 75, 90}
+  curve bob["Bob"]{70, 75, 85, 80, 90, 85}
+  max 100
+  min 0
 ```""",
     "requirementDiagram.md": """# Requirement Diagram
 
