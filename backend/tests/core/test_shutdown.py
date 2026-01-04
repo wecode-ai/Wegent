@@ -75,15 +75,22 @@ class TestShutdownManager:
 
     @pytest.mark.asyncio
     async def test_register_stream_during_shutdown(self, shutdown_manager):
-        """Test that registering a stream during shutdown fails."""
+        """Test that registering a stream during shutdown still succeeds.
+
+        During graceful shutdown, we still accept new streams from existing
+        WebSocket connections. New WebSocket connections are rejected at the
+        connection level (on_connect), but requests from already connected
+        clients should be allowed to complete gracefully.
+        """
         with patch("app.core.cache.cache_manager") as mock_cache:
             mock_cache.set = AsyncMock(return_value=True)
 
             await shutdown_manager.initiate_shutdown()
             result = await shutdown_manager.register_stream(123)
 
-            assert result is False
-            assert shutdown_manager.get_active_stream_count() == 0
+            # Streams are still accepted during shutdown for graceful handling
+            assert result is True
+            assert shutdown_manager.get_active_stream_count() == 1
 
     @pytest.mark.asyncio
     async def test_unregister_stream(self, shutdown_manager):
@@ -192,7 +199,12 @@ class TestShutdownIntegration:
 
     @pytest.mark.asyncio
     async def test_shutdown_flow(self):
-        """Test the complete shutdown flow."""
+        """Test the complete shutdown flow.
+
+        During graceful shutdown, new streams from existing connections are
+        still accepted. New WebSocket connections are rejected at the
+        connection level (on_connect).
+        """
         manager = ShutdownManager()
 
         with patch("app.core.cache.cache_manager") as mock_cache:
@@ -206,13 +218,14 @@ class TestShutdownIntegration:
             await manager.initiate_shutdown()
             assert manager.is_shutting_down is True
 
-            # New streams should be rejected
+            # New streams are still accepted during shutdown (from existing connections)
             result = await manager.register_stream(3)
-            assert result is False
+            assert result is True
 
-            # Complete existing streams
+            # Complete all streams
             await manager.unregister_stream(1)
             await manager.unregister_stream(2)
+            await manager.unregister_stream(3)
 
             # Wait should complete immediately
             result = await manager.wait_for_streams(timeout=1.0)
