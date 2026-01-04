@@ -51,9 +51,9 @@ class MermaidToolProvider(SkillToolProvider):
         """Return the list of tools this provider can create.
 
         Returns:
-            List containing "render_mermaid"
+            List containing "render_mermaid" and "read_mermaid_reference"
         """
-        return ["render_mermaid"]
+        return ["render_mermaid", "read_mermaid_reference"]
 
     def create_tool(
         self,
@@ -64,31 +64,38 @@ class MermaidToolProvider(SkillToolProvider):
         """Create a mermaid tool instance.
 
         Args:
-            tool_name: Name of the tool to create (must be "render_mermaid")
+            tool_name: Name of the tool to create
             context: Context with dependencies (task_id, subtask_id, ws_emitter)
             tool_config: Optional configuration with keys:
                 - timeout: Render timeout in seconds (default: 30.0)
 
         Returns:
-            Configured RenderMermaidTool instance
+            Configured tool instance
 
         Raises:
-            ValueError: If tool_name is not "render_mermaid"
+            ValueError: If tool_name is unknown
         """
-        if tool_name != "render_mermaid":
+        if tool_name == "render_mermaid":
+            # Import from local module within this skill package
+            from .render_mermaid import RenderMermaidTool
+
+            config = tool_config or {}
+
+            return RenderMermaidTool(
+                task_id=context.task_id,
+                subtask_id=context.subtask_id,
+                ws_emitter=context.ws_emitter,
+                render_timeout=config.get("timeout", 30.0),
+            )
+
+        elif tool_name == "read_mermaid_reference":
+            # Import from local module within this skill package
+            from .read_reference import ReadMermaidReferenceTool
+
+            return ReadMermaidReferenceTool()
+
+        else:
             raise ValueError(f"Unknown tool: {tool_name}")
-
-        # Import from local module within this skill package
-        from .render_mermaid import RenderMermaidTool
-
-        config = tool_config or {}
-
-        return RenderMermaidTool(
-            task_id=context.task_id,
-            subtask_id=context.subtask_id,
-            ws_emitter=context.ws_emitter,
-            render_timeout=config.get("timeout", 30.0),
-        )
 
     def validate_config(self, tool_config: dict[str, Any]) -> bool:
         """Validate mermaid tool configuration.

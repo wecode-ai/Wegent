@@ -55,30 +55,37 @@ class RenderMermaidTool(BaseTool):
     name: str = "render_mermaid"
     display_name: str = "渲染图表"
     description: str = """Render a Mermaid diagram. Use this tool when you need to create visual diagrams.
-    
+
+⚠️ CRITICAL WORKFLOW:
+Before calling render_mermaid, you MUST call read_mermaid_reference first to learn the correct syntax!
+Example: read_mermaid_reference(reference="radar.md") before drawing radar charts.
+
 The tool will validate the mermaid syntax and return:
 - On success: A confirmation that the diagram is rendered and visible to the user
 - On failure: The error message with line number, so you can fix the syntax and retry
 
-Supported diagram types:
-- flowchart: Process flows, decision trees (use flowchart TD or flowchart LR)
-- sequenceDiagram: Interaction sequences between components
-- classDiagram: Class structures and relationships
-- stateDiagram-v2: State machines and transitions
-- erDiagram: Entity-relationship diagrams
-- gantt: Project timelines
-- pie: Proportional data
-- mindmap: Hierarchical ideas
-- timeline: Chronological events
-- gitGraph: Git branch visualizations
-- journey: User journeys
-- quadrantChart: Strategic planning
-- radar-beta: Radar/spider charts (experimental)
+Supported diagram types and their references:
+- flowchart: Process flows, decision trees → flowchart.md
+- sequenceDiagram: Interaction sequences → sequenceDiagram.md
+- classDiagram: Class structures → classDiagram.md
+- stateDiagram-v2: State machines → stateDiagram.md
+- erDiagram: Entity-relationship diagrams → erDiagram.md
+- gantt: Project timelines → gantt.md
+- pie: Proportional data → pie.md
+- mindmap: Hierarchical ideas → mindmap.md
+- timeline: Chronological events → timeline.md
+- gitGraph: Git branch visualizations → gitgraph.md
+- journey: User journeys → journey.md
+- quadrantChart: Strategic planning → quadrantChart.md
+- radar-beta: Radar/spider charts → radar.md (MUST read reference first!)
+- architecture-beta: System architecture → architecture.md (MUST read reference first!)
+- sankey-beta: Flow diagrams → sankey.md (MUST read reference first!)
 
 IMPORTANT syntax rules:
-1. Use English for node IDs, wrap Chinese labels in quotes: A["中文标签"]
-2. Avoid special characters in node IDs
-3. Keep diagrams simple - split complex ones into multiple diagrams
+1. ALWAYS call read_mermaid_reference(reference="xxx.md") BEFORE render_mermaid for complex diagrams
+2. Use English for node IDs, wrap Chinese labels in quotes: A["中文标签"]
+3. Avoid special characters in node IDs
+4. Keep diagrams simple - split complex ones into multiple diagrams
 """
 
     args_schema: type[BaseModel] = RenderMermaidInput
@@ -641,14 +648,30 @@ IMPORTANT syntax rules:
         }
 
         if error_line:
-            error_info["error_line"] = error_line
-            # Add context around the error line
-            lines = original_code.split("\n")
-            if 0 < error_line <= len(lines):
-                error_info["error_line_content"] = lines[error_line - 1]
+            # Convert error_line to int if it's a string
+            if isinstance(error_line, str):
+                try:
+                    error_line = int(error_line)
+                except (ValueError, TypeError):
+                    error_line = None
+
+            if error_line:
+                error_info["error_line"] = error_line
+                # Add context around the error line
+                lines = original_code.split("\n")
+                if 0 < error_line <= len(lines):
+                    error_info["error_line_content"] = lines[error_line - 1]
 
         if error_column:
-            error_info["error_column"] = error_column
+            # Convert error_column to int if it's a string
+            if isinstance(error_column, str):
+                try:
+                    error_column = int(error_column)
+                except (ValueError, TypeError):
+                    error_column = None
+
+            if error_column:
+                error_info["error_column"] = error_column
 
         if error_details:
             error_info["error_details"] = error_details
