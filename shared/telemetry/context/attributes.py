@@ -40,6 +40,9 @@ class SpanAttributes:
     # Request attributes
     REQUEST_ID = "request.id"
 
+    # Server attributes
+    SERVER_IP = "server.ip"
+
     # Git/Repository attributes
     REPOSITORY_URL = "repository.url"
     BRANCH_NAME = "branch.name"

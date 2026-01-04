@@ -671,7 +671,7 @@ class KnowledgeService:
         import logging
 
         from app.services.adapters.retriever_kinds import retriever_kinds_service
-        from app.services.attachment import attachment_service
+        from app.services.context import context_service
         from app.services.rag.document_service import DocumentService
         from app.services.rag.storage.factory import create_storage_backend
 
@@ -784,26 +784,26 @@ class KnowledgeService:
                             exc_info=True,
                         )
 
-        # Delete associated attachment if exists
+        # Delete associated attachment (context) if exists
         if attachment_id:
             try:
-                deleted = attachment_service.delete_attachment(
+                deleted = context_service.delete_context(
                     db=db,
-                    attachment_id=attachment_id,
+                    context_id=attachment_id,
                     user_id=user_id,
                 )
                 if deleted:
                     logger.info(
-                        f"Deleted attachment {attachment_id} for document {document_id}"
+                        f"Deleted attachment context {attachment_id} for document {document_id}"
                     )
                 else:
                     logger.warning(
-                        f"Failed to delete attachment {attachment_id} for document {document_id}"
+                        f"Failed to delete attachment context {attachment_id} for document {document_id}"
                     )
             except Exception as e:
                 # Log error but don't fail the document deletion
                 logger.error(
-                    f"Failed to delete attachment {attachment_id}: {str(e)}",
+                    f"Failed to delete attachment context {attachment_id}: {str(e)}",
                     exc_info=True,
                 )
 

@@ -154,9 +154,11 @@ wegent-backend:
       changes:
         - backend/**/*
         - wecode/docker/backend/**/*
+        - shared/**/*
     - changes:
       - backend/**/*
       - wecode/docker/backend/**/*
+      - shared/**/*
 
 trigger_update_backend_web:
     stage: production
@@ -230,6 +232,7 @@ trigger_update_simulation_web:
         UPSTREAM_CI_PIPELINE_ID: $CI_PIPELINE_ID
         UPSTREAM_CI_COMMIT_REF_NAME: $CI_COMMIT_REF_NAME
         UPSTREAM_CI_COMMIT_SHA: $CI_COMMIT_SHA
+        CD_AUTO_PRODUCTION: 1
     trigger:
         project: weibo_rd/cloudnative/aigc_gitops_manifest
         branch: master
@@ -251,6 +254,7 @@ trigger_update_simulation_backend_web:
         UPSTREAM_CI_PIPELINE_ID: $CI_PIPELINE_ID
         UPSTREAM_CI_COMMIT_REF_NAME: $CI_COMMIT_REF_NAME
         UPSTREAM_CI_COMMIT_SHA: $CI_COMMIT_SHA
+        CD_AUTO_PRODUCTION: 1
     trigger:
         project: weibo_rd/cloudnative/aigc_gitops_manifest
         branch: master

@@ -56,6 +56,7 @@ interface StreamingMessageBubbleProps {
   t: (key: string) => string;
   onSendMessage?: (content: string) => void;
   index: number;
+  isGroupChat?: boolean;
 }
 
 function StreamingMessageBubble({
@@ -68,6 +69,7 @@ function StreamingMessageBubble({
   t,
   onSendMessage,
   index,
+  isGroupChat,
 }: StreamingMessageBubbleProps) {
   // Use typewriter effect for streaming content
   const displayContent = useTypewriter(message.content || '');
@@ -95,6 +97,8 @@ function StreamingMessageBubble({
     thinking: message.thinking as Message['thinking'],
     // Pass result with shell_type for component selection
     result: message.result,
+    // Pass sources for RAG knowledge base citations
+    sources: message.sources,
   };
 
   return (
@@ -110,6 +114,7 @@ function StreamingMessageBubble({
       t={t}
       isWaiting={Boolean(isStreaming && !hasContent && !hasThinking)}
       onSendMessage={onSendMessage}
+      isGroupChat={isGroupChat}
     />
   );
 }
@@ -127,6 +132,14 @@ interface MessagesAreaProps {
   enableCorrectionMode?: boolean;
   correctionModelId?: string | null;
   enableCorrectionWebSearch?: boolean;
+  // Whether there are messages to display (from parent ChatArea)
+  // This ensures MessagesArea shows content when ChatArea's hasMessages is true
+  hasMessages?: boolean;
+  /**
+   * Pending task ID - used when selectedTaskDetail.id is not yet available.
+   * Can be either tempTaskId (negative) or taskId (positive) before selectedTaskDetail updates.
+   */
+  pendingTaskId?: number | null;
 }
 
 export default function MessagesArea({
@@ -141,6 +154,8 @@ export default function MessagesArea({
   enableCorrectionMode = false,
   correctionModelId = null,
   enableCorrectionWebSearch = false,
+  hasMessages: hasMessagesFromParent,
+  pendingTaskId,
 }: MessagesAreaProps) {
   const { t } = useTranslation();
   const { toast } = useToast();
@@ -152,9 +167,11 @@ export default function MessagesArea({
   const { registerCorrectionHandlers } = useSocket();
 
   // Use unified messages hook - SINGLE SOURCE OF TRUTH
+  // Pass pendingTaskId to query messages when selectedTaskDetail.id is not yet available
   const { messages, streamingSubtaskIds } = useUnifiedMessages({
     team: selectedTeam || null,
     isGroupChat,
+    pendingTaskId,
   });
 
   // Task share modal state
@@ -694,11 +711,13 @@ export default function MessagesArea({
         subtaskStatus: msg.subtaskStatus,
         subtaskId: msg.subtaskId,
         attachments: msg.attachments,
+        contexts: msg.contexts, // Add contexts for unified context system
         senderUserName: msg.senderUserName,
         senderUserId: msg.senderUserId,
         shouldShowSender: msg.shouldShowSender,
         thinking: msg.thinking as Message['thinking'],
         result: msg.result, // Include result with shell_type for component selection
+        sources: msg.sources, // Include sources for RAG knowledge base citations
         recoveredContent: msg.recoveredContent,
         isRecovered: msg.isRecovered,
         isIncomplete: msg.isIncomplete,
@@ -716,7 +735,10 @@ export default function MessagesArea({
       translate="no"
     >
       {/* Messages Area */}
-      {(messages.length > 0 || streamingSubtaskIds.length > 0 || selectedTaskDetail?.id) && (
+      {(messages.length > 0 ||
+        streamingSubtaskIds.length > 0 ||
+        selectedTaskDetail?.id ||
+        hasMessagesFromParent) && (
         <div className="flex-1 space-y-8 messages-container">
           {messages.map((msg, index) => {
             const messageKey = msg.subtaskId
@@ -754,6 +776,7 @@ export default function MessagesArea({
                   t={t}
                   onSendMessage={onSendMessage}
                   index={index}
+                  isGroupChat={isGroupChat}
                 />
               );
             }
@@ -781,6 +804,7 @@ export default function MessagesArea({
                     t={t}
                     onSendMessage={onSendMessage}
                     isCurrentUserMessage={isCurrentUserMessage}
+                    isGroupChat={isGroupChat}
                   />
                   <div className="flex flex-col gap-2">
                     {/* Show progress indicator when correction is in progress */}
@@ -839,6 +863,7 @@ export default function MessagesArea({
                 onSendMessage={onSendMessage}
                 isCurrentUserMessage={isCurrentUserMessage}
                 onRetry={onRetry}
+                isGroupChat={isGroupChat}
               />
             );
           })}

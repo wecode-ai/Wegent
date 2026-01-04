@@ -197,15 +197,22 @@ const ApiKeyList: React.FC = () => {
               <Card key={apiKey.id} className="p-4 bg-base hover:bg-hover transition-colors">
                 <div className="flex items-center justify-between min-w-0">
                   <div className="flex items-center gap-3 min-w-0 flex-1">
-                    <KeyIcon className="w-5 h-5 text-primary flex-shrink-0" />
+                    <KeyIcon className="w-5 h-5 flex-shrink-0 text-primary" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="font-medium text-text-primary truncate">
+                        <span
+                          className={`font-medium truncate ${apiKey.is_active ? 'text-text-primary' : 'text-text-muted'}`}
+                        >
                           {apiKey.name}
                         </span>
                         <code className="text-xs bg-muted px-1.5 py-0.5 rounded text-text-secondary">
                           {apiKey.key_prefix}
                         </code>
+                        {!apiKey.is_active && (
+                          <span className="text-xs px-1.5 py-0.5 rounded bg-error/10 text-error">
+                            {t('common:api_keys.status_disabled')}
+                          </span>
+                        )}
                       </div>
                       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-muted mt-1">
                         <span>
@@ -223,7 +230,7 @@ const ApiKeyList: React.FC = () => {
                       </div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-1 flex-shrink-0 ml-3">
+                  <div className="flex items-center gap-2 flex-shrink-0 ml-3">
                     <Button
                       variant="ghost"
                       size="icon"

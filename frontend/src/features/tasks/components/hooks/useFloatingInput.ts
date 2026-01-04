@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useRef, useState, useEffect, useCallback } from 'react';
+import { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 
 export interface FloatingMetrics {
   /**
@@ -78,6 +78,9 @@ export function useFloatingInput({ hasMessages }: UseFloatingInputOptions): UseF
   const floatingInputRef = useRef<HTMLDivElement>(null);
   const inputControlsRef = useRef<HTMLDivElement>(null);
 
+  // Track previous hasMessages state to detect transitions
+  const prevHasMessagesRef = useRef(hasMessages);
+
   const [floatingMetrics, setFloatingMetrics] = useState<FloatingMetrics>({
     width: 0,
     left: 0,
@@ -87,15 +90,39 @@ export function useFloatingInput({ hasMessages }: UseFloatingInputOptions): UseF
 
   /**
    * Updates the floating metrics based on chat area dimensions.
+   * Returns the new metrics for immediate use.
    */
-  const updateFloatingMetrics = useCallback(() => {
-    if (!chatAreaRef.current) return;
+  const updateFloatingMetrics = useCallback((): FloatingMetrics => {
+    if (!chatAreaRef.current) return { width: 0, left: 0 };
     const rect = chatAreaRef.current.getBoundingClientRect();
-    setFloatingMetrics({
+    const newMetrics = {
       width: rect.width,
       left: rect.left,
-    });
+    };
+    setFloatingMetrics(newMetrics);
+    return newMetrics;
   }, []);
+
+  // Update ref for next render
+  prevHasMessagesRef.current = hasMessages;
+
+  // Compute effective metrics: when hasMessages is true but state hasn't updated yet,
+  // synchronously read from DOM to prevent the "flash" where width is 0 for one frame
+  const effectiveFloatingMetrics = useMemo((): FloatingMetrics => {
+    // If we have valid metrics from state, use them
+    if (floatingMetrics.width > 0) {
+      return floatingMetrics;
+    }
+    // If hasMessages is true but metrics are still 0, try to read from DOM synchronously
+    if (hasMessages && chatAreaRef.current) {
+      const rect = chatAreaRef.current.getBoundingClientRect();
+      if (rect.width > 0) {
+        return { width: rect.width, left: rect.left };
+      }
+    }
+    // Fallback to state (which may be 0)
+    return floatingMetrics;
+  }, [hasMessages, floatingMetrics]);
 
   /**
    * Effect: Observe controls container width for responsive collapse.
@@ -120,17 +147,16 @@ export function useFloatingInput({ hasMessages }: UseFloatingInputOptions): UseF
   }, []);
 
   /**
-   * Effect: Keep floating input aligned with chat area.
-   *
-   * This replaces the original useEffect at lines 440-468 in ChatArea.tsx.
-   * Tracks chat area position and updates floating metrics.
-   */
+   /**
+    * Effect: Keep floating input aligned with chat area.
+    *
+    * This replaces the original useEffect at lines 440-468 in ChatArea.tsx.
+    * Tracks chat area position and updates floating metrics.
+    * Always track metrics regardless of hasMessages to avoid position jumps.
+    */
   useEffect(() => {
-    if (!hasMessages) {
-      setFloatingMetrics({ width: 0, left: 0 });
-      return;
-    }
-
+    // Always update metrics when chatAreaRef is available
+    // This prevents position jumps when transitioning to hasMessages state
     updateFloatingMetrics();
     window.addEventListener('resize', updateFloatingMetrics);
 
@@ -144,8 +170,7 @@ export function useFloatingInput({ hasMessages }: UseFloatingInputOptions): UseF
       window.removeEventListener('resize', updateFloatingMetrics);
       observer?.disconnect();
     };
-  }, [hasMessages, updateFloatingMetrics]);
-
+  }, [updateFloatingMetrics]);
   /**
    * Effect: Measure floating input height.
    *
@@ -177,7 +202,7 @@ export function useFloatingInput({ hasMessages }: UseFloatingInputOptions): UseF
     chatAreaRef,
     floatingInputRef,
     inputControlsRef,
-    floatingMetrics,
+    floatingMetrics: effectiveFloatingMetrics,
     inputHeight,
     controlsContainerWidth,
   };

@@ -82,9 +82,9 @@ async def load_mcp_tools(
             return None
 
         logger.info(
-            "[MCP] Merged MCP configuration: %d servers for task %d",
-            len(merged_servers),
+            "[MCP] Merged MCP configuration for task %d: %s",
             task_id,
+            merged_servers,
         )
 
         # Step 4: Create MCP client with merged configuration

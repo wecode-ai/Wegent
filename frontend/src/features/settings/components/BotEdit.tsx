@@ -341,13 +341,14 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
     fetchShells();
   }, [toast, t, allowedAgents, scope, groupName]);
-  // Check if current agent supports skills (ClaudeCode or Chat)
+  // Check if current agent supports skills (ClaudeCode only, Chat shell is hidden)
   const supportsSkills = useMemo(() => {
     // Get shell type from the selected shell
     const selectedShell = shells.find(s => s.name === agentName);
     const shellType = selectedShell?.shellType || agentName;
-    // Skills are supported for ClaudeCode and Chat shell types
-    return shellType === 'ClaudeCode' || shellType === 'Chat';
+    // Skills are supported for ClaudeCode shell type only
+    // Chat shell skills selection is hidden (but skills still work if configured)
+    return shellType === 'ClaudeCode';
   }, [agentName, shells]);
 
   // Get current shell type for skill filtering
@@ -1195,29 +1196,38 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                     value={
                       selectedModel
                         ? `${selectedModel}:${selectedModelType || ''}:${selectedModelNamespace || 'default'}`
-                        : ''
+                        : '__none__'
                     }
                     onValueChange={value => {
+                      if (value === '__none__') {
+                        // Clear model selection
+                        setSelectedModel('');
+                        setSelectedModelType(undefined);
+                        setSelectedModelNamespace(undefined);
+                        return;
+                      }
                       // Value format: "modelName:modelType:namespace"
                       const [modelName, modelType, modelNamespace] = value.split(':');
                       setSelectedModel(modelName);
                       setSelectedModelType((modelType as ModelTypeEnum) || undefined);
                       setSelectedModelNamespace(modelNamespace || 'default');
                     }}
-                    disabled={loadingModels || !agentName || models.length === 0 || readOnly}
+                    disabled={loadingModels || !agentName || readOnly}
                   >
                     <SelectTrigger className="w-full">
                       <SelectValue
                         placeholder={
                           !agentName
                             ? t('common:bot.select_executor_first')
-                            : models.length === 0
-                              ? t('common:bot.no_available_models')
-                              : t('common:bot.model_select')
+                            : t('common:bot.model_select')
                         }
                       />
                     </SelectTrigger>
                     <SelectContent>
+                      {/* Option to unbind model */}
+                      <SelectItem value="__none__">
+                        <span className="text-text-muted">{t('common:bot.no_model_binding')}</span>
+                      </SelectItem>
                       {models.length === 0 ? (
                         <div className="py-2 px-3 text-sm text-text-muted text-center">
                           {t('common:bot.no_available_models')}

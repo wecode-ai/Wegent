@@ -4,7 +4,7 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -24,8 +24,6 @@ import {
 } from '@/components/ui/accordion';
 import { useTranslation } from '@/hooks/useTranslation';
 import { RetrievalSettingsSection, type RetrievalConfig } from './RetrievalSettingsSection';
-import { useRetrievers } from '../hooks/useRetrievers';
-import { useEmbeddingModels } from '../hooks/useEmbeddingModels';
 
 interface CreateKnowledgeBaseDialogProps {
   open: boolean;
@@ -63,54 +61,7 @@ export function CreateKnowledgeBaseDialog({
   const [error, setError] = useState('');
   const [accordionValue, setAccordionValue] = useState<string>('');
 
-  // Load data when dialog opens
-  const {
-    retrievers,
-    loading: loadingRetrievers,
-    refetch: refetchRetrievers,
-  } = useRetrievers(scope, groupName);
-  const {
-    models: embeddingModels,
-    loading: loadingModels,
-    refetch: refetchModels,
-  } = useEmbeddingModels(scope, groupName);
-
-  useEffect(() => {
-    if (open) {
-      refetchRetrievers();
-      refetchModels();
-    }
-  }, [open, refetchRetrievers, refetchModels]);
-
-  // Auto-select default retriever when data is loaded and no selection exists
-  useEffect(() => {
-    if (!loadingRetrievers && retrievers.length > 0 && !retrievalConfig.retriever_name) {
-      const firstRetriever = retrievers[0];
-      setRetrievalConfig(prev => ({
-        ...prev,
-        retriever_name: firstRetriever.name,
-        retriever_namespace: firstRetriever.namespace,
-      }));
-    }
-  }, [loadingRetrievers, retrievers, retrievalConfig.retriever_name]);
-
-  // Auto-select default embedding model when data is loaded and no selection exists
-  useEffect(() => {
-    if (
-      !loadingModels &&
-      embeddingModels.length > 0 &&
-      !retrievalConfig.embedding_config?.model_name
-    ) {
-      const firstModel = embeddingModels[0];
-      setRetrievalConfig(prev => ({
-        ...prev,
-        embedding_config: {
-          model_name: firstModel.name,
-          model_namespace: firstModel.namespace || 'default',
-        },
-      }));
-    }
-  }, [loadingModels, embeddingModels, retrievalConfig.embedding_config?.model_name]);
+  // Note: Auto-selection of retriever and embedding model is handled by RetrievalSettingsSection
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -224,7 +175,10 @@ export function CreateKnowledgeBaseDialog({
                 <AccordionTrigger className="text-sm font-medium hover:no-underline">
                   {t('knowledge:document.advancedSettings.title')}
                 </AccordionTrigger>
-                <AccordionContent>
+                <AccordionContent
+                  forceMount
+                  className={accordionValue !== 'advanced' ? 'hidden' : ''}
+                >
                   <div className="space-y-4 pt-2">
                     <p className="text-xs text-text-muted">
                       {t('knowledge:document.advancedSettings.collapsed')}

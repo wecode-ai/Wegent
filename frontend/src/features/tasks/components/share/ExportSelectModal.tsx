@@ -16,6 +16,7 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { getAttachmentPreviewUrl, isImageExtension } from '@/apis/attachments';
 import { getToken } from '@/apis/user';
 import { taskApis } from '@/apis/tasks';
+import { formatDateTime } from '@/utils/dateTime';
 
 /** Attachment info for selectable messages */
 export interface SelectableAttachment {
@@ -410,9 +411,7 @@ export default function ExportSelectModal({
                         ? msg.userName || 'User'
                         : msg.teamName || msg.botName || 'AI'}
                     </span>
-                    <span className="text-xs text-text-muted">
-                      {new Date(msg.timestamp).toLocaleTimeString()}
-                    </span>
+                    <span className="text-xs text-text-muted">{formatDateTime(msg.timestamp)}</span>
                   </div>
                   <p className="text-sm text-text-primary line-clamp-2">
                     {msg.content.slice(0, 200)}

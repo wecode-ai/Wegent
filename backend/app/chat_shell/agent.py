@@ -8,6 +8,7 @@ This module provides the ChatAgent class which handles:
 - LangGraph agent creation and configuration
 - Tool registry management
 - Agent execution (both streaming and non-streaming)
+- Automatic message compression when context limits are exceeded
 
 The ChatAgent is decoupled from streaming infrastructure, making it easier
 to test and maintain. Streaming is handled by the streaming module.
@@ -24,6 +25,7 @@ from langchain_core.tools.base import BaseTool
 from app.core.config import settings
 
 from .agents import LangGraphAgentBuilder
+from .compression import MessageCompressor
 from .messages import MessageConverter
 from .models import LangChainModelFactory
 from .tools import ToolRegistry
@@ -290,6 +292,7 @@ class ChatAgent:
         system_prompt: str,
         username: str | None = None,
         config: AgentConfig | None = None,
+        model_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Build messages for agent execution.
 
@@ -299,6 +302,7 @@ class ChatAgent:
             system_prompt: Base system prompt (will be enhanced if config is provided)
             username: Optional username for group chat
             config: Optional AgentConfig for prompt enhancements
+            model_id: Optional model ID for compression configuration
 
         Returns:
             List of message dictionaries ready for agent
@@ -315,9 +319,32 @@ class ChatAgent:
                 skills=config.skills,
             )
 
-        return MessageConverter.build_messages(
+        messages = MessageConverter.build_messages(
             history, current_message, final_prompt, username=username
         )
+
+        # Apply message compression if enabled and model_id is provided
+        if model_id and settings.MESSAGE_COMPRESSION_ENABLED:
+            # Pass model_config to compressor for context window configuration
+            model_config_for_compression = config.model_config if config else None
+            compressor = MessageCompressor(
+                model_id,
+                model_config=model_config_for_compression,
+            )
+            result = compressor.compress_if_needed(messages)
+
+            if result.was_compressed:
+                logger.info(
+                    "[ChatAgent] Messages compressed: %d -> %d tokens (saved %d), "
+                    "strategies: %s",
+                    result.original_tokens,
+                    result.compressed_tokens,
+                    result.tokens_saved,
+                    ", ".join(result.strategies_applied),
+                )
+                messages = result.messages
+
+        return messages
 
     def list_tools(self) -> list[dict[str, Any]]:
         """List available tools in OpenAI format."""

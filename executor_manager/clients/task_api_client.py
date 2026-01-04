@@ -140,7 +140,6 @@ class TaskApiClient:
 
     def update_task_status(self, data: dict):
         """Update task status in API with a dict parameter"""
-        logger.info(f"Updating task status with dict: {data}")
 
         try:
             return self._request_with_retry(lambda: self._do_update_task_status(data))

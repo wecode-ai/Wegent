@@ -63,7 +63,10 @@
     "tool_completed": "工具完成",
     "query": "查询",
     "search_completed": "搜索完成",
-    "found": "找到"
+    "found": "找到",
+    "expand_content": "展开显示",
+    "collapse_content": "收起内容",
+    "lines": "行"
   },
   "shared_task": {
     "share_task": "分享",

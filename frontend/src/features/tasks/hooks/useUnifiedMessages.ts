@@ -30,7 +30,8 @@ import { useMemo, useEffect, useRef } from 'react';
 import { useChatStreamContext, computeIsStreaming } from '../contexts/chatStreamContext';
 import { useUser } from '@/features/common/UserContext';
 import { useTaskContext } from '../contexts/taskContext';
-import type { Team, Attachment } from '@/types/api';
+import type { Team, Attachment, SubtaskContextBrief } from '@/types/api';
+import type { SourceReference } from '@/types/socket';
 
 /**
  * Message for display - extends UnifiedMessage with additional rendering info
@@ -52,8 +53,10 @@ export interface DisplayMessage {
   messageId?: number;
   /** Error message if status is 'error' */
   error?: string;
-  /** Attachments array */
+  /** Attachments array (deprecated, use contexts) */
   attachments?: Attachment[];
+  /** Unified contexts (attachments, knowledge bases, etc.) */
+  contexts?: SubtaskContextBrief[];
   /** Bot name for AI messages */
   botName?: string;
   /** Sender user name for group chat */
@@ -72,7 +75,10 @@ export interface DisplayMessage {
     thinking?: unknown[];
     workbench?: Record<string, unknown>;
     shell_type?: string; // Shell type for frontend display (Chat, ClaudeCode, Agno, etc.)
+    sources?: SourceReference[]; // RAG knowledge base sources
   };
+  /** Knowledge base source references (for RAG citations) - top-level for backward compatibility */
+  sources?: SourceReference[];
   /** Whether this message is from the current user (for alignment) */
   isCurrentUser?: boolean;
   /** Whether to show the sender avatar/name */
@@ -90,6 +96,13 @@ interface UseUnifiedMessagesOptions {
   team: Team | null;
   /** Whether this is a group chat */
   isGroupChat: boolean;
+  /**
+   * Pending task ID - used when selectedTaskDetail.id is not yet available.
+   * Can be either:
+   * - tempTaskId (negative number like -Date.now()) for new tasks before backend responds
+   * - taskId (positive number) after backend responds but before selectedTaskDetail updates
+   */
+  pendingTaskId?: number | null;
 }
 
 interface UseUnifiedMessagesResult {
@@ -121,6 +134,7 @@ interface UseUnifiedMessagesResult {
 export function useUnifiedMessages({
   team,
   isGroupChat,
+  pendingTaskId,
 }: UseUnifiedMessagesOptions): UseUnifiedMessagesResult {
   const { getStreamState, syncBackendMessages } = useChatStreamContext();
   const { selectedTaskDetail } = useTaskContext();
@@ -132,9 +146,14 @@ export function useUnifiedMessages({
   // Track the last synced task to avoid unnecessary syncs
   const lastSyncedTaskIdRef = useRef<number | undefined>(undefined);
 
+  // Determine effective task ID for querying streamState:
+  // - Use taskId (from selectedTaskDetail) if available
+  // - Otherwise use pendingTaskId (tempTaskId or taskId before selectedTaskDetail updates)
+  const effectiveTaskId = taskId || pendingTaskId || undefined;
+
   // Get stream state for current task - this will update when streamStates changes
   // because getStreamState depends on streamStates via useCallback
-  const streamState = taskId ? getStreamState(taskId) : undefined;
+  const streamState = effectiveTaskId ? getStreamState(effectiveTaskId) : undefined;
 
   // Sync backend subtasks to streamState.messages when task changes
   // This initializes the message list from backend data
@@ -152,7 +171,6 @@ export function useUnifiedMessages({
       subtasks.length > 0 &&
       (taskId !== lastSyncedTaskIdRef.current || !hasMessages)
     ) {
-      console.log('[useUnifiedMessages] Syncing backend messages for task', taskId);
       syncBackendMessages(taskId, subtasks, {
         teamName: team?.name,
         isGroupChat,
@@ -181,8 +199,8 @@ export function useUnifiedMessages({
   // NOTE: streamState is obtained outside useMemo to ensure proper reactivity
   // when streamStates changes in the context
   const result = useMemo<UseUnifiedMessagesResult>(() => {
-    // If no taskId or no streamState, return empty result
-    if (!taskId || !streamState?.messages) {
+    // If no effectiveTaskId or no streamState, return empty result
+    if (!effectiveTaskId || !streamState?.messages) {
       return {
         messages: [],
         isStreaming: false,
@@ -218,6 +236,9 @@ export function useUnifiedMessages({
         attachments = [msg.attachment as Attachment];
       }
 
+      // Get contexts from message (new unified context system)
+      const contexts = msg.contexts as SubtaskContextBrief[] | undefined;
+
       const displayMsg: DisplayMessage = {
         id: msg.id,
         type: msg.type,
@@ -228,6 +249,7 @@ export function useUnifiedMessages({
         messageId: msg.messageId,
         error: msg.error,
         attachments,
+        contexts,
         botName: msg.botName || team?.name,
         senderUserName: msg.senderUserName,
         senderUserId: msg.senderUserId,
@@ -237,6 +259,8 @@ export function useUnifiedMessages({
         thinking: msg.result?.thinking,
         // Include full result object (contains shell_type and other metadata)
         result: msg.result,
+        // Include sources from both top-level and result for backward compatibility
+        sources: msg.sources || msg.result?.sources,
         isCurrentUser: msg.type === 'user' && (msg.senderUserId === user?.id || !msg.senderUserId),
         showSender: isGroupChat && msg.type === 'user',
       };
@@ -292,7 +316,7 @@ export function useUnifiedMessages({
       subtasksMap,
       pendingMessages,
     };
-  }, [taskId, streamState, team?.name, isGroupChat, user?.id]);
+  }, [effectiveTaskId, streamState, team?.name, isGroupChat, user?.id]);
 
   return result;
 }

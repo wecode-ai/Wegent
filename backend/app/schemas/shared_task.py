@@ -79,7 +79,13 @@ class SharedTaskInDB(BaseModel):
 
 
 class PublicAttachmentData(BaseModel):
-    """Public attachment data for read-only viewing"""
+    """
+    Public attachment data for read-only viewing.
+
+    NOTE: This schema is used for shared task public viewing.
+    The data is sourced from SubtaskContext (not SubtaskAttachment).
+    Field names are kept for backward compatibility with frontend.
+    """
 
     id: int
     original_filename: str

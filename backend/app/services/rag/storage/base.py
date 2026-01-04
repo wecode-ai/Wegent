@@ -6,9 +6,11 @@
 Base storage backend interface for RAG functionality.
 """
 
-import hashlib
+import logging
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 from llama_index.core.schema import BaseNode
 
@@ -83,18 +85,26 @@ class BaseStorageBackend(ABC):
 
         Strategies:
         - fixed: Use a single fixed index name (requires fixedName)
-        - rolling: Use rolling indices based on knowledge_id hash (uses prefix)
+        - rolling: Use rolling indices based on numeric knowledge_id (uses prefix)
+                   Groups N knowledge bases per index, where N = rollingStep (default 10)
+                   e.g., step=10: kb_id 1-10 -> index_0, kb_id 11-20 -> index_10, etc.
         - per_dataset: Use separate index per knowledge base (default)
         - per_user: Use separate index per user (requires user_id)
 
         Args:
-            knowledge_id: Knowledge base ID
+            knowledge_id: Knowledge base ID (must be numeric string for rolling mode)
             **kwargs: Additional parameters (e.g., user_id for per_user strategy)
 
         Returns:
             Index/collection name
         """
         mode = self.index_strategy.get("mode", "per_dataset")
+
+        # Debug logging for index strategy
+        logger.debug(
+            f"get_index_name called: knowledge_id={knowledge_id}, "
+            f"index_strategy={self.index_strategy}, mode={mode}"
+        )
 
         if mode == "fixed":
             fixed_name = self.index_strategy.get("fixedName")
@@ -108,15 +118,34 @@ class BaseStorageBackend(ABC):
             self._validate_knowledge_id(knowledge_id, mode)
             prefix = self._validate_prefix(mode)
 
-            # Validate rollingStep
-            step = self.index_strategy.get("rollingStep", 5000)
+            # Validate rollingStep (number of knowledge_ids per index bucket)
+            step = self.index_strategy.get("rollingStep", 10)
             if not isinstance(step, int) or step <= 0:
                 raise ValueError(f"rollingStep must be a positive integer, got: {step}")
 
-            # Deterministic hash-based sharding using MD5
-            hash_val = int(hashlib.md5(knowledge_id.encode()).hexdigest(), 16) % 10000
-            index_base = (hash_val // step) * step
-            return f"{prefix}_{self.INDEX_PREFIX}_{index_base}"
+            # Convert knowledge_id to integer for bucket calculation
+            # knowledge_id is expected to be a numeric string (e.g., "1", "2", "123")
+            try:
+                kb_id_num = int(knowledge_id)
+            except ValueError:
+                raise ValueError(
+                    f"knowledge_id must be a numeric value for 'rolling' mode, got: {knowledge_id}"
+                )
+
+            # Calculate index base using floor division
+            # e.g., step=10: kb_id 1-10 -> index_0, kb_id 11-20 -> index_10, etc.
+            # Using (kb_id_num - 1) to make it 0-indexed:
+            #   kb_id 1-10 -> bucket 0 -> index_0
+            #   kb_id 11-20 -> bucket 1 -> index_10
+            bucket_num = (kb_id_num - 1) // step if kb_id_num > 0 else 0
+            index_base = bucket_num * step
+            index_name = f"{prefix}_{self.INDEX_PREFIX}_{index_base}"
+
+            logger.debug(
+                f"Rolling index: step={step}, kb_id_num={kb_id_num}, "
+                f"bucket_num={bucket_num}, index_base={index_base}, index_name={index_name}"
+            )
+            return index_name
         elif mode == "per_dataset":
             # Validate knowledge_id and prefix
             self._validate_knowledge_id(knowledge_id, mode)

@@ -9,6 +9,7 @@ This module provides a simplified LangGraph agent implementation using:
 - LangChain's convert_to_messages for message format conversion
 - Streaming support with cancellation
 - State checkpointing for resumability
+- Dynamic tool filtering for gemini_search (removed after first use)
 """
 
 import asyncio
@@ -17,15 +18,43 @@ from collections.abc import AsyncGenerator
 from typing import Any, Callable
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.messages.utils import convert_to_messages
+from langchain_core.runnables import Runnable
 from langchain_core.tools.base import BaseTool
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.errors import GraphRecursionError
 from langgraph.prebuilt import create_react_agent
 
 from ..tools.base import ToolRegistry
+from ..tools.builtin.web_search import WebSearchTool
+from ..tools.gemini_search import GeminiSearchTool, create_gemini_search_tool
 
 logger = logging.getLogger(__name__)
+
+# Message to send to model when tool call limit is reached
+TOOL_LIMIT_REACHED_MESSAGE = """[SYSTEM NOTICE] Tool call limit reached. You have made too many tool calls in this conversation.
+
+Please provide your final response to the user based on the information you have gathered so far. Do NOT attempt to call any more tools - simply summarize your findings and provide a helpful response."""
+
+
+# SystemMessage content to inject after gemini_search has been called
+# This strongly instructs the model to stop calling tools and provide a final answer
+GEMINI_SEARCH_COMPLETE_INSTRUCTION = """[SYSTEM INSTRUCTION - RESEARCH COMPLETE]
+
+You have ALREADY called the heavy research tool `gemini_search` in THIS conversation turn.
+The research results are now available in the conversation above.
+
+⛔ CRITICAL: You MUST NOT call ANY tools again in this turn.
+
+✅ YOUR TASK NOW:
+1. Carefully read the research results already present in the conversation
+2. Synthesize the information into a comprehensive, well-structured answer
+3. Write your final response in Chinese (中文)
+4. Include all relevant findings, data points, and context from the research
+
+DO NOT request more research. DO NOT call any tools again. Just provide your final answer based on the research results above."""
 
 
 class LangGraphAgentBuilder:
@@ -54,6 +83,10 @@ class LangGraphAgentBuilder:
         self.enable_checkpointing = enable_checkpointing
         self._agent = None
         self._load_skill_tool = load_skill_tool
+        # Track tools with return_direct=True for direct output handling
+        self._return_direct_tools: set[str] = set()
+        # Store GeminiSearchTool reference for streaming support
+        self._gemini_search_tool: GeminiSearchTool | None = None
 
         # Get all LangChain tools from registry
         self.tools: list[BaseTool] = []
@@ -139,6 +172,51 @@ class LangGraphAgentBuilder:
 
         return prompt_modifier
 
+    def _create_gemini_prompt_modifier(
+        self, gemini_search_tool: GeminiSearchTool
+    ) -> Callable:
+        """Create a prompt modifier that wraps skill injection and adds gemini_search constraints.
+
+        This function creates a prompt modifier that:
+        1. First applies skill prompt injection (if load_skill_tool exists)
+        2. Then injects a constraint SystemMessage after gemini_search has been called
+
+        Args:
+            gemini_search_tool: GeminiSearchTool instance for checking call state
+
+        Returns:
+            A callable that modifies the messages
+        """
+        base_modifier = self._create_prompt_modifier()
+        captured_gemini_tool = gemini_search_tool
+
+        def gemini_prompt_modifier(state: dict[str, Any]) -> list[BaseMessage]:
+            """Modify messages with skill prompts and gemini_search constraints."""
+            # First apply base modifier (skill injection) if it exists
+            if base_modifier:
+                messages = base_modifier(state)
+            else:
+                messages = list(state.get("messages", []))
+
+            if not messages:
+                return messages
+
+            # Then handle gemini_search constraint injection
+            # If gemini_search has been called, append a strong constraint SystemMessage
+            # This tells the model to stop calling tools and provide a final answer
+            if captured_gemini_tool.has_been_called():
+                logger.info(
+                    "[gemini_prompt_modifier] gemini_search has been called, injecting "
+                    "constraint SystemMessage to stop further tool calls"
+                )
+                messages.append(
+                    SystemMessage(content=GEMINI_SEARCH_COMPLETE_INSTRUCTION)
+                )
+
+            return messages
+
+        return gemini_prompt_modifier
+
     def _build_agent(self):
         """Build the LangGraph ReAct agent lazily."""
         if self._agent is not None:
@@ -150,9 +228,105 @@ class LangGraphAgentBuilder:
         # Create prompt modifier for dynamic skill prompt injection
         prompt_modifier = self._create_prompt_modifier()
 
-        # Build agent with optional prompt modifier for dynamic system prompt updates
+        # Track GeminiSearchTool instance for dynamic filtering
+        gemini_search_tool: GeminiSearchTool | None = None
+
+        # Add llm built-in search tool if supported
+        model_with_tools: BaseChatModel | Callable = self.llm
+        if isinstance(self.llm, ChatGoogleGenerativeAI):
+            # For Gemini models, create a GeminiSearchTool instead of directly binding
+            # google_search. This is because Gemini server forbids using google_search
+            # and other tools simultaneously.
+            # Note: GeminiSearchTool uses its own internal system prompt optimized for
+            # comprehensive web search, not the main agent's system prompt.
+            gemini_search_tool = create_gemini_search_tool(self.llm)
+            # Store reference for streaming support
+            self._gemini_search_tool = gemini_search_tool
+            # Use gemini-specific prompt modifier that wraps skill injection
+            prompt_modifier = self._create_gemini_prompt_modifier(gemini_search_tool)
+            self.tools.append(gemini_search_tool)
+
+            logger.info(
+                "[LangGraphAgentBuilder] Created GeminiSearchTool for Google model, "
+                "tools count: %d, return_direct: %s",
+                len(self.tools),
+                gemini_search_tool.return_direct,
+            )
+
+            # Create a dynamic model callable that manages search tool visibility
+            # This uses LangGraph's native dynamic model support to control which
+            # search tools are available at different stages of the conversation.
+            #
+            # Search tool management strategy for Gemini models:
+            # - First call (gemini_search not yet called):
+            #   - Show gemini_search (Gemini's native search)
+            #   - Hide other search tools (e.g., web_search) to avoid confusion
+            # - After gemini_search is called:
+            #   - Hide gemini_search (already used, one-time per turn)
+            #   - Show other search tools (if any) as fallback options
+            #
+            # Why dynamic model instead of tool-level filtering:
+            # - Tool-level filtering (_called_this_turn) only returns an error message
+            # - The model still sees the tool and may try to call it repeatedly
+            # - Dynamic model filtering completely removes the tool from the model's view
+            # - This prevents wasted tokens and model confusion
+            base_llm = self.llm
+            all_tools = list(self.tools)
+
+            # Identify search tools: GeminiSearchTool and WebSearchTool
+            other_search_tools = [t for t in all_tools if isinstance(t, WebSearchTool)]
+
+            # Tools for first call: all tools except other search tools (only gemini_search for search)
+            tools_with_gemini_only = [
+                t for t in all_tools if not isinstance(t, WebSearchTool)
+            ]
+
+            # Tools after gemini_search is called: all tools except gemini_search
+            # (includes other search tools if any)
+            tools_without_gemini = [
+                t for t in all_tools if not isinstance(t, GeminiSearchTool)
+            ]
+
+            captured_gemini_tool = gemini_search_tool
+            has_other_search_tools = len(other_search_tools) > 0
+
+            def gemini_model_callable(state: dict[str, Any], runtime: Any) -> Runnable:
+                """Dynamic model that manages search tool visibility for Gemini.
+
+                This callable is invoked before each LLM call. It manages search tools:
+                - If gemini_search not called: show only gemini_search (hide other search tools)
+                - If gemini_search called: hide gemini_search, show other search tools (if any)
+
+                This ensures:
+                1. Gemini uses its native search first (better integration)
+                2. Other search tools are available as fallback after gemini_search is used
+                3. No duplicate search capabilities confuse the model
+                """
+                if captured_gemini_tool.has_been_called():
+                    # GeminiSearchTool has been called, filter it out and restore other search tools
+                    logger.info(
+                        "[LangGraphAgentBuilder] gemini_search already called, "
+                        "returning model without gemini_search. "
+                        "Other search tools available: %s, Remaining tools: %d",
+                        has_other_search_tools,
+                        len(tools_without_gemini),
+                    )
+                    return base_llm.bind_tools(tools_without_gemini)
+                else:
+                    # First call, include gemini_search but hide other search tools
+                    logger.debug(
+                        "[LangGraphAgentBuilder] gemini_search not yet called, "
+                        "returning model with gemini_search only (hiding %d other search tools). "
+                        "Total tools: %d",
+                        len(other_search_tools),
+                        len(tools_with_gemini_only),
+                    )
+                    return base_llm.bind_tools(tools_with_gemini_only)
+
+            model_with_tools = gemini_model_callable
+
         self._agent = create_react_agent(
-            model=self.llm,
+            model=model_with_tools,
             tools=self.tools,
             checkpointer=checkpointer,
             prompt=prompt_modifier,
@@ -375,6 +549,7 @@ class LangGraphAgentBuilder:
                     tool_name = event.get("name", "unknown")
                     # Get run_id to track tool execution pairs
                     run_id = event.get("run_id", "")
+                    tool_input_data = event.get("data", {})
                     logger.info(
                         "[stream_tokens] Tool started: %s (run_id=%s)",
                         tool_name,
@@ -387,9 +562,48 @@ class LangGraphAgentBuilder:
                             {
                                 "name": tool_name,
                                 "run_id": run_id,
-                                "data": event.get("data", {}),
+                                "data": tool_input_data,
                             },
                         )
+
+                    # Special handling for gemini_search: intercept and stream directly
+                    # This provides real-time streaming output instead of waiting for
+                    # the tool to complete and returning all at once.
+                    # gemini_search acts as a sub-agent that receives the full conversation
+                    # context and performs web search using Gemini with google_search.
+                    if tool_name == "gemini_search" and self._gemini_search_tool:
+                        logger.info(
+                            "[stream_tokens] Intercepting gemini_search for streaming, "
+                            "forwarding full conversation context (%d messages) (run_id=%s)",
+                            len(lc_messages),
+                            run_id,
+                        )
+                        # Stream the search results directly with full conversation context
+                        # The sub-agent will receive all messages and perform search
+                        async for (
+                            chunk
+                        ) in self._gemini_search_tool.astream_with_context(lc_messages):
+                            if chunk:
+                                streamed_content = True
+                                yield chunk
+
+                        # Notify tool_end callback
+                        if on_tool_event:
+                            on_tool_event(
+                                "tool_end",
+                                {
+                                    "name": tool_name,
+                                    "run_id": run_id,
+                                    "data": {"output": "[Streamed directly]"},
+                                },
+                            )
+
+                        logger.info(
+                            "[stream_tokens] gemini_search streaming completed, "
+                            "returning early (return_direct=True)"
+                        )
+                        # Return early since gemini_search has return_direct=True
+                        return
 
                 elif kind == "on_tool_end":
                     tool_name = event.get("name", "unknown")
@@ -410,14 +624,40 @@ class LangGraphAgentBuilder:
                                 else str(tool_output)
                             ),
                         )
+                    elif tool_name == "gemini_search":
+                        # If we reach here, it means the streaming interception didn't work
+                        # (e.g., _gemini_search_tool was None). Fall back to non-streaming output.
+                        logger.info(
+                            "[stream_tokens] gemini_search completed (fallback non-streaming), "
+                            "yielding output directly as final response (run_id=%s), output length=%d",
+                            run_id,
+                            len(str(tool_output)),
+                        )
+                        # Notify callback if provided
+                        if on_tool_event:
+                            on_tool_event(
+                                "tool_end",
+                                {
+                                    "name": tool_name,
+                                    "run_id": run_id,
+                                    "data": tool_data,
+                                },
+                            )
+                        # Yield the tool output directly as the final response
+                        if tool_output:
+                            streamed_content = True
+                            yield str(tool_output)
+                        # Return early to stop the agent loop since return_direct=True
+                        # means we should use the tool output as the final response
+                        return
                     else:
                         logger.info(
                             "[stream_tokens] Tool completed: %s (run_id=%s)",
                             tool_name,
                             run_id,
                         )
-                    # Notify callback if provided
-                    if on_tool_event:
+                    # Notify callback if provided (for non-gemini_search tools)
+                    if tool_name != "gemini_search" and on_tool_event:
                         on_tool_event(
                             "tool_end",
                             {
@@ -442,8 +682,94 @@ class LangGraphAgentBuilder:
                 streamed_content,
             )
 
-        except Exception:
+        except GraphRecursionError as e:
+            # Tool call limit reached - ask model to provide final response
+            from shared.telemetry.context import (
+                TelemetryEventNames,
+                add_span_event,
+                record_stream_error,
+                set_span_error,
+            )
+
+            logger.warning(
+                "[stream_tokens] GraphRecursionError: Tool call limit reached (max_iterations=%d). "
+                "Asking model to provide final response.",
+                self.max_iterations,
+            )
+
+            # Record recursion limit error in OpenTelemetry trace using unified function
+            add_span_event(
+                TelemetryEventNames.RECURSION_LIMIT_ERROR,
+                {
+                    "max_iterations": self.max_iterations,
+                    "recursion_limit": self.max_iterations * 2 + 1,
+                    "event_count": event_count,
+                    "streamed_content": streamed_content,
+                    "error.message": str(e),
+                },
+            )
+
+            # Build messages with the limit reached notice
+            # Add a human message to prompt the model to provide final response
+            limit_messages = list(lc_messages) + [
+                HumanMessage(content=TOOL_LIMIT_REACHED_MESSAGE)
+            ]
+
+            # Call the LLM directly (without tools) to get final response
+            try:
+                async for chunk in self.llm.astream(limit_messages):
+                    if hasattr(chunk, "content"):
+                        content = chunk.content
+                        if isinstance(content, str) and content:
+                            yield content
+                        elif isinstance(content, list):
+                            for part in content:
+                                if isinstance(part, str) and part:
+                                    yield part
+                                elif isinstance(part, dict):
+                                    text = part.get("text", "")
+                                    if text:
+                                        yield text
+
+                logger.info(
+                    "[stream_tokens] Final response generated after tool limit reached"
+                )
+            except Exception as recovery_error:
+                logger.exception(
+                    "Error generating final response after tool limit reached"
+                )
+                # Record recovery failure in trace
+                set_span_error(
+                    recovery_error,
+                    description="Failed to generate final response after recursion limit",
+                )
+                add_span_event(
+                    TelemetryEventNames.AGENT_ERROR,
+                    {
+                        "error.type": type(recovery_error).__name__,
+                        "error.message": str(recovery_error),
+                        "context": "recursion_limit_recovery",
+                    },
+                )
+                raise
+
+        except Exception as e:
+            from shared.telemetry.context import (
+                TelemetryEventNames,
+                record_stream_error,
+            )
+
             logger.exception("Error in stream_tokens")
+
+            # Record error in OpenTelemetry trace using unified function
+            record_stream_error(
+                error=e,
+                event_name=TelemetryEventNames.AGENT_ERROR,
+                extra_attributes={
+                    "event_count": event_count,
+                    "streamed_content": streamed_content,
+                },
+            )
             raise
 
     def get_final_content(self, state: dict[str, Any]) -> str:
@@ -590,6 +916,51 @@ class LangGraphAgentBuilder:
             )
 
             return final_state, all_events
+
+        except GraphRecursionError:
+            # Tool call limit reached - ask model to provide final response
+            logger.warning(
+                "[stream_events_with_state] GraphRecursionError: Tool call limit reached (max_iterations=%d). "
+                "Asking model to provide final response.",
+                self.max_iterations,
+            )
+
+            # Build messages with the limit reached notice
+            limit_messages = list(lc_messages) + [
+                HumanMessage(content=TOOL_LIMIT_REACHED_MESSAGE)
+            ]
+
+            # Call the LLM directly (without tools) to get final response
+            try:
+                response = await self.llm.ainvoke(limit_messages)
+                final_content = ""
+                if hasattr(response, "content"):
+                    if isinstance(response.content, str):
+                        final_content = response.content
+                    elif isinstance(response.content, list):
+                        text_parts = []
+                        for part in response.content:
+                            if isinstance(part, str):
+                                text_parts.append(part)
+                            elif isinstance(part, dict) and part.get("type") == "text":
+                                text_parts.append(part.get("text", ""))
+                        final_content = "".join(text_parts)
+
+                # Create a final state with the response
+                final_state = {
+                    "messages": list(lc_messages) + [AIMessage(content=final_content)]
+                }
+
+                logger.info(
+                    "[stream_events_with_state] Final response generated after tool limit reached"
+                )
+                return final_state, all_events
+
+            except Exception:
+                logger.exception(
+                    "Error generating final response after tool limit reached"
+                )
+                raise
 
         except Exception:
             logger.exception("Error in stream_events_with_state")
