@@ -50,7 +50,7 @@ export interface RetrieverListResponse {
 }
 
 // Unified Retriever Types (for list API)
-export type RetrieverTypeEnum = 'user' | 'group';
+export type RetrieverTypeEnum = 'user' | 'group' | 'public';
 
 export interface UnifiedRetriever {
   name: string;

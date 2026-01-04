@@ -18,7 +18,7 @@ from app.core.config import settings
 from app.models.kind import Kind
 from app.models.shared_task import SharedTask
 from app.models.subtask import Subtask
-from app.models.subtask_attachment import SubtaskAttachment
+from app.models.subtask_context import ContextType, SubtaskContext
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.shared_task import (
@@ -574,30 +574,30 @@ class SharedTaskService:
             db.add(new_subtask)
             db.flush()  # Get new subtask ID
 
-            # Copy attachments if any
-            original_attachments = (
-                db.query(SubtaskAttachment)
-                .filter(SubtaskAttachment.subtask_id == original_subtask.id)
+            # Copy contexts (attachments) if any
+            original_contexts = (
+                db.query(SubtaskContext)
+                .filter(SubtaskContext.subtask_id == original_subtask.id)
                 .all()
             )
 
-            for original_attachment in original_attachments:
-                new_attachment = SubtaskAttachment(
+            for original_context in original_contexts:
+                new_context = SubtaskContext(
                     subtask_id=new_subtask.id,
                     user_id=new_user_id,
-                    original_filename=original_attachment.original_filename,
-                    file_extension=original_attachment.file_extension,
-                    file_size=original_attachment.file_size,
-                    mime_type=original_attachment.mime_type,
-                    binary_data=original_attachment.binary_data,
-                    image_base64=original_attachment.image_base64,
-                    extracted_text=original_attachment.extracted_text,
-                    text_length=original_attachment.text_length,
-                    status=original_attachment.status,
-                    error_message=original_attachment.error_message,
+                    context_type=original_context.context_type,
+                    name=original_context.name,
+                    status=original_context.status,
+                    error_message=original_context.error_message,
+                    binary_data=original_context.binary_data,
+                    image_base64=original_context.image_base64,
+                    extracted_text=original_context.extracted_text,
+                    text_length=original_context.text_length,
+                    type_data=original_context.type_data,
                     created_at=datetime.now(),
+                    updated_at=datetime.now(),
                 )
-                db.add(new_attachment)
+                db.add(new_context)
 
         db.commit()
         db.refresh(new_task)
@@ -833,30 +833,29 @@ class SharedTaskService:
         # Convert to public subtask data (exclude sensitive fields)
         public_subtasks = []
         for sub in subtasks:
-            # Get attachments for this subtask
-            attachments = (
-                db.query(SubtaskAttachment)
-                .filter(SubtaskAttachment.subtask_id == sub.id)
+            # Get attachment contexts for this subtask
+            contexts = (
+                db.query(SubtaskContext)
+                .filter(
+                    SubtaskContext.subtask_id == sub.id,
+                    SubtaskContext.context_type == ContextType.ATTACHMENT.value,
+                )
                 .all()
             )
 
-            # Convert attachments to public format (exclude binary data and image base64)
+            # Convert contexts to public format (exclude binary data and image base64)
             public_attachments = [
                 {
-                    "id": att.id,
-                    "original_filename": att.original_filename,
-                    "file_extension": att.file_extension,
-                    "file_size": att.file_size,
-                    "mime_type": att.mime_type,
-                    "extracted_text": att.extracted_text or "",
-                    "text_length": att.text_length,
-                    "status": (
-                        att.status.value
-                        if hasattr(att.status, "value")
-                        else str(att.status)
-                    ),
+                    "id": ctx.id,
+                    "original_filename": ctx.original_filename,
+                    "file_extension": ctx.file_extension,
+                    "file_size": ctx.file_size,
+                    "mime_type": ctx.mime_type,
+                    "extracted_text": ctx.extracted_text or "",
+                    "text_length": ctx.text_length,
+                    "status": ctx.status,
                 }
-                for att in attachments
+                for ctx in contexts
             ]
 
             # Get sender user name if available

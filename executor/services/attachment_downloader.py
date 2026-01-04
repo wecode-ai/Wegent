@@ -60,9 +60,9 @@ class AttachmentDownloader:
         self.auth_token = auth_token
         self.headers = {"Authorization": f"Bearer {auth_token}"}
         # Get API base URL from environment, similar to skill downloads
-        self.api_base_url = os.getenv(
-            "TASK_API_DOMAIN", DEFAULT_API_BASE_URL
-        ).rstrip("/")
+        self.api_base_url = os.getenv("TASK_API_DOMAIN", DEFAULT_API_BASE_URL).rstrip(
+            "/"
+        )
 
     def get_attachments_dir(self) -> str:
         """
@@ -160,7 +160,9 @@ class AttachmentDownloader:
 
         # Build download URL using TASK_API_DOMAIN, similar to skill downloads
         download_url = self._build_download_url(att_id)
-        logger.info(f"Downloading attachment: {filename} (id={att_id}) from {download_url}")
+        logger.info(
+            f"Downloading attachment: {filename} (id={att_id}) from {download_url}"
+        )
 
         try:
             # Download file with streaming for large files
@@ -187,9 +189,7 @@ class AttachmentDownloader:
 
         except requests.exceptions.Timeout:
             error_msg = "Download timeout"
-            logger.error(
-                f"Timeout downloading attachment '{filename}': {error_msg}"
-            )
+            logger.error(f"Timeout downloading attachment '{filename}': {error_msg}")
             return {**att, "error": error_msg}
         except requests.exceptions.RequestException as e:
             error_msg = f"Request error: {str(e)}"

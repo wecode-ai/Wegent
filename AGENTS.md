@@ -54,10 +54,15 @@ Task = Team + Workspace (代码仓库)
 
 **Always run tests before committing.** Target coverage: 40-60% minimum.
 
+**⚠️ Python modules use [uv](https://docs.astral.sh/uv/) for dependency management. Always use `uv run` to execute Python commands.**
+
 ```bash
-cd backend && pytest --cov=app     # Backend
-cd frontend && npm test            # Frontend
-cd frontend && npm run test:e2e    # E2E tests (Playwright)
+cd backend && uv run pytest --cov=app           # Backend
+cd executor && uv run pytest                    # Executor
+cd executor_manager && uv run pytest            # Executor Manager
+cd shared && uv run pytest                      # Shared
+cd frontend && npm test                         # Frontend
+cd frontend && npm run test:e2e                 # E2E tests (Playwright)
 ```
 
 **Test principles:**
@@ -336,9 +341,9 @@ team = db.query(Kind).filter(Kind.kind == "Team", ...).first()
 **Database Migrations:**
 ```bash
 cd backend
-alembic revision --autogenerate -m "description"  # Create
-alembic upgrade head                               # Apply
-alembic downgrade -1                               # Rollback
+uv run alembic revision --autogenerate -m "description"  # Create
+uv run alembic upgrade head                               # Apply
+uv run alembic downgrade -1                               # Rollback
 ```
 
 **Web Search Configuration:**
@@ -475,8 +480,11 @@ t('actions.save')             // Ambiguous - which namespace?
 # Start services
 docker-compose up -d
 
-# Run tests
-cd backend && pytest
+# Run tests (Python modules use uv)
+cd backend && uv run pytest
+cd executor && uv run pytest
+cd executor_manager && uv run pytest
+cd shared && uv run pytest
 cd frontend && npm test
 
 # Format code
@@ -484,7 +492,7 @@ cd backend && black . && isort .
 cd frontend && npm run format
 
 # Database migration
-cd backend && alembic revision --autogenerate -m "msg" && alembic upgrade head
+cd backend && uv run alembic revision --autogenerate -m "msg" && uv run alembic upgrade head
 ```
 
 **Ports:** 3000 (frontend), 8000 (backend), 8001 (executor manager), 3306 (MySQL), 6379 (Redis)

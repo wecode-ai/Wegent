@@ -2,7 +2,42 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from pydantic_settings import BaseSettings
+from pathlib import Path
+from typing import Any, Mapping, Tuple, Type
+
+from dotenv import dotenv_values
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
+from pydantic_settings.sources import DotEnvSettingsSource
+from pydantic_settings.sources.utils import parse_env_vars
+
+
+class NoInterpolationDotEnvSettingsSource(DotEnvSettingsSource):
+    """
+    Custom DotEnvSettingsSource that disables variable interpolation.
+
+    This fixes an issue where dotenv's default interpolation behavior
+    incorrectly parses template variables like ${{user.name}} in JSON strings,
+    turning them into "}".
+    """
+
+    @staticmethod
+    def _static_read_env_file(
+        file_path: Path,
+        *,
+        encoding: str | None = None,
+        case_sensitive: bool = False,
+        ignore_empty: bool = False,
+        parse_none_str: str | None = None,
+    ) -> Mapping[str, str | None]:
+        # Disable interpolation to preserve template variables like ${{user.name}}
+        file_vars: dict[str, str | None] = dotenv_values(
+            file_path, encoding=encoding or "utf8", interpolate=False
+        )
+        return parse_env_vars(file_vars, case_sensitive, ignore_empty, parse_none_str)
 
 
 class Settings(BaseSettings):
@@ -150,6 +185,16 @@ class Settings(BaseSettings):
         50  # Default max results when not specified by LLM or engine config
     )
 
+    # Message compression configuration
+    # Enable/disable automatic message compression when context limit is exceeded
+    MESSAGE_COMPRESSION_ENABLED: bool = True
+    # Number of first messages to keep during history truncation (system prompt + initial context)
+    MESSAGE_COMPRESSION_FIRST_MESSAGES: int = 2
+    # Number of last messages to keep during history truncation (recent context)
+    MESSAGE_COMPRESSION_LAST_MESSAGES: int = 10
+    # Maximum length for attachment content after truncation (characters)
+    MESSAGE_COMPRESSION_ATTACHMENT_LENGTH: int = 50000
+
     # Wizard configuration
     # The name of the public model to use for wizard AI features (follow-up questions, prompt generation)
     # If not set or empty, wizard will try to find any available model (user's first, then public)
@@ -189,10 +234,33 @@ class Settings(BaseSettings):
     # Use: from shared.telemetry.config import get_otel_config
     # All OTEL_* environment variables are read from there
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        extra = "ignore"
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: Type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> Tuple[PydanticBaseSettingsSource, ...]:
+        """
+        Customize settings sources to use NoInterpolationDotEnvSettingsSource.
+
+        This ensures that template variables like ${{user.name}} in .env files
+        are preserved and not incorrectly parsed by dotenv's interpolation.
+        """
+        return (
+            init_settings,
+            env_settings,
+            NoInterpolationDotEnvSettingsSource(settings_cls),
+            file_secret_settings,
+        )
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
 
 # Global configuration instance
