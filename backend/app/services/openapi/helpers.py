@@ -76,14 +76,22 @@ def parse_wegent_tools(tools: Optional[List[WegentTool]]) -> Dict[str, Any]:
     Returns:
         Dict with parsed tool settings:
         - enable_deep_thinking: bool (also enables web search if WEB_SEARCH_ENABLED)
+        - disable_wegent_tools: bool (disable all wecode-added tools: MCP, WebSearch)
+        - disable_wegent_extend_message: bool (disable all auto-injected content: datetime, prompts)
     """
     result = {
         "enable_deep_thinking": False,
+        "disable_wegent_tools": False,
+        "disable_wegent_extend_message": False,
     }
     if tools:
         for tool in tools:
             if tool.type == "wegent_deep_thinking":
                 result["enable_deep_thinking"] = True
+            elif tool.type == "disable_wegent_tools":
+                result["disable_wegent_tools"] = True
+            elif tool.type == "disable_wegent_extend_message":
+                result["disable_wegent_extend_message"] = True
     return result
 
 

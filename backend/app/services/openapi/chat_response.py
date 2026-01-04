@@ -86,6 +86,10 @@ async def create_streaming_response(
 
     # Capture tool settings for use in generator
     enable_deep_thinking = tool_settings.get("enable_deep_thinking", False)
+    disable_wegent_tools = tool_settings.get("disable_wegent_tools", False)
+    disable_wegent_extend_message = tool_settings.get(
+        "disable_wegent_extend_message", False
+    )
     bot_name = setup.bot_name
     bot_namespace = setup.bot_namespace
 
@@ -109,42 +113,63 @@ async def create_streaming_response(
             cancel_event = await session_manager.register_stream(assistant_subtask_id)
             await db_handler.update_subtask_status(assistant_subtask_id, "RUNNING")
 
+            # Build enhanced system prompt with deep thinking etc. if not disabled
+            from app.chat_shell.prompts import build_system_prompt
+
+            if disable_wegent_extend_message:
+                final_system_prompt = setup.system_prompt
+            else:
+                final_system_prompt = build_system_prompt(
+                    base_prompt=setup.system_prompt,
+                    enable_clarification=False,
+                    enable_deep_thinking=enable_deep_thinking,
+                    skills=None,
+                )
+
             # Build messages with history
             history = build_chat_history(setup.existing_subtasks)
             messages = MessageConverter.build_messages(
                 history=history,
                 current_message=input_text,
-                system_prompt=setup.system_prompt,
+                system_prompt=final_system_prompt,
+                inject_datetime=not disable_wegent_extend_message,
             )
 
             # Prepare extra tools (MCP and web search)
             extra_tools = []
 
-            # Load MCP tools if system config enabled
-            if settings.CHAT_MCP_ENABLED:
-                try:
-                    mcp_client = await load_mcp_tools(
-                        task_kind_id, bot_name, bot_namespace
-                    )
-                    if mcp_client:
-                        extra_tools.extend(mcp_client.get_tools())
-                        logger.info(
-                            f"[OPENAPI] Loaded {len(mcp_client.get_tools())} MCP tools for task {task_kind_id}"
+            # Only load tools if not disabled
+            if not disable_wegent_tools:
+                # Load MCP tools if system config enabled
+                if settings.CHAT_MCP_ENABLED:
+                    try:
+                        mcp_client = await load_mcp_tools(
+                            task_kind_id, bot_name, bot_namespace
                         )
-                except Exception as e:
-                    logger.warning(f"[OPENAPI] Failed to load MCP tools: {e}")
+                        if mcp_client:
+                            extra_tools.extend(mcp_client.get_tools())
+                            logger.info(
+                                f"[OPENAPI] Loaded {len(mcp_client.get_tools())} MCP tools for task {task_kind_id}"
+                            )
+                    except Exception as e:
+                        logger.warning(f"[OPENAPI] Failed to load MCP tools: {e}")
 
-            # Add web search tool if deep thinking enabled and system config allows
-            if enable_deep_thinking and settings.WEB_SEARCH_ENABLED:
-                try:
-                    from app.chat_shell.tools import WebSearchTool
+                # Always add web search tool if web search is enabled in system settings
+                # (consistent with WebSocket chat behavior)
+                if settings.WEB_SEARCH_ENABLED:
+                    try:
+                        from app.chat_shell.tools import WebSearchTool
 
-                    extra_tools.append(WebSearchTool())
-                    logger.info(
-                        f"[OPENAPI] Added web search tool for task {task_kind_id}"
-                    )
-                except Exception as e:
-                    logger.warning(f"[OPENAPI] Failed to add web search tool: {e}")
+                        extra_tools.append(
+                            WebSearchTool(
+                                default_max_results=settings.WEB_SEARCH_DEFAULT_MAX_RESULTS,
+                            )
+                        )
+                        logger.info(
+                            f"[OPENAPI] Added web search tool for task {task_kind_id}"
+                        )
+                    except Exception as e:
+                        logger.warning(f"[OPENAPI] Failed to add web search tool: {e}")
 
             # Decide whether to use agent (with tools) or simple LLM
             use_agent = len(extra_tools) > 0
@@ -406,6 +431,10 @@ async def create_sync_response(
 
     # Extract tool settings
     enable_deep_thinking = tool_settings.get("enable_deep_thinking", False)
+    disable_wegent_tools = tool_settings.get("disable_wegent_tools", False)
+    disable_wegent_extend_message = tool_settings.get(
+        "disable_wegent_extend_message", False
+    )
 
     # Update subtask status to RUNNING
     await db_handler.update_subtask_status(assistant_subtask_id, "RUNNING")
@@ -414,42 +443,63 @@ async def create_sync_response(
     mcp_client = None
 
     try:
+        # Build enhanced system prompt with deep thinking etc. if not disabled
+        from app.chat_shell.prompts import build_system_prompt
+
+        if disable_wegent_extend_message:
+            final_system_prompt = setup.system_prompt
+        else:
+            final_system_prompt = build_system_prompt(
+                base_prompt=setup.system_prompt,
+                enable_clarification=False,
+                enable_deep_thinking=enable_deep_thinking,
+                skills=None,
+            )
+
         # Build messages with history
         history = build_chat_history(setup.existing_subtasks)
         messages = MessageConverter.build_messages(
             history=history,
             current_message=input_text,
-            system_prompt=setup.system_prompt,
+            system_prompt=final_system_prompt,
+            inject_datetime=not disable_wegent_extend_message,
         )
 
         # Prepare extra tools (MCP and web search)
         extra_tools = []
 
-        # Load MCP tools if system config enabled
-        if settings.CHAT_MCP_ENABLED:
-            try:
-                mcp_client = await load_mcp_tools(
-                    setup.task_id, setup.bot_name, setup.bot_namespace
-                )
-                if mcp_client:
-                    extra_tools.extend(mcp_client.get_tools())
-                    logger.info(
-                        f"[OPENAPI_SYNC] Loaded {len(mcp_client.get_tools())} MCP tools for task {setup.task_id}"
+        # Only load tools if not disabled
+        if not disable_wegent_tools:
+            # Load MCP tools if system config enabled
+            if settings.CHAT_MCP_ENABLED:
+                try:
+                    mcp_client = await load_mcp_tools(
+                        setup.task_id, setup.bot_name, setup.bot_namespace
                     )
-            except Exception as e:
-                logger.warning(f"[OPENAPI_SYNC] Failed to load MCP tools: {e}")
+                    if mcp_client:
+                        extra_tools.extend(mcp_client.get_tools())
+                        logger.info(
+                            f"[OPENAPI_SYNC] Loaded {len(mcp_client.get_tools())} MCP tools for task {setup.task_id}"
+                        )
+                except Exception as e:
+                    logger.warning(f"[OPENAPI_SYNC] Failed to load MCP tools: {e}")
 
-        # Add web search tool if deep thinking enabled and system config allows
-        if enable_deep_thinking and settings.WEB_SEARCH_ENABLED:
-            try:
-                from app.chat_shell.tools import WebSearchTool
+            # Always add web search tool if web search is enabled in system settings
+            # (consistent with WebSocket chat behavior)
+            if settings.WEB_SEARCH_ENABLED:
+                try:
+                    from app.chat_shell.tools import WebSearchTool
 
-                extra_tools.append(WebSearchTool())
-                logger.info(
-                    f"[OPENAPI_SYNC] Added web search tool for task {setup.task_id}"
-                )
-            except Exception as e:
-                logger.warning(f"[OPENAPI_SYNC] Failed to add web search tool: {e}")
+                    extra_tools.append(
+                        WebSearchTool(
+                            default_max_results=settings.WEB_SEARCH_DEFAULT_MAX_RESULTS,
+                        )
+                    )
+                    logger.info(
+                        f"[OPENAPI_SYNC] Added web search tool for task {setup.task_id}"
+                    )
+                except Exception as e:
+                    logger.warning(f"[OPENAPI_SYNC] Failed to add web search tool: {e}")
 
         # Decide whether to use agent (with tools) or simple LLM
         use_agent = len(extra_tools) > 0

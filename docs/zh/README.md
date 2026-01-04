@@ -49,6 +49,7 @@ Wegent 是一个开源的 AI 原生操作系统，使您能够大规模定义、
 详细的技术参考资料：
 
 - [YAML 规范](./reference/yaml-specification.md) - 完整的 YAML 配置格式说明
+- [OpenAPI Responses API](./reference/openapi-responses.md) - Responses API 接口参考
 
 ### 📝 配置示例
 

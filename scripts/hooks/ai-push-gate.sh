@@ -122,34 +122,66 @@ echo ""
 # -----------------------------------------------------------------------------
 echo -e "${BLUE}📝 Documentation Check:${NC}"
 
-# Backend API/Services changed → User guides (creating-bots, creating-teams, etc.)
+# First, check if this commit already includes documentation updates
+DOCS_CHANGED=$(echo "$CHANGED_FILES" | grep -E "^docs/.*\.md$" || true)
+README_CHANGED=$(echo "$CHANGED_FILES" | grep -E "^(README|AGENTS).*\.md$" || true)
+
+# If docs are already changed in this commit, skip the corresponding reminders
+# This prevents false positives when developers have already updated documentation
+
+# Backend API/Services changed → User guides or reference docs
 BACKEND_API=$(echo "$CHANGED_FILES" | grep -E "^backend/app/(api|services)/.*\.py$" || true)
 if [ -n "$BACKEND_API" ]; then
-    DOC_REMINDERS+=("Backend API/Services changed → Check docs/*/guides/user/ for user guide updates")
+    # Check if any reference or guide docs are already updated
+    if [ -z "$DOCS_CHANGED" ]; then
+        DOC_REMINDERS+=("Backend API/Services changed → Check docs/*/guides/user/ or docs/*/reference/ for documentation updates")
+    else
+        echo -e "   ${GREEN}✅ Backend API/Services changed - docs already updated in this commit${NC}"
+    fi
 fi
 
-# Backend Models/Schemas changed → YAML specification reference
+# Backend Models/Schemas changed → YAML specification or API reference
 BACKEND_MODELS=$(echo "$CHANGED_FILES" | grep -E "^backend/app/(models|schemas)/.*\.py$" || true)
 if [ -n "$BACKEND_MODELS" ]; then
-    DOC_REMINDERS+=("Backend Models/Schemas changed → Check docs/*/reference/yaml-specification.md")
+    # Check if any reference docs are already updated
+    REFERENCE_DOCS=$(echo "$DOCS_CHANGED" | grep -E "reference/.*\.md$" || true)
+    if [ -z "$REFERENCE_DOCS" ]; then
+        DOC_REMINDERS+=("Backend Models/Schemas changed → Check docs/*/reference/ for API/schema documentation updates")
+    else
+        echo -e "   ${GREEN}✅ Backend Models/Schemas changed - reference docs already updated in this commit${NC}"
+    fi
 fi
 
 # Executor/Agent changed → Architecture and concepts docs
 EXECUTOR_CODE=$(echo "$CHANGED_FILES" | grep -E "^executor/.*\.py$" || true)
 if [ -n "$EXECUTOR_CODE" ]; then
-    DOC_REMINDERS+=("Executor changed → Check docs/*/concepts/architecture.md")
+    CONCEPT_DOCS=$(echo "$DOCS_CHANGED" | grep -E "concepts/.*\.md$" || true)
+    if [ -z "$CONCEPT_DOCS" ]; then
+        DOC_REMINDERS+=("Executor changed → Check docs/*/concepts/architecture.md")
+    else
+        echo -e "   ${GREEN}✅ Executor changed - concept docs already updated in this commit${NC}"
+    fi
 fi
 
 # Project config changed → Getting started and installation docs
 CONFIG_FILES=$(echo "$CHANGED_FILES" | grep -E "(docker-compose|Dockerfile|requirements\.txt|package\.json)" || true)
 if [ -n "$CONFIG_FILES" ]; then
-    DOC_REMINDERS+=("Project config changed → Check docs/*/getting-started/ for installation/setup updates")
+    GETTING_STARTED_DOCS=$(echo "$DOCS_CHANGED" | grep -E "getting-started/.*\.md$" || true)
+    if [ -z "$GETTING_STARTED_DOCS" ]; then
+        DOC_REMINDERS+=("Project config changed → Check docs/*/getting-started/ for installation/setup updates")
+    else
+        echo -e "   ${GREEN}✅ Project config changed - getting-started docs already updated in this commit${NC}"
+    fi
 fi
 
 # Any code change → Consider updating AGENTS.md and README
 ANY_CODE=$(echo "$CHANGED_FILES" | grep -E "^(backend|frontend|executor|executor_manager|shared)/.*\.(py|ts|tsx)$" || true)
 if [ -n "$ANY_CODE" ]; then
-    DOC_REMINDERS+=("Code changed → Consider updating AGENTS.md and README.md/README_zh.md if needed")
+    if [ -z "$README_CHANGED" ] && [ -z "$DOCS_CHANGED" ]; then
+        DOC_REMINDERS+=("Code changed → Consider updating AGENTS.md and README.md/README_zh.md if needed")
+    else
+        echo -e "   ${GREEN}✅ Code changed - documentation already updated in this commit${NC}"
+    fi
 fi
 
 if [ ${#DOC_REMINDERS[@]} -eq 0 ]; then
