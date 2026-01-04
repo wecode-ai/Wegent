@@ -380,7 +380,10 @@ echo -e "${GREEN}Server will start on http://$HOST:$PORT${NC}"
 echo -e "${GREEN}API documentation: http://localhost:$PORT/api/docs${NC}"
 echo ""
 echo -e "${YELLOW}Press Ctrl+C to stop the server${NC}"
+echo -e "${YELLOW}Server will wait for active streams to complete before shutdown (max 10 minutes)${NC}"
 echo ""
 
-# Start uvicorn
-uvicorn app.main:app --reload --host "$HOST" --port "$PORT"
+# Start uvicorn with graceful shutdown timeout
+# --timeout-graceful-shutdown: Wait for active connections to complete (matches GRACEFUL_SHUTDOWN_TIMEOUT in config)
+# Default is 600 seconds (10 minutes) to allow long-running streaming requests to complete
+uvicorn app.main:app --reload --host "$HOST" --port "$PORT" --timeout-graceful-shutdown 600

@@ -154,11 +154,12 @@ def get_task_with_access_check(
     raise HTTPException(status_code=404, detail="Task not found")
 
 
-def check_task_status(task: TaskResource) -> None:
+def check_task_status(db: Session, task: TaskResource) -> None:
     """
     Check if task is in a valid state for new messages.
 
     Args:
+        db: Database session
         task: Task resource to check
 
     Raises:
@@ -570,10 +571,10 @@ async def create_task_and_subtasks(
     subtask_user_id = user.id
 
     if task_id:
-        # Get existing task with access check
-        task, subtask_user_id = get_task_with_access_check(db, task_id, user.id)
-        check_task_status(task)
-
+        if task_id:
+            # Get existing task with access check
+            task, subtask_user_id = get_task_with_access_check(db, task_id, user.id)
+            check_task_status(db, task)
         # Update modelId in existing task if provided
         if params.model_id:
             from sqlalchemy.orm.attributes import flag_modified

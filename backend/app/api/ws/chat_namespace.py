@@ -149,6 +149,7 @@ class ChatNamespace(socketio.AsyncNamespace):
         Handle client connection.
 
         Verifies JWT token and joins user to their personal room.
+        Rejects new connections during graceful shutdown.
 
         Args:
             sid: Socket ID
@@ -156,13 +157,20 @@ class ChatNamespace(socketio.AsyncNamespace):
             auth: Authentication data (expected: {"token": "..."})
 
         Raises:
-            ConnectionRefusedError: If authentication fails
+            ConnectionRefusedError: If authentication fails or server is shutting down
         """
+        from app.core.shutdown import shutdown_manager
+
         # Generate unique request ID for this WebSocket connection
         request_id = str(uuid.uuid4())[:8]
         set_request_context(request_id)
 
         logger.info(f"[WS] Connection attempt sid={sid}")
+
+        # Reject new connections during graceful shutdown
+        if shutdown_manager.is_shutting_down:
+            logger.warning(f"[WS] Rejecting connection during shutdown sid={sid}")
+            raise ConnectionRefusedError("Server is shutting down")
 
         # Check auth token
         if not auth or not isinstance(auth, dict):

@@ -44,7 +44,7 @@ class ShutdownManager:
     Tracks active streaming requests and provides mechanisms to:
     - Signal shutdown initiation
     - Wait for active streams to complete
-    - Reject new requests during shutdown
+    - Continue accepting new requests during shutdown (graceful)
     """
 
     def __init__(self):
@@ -116,26 +116,37 @@ class ShutdownManager:
         """
         Register a new streaming request.
 
+        Note: During graceful shutdown, we still accept new streams from
+        existing WebSocket connections. New WebSocket connections are rejected
+        at the connection level (on_connect), but requests from already
+        connected clients should be allowed to complete gracefully.
+
         Args:
             subtask_id: The subtask ID for the stream
 
         Returns:
-            bool: True if registration successful, False if shutting down
+            bool: Always True (registration always succeeds)
         """
         async with self._lock:
-            if self._shutting_down:
-                logger.warning(
-                    "Rejecting stream registration during shutdown: subtask_id=%d",
-                    subtask_id,
-                )
-                return False
+            # Reset shutdown event if we're adding a new stream during shutdown
+            # This ensures wait_for_streams will wait for this new stream too
+            if self._shutting_down and len(self._active_streams) == 0:
+                self._shutdown_event.clear()
 
             self._active_streams.add(subtask_id)
-            logger.debug(
-                "Registered stream: subtask_id=%d, active_count=%d",
-                subtask_id,
-                len(self._active_streams),
-            )
+            if self._shutting_down:
+                logger.info(
+                    "Registered stream during shutdown (from existing connection): "
+                    "subtask_id=%d, active_count=%d",
+                    subtask_id,
+                    len(self._active_streams),
+                )
+            else:
+                logger.debug(
+                    "Registered stream: subtask_id=%d, active_count=%d",
+                    subtask_id,
+                    len(self._active_streams),
+                )
             return True
 
     async def unregister_stream(self, subtask_id: int) -> None:
