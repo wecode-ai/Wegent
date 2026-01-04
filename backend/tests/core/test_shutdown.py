@@ -77,10 +77,10 @@ class TestShutdownManager:
     async def test_register_stream_during_shutdown(self, shutdown_manager):
         """Test that registering a stream during shutdown still succeeds.
 
-        Note: During graceful shutdown, we still accept new streams.
-        This allows requests that are already in-flight to complete.
-        The shutdown wait mechanism will wait for all streams (including
-        newly registered ones) to complete before proceeding.
+        During graceful shutdown, we still accept new streams from existing
+        WebSocket connections. New WebSocket connections are rejected at the
+        connection level (on_connect), but requests from already connected
+        clients should be allowed to complete gracefully.
         """
         with patch("app.core.cache.cache_manager") as mock_cache:
             mock_cache.set = AsyncMock(return_value=True)
@@ -201,8 +201,9 @@ class TestShutdownIntegration:
     async def test_shutdown_flow(self):
         """Test the complete shutdown flow.
 
-        Note: During graceful shutdown, new streams are still accepted
-        to allow in-flight requests to complete gracefully.
+        During graceful shutdown, new streams from existing connections are
+        still accepted. New WebSocket connections are rejected at the
+        connection level (on_connect).
         """
         manager = ShutdownManager()
 
@@ -217,11 +218,11 @@ class TestShutdownIntegration:
             await manager.initiate_shutdown()
             assert manager.is_shutting_down is True
 
-            # New streams are still accepted during graceful shutdown
+            # New streams are still accepted during shutdown (from existing connections)
             result = await manager.register_stream(3)
             assert result is True
 
-            # Complete all streams (including the one registered during shutdown)
+            # Complete all streams
             await manager.unregister_stream(1)
             await manager.unregister_stream(2)
             await manager.unregister_stream(3)

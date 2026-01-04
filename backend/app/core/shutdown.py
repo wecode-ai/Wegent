@@ -116,10 +116,10 @@ class ShutdownManager:
         """
         Register a new streaming request.
 
-        Note: During graceful shutdown, we still accept new streams.
-        This allows requests that are already in-flight to complete.
-        The shutdown wait mechanism will wait for all streams (including
-        newly registered ones) to complete before proceeding.
+        Note: During graceful shutdown, we still accept new streams from
+        existing WebSocket connections. New WebSocket connections are rejected
+        at the connection level (on_connect), but requests from already
+        connected clients should be allowed to complete gracefully.
 
         Args:
             subtask_id: The subtask ID for the stream
@@ -136,7 +136,8 @@ class ShutdownManager:
             self._active_streams.add(subtask_id)
             if self._shutting_down:
                 logger.info(
-                    "Registered stream during shutdown: subtask_id=%d, active_count=%d",
+                    "Registered stream during shutdown (from existing connection): "
+                    "subtask_id=%d, active_count=%d",
                     subtask_id,
                     len(self._active_streams),
                 )
