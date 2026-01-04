@@ -75,23 +75,15 @@ def parse_wegent_tools(tools: Optional[List[WegentTool]]) -> Dict[str, Any]:
 
     Returns:
         Dict with parsed tool settings:
-        - enable_deep_thinking: bool (also enables web search if WEB_SEARCH_ENABLED)
-        - enable_extend_tool: bool (enables server-side MCP from CHAT_MCP_SERVERS)
-        - enable_extend_message: bool (enables Current time injection)
+        - enable_chat_bot: bool (enables all server-side capabilities)
     """
     result = {
-        "enable_deep_thinking": False,
-        "enable_extend_tool": False,
-        "enable_extend_message": False,
+        "enable_chat_bot": False,
     }
     if tools:
         for tool in tools:
-            if tool.type == "wegent_deep_thinking":
-                result["enable_deep_thinking"] = True
-            elif tool.type == "wegent_extend_tool":
-                result["enable_extend_tool"] = True
-            elif tool.type == "wegent_extend_message":
-                result["enable_extend_message"] = True
+            if tool.type == "wegent_chat_bot":
+                result["enable_chat_bot"] = True
     return result
 
 

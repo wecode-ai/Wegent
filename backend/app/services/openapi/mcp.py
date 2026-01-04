@@ -11,7 +11,7 @@ This module provides separate functions for loading:
 """
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
 
@@ -153,104 +153,6 @@ async def load_bot_mcp_tools(
     except Exception:
         logger.exception(
             f"[OPENAPI_MCP] Unexpected error loading bot MCP tools for task {task_id}"
-        )
-        return None
-
-
-async def load_mcp_tools(
-    task_id: int,
-    bot_name: str = "",
-    bot_namespace: str = "default",
-    enable_server_mcp: bool = True,
-    enable_bot_mcp: bool = True,
-) -> Any:
-    """
-    Load MCP tools for a task, optionally merging server and bot configurations.
-
-    This function provides flexible control over which MCP sources to load:
-    - Server-side MCP (from CHAT_MCP_SERVERS config)
-    - Bot MCP (from Bot/Ghost mcpServers config)
-
-    Args:
-        task_id: Task ID for session management
-        bot_name: Bot name to query Ghost MCP configuration
-        bot_namespace: Bot namespace for Ghost query
-        enable_server_mcp: Whether to load server-side MCP tools (default: True)
-        enable_bot_mcp: Whether to load bot MCP tools (default: True)
-
-    Returns:
-        MCPClient instance or None if no MCP configured
-    """
-    import asyncio
-    import json
-
-    from app.core.config import settings
-
-    try:
-        from app.chat_shell.tools.mcp import MCPClient
-
-        merged_servers: Dict[str, Any] = {}
-
-        # Step 1: Load server-side MCP configuration if enabled
-        if enable_server_mcp:
-            mcp_servers_config = getattr(settings, "CHAT_MCP_SERVERS", "")
-            if mcp_servers_config:
-                try:
-                    config_data = json.loads(mcp_servers_config)
-                    backend_servers = config_data.get("mcpServers", config_data)
-                    merged_servers.update(backend_servers)
-                except json.JSONDecodeError as e:
-                    logger.warning(
-                        f"[OPENAPI_MCP] Failed to parse CHAT_MCP_SERVERS: {e}"
-                    )
-
-        # Step 2: Load bot's MCP configuration from Ghost CRD if enabled
-        if enable_bot_mcp and bot_name and bot_namespace:
-            try:
-                bot_servers = await asyncio.wait_for(
-                    _get_bot_mcp_servers(bot_name, bot_namespace), timeout=5.0
-                )
-                # Bot config takes precedence (overwrites server config for same keys)
-                merged_servers.update(bot_servers)
-            except asyncio.TimeoutError:
-                logger.warning(
-                    f"[OPENAPI_MCP] Timeout querying bot MCP servers for {bot_namespace}/{bot_name}"
-                )
-            except Exception as e:
-                logger.warning(
-                    f"[OPENAPI_MCP] Failed to load bot MCP servers for {bot_namespace}/{bot_name}: {e}"
-                )
-
-        if not merged_servers:
-            logger.info(
-                f"[OPENAPI_MCP] No MCP servers configured for task {task_id} "
-                f"(bot={bot_namespace}/{bot_name}, server_mcp={enable_server_mcp}, bot_mcp={enable_bot_mcp})"
-            )
-            return None
-
-        # Step 3: Create MCP client with merged configuration
-        client = MCPClient(merged_servers)
-        try:
-            await asyncio.wait_for(client.connect(), timeout=30.0)
-            logger.info(
-                f"[OPENAPI_MCP] Loaded {len(client.get_tools())} tools from {len(merged_servers)} "
-                f"MCP servers for task {task_id}"
-            )
-            return client
-        except asyncio.TimeoutError:
-            logger.error(
-                f"[OPENAPI_MCP] Timeout connecting to MCP servers for task {task_id}"
-            )
-            return None
-        except Exception as e:
-            logger.error(
-                f"[OPENAPI_MCP] Failed to connect to MCP servers for task {task_id}: {e}"
-            )
-            return None
-
-    except Exception:
-        logger.exception(
-            f"[OPENAPI_MCP] Unexpected error loading MCP tools for task {task_id}"
         )
         return None
 

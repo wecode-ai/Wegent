@@ -85,9 +85,8 @@ async def create_streaming_response(
     task_kind_id = setup.task_id
 
     # Capture tool settings for use in generator
-    enable_deep_thinking = tool_settings.get("enable_deep_thinking", False)
-    enable_extend_tool = tool_settings.get("enable_extend_tool", False)
-    enable_extend_message = tool_settings.get("enable_extend_message", False)
+    # wegent_chat_bot enables all server-side capabilities
+    enable_chat_bot = tool_settings.get("enable_chat_bot", False)
     bot_name = setup.bot_name
     bot_namespace = setup.bot_namespace
 
@@ -114,17 +113,17 @@ async def create_streaming_response(
             from app.chat_shell.prompts import append_deep_thinking_prompt
 
             final_system_prompt = append_deep_thinking_prompt(
-                setup.system_prompt, enable_deep_thinking
+                setup.system_prompt, enable_chat_bot
             )
 
             # Build messages with history
-            # inject_datetime is controlled by enable_extend_message (default: False for clean API)
+            # inject_datetime is controlled by enable_chat_bot (default: False for clean API)
             history = build_chat_history(setup.existing_subtasks)
             messages = MessageConverter.build_messages(
                 history=history,
                 current_message=input_text,
                 system_prompt=final_system_prompt,
-                inject_datetime=enable_extend_message,
+                inject_datetime=enable_chat_bot,
             )
 
             # Prepare extra tools (MCP and web search)
@@ -132,7 +131,6 @@ async def create_streaming_response(
             mcp_clients = []  # Track all MCP clients for cleanup
 
             # 1. Bot MCP (always available when bot has MCP configured)
-            # No CHAT_MCP_ENABLED check - bot MCP is user-controlled via bot config
             try:
                 bot_mcp_client = await load_bot_mcp_tools(
                     task_kind_id, bot_name, bot_namespace
@@ -146,9 +144,8 @@ async def create_streaming_response(
             except Exception as e:
                 logger.warning(f"[OPENAPI] Failed to load bot MCP tools: {e}")
 
-            # 2. Server MCP (requires explicit wegent_extend_tool)
-            # Only loaded when user explicitly requests via tools parameter
-            if enable_extend_tool:
+            # 2. Server MCP (requires wegent_chat_bot)
+            if enable_chat_bot:
                 try:
                     server_mcp_client = await load_server_mcp_tools(task_kind_id)
                     if server_mcp_client:
@@ -160,8 +157,8 @@ async def create_streaming_response(
                 except Exception as e:
                     logger.warning(f"[OPENAPI] Failed to load server MCP tools: {e}")
 
-            # Add web search tool if deep thinking enabled and system config allows
-            if enable_deep_thinking and settings.WEB_SEARCH_ENABLED:
+            # 3. Web search tool (requires wegent_chat_bot and WEB_SEARCH_ENABLED)
+            if enable_chat_bot and settings.WEB_SEARCH_ENABLED:
                 try:
                     from app.chat_shell.tools import WebSearchTool
 
@@ -431,9 +428,8 @@ async def create_sync_response(
     assistant_subtask_id = setup.assistant_subtask.id
 
     # Extract tool settings
-    enable_deep_thinking = tool_settings.get("enable_deep_thinking", False)
-    enable_extend_tool = tool_settings.get("enable_extend_tool", False)
-    enable_extend_message = tool_settings.get("enable_extend_message", False)
+    # wegent_chat_bot enables all server-side capabilities
+    enable_chat_bot = tool_settings.get("enable_chat_bot", False)
 
     # Update subtask status to RUNNING
     await db_handler.update_subtask_status(assistant_subtask_id, "RUNNING")
@@ -446,24 +442,23 @@ async def create_sync_response(
         from app.chat_shell.prompts import append_deep_thinking_prompt
 
         final_system_prompt = append_deep_thinking_prompt(
-            setup.system_prompt, enable_deep_thinking
+            setup.system_prompt, enable_chat_bot
         )
 
         # Build messages with history
-        # inject_datetime is controlled by enable_extend_message (default: False for clean API)
+        # inject_datetime is controlled by enable_chat_bot (default: False for clean API)
         history = build_chat_history(setup.existing_subtasks)
         messages = MessageConverter.build_messages(
             history=history,
             current_message=input_text,
             system_prompt=final_system_prompt,
-            inject_datetime=enable_extend_message,
+            inject_datetime=enable_chat_bot,
         )
 
         # Prepare extra tools (MCP and web search)
         extra_tools = []
 
         # 1. Bot MCP (always available when bot has MCP configured)
-        # No CHAT_MCP_ENABLED check - bot MCP is user-controlled via bot config
         try:
             bot_mcp_client = await load_bot_mcp_tools(
                 setup.task_id, setup.bot_name, setup.bot_namespace
@@ -477,9 +472,8 @@ async def create_sync_response(
         except Exception as e:
             logger.warning(f"[OPENAPI_SYNC] Failed to load bot MCP tools: {e}")
 
-        # 2. Server MCP (requires explicit wegent_extend_tool)
-        # Only loaded when user explicitly requests via tools parameter
-        if enable_extend_tool:
+        # 2. Server MCP (requires wegent_chat_bot)
+        if enable_chat_bot:
             try:
                 server_mcp_client = await load_server_mcp_tools(setup.task_id)
                 if server_mcp_client:
@@ -491,8 +485,8 @@ async def create_sync_response(
             except Exception as e:
                 logger.warning(f"[OPENAPI_SYNC] Failed to load server MCP tools: {e}")
 
-        # Add web search tool if deep thinking enabled and system config allows
-        if enable_deep_thinking and settings.WEB_SEARCH_ENABLED:
+        # 3. Web search tool (requires wegent_chat_bot and WEB_SEARCH_ENABLED)
+        if enable_chat_bot and settings.WEB_SEARCH_ENABLED:
             try:
                 from app.chat_shell.tools import WebSearchTool
 
