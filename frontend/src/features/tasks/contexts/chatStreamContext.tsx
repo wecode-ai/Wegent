@@ -99,6 +99,8 @@ export interface UnifiedMessage {
   shouldShowSender?: boolean;
   /** Subtask status from backend (RUNNING, COMPLETED, etc.) */
   subtaskStatus?: string;
+  /** Reasoning content from models like DeepSeek R1 */
+  reasoningContent?: string;
   /** Full result data from backend (for executor tasks) */
   result?: {
     value?: string;
@@ -110,6 +112,8 @@ export interface UnifiedMessage {
       title: string;
       kb_id: number;
     }>;
+    /** Reasoning content from models like DeepSeek R1 */
+    reasoning_content?: string;
   };
   /** Knowledge base source references (for RAG citations) */
   sources?: Array<{
@@ -542,6 +546,14 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           ...existingMessage,
           content: existingMessage.content + content,
         };
+
+        // Handle reasoning_chunk from DeepSeek R1 and similar models
+        // Accumulate reasoning content incrementally
+        if (result?.reasoning_chunk) {
+          updatedMessage.reasoningContent =
+            (existingMessage.reasoningContent || '') + result.reasoning_chunk;
+        }
+
         // If result is provided (executor tasks), merge it with existing result
         // This prevents losing thinking data when result is partially updated
         if (result) {
@@ -556,6 +568,10 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
               newResult && newResult.thinking
                 ? newResult.thinking
                 : existingMessage.result?.thinking,
+            // Keep accumulated reasoning_content
+            reasoning_content:
+              newResult?.reasoning_content ||
+              existingMessage.result?.reasoning_content,
           };
         }
         // Extract sources from either top-level or result.sources

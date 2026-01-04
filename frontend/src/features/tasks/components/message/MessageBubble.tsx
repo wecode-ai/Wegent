@@ -30,7 +30,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import MarkdownEditor from '@uiw/react-markdown-editor';
 import MarkdownWithMermaid from '@/components/common/MarkdownWithMermaid';
-import { ThinkingDisplay } from './thinking';
+import { ThinkingDisplay, ReasoningDisplay } from './thinking';
 import ClarificationForm from '../clarification/ClarificationForm';
 import FinalPromptMessage from './FinalPromptMessage';
 import ClarificationAnswerSummary from '../clarification/ClarificationAnswerSummary';
@@ -69,6 +69,7 @@ export interface Message {
     workbench?: Record<string, unknown>;
     shell_type?: string; // Shell type (Chat, ClaudeCode, Agno, etc.)
     sources?: SourceReference[]; // RAG knowledge base sources
+    reasoning_content?: string; // Reasoning content from DeepSeek R1 etc.
   };
   /** @deprecated Use contexts instead */
   attachments?: Attachment[];
@@ -94,6 +95,8 @@ export interface Message {
   error?: string;
   /** RAG knowledge base sources (top-level for backward compatibility) */
   sources?: SourceReference[];
+  /** Reasoning/thinking content from DeepSeek R1 and similar models */
+  reasoningContent?: string;
 }
 
 /** Configuration for paragraph-level action button */
@@ -1359,6 +1362,16 @@ const MessageBubble = memo(
               shellType={msg.result?.shell_type}
             />
           )}
+          {/* Show reasoning display for DeepSeek R1 and similar models */}
+          {!isUserTypeMessage &&
+            (msg.reasoningContent || msg.result?.reasoning_content) && (
+              <ReasoningDisplay
+                reasoningContent={
+                  msg.reasoningContent || msg.result?.reasoning_content || ''
+                }
+                isStreaming={msg.status === 'streaming'}
+              />
+            )}
           <div
             className={`${bubbleBaseClasses} ${bubbleTypeClasses}`}
             onMouseUp={handleTextSelection}
