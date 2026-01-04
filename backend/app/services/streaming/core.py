@@ -398,7 +398,7 @@ class StreamingCore:
             token: The token to process
 
         Returns:
-            True if processing should continue, False if cancelled/shutdown
+            True if processing should continue, False if cancelled
         """
         logger.debug(
             "[STREAMING] process_token: subtask_id=%d, token_len=%d",
@@ -406,16 +406,28 @@ class StreamingCore:
             len(token),
         )
 
-        # Check for cancellation or shutdown
-        if self.is_cancelled() or self.is_shutting_down():
+        # Check for cancellation (user-initiated or shutdown)
+        # When cancelled, we treat it as completed with partial response
+        # This is consistent with update_subtask_on_cancel in cancel.py
+        if self.is_cancelled():
             logger.info(
-                "[STREAMING] Cancelled or shutting down: subtask_id=%d",
+                "[STREAMING] Cancelled: subtask_id=%d, response_len=%d",
                 self.state.subtask_id,
+                len(self.state.full_response),
             )
             await self.emitter.emit_cancelled(self.state.subtask_id)
+            # Use COMPLETED status to ensure Task status is properly updated
+            # The partial response is preserved in the result
+            is_chat_mode = self.state.shell_type == "Chat"
+            result = self.state.get_current_result(
+                include_value=True,
+                include_thinking=True,
+                slim_thinking=is_chat_mode,
+            )
             await self._storage.update_subtask_status(
                 self.state.subtask_id,
-                "CANCELLED",
+                "COMPLETED",
+                result=result,
             )
             return False
 

@@ -147,6 +147,8 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   const joinedTasksRef = useRef<Set<number>>(new Set());
   // Use ref for socket to avoid dependency issues in connect callback
   const socketRef = useRef<Socket | null>(null);
+  // Track reconnection attempts for rejoining tasks
+  const hasReconnectedRef = useRef<boolean>(false);
 
   /**
    * Internal function to create socket connection
@@ -182,13 +184,34 @@ export function SocketProvider({ children }: { children: ReactNode }) {
 
     // Connection event handlers
     newSocket.on('connect', () => {
+      console.log('[Socket.IO] Connected to server');
       setIsConnected(true);
       setConnectionError(null);
       setReconnectAttempts(0);
+
+      // If we were previously connected and this is a reconnect, rejoin tasks
+      // This handles both manual reconnects and transport upgrade scenarios
+      if (socketRef.current && joinedTasksRef.current.size > 0) {
+        console.log('[Socket.IO] Connection restored, rejoining task rooms...');
+        const tasksToRejoin = Array.from(joinedTasksRef.current);
+        console.log('[Socket.IO] Rejoining tasks:', tasksToRejoin);
+
+        tasksToRejoin.forEach(taskId => {
+          newSocket.emit('task:join', { task_id: taskId }, (response: { error?: string }) => {
+            if (response?.error) {
+              console.error(`[Socket.IO] Failed to rejoin task ${taskId}:`, response.error);
+            } else {
+              console.log(`[Socket.IO] Successfully rejoined task ${taskId}`);
+            }
+          });
+        });
+      }
     });
 
-    newSocket.on('disconnect', (_reason: string) => {
+    newSocket.on('disconnect', (reason: string) => {
+      console.log('[Socket.IO] Disconnected from server, reason:', reason);
       setIsConnected(false);
+      // Don't clear joinedTasksRef here - we need it for rejoining after reconnect
     });
 
     newSocket.on('connect_error', (error: Error) => {
@@ -202,13 +225,24 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     });
 
     newSocket.io.on('reconnect', (_attempt: number) => {
+      console.log('[Socket.IO] Reconnected successfully, rejoining task rooms...');
       setIsConnected(true);
       setConnectionError(null);
       setReconnectAttempts(0);
+      hasReconnectedRef.current = true;
 
       // Rejoin all previously joined task rooms
-      joinedTasksRef.current.forEach(taskId => {
-        newSocket.emit('task:join', { task_id: taskId });
+      const tasksToRejoin = Array.from(joinedTasksRef.current);
+      console.log('[Socket.IO] Rejoining tasks:', tasksToRejoin);
+
+      tasksToRejoin.forEach(taskId => {
+        newSocket.emit('task:join', { task_id: taskId }, (response: { error?: string }) => {
+          if (response?.error) {
+            console.error(`[Socket.IO] Failed to rejoin task ${taskId}:`, response.error);
+          } else {
+            console.log(`[Socket.IO] Successfully rejoined task ${taskId}`);
+          }
+        });
       });
     });
 
@@ -262,6 +296,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   /**
    * Join a task room
    * Prevents duplicate joins by checking if already joined
+   * If reconnected, always rejoin to ensure backend state is synced
    */
   const joinTask = useCallback(
     async (
@@ -279,9 +314,14 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       }
 
       // Check if already joined this task room to prevent duplicate joins
-      // This check happens BEFORE adding to the set to handle concurrent calls
-      if (joinedTasksRef.current.has(taskId)) {
+      // Exception: If we just reconnected, always rejoin to sync backend state
+      if (joinedTasksRef.current.has(taskId) && !hasReconnectedRef.current) {
         return {};
+      }
+
+      // Clear reconnected flag after first join
+      if (hasReconnectedRef.current) {
+        hasReconnectedRef.current = false;
       }
 
       // Add to set IMMEDIATELY to prevent concurrent duplicate joins

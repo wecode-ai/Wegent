@@ -111,14 +111,9 @@ class WebSocketStreamingHandler:
         core = StreamingCore(emitter, state, StreamingConfig())
 
         try:
-            # Register with shutdown manager
-            if not await shutdown_manager.register_stream(subtask_id):
-                logger.warning(
-                    "[WS_STREAM] Rejecting stream during shutdown: subtask_id=%d",
-                    subtask_id,
-                )
-                await emitter.emit_error(subtask_id, "Server is shutting down")
-                return
+            # Register with shutdown manager (always succeeds for existing connections)
+            # New WebSocket connections are rejected at on_connect level during shutdown
+            await shutdown_manager.register_stream(subtask_id)
 
             # Acquire resources
             if not await core.acquire_resources():

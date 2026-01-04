@@ -15,6 +15,7 @@
  */
 
 import { useEffect, useRef } from 'react';
+import { useSearchParams } from 'next/navigation';
 import type { Team, TaskDetail } from '@/types/api';
 
 export interface UseTeamPreferencesOptions {
@@ -110,6 +111,15 @@ export function useTeamPreferences({
   // Refs for tracking previous values
   const prevClearVersionRef = useRef(clearVersion);
 
+  // Get taskId from URL to check if we're waiting for task detail to load
+  // Support multiple parameter formats for backward compatibility
+  const searchParams = useSearchParams();
+  const taskIdFromUrl =
+    searchParams.get('taskId') || searchParams.get('task_id') || searchParams.get('taskid');
+
+  // Track the taskId we're waiting for to detect if it changes
+  const waitingForTaskIdRef = useRef<string | null>(null);
+
   // Compute detailTeamId
   const detailTeamId = selectedTaskDetail ? extractTeamId(selectedTaskDetail.team) : null;
 
@@ -126,26 +136,64 @@ export function useTeamPreferences({
   /**
    * Effect: Restore team preferences from localStorage.
    * Only runs when there are no messages and preferences haven't been restored.
+   *
+   * IMPORTANT: If URL has taskId but selectedTaskDetail hasn't loaded yet,
+   * we should wait for the task detail to load before restoring preferences.
+   * This prevents showing the wrong team when navigating between chat/code pages.
+   *
+   * A timeout (3 seconds) is used as a fallback in case task detail fails to load.
    */
   useEffect(() => {
-    if (hasRestoredPreferences || !teams.length || (!selectedTaskDetail && hasMessages)) return;
+    if (hasRestoredPreferences || !teams.length || (!selectedTaskDetail && hasMessages)) {
+      return;
+    }
 
-    const lastTeamId = initialTeamIdRef.current;
+    // Helper function to restore from localStorage
+    const restoreFromLocalStorage = () => {
+      const lastTeamId = initialTeamIdRef.current;
 
-    if (lastTeamId) {
-      const lastTeam = teams.find(team => team.id === lastTeamId);
-      if (lastTeam && isTeamCompatibleWithMode(lastTeam)) {
-        setSelectedTeam(lastTeam);
-        setHasRestoredPreferences(true);
-        return;
+      if (lastTeamId) {
+        const lastTeam = teams.find(team => team.id === lastTeamId);
+        if (lastTeam && isTeamCompatibleWithMode(lastTeam)) {
+          setSelectedTeam(lastTeam);
+          setHasRestoredPreferences(true);
+          return;
+        }
       }
+
+      const compatibleTeam = teams.find(team => isTeamCompatibleWithMode(team));
+      if (compatibleTeam) {
+        setSelectedTeam(compatibleTeam);
+      }
+      setHasRestoredPreferences(true);
+    };
+
+    // If URL has taskId but task detail hasn't loaded yet, wait for it
+    // Use a timeout (3s) as fallback in case task detail fails to load
+    if (taskIdFromUrl && !selectedTaskDetail) {
+      // Start waiting for this taskId
+      if (waitingForTaskIdRef.current !== taskIdFromUrl) {
+        waitingForTaskIdRef.current = taskIdFromUrl;
+      }
+
+      const timeoutId = setTimeout(() => {
+        // Only fallback if we're still waiting for the same taskId and preferences not restored
+        if (waitingForTaskIdRef.current === taskIdFromUrl && !hasRestoredPreferences) {
+          console.warn(
+            '[useTeamPreferences] Task detail load timeout, falling back to localStorage'
+          );
+          restoreFromLocalStorage();
+        }
+      }, 3000);
+
+      return () => clearTimeout(timeoutId);
     }
 
-    const compatibleTeam = teams.find(team => isTeamCompatibleWithMode(team));
-    if (compatibleTeam) {
-      setSelectedTeam(compatibleTeam);
-    }
-    setHasRestoredPreferences(true);
+    // Clear waiting state when task detail is loaded
+    waitingForTaskIdRef.current = null;
+
+    // Normal restoration logic
+    restoreFromLocalStorage();
   }, [
     teams,
     hasRestoredPreferences,
@@ -155,13 +203,22 @@ export function useTeamPreferences({
     initialTeamIdRef,
     setSelectedTeam,
     setHasRestoredPreferences,
+    taskIdFromUrl,
   ]);
 
   /**
    * Effect: Sync team selection when viewing existing task.
    */
   useEffect(() => {
-    if (!detailTeamId) return;
+    if (!detailTeamId) {
+      return;
+    }
+
+    // Skip sync if there's no taskId in URL
+    // This means user switched modes without a specific task, so we should use localStorage preference
+    if (!taskIdFromUrl) {
+      return;
+    }
 
     if (!selectedTeam?.id || selectedTeam.id !== detailTeamId) {
       const matchedTeam = teams.find(team => team.id === detailTeamId) || null;
@@ -183,6 +240,7 @@ export function useTeamPreferences({
     selectedTaskDetail?.team,
     setSelectedTeam,
     setHasRestoredPreferences,
+    taskIdFromUrl,
   ]);
 }
 
