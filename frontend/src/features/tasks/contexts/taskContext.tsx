@@ -371,6 +371,9 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   // Handle user invited to group chat via WebSocket
   const handleTaskInvited = useCallback((data: TaskInvitedPayload) => {
     // Create a new task object from the WebSocket payload for invited group chat
+    // Use COMPLETED status instead of RUNNING since group chat creation is already complete
+    // when the invitation is sent. Using RUNNING would cause the sidebar to show a spinning
+    // indicator indefinitely for invited users.
     const newTask: Task = {
       id: data.task_id,
       title: data.title,
@@ -381,9 +384,9 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
       git_domain: '',
       branch_name: '',
       prompt: '',
-      status: 'RUNNING' as TaskStatus,
+      status: 'COMPLETED' as TaskStatus,
       task_type: 'chat',
-      progress: 0,
+      progress: 100,
       batch: 0,
       result: {},
       error_message: '',
@@ -391,7 +394,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
       user_name: '',
       created_at: data.created_at,
       updated_at: data.created_at,
-      completed_at: '',
+      completed_at: data.created_at,
       is_group_chat: data.is_group_chat,
     };
 

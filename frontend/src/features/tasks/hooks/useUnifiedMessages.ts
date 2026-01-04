@@ -30,6 +30,7 @@ import { useMemo, useEffect, useRef } from 'react';
 import { useChatStreamContext, computeIsStreaming } from '../contexts/chatStreamContext';
 import { useUser } from '@/features/common/UserContext';
 import { useTaskContext } from '../contexts/taskContext';
+import { isSystemMessage } from '../constants/systemMessages';
 import type { Team, Attachment, SubtaskContextBrief } from '@/types/api';
 import type { SourceReference } from '@/types/socket';
 
@@ -312,8 +313,12 @@ export function useUnifiedMessages({
       return a.timestamp - b.timestamp;
     });
 
+    // Filter out system messages (e.g., group chat creation markers)
+    // These are internal markers that should not be displayed to users
+    const filteredMessages = sortedMessages.filter(msg => !isSystemMessage(msg.content));
+
     return {
-      messages: sortedMessages,
+      messages: filteredMessages,
       // Compute isStreaming from messages - a task is streaming if any AI message has status='streaming'
       isStreaming: streamingSubtaskIds.length > 0 || computeIsStreaming(streamState?.messages),
       streamingSubtaskIds,
