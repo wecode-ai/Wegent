@@ -154,9 +154,11 @@ wegent-backend:
       changes:
         - backend/**/*
         - wecode/docker/backend/**/*
+        - shared/**/*
     - changes:
       - backend/**/*
       - wecode/docker/backend/**/*
+      - shared/**/*
 
 trigger_update_backend_web:
     stage: production
