@@ -159,6 +159,10 @@ export interface ChatChunkPayload {
     thinking?: unknown[];
     workbench?: Record<string, unknown>;
     sources?: SourceReference[];
+    /** Reasoning content from models like DeepSeek R1 */
+    reasoning_content?: string;
+    /** Incremental reasoning chunk for streaming */
+    reasoning_chunk?: string;
   };
   /** Knowledge base source references (for RAG citations) */
   sources?: SourceReference[];

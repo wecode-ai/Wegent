@@ -10,6 +10,9 @@ export { default } from './ThinkingDisplay';
 export { default as SimpleThinkingView } from './SimpleThinkingView';
 export { default as DetailedThinkingView } from './DetailedThinkingView';
 
+// Reasoning display for DeepSeek R1 and similar models
+export { default as ReasoningDisplay } from './ReasoningDisplay';
+
 // Reusable components
 export { default as ThinkingHeader } from './components/ThinkingHeader';
 export { default as ToolCallItem } from './components/ToolCallItem';

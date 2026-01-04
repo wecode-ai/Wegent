@@ -78,6 +78,7 @@ class ThinkingStep(BaseModel):
 class ExecutionResult(BaseModel):
     value: Optional[str] = None
     thinking: List[ThinkingStep] = []
+    reasoning_content: Optional[str] = None  # Reasoning content from DeepSeek R1 etc.
 
     def dict(self, **kwargs) -> Dict[str, Any]:
         """Override dict method to exclude None values"""

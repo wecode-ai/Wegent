@@ -124,6 +124,7 @@
     "tool_call": "🔧 Tool Call",
     "tool_use": "🔧 Tool Use",
     "tool_result": "🔧 Tool Result",
+    "model_reasoning": "💭 Model Thinking",
     "text_response": "Text Response",
     "expand": "Expand",
     "collapse": "Collapse",
@@ -146,7 +147,8 @@
     "error_message": "Error Message",
     "execution_type": "Execution Type",
     "mcp_init_fail": "❌ MCP initialization failed. ",
-    "attachments_downloaded": "📎 Attachments Downloaded"
+    "attachments_downloaded": "📎 Attachments Downloaded",
+    "generating_content": "✨ Generating Content"
   },
   "send_button": {
     "shortcut_title": "Send Shortcut",
@@ -237,6 +239,11 @@
   "deep_thinking": {
     "enable": "Enable deep thinking",
     "disable": "Disable deep thinking"
+  },
+  "reasoning": {
+    "thinking": "Thinking...",
+    "thought_process": "Thought process",
+    "chars": "chars"
   },
   "upload": {
     "tooltip": "Supported file types: PDF, Word, PPT, Excel, TXT, Markdown, Images(JPG, PNG, GIF, BMP, WebP)\nMax file size: {{maxSize}} MB\nSupports multiple file uploads"

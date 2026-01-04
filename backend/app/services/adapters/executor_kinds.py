@@ -1065,6 +1065,20 @@ class ExecutorKindsService(
             f"update subtask subtask_id={subtask_update.subtask_id}, subtask_status={subtask_update.status}, subtask_progress={subtask_update.progress}"
         )
 
+        # [DEBUG] Log incoming result for streaming debugging
+        if subtask_update.result:
+            result_value = subtask_update.result.get("value", "")
+            result_thinking = subtask_update.result.get("thinking", [])
+            logger.info(
+                f"[DEBUG] Backend received update: subtask_id={subtask_update.subtask_id}, "
+                f"status={subtask_update.status}, "
+                f"value_length={len(result_value) if result_value else 0}, "
+                f"thinking_count={len(result_thinking)}"
+            )
+            if result_value:
+                preview = result_value[:200] if len(result_value) > 200 else result_value
+                logger.info(f"[DEBUG] Backend content preview: {preview}...")
+
         # Get subtask
         subtask = db.query(Subtask).get(subtask_update.subtask_id)
         if not subtask:
@@ -1117,6 +1131,12 @@ class ExecutorKindsService(
         # Emit chat:chunk event for streaming content updates
         # This allows frontend to display content in real-time during executor task execution
         # For executor tasks, result contains thinking and workbench data, not just value
+        logger.info(
+            f"[DEBUG] Checking streaming: status={subtask_update.status}, "
+            f"status_type={type(subtask_update.status)}, "
+            f"is_running={subtask_update.status == SubtaskStatus.RUNNING}, "
+            f"has_result={bool(subtask_update.result)}"
+        )
         if subtask_update.status == SubtaskStatus.RUNNING and subtask_update.result:
             if isinstance(subtask_update.result, dict):
                 # For executor tasks, send the full result (thinking, workbench)
@@ -1136,6 +1156,13 @@ class ExecutorKindsService(
                     previous_content
                 )
 
+                # [DEBUG] Log streaming decision
+                logger.info(
+                    f"[DEBUG] Streaming check: previous_len={len(previous_content)}, "
+                    f"new_len={len(new_content)}, has_thinking={has_thinking}, "
+                    f"has_workbench={has_workbench}, has_new_content={has_new_content}"
+                )
+
                 if has_thinking or has_workbench or has_new_content:
                     # Calculate chunk content for text streaming
                     chunk_content = ""
@@ -1146,6 +1173,11 @@ class ExecutorKindsService(
                     logger.info(
                         f"[WS] Emitting chat:chunk for executor task={subtask.task_id} subtask={subtask.id} "
                         f"offset={offset} has_thinking={has_thinking} has_workbench={has_workbench}"
+                    )
+                    # [DEBUG] Log chunk content
+                    logger.info(
+                        f"[DEBUG] Chunk to emit: chunk_len={len(chunk_content)}, "
+                        f"chunk_preview={chunk_content[:100] if chunk_content else 'empty'}..."
                     )
 
                     self._emit_chat_chunk_ws_event(

@@ -222,6 +222,21 @@ async def callback_handler(request: CallbackRequest, http_request: Request):
         client_ip = http_request.client.host if http_request.client else "unknown"
         logger.info(f"Received callback: body={request} from {client_ip}")
 
+        # [DEBUG] Log result content for streaming debugging
+        if request.result:
+            result_value = request.result.get("value", "")
+            result_thinking = request.result.get("thinking", [])
+            logger.info(
+                f"[DEBUG] Callback result: task_id={request.task_id}, "
+                f"status={request.status}, progress={request.progress}, "
+                f"value_length={len(result_value) if result_value else 0}, "
+                f"thinking_count={len(result_thinking)}"
+            )
+            if result_value:
+                # Log first 200 chars of content
+                preview = result_value[:200] if len(result_value) > 200 else result_value
+                logger.info(f"[DEBUG] Content preview: {preview}...")
+
         # Set task context for tracing (function handles OTEL enabled check internally)
         set_task_context(task_id=request.task_id, subtask_id=request.subtask_id)
 
