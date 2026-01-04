@@ -6,6 +6,7 @@ from app.api.endpoints import (
     admin,
     api_keys,
     auth,
+    canvas,
     groups,
     health,
     knowledge,
@@ -54,6 +55,7 @@ api_router.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
 api_router.include_router(subtasks.router, prefix="/subtasks", tags=["subtasks"])
 api_router.include_router(task_members.router, prefix="/tasks", tags=["task-members"])
 api_router.include_router(chat.router, prefix="/chat", tags=["chat"])
+api_router.include_router(canvas.router, prefix="/canvas", tags=["canvas"])
 api_router.include_router(
     attachments.router, prefix="/attachments", tags=["attachments"]
 )

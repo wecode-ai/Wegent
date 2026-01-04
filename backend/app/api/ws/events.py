@@ -32,6 +32,9 @@ class ClientEvents:
     TASK_JOIN = "task:join"
     TASK_LEAVE = "task:leave"
 
+    # Canvas events
+    CANVAS_SELECTION_EDIT_REQUEST = "canvas:selection:edit:request"
+
     # History sync
     # History sync
     HISTORY_SYNC = "history:sync"
@@ -54,6 +57,13 @@ class ServerEvents:
     CHAT_MESSAGE = "chat:message"
     CHAT_BOT_COMPLETE = "chat:bot_complete"
     CHAT_SYSTEM = "chat:system"
+
+    # Canvas events (to task room)
+    CANVAS_ENABLE = "canvas:enable"
+    CANVAS_DISABLE = "canvas:disable"
+    CANVAS_UPDATE = "canvas:update"
+    CANVAS_SELECTION_EDIT = "canvas:selection:edit"
+    CANVAS_SYNC = "canvas:sync"
 
     # Correction events (to task room)
     CORRECTION_START = "correction:start"
@@ -448,6 +458,50 @@ class CorrectionErrorPayload(BaseModel):
     task_id: int
     subtask_id: int
     error: str
+
+
+# ============================================================
+# Canvas Event Payloads
+# ============================================================
+
+
+class CanvasEnablePayload(BaseModel):
+    """Payload for canvas:enable event."""
+
+    task_id: int
+    content: str
+    file_type: str
+    title: str
+
+
+class CanvasUpdatePayload(BaseModel):
+    """Payload for canvas:update event."""
+
+    task_id: int
+    content: str
+    file_type: Optional[str] = None
+    title: Optional[str] = None
+    version: int = 0
+
+
+class CanvasSelectionEditPayload(BaseModel):
+    """Payload for canvas:selection:edit event."""
+
+    task_id: int
+    selection_start: int
+    selection_end: int
+    modified_content: str
+    explanation: Optional[str] = None
+
+
+class CanvasSelectionEditRequest(BaseModel):
+    """Request payload for canvas:selection:edit:request event."""
+
+    task_id: int
+    selection_start: int
+    selection_end: int
+    selected_text: str
+    instruction: str
 
 
 # ============================================================

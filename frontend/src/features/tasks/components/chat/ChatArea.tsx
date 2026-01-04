@@ -23,6 +23,7 @@ import { useScrollManagement } from '../hooks/useScrollManagement';
 import { useFloatingInput } from '../hooks/useFloatingInput';
 import { useTeamPreferences } from '../hooks/useTeamPreferences';
 import { useAttachmentUpload } from '../hooks/useAttachmentUpload';
+import { CanvasPanel, CanvasToggle, useCanvasState } from '@/features/canvas';
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
@@ -69,6 +70,11 @@ export default function ChatArea({
     teams,
     taskType,
     selectedTeamForNewTask,
+  });
+
+  // Canvas state
+  const canvas = useCanvasState({
+    taskId: selectedTaskDetail?.id,
   });
 
   // Compute subtask info for scroll management
@@ -361,11 +367,15 @@ export default function ChatArea({
   };
 
   return (
-    <div
-      ref={chatAreaRef}
-      className="flex-1 flex flex-col min-h-0 w-full relative"
-      style={{ height: '100%', boxSizing: 'border-box' }}
-    >
+    <div className="flex h-full">
+      {/* Left side: Chat Area */}
+      <div
+        ref={chatAreaRef}
+        className={`flex-1 flex flex-col min-h-0 relative transition-all duration-300 ${
+          canvas.canvasEnabled ? 'w-1/2' : 'w-full'
+        }`}
+        style={{ height: '100%', boxSizing: 'border-box' }}
+      >
       {/* Messages Area: always mounted to keep scroll container stable */}
       <div className={hasMessages ? 'relative flex-1 min-h-0' : 'relative'}>
         {/* Top gradient fade effect */}
@@ -452,10 +462,40 @@ export default function ChatArea({
             <div className="absolute inset-0 bg-gradient-to-t from-base via-base/95 to-base/0 pointer-events-none" />
             <div className="relative z-10 w-full max-w-4xl mx-auto px-4 sm:px-6 py-4">
               <ChatInputCard {...inputCardProps} />
+              {/* Canvas Toggle Button */}
+              {hasMessages && selectedTaskDetail?.id && (
+                <div className="mt-2 flex justify-center">
+                  <CanvasToggle
+                    enabled={canvas.canvasEnabled}
+                    onToggle={(enabled) => {
+                      if (enabled) {
+                        canvas.enableCanvas()
+                      } else {
+                        canvas.disableCanvas()
+                      }
+                    }}
+                  />
+                </div>
+              )}
             </div>
           </div>
         )}
       </div>
+    </div>
+
+    {/* Right side: Canvas Panel */}
+    {canvas.canvasEnabled && selectedTaskDetail?.id && (
+      <div className="w-1/2 h-full">
+        <CanvasPanel
+          content={canvas.canvasContent}
+          fileType={canvas.canvasFileType}
+          title={canvas.canvasTitle}
+          onContentChange={canvas.updateCanvas}
+          onClose={canvas.disableCanvas}
+          taskId={selectedTaskDetail.id}
+        />
+      </div>
+    )}
     </div>
   );
 }
