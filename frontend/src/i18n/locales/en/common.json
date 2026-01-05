@@ -1045,7 +1045,8 @@
       "network_error": "Upload failed",
       "network_error_hint": "Network connection error. Please check your network and try again",
       "content_truncated": "File content truncated",
-      "content_truncated_hint": "File content was too long. Kept first {{length}} million characters"
+      "content_truncated_hint": "File content was too long. Kept first {{length}} million characters",
+      "batch_limit_exceeded": "Too many files selected (max {{max}} files)"
     },
     "truncation": {
       "notice": "⚠️ Content too long, auto-truncated ({{original}} chars → {{truncated}} chars)"

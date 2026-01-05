@@ -1040,7 +1040,8 @@
       "network_error": "上传失败",
       "network_error_hint": "网络连接异常，请检查网络后重试",
       "content_truncated": "文件内容已压缩",
-      "content_truncated_hint": "文件内容过长，已自动保留前 {{length}} 万字符"
+      "content_truncated_hint": "文件内容过长，已自动保留前 {{length}} 万字符",
+      "batch_limit_exceeded": "选择的文件过多（最多 {{max}} 个文件）"
     },
     "truncation": {
       "notice": "⚠️ 文件内容过长，已自动压缩（原始 {{original}} 字符 → 压缩至 {{truncated}} 字符）"

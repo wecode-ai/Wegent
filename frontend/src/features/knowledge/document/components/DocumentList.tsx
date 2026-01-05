@@ -107,23 +107,27 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
   };
 
   const handleUploadComplete = async (
-    attachmentId: number,
-    file: File,
+    attachments: { attachment: { id: number; filename: string }; file: File }[],
     splitterConfig?: Partial<SplitterConfig>
   ) => {
-    const extension = file.name.split('.').pop() || '';
-    try {
-      await create({
-        attachment_id: attachmentId,
-        name: file.name,
-        file_extension: extension,
-        file_size: file.size,
-        splitter_config: splitterConfig,
-      });
-      setShowUpload(false);
-    } catch {
-      // Error handled by hook
+    // Create documents sequentially to ensure all are created
+    for (const { attachment, file } of attachments) {
+      // Use attachment.filename (which may have been renamed) instead of file.name
+      const documentName = attachment.filename || file.name;
+      const extension = documentName.split('.').pop() || '';
+      try {
+        await create({
+          attachment_id: attachment.id,
+          name: documentName,
+          file_extension: extension,
+          file_size: file.size,
+          splitter_config: splitterConfig,
+        });
+      } catch {
+        // Continue with next file even if one fails
+      }
     }
+    setShowUpload(false);
   };
 
   const handleDelete = async () => {
@@ -224,7 +228,7 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
           {t('document.retrievalTest.button')}
         </Button>
 
-        {/* Upload button - right aligned */}
+        {/* Upload button */}
         {canManage && (
           <Button variant="primary" size="sm" onClick={() => setShowUpload(true)}>
             <Upload className="w-4 h-4 mr-1" />
