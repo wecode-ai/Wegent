@@ -30,6 +30,7 @@ from app.api.endpoints.adapter import (
     models,
     retrievers,
     shells,
+    task_knowledge_bases,
     task_members,
     tasks,
     teams,
@@ -53,6 +54,9 @@ api_router.include_router(teams.router, prefix="/teams", tags=["teams"])
 api_router.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
 api_router.include_router(subtasks.router, prefix="/subtasks", tags=["subtasks"])
 api_router.include_router(task_members.router, prefix="/tasks", tags=["task-members"])
+api_router.include_router(
+    task_knowledge_bases.router, prefix="/tasks", tags=["task-knowledge-bases"]
+)
 api_router.include_router(chat.router, prefix="/chat", tags=["chat"])
 api_router.include_router(
     attachments.router, prefix="/attachments", tags=["attachments"]

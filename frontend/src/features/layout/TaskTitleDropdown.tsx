@@ -16,7 +16,11 @@ import {
 } from '@/components/ui/dropdown';
 import { cn } from '@/lib/utils';
 import { TaskDetail } from '@/types/api';
-import { TaskMembersPanel, InviteLinkDialog } from '@/features/tasks/components/group-chat';
+import {
+  TaskMembersPanel,
+  InviteLinkDialog,
+  BoundKnowledgeBaseSummary,
+} from '@/features/tasks/components/group-chat';
 import { taskApis } from '@/apis/tasks';
 import { useRouter } from 'next/navigation';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -128,55 +132,62 @@ export default function TaskTitleDropdown({
   // Group chat dropdown with additional options
   return (
     <>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <button
-            type="button"
-            className={cn(
-              'flex items-center gap-2 h-9 px-3 rounded-md',
-              'text-text-primary font-medium text-base',
-              'hover:bg-muted transition-colors',
-              'focus:outline-none focus:ring-2 focus:ring-primary/40',
-              'max-w-[300px]',
-              className
-            )}
-          >
-            <Users className="h-4 w-4 flex-shrink-0 text-text-muted" />
-            <span className="truncate">{displayTitle}</span>
-            <ChevronDownIcon className="h-4 w-4 flex-shrink-0 text-text-muted" />
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-56">
-          {/* Members option */}
-          <DropdownMenuItem onClick={handleViewMembers} className="gap-2">
-            <UserGroupIcon className="h-4 w-4" />
-            <span>{t('groupChat.members.title', '人员')}</span>
-          </DropdownMenuItem>
+      <div className="flex items-center gap-1">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className={cn(
+                'flex items-center gap-2 h-9 px-3 rounded-md',
+                'text-text-primary font-medium text-base',
+                'hover:bg-muted transition-colors',
+                'focus:outline-none focus:ring-2 focus:ring-primary/40',
+                'max-w-[300px]',
+                className
+              )}
+            >
+              <Users className="h-4 w-4 flex-shrink-0 text-text-muted" />
+              <span className="truncate">{displayTitle}</span>
+              <ChevronDownIcon className="h-4 w-4 flex-shrink-0 text-text-muted" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-56">
+            {/* Members option */}
+            <DropdownMenuItem onClick={handleViewMembers} className="gap-2">
+              <UserGroupIcon className="h-4 w-4" />
+              <span>{t('groupChat.members.title', '人员')}</span>
+            </DropdownMenuItem>
 
-          {/* Invite link option */}
-          <DropdownMenuItem onClick={handleManageInviteLink} className="gap-2">
-            <LinkIcon className="h-4 w-4" />
-            <span>{t('groupChat.inviteLink.manage', '管理群组链接')}</span>
-          </DropdownMenuItem>
+            {/* Invite link option */}
+            <DropdownMenuItem onClick={handleManageInviteLink} className="gap-2">
+              <LinkIcon className="h-4 w-4" />
+              <span>{t('groupChat.inviteLink.manage', '管理群组链接')}</span>
+            </DropdownMenuItem>
 
-          <DropdownMenuSeparator />
+            <DropdownMenuSeparator />
 
-          {/* Delete group option */}
-          <DropdownMenuItem
-            onClick={handleDeleteGroup}
-            disabled={isDeleting}
-            danger
-            className="gap-2"
-          >
-            <TrashIcon className="h-4 w-4" />
-            <span>
-              {isDeleting
-                ? t('common.deleting', '删除中...')
-                : t('groupChat.delete.button', '删除群组')}
-            </span>
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+            {/* Delete group option */}
+            <DropdownMenuItem
+              onClick={handleDeleteGroup}
+              disabled={isDeleting}
+              danger
+              className="gap-2"
+            >
+              <TrashIcon className="h-4 w-4" />
+              <span>
+                {isDeleting
+                  ? t('common.deleting', '删除中...')
+                  : t('groupChat.delete.button', '删除群组')}
+              </span>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        {/* Knowledge Base Summary - shows bound knowledge bases for group chat */}
+        {taskDetail?.id && (
+          <BoundKnowledgeBaseSummary taskId={taskDetail.id} onManageClick={handleViewMembers} />
+        )}
+      </div>
 
       {/* Dialogs */}
       {taskDetail && user && (

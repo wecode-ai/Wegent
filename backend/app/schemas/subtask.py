@@ -41,6 +41,7 @@ class SenderType(str, Enum):
 
     USER = "USER"  # Message sent by a user
     TEAM = "TEAM"  # Message sent by the AI team/agent
+    SYSTEM = "SYSTEM"  # System notification message (e.g., KB binding)
 
 
 class SubtaskBase(BaseModel):

@@ -106,11 +106,14 @@ class KnowledgeBaseTool(BaseTool):
             # Retrieve from each knowledge base
             for kb_id in self.knowledge_base_ids:
                 try:
-                    result = await retrieval_service.retrieve_from_knowledge_base(
-                        query=query,
-                        knowledge_base_id=kb_id,
-                        user_id=self.user_id,
-                        db=self.db_session,
+                    # Use internal method to bypass user permission check
+                    # Permission is already validated at task/team level
+                    result = (
+                        await retrieval_service.retrieve_from_knowledge_base_internal(
+                            query=query,
+                            knowledge_base_id=kb_id,
+                            db=self.db_session,
+                        )
                     )
 
                     records = result.get("records", [])

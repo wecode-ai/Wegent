@@ -1005,7 +1005,7 @@
       "invalidLink": "邀请链接无效或已过期"
     },
     "members": {
-      "title": "群聊成员",
+      "title": "群管理",
       "inviteLink": "邀请链接",
       "addMember": "添加成员",
       "addMembers": "添加成员",

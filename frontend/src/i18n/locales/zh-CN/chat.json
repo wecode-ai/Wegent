@@ -262,6 +262,32 @@
     "mentionHint": "在群聊中，请使用 @ 提及智能体来获取 AI 回复",
     "mentionToTrigger": "输入 @{{teamName}} 以获取 AI 回复",
     "messageSaved": "消息已保存",
+    "tabs": {
+      "members": "成员",
+      "knowledge": "知识库"
+    },
+    "knowledge": {
+      "title": "群聊知识库",
+      "groupKnowledgeBases": "群聊知识库",
+      "otherKnowledgeBases": "其他知识库",
+      "add": "添加",
+      "addTitle": "添加知识库",
+      "addDescription": "选择要绑定到此群聊的知识库。所有成员都可以访问绑定的知识库。",
+      "remove": "移除",
+      "empty": "暂未绑定知识库",
+      "noAvailable": "没有可用的知识库",
+      "limit": "已绑定 {{count}}/{{max}} 个",
+      "boundBy": "{{name}} 于 {{time}} 绑定",
+      "bindSuccess": "知识库「{{name}}」绑定成功",
+      "bindFailed": "绑定知识库失败",
+      "removeSuccess": "知识库「{{name}}」已移除",
+      "removeFailed": "移除知识库失败",
+      "loadFailed": "加载知识库失败",
+      "systemMessage": {
+        "bind": "{{userName}} 绑定了知识库「{{kbName}}」",
+        "unbind": "{{userName}} 移除了知识库「{{kbName}}」"
+      }
+    },
     "mentionAutocomplete": {
       "title": "提及",
       "noTeam": "无可用团队",
@@ -335,6 +361,10 @@
       "showInviteLink": "部分用户添加失败，你可以生成邀请链接分享给他们",
       "generateInviteLink": "生成邀请链接"
     }
+  },
+  "knowledgeSummary": {
+    "totalDocuments": "共 {{count}} 个文档",
+    "manage": "管理知识库"
   },
   "common": {
     "cancel": "取消",
