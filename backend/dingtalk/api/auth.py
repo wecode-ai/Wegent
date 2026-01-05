@@ -103,23 +103,13 @@ async def dingtalk_login(
         logger.error("[DingTalk] Failed to get user union_id")
         raise HTTPException(status_code=401, detail="Failed to get DingTalk user info")
 
+    logger.info(f"[DingTalk] Auth success: {user_info}")
     # Find or create user (use unionId as username, same pattern as OIDC)
     user = db.scalar(select(User).where(User.user_name == user_info.union_id))
 
     if not user:
-        # Create new user
-        logger.info(f"[DingTalk] Creating new user: {user_info.union_id}")
-        user = User(
-            user_name=user_info.union_id,
-            email=f"{user_info.union_id}@dingtalk.local",
-            is_active=True,
-            password_hash=security.get_password_hash(str(uuid.uuid4())),
-            git_info=[],
-            auth_source="dingtalk",
-        )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
+        logger.warning(f"[DingTalk] User not found: {user_info.union_id}")
+        raise HTTPException(status_code=401, detail="User not registered")
     else:
         # Update auth_source if needed
         if user.auth_source == "unknown":
