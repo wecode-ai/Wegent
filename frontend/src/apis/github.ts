@@ -5,6 +5,9 @@
 import { apiClient } from './client';
 import type { GitRepoInfo, GitBranch } from '@/types/api';
 
+// Maximum repositories to request per API call (backend supports up to 5000)
+const REPOSITORY_FETCH_LIMIT = 5000;
+
 // GitHub Response Types
 export type GitHubRepositoriesResponse = GitRepoInfo[];
 
@@ -30,7 +33,8 @@ export const githubApis = {
   },
 
   async getRepositories(): Promise<GitHubRepositoriesResponse> {
-    return await apiClient.get('/git/repositories');
+    // Request all user repositories in one request (backend caches the full list)
+    return await apiClient.get(`/git/repositories?limit=${REPOSITORY_FETCH_LIMIT}`);
   },
 
   // Unified search API: supports optional precise search via fullmatch and configurable timeout
