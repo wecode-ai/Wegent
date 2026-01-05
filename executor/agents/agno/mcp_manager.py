@@ -3,16 +3,11 @@ import json
 from datetime import timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
-from agno.tools.mcp import (
-    MCPTools,
-    SSEClientParams,
-    StdioServerParameters,
-    StreamableHTTPClientParams,
-)
-from executor.utils.mcp_utils import (
-    extract_mcp_servers_config,
-    replace_mcp_server_variables,
-)
+from agno.tools.mcp import (MCPTools, SSEClientParams, StdioServerParameters,
+                            StreamableHTTPClientParams)
+
+from executor.utils.mcp_utils import (extract_mcp_servers_config,
+                                      replace_mcp_server_variables)
 from shared.logger import setup_logger
 
 # SPDX-FileCopyrightText: 2025 Weibo, Inc.
@@ -84,8 +79,14 @@ class MCPManager:
                 # Connect all MCP tools in the list
                 for mcp_tool in mcp_tools_list:
                     logger.info(f"Connecting to MCP server: {mcp_tool}")
-                    await mcp_tool.connect()
-                    self.connected_tools.append(mcp_tool)
+                    try:
+                        await mcp_tool.connect()
+                        self.connected_tools.append(mcp_tool)
+                    except Exception as connect_error:
+                        logger.error(
+                            f"[MCP_CONNECT_FAIL] {type(connect_error).__name__}: {str(connect_error)}"
+                        )
+                        raise
 
             return mcp_tools_list
         except Exception as e:
@@ -299,11 +300,10 @@ class MCPManager:
         logger.info("Cleaning up MCP tools")
         for tools in self.connected_tools:
             try:
-                # Disconnect MCP tools if they have a disconnect method
                 if hasattr(tools, "disconnect"):
                     await tools.disconnect()
             except Exception as e:
-                logger.warning(f"Failed to disconnect MCP tools: {str(e)}")
+                logger.warning(f"[MCP_DISCONNECT_FAIL] {type(e).__name__}: {str(e)}")
                 # Add thinking step for MCP tools disconnection failure
                 self.add_thinking_step_by_key(
                     title_key="thinking.mcp_init_fail",
