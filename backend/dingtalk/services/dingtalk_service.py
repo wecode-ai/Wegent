@@ -14,6 +14,7 @@ from typing import Optional
 import httpx
 
 from app.core.cache import cache_manager
+from app.core.config import settings
 from dingtalk.config import dingtalk_config
 
 logger = logging.getLogger(__name__)
@@ -26,7 +27,6 @@ class DingTalkUserInfo:
     user_id: str
     union_id: str
     name: str
-    avatar: str = ""
 
 
 class DingTalkService:
@@ -54,10 +54,11 @@ class DingTalkService:
         logger.info("[DingTalk] Fetching new access token")
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
-                f"{self.DINGTALK_API_BASE}/v1.0/oauth2/accessToken",
+                f"{self.DINGTALK_API_BASE}/v1.0/oauth2/{settings.DINGTALK_CORP_ID}/accessToken",
                 json={
-                    "appKey": self.config.client_id,
-                    "appSecret": self.config.client_secret,
+                    "client_id": self.config.client_id,
+                    "client_secret": self.config.client_secret,
+                    "grant_type": "client_credentials",
                 },
             )
             response.raise_for_status()
@@ -74,7 +75,9 @@ class DingTalkService:
 
         return access_token
 
-    async def get_user_info(self, auth_code: str) -> DingTalkUserInfo:
+    async def get_user_info(
+        self, auth_code: str, access_token: str
+    ) -> DingTalkUserInfo:
         """
         Get user info by auth code.
 
@@ -87,44 +90,18 @@ class DingTalkService:
         async with httpx.AsyncClient(timeout=30.0) as client:
             # Step 1: Get user access token
             logger.info("[DingTalk] Exchanging auth code for user access token")
-            token_response = await client.post(
-                f"{self.DINGTALK_API_BASE}/v1.0/oauth2/userAccessToken",
-                json={
-                    "clientId": self.config.client_id,
-                    "clientSecret": self.config.client_secret,
-                    "code": auth_code,
-                    "grantType": "authorization_code",
-                },
+            user_response = await client.post(
+                f"{self.DINGTALK_API_BASE}/topapi/v2/user/getuserinfo?access_token={access_token}",
+                json={"code": auth_code},
             )
 
-            # Log detailed error for debugging
-            if token_response.status_code != 200:
-                error_body = token_response.text
-                logger.error(
-                    f"[DingTalk] userAccessToken failed: "
-                    f"status={token_response.status_code}, body={error_body}"
-                )
-            token_response.raise_for_status()
-            token_data = token_response.json()
-
-            user_access_token = token_data.get("accessToken")
-            if not user_access_token:
-                raise ValueError(f"Failed to get user access token: {token_data}")
-
-            # Step 2: Get user info
-            logger.info("[DingTalk] Fetching user info")
-            user_response = await client.get(
-                f"{self.DINGTALK_API_BASE}/v1.0/contact/users/me",
-                headers={"x-acs-dingtalk-access-token": user_access_token},
-            )
             user_response.raise_for_status()
-            user_data = user_response.json()
+            user_data = user_response.json().get("result", {})
 
         return DingTalkUserInfo(
-            user_id=user_data.get("userId", ""),
-            union_id=user_data.get("unionId", ""),
-            name=user_data.get("nick", ""),
-            avatar=user_data.get("avatarUrl", ""),
+            user_id=user_data.get("userid", ""),
+            union_id=user_data.get("unionid", ""),
+            name=user_data.get("name", ""),
         )
 
     def verify_signature(self, timestamp: str, signature: str) -> bool:

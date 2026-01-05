@@ -91,8 +91,10 @@ async def dingtalk_login(
             raise HTTPException(status_code=401, detail="Invalid signature")
 
     # Get user info from DingTalk
+
     try:
-        user_info = await dingtalk_service.get_user_info(body.auth_code)
+        access_token = await dingtalk_service.get_access_token()
+        user_info = await dingtalk_service.get_user_info(body.auth_code, access_token)
     except Exception as e:
         logger.error(f"[DingTalk] Auth failed: {str(e)}")
         raise HTTPException(status_code=401, detail=f"DingTalk auth failed: {str(e)}")
