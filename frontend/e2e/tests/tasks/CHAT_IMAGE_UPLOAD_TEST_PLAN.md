@@ -63,7 +63,7 @@ sequenceDiagram
 1. **前端上传**: `POST /api/attachments/upload` → 返回 `attachment_id`
 2. **前端发送**: `POST /api/chat/stream` with `attachment_id`
 3. **后端处理**:
-   - [`attachment_service.build_message_with_attachment()`](backend/app/services/attachment/attachment_service.py:359) 构建 vision dict
+   - [`context_service.build_message_with_attachment()`](backend/app/services/context/context_service.py:337) 构建 vision dict
    - [`message_builder.build_vision_content()`](backend/app/services/chat/message_builder.py:15) 转换为 OpenAI 格式
 4. **Provider 发送**: [`OpenAIProvider.stream_chat()`](backend/app/services/chat/providers/openai.py:66) 发送到模型
 
