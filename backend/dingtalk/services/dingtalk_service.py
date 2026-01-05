@@ -54,7 +54,7 @@ class DingTalkService:
         logger.info("[DingTalk] Fetching new access token")
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
-                f"{self.DINGTALK_API_BASE}/v1.0/oauth2/{settings.DINGTALK_CORP_ID}/accessToken",
+                f"{self.DINGTALK_API_BASE}/v1.0/oauth2/{settings.DINGTALK_CORP_ID}/token",
                 json={
                     "client_id": self.config.client_id,
                     "client_secret": self.config.client_secret,
@@ -64,7 +64,7 @@ class DingTalkService:
             response.raise_for_status()
             data = response.json()
 
-        access_token = data.get("accessToken")
+        access_token = data.get("access_token")
         if not access_token:
             raise ValueError(f"Failed to get access token: {data}")
 
@@ -91,7 +91,7 @@ class DingTalkService:
             # Step 1: Get user access token
             logger.info("[DingTalk] Exchanging auth code for user access token")
             user_response = await client.post(
-                f"{self.DINGTALK_API_BASE}/topapi/v2/user/getuserinfo?access_token={access_token}",
+                f"https://oapi.dingtalk.com/topapi/v2/user/getuserinfo?access_token={access_token}",
                 json={"code": auth_code},
             )
 
