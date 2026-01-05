@@ -319,7 +319,8 @@
     "recommended_mode_code": "Code",
     "bind_mode": "Bind Mode",
     "bind_mode_chat": "Chat",
-    "bind_mode_code": "Code"
+    "bind_mode_code": "Code",
+    "bind_mode_required": "Please select at least one bind mode (Chat or Code)"
   },
   "team_model": {
     "solo": "Solo",
