@@ -124,6 +124,7 @@
     "tool_call": "🔧 Tool Call",
     "tool_use": "🔧 Tool Use",
     "tool_result": "🔧 Tool Result",
+    "tool_error": "❌ Tool Error",
     "model_reasoning": "💭 Model Thinking",
     "text_response": "Text Response",
     "expand": "Expand",
