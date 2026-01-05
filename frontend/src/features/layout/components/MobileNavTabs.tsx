@@ -13,17 +13,18 @@ import {
 } from '@heroicons/react/24/outline';
 import { paths } from '@/config/paths';
 import { useTranslation } from '@/hooks/useTranslation';
+import { getRuntimeConfigSync } from '@/lib/runtime-config';
 
 interface MobileNavTabsProps {
   activePage: 'chat' | 'code' | 'wiki' | 'dashboard';
 }
 
-// Check if Wiki module is enabled via environment variable
-const isWikiEnabled = process.env.NEXT_PUBLIC_ENABLE_WIKI !== 'false';
-
 export function MobileNavTabs({ activePage }: MobileNavTabsProps) {
   const router = useRouter();
   const { t } = useTranslation();
+
+  // Check if Wiki module is enabled via runtime config
+  const isWikiEnabled = getRuntimeConfigSync().enableWiki;
 
   const tabs = [
     {

@@ -259,6 +259,7 @@
     "longer_than_usual": "Response is taking longer than usual"
   },
   "groupChat": {
+    "mentionHint": "In group chat, use @ to mention an agent to get AI responses",
     "mentionToTrigger": "Type @{{teamName}} to get AI response",
     "messageSaved": "Message saved",
     "mentionAutocomplete": {

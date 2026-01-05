@@ -259,6 +259,7 @@
     "longer_than_usual": "响应时间较长，请耐心等待"
   },
   "groupChat": {
+    "mentionHint": "在群聊中，请使用 @ 提及智能体来获取 AI 回复",
     "mentionToTrigger": "输入 @{{teamName}} 以获取 AI 回复",
     "messageSaved": "消息已保存",
     "mentionAutocomplete": {

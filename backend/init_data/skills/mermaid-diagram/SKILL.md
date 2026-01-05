@@ -1,5 +1,5 @@
 ---
-description: "Use this skill when you need to draw diagrams. You MUST use this skill BEFORE outputting any mermaid code block."
+description: "Use this skill when you need to draw diagrams including: Flowchart, Sequence Diagram, Class Diagram, State Diagram, ER Diagram, User Journey, Gantt Chart, Pie Chart, Quadrant Chart, Requirement Diagram, Gitgraph, Mindmap, Timeline, Sankey, XY Chart (Bar/Line), Block Diagram, Packet Diagram, Kanban, Architecture Diagram, C4 Diagram, Radar Chart, Treemap, and ZenUML. You MUST use this skill BEFORE outputting any mermaid code block."
 displayName: "绘制图表"
 version: "2.0.0"
 author: "Wegent Team"

@@ -8,18 +8,19 @@ import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { paths } from '@/config/paths';
 import { useTranslation } from '@/hooks/useTranslation';
+import { getRuntimeConfigSync } from '@/lib/runtime-config';
 
 interface DesktopNavLinksProps {
   activePage: 'chat' | 'code' | 'wiki' | 'dashboard';
 }
 
-// Check if Wiki module is enabled via environment variable
-const isWikiEnabled = process.env.NEXT_PUBLIC_ENABLE_WIKI !== 'false';
-
 export function DesktopNavLinks({ activePage }: DesktopNavLinksProps) {
   const { t } = useTranslation();
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+
+  // Check if Wiki module is enabled via runtime config
+  const isWikiEnabled = getRuntimeConfigSync().enableWiki;
 
   const indicatorContainerRef = useRef<HTMLDivElement | null>(null);
   const itemRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -32,7 +33,7 @@ export function DesktopNavLinks({ activePage }: DesktopNavLinksProps) {
     if (isWikiEnabled) {
       router.prefetch(paths.wiki.getHref());
     }
-  }, [router]);
+  }, [router, isWikiEnabled]);
 
   const navItems = useMemo(
     () => [
