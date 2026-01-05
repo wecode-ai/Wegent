@@ -21,6 +21,12 @@ export default function Home() {
   const { t } = useTranslation('common');
 
   const handleGetStarted = () => {
+    // DingTalk mode: always go through DingTalk auth
+    if (isAuthModeDingTalk()) {
+      router.push('/auth/dingtalk');
+      return;
+    }
+
     const token = getToken();
     if (token) {
       // Try to restore user's last active tab
@@ -32,12 +38,7 @@ export default function Home() {
         router.replace(paths.chat.getHref());
       }
     } else {
-      // DingTalk mode: redirect to DingTalk auth page
-      if (isAuthModeDingTalk()) {
-        router.push('/auth/dingtalk');
-      } else {
-        router.push(paths.auth.login.getHref());
-      }
+      router.push(paths.auth.login.getHref());
     }
   };
 
