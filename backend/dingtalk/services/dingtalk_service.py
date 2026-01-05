@@ -96,6 +96,14 @@ class DingTalkService:
                     "grantType": "authorization_code",
                 },
             )
+
+            # Log detailed error for debugging
+            if token_response.status_code != 200:
+                error_body = token_response.text
+                logger.error(
+                    f"[DingTalk] userAccessToken failed: "
+                    f"status={token_response.status_code}, body={error_body}"
+                )
             token_response.raise_for_status()
             token_data = token_response.json()
 

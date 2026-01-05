@@ -4,7 +4,12 @@
 
 import os
 
+from dotenv import load_dotenv
+
 import wecode.api  # noqa: F401  side-effect import to load wecode patches and auto-mount internal routers
+
+# Load .env file early to ensure environment variables are available
+load_dotenv()
 
 # DingTalk authentication module (loaded when AUTH_MODE=dingtalk)
 if os.getenv("AUTH_MODE") == "dingtalk":

@@ -11,11 +11,15 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.dependencies import get_db
 from app.core import security
-from app.core.deps import get_db
 from app.models.user import User
 from dingtalk.config import dingtalk_config
-from dingtalk.middleware.security import check_ip_whitelist, check_rate_limit, check_referer
+from dingtalk.middleware.security import (
+    check_ip_whitelist,
+    check_rate_limit,
+    check_referer,
+)
 from dingtalk.services.dingtalk_service import dingtalk_service
 
 logger = logging.getLogger(__name__)
