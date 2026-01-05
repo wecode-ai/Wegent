@@ -14,6 +14,7 @@ import { ThemeToggle } from '@/features/theme/ThemeToggle';
 import { GithubStarButton } from '@/features/layout/GithubStarButton';
 import { getLastTab } from '@/utils/userPreferences';
 import { Button } from '@/components/ui/button';
+import { isAuthModeDingTalk } from '@/dingtalk/lib/environment';
 
 export default function Home() {
   const router = useRouter();
@@ -31,7 +32,12 @@ export default function Home() {
         router.replace(paths.chat.getHref());
       }
     } else {
-      router.push(paths.auth.login.getHref());
+      // DingTalk mode: redirect to DingTalk auth page
+      if (isAuthModeDingTalk()) {
+        router.push('/auth/dingtalk');
+      } else {
+        router.push(paths.auth.login.getHref());
+      }
     }
   };
 
