@@ -265,6 +265,25 @@ trigger_update_simulation_backend_web:
           - backend/**/*
           - wecode/docker/backend/**/*
 
+wegent-outer-web:
+  stage: package
+  retry: 1
+  variables:
+    SERVICE: wegent-outer-web
+    DOCKERFILE_PATH: wecode/docker/frontend_outer
+  script:
+    - build_image
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "develop"'
+      when: never
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - frontend/**/*
+        - wecode/docker/frontend_outer/**/*
+    - changes:
+      - frontend/**/*
+      - wecode/docker/frontend_outer/**/*
+
 wegent-ops-web:
   stage: package
   retry: 1
@@ -282,6 +301,7 @@ wegent-ops-web:
       - frontend/**/*
       - wecode/docker/frontend_ops/**/*
       when: manual
+
 # Auto create MR from develop to main when branch merged to develop
 auto-create-develop-to-main-mr:
   stage: auto-merge-request
