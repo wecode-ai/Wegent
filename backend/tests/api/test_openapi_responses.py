@@ -859,16 +859,16 @@ class TestOpenAPIResponsesHelpers:
         from app.services.openapi.helpers import parse_wegent_tools
 
         result = parse_wegent_tools(None)
-        assert result["enable_deep_thinking"] is False
+        assert result["enable_chat_bot"] is False
 
-    def test_parse_wegent_tools_deep_thinking(self):
-        """Test parsing tools with deep thinking enabled."""
+    def test_parse_wegent_tools_chat_bot(self):
+        """Test parsing tools with chat bot enabled."""
         from app.schemas.openapi_response import WegentTool
         from app.services.openapi.helpers import parse_wegent_tools
 
-        tools = [WegentTool(type="wegent_deep_thinking")]
+        tools = [WegentTool(type="wegent_chat_bot")]
         result = parse_wegent_tools(tools)
-        assert result["enable_deep_thinking"] is True
+        assert result["enable_chat_bot"] is True
 
     def test_wegent_status_to_openai_status(self):
         """Test status conversion from Wegent to OpenAI format."""

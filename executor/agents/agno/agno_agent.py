@@ -17,6 +17,7 @@ from agno.agent import RunEvent
 from agno.db.sqlite import SqliteDb
 from agno.team import Team
 from agno.team.team import TeamRunEvent
+
 from executor.agents.base import Agent
 from executor.config.config import DEBUG_RUN, EXECUTOR_ENV
 from executor.tasks.resource_manager import ResourceManager
@@ -338,10 +339,8 @@ class AgnoAgent(Agent):
                 # Copy ContextVars before creating new event loop
                 # ContextVars don't automatically propagate to new event loops
                 try:
-                    from shared.telemetry.context import (
-                        copy_context_vars,
-                        restore_context_vars,
-                    )
+                    from shared.telemetry.context import (copy_context_vars,
+                                                          restore_context_vars)
 
                     saved_context = copy_context_vars()
                 except ImportError:
@@ -575,6 +574,7 @@ class AgnoAgent(Agent):
                 thinking=self.thinking_manager.get_thinking_steps()
             ).dict(),
         )
+
         return TaskStatus.FAILED
 
     async def _handle_agent_streaming_event(
@@ -649,10 +649,10 @@ class AgnoAgent(Agent):
             )
 
         if run_response_event.event in [RunEvent.tool_call_completed]:
-            logger.info(f"✅ AGENT TOOL COMPLETED: {run_response_event.tool.tool_name}")
-            logger.info(
-                f"   Result: {run_response_event.tool.result[:100] if run_response_event.tool.result else 'None'}..."
-            )
+            tool_name = run_response_event.tool.tool_name
+            tool_result = run_response_event.tool.result
+            logger.info(f"✅ AGENT TOOL COMPLETED: {tool_name}")
+            logger.info(f"   Result: {tool_result[:100] if tool_result else 'None'}...")
 
             # Build tool result details in target format
             tool_result_details = {
@@ -692,7 +692,9 @@ class AgnoAgent(Agent):
                 )
                 if time_since_last >= self._content_report_interval:
                     self._last_content_report_time = current_time
-                    logger.info(f"Sending streaming update, content_length={len(result_content)}")
+                    logger.info(
+                        f"Sending streaming update, content_length={len(result_content)}"
+                    )
                     # Include accumulated reasoning_content in streaming updates
                     reasoning_content = (
                         self.accumulated_reasoning_content
@@ -1157,9 +1159,9 @@ class AgnoAgent(Agent):
             )
 
         if run_response_event.event in [TeamRunEvent.tool_call_completed]:
-            logger.info(
-                f"\n✅ TEAM TOOL COMPLETED: {run_response_event.tool.tool_name}"
-            )
+            tool_name = run_response_event.tool.tool_name
+            tool_result = run_response_event.tool.result
+            logger.info(f"\n✅ TEAM TOOL COMPLETED: {tool_name}")
 
             # Build team tool result details in target format
             team_tool_result_details = {
@@ -1172,7 +1174,7 @@ class AgnoAgent(Agent):
                         {
                             "type": "tool_result",
                             "tool_use_id": getattr(run_response_event.tool, "id", ""),
-                            "content": run_response_event.tool.result,
+                            "content": tool_result,
                             "is_error": False,
                         }
                     ],
@@ -1184,9 +1186,7 @@ class AgnoAgent(Agent):
                 report_immediately=False,
                 details=team_tool_result_details,
             )
-            logger.info(
-                f"   Result: {run_response_event.tool.result[:100] if run_response_event.tool.result else 'None'}..."
-            )
+            logger.info(f"   Result: {tool_result[:100] if tool_result else 'None'}...")
 
         # Handle member-level events
         if run_response_event.event in [RunEvent.tool_call_started]:
@@ -1219,11 +1219,11 @@ class AgnoAgent(Agent):
             )
 
         if run_response_event.event in [RunEvent.tool_call_completed]:
+            tool_name = run_response_event.tool.tool_name
+            tool_result = run_response_event.tool.result
             logger.info(f"\n✅ MEMBER TOOL COMPLETED: {run_response_event.agent_id}")
-            logger.info(f"   Tool: {run_response_event.tool.tool_name}")
-            logger.info(
-                f"   Result: {run_response_event.tool.result[:100] if run_response_event.tool.result else 'None'}..."
-            )
+            logger.info(f"   Tool: {tool_name}")
+            logger.info(f"   Result: {tool_result[:100] if tool_result else 'None'}...")
 
             # Build member tool result details in target format
             member_tool_result_details = {
@@ -1236,7 +1236,7 @@ class AgnoAgent(Agent):
                         {
                             "type": "tool_result",
                             "tool_use_id": getattr(run_response_event.tool, "id", ""),
-                            "content": run_response_event.tool.result,
+                            "content": tool_result,
                             "is_error": False,
                         }
                     ],
@@ -1263,7 +1263,9 @@ class AgnoAgent(Agent):
                 )
                 if time_since_last >= self._content_report_interval:
                     self._last_content_report_time = current_time
-                    logger.info(f"[Team] Sending streaming update, content_length={len(result_content)}")
+                    logger.info(
+                        f"[Team] Sending streaming update, content_length={len(result_content)}"
+                    )
                     # Include accumulated reasoning_content in streaming updates
                     reasoning_content_update = (
                         self.accumulated_reasoning_content
