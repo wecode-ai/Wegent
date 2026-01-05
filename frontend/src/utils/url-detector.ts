@@ -54,17 +54,35 @@ export interface DetectedUrl {
 
 /**
  * Check if a URL points to an image based on its extension.
- * Also handles URLs with query parameters.
+ * Checks both the pathname and query parameters for image extensions.
+ * This handles cases where:
+ * 1. The image extension is in the pathname (e.g., /path/to/image.png)
+ * 2. The image extension is in a query parameter (e.g., /api/image?file=photo.jpg)
  */
 export function isImageUrl(url: string): boolean {
   try {
     const urlObj = new URL(url);
     const pathname = urlObj.pathname.toLowerCase();
-    return IMAGE_EXTENSIONS.some(ext => pathname.endsWith(ext));
+
+    // Check if pathname ends with an image extension
+    if (IMAGE_EXTENSIONS.some(ext => pathname.endsWith(ext))) {
+      return true;
+    }
+
+    // Check if any query parameter value contains an image extension
+    // This handles URLs like /api/image_url?ikey=path/to/image.png
+    for (const value of urlObj.searchParams.values()) {
+      const decodedValue = decodeURIComponent(value).toLowerCase();
+      if (IMAGE_EXTENSIONS.some(ext => decodedValue.endsWith(ext))) {
+        return true;
+      }
+    }
+
+    return false;
   } catch {
-    // If URL parsing fails, try simple extension check
-    const cleanUrl = url.split('?')[0].split('#')[0].toLowerCase();
-    return IMAGE_EXTENSIONS.some(ext => cleanUrl.endsWith(ext));
+    // If URL parsing fails, try simple extension check on the full URL
+    const lowerUrl = url.toLowerCase();
+    return IMAGE_EXTENSIONS.some(ext => lowerUrl.endsWith(ext));
   }
 }
 

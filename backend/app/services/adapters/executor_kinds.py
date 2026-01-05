@@ -1076,7 +1076,9 @@ class ExecutorKindsService(
                 f"thinking_count={len(result_thinking)}"
             )
             if result_value:
-                preview = result_value[:200] if len(result_value) > 200 else result_value
+                preview = (
+                    result_value[:200] if len(result_value) > 200 else result_value
+                )
                 logger.info(f"[DEBUG] Backend content preview: {preview}...")
 
         # Get subtask

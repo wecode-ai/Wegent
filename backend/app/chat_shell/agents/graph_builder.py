@@ -319,7 +319,9 @@ class LangGraphAgentBuilder:
                                 "reasoning_content"
                             )
                         # Also check direct attribute (some providers may use this)
-                        if not reasoning_content and hasattr(chunk, "reasoning_content"):
+                        if not reasoning_content and hasattr(
+                            chunk, "reasoning_content"
+                        ):
                             reasoning_content = chunk.reasoning_content
 
                         if reasoning_content:
