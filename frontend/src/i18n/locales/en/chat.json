@@ -262,6 +262,32 @@
     "mentionHint": "In group chat, use @ to mention an agent to get AI responses",
     "mentionToTrigger": "Type @{{teamName}} to get AI response",
     "messageSaved": "Message saved",
+    "tabs": {
+      "members": "Members",
+      "knowledge": "Knowledge"
+    },
+    "knowledge": {
+      "title": "Group Knowledge Bases",
+      "groupKnowledgeBases": "Group Knowledge",
+      "otherKnowledgeBases": "Other Knowledge Bases",
+      "add": "Add",
+      "addTitle": "Add Knowledge Base",
+      "addDescription": "Select knowledge bases to bind to this group chat. All members can access bound knowledge bases.",
+      "remove": "Remove",
+      "empty": "No knowledge bases bound",
+      "noAvailable": "No available knowledge bases",
+      "limit": "{{count}}/{{max}} bound",
+      "boundBy": "Bound by {{name}} at {{time}}",
+      "bindSuccess": "Knowledge base \"{{name}}\" bound successfully",
+      "bindFailed": "Failed to bind knowledge base",
+      "removeSuccess": "Knowledge base \"{{name}}\" removed",
+      "removeFailed": "Failed to remove knowledge base",
+      "loadFailed": "Failed to load knowledge bases",
+      "systemMessage": {
+        "bind": "{{userName}} bound knowledge base \"{{kbName}}\"",
+        "unbind": "{{userName}} removed knowledge base \"{{kbName}}\""
+      }
+    },
     "mentionAutocomplete": {
       "title": "Mention",
       "noTeam": "No team available",
@@ -335,6 +361,10 @@
       "showInviteLink": "Some users failed to add. You can generate an invite link to share with them.",
       "generateInviteLink": "Generate Invite Link"
     }
+  },
+  "knowledgeSummary": {
+    "totalDocuments": "{{count}} documents total",
+    "manage": "Manage Knowledge Bases"
   },
   "common": {
     "cancel": "Cancel",

@@ -5,7 +5,7 @@
 'use client';
 
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
-import { Check, Database, ArrowRight } from 'lucide-react';
+import { Check, Database, ArrowRight, Users } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import Link from 'next/link';
 import {
@@ -15,9 +15,12 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
+  CommandSeparator,
 } from '@/components/ui/command';
 import { knowledgeBaseApi } from '@/apis/knowledge-base';
+import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base';
 import type { KnowledgeBase } from '@/types/api';
+import type { BoundKnowledgeBaseDetail } from '@/types/task-knowledge-base';
 import type { ContextItem, KnowledgeBaseContext } from '@/types/context';
 import { useTranslation } from '@/hooks/useTranslation';
 import { cn } from '@/lib/utils';
@@ -30,6 +33,10 @@ interface ContextSelectorProps {
   onSelect: (context: ContextItem) => void;
   onDeselect: (id: number | string) => void;
   children: React.ReactNode;
+  /** Task ID for group chat mode - if provided, shows bound knowledge bases */
+  taskId?: number;
+  /** Whether this is a group chat - if true, shows bound knowledge bases section */
+  isGroupChat?: boolean;
 }
 
 interface KnowledgeBaseItemProps {
@@ -88,6 +95,9 @@ function KnowledgeBaseItem({ kb, isSelected, onSelect }: KnowledgeBaseItemProps)
  * Generic context selector component
  * Currently supports: knowledge_base
  * Future: person, bot, team
+ *
+ * For group chat mode (taskId + isGroupChat), shows bound knowledge bases
+ * as a separate section that are selected by default.
  */
 export default function ContextSelector({
   open,
@@ -96,9 +106,12 @@ export default function ContextSelector({
   onSelect,
   onDeselect,
   children,
+  taskId,
+  isGroupChat,
 }: ContextSelectorProps) {
   const { t } = useTranslation();
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
+  const [boundKnowledgeBases, setBoundKnowledgeBases] = useState<BoundKnowledgeBaseDetail[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchValue, setSearchValue] = useState('');
@@ -117,14 +130,39 @@ export default function ContextSelector({
     }
   }, [t]);
 
+  // Fetch bound knowledge bases for group chat
+  const fetchBoundKnowledgeBases = useCallback(async () => {
+    if (!taskId || !isGroupChat) {
+      setBoundKnowledgeBases([]);
+      return;
+    }
+    try {
+      const response = await taskKnowledgeBaseApi.getBoundKnowledgeBases(taskId);
+      setBoundKnowledgeBases(response.items);
+    } catch (error) {
+      console.error('Failed to fetch bound knowledge bases:', error);
+      // Don't show error - just hide the section
+      setBoundKnowledgeBases([]);
+    }
+  }, [taskId, isGroupChat]);
+
   // Fetch knowledge bases on mount (not on every open) - like ModelSelector
   useEffect(() => {
     fetchKnowledgeBases();
   }, [fetchKnowledgeBases]);
-  // Sort knowledge bases by name
+
+  // Fetch bound knowledge bases when taskId or isGroupChat changes
+  useEffect(() => {
+    fetchBoundKnowledgeBases();
+  }, [fetchBoundKnowledgeBases]);
+
+  // Sort knowledge bases by name and exclude bound ones from user list
   const sortedKnowledgeBases = useMemo(() => {
-    return [...knowledgeBases].sort((a, b) => a.name.localeCompare(b.name));
-  }, [knowledgeBases]);
+    const boundIds = new Set(boundKnowledgeBases.map(kb => kb.id));
+    return [...knowledgeBases]
+      .filter(kb => !boundIds.has(kb.id))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [knowledgeBases, boundKnowledgeBases]);
 
   // Check if a context item is selected
   const isSelected = (id: number) => {
@@ -145,6 +183,22 @@ export default function ContextSelector({
         description: kb.description ?? undefined,
         retriever_name: kb.retrieval_config?.retriever_name,
         retriever_namespace: kb.retrieval_config?.retriever_namespace,
+        document_count: kb.document_count,
+      };
+      onSelect(context);
+    }
+  };
+
+  // Handle bound knowledge base selection (from group chat)
+  const handleSelectBound = (kb: BoundKnowledgeBaseDetail) => {
+    if (isSelected(kb.id)) {
+      onDeselect(kb.id);
+    } else {
+      const context: KnowledgeBaseContext = {
+        id: kb.id,
+        name: kb.name,
+        type: 'knowledge_base',
+        description: kb.description ?? undefined,
         document_count: kb.document_count,
       };
       onSelect(context);
@@ -198,7 +252,7 @@ export default function ContextSelector({
                   {t('common:actions.retry')}
                 </button>
               </div>
-            ) : sortedKnowledgeBases.length === 0 ? (
+            ) : sortedKnowledgeBases.length === 0 && boundKnowledgeBases.length === 0 ? (
               <div className="py-6 px-4 text-center">
                 <p className="text-sm text-text-muted mb-3">{t('knowledge:no_knowledge_bases')}</p>
                 <Link
@@ -215,16 +269,80 @@ export default function ContextSelector({
                 <CommandEmpty className="py-4 text-center text-sm text-text-muted">
                   {t('common:branches.no_match')}
                 </CommandEmpty>
-                <CommandGroup>
-                  {sortedKnowledgeBases.map(kb => (
-                    <KnowledgeBaseItem
-                      key={kb.id}
-                      kb={kb}
-                      isSelected={isSelected(kb.id)}
-                      onSelect={() => handleSelect(kb)}
-                    />
-                  ))}
-                </CommandGroup>
+
+                {/* Group Chat Bound Knowledge Bases */}
+                {boundKnowledgeBases.length > 0 && (
+                  <>
+                    <CommandGroup heading={
+                      <div className="flex items-center gap-1.5 text-xs font-medium text-text-muted">
+                        <Users className="w-3 h-3" />
+                        {t('chat:groupChat.knowledge.groupKnowledgeBases')}
+                      </div>
+                    }>
+                      {boundKnowledgeBases.map(kb => {
+                        const documentCount = kb.document_count || 0;
+                        const documentText = formatDocumentCount(documentCount, t);
+                        const selected = isSelected(kb.id);
+
+                        return (
+                          <CommandItem
+                            key={`bound-${kb.id}`}
+                            value={`${kb.display_name} ${kb.description || ''} ${kb.id}`}
+                            onSelect={() => handleSelectBound(kb)}
+                            className={cn(
+                              'group cursor-pointer select-none',
+                              'px-3 py-2 text-sm text-text-primary',
+                              'rounded-md mx-1 my-[2px]',
+                              'data-[selected=true]:bg-primary/10 data-[selected=true]:text-primary',
+                              'aria-selected:bg-hover',
+                              '!flex !flex-row !items-start !justify-between !gap-2'
+                            )}
+                          >
+                            <div className="flex items-start gap-2 min-w-0 flex-1">
+                              <Database className="w-4 h-4 text-primary flex-shrink-0 mt-0.5" />
+                              <div className="flex flex-col min-w-0 flex-1">
+                                <span className="font-medium text-sm text-text-primary truncate" title={kb.display_name}>
+                                  {kb.display_name}
+                                </span>
+                                {kb.description && (
+                                  <span className="text-xs text-text-muted truncate" title={kb.description}>
+                                    {kb.description}
+                                  </span>
+                                )}
+                                <span className="text-xs text-text-muted mt-0.5">{documentText}</span>
+                              </div>
+                            </div>
+                            <Check
+                              className={cn(
+                                'h-3.5 w-3.5 shrink-0 mt-0.5',
+                                selected ? 'opacity-100 text-primary' : 'opacity-0'
+                              )}
+                            />
+                          </CommandItem>
+                        );
+                      })}
+                    </CommandGroup>
+                    {sortedKnowledgeBases.length > 0 && <CommandSeparator />}
+                  </>
+                )}
+
+                {/* User's Knowledge Bases */}
+                {sortedKnowledgeBases.length > 0 && (
+                  <CommandGroup heading={boundKnowledgeBases.length > 0 ?
+                    <span className="text-xs font-medium text-text-muted">
+                      {t('chat:groupChat.knowledge.otherKnowledgeBases')}
+                    </span> : undefined
+                  }>
+                    {sortedKnowledgeBases.map(kb => (
+                      <KnowledgeBaseItem
+                        key={kb.id}
+                        kb={kb}
+                        isSelected={isSelected(kb.id)}
+                        onSelect={() => handleSelect(kb)}
+                      />
+                    ))}
+                  </CommandGroup>
+                )}
               </>
             )}
           </CommandList>
