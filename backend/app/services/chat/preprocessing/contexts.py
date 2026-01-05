@@ -410,14 +410,21 @@ async def prepare_contexts_for_chat(
     contexts = context_service.get_by_subtask(db, user_subtask_id)
 
     if not contexts:
-        logger.debug(f"No contexts found for subtask {user_subtask_id}")
-        # Even without contexts, check for historical KB meta
-        enhanced_prompt = base_system_prompt
-        if task_id:
-            kb_meta_prompt = _build_historical_kb_meta_prompt(db, task_id)
-            if kb_meta_prompt:
-                enhanced_prompt = f"{base_system_prompt}{kb_meta_prompt}"
-        return message, enhanced_prompt, []
+        logger.info(
+            f"[prepare_contexts_for_chat] No subtask contexts for subtask={user_subtask_id}, "
+            f"checking task-level bound KBs for task_id={task_id}"
+        )
+        # Even without subtask contexts, check for task-level bound knowledge bases
+        # This is important for group chat where KBs are bound to the task, not subtask
+        extra_tools, enhanced_prompt = _prepare_kb_tools_from_contexts(
+            kb_contexts=[],  # No subtask-level KB contexts
+            user_id=user_id,
+            db=db,
+            base_system_prompt=base_system_prompt,
+            task_id=task_id,
+            user_subtask_id=user_subtask_id,
+        )
+        return message, enhanced_prompt, extra_tools
 
     # Separate contexts by type
     attachment_contexts = [
@@ -515,12 +522,15 @@ def _prepare_kb_tools_from_contexts(
     """
     Prepare knowledge base tools from context records.
 
+    For group chat tasks, this function also includes knowledge bases
+    bound to the group chat via knowledgeBaseRefs in the task spec.
+
     Args:
         kb_contexts: List of knowledge base SubtaskContext records
         user_id: User ID for access control
         db: Database session
         base_system_prompt: Base system prompt to enhance
-        task_id: Optional task ID for historical KB meta
+        task_id: Optional task ID for historical KB meta and group chat KB refs
         user_subtask_id: User subtask ID for RAG persistence
 
     Returns:
@@ -529,10 +539,21 @@ def _prepare_kb_tools_from_contexts(
     extra_tools: List[BaseTool] = []
     enhanced_system_prompt = base_system_prompt
 
-    # Extract knowledge_id values from contexts
+    # Extract knowledge_id values from user-selected contexts
     knowledge_base_ids = [
         c.knowledge_id for c in kb_contexts if c.knowledge_id is not None
     ]
+
+    # For group chat tasks, also include bound knowledge bases
+    if task_id:
+        bound_kb_ids = _get_bound_knowledge_base_ids(db, task_id)
+        if bound_kb_ids:
+            logger.info(
+                f"[_prepare_kb_tools_from_contexts] Adding {len(bound_kb_ids)} "
+                f"group chat bound knowledge bases: {bound_kb_ids}"
+            )
+            # Merge and deduplicate
+            knowledge_base_ids = list(set(knowledge_base_ids + bound_kb_ids))
 
     if not knowledge_base_ids:
         # Even without current knowledge bases, check for historical KB meta
@@ -595,6 +616,118 @@ The user expects answers based on the selected knowledge base content only."""
     )
 
     return extra_tools, enhanced_system_prompt
+
+
+def _get_bound_knowledge_base_ids(db: Session, task_id: int) -> List[int]:
+    """
+    Get knowledge base IDs bound to a group chat task.
+
+    This function checks if the task is a group chat and retrieves
+    the knowledge base IDs from knowledgeBaseRefs in the task spec.
+
+    Note: The knowledgeBaseRefs stores display names (spec.name), not Kind.name.
+    We need to query by spec.name to find the correct knowledge base.
+
+    Args:
+        db: Database session
+        task_id: Task ID
+
+    Returns:
+        List of knowledge base IDs bound to the group chat
+    """
+    from app.models.task import TaskResource
+
+    logger.info(f"[_get_bound_knowledge_base_ids] START task_id={task_id}")
+
+    try:
+        task = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.id == task_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active.is_(True),
+            )
+            .first()
+        )
+
+        if not task:
+            logger.info(f"[_get_bound_knowledge_base_ids] Task not found: {task_id}")
+            return []
+
+        task_json = task.json if isinstance(task.json, dict) else {}
+        spec = task_json.get("spec", {})
+        is_group_chat = spec.get("is_group_chat", False)
+        kb_refs = spec.get("knowledgeBaseRefs", []) or []
+
+        logger.info(
+            f"[_get_bound_knowledge_base_ids] task_id={task_id}, "
+            f"is_group_chat={is_group_chat}, kb_refs_count={len(kb_refs)}, "
+            f"kb_refs={kb_refs}"
+        )
+
+        # Only process for group chat tasks
+        if not is_group_chat:
+            return []
+
+        if not kb_refs:
+            return []
+
+        from app.models.kind import Kind
+
+        kb_ids = []
+        for ref in kb_refs:
+            kb_name = ref.get("name")
+            kb_namespace = ref.get("namespace", "default")
+
+            if not kb_name:
+                continue
+
+            # Find the knowledge base by display name (spec.name) and namespace
+            # Note: knowledgeBaseRefs stores display names (spec.name), not Kind.name
+            # Kind.name has format 'kb-{user_id}-{namespace}-{display_name}'
+            # We need to query all KBs in the namespace and filter by spec.name
+            knowledge_bases = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "KnowledgeBase",
+                    Kind.namespace == kb_namespace,
+                    Kind.is_active.is_(True),
+                )
+                .all()
+            )
+
+            # Find the one with matching display name in spec
+            kb = None
+            for candidate in knowledge_bases:
+                kb_spec = candidate.json.get("spec", {}) if candidate.json else {}
+                candidate_name = kb_spec.get("name")
+                if candidate_name == kb_name:
+                    kb = candidate
+                    break
+
+            if kb:
+                kb_ids.append(kb.id)
+                logger.info(
+                    f"[_get_bound_knowledge_base_ids] FOUND KB: "
+                    f"display_name={kb_name}, namespace={kb_namespace}, id={kb.id}"
+                )
+            else:
+                logger.warning(
+                    f"[_get_bound_knowledge_base_ids] NOT FOUND KB: "
+                    f"display_name={kb_name}, namespace={kb_namespace}, "
+                    f"candidates_count={len(knowledge_bases)}"
+                )
+
+        logger.info(
+            f"[_get_bound_knowledge_base_ids] RESULT task_id={task_id}, kb_ids={kb_ids}"
+        )
+        return kb_ids
+
+    except Exception as e:
+        # Catch all exceptions to ensure robustness - this function should
+        # never block chat functionality even if KB lookup fails
+        logger.warning(f"Failed to get bound KB IDs for task {task_id}: {e}")
+        return []
 
 
 def _build_historical_kb_meta_prompt(

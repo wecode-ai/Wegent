@@ -364,6 +364,11 @@ async def _stream_chat_response(
         enhanced_system_prompt = chat_config.system_prompt
         extra_tools = []
 
+        logger.info(
+            f"[ai_trigger] Context processing: user_subtask_id={user_subtask_id}, "
+            f"task_id={stream_data.task_id}"
+        )
+
         if user_subtask_id:
             from app.services.chat.preprocessing import prepare_contexts_for_chat
 
@@ -380,7 +385,12 @@ async def _stream_chat_response(
             logger.info(
                 f"[ai_trigger] Unified context processing completed: "
                 f"user_subtask_id={user_subtask_id}, "
-                f"extra_tools_count={len(extra_tools)}"
+                f"extra_tools_count={len(extra_tools)}, "
+                f"extra_tools={[t.name for t in extra_tools]}"
+            )
+        else:
+            logger.warning(
+                f"[ai_trigger] user_subtask_id is None, skipping context processing"
             )
 
         # Emit chat:start event with shell_type using global emitter for cross-worker broadcasting

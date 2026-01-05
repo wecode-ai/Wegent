@@ -412,6 +412,15 @@ class WorkspaceTaskRef(BaseModel):
     namespace: str = "default"
 
 
+class KnowledgeBaseTaskRef(BaseModel):
+    """Reference to a KnowledgeBase bound to a Task (group chat)"""
+
+    name: str
+    namespace: str = "default"
+    boundBy: Optional[str] = None  # Username of the person who bound this KB
+    boundAt: Optional[str] = None  # Binding timestamp in ISO format
+
+
 class TaskSpec(BaseModel):
     """Task specification"""
 
@@ -420,6 +429,9 @@ class TaskSpec(BaseModel):
     teamRef: TeamTaskRef
     workspaceRef: WorkspaceTaskRef
     is_group_chat: bool = False  # Whether this task is a group chat
+    knowledgeBaseRefs: Optional[List[KnowledgeBaseTaskRef]] = (
+        None  # Bound knowledge bases for group chat
+    )
 
 
 class TaskStatus(Status):

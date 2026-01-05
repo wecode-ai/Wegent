@@ -15,6 +15,7 @@ import LanguageSwitcher from '@/components/LanguageSwitcher';
 import { ThemeToggle } from '@/features/theme/ThemeToggle';
 import { POST_LOGIN_REDIRECT_KEY, sanitizeRedirectPath } from '@/features/login/constants';
 import Image from 'next/image';
+import { getRuntimeConfigSync } from '@/lib/runtime-config';
 
 export default function LoginForm() {
   const { t } = useTranslation();
@@ -28,13 +29,14 @@ export default function LoginForm() {
   // Used antd message.error for unified error prompt, no need for local error state
   const [isLoading, setIsLoading] = useState(false);
 
-  // Get login mode configuration
-  const loginMode = process.env.NEXT_PUBLIC_LOGIN_MODE || 'all';
+  // Get login mode configuration from runtime config
+  const runtimeConfig = getRuntimeConfigSync();
+  const loginMode = runtimeConfig.loginMode;
   const showPasswordLogin = loginMode === 'password' || loginMode === 'all';
   const showOidcLogin = loginMode === 'oidc' || loginMode === 'all';
 
-  // Get OIDC login button text
-  const oidcLoginText = process.env.NEXT_PUBLIC_OIDC_LOGIN_TEXT || t('common:login.oidc_login');
+  // Get OIDC login button text from runtime config
+  const oidcLoginText = runtimeConfig.oidcLoginText || t('common:login.oidc_login');
   const loginPath = paths.auth.login.getHref();
   const defaultRedirect = paths.chat.getHref();
   const [redirectPath, setRedirectPath] = useState(defaultRedirect);

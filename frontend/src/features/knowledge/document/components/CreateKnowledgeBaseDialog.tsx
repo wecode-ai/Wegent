@@ -52,7 +52,7 @@ export function CreateKnowledgeBaseDialog({
   const [retrievalConfig, setRetrievalConfig] = useState<Partial<RetrievalConfig>>({
     retrieval_mode: 'vector',
     top_k: 5,
-    score_threshold: 0.7,
+    score_threshold: 0.5,
     hybrid_weights: {
       vector_weight: 0.7,
       keyword_weight: 0.3,
@@ -101,7 +101,7 @@ export function CreateKnowledgeBaseDialog({
       setRetrievalConfig({
         retrieval_mode: 'vector',
         top_k: 5,
-        score_threshold: 0.7,
+        score_threshold: 0.5,
         hybrid_weights: {
           vector_weight: 0.7,
           keyword_weight: 0.3,
@@ -119,7 +119,7 @@ export function CreateKnowledgeBaseDialog({
       setRetrievalConfig({
         retrieval_mode: 'vector',
         top_k: 5,
-        score_threshold: 0.7,
+        score_threshold: 0.5,
         hybrid_weights: {
           vector_weight: 0.7,
           keyword_weight: 0.3,

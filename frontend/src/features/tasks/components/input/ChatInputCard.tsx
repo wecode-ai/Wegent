@@ -5,13 +5,14 @@
 'use client';
 
 import React from 'react';
-import { Upload } from 'lucide-react';
+import { Upload, Sparkles } from 'lucide-react';
 import ChatInput from './ChatInput';
 import InputBadgeDisplay from './InputBadgeDisplay';
 import ExternalApiParamsInput from '../params/ExternalApiParamsInput';
 import { SelectedTeamBadge } from '../selector/SelectedTeamBadge';
 import ChatInputControls, { ChatInputControlsProps } from './ChatInputControls';
 import type { Team, ChatTipItem } from '@/types/api';
+import { useTranslation } from '@/hooks/useTranslation';
 
 export interface ChatInputCardProps extends Omit<ChatInputControlsProps, 'taskInputMessage'> {
   // Input message
@@ -124,6 +125,8 @@ export function ChatInputCard({
   onStopStream,
   onSendMessage,
 }: ChatInputCardProps) {
+  const { t } = useTranslation('chat');
+
   return (
     <div className="w-full">
       {/* External API Parameters Input - only show for Dify teams */}
@@ -134,6 +137,14 @@ export function ChatInputCard({
           onAppModeChange={onAppModeChange}
           initialParams={externalApiParams}
         />
+      )}
+
+      {/* Group Chat Mention Hint - only show in group chat mode */}
+      {isGroupChat && (
+        <div className="flex items-center gap-1.5 px-4 py-1.5 mb-1 text-text-muted text-xs">
+          <Sparkles className="h-3.5 w-3.5 flex-shrink-0" />
+          <span>{t('groupChat.mentionHint')}</span>
+        </div>
       )}
 
       {/* Chat Input Card */}

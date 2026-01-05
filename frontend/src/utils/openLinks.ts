@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { TaskDetail, OpenLinks } from '@/types/api';
+import { getRuntimeConfigSync } from '@/lib/runtime-config';
 
 /**
  * Calculate open links from task detail data
@@ -69,7 +70,7 @@ export function calculateOpenLinks(taskDetail: TaskDetail | null | undefined): O
   }
 
   // Build VSCode link from template
-  const vscodeLinkTemplate = process.env.NEXT_PUBLIC_VSCODE_LINK_TEMPLATE;
+  const vscodeLinkTemplate = getRuntimeConfigSync().vscodeLinkTemplate;
   if (vscodeLinkTemplate && result.session_id && result.git_url) {
     const branch = result.target_branch || taskDetail.branch_name || '';
     // Replace placeholders in template

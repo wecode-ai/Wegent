@@ -450,7 +450,7 @@ def create_app():
                         user_id = body_json.get("user_id")
                         if user_id is not None:
                             set_user_context(user_id=str(user_id))
-                    except (json.JSONDecodeError, TypeError):
+                    except:
                         pass  # Not JSON or invalid format, skip task context extraction
 
                 # Add request body to current span

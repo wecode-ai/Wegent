@@ -170,7 +170,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
         } else if (recMode === 'code') {
           setBindMode(['code']);
         } else {
-          setBindMode(['chat', 'code']);
+          setBindMode([]); // Default to empty array instead of ['chat', 'code']
         }
       }
       const ids = formTeam.bots.map(b => String(b.bot_id));
@@ -182,7 +182,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setDescription('');
       setIcon(null);
       setMode('solo');
-      setBindMode(['chat', 'code']);
+      setBindMode([]);
       setSelectedBotKeys([]);
       setLeaderBotId(null);
     }
@@ -315,6 +315,15 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       toast({
         variant: 'destructive',
         title: t('common:team.name_required'),
+      });
+      return;
+    }
+
+    // Validate bind_mode is not empty
+    if (bindMode.length === 0) {
+      toast({
+        variant: 'destructive',
+        title: t('team.bind_mode_required'),
       });
       return;
     }

@@ -55,7 +55,7 @@
     "tasks": "Tasks",
     "chat": "Chat",
     "code": "Code",
-    "wiki": "Wiki",
+    "wiki": "Knowledge",
     "settings": "Settings",
     "docs": "Docs",
     "feedback": "Feedback",
@@ -319,7 +319,8 @@
     "recommended_mode_code": "Code",
     "bind_mode": "Bind Mode",
     "bind_mode_chat": "Chat",
-    "bind_mode_code": "Code"
+    "bind_mode_code": "Code",
+    "bind_mode_required": "Please select at least one bind mode (Chat or Code)"
   },
   "team_model": {
     "solo": "Solo",
@@ -1047,7 +1048,8 @@
       "network_error": "Upload failed",
       "network_error_hint": "Network connection error. Please check your network and try again",
       "content_truncated": "File content truncated",
-      "content_truncated_hint": "File content was too long. Kept first {{length}} million characters"
+      "content_truncated_hint": "File content was too long. Kept first {{length}} million characters",
+      "batch_limit_exceeded": "Too many files selected (max {{max}} files)"
     },
     "truncation": {
       "notice": "⚠️ Content too long, auto-truncated ({{original}} chars → {{truncated}} chars)"
