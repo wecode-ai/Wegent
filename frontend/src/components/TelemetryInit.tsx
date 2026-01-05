@@ -15,10 +15,11 @@
  * - Initializes only in browser environment
  * - Prevents double initialization
  * - Gracefully handles initialization errors
- * - Configurable via environment variables
+ * - Configurable via runtime environment variables
  */
 
 import { useEffect, useRef } from 'react';
+import { getRuntimeConfigSync } from '@/lib/runtime-config';
 
 /**
  * TelemetryInit initializes OpenTelemetry for browser-side tracing.
@@ -28,9 +29,9 @@ import { useEffect, useRef } from 'react';
  * - Fetch API requests
  * - Document load performance
  *
- * Configuration is done via environment variables:
- * - NEXT_PUBLIC_OTEL_ENABLED: Enable/disable telemetry (default: false)
- * - NEXT_PUBLIC_OTEL_SERVICE_NAME: Service name (default: wegent-frontend)
+ * Configuration is done via runtime environment variables:
+ * - RUNTIME_OTEL_ENABLED: Enable/disable telemetry (default: false)
+ * - RUNTIME_OTEL_SERVICE_NAME: Service name (default: wegent-frontend)
  *
  * @returns null - This component doesn't render anything
  *
@@ -55,9 +56,9 @@ export default function TelemetryInit(): null {
     }
     initRef.current = true;
 
-    // Check if telemetry is enabled
-    const otelEnabled = process.env.NEXT_PUBLIC_OTEL_ENABLED === 'true';
-    if (!otelEnabled) {
+    // Check if telemetry is enabled via runtime config
+    const runtimeConfig = getRuntimeConfigSync();
+    if (!runtimeConfig.otelEnabled) {
       return;
     }
 

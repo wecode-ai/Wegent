@@ -45,6 +45,66 @@ export async function GET() {
 
     // Enable chat context feature (knowledge base background)
     // Priority: RUNTIME_ENABLE_CHAT_CONTEXT > NEXT_PUBLIC_ENABLE_CHAT_CONTEXT > false
-    enableChatContext: parseBoolean(process.env.RUNTIME_ENABLE_CHAT_CONTEXT, false),
+    enableChatContext:
+      parseBoolean(process.env.RUNTIME_ENABLE_CHAT_CONTEXT, false) ||
+      parseBoolean(process.env.NEXT_PUBLIC_ENABLE_CHAT_CONTEXT, false),
+
+    // Login mode: 'password', 'oidc', or 'all'
+    // Priority: RUNTIME_LOGIN_MODE > NEXT_PUBLIC_LOGIN_MODE > 'all'
+    loginMode: process.env.RUNTIME_LOGIN_MODE || process.env.NEXT_PUBLIC_LOGIN_MODE || 'all',
+
+    // OIDC login button text
+    // Priority: RUNTIME_OIDC_LOGIN_TEXT > NEXT_PUBLIC_OIDC_LOGIN_TEXT > empty
+    oidcLoginText:
+      process.env.RUNTIME_OIDC_LOGIN_TEXT || process.env.NEXT_PUBLIC_OIDC_LOGIN_TEXT || '',
+
+    // Enable display quotas in frontend
+    // Priority: RUNTIME_ENABLE_DISPLAY_QUOTAS > NEXT_PUBLIC_FRONTEND_ENABLE_DISPLAY_QUOTAS > false
+    enableDisplayQuotas:
+      process.env.RUNTIME_ENABLE_DISPLAY_QUOTAS === 'enable' ||
+      process.env.NEXT_PUBLIC_FRONTEND_ENABLE_DISPLAY_QUOTAS === 'enable',
+
+    // Enable Wiki module
+    // Priority: RUNTIME_ENABLE_WIKI > NEXT_PUBLIC_ENABLE_WIKI > true (enabled by default)
+    enableWiki:
+      process.env.RUNTIME_ENABLE_WIKI !== 'false' &&
+      process.env.NEXT_PUBLIC_ENABLE_WIKI !== 'false',
+
+    // VSCode link template for deep linking
+    // Priority: RUNTIME_VSCODE_LINK_TEMPLATE > NEXT_PUBLIC_VSCODE_LINK_TEMPLATE > empty
+    vscodeLinkTemplate:
+      process.env.RUNTIME_VSCODE_LINK_TEMPLATE ||
+      process.env.NEXT_PUBLIC_VSCODE_LINK_TEMPLATE ||
+      '',
+
+    // Feedback URL for issue reporting
+    // Priority: RUNTIME_FEEDBACK_URL > NEXT_PUBLIC_FEEDBACK_URL > default
+    feedbackUrl:
+      process.env.RUNTIME_FEEDBACK_URL ||
+      process.env.NEXT_PUBLIC_FEEDBACK_URL ||
+      'https://github.com/wecode-ai/wegent/issues/new',
+
+    // Documentation URL
+    // Priority: RUNTIME_DOCS_URL > NEXT_PUBLIC_DOCS_URL > default
+    docsUrl:
+      process.env.RUNTIME_DOCS_URL ||
+      process.env.NEXT_PUBLIC_DOCS_URL ||
+      'https://github.com/wecode-ai/Wegent',
+
+    // OpenTelemetry configuration
+    // Priority: RUNTIME_OTEL_* > NEXT_PUBLIC_OTEL_* > defaults
+    otelEnabled:
+      parseBoolean(process.env.RUNTIME_OTEL_ENABLED, false) ||
+      parseBoolean(process.env.NEXT_PUBLIC_OTEL_ENABLED, false),
+
+    otelServiceName:
+      process.env.RUNTIME_OTEL_SERVICE_NAME ||
+      process.env.NEXT_PUBLIC_OTEL_SERVICE_NAME ||
+      'wegent-frontend',
+
+    otelCollectorEndpoint:
+      process.env.RUNTIME_OTEL_COLLECTOR_ENDPOINT ||
+      process.env.NEXT_PUBLIC_OTEL_COLLECTOR_ENDPOINT ||
+      'http://localhost:4318',
   });
 }

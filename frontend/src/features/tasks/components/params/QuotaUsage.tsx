@@ -9,6 +9,7 @@ import { quotaApis, QuotaData } from '@/apis/quota';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useToast } from '@/hooks/use-toast';
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
+import { getRuntimeConfigSync } from '@/lib/runtime-config';
 
 type QuotaUsageProps = {
   className?: string;
@@ -61,8 +62,9 @@ export default function QuotaUsage({ className, compact = false }: QuotaUsagePro
     };
   }, [quota, handleLoadQuota]);
 
-  const deployMode = process.env.NEXT_PUBLIC_FRONTEND_ENABLE_DISPLAY_QUOTAS;
-  if (deployMode !== 'enable') {
+  // Check if quota display is enabled via runtime config
+  const enableDisplayQuotas = getRuntimeConfigSync().enableDisplayQuotas;
+  if (!enableDisplayQuotas) {
     return null;
   }
 

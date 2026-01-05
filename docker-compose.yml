@@ -117,8 +117,23 @@ services:
       - "${WEGENT_FRONTEND_PORT:-3000}:3000"
     environment:
       - NODE_ENV=production
+      # API Configuration
       - RUNTIME_INTERNAL_API_URL=http://backend:8000
       - RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000
+      # Feature Flags
+      # - RUNTIME_ENABLE_CHAT_CONTEXT=false
+      # - RUNTIME_LOGIN_MODE=all
+      # - RUNTIME_OIDC_LOGIN_TEXT=
+      # - RUNTIME_ENABLE_DISPLAY_QUOTAS=enable
+      # - RUNTIME_ENABLE_WIKI=true
+      # URLs
+      # - RUNTIME_VSCODE_LINK_TEMPLATE=
+      # - RUNTIME_FEEDBACK_URL=https://github.com/wecode-ai/wegent/issues/new
+      # - RUNTIME_DOCS_URL=https://github.com/wecode-ai/Wegent
+      # OpenTelemetry Configuration (uncomment to enable)
+      # - RUNTIME_OTEL_ENABLED=false
+      # - RUNTIME_OTEL_SERVICE_NAME=wegent-frontend
+      # - RUNTIME_OTEL_COLLECTOR_ENDPOINT=http://localhost:4318
     working_dir: /app
     depends_on:
       - backend

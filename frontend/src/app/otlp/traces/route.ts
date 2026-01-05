@@ -17,14 +17,14 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getRuntimeConfigSync } from '@/lib/runtime-config';
 
 /**
- * OTEL Collector endpoint for receiving traces.
- * Default: http://otel-collector:4318 (internal Docker network)
- * For local development: http://localhost:4318
+ * Get OTEL Collector endpoint from runtime config
  */
-const OTEL_COLLECTOR_ENDPOINT =
-  process.env.NEXT_PUBLIC_OTEL_COLLECTOR_ENDPOINT || 'http://localhost:4318';
+const getOtelCollectorEndpoint = (): string => {
+  return getRuntimeConfigSync().otelCollectorEndpoint;
+};
 
 /**
  * POST /otlp/traces
@@ -36,9 +36,9 @@ const OTEL_COLLECTOR_ENDPOINT =
  * @returns Success response or error
  */
 export async function POST(request: NextRequest): Promise<Response> {
-  // Check if telemetry is enabled
-  const otelEnabled = process.env.NEXT_PUBLIC_OTEL_ENABLED === 'true';
-  if (!otelEnabled) {
+  // Check if telemetry is enabled via runtime config
+  const runtimeConfig = getRuntimeConfigSync();
+  if (!runtimeConfig.otelEnabled) {
     return NextResponse.json({ message: 'Telemetry is disabled' }, { status: 200 });
   }
 
@@ -49,8 +49,11 @@ export async function POST(request: NextRequest): Promise<Response> {
     // Preserve the content type from the original request
     const contentType = request.headers.get('content-type') || 'application/json';
 
+    // Get OTEL Collector endpoint from runtime config
+    const collectorEndpoint = getOtelCollectorEndpoint();
+
     // Forward the request to OTEL Collector
-    const response = await fetch(`${OTEL_COLLECTOR_ENDPOINT}/v1/traces`, {
+    const response = await fetch(`${collectorEndpoint}/v1/traces`, {
       method: 'POST',
       headers: {
         'Content-Type': contentType,

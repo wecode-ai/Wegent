@@ -30,6 +30,7 @@ import { TaskMembersPanel } from '../group-chat';
 import { useUser } from '@/features/common/UserContext';
 import { useUnifiedMessages, type DisplayMessage } from '../../hooks/useUnifiedMessages';
 import { useTraceAction } from '@/hooks/useTraceAction';
+import { getRuntimeConfigSync } from '@/lib/runtime-config';
 import {
   correctionApis,
   CorrectionResponse,
@@ -656,9 +657,7 @@ export default function MessagesArea({
             variant="outline"
             size="sm"
             onClick={() => {
-              const feedbackUrl =
-                process.env.NEXT_PUBLIC_FEEDBACK_URL ||
-                'https://github.com/wecode-ai/wegent/issues/new';
+              const feedbackUrl = getRuntimeConfigSync().feedbackUrl;
               window.open(feedbackUrl, '_blank');
             }}
             className="flex items-center gap-1 h-8 pl-2 pr-3 rounded-[7px] text-sm"

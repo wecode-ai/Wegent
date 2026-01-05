@@ -2,12 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import { getRuntimeConfigSync } from '@/lib/runtime-config';
+
 export const paths = {
   home: {
     getHref: () => '/',
   },
   docs: {
-    getHref: () => process.env.NEXT_PUBLIC_DOCS_URL || 'https://github.com/wecode-ai/Wegent',
+    getHref: () => getRuntimeConfigSync().docsUrl,
   },
   auth: {
     password_login: {
