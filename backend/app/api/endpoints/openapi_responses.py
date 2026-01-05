@@ -136,14 +136,15 @@ async def create_response(
         - model: Format "namespace#team_name" or "namespace#team_name#model_id"
         - input: The user prompt (string or list of messages)
         - stream: Whether to enable streaming output (default: False)
-        - tools: Optional Wegent tools:
-          - {"type": "wegent_deep_thinking"}: Enable deep thinking mode with web search
-            (web search requires WEB_SEARCH_ENABLED=true in system config)
+        - tools: Optional Wegent tools to enable server-side capabilities:
+          - {"type": "wegent_chat_bot"}: Enable all server-side capabilities
+            (deep thinking with web search, server MCP tools, message enhancement)
         - previous_response_id: Optional, for follow-up conversations
 
     Note:
-        - MCP tools are automatically loaded when CHAT_MCP_ENABLED=true (no user tool needed)
-        - Web search is enabled when wegent_deep_thinking is used AND WEB_SEARCH_ENABLED=true
+        - By default, API calls use "clean mode" without server-side enhancements
+        - Bot/Ghost MCP tools are always available (configured in the bot's Ghost CRD)
+        - Use wegent_chat_bot to enable full server-side capabilities
 
     Returns:
         ResponseObject with status 'completed' (Chat Shell)

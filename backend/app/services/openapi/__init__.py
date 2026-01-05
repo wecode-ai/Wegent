@@ -30,7 +30,7 @@ from app.services.openapi.helpers import (
     subtask_status_to_message_status,
     wegent_status_to_openai_status,
 )
-from app.services.openapi.mcp import load_mcp_tools
+from app.services.openapi.mcp import load_bot_mcp_tools, load_server_mcp_tools
 
 __all__ = [
     # chat_response
@@ -48,5 +48,6 @@ __all__ = [
     "subtask_status_to_message_status",
     "wegent_status_to_openai_status",
     # mcp
-    "load_mcp_tools",
+    "load_bot_mcp_tools",
+    "load_server_mcp_tools",
 ]
