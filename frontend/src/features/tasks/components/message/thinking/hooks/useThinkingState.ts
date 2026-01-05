@@ -52,7 +52,25 @@ export function useThinkingState({
   thinking,
   taskStatus,
 }: UseThinkingStateOptions): UseThinkingStateReturn {
-  const items = useMemo(() => thinking ?? [], [thinking]);
+  // Filter out consecutive duplicate reasoning steps
+  // This fixes the issue where refreshing during streaming shows multiple
+  // "💭 Model Thinking" entries because each reasoning chunk creates a new step
+  const items = useMemo(() => {
+    if (!thinking) return [];
+
+    return thinking.filter((step, index) => {
+      // Check if this is a reasoning type step
+      const isReasoningStep = step.details?.type === 'reasoning';
+      if (isReasoningStep && index > 0) {
+        // Check if previous step was also a reasoning step - if so, skip this one
+        const prevStep = thinking[index - 1];
+        if (prevStep?.details?.type === 'reasoning') {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [thinking]);
 
   // Calculate derived state
   const isCompleted = isTerminalStatus(taskStatus);
