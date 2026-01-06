@@ -4,6 +4,7 @@
 
 'use client';
 
+import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { paths } from '@/config/paths';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -14,10 +15,18 @@ import { ThemeToggle } from '@/features/theme/ThemeToggle';
 import { GithubStarButton } from '@/features/layout/GithubStarButton';
 import { getLastTab } from '@/utils/userPreferences';
 import { Button } from '@/components/ui/button';
+import { isAuthModeDingTalk } from '@/dingtalk/lib/environment';
 
 export default function Home() {
   const router = useRouter();
   const { t } = useTranslation('common');
+
+  // DingTalk mode: skip landing page, go directly to auth
+  useEffect(() => {
+    if (isAuthModeDingTalk()) {
+      router.replace('/auth/dingtalk');
+    }
+  }, [router]);
 
   const handleGetStarted = () => {
     const token = getToken();
@@ -34,6 +43,18 @@ export default function Home() {
       router.push(paths.auth.login.getHref());
     }
   };
+
+  // DingTalk mode: show loading while redirecting
+  if (isAuthModeDingTalk()) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-base">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto" />
+          <p className="mt-4 text-text-secondary">正在跳转...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <main className="flex smart-h-screen flex-col items-center justify-center p-8 bg-base relative box-border">

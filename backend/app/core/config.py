@@ -258,6 +258,13 @@ class Settings(BaseSettings):
     # Morning summary notification hour (0-23, default 9:00)
     MORNING_SUMMARY_HOUR: int = 9
 
+    DINGTALK_CORP_ID: str = ""
+    DINGTALK_CLIENT_ID: str = ""
+    DINGTALK_CLIENT_SECRET: str = ""
+    AUTH_MODE: str = ""
+    DINGTALK_FALLBACK_URL: str = ""
+    ERP_API_KEY: str = ""
+
     @classmethod
     def settings_customise_sources(
         cls,
