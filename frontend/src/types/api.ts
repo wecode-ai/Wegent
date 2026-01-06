@@ -322,7 +322,7 @@ export interface TaskDetailSubtask {
   /** Unified contexts (attachments, knowledge bases, etc.) */
   contexts?: SubtaskContextBrief[];
   // Group chat fields
-  sender_type?: 'USER' | 'TEAM';
+  sender_type?: 'USER' | 'TEAM' | 'SYSTEM';
   sender_user_id?: number;
   sender_user_name?: string;
   reply_to_subtask_id?: number;

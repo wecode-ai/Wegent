@@ -2,14 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { ReactNode } from 'react';
-import { Database } from 'lucide-react';
-import AttachmentPreview from '../input/AttachmentPreview';
-import type { SubtaskContextBrief, Attachment } from '@/types/api';
-import { useTranslation } from '@/hooks/useTranslation';
-import { formatDocumentCount } from '@/lib/i18n-helpers';
+import React, { ReactNode } from 'react'
+import { Database } from 'lucide-react'
+import AttachmentPreview from '../input/AttachmentPreview'
+import type { SubtaskContextBrief, Attachment } from '@/types/api'
+import { useTranslation } from '@/hooks/useTranslation'
+import { formatDocumentCount } from '@/lib/i18n-helpers'
 
 /**
  * Base preview component for context items (attachments, knowledge bases, etc.)
@@ -17,13 +17,13 @@ import { formatDocumentCount } from '@/lib/i18n-helpers';
  */
 interface ContextPreviewBaseProps {
   /** Icon element to display (should be text-2xl size) */
-  icon: ReactNode;
+  icon: ReactNode
   /** Primary text (filename, KB name, etc.) */
-  title: string;
+  title: string
   /** Secondary text (file size, document count, etc.) */
-  subtitle?: string;
+  subtitle?: string
   /** Optional className for customization */
-  className?: string;
+  className?: string
 }
 
 function ContextPreviewBase({ icon, title, subtitle, className = '' }: ContextPreviewBaseProps) {
@@ -39,12 +39,12 @@ function ContextPreviewBase({ icon, title, subtitle, className = '' }: ContextPr
         {subtitle && <div className="text-xs text-text-muted">{subtitle}</div>}
       </div>
     </div>
-  );
+  )
 }
 
 interface ContextBadgeListProps {
   /** List of contexts to display */
-  contexts?: SubtaskContextBrief[];
+  contexts?: SubtaskContextBrief[]
 }
 
 /**
@@ -56,12 +56,8 @@ interface ContextBadgeListProps {
  * - knowledge_base: Displays KB name with document count
  */
 export function ContextBadgeList({ contexts }: ContextBadgeListProps) {
-  // DEBUG: Log contexts to help diagnose display issues
-  console.log('[ContextBadgeList] Rendering with contexts:', contexts);
-
   if (!contexts || contexts.length === 0) {
-    console.log('[ContextBadgeList] No contexts to display');
-    return null;
+    return null
   }
 
   return (
@@ -70,7 +66,7 @@ export function ContextBadgeList({ contexts }: ContextBadgeListProps) {
         <ContextBadgeItem key={`${context.context_type}-${context.id}`} context={context} />
       ))}
     </div>
-  );
+  )
 }
 
 /**
@@ -79,11 +75,11 @@ export function ContextBadgeList({ contexts }: ContextBadgeListProps) {
 function ContextBadgeItem({ context }: { context: SubtaskContextBrief }) {
   switch (context.context_type) {
     case 'attachment':
-      return <AttachmentContextBadge context={context} />;
+      return <AttachmentContextBadge context={context} />
     case 'knowledge_base':
-      return <KnowledgeBaseBadge context={context} />;
+      return <KnowledgeBaseBadge context={context} />
     default:
-      return null;
+      return null
   }
 }
 
@@ -99,20 +95,20 @@ function AttachmentContextBadge({ context }: { context: SubtaskContextBrief }) {
   const mapStatus = (status: string): Attachment['status'] => {
     switch (status) {
       case 'ready':
-        return 'ready';
+        return 'ready'
       case 'failed':
-        return 'failed';
+        return 'failed'
       case 'parsing':
-        return 'parsing';
+        return 'parsing'
       case 'uploading':
-        return 'uploading';
+        return 'uploading'
       case 'pending':
         // Map 'pending' to 'uploading' as they're semantically similar
-        return 'uploading';
+        return 'uploading'
       default:
-        return 'ready';
+        return 'ready'
     }
-  };
+  }
 
   // Convert SubtaskContextBrief to Attachment format for AttachmentPreview
   const attachment: Attachment = {
@@ -123,9 +119,9 @@ function AttachmentContextBadge({ context }: { context: SubtaskContextBrief }) {
     mime_type: context.mime_type || '',
     status: mapStatus(context.status),
     created_at: '',
-  };
+  }
 
-  return <AttachmentPreview attachment={attachment} compact={false} showDownload={true} />;
+  return <AttachmentPreview attachment={attachment} compact={false} showDownload={true} />
 }
 /**
  * Knowledge base badge - displays KB name and document count
@@ -133,14 +129,14 @@ function AttachmentContextBadge({ context }: { context: SubtaskContextBrief }) {
  * Uses ContextPreviewBase for consistent styling with attachments
  */
 function KnowledgeBaseBadge({ context }: { context: SubtaskContextBrief }) {
-  const { t } = useTranslation('knowledge');
+  const { t } = useTranslation('knowledge')
 
   const subtitle =
     context.document_count !== undefined &&
     context.document_count !== null &&
     context.document_count > 0
       ? formatDocumentCount(context.document_count, t)
-      : undefined;
+      : undefined
 
   return (
     <ContextPreviewBase
@@ -148,7 +144,7 @@ function KnowledgeBaseBadge({ context }: { context: SubtaskContextBrief }) {
       title={context.name}
       subtitle={subtitle}
     />
-  );
+  )
 }
 
-export default ContextBadgeList;
+export default ContextBadgeList

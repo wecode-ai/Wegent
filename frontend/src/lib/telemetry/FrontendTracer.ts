@@ -36,6 +36,7 @@ import { browserDetector } from '@opentelemetry/opentelemetry-browser-detector';
 import { FetchInstrumentation } from '@opentelemetry/instrumentation-fetch';
 import { DocumentLoadInstrumentation } from '@opentelemetry/instrumentation-document-load';
 import { trace, SpanStatusCode, Attributes, Span } from '@opentelemetry/api';
+import { getRuntimeConfigSync } from '@/lib/runtime-config';
 
 // Track initialization state
 let isInitialized = false;
@@ -79,14 +80,17 @@ const DEFAULT_IGNORE_URLS: RegExp[] = [
 /**
  * Default configuration
  */
-const defaultConfig: Required<FrontendTracerConfig> = {
-  serviceName: process.env.NEXT_PUBLIC_OTEL_SERVICE_NAME || 'wegent-frontend',
-  otlpEndpoint: '/otlp/traces',
-  batchDelayMs: 500,
-  traceFetch: true,
-  traceDocumentLoad: true,
-  propagateTraceHeaderCorsUrls: /.*/,
-  ignoreUrls: DEFAULT_IGNORE_URLS,
+const getDefaultConfig = (): Required<FrontendTracerConfig> => {
+  const runtimeConfig = getRuntimeConfigSync();
+  return {
+    serviceName: runtimeConfig.otelServiceName,
+    otlpEndpoint: '/otlp/traces',
+    batchDelayMs: 500,
+    traceFetch: true,
+    traceDocumentLoad: true,
+    propagateTraceHeaderCorsUrls: /.*/,
+    ignoreUrls: DEFAULT_IGNORE_URLS,
+  };
 };
 
 /**
@@ -121,14 +125,15 @@ export async function initFrontendTracer(config: FrontendTracerConfig = {}): Pro
     return;
   }
 
-  // Check if telemetry is enabled
-  const otelEnabled = process.env.NEXT_PUBLIC_OTEL_ENABLED === 'true';
-  if (!otelEnabled) {
+  // Check if telemetry is enabled via runtime config
+  const runtimeConfig = getRuntimeConfigSync();
+  if (!runtimeConfig.otelEnabled) {
     console.info('[FrontendTracer] Telemetry is disabled');
     return;
   }
 
   // Merge config with defaults
+  const defaultConfig = getDefaultConfig();
   const finalConfig = { ...defaultConfig, ...config };
 
   try {

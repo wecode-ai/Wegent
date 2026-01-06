@@ -16,16 +16,17 @@ class WegentTool(BaseModel):
     """Custom Wegent tool configuration.
 
     Supported tool types:
-    - wegent_deep_thinking: Enable deep thinking mode with web search
-      (web search requires WEB_SEARCH_ENABLED=true in system config)
+    - wegent_chat_bot: Enable all server-side capabilities (recommended)
+      Includes: deep thinking with web search, server MCP tools, and message enhancement
 
     Note:
-    - MCP tools are controlled by CHAT_MCP_ENABLED system config (no user tool needed)
+    - Bot/Ghost MCP tools are always available by default (no user tool needed)
+    - Use wegent_chat_bot to enable full server-side capabilities
     """
 
     type: str = Field(
         ...,
-        description="Tool type: 'wegent_deep_thinking'",
+        description="Tool type: 'wegent_chat_bot' (enables all server-side capabilities)",
     )
 
 
@@ -61,7 +62,7 @@ class ResponseCreateInput(BaseModel):
     )
     tools: Optional[List[WegentTool]] = Field(
         default=None,
-        description="Wegent custom tools, e.g., [{'type': 'wegent_deep_thinking'}]",
+        description="Wegent custom tools: [{'type': 'wegent_chat_bot'}] to enable all server-side capabilities",
     )
 
 

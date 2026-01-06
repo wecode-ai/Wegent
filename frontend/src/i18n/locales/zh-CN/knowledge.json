@@ -89,7 +89,7 @@
       "nameRequired": "请输入文档名称",
       "namePlaceholder": "输入文档名称",
       "updateFailed": "更新文档失败",
-      "dropzone": "拖放文件到此处或点击浏览",
+      "dropzone": "拖拽文件到此处或点击浏览",
       "supportedTypes": "支持 PDF、Word、PPT、Excel、TXT、MD、图片（最大 20MB）",
       "uploading": "上传中...",
       "uploadSuccess": "文件上传成功",
@@ -99,6 +99,31 @@
         "disable": "批量停用",
         "delete": "批量删除"
       }
+    },
+    "upload": {
+      "dropzoneHint": "一次最多选择 {{max}} 个文件",
+      "fileList": "已选择 {{count}} 个文件",
+      "clearAll": "清空全部",
+      "startUpload": "上传 {{count}} 个文件",
+      "confirmUpload": "确认（{{count}} 个文件）",
+      "confirming": "正在创建文档...",
+      "summary": "上传完成：{{success}} 个成功，{{failed}} 个失败",
+      "status": {
+        "pending": "等待中",
+        "uploading": "上传中",
+        "success": "已上传",
+        "error": "失败"
+      },
+      "uploadFile": "上传文件",
+      "pasteText": "粘贴文本",
+      "pasteTextHint": "在下方粘贴文本内容，即可将其作为文档上传到知识库。",
+      "fileName": "文件名",
+      "fileNamePlaceholder": "输入文件名（可选，默认自动生成）",
+      "textContent": "文本内容",
+      "textPlaceholder": "在此处粘贴文本...",
+      "textRequired": "请输入文本内容",
+      "insert": "插入",
+      "clickToRename": "点击修改文件名"
     },
     "permission": {
       "noAccess": "您没有操作权限"

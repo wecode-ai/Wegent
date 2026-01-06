@@ -144,6 +144,70 @@ def shutdown_status(response: Response):
     return {"is_shutting_down": shutdown_manager.is_shutting_down}
 
 
+@router.post("/shutdown/wait")
+async def wait_for_shutdown():
+    """
+    Wait for all active streams to complete during graceful shutdown.
+
+    This endpoint is designed for Kubernetes preStop hooks. It will:
+    1. Initiate shutdown if not already initiated
+    2. Wait for all active streams to complete (up to GRACEFUL_SHUTDOWN_TIMEOUT)
+    3. Return when all streams are done or timeout is reached
+
+    Usage in Kubernetes preStop hook:
+    ```yaml
+    preStop:
+      exec:
+        command:
+          - /bin/sh
+          - -c
+          - curl -X POST http://localhost:8080/api/shutdown/wait || true
+    ```
+
+    Returns:
+        dict: Shutdown completion status
+    """
+    from app.core.config import settings
+
+    # Initiate shutdown if not already
+    if not shutdown_manager.is_shutting_down:
+        await shutdown_manager.initiate_shutdown()
+
+    active_streams = shutdown_manager.get_active_stream_count()
+
+    if active_streams == 0:
+        return {
+            "status": "completed",
+            "message": "No active streams, shutdown can proceed immediately",
+            "active_streams": 0,
+            "waited_seconds": 0,
+        }
+
+    # Wait for streams to complete
+    timeout = settings.GRACEFUL_SHUTDOWN_TIMEOUT
+    streams_completed = await shutdown_manager.wait_for_streams(timeout=timeout)
+
+    if streams_completed:
+        return {
+            "status": "completed",
+            "message": "All streams completed successfully",
+            "active_streams": 0,
+            "waited_seconds": shutdown_manager.shutdown_duration,
+        }
+    else:
+        # Timeout reached, cancel remaining streams
+        remaining = shutdown_manager.get_active_stream_count()
+        cancelled = await shutdown_manager.cancel_all_streams()
+
+        return {
+            "status": "timeout",
+            "message": f"Timeout reached after {timeout}s. Cancelled {cancelled} remaining streams.",
+            "active_streams": remaining,
+            "cancelled_streams": cancelled,
+            "waited_seconds": shutdown_manager.shutdown_duration,
+        }
+
+
 @router.post("/shutdown/reset")
 def reset_shutdown():
     """

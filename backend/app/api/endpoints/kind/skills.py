@@ -643,6 +643,42 @@ def download_skill(
     )
 
 
+@router.post("/{skill_id}/remove-references", response_model=Dict[str, Any])
+def remove_skill_references(
+    skill_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Remove all Ghost references to this Skill.
+
+    This allows the Skill to be deleted afterwards.
+    Returns the count of removed references and affected Ghost names.
+    """
+    result = skill_kinds_service.remove_skill_references(
+        db=db, skill_id=skill_id, user_id=current_user.id
+    )
+    return result
+
+
+@router.post("/{skill_id}/remove-reference/{ghost_id}", response_model=Dict[str, Any])
+def remove_single_skill_reference(
+    skill_id: int,
+    ghost_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Remove a Skill reference from a single Ghost.
+
+    Returns success status and the affected Ghost name.
+    """
+    result = skill_kinds_service.remove_single_skill_reference(
+        db=db, skill_id=skill_id, ghost_id=ghost_id, user_id=current_user.id
+    )
+    return result
+
+
 @router.put("/{skill_id}", response_model=Skill)
 async def update_skill(
     skill_id: int,

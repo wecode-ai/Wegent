@@ -178,7 +178,22 @@ class GiteaProvider(RepositoryProvider):
                     for repo in repos
                 ]
 
-                if len(mapped_repos) < limit:
+                # Check X-Total-Count header to determine if we have all repos
+                # Gitea servers may limit response to MAX_RESPONSE_ITEMS (default 50)
+                total_count = response.headers.get("X-Total-Count")
+                has_more = False
+                if total_count:
+                    try:
+                        total = int(total_count)
+                        has_more = len(mapped_repos) < total
+                    except (ValueError, TypeError):
+                        # Malformed header, fall back to default logic
+                        has_more = len(mapped_repos) >= limit
+                else:
+                    # Fall back to comparing with requested limit
+                    has_more = len(mapped_repos) >= limit
+
+                if not has_more:
                     cache_key = cache_manager.generate_full_cache_key(
                         user.id, git_domain
                     )
@@ -580,7 +595,9 @@ class GiteaProvider(RepositoryProvider):
 
             all_repos = []
             page = 1
-            per_page = 100
+            # Gitea servers may have MAX_RESPONSE_ITEMS configured (default 50)
+            # We request 50 to be safe and rely on pagination
+            per_page = 50
 
             self.logger.info(
                 f"Fetching gitea all repositories for user {user.user_name}"
@@ -613,14 +630,27 @@ class GiteaProvider(RepositoryProvider):
                 ]
                 all_repos.extend(mapped_repos)
 
-                if len(repos) < per_page:
+                # Check if there are more pages using X-Total-Count header
+                # or fall back to checking if we got fewer items than requested
+                total_count = response.headers.get("X-Total-Count")
+                if total_count:
+                    try:
+                        total = int(total_count)
+                        if len(all_repos) >= total:
+                            break
+                    except (ValueError, TypeError):
+                        # Malformed header, fall back to checking response size
+                        if len(repos) < per_page:
+                            break
+                elif len(repos) < per_page:
+                    # No header available, fall back to old logic
                     break
 
                 page += 1
 
-                if page > 50:
+                if page > 100:
                     self.logger.warning(
-                        f"Reached maximum page limit (50) for user {user.id}"
+                        f"Reached maximum page limit (100) for user {user.id}"
                     )
                     break
 

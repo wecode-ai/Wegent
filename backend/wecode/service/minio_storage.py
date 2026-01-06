@@ -20,7 +20,7 @@ from minio.error import S3Error
 from sqlalchemy.orm import Session
 from urllib3.exceptions import MaxRetryError
 
-from app.models.subtask_attachment import SubtaskAttachment
+from app.models.subtask_context import SubtaskContext
 from app.services.attachment.storage_backend import StorageBackend, StorageError
 
 logger = logging.getLogger(__name__)
@@ -162,16 +162,19 @@ class MinIOStorageBackend(StorageBackend):
             # Update attachment record to clear binary_data (stored externally now)
             attachment_id = self._extract_attachment_id(key)
             attachment = (
-                self._db.query(SubtaskAttachment)
-                .filter(SubtaskAttachment.id == attachment_id)
+                self._db.query(SubtaskContext)
+                .filter(SubtaskContext.id == attachment_id)
                 .first()
             )
 
             if attachment:
                 # Clear binary_data since it's now stored in MinIO
                 attachment.binary_data = b""
-                attachment.storage_backend = self.BACKEND_TYPE
-                attachment.storage_key = key
+                # Update type_data to store storage backend and key
+                if not attachment.type_data:
+                    attachment.type_data = {}
+                attachment.type_data["storage_backend"] = self.BACKEND_TYPE
+                attachment.type_data["storage_key"] = key
                 self._db.flush()
 
             logger.debug(f"Saved file to MinIO: {key}")

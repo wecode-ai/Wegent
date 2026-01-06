@@ -223,15 +223,74 @@ class ExecutorKindsService(
                 # update task status to RUNNING
                 self._update_task_to_running(db, updated_subtask.task_id)
 
+                # Get shell_type from the subtask's first bot for WebSocket event
+                shell_type = self._get_shell_type_for_subtask(db, updated_subtask)
+
                 # Send chat:start WebSocket event for executor tasks
                 # This allows frontend to establish subtask-to-task mapping
                 # and prepare for receiving chat:done event later
                 self._emit_chat_start_ws_event(
                     task_id=updated_subtask.task_id,
                     subtask_id=updated_subtask.id,
+                    shell_type=shell_type,
                 )
 
         return updated_subtasks
+
+    def _get_shell_type_for_subtask(self, db: Session, subtask: Subtask) -> str:
+        """
+        Get shell_type from the subtask's first bot.
+
+        Args:
+            db: Database session
+            subtask: Subtask object
+
+        Returns:
+            shell_type string (e.g., 'Chat', 'ClaudeCode', 'Agno'), defaults to 'Chat'
+        """
+        if not subtask.bot_ids or len(subtask.bot_ids) == 0:
+            logger.warning(
+                f"Subtask {subtask.id} has no bots, defaulting shell_type to 'Chat'"
+            )
+            return "Chat"
+
+        try:
+            # Get first bot
+            bot_id = subtask.bot_ids[0]
+            bot = (
+                db.query(Kind).filter(Kind.id == bot_id, Kind.is_active == True).first()
+            )
+
+            if not bot:
+                logger.warning(
+                    f"Bot {bot_id} not found for subtask {subtask.id}, defaulting to 'Chat'"
+                )
+                return "Chat"
+
+            bot_crd = Bot.model_validate(bot.json)
+
+            # Get shell
+            shell, _ = self._query_shell(
+                db,
+                bot_crd.spec.shellRef.name,
+                bot_crd.spec.shellRef.namespace,
+                bot.user_id,
+            )
+
+            if shell and shell.json:
+                shell_crd = Shell.model_validate(shell.json)
+                shell_type = shell_crd.spec.shellType
+                logger.info(f"Got shell_type '{shell_type}' for subtask {subtask.id}")
+                return shell_type
+
+            logger.warning(f"No shell found for bot {bot_id}, defaulting to 'Chat'")
+            return "Chat"
+
+        except Exception as e:
+            logger.error(
+                f"Error getting shell_type for subtask {subtask.id}: {e}", exc_info=True
+            )
+            return "Chat"
 
     def _update_task_to_running(self, db: Session, task_id: int) -> None:
         """Update task status to RUNNING (only when task is PENDING) using tasks table"""
@@ -1071,11 +1130,30 @@ class ExecutorKindsService(
             raise HTTPException(status_code=404, detail="Subtask not found")
 
         # Track previous content for streaming chunk calculation
+        # IMPORTANT: Must capture this BEFORE updating subtask fields
         previous_content = ""
         if subtask.result and isinstance(subtask.result, dict):
             prev_value = subtask.result.get("value", "")
             if isinstance(prev_value, str):
                 previous_content = prev_value
+
+        # Calculate new content from update for chunk emission
+        # Do this BEFORE updating the subtask to avoid using stale data
+        new_content = ""
+        if subtask_update.status == SubtaskStatus.RUNNING and subtask_update.result:
+            if isinstance(subtask_update.result, dict):
+                new_value = subtask_update.result.get("value", "")
+                if isinstance(new_value, str):
+                    new_content = new_value
+
+        # CRITICAL FIX: If executor sends empty value but we have previous content,
+        # keep the previous content in the update to prevent data loss
+        # This happens when executor temporarily clears value between thinking steps
+        if not new_content and previous_content:
+            # Keep previous content by updating the result dict
+            if subtask_update.result and isinstance(subtask_update.result, dict):
+                subtask_update.result["value"] = previous_content
+                new_content = previous_content
 
         # Update subtask title (if provided)
         if subtask_update.subtask_title:
@@ -1120,11 +1198,7 @@ class ExecutorKindsService(
         if subtask_update.status == SubtaskStatus.RUNNING and subtask_update.result:
             if isinstance(subtask_update.result, dict):
                 # For executor tasks, send the full result (thinking, workbench)
-                # Calculate offset from value if present
-                new_content = ""
-                new_value = subtask_update.result.get("value", "")
-                if isinstance(new_value, str):
-                    new_content = new_value
+                # new_content was already calculated before updating subtask
 
                 # Calculate offset based on value content length
                 offset = len(new_content) if new_content else 0
@@ -1148,12 +1222,22 @@ class ExecutorKindsService(
                         f"offset={offset} has_thinking={has_thinking} has_workbench={has_workbench}"
                     )
 
+                    # Get shell_type for this subtask and include it in the result
+                    # This allows frontend to properly route thinking display
+                    shell_type = self._get_shell_type_for_subtask(db, subtask)
+
+                    # Add shell_type to result for frontend routing
+                    result_with_shell_type = {
+                        **subtask_update.result,
+                        "shell_type": shell_type,
+                    }
+
                     self._emit_chat_chunk_ws_event(
                         task_id=subtask.task_id,
                         subtask_id=subtask.id,
                         content=chunk_content,
                         offset=offset,
-                        result=subtask_update.result,  # Send full result with thinking and workbench
+                        result=result_with_shell_type,  # Send full result with thinking, workbench, and shell_type
                     )
 
         # Update associated task status
@@ -1321,10 +1405,19 @@ class ExecutorKindsService(
             SubtaskStatus.COMPLETED,
             SubtaskStatus.FAILED,
         ]:
+            # Get shell_type and add to result for frontend routing
+            shell_type = self._get_shell_type_for_subtask(db, last_non_pending_subtask)
+            result_with_shell_type = None
+            if last_non_pending_subtask.result:
+                result_with_shell_type = {
+                    **last_non_pending_subtask.result,
+                    "shell_type": shell_type,
+                }
+
             self._emit_chat_done_ws_event(
                 task_id=task_id,
                 subtask_id=last_non_pending_subtask.id,
-                result=last_non_pending_subtask.result,
+                result=result_with_shell_type,
                 message_id=last_non_pending_subtask.message_id,
             )
 
@@ -1427,6 +1520,7 @@ class ExecutorKindsService(
         task_id: int,
         subtask_id: int,
         bot_name: Optional[str] = None,
+        shell_type: str = "Chat",
     ) -> None:
         """
         Emit chat:start WebSocket event to notify frontend that AI response is starting.
@@ -1438,9 +1532,10 @@ class ExecutorKindsService(
             task_id: Task ID
             subtask_id: Subtask ID
             bot_name: Optional bot name
+            shell_type: Shell type for frontend display (Chat, ClaudeCode, Agno, etc.)
         """
         logger.info(
-            f"[WS] _emit_chat_start_ws_event called for task={task_id} subtask={subtask_id}"
+            f"[WS] _emit_chat_start_ws_event called for task={task_id} subtask={subtask_id} shell_type={shell_type}"
         )
 
         async def emit_async():
@@ -1453,9 +1548,10 @@ class ExecutorKindsService(
                         task_id=task_id,
                         subtask_id=subtask_id,
                         bot_name=bot_name,
+                        shell_type=shell_type,
                     )
                     logger.info(
-                        f"[WS] Successfully emitted chat:start event for task={task_id} subtask={subtask_id}"
+                        f"[WS] Successfully emitted chat:start event for task={task_id} subtask={subtask_id} shell_type={shell_type}"
                     )
                 else:
                     logger.warning(

@@ -7,17 +7,16 @@
 # -*- coding: utf-8 -*-
 
 import os
-from typing import Dict, Any, Optional, Tuple
-from datetime import datetime
 from collections import OrderedDict
+from datetime import datetime
+from typing import Any, Dict, Optional, Tuple
 
-
-from shared.utils import git_util
-from executor.config import config
-from shared.status import TaskStatus
-from shared.logger import setup_logger
 from executor.callback.callback_client import CallbackClient
-from shared.utils.crypto import is_token_encrypted, decrypt_git_token
+from executor.config import config
+from shared.logger import setup_logger
+from shared.status import TaskStatus
+from shared.utils import git_util
+from shared.utils.crypto import decrypt_git_token, is_token_encrypted
 
 logger = setup_logger("agent_base")
 
@@ -26,12 +25,12 @@ class Agent:
     """
     Base Agent class that all specific agents should inherit from
     """
-    
+
     def get_name(self) -> str:
         """
         Get the name of the agent. By default, returns the class name.
         Subclasses can override this method to provide a custom name.
-        
+
         Returns:
             str: The name of the agent
         """
@@ -50,18 +49,22 @@ class Agent:
         self.subtask_id = task_data.get("subtask_id", -1)
         self.task_title = task_data.get("task_title", "")
         self.subtask_title = task_data.get("subtask_title", "")
-        self.task_type = task_data.get("type")  # Task type (e.g., "validation" for validation tasks)
+        self.task_type = task_data.get(
+            "type"
+        )  # Task type (e.g., "validation" for validation tasks)
         self.execution_status = TaskStatus.INITIALIZED
         self.project_path = None
 
-    def handle(self, pre_executed: Optional[TaskStatus] = None) -> Tuple[TaskStatus, Optional[str]]:
+    def handle(
+        self, pre_executed: Optional[TaskStatus] = None
+    ) -> Tuple[TaskStatus, Optional[str]]:
         """
         Unified entry point for agent execution.
         Executes pre_execute first, then execute if pre_execute succeeds.
-        
+
         Args:
             pre_executed: Optional parameter to override the internal execution status
-            
+
         Returns:
             tuple: (status: TaskStatus, error_message: str or None)
             - status: TaskStatus indicating the result of execution
@@ -71,9 +74,11 @@ class Agent:
             # If pre_executed parameter is provided, update internal state
             if pre_executed is not None:
                 self.execution_status = pre_executed
-                
+
             if self.execution_status == TaskStatus.INITIALIZED:
-                logger.info(f"Agent[{self.get_name()}][{self.task_id}] handle: Starting pre_execute.")
+                logger.info(
+                    f"Agent[{self.get_name()}][{self.task_id}] handle: Starting pre_execute."
+                )
                 pre_execute_status = self.pre_execute()
                 if pre_execute_status != TaskStatus.SUCCESS:
                     error_msg = f"Agent[{self.get_name()}][{self.task_id}] handle: pre_execute failed."
@@ -86,8 +91,10 @@ class Agent:
                 )
                 self.execution_status = TaskStatus.PRE_EXECUTED
             else:
-                logger.info(f"Agent[{self.get_name()}][{self.task_id}] handle: Skipping pre_execute (already done).")
-  
+                logger.info(
+                    f"Agent[{self.get_name()}][{self.task_id}] handle: Skipping pre_execute (already done)."
+                )
+
             self.execution_status = TaskStatus.RUNNING
             result = self.execute()
             logger.info(
@@ -102,8 +109,11 @@ class Agent:
             return TaskStatus.FAILED, error_msg
 
     def report_progress(
-        self, progress: int, status: Optional[str] = None, message: Optional[str] = None,
-        result: Optional[Dict[str, Any]] = None
+        self,
+        progress: int,
+        status: Optional[str] = None,
+        message: Optional[str] = None,
+        result: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Report progress to the executor_manager
@@ -114,18 +124,26 @@ class Agent:
             message: Optional message string
             result: Optional result data dictionary
         """
-        logger.info(f"Reporting progress: {progress}%, status: {status}, message: {message}, result: {result}, task_type: {self.task_type}")
-        self.callback_client.send_callback(
-            task_id=self.task_id,
-            subtask_id=self.subtask_id,
-            task_title=self.task_title,
-            subtask_title=self.subtask_title,
-            progress=progress,
-            status=status,
-            message=message,
-            result=result,
-            task_type=self.task_type,
+        logger.info(
+            f"Reporting progress: {progress}%, status: {status}, message: {message}, result: {result}, task_type: {self.task_type}"
         )
+        try:
+            self.callback_client.send_callback(
+                task_id=self.task_id,
+                subtask_id=self.subtask_id,
+                task_title=self.task_title,
+                subtask_title=self.subtask_title,
+                progress=progress,
+                status=status,
+                message=message,
+                result=result,
+                task_type=self.task_type,
+            )
+        except Exception as e:
+            logger.critical(
+                f"[CALLBACK_FAIL] task_id={self.task_id}, progress={progress}, "
+                f"status={status}, error={type(e).__name__}: {str(e)}"
+            )
 
     def pre_execute(self) -> TaskStatus:
         """
@@ -135,9 +153,11 @@ class Agent:
         Returns:
             TaskStatus: Execution status (COMPLETED, FAILED, etc.)
         """
-        logger.info(f"Agent[{self.get_name()}][{self.task_id}] pre_execute: No pre-execution steps by default, passing through.")
+        logger.info(
+            f"Agent[{self.get_name()}][{self.task_id}] pre_execute: No pre-execution steps by default, passing through."
+        )
         return TaskStatus.SUCCESS
-        
+
     def execute(self) -> TaskStatus:
         """
         Execute the agent's task
@@ -148,43 +168,53 @@ class Agent:
         raise NotImplementedError("Subclasses must implement execute()")
 
     def download_code(self):
-        git_url = self.task_data.get("git_url","")
+        git_url = self.task_data.get("git_url", "")
         if git_url == "":
             logger.info("git url is empty, skip download code")
             return
-        
+
         user_config = self.task_data.get("user")
         git_token = user_config.get("git_token")
         # Handle encrypted tokens
         if git_token and is_token_encrypted(git_token):
-            logger.debug(f"Agent[{self.get_name()}][{self.task_id}] Decrypting git token")
+            logger.debug(
+                f"Agent[{self.get_name()}][{self.task_id}] Decrypting git token"
+            )
             git_token = decrypt_git_token(git_token)
 
         username = user_config.get("user_name")
         branch_name = self.task_data.get("branch_name")
         repo_name = git_util.get_repo_name_from_url(git_url)
-        logger.info(f"Agent[{self.get_name()}][{self.task_id}] start download code for git url: {git_url}, branch name: {branch_name}")
+        logger.info(
+            f"Agent[{self.get_name()}][{self.task_id}] start download code for git url: {git_url}, branch name: {branch_name}"
+        )
         logger.info("username: {username} git token: {git_token}")
         logger.info(user_config)
 
-        project_path = os.path.join(config.WORKSPACE_ROOT, str(self.task_id),repo_name)
+        project_path = os.path.join(config.WORKSPACE_ROOT, str(self.task_id), repo_name)
         if self.project_path is None:
             self.project_path = project_path
 
         if not os.path.exists(project_path):
-            success, error_msg = git_util.clone_repo(git_url, branch_name, project_path, username, git_token)
+            success, error_msg = git_util.clone_repo(
+                git_url, branch_name, project_path, username, git_token
+            )
 
             if success:
                 # Setup git config with user information
                 self.setup_git_config(user_config, project_path)
-                logger.info(f"Agent[{self.get_name()}][{self.task_id}] Project cloned to {project_path}")
+                logger.info(
+                    f"Agent[{self.get_name()}][{self.task_id}] Project cloned to {project_path}"
+                )
             else:
                 error_detail = f": {error_msg}" if error_msg else ""
                 error_msg = f"Agent[{self.get_name()}][{self.task_id}] Failed to clone project to {project_path}{error_detail}"
                 logger.error(error_msg)
                 raise Exception(error_msg)
         else:
-            logger.info(f"Agent[{self.get_name()}][{self.task_id}] Project already exists at {project_path}, skip cloning")
+            logger.info(
+                f"Agent[{self.get_name()}][{self.task_id}] Project already exists at {project_path}, skip cloning"
+            )
 
     def initialize(self) -> TaskStatus:
         """
@@ -195,13 +225,15 @@ class Agent:
         Returns:
             TaskStatus: Initialization status (COMPLETED, FAILED, etc.)
         """
-        logger.info(f"Agent[{self.get_name()}][{self.task_id}] initialize: No initialization steps by default.")
+        logger.info(
+            f"Agent[{self.get_name()}][{self.task_id}] initialize: No initialization steps by default."
+        )
         return TaskStatus.SUCCESS
-        
+
     def setup_git_config(self, user_config, project_path):
         """
         Setup git config with user information
-        
+
         Args:
             user_config: User configuration dictionary
             project_path: Path to the git repository
@@ -218,12 +250,18 @@ class Agent:
                 f"Agent[{self.get_name()}][{self.task_id}] "
                 f"Setting git config user.name='{git_login}', user.email='{git_email}'"
             )
-            success, error_msg = git_util.set_git_config(project_path, git_login, git_email)
+            success, error_msg = git_util.set_git_config(
+                project_path, git_login, git_email
+            )
             if not success:
-                logger.error(f"Agent[{self.get_name()}][{self.task_id}] Failed to set git config: {error_msg}")
+                logger.error(
+                    f"Agent[{self.get_name()}][{self.task_id}] Failed to set git config: {error_msg}"
+                )
         else:
-            logger.warning(f"Agent[{self.get_name()}][{self.task_id}] Missing git_login or git_email, skip git config")
-    
+            logger.warning(
+                f"Agent[{self.get_name()}][{self.task_id}] Missing git_login or git_email, skip git config"
+            )
+
     def _record_error_thinking(self, title: str, error_message: str) -> None:
         """
         Record error thinking for logging system errors
@@ -234,12 +272,12 @@ class Agent:
         """
         try:
             # Check if thinking recording capability is available
-            if hasattr(self, 'add_thinking_step'):
+            if hasattr(self, "add_thinking_step"):
                 self.add_thinking_step(
                     title=title,
                     report_immediately=True,
                     use_i18n_keys=False,
-                    details={"error_message": error_message}
+                    details={"error_message": error_message},
                 )
                 logger.info(f"Recorded error thinking for {title}: {error_message}")
         except Exception as e:
@@ -261,13 +299,13 @@ class Agent:
             return False
 
         # Reject paths containing '..'
-        if '..' in file_path.split(os.sep):
+        if ".." in file_path.split(os.sep):
             logger.warning(f"Path traversal detected: {file_path}")
             return False
 
         # Normalize path and check if it points outside the project
         normalized = os.path.normpath(file_path)
-        if normalized.startswith('..'):
+        if normalized.startswith(".."):
             logger.warning(f"Path points outside project: {file_path}")
             return False
 
@@ -310,18 +348,24 @@ class Agent:
 
             # Try to read file
             try:
-                with open(full_path, 'r', encoding='utf-8') as f:
+                with open(full_path, "r", encoding="utf-8") as f:
                     content = f.read()
-                    file_size = len(content.encode('utf-8'))
+                    file_size = len(content.encode("utf-8"))
                     custom_rules[file_path] = content
-                    logger.info(f"Successfully loaded custom instruction file: {file_path} ({file_size} bytes)")
+                    logger.info(
+                        f"Successfully loaded custom instruction file: {file_path} ({file_size} bytes)"
+                    )
             except Exception as e:
-                logger.warning(f"Failed to read custom instruction file {file_path}: {e}")
+                logger.warning(
+                    f"Failed to read custom instruction file {file_path}: {e}"
+                )
                 continue
 
         return custom_rules
 
-    def _update_git_exclude(self, project_path: str, exclude_claude_md: bool = True) -> None:
+    def _update_git_exclude(
+        self, project_path: str, exclude_claude_md: bool = True
+    ) -> None:
         """
         Update .git/info/exclude file to exclude .claudecode directory
 
@@ -335,7 +379,9 @@ class Agent:
             # Check if .git directory exists
             git_dir = os.path.join(project_path, ".git")
             if not os.path.exists(git_dir):
-                logger.debug(".git directory does not exist, skipping git exclude update")
+                logger.debug(
+                    ".git directory does not exist, skipping git exclude update"
+                )
                 return
 
             # Ensure .git/info directory exists
@@ -349,7 +395,7 @@ class Agent:
             # Check if file exists and read content
             content = ""
             if os.path.exists(exclude_file):
-                with open(exclude_file, 'r', encoding='utf-8') as f:
+                with open(exclude_file, "r", encoding="utf-8") as f:
                     content = f.read()
 
             # Check which patterns need to be added
@@ -360,16 +406,16 @@ class Agent:
 
             if patterns_to_add:
                 # Append patterns
-                with open(exclude_file, 'a', encoding='utf-8') as f:
-                    if content and not content.endswith('\n'):
-                        f.write('\n')
+                with open(exclude_file, "a", encoding="utf-8") as f:
+                    if content and not content.endswith("\n"):
+                        f.write("\n")
                     for pattern in patterns_to_add:
                         f.write(f"{pattern}\n")
-                logger.info(f"Updated .git/info/exclude to ignore: {', '.join(patterns_to_add)}")
+                logger.info(
+                    f"Updated .git/info/exclude to ignore: {', '.join(patterns_to_add)}"
+                )
             else:
                 logger.debug(f"All patterns already in {exclude_file}")
 
         except Exception as e:
             logger.warning(f"Failed to update .git/info/exclude: {e}")
-
- 

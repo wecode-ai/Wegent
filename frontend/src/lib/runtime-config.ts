@@ -21,6 +21,26 @@ export interface RuntimeConfig {
   socketDirectUrl: string;
   /** Enable chat context feature (knowledge base background) */
   enableChatContext: boolean;
+  /** Login mode: 'password', 'oidc', or 'all' */
+  loginMode: string;
+  /** OIDC login button text */
+  oidcLoginText: string;
+  /** Enable display quotas in frontend */
+  enableDisplayQuotas: boolean;
+  /** Enable Wiki module */
+  enableWiki: boolean;
+  /** VSCode link template for deep linking */
+  vscodeLinkTemplate: string;
+  /** Feedback URL for issue reporting */
+  feedbackUrl: string;
+  /** Documentation URL */
+  docsUrl: string;
+  /** Enable OpenTelemetry tracing */
+  otelEnabled: boolean;
+  /** OpenTelemetry service name */
+  otelServiceName: string;
+  /** OpenTelemetry collector endpoint */
+  otelCollectorEndpoint: string;
 }
 
 // Cache for runtime config to avoid repeated API calls
@@ -61,6 +81,18 @@ export const fetchRuntimeConfig = async (): Promise<RuntimeConfig> => {
         apiUrl: process.env.NEXT_PUBLIC_API_URL || '',
         socketDirectUrl: process.env.NEXT_PUBLIC_SOCKET_DIRECT_URL || '',
         enableChatContext: process.env.NEXT_PUBLIC_ENABLE_CHAT_CONTEXT === 'true',
+        loginMode: process.env.NEXT_PUBLIC_LOGIN_MODE || 'all',
+        oidcLoginText: process.env.NEXT_PUBLIC_OIDC_LOGIN_TEXT || '',
+        enableDisplayQuotas: process.env.NEXT_PUBLIC_FRONTEND_ENABLE_DISPLAY_QUOTAS === 'enable',
+        enableWiki: process.env.NEXT_PUBLIC_ENABLE_WIKI !== 'false',
+        vscodeLinkTemplate: process.env.NEXT_PUBLIC_VSCODE_LINK_TEMPLATE || '',
+        feedbackUrl:
+          process.env.NEXT_PUBLIC_FEEDBACK_URL || 'https://github.com/wecode-ai/wegent/issues/new',
+        docsUrl: process.env.NEXT_PUBLIC_DOCS_URL || 'https://github.com/wecode-ai/Wegent',
+        otelEnabled: process.env.NEXT_PUBLIC_OTEL_ENABLED === 'true',
+        otelServiceName: process.env.NEXT_PUBLIC_OTEL_SERVICE_NAME || 'wegent-frontend',
+        otelCollectorEndpoint:
+          process.env.NEXT_PUBLIC_OTEL_COLLECTOR_ENDPOINT || 'http://localhost:4318',
       };
       runtimeConfigCache = fallback;
       return fallback;
@@ -85,6 +117,18 @@ export const getRuntimeConfigSync = (): RuntimeConfig => {
     apiUrl: process.env.NEXT_PUBLIC_API_URL || '',
     socketDirectUrl: process.env.NEXT_PUBLIC_SOCKET_DIRECT_URL || '',
     enableChatContext: process.env.NEXT_PUBLIC_ENABLE_CHAT_CONTEXT === 'true',
+    loginMode: process.env.NEXT_PUBLIC_LOGIN_MODE || 'all',
+    oidcLoginText: process.env.NEXT_PUBLIC_OIDC_LOGIN_TEXT || '',
+    enableDisplayQuotas: process.env.NEXT_PUBLIC_FRONTEND_ENABLE_DISPLAY_QUOTAS === 'enable',
+    enableWiki: process.env.NEXT_PUBLIC_ENABLE_WIKI !== 'false',
+    vscodeLinkTemplate: process.env.NEXT_PUBLIC_VSCODE_LINK_TEMPLATE || '',
+    feedbackUrl:
+      process.env.NEXT_PUBLIC_FEEDBACK_URL || 'https://github.com/wecode-ai/wegent/issues/new',
+    docsUrl: process.env.NEXT_PUBLIC_DOCS_URL || 'https://github.com/wecode-ai/Wegent',
+    otelEnabled: process.env.NEXT_PUBLIC_OTEL_ENABLED === 'true',
+    otelServiceName: process.env.NEXT_PUBLIC_OTEL_SERVICE_NAME || 'wegent-frontend',
+    otelCollectorEndpoint:
+      process.env.NEXT_PUBLIC_OTEL_COLLECTOR_ENDPOINT || 'http://localhost:4318',
   };
 };
 
