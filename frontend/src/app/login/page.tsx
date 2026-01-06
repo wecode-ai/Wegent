@@ -2,14 +2,30 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import LogoHeader, { LogoSubTitle } from '@/features/login/components/LogoHeader';
-import LoginForm from '@/features/login/components/LoginForm';
+import { useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import LogoHeader, { LogoSubTitle } from '@/features/login/components/LogoHeader'
+import LoginForm from '@/features/login/components/LoginForm'
 
-import { UserProvider } from '@/features/common/UserContext';
+import { UserProvider } from '@/features/common/UserContext'
 
 export default function LoginPage() {
+  const router = useRouter()
+
+  useEffect(() => {
+    // DingTalk exclusive mode: redirect to DingTalk auth
+    if (process.env.NEXT_PUBLIC_AUTH_MODE === 'dingtalk') {
+      router.replace('/auth/dingtalk')
+    }
+  }, [router])
+
+  // Hide content during redirect in DingTalk mode
+  if (process.env.NEXT_PUBLIC_AUTH_MODE === 'dingtalk') {
+    return null
+  }
+
   return (
     <UserProvider>
       <div className="smart-h-screen bg-base flex flex-col justify-center py-12 sm:px-6 lg:px-8 box-border">
@@ -24,5 +40,5 @@ export default function LoginPage() {
         </div>
       </div>
     </UserProvider>
-  );
+  )
 }
