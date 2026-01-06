@@ -2,9 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import * as React from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 
 /**
  * Truncate text to a maximum length, keeping start and end with ellipsis in the middle
@@ -16,38 +17,47 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
  */
 function truncateMiddle(text: string, maxLength: number, startChars = 8, endChars = 10): string {
   if (text.length <= maxLength) {
-    return text;
+    return text
   }
 
-  const start = text.slice(0, startChars);
-  const end = text.slice(-endChars);
-  return `${start}...${end}`;
+  const start = text.slice(0, startChars)
+  const end = text.slice(-endChars)
+  return `${start}...${end}`
 }
-import { SearchableSelect, SearchableSelectItem } from '@/components/ui/searchable-select';
-import { FiGithub } from 'react-icons/fi';
-import { Loader2, RefreshCw } from 'lucide-react';
-import { Cog6ToothIcon } from '@heroicons/react/24/outline';
-import { GitRepoInfo, TaskDetail } from '@/types/api';
-import { useUser } from '@/features/common/UserContext';
-import { useRouter } from 'next/navigation';
-import { paths } from '@/config/paths';
-import { useTranslation } from 'react-i18next';
-import { getLastRepo } from '@/utils/userPreferences';
-import { githubApis } from '@/apis/github';
-import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
-import { useToast } from '@/hooks/use-toast';
-import { cn } from '@/lib/utils';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { SearchableSelect, SearchableSelectItem } from '@/components/ui/searchable-select'
+import { FiGithub } from 'react-icons/fi'
+import { Loader2, RefreshCw, Check } from 'lucide-react'
+import { Cog6ToothIcon } from '@heroicons/react/24/outline'
+import { GitRepoInfo, TaskDetail } from '@/types/api'
+import { useUser } from '@/features/common/UserContext'
+import { useRouter } from 'next/navigation'
+import { paths } from '@/config/paths'
+import { useTranslation } from '@/hooks/useTranslation'
+import { getLastRepo } from '@/utils/userPreferences'
+import { githubApis } from '@/apis/github'
+import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
+import { useToast } from '@/hooks/use-toast'
+import { cn } from '@/lib/utils'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command'
 
 interface RepositorySelectorProps {
-  selectedRepo: GitRepoInfo | null;
-  handleRepoChange: (repo: GitRepoInfo | null) => void;
-  disabled: boolean;
-  selectedTaskDetail?: TaskDetail | null;
+  selectedRepo: GitRepoInfo | null
+  handleRepoChange: (repo: GitRepoInfo | null) => void
+  disabled: boolean
+  selectedTaskDetail?: TaskDetail | null
   /** When true, the selector will take full width of its container */
-  fullWidth?: boolean;
+  fullWidth?: boolean
   /** When true, display only icon without text (for responsive collapse) */
-  compact?: boolean;
+  compact?: boolean
 }
 
 export default function RepositorySelector({
@@ -58,22 +68,22 @@ export default function RepositorySelector({
   fullWidth = false,
   compact = false,
 }: RepositorySelectorProps) {
-  const { toast } = useToast();
-  const { t } = useTranslation();
-  const { user } = useUser();
-  const router = useRouter();
-  const [repos, setRepos] = useState<GitRepoInfo[]>([]);
-  const [cachedRepos, setCachedRepos] = useState<GitRepoInfo[]>([]); // Cache initially loaded repositories
-  const [loading, setLoading] = useState<boolean>(false);
-  const [isSearching, setIsSearching] = useState<boolean>(false); // User is searching (includes waiting period)
-  const [isRefreshing, setIsRefreshing] = useState<boolean>(false); // Refreshing repository cache
-  const [currentSearchQuery, setCurrentSearchQuery] = useState<string>(''); // Current search query for refresh
-  const [error, setError] = useState<string | null>(null);
-  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const { toast } = useToast()
+  const { t } = useTranslation()
+  const { user } = useUser()
+  const router = useRouter()
+  const [repos, setRepos] = useState<GitRepoInfo[]>([])
+  const [cachedRepos, setCachedRepos] = useState<GitRepoInfo[]>([]) // Cache initially loaded repositories
+  const [loading, setLoading] = useState<boolean>(false)
+  const [isSearching, setIsSearching] = useState<boolean>(false) // User is searching (includes waiting period)
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false) // Refreshing repository cache
+  const [currentSearchQuery, setCurrentSearchQuery] = useState<string>('') // Current search query for refresh
+  const [error, setError] = useState<string | null>(null)
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   // Check if user has git_info configured
   const hasGitInfo = () => {
-    return user && user.git_info && user.git_info.length > 0;
-  };
+    return user && user.git_info && user.git_info.length > 0
+  }
 
   /**
    * Load repositories from API
@@ -81,29 +91,29 @@ export default function RepositorySelector({
    */
   const loadRepositories = async (): Promise<GitRepoInfo[]> => {
     if (!hasGitInfo()) {
-      return [];
+      return []
     }
 
-    setLoading(true);
-    setError(null);
+    setLoading(true)
+    setError(null)
 
     try {
-      const data = await githubApis.getRepositories();
-      setRepos(data);
-      setCachedRepos(data); // Cache initial repository list
-      setError(null);
-      return data;
+      const data = await githubApis.getRepositories()
+      setRepos(data)
+      setCachedRepos(data) // Cache initial repository list
+      setError(null)
+      return data
     } catch {
-      setError('Failed to load repositories');
+      setError('Failed to load repositories')
       toast({
         variant: 'destructive',
         title: 'Failed to load repositories',
-      });
-      return [];
+      })
+      return []
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  };
+  }
 
   /**
    * Search repositories locally (in cache)
@@ -111,13 +121,13 @@ export default function RepositorySelector({
   const searchLocalRepos = useCallback(
     (query: string): GitRepoInfo[] => {
       if (!query.trim()) {
-        return cachedRepos;
+        return cachedRepos
       }
-      const lowerQuery = query.toLowerCase();
-      return cachedRepos.filter(repo => repo.git_repo.toLowerCase().includes(lowerQuery));
+      const lowerQuery = query.toLowerCase()
+      return cachedRepos.filter(repo => repo.git_repo.toLowerCase().includes(lowerQuery))
     },
     [cachedRepos]
-  );
+  )
 
   /**
    * Search repositories remotely (delayed execution)
@@ -125,37 +135,37 @@ export default function RepositorySelector({
   const searchRemoteRepos = useCallback(
     async (query: string) => {
       if (!query.trim()) {
-        setRepos(cachedRepos);
-        return;
+        setRepos(cachedRepos)
+        return
       }
 
       try {
         const results = await githubApis.searchRepositories(query, {
           fullmatch: false,
           timeout: 30,
-        });
+        })
 
         // Merge local and remote results, remove duplicates
-        const localResults = searchLocalRepos(query);
-        const mergedResults = [...localResults];
+        const localResults = searchLocalRepos(query)
+        const mergedResults = [...localResults]
 
         results.forEach(remoteRepo => {
           if (!mergedResults.find(r => r.git_repo_id === remoteRepo.git_repo_id)) {
-            mergedResults.push(remoteRepo);
+            mergedResults.push(remoteRepo)
           }
-        });
+        })
 
-        setRepos(mergedResults);
-        setError(null);
+        setRepos(mergedResults)
+        setError(null)
       } catch {
         // Keep local results when remote search fails
-        console.error('Remote search failed, keeping local results');
+        console.error('Remote search failed, keeping local results')
       } finally {
-        setIsSearching(false); // Hide loading indicator when remote search completes
+        setIsSearching(false) // Hide loading indicator when remote search completes
       }
     },
     [cachedRepos, searchLocalRepos]
-  );
+  )
 
   /**
    * Handle search input changes
@@ -163,46 +173,46 @@ export default function RepositorySelector({
   const handleSearchChange = useCallback(
     (query: string) => {
       // Track current search query for refresh functionality
-      setCurrentSearchQuery(query);
+      setCurrentSearchQuery(query)
 
       // Clear previous timer
       if (searchTimeoutRef.current) {
-        clearTimeout(searchTimeoutRef.current);
+        clearTimeout(searchTimeoutRef.current)
       }
 
       // If search is empty, restore cached repos immediately
       if (!query.trim()) {
-        setRepos(cachedRepos);
-        setIsSearching(false);
-        return;
+        setRepos(cachedRepos)
+        setIsSearching(false)
+        return
       }
 
       // Show loading indicator immediately when user starts typing
-      setIsSearching(true);
+      setIsSearching(true)
 
       // Immediately perform local search
-      const localResults = searchLocalRepos(query);
-      setRepos(localResults);
+      const localResults = searchLocalRepos(query)
+      setRepos(localResults)
 
       // Delay 1 second before remote search (regardless of local results)
       searchTimeoutRef.current = setTimeout(() => {
-        searchRemoteRepos(query);
-      }, 1000);
+        searchRemoteRepos(query)
+      }, 1000)
     },
     [searchLocalRepos, searchRemoteRepos, cachedRepos]
-  );
+  )
 
   /**
    * Handle refresh cache button click
    * Clears backend Redis cache and reloads repository list
    */
   const handleRefreshCache = useCallback(async () => {
-    if (isRefreshing) return; // Prevent duplicate clicks
+    if (isRefreshing) return // Prevent duplicate clicks
 
-    setIsRefreshing(true);
+    setIsRefreshing(true)
     try {
       // 1. Call backend API to clear cache
-      await githubApis.refreshRepositories();
+      await githubApis.refreshRepositories()
 
       // 2. Reload data based on current search state
       if (currentSearchQuery.trim()) {
@@ -210,55 +220,55 @@ export default function RepositorySelector({
         const results = await githubApis.searchRepositories(currentSearchQuery, {
           fullmatch: false,
           timeout: 30,
-        });
-        setRepos(results);
+        })
+        setRepos(results)
       } else {
         // No search query: reload all repositories
-        const data = await githubApis.getRepositories();
-        setRepos(data);
-        setCachedRepos(data);
+        const data = await githubApis.getRepositories()
+        setRepos(data)
+        setCachedRepos(data)
       }
 
-      toast({ title: t('branches.refresh_success') });
+      toast({ title: t('branches.refresh_success') })
     } catch {
-      toast({ variant: 'destructive', title: t('branches.refresh_failed') });
+      toast({ variant: 'destructive', title: t('branches.refresh_failed') })
     } finally {
-      setIsRefreshing(false);
+      setIsRefreshing(false)
     }
-  }, [isRefreshing, currentSearchQuery, toast, t]);
+  }, [isRefreshing, currentSearchQuery, toast, t])
 
   // Cleanup timer
   useEffect(() => {
     return () => {
       if (searchTimeoutRef.current) {
-        clearTimeout(searchTimeoutRef.current);
+        clearTimeout(searchTimeoutRef.current)
       }
-    };
-  }, []);
+    }
+  }, [])
 
   const handleChange = (value: string) => {
     // First try to find in current repos list (includes search results)
-    let repo = repos.find(r => r.git_repo_id === Number(value));
+    let repo = repos.find(r => r.git_repo_id === Number(value))
 
     // If not found in current list, try cached repos (all initially loaded repos)
     if (!repo) {
-      repo = cachedRepos.find(r => r.git_repo_id === Number(value));
+      repo = cachedRepos.find(r => r.git_repo_id === Number(value))
     }
 
     if (repo) {
-      handleRepoChange(repo);
+      handleRepoChange(repo)
     }
-  };
+  }
 
   /**
    * Centralized repository selection logic
    * Handles all scenarios: mount, task selection, and restoration
    */
   useEffect(() => {
-    let canceled = false;
+    let canceled = false
 
     const selectRepository = async () => {
-      const hasGit = hasGitInfo();
+      const hasGit = hasGitInfo()
       console.log('[RepositorySelector] Effect triggered', {
         hasGitInfo: hasGit,
         user: user ? 'loaded' : 'null',
@@ -267,11 +277,11 @@ export default function RepositorySelector({
         selectedRepo: selectedRepo?.git_repo || 'none',
         disabled,
         reposLength: repos.length,
-      });
+      })
 
       if (!hasGit) {
-        console.log('[RepositorySelector] No git info, exiting');
-        return;
+        console.log('[RepositorySelector] No git info, exiting')
+        return
       }
 
       // Scenario 1: Task is selected - use task's repository
@@ -279,119 +289,117 @@ export default function RepositorySelector({
         console.log(
           '[RepositorySelector] Scenario 1: Task selected, repo:',
           selectedTaskDetail.git_repo
-        );
+        )
 
         // Check if already selected
         if (selectedRepo?.git_repo === selectedTaskDetail.git_repo) {
-          console.log('[RepositorySelector] Already selected, no change needed');
-          return;
+          console.log('[RepositorySelector] Already selected, no change needed')
+          return
         }
 
         // Try to find in existing repos list
-        const repoInList = repos.find(r => r.git_repo === selectedTaskDetail.git_repo);
+        const repoInList = repos.find(r => r.git_repo === selectedTaskDetail.git_repo)
         if (repoInList) {
-          console.log('[RepositorySelector] Found in list, selecting:', repoInList.git_repo);
-          handleRepoChange(repoInList);
-          return;
+          console.log('[RepositorySelector] Found in list, selecting:', repoInList.git_repo)
+          handleRepoChange(repoInList)
+          return
         }
 
         // Not found locally - search via API
-        console.log('[RepositorySelector] Not in list, searching via API');
+        console.log('[RepositorySelector] Not in list, searching via API')
         try {
-          setLoading(true);
+          setLoading(true)
           const result = await githubApis.searchRepositories(selectedTaskDetail.git_repo, {
             fullmatch: true,
-          });
+          })
 
-          if (canceled) return;
+          if (canceled) return
 
           if (result && result.length > 0) {
             const matched =
-              result.find(r => r.git_repo === selectedTaskDetail.git_repo) ?? result[0];
-            console.log('[RepositorySelector] Found via API, selecting:', matched.git_repo);
-            handleRepoChange(matched);
-            setError(null);
+              result.find(r => r.git_repo === selectedTaskDetail.git_repo) ?? result[0]
+            console.log('[RepositorySelector] Found via API, selecting:', matched.git_repo)
+            handleRepoChange(matched)
+            setError(null)
           } else {
             toast({
               variant: 'destructive',
               title: 'No repositories found',
-            });
+            })
           }
         } catch {
-          setError('Failed to search repositories');
+          setError('Failed to search repositories')
           toast({
             variant: 'destructive',
             title: 'Failed to search repositories',
-          });
+          })
         } finally {
           if (!canceled) {
-            setLoading(false);
+            setLoading(false)
           }
         }
-        return;
+        return
       }
 
       // Scenario 2: No task selected and no repo selected - load repos and optionally restore from localStorage
       if (!selectedTaskDetail && !selectedRepo && !disabled) {
-        console.log('[RepositorySelector] Scenario 2: Load repos and restore from localStorage');
+        console.log('[RepositorySelector] Scenario 2: Load repos and restore from localStorage')
 
         // Load repositories if not already loaded
-        let repoList = repos;
+        let repoList = repos
         if (repoList.length === 0) {
-          console.log('[RepositorySelector] Repos not loaded, loading now...');
-          repoList = await loadRepositories();
-          console.log('[RepositorySelector] Loaded repos count:', repoList.length);
+          console.log('[RepositorySelector] Repos not loaded, loading now...')
+          repoList = await loadRepositories()
+          console.log('[RepositorySelector] Loaded repos count:', repoList.length)
           if (canceled || repoList.length === 0) {
-            console.log('[RepositorySelector] Load failed or canceled');
-            return;
+            console.log('[RepositorySelector] Load failed or canceled')
+            return
           }
         }
 
         // Try to restore from localStorage if available
-        const lastRepo = getLastRepo();
-        console.log('[RepositorySelector] Last repo from storage:', lastRepo);
+        const lastRepo = getLastRepo()
+        console.log('[RepositorySelector] Last repo from storage:', lastRepo)
 
         if (lastRepo) {
           // Find and select the last repo
-          const repoToRestore = repoList.find(r => r.git_repo_id === lastRepo.repoId);
+          const repoToRestore = repoList.find(r => r.git_repo_id === lastRepo.repoId)
           if (repoToRestore) {
             console.log(
               '[RepositorySelector] ✅ Restoring repo from localStorage:',
               repoToRestore.git_repo
-            );
-            handleRepoChange(repoToRestore);
+            )
+            handleRepoChange(repoToRestore)
           } else {
-            console.log('[RepositorySelector] ❌ Repo not found in list, ID:', lastRepo.repoId);
+            console.log('[RepositorySelector] ❌ Repo not found in list, ID:', lastRepo.repoId)
           }
         } else {
-          console.log(
-            '[RepositorySelector] No last repo in storage, repos loaded but no selection'
-          );
+          console.log('[RepositorySelector] No last repo in storage, repos loaded but no selection')
         }
       } else {
         console.log('[RepositorySelector] Scenario 2 conditions not met:', {
           hasTaskDetail: !!selectedTaskDetail,
           hasSelectedRepo: !!selectedRepo,
           disabled,
-        });
+        })
       }
-    };
+    }
 
-    selectRepository();
+    selectRepository()
 
     return () => {
-      canceled = true;
-    };
+      canceled = true
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTaskDetail?.git_repo, disabled, user, repos.length]);
+  }, [selectedTaskDetail?.git_repo, disabled, user, repos.length])
 
   /**
    * Navigate to settings page to configure git integration
    */
   const handleIntegrationClick = () => {
-    router.push(paths.settings.integrations.getHref());
-  };
-  const isMobile = useIsMobile();
+    router.push(paths.settings.integrations.getHref())
+  }
+  const isMobile = useIsMobile()
 
   // Convert repos to SearchableSelectItem format
   // Always include the selected repo to ensure it displays correctly
@@ -400,126 +408,182 @@ export default function RepositorySelector({
       value: repo.git_repo_id.toString(),
       label: repo.git_repo,
       searchText: repo.git_repo,
-    }));
+    }))
 
     // Ensure selected repo is in the items list
     if (selectedRepo) {
-      const hasSelected = items.some(item => item.value === selectedRepo.git_repo_id.toString());
+      const hasSelected = items.some(item => item.value === selectedRepo.git_repo_id.toString())
       if (!hasSelected) {
         // Add selected repo at the beginning if not in current list
         items.unshift({
           value: selectedRepo.git_repo_id.toString(),
           label: selectedRepo.git_repo,
           searchText: selectedRepo.git_repo,
-        });
+        })
       }
     }
 
-    return items;
-  }, [repos, selectedRepo]);
+    return items
+  }, [repos, selectedRepo])
+
+  // State for compact mode popover
+  const [compactOpen, setCompactOpen] = React.useState(false)
 
   // Tooltip content for repository selector
   // In compact mode, show selected repo name in tooltip
   const tooltipContent =
     compact && selectedRepo
       ? `${t('repos.repository_tooltip', '选择代码仓库')}: ${selectedRepo.git_repo}`
-      : t('repos.repository_tooltip', '选择代码仓库');
+      : t('repos.repository_tooltip', '选择代码仓库')
 
-  // In compact mode, only show the icon button
+  // In compact mode, use Popover directly instead of hidden SearchableSelect
   if (compact) {
     return (
       <div className="flex items-center min-w-0" data-tour="repo-selector">
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                disabled={disabled || loading}
+        <Popover open={compactOpen} onOpenChange={setCompactOpen}>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    disabled={disabled || loading}
+                    className={cn(
+                      'flex items-center gap-1 min-w-0 rounded-md px-2 py-1',
+                      'transition-colors',
+                      'text-text-muted hover:text-text-primary hover:bg-muted',
+                      loading ? 'animate-pulse' : '',
+                      'focus:outline-none focus:ring-0',
+                      'disabled:cursor-not-allowed disabled:opacity-50'
+                    )}
+                  >
+                    <FiGithub className="w-4 h-4 flex-shrink-0" />
+                  </button>
+                </PopoverTrigger>
+              </TooltipTrigger>
+              <TooltipContent side="top">
+                <p>{tooltipContent}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+          <PopoverContent
+            className={cn(
+              'p-0 w-auto min-w-[280px] max-w-[90vw] border border-border bg-base',
+              'shadow-xl rounded-xl overflow-hidden',
+              'max-h-[var(--radix-popover-content-available-height,400px)]',
+              'flex flex-col'
+            )}
+            align="start"
+            sideOffset={4}
+            collisionPadding={8}
+            avoidCollisions={true}
+            sticky="partial"
+          >
+            <Command
+              className="border-0 flex flex-col flex-1 min-h-0 overflow-hidden"
+              shouldFilter={false}
+            >
+              <CommandInput
+                placeholder={t('branches.search_repository')}
+                onValueChange={handleSearchChange}
                 className={cn(
-                  'flex items-center gap-1 min-w-0 rounded-md px-2 py-1',
-                  'transition-colors',
-                  'text-text-muted hover:text-text-primary hover:bg-muted',
-                  loading ? 'animate-pulse' : '',
-                  'focus:outline-none focus:ring-0',
-                  'disabled:cursor-not-allowed disabled:opacity-50'
+                  'h-9 rounded-none border-b border-border flex-shrink-0',
+                  'placeholder:text-text-muted text-sm'
                 )}
-                onClick={() => {
-                  const trigger = document.querySelector(
-                    '[data-repo-trigger]'
-                  ) as HTMLButtonElement;
-                  trigger?.click();
+              />
+              <CommandList className="min-h-[36px] max-h-[200px] overflow-y-auto flex-1">
+                {error ? (
+                  <div className="py-4 px-3 text-center text-sm text-error">{error}</div>
+                ) : selectItems.length === 0 ? (
+                  <CommandEmpty className="py-4 text-center text-sm text-text-muted">
+                    {loading ? 'Loading...' : t('branches.select_repository')}
+                  </CommandEmpty>
+                ) : (
+                  <>
+                    <CommandEmpty className="py-4 text-center text-sm text-text-muted">
+                      {t('branches.no_match')}
+                    </CommandEmpty>
+                    <CommandGroup>
+                      {selectItems.map(item => (
+                        <CommandItem
+                          key={item.value}
+                          value={item.searchText || item.label}
+                          onSelect={() => {
+                            handleChange(item.value)
+                            setCompactOpen(false)
+                          }}
+                          className={cn(
+                            'group cursor-pointer select-none',
+                            'px-3 py-1.5 text-sm text-text-primary',
+                            'rounded-md mx-1 my-[2px]',
+                            'data-[selected=true]:bg-primary/10 data-[selected=true]:text-primary',
+                            'aria-selected:bg-hover',
+                            '!flex !flex-row !items-start !gap-3'
+                          )}
+                        >
+                          <Check
+                            className={cn(
+                              'h-3 w-3 shrink-0 mt-0.5 ml-1',
+                              selectedRepo?.git_repo_id.toString() === item.value
+                                ? 'opacity-100 text-primary'
+                                : 'opacity-0 text-text-muted'
+                            )}
+                          />
+                          <span className="flex-1 min-w-0 truncate" title={item.label}>
+                            {item.label}
+                          </span>
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  </>
+                )}
+              </CommandList>
+            </Command>
+            <div className="border-t border-border bg-base flex items-center justify-between px-2.5 py-2 text-xs text-text-secondary">
+              <div
+                className="cursor-pointer group flex items-center space-x-2 hover:bg-muted transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-1 py-0.5"
+                onClick={handleIntegrationClick}
+                role="button"
+                tabIndex={0}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    handleIntegrationClick()
+                  }
                 }}
               >
-                <FiGithub className="w-4 h-4 flex-shrink-0" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="top">
-              <p>{tooltipContent}</p>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-        {/* Hidden SearchableSelect for popover functionality */}
-        <div className="hidden">
-          <SearchableSelect
-            value={selectedRepo?.git_repo_id.toString()}
-            onValueChange={handleChange}
-            onSearchChange={handleSearchChange}
-            disabled={disabled || loading}
-            placeholder={t('branches.select_repository')}
-            searchPlaceholder={t('branches.search_repository')}
-            items={selectItems}
-            loading={loading}
-            error={error}
-            emptyText={t('branches.select_repository')}
-            noMatchText={t('branches.no_match')}
-            contentClassName="max-w-[280px]"
-            footer={
-              <div className="border-t border-border bg-base flex items-center justify-between px-2.5 py-2 text-xs text-text-secondary">
-                <div
-                  className="cursor-pointer group flex items-center space-x-2 hover:bg-muted transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-1 py-0.5"
-                  onClick={handleIntegrationClick}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      handleIntegrationClick();
-                    }
-                  }}
-                >
-                  <Cog6ToothIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
-                  <span className="font-medium group-hover:text-text-primary">
-                    {t('branches.configure_integration')}
-                  </span>
-                </div>
-                <div
-                  className="cursor-pointer flex items-center gap-1.5 hover:bg-muted transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-1.5 py-0.5"
-                  onClick={e => {
-                    e.stopPropagation();
-                    handleRefreshCache();
-                  }}
-                  role="button"
-                  tabIndex={0}
-                  title={t('branches.load_more')}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      handleRefreshCache();
-                    }
-                  }}
-                >
-                  <RefreshCw className={cn('w-3.5 h-3.5', isRefreshing && 'animate-spin')} />
-                  <span className="text-xs">
-                    {isRefreshing ? t('branches.refreshing') : t('actions.refresh')}
-                  </span>
-                </div>
+                <Cog6ToothIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
+                <span className="font-medium group-hover:text-text-primary">
+                  {t('branches.configure_integration')}
+                </span>
               </div>
-            }
-          />
-        </div>
+              <div
+                className="cursor-pointer flex items-center gap-1.5 hover:bg-muted transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-1.5 py-0.5"
+                onClick={e => {
+                  e.stopPropagation()
+                  handleRefreshCache()
+                }}
+                role="button"
+                tabIndex={0}
+                title={t('branches.load_more')}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    handleRefreshCache()
+                  }
+                }}
+              >
+                <RefreshCw className={cn('w-3.5 h-3.5', isRefreshing && 'animate-spin')} />
+                <span className="text-xs">
+                  {isRefreshing ? t('branches.refreshing') : t('actions.refresh')}
+                </span>
+              </div>
+            </div>
+          </PopoverContent>
+        </Popover>
       </div>
-    );
+    )
   }
 
   return (
@@ -531,25 +595,15 @@ export default function RepositorySelector({
       <TooltipProvider>
         <Tooltip>
           <TooltipTrigger asChild>
-            <button
-              type="button"
-              disabled={disabled || loading}
+            <div
               className={cn(
                 'flex items-center gap-1 min-w-0 rounded-md px-2 py-1',
-                'transition-colors',
-                'text-text-muted hover:text-text-primary hover:bg-muted',
-                loading ? 'animate-pulse' : '',
-                'focus:outline-none focus:ring-0',
-                'disabled:cursor-not-allowed disabled:opacity-50'
+                'text-text-muted',
+                loading ? 'animate-pulse' : ''
               )}
-              onClick={() => {
-                // Trigger the SearchableSelect to open
-                const trigger = document.querySelector('[data-repo-trigger]') as HTMLButtonElement;
-                trigger?.click();
-              }}
             >
               <FiGithub className="w-4 h-4 flex-shrink-0" />
-            </button>
+            </div>
           </TooltipTrigger>
           <TooltipContent side="top">
             <p>{tooltipContent}</p>
@@ -586,8 +640,8 @@ export default function RepositorySelector({
                 tabIndex={0}
                 onKeyDown={e => {
                   if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    handleIntegrationClick();
+                    e.preventDefault()
+                    handleIntegrationClick()
                   }
                 }}
               >
@@ -599,17 +653,17 @@ export default function RepositorySelector({
               <div
                 className="cursor-pointer flex items-center gap-1.5 hover:bg-muted transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-1.5 py-0.5"
                 onClick={e => {
-                  e.stopPropagation();
-                  handleRefreshCache();
+                  e.stopPropagation()
+                  handleRefreshCache()
                 }}
                 role="button"
                 tabIndex={0}
                 title={t('branches.load_more')}
                 onKeyDown={e => {
                   if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    handleRefreshCache();
+                    e.preventDefault()
+                    e.stopPropagation()
+                    handleRefreshCache()
                   }
                 }}
               >
@@ -626,5 +680,5 @@ export default function RepositorySelector({
         )}
       </div>
     </div>
-  );
+  )
 }
