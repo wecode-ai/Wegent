@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """DingTalk authentication API endpoints."""
+import json
 import logging
 import uuid
 
@@ -13,7 +14,9 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
+from app.core.security import get_password_hash
 from app.models.user import User
+from app.services.k_batch import apply_default_resources_sync
 from dingtalk.config import dingtalk_config
 from dingtalk.middleware.security import (
     check_ip_whitelist,
@@ -104,19 +107,56 @@ async def dingtalk_login(
         raise HTTPException(status_code=401, detail="Failed to get DingTalk user info")
 
     logger.info(f"[DingTalk] Auth success: {user_info}")
-    # Find or create user (use unionId as username, same pattern as OIDC)
-    user = db.scalar(select(User).where(User.user_name == user_info.union_id))
+
+    # Get employee email by user_id
+    employee_email = None
+    if user_info.user_id:
+        employee_email = await dingtalk_service.get_employee_email(user_info.user_id)
+
+    if not employee_email:
+        logger.error("[DingTalk] Failed to get employee email")
+        raise HTTPException(status_code=401, detail="Failed to get employee email")
+
+    # Extract username from email prefix (before @)
+    user_name = employee_email.split("@")[0]
+
+    # Find or create user (use email prefix as username)
+    user = db.scalar(select(User).where(User.user_name == user_name))
 
     if not user:
-        logger.warning(f"[DingTalk] User not found: {user_info.union_id}")
-        raise HTTPException(status_code=401, detail="User not registered")
+        # Create new user with minimal info
+        logger.info(f"[DingTalk] Creating new user: {user_info}")
+        new_user = User(
+            user_name=user_name,
+            email=employee_email,
+            password_hash=get_password_hash(str(uuid.uuid4())),
+            git_info=[],
+            is_active=True,
+            preferences=json.dumps({}),
+            auth_source="dingtalk",
+        )
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+        user = new_user
+
+        # Apply default resources synchronously for new users
+        try:
+            apply_default_resources_sync(new_user.id)
+        except Exception as e:
+            logger.warning(
+                f"[DingTalk] Failed to apply default resources for user {new_user.id}: {e}"
+            )
     else:
         # Update auth_source if needed
         if user.auth_source == "unknown":
-            logger.info(
-                f"[DingTalk] Updating auth_source for user: {user_info.union_id}"
-            )
+            logger.info(f"[DingTalk] Updating auth_source for user: {user_name}")
             user.auth_source = "dingtalk"
+            db.commit()
+        # Update email if not set and we got one from ERP
+        if employee_email and not user.email:
+            logger.info(f"[DingTalk] Updating email for user: {user_name}")
+            user.email = employee_email
             db.commit()
 
     # Generate JWT token (same as existing auth)

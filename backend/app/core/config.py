@@ -263,6 +263,7 @@ class Settings(BaseSettings):
     DINGTALK_CLIENT_SECRET: str = ""
     AUTH_MODE: str = ""
     DINGTALK_FALLBACK_URL: str = ""
+    ERP_API_KEY: str = ""
 
     @classmethod
     def settings_customise_sources(

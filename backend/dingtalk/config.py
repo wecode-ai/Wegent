@@ -17,6 +17,9 @@ class DingTalkConfig:
     client_id: str = ""
     client_secret: str = ""
 
+    # ERP API key for employee email lookup
+    erp_api_key: str = ""
+
     # Optional configuration
     fallback_url: str = "https://github.com/aspect-build/wegent"
     allowed_referers: List[str] = field(default_factory=list)
@@ -35,6 +38,7 @@ class DingTalkConfig:
             corp_id=os.getenv("DINGTALK_CORP_ID", ""),
             client_id=os.getenv("DINGTALK_CLIENT_ID", ""),
             client_secret=os.getenv("DINGTALK_CLIENT_SECRET", ""),
+            erp_api_key=os.getenv("ERP_API_KEY", ""),
             fallback_url=os.getenv(
                 "DINGTALK_FALLBACK_URL", "https://github.com/aspect-build/wegent"
             ),

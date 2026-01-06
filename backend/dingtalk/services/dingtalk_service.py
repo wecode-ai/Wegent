@@ -6,8 +6,10 @@
 import base64
 import hashlib
 import hmac
+import json
 import logging
 import time
+import urllib.parse
 from dataclasses import dataclass
 from typing import Optional
 
@@ -140,6 +142,64 @@ class DingTalkService:
             return False
 
         return True
+
+    async def get_employee_email(self, employee_id: str) -> Optional[str]:
+        """
+        Get employee email by employee ID (工号) from ERP API.
+
+        API: GET http://api.service.erp.sina.com.cn/api2/index.php/b/emp-getOnlyEmail
+        """
+        if not self.config.erp_api_key:
+            logger.warning("[DingTalk] ERP API key not configured")
+            return None
+
+        if not employee_id:
+            logger.warning("[DingTalk] Employee ID is empty")
+            return None
+
+        # Build data and token
+        data = {"EMPLOYEE_ID": [employee_id]}
+        data_json = json.dumps(data, separators=(",", ":"))
+        token = hashlib.md5((data_json + self.config.erp_api_key).encode()).hexdigest()
+
+        # Build request params
+        request_param = {"data": data, "token": token}
+        json_param = json.dumps(request_param, separators=(",", ":"))
+        encoded_param = urllib.parse.quote(json_param)
+
+        url = f"http://api.service.erp.sina.com.cn/api2/index.php/b/emp-getOnlyEmail?json={encoded_param}"
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+                result = response.json()
+
+            logger.info(
+                f"[DingTalk] ERP API response: {response.status_code}, {result}"
+            )
+            if result.get("code") == "0":
+                email_data = result.get("data", {}).get(employee_id, {})
+                email = email_data.get("EMAIL")
+                if email:
+                    logger.info(
+                        f"[DingTalk] Got email for employee {employee_id}: {email}"
+                    )
+                    return email
+                else:
+                    logger.warning(
+                        f"[DingTalk] No email found for employee {employee_id}"
+                    )
+                    return None
+            else:
+                logger.warning(
+                    f"[DingTalk] ERP API error: code={result.get('code')}, "
+                    f"msg={result.get('msg')}"
+                )
+                return None
+        except Exception as e:
+            logger.error(f"[DingTalk] Failed to get employee email: {e}")
+            return None
 
 
 # Global service instance
