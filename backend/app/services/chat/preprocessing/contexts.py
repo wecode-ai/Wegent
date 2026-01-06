@@ -590,11 +590,15 @@ def _prepare_kb_tools_from_contexts(
     Prepare knowledge base tools from context records.
 
     Knowledge base priority rules:
-    1. If subtask has selected knowledge bases (kb_contexts), use ONLY those
-    2. If subtask has no KB selection, fall back to task-level knowledgeBaseRefs
+    1. If subtask has selected knowledge bases (kb_contexts), use ONLY those (strict mode)
+    2. If subtask has no KB selection, fall back to task-level knowledgeBaseRefs (relaxed mode)
 
     This ensures user's explicit KB selection in a message takes precedence
     over task-level bound knowledge bases.
+
+    Prompt mode:
+    - Strict mode: User explicitly selected KB for this message, AI must use KB only
+    - Relaxed mode: KB inherited from task, AI can use general knowledge as fallback
 
     Args:
         kb_contexts: List of knowledge base SubtaskContext records
@@ -613,13 +617,16 @@ def _prepare_kb_tools_from_contexts(
     # Priority 1: Subtask-level knowledge bases (user-selected for this message)
     subtask_kb_ids = [c.knowledge_id for c in kb_contexts if c.knowledge_id is not None]
 
+    # Track whether KB is user-selected (strict mode) or inherited from task (relaxed mode)
+    is_user_selected_kb = bool(subtask_kb_ids)
+
     # Determine which knowledge bases to use based on priority
     if subtask_kb_ids:
         # Use subtask-level KBs only (user's explicit selection takes precedence)
         knowledge_base_ids = subtask_kb_ids
         logger.info(
             f"[_prepare_kb_tools_from_contexts] Using {len(knowledge_base_ids)} "
-            f"subtask-level knowledge bases (priority 1): {knowledge_base_ids}"
+            f"subtask-level knowledge bases (priority 1, strict mode): {knowledge_base_ids}"
         )
     elif task_id:
         # Priority 2: Fall back to task-level bound knowledge bases
@@ -627,7 +634,7 @@ def _prepare_kb_tools_from_contexts(
         if knowledge_base_ids:
             logger.info(
                 f"[_prepare_kb_tools_from_contexts] Using {len(knowledge_base_ids)} "
-                f"task-level bound knowledge bases (priority 2): {knowledge_base_ids}"
+                f"task-level bound knowledge bases (priority 2, relaxed mode): {knowledge_base_ids}"
             )
     else:
         knowledge_base_ids = []
@@ -657,27 +664,24 @@ def _prepare_kb_tools_from_contexts(
     )
     extra_tools.append(kb_tool)
 
-    # Enhance system prompt to REQUIRE AI to use the knowledge base tool
-    kb_instruction = """
+    # Import shared prompt constants
+    from app.chat_shell.prompts import KB_PROMPT_RELAXED, KB_PROMPT_STRICT
 
-# IMPORTANT: Knowledge Base Requirement
-
-The user has selected specific knowledge bases for this conversation. You MUST use the `knowledge_base_search` tool to retrieve information from these knowledge bases before answering any questions.
-
-## Required Workflow:
-1. **ALWAYS** call `knowledge_base_search` first with the user's query
-2. Wait for the search results
-3. Base your answer **ONLY** on the retrieved information
-4. If the search returns no results or irrelevant information, clearly state: "I cannot find relevant information in the selected knowledge base to answer this question."
-5. **DO NOT** use your general knowledge or make assumptions beyond what's in the knowledge base
-
-## Critical Rules:
-- You MUST search the knowledge base for EVERY user question
-- You MUST NOT answer without searching first
-- You MUST NOT make up information if the knowledge base doesn't contain it
-- If unsure, search again with different keywords
-
-The user expects answers based on the selected knowledge base content only."""
+    # Choose prompt based on whether KB is user-selected or inherited from task
+    if is_user_selected_kb:
+        # Strict mode: User explicitly selected KB for this message
+        kb_instruction = KB_PROMPT_STRICT
+        logger.info(
+            "[_prepare_kb_tools_from_contexts] Using STRICT mode prompt "
+            "(user explicitly selected KB)"
+        )
+    else:
+        # Relaxed mode: KB inherited from task, AI can use general knowledge as fallback
+        kb_instruction = KB_PROMPT_RELAXED
+        logger.info(
+            "[_prepare_kb_tools_from_contexts] Using RELAXED mode prompt "
+            "(KB inherited from task)"
+        )
 
     enhanced_system_prompt = f"{base_system_prompt}{kb_instruction}"
 
@@ -686,11 +690,6 @@ The user expects answers based on the selected knowledge base content only."""
         kb_meta_prompt = _build_historical_kb_meta_prompt(db, task_id)
         if kb_meta_prompt:
             enhanced_system_prompt = f"{enhanced_system_prompt}{kb_meta_prompt}"
-
-    logger.info(
-        "[_prepare_kb_tools_from_contexts] Enhanced system prompt with "
-        "REQUIRED knowledge base usage instructions"
-    )
 
     return extra_tools, enhanced_system_prompt
 
