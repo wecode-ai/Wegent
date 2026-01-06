@@ -599,6 +599,8 @@ class ChatNamespace(socketio.AsyncNamespace):
                         attachment_ids_to_link if attachment_ids_to_link else None
                     ),
                     contexts=payload.contexts,
+                    task=task,
+                    user_name=user_name,
                 )
                 if linked_context_ids:
                     logger.info(
