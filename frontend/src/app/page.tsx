@@ -4,6 +4,7 @@
 
 'use client';
 
+import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { paths } from '@/config/paths';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -20,13 +21,14 @@ export default function Home() {
   const router = useRouter();
   const { t } = useTranslation('common');
 
-  const handleGetStarted = () => {
-    // DingTalk mode: always go through DingTalk auth
+  // DingTalk mode: skip landing page, go directly to auth
+  useEffect(() => {
     if (isAuthModeDingTalk()) {
-      router.push('/auth/dingtalk');
-      return;
+      router.replace('/auth/dingtalk');
     }
+  }, [router]);
 
+  const handleGetStarted = () => {
     const token = getToken();
     if (token) {
       // Try to restore user's last active tab
@@ -41,6 +43,18 @@ export default function Home() {
       router.push(paths.auth.login.getHref());
     }
   };
+
+  // DingTalk mode: show loading while redirecting
+  if (isAuthModeDingTalk()) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-base">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto" />
+          <p className="mt-4 text-text-secondary">正在跳转...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <main className="flex smart-h-screen flex-col items-center justify-center p-8 bg-base relative box-border">
