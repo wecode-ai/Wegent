@@ -22,14 +22,14 @@
  * - RUNTIME_INTERNAL_API_URL is not needed in this case
  */
 
-import { NextResponse } from 'next/server';
+import { NextResponse } from 'next/server'
 
 export async function GET() {
   // Helper to parse boolean env vars
   const parseBoolean = (value: string | undefined, defaultValue: boolean): boolean => {
-    if (value === undefined || value === '') return defaultValue;
-    return value.toLowerCase() === 'true';
-  };
+    if (value === undefined || value === '') return defaultValue
+    return value.toLowerCase() === 'true'
+  }
 
   return NextResponse.json({
     // Backend API URL for browser
@@ -46,8 +46,8 @@ export async function GET() {
     // Enable chat context feature (knowledge base background)
     // Priority: RUNTIME_ENABLE_CHAT_CONTEXT > NEXT_PUBLIC_ENABLE_CHAT_CONTEXT > false
     enableChatContext:
-      parseBoolean(process.env.RUNTIME_ENABLE_CHAT_CONTEXT, false) ||
-      parseBoolean(process.env.NEXT_PUBLIC_ENABLE_CHAT_CONTEXT, false),
+      parseBoolean(process.env.RUNTIME_ENABLE_CHAT_CONTEXT, true) ||
+      parseBoolean(process.env.NEXT_PUBLIC_ENABLE_CHAT_CONTEXT, true),
 
     // Login mode: 'password', 'oidc', or 'all'
     // Priority: RUNTIME_LOGIN_MODE > NEXT_PUBLIC_LOGIN_MODE > 'all'
@@ -106,5 +106,5 @@ export async function GET() {
       process.env.RUNTIME_OTEL_COLLECTOR_ENDPOINT ||
       process.env.NEXT_PUBLIC_OTEL_COLLECTOR_ENDPOINT ||
       'http://localhost:4318',
-  });
+  })
 }

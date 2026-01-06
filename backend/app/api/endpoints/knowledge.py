@@ -514,9 +514,9 @@ def _index_document_background(
             f"Successfully indexed document for knowledge base {knowledge_base_id}: {result}"
         )
 
-        # Update document is_active to True after successful indexing
+        # Update document is_active to True and status to enabled after successful indexing
         if document_id:
-            from app.models.knowledge import KnowledgeDocument
+            from app.models.knowledge import DocumentStatus, KnowledgeDocument
 
             doc = (
                 db.query(KnowledgeDocument)
@@ -525,9 +525,10 @@ def _index_document_background(
             )
             if doc:
                 doc.is_active = True
+                doc.status = DocumentStatus.ENABLED
                 db.commit()
                 logger.info(
-                    f"Updated document {document_id} is_active to True after successful indexing"
+                    f"Updated document {document_id} is_active to True and status to enabled after successful indexing"
                 )
     except Exception as e:
         logger.error(
