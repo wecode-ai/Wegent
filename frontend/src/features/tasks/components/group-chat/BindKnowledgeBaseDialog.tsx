@@ -2,34 +2,34 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState, useEffect, useMemo } from 'react';
-import { Database, Check, Loader2, Search } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react'
+import { Database, Check, Loader2, Search } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogDescription,
-} from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { useTranslation } from '@/hooks/useTranslation';
-import { knowledgeBaseApi } from '@/apis/knowledge-base';
-import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base';
-import type { KnowledgeBase } from '@/types/api';
-import type { BoundKnowledgeBaseDetail } from '@/types/task-knowledge-base';
-import { cn } from '@/lib/utils';
-import { toast } from '@/hooks/use-toast';
-import { formatDocumentCount } from '@/lib/i18n-helpers';
+} from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { useTranslation } from '@/hooks/useTranslation'
+import { knowledgeBaseApi } from '@/apis/knowledge-base'
+import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base'
+import type { KnowledgeBase } from '@/types/api'
+import type { BoundKnowledgeBaseDetail } from '@/types/task-knowledge-base'
+import { cn } from '@/lib/utils'
+import { toast } from '@/hooks/use-toast'
+import { formatDocumentCount } from '@/lib/i18n-helpers'
 
 interface BindKnowledgeBaseDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  taskId: number;
-  boundKnowledgeBases: BoundKnowledgeBaseDetail[];
-  onSuccess: (kb: BoundKnowledgeBaseDetail) => void;
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  taskId: number
+  boundKnowledgeBases: BoundKnowledgeBaseDetail[]
+  onSuccess: (kb: BoundKnowledgeBaseDetail) => void
 }
 
 export default function BindKnowledgeBaseDialog({
@@ -39,91 +39,91 @@ export default function BindKnowledgeBaseDialog({
   boundKnowledgeBases,
   onSuccess,
 }: BindKnowledgeBaseDialogProps) {
-  const { t } = useTranslation('chat');
-  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedKb, setSelectedKb] = useState<KnowledgeBase | null>(null);
-  const [binding, setBinding] = useState(false);
+  const { t } = useTranslation('chat')
+  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [selectedKb, setSelectedKb] = useState<KnowledgeBase | null>(null)
+  const [binding, setBinding] = useState(false)
 
   // Fetch available knowledge bases
   useEffect(() => {
-    if (!open) return;
+    if (!open) return
 
     const fetchKnowledgeBases = async () => {
-      setLoading(true);
-      setError(null);
+      setLoading(true)
+      setError(null)
       try {
-        const response = await knowledgeBaseApi.list({ scope: 'all' });
-        setKnowledgeBases(response.items);
+        const response = await knowledgeBaseApi.list({ scope: 'all' })
+        setKnowledgeBases(response.items)
       } catch (err) {
-        console.error('Failed to fetch knowledge bases:', err);
-        setError(t('knowledge:fetch_error'));
+        console.error('Failed to fetch knowledge bases:', err)
+        setError(t('knowledge:fetch_error'))
       } finally {
-        setLoading(false);
+        setLoading(false)
       }
-    };
+    }
 
-    fetchKnowledgeBases();
-  }, [open, t]);
+    fetchKnowledgeBases()
+  }, [open, t])
 
   // Reset state when dialog closes
   useEffect(() => {
     if (!open) {
-      setSearchQuery('');
-      setSelectedKb(null);
+      setSearchQuery('')
+      setSelectedKb(null)
     }
-  }, [open]);
+  }, [open])
 
   // Filter knowledge bases: exclude already bound ones and apply search
   const availableKnowledgeBases = useMemo(() => {
-    const boundKeys = new Set(boundKnowledgeBases.map(kb => `${kb.name}:${kb.namespace}`));
+    const boundKeys = new Set(boundKnowledgeBases.map(kb => `${kb.name}:${kb.namespace}`))
 
     return knowledgeBases
       .filter(kb => {
         // Exclude already bound knowledge bases
-        const kbKey = `${kb.name}:${kb.namespace || 'default'}`;
-        if (boundKeys.has(kbKey)) return false;
+        const kbKey = `${kb.name}:${kb.namespace || 'default'}`
+        if (boundKeys.has(kbKey)) return false
 
         // Apply search filter
         if (searchQuery) {
-          const query = searchQuery.toLowerCase();
+          const query = searchQuery.toLowerCase()
           return (
             kb.name.toLowerCase().includes(query) ||
             (kb.description && kb.description.toLowerCase().includes(query))
-          );
+          )
         }
-        return true;
+        return true
       })
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [knowledgeBases, boundKnowledgeBases, searchQuery]);
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }, [knowledgeBases, boundKnowledgeBases, searchQuery])
 
   const handleBind = async () => {
-    if (!selectedKb) return;
+    if (!selectedKb) return
 
-    setBinding(true);
+    setBinding(true)
     try {
       const result = await taskKnowledgeBaseApi.bindKnowledgeBase(
         taskId,
         selectedKb.name,
         selectedKb.namespace || 'default'
-      );
+      )
       toast({
         description: t('groupChat.knowledge.bindSuccess', { name: selectedKb.name }),
-      });
-      onSuccess(result);
+      })
+      onSuccess(result)
     } catch (err: unknown) {
-      console.error('Failed to bind knowledge base:', err);
-      const errorMessage = err instanceof Error ? err.message : t('groupChat.knowledge.bindFailed');
+      console.error('Failed to bind knowledge base:', err)
+      const errorMessage = err instanceof Error ? err.message : t('groupChat.knowledge.bindFailed')
       toast({
         variant: 'destructive',
         description: errorMessage,
-      });
+      })
     } finally {
-      setBinding(false);
+      setBinding(false)
     }
-  };
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -169,9 +169,9 @@ export default function BindKnowledgeBaseDialog({
               {availableKnowledgeBases.map(kb => {
                 const isSelected =
                   selectedKb?.id === kb.id ||
-                  (selectedKb?.name === kb.name && selectedKb?.namespace === kb.namespace);
-                const documentCount = kb.document_count || 0;
-                const documentText = formatDocumentCount(documentCount, t);
+                  (selectedKb?.name === kb.name && selectedKb?.namespace === kb.namespace)
+                const documentCount = kb.document_count || 0
+                const documentText = formatDocumentCount(documentCount, t)
 
                 return (
                   <div
@@ -220,7 +220,7 @@ export default function BindKnowledgeBaseDialog({
                     </div>
                     {isSelected && <Check className="h-5 w-5 text-primary flex-shrink-0" />}
                   </div>
-                );
+                )
               })}
             </div>
           )}
@@ -228,7 +228,7 @@ export default function BindKnowledgeBaseDialog({
           {/* Actions */}
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" onClick={() => onOpenChange(false)}>
-              {t('common:cancel')}
+              {t('common:actions.cancel')}
             </Button>
             <Button onClick={handleBind} disabled={!selectedKb || binding}>
               {binding && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
@@ -238,5 +238,5 @@ export default function BindKnowledgeBaseDialog({
         </div>
       </DialogContent>
     </Dialog>
-  );
+  )
 }

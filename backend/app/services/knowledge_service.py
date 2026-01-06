@@ -451,15 +451,17 @@ class KnowledgeService:
     ) -> int:
         """
         Get the active document count for a knowledge base.
-        Only counts documents that are indexed (is_active=True) and enabled (status=enabled).
+        Only counts documents that are indexed (is_active=True).
         Used for AI chat integration to show available documents.
+
+        Note: The status field is reserved for future use and not currently checked.
 
         Args:
             db: Database session
             knowledge_base_id: Knowledge base ID
 
         Returns:
-            Number of active and enabled documents in the knowledge base
+            Number of active documents in the knowledge base
         """
         from sqlalchemy import func
 
@@ -468,7 +470,6 @@ class KnowledgeService:
             .filter(
                 KnowledgeDocument.kind_id == knowledge_base_id,
                 KnowledgeDocument.is_active == True,
-                KnowledgeDocument.status == DocumentStatus.ENABLED,
             )
             .scalar()
             or 0

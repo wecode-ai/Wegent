@@ -428,5 +428,130 @@ class TaskKnowledgeBaseService:
 
         return True
 
+    def sync_subtask_kb_to_task(
+        self,
+        db: Session,
+        task: TaskResource,
+        knowledge_id: int,
+        user_id: int,
+        user_name: str,
+    ) -> bool:
+        """
+        Sync a subtask-level knowledge base to task-level knowledgeBaseRefs.
+
+        This is an internal method that automatically syncs KB selected in subtask
+        to the task level. It uses append mode with deduplication.
+
+        Unlike bind_knowledge_base(), this method:
+        - Does NOT require group chat check (works for all tasks)
+        - Does NOT throw exceptions on failures (silent skip)
+        - Skips if KB limit is reached (instead of raising error)
+        - Skips if user has no access (instead of raising error)
+
+        Args:
+            db: Database session
+            task: Pre-queried TaskResource object
+            knowledge_id: Knowledge base Kind.id
+            user_id: User ID who selected the KB
+            user_name: Pre-queried user name for boundBy field
+
+        Returns:
+            True if synced successfully, False if skipped
+        """
+        try:
+            # Get the knowledge base by ID
+            kb = (
+                db.query(Kind)
+                .filter(
+                    Kind.id == knowledge_id,
+                    Kind.kind == "KnowledgeBase",
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+
+            if not kb:
+                logger.debug(
+                    f"[sync_subtask_kb_to_task] KB not found: knowledge_id={knowledge_id}"
+                )
+                return False
+
+            # Extract KB display name and namespace
+            kb_spec = kb.json.get("spec", {}) if kb.json else {}
+            kb_name = kb_spec.get("name")
+            kb_namespace = kb.namespace
+
+            if not kb_name:
+                logger.debug(
+                    f"[sync_subtask_kb_to_task] KB has no display name: knowledge_id={knowledge_id}"
+                )
+                return False
+
+            # Check user access to the knowledge base
+            if not self.can_access_knowledge_base(db, user_id, kb_name, kb_namespace):
+                logger.debug(
+                    f"[sync_subtask_kb_to_task] User {user_id} has no access to KB "
+                    f"{kb_name}/{kb_namespace}"
+                )
+                return False
+
+            # Get current task spec
+            task_json = task.json if isinstance(task.json, dict) else {}
+            spec = task_json.get("spec", {})
+            kb_refs = spec.get("knowledgeBaseRefs", []) or []
+
+            # Check binding limit - skip silently if reached
+            if len(kb_refs) >= self.MAX_BOUND_KNOWLEDGE_BASES:
+                logger.debug(
+                    f"[sync_subtask_kb_to_task] KB limit reached for task {task.id}, "
+                    f"skipping sync of KB {kb_name}/{kb_namespace}"
+                )
+                return False
+
+            # Check if already bound (deduplication by name + namespace)
+            for ref in kb_refs:
+                if (
+                    ref.get("name") == kb_name
+                    and ref.get("namespace", "default") == kb_namespace
+                ):
+                    logger.debug(
+                        f"[sync_subtask_kb_to_task] KB {kb_name}/{kb_namespace} "
+                        f"already bound to task {task.id}"
+                    )
+                    return False
+
+            # Add new binding using pre-queried user_name
+            new_ref = KnowledgeBaseTaskRef(
+                name=kb_name,
+                namespace=kb_namespace,
+                boundBy=user_name,
+                boundAt=datetime.utcnow().isoformat() + "Z",
+            )
+            kb_refs.append(new_ref.model_dump())
+
+            # Update task spec
+            spec["knowledgeBaseRefs"] = kb_refs
+            task_json["spec"] = spec
+            task.json = task_json
+            flag_modified(task, "json")
+
+            task.updated_at = datetime.utcnow()
+            db.commit()
+            db.refresh(task)
+
+            logger.info(
+                f"[sync_subtask_kb_to_task] Synced KB {kb_name}/{kb_namespace} "
+                f"to task {task.id} (selected by user {user_id})"
+            )
+            return True
+
+        except Exception as e:
+            logger.warning(
+                f"[sync_subtask_kb_to_task] Failed to sync KB {knowledge_id} "
+                f"to task {task.id}: {e}"
+            )
+            db.rollback()
+            return False
+
 
 task_knowledge_base_service = TaskKnowledgeBaseService()
