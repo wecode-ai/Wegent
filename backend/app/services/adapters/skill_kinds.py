@@ -34,6 +34,9 @@ class SkillKindsService:
         """
         Create a new Skill with ZIP package.
 
+        If a soft-deleted skill with the same name exists, it will be restored
+        and updated with the new content.
+
         Args:
             db: Database session
             name: Skill name (unique per user)
@@ -46,9 +49,9 @@ class SkillKindsService:
             Created Skill CRD
 
         Raises:
-            HTTPException: If validation fails or name already exists
+            HTTPException: If validation fails or name already exists (active)
         """
-        # Check duplicate skill name
+        # Check for existing skill (including soft-deleted ones)
         existing = (
             db.query(Kind)
             .filter(
@@ -56,12 +59,11 @@ class SkillKindsService:
                 Kind.kind == "Skill",
                 Kind.name == name,
                 Kind.namespace == namespace,
-                Kind.is_active == True,
             )
             .first()
         )
 
-        if existing:
+        if existing and existing.is_active:
             raise HTTPException(
                 status_code=400,
                 detail=f"Skill name '{name}' already exists in namespace '{namespace}'",
@@ -70,7 +72,7 @@ class SkillKindsService:
         # Validate ZIP package and extract metadata
         metadata = SkillValidator.validate_zip(file_content, file_name)
 
-        # Create Skill Kind
+        # Build skill JSON
         skill_json = {
             "apiVersion": "agent.wecode.io/v1",
             "kind": "Skill",
@@ -93,6 +95,35 @@ class SkillKindsService:
             },
         }
 
+        if existing and not existing.is_active:
+            # Restore soft-deleted skill and update with new content
+            existing.json = skill_json
+            existing.is_active = True
+            flag_modified(existing, "json")
+            db.flush()
+
+            # Update or create SkillBinary
+            skill_binary = (
+                db.query(SkillBinary).filter(SkillBinary.kind_id == existing.id).first()
+            )
+            if skill_binary:
+                skill_binary.binary_data = file_content
+                skill_binary.file_size = metadata["file_size"]
+                skill_binary.file_hash = metadata["file_hash"]
+            else:
+                skill_binary = SkillBinary(
+                    kind_id=existing.id,
+                    binary_data=file_content,
+                    file_size=metadata["file_size"],
+                    file_hash=metadata["file_hash"],
+                )
+                db.add(skill_binary)
+
+            result = self._kind_to_skill(existing)
+            db.commit()
+            return result
+
+        # Create new Skill Kind
         skill_kind = Kind(
             user_id=user_id,
             kind="Skill",
