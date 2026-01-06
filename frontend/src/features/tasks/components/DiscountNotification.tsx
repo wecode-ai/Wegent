@@ -2,54 +2,54 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useState, useEffect } from 'react';
-import { Card } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { XMarkIcon } from '@heroicons/react/24/outline';
+import React, { useState, useEffect } from 'react'
+import { Card } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { XMarkIcon } from '@heroicons/react/24/outline'
 
 interface DiscountNotificationProps {
-  className?: string;
+  className?: string
 }
 
 interface DiscountInfo {
-  title: string;
-  discountPercentage: number;
+  title: string
+  discountPercentage: number
 }
 
 export default function DiscountNotification({ className = '' }: DiscountNotificationProps) {
-  const [isVisible, setIsVisible] = useState(true);
-  const [discountInfo, setDiscountInfo] = useState<DiscountInfo | null>(null);
+  const [isVisible, setIsVisible] = useState(true)
+  const [discountInfo, setDiscountInfo] = useState<DiscountInfo | null>(null)
 
   useEffect(() => {
-    const isClosed = localStorage.getItem('discountNotificationClosed');
+    const isClosed = localStorage.getItem('discountNotificationClosed')
     if (isClosed === 'true') {
-      setIsVisible(false);
+      setIsVisible(false)
     }
 
     const mockDiscount: DiscountInfo = {
       title: '🎉 试用期间，在Wegent中使用Claude模型配额消耗降低',
-      discountPercentage: 90,
-    };
+      discountPercentage: 20,
+    }
 
-    setDiscountInfo(mockDiscount);
-  }, []);
+    setDiscountInfo(mockDiscount)
+  }, [])
 
   const handleClose = () => {
-    setIsVisible(false);
+    setIsVisible(false)
     // 保存到本地存储，记住用户已关闭通知
-    localStorage.setItem('discountNotificationClosed', 'true');
-  };
+    localStorage.setItem('discountNotificationClosed', 'true')
+  }
 
   const handleReopen = () => {
-    setIsVisible(true);
+    setIsVisible(true)
     // 清除本地存储中的关闭状态
-    localStorage.removeItem('discountNotificationClosed');
-  };
+    localStorage.removeItem('discountNotificationClosed')
+  }
 
   if (!discountInfo) {
-    return null;
+    return null
   }
 
   // 如果通知被关闭,显示一个小的重新开启按钮
@@ -67,7 +67,7 @@ export default function DiscountNotification({ className = '' }: DiscountNotific
           </Button>
         </div>
       </div>
-    );
+    )
   }
 
   return (
@@ -109,5 +109,5 @@ export default function DiscountNotification({ className = '' }: DiscountNotific
         </div>
       </Card>
     </div>
-  );
+  )
 }
