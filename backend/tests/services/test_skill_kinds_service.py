@@ -5,15 +5,16 @@
 """
 Integration tests for SkillKindsService
 """
-import pytest
 import io
 import zipfile
+
+import pytest
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.services.adapters.skill_kinds import SkillKindsService, skill_kinds_service
 from app.models.kind import Kind
 from app.models.user import User
+from app.services.adapters.skill_kinds import SkillKindsService, skill_kinds_service
 
 
 @pytest.mark.integration
@@ -24,8 +25,8 @@ class TestSkillKindsService:
     def create_test_zip(skill_md_content: str, zip_name: str = "test") -> bytes:
         """Create a test ZIP with SKILL.md in proper structure"""
         zip_buffer = io.BytesIO()
-        folder_name = zip_name.replace('.zip', '')
-        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+        folder_name = zip_name.replace(".zip", "")
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
             zf.writestr(f"{folder_name}/SKILL.md", skill_md_content)
             zf.writestr(f"{folder_name}/script.py", "print('test')")
         return zip_buffer.getvalue()
@@ -49,7 +50,7 @@ tags: ["debug", "test"]
             namespace="default",
             file_content=zip_content,
             file_name="test.zip",
-            user_id=test_user.id
+            user_id=test_user.id,
         )
 
         assert skill.metadata.name == "test-debugger"
@@ -75,7 +76,7 @@ tags: ["debug", "test"]
             namespace="default",
             file_content=zip_content,
             file_name="test.zip",
-            user_id=test_user.id
+            user_id=test_user.id,
         )
 
         # Try to create second skill with same name
@@ -86,13 +87,15 @@ tags: ["debug", "test"]
                 namespace="default",
                 file_content=zip_content,
                 file_name="test.zip",
-                user_id=test_user.id
+                user_id=test_user.id,
             )
 
         assert exc_info.value.status_code == 400
         assert "already exists" in exc_info.value.detail
 
-    def test_create_skill_different_users_same_name(self, test_db: Session, test_user: User, test_admin_user: User):
+    def test_create_skill_different_users_same_name(
+        self, test_db: Session, test_user: User, test_admin_user: User
+    ):
         """Test different users can create skills with the same name"""
         service = SkillKindsService()
         skill_md = "---\ndescription: Shared name skill\n---\n"
@@ -105,7 +108,7 @@ tags: ["debug", "test"]
             namespace="default",
             file_content=zip_content,
             file_name="test.zip",
-            user_id=test_user.id
+            user_id=test_user.id,
         )
 
         # User 2 creates skill with same name (should succeed)
@@ -115,7 +118,7 @@ tags: ["debug", "test"]
             namespace="default",
             file_content=zip_content,
             file_name="test.zip",
-            user_id=test_admin_user.id
+            user_id=test_admin_user.id,
         )
 
         assert skill1.metadata.name == skill2.metadata.name
@@ -133,21 +136,21 @@ tags: ["debug", "test"]
             namespace="default",
             file_content=zip_content,
             file_name="test.zip",
-            user_id=test_user.id
+            user_id=test_user.id,
         )
 
         skill_id = int(created_skill.metadata.labels["id"])
         retrieved_skill = service.get_skill_by_id(
-            db=test_db,
-            skill_id=skill_id,
-            user_id=test_user.id
+            db=test_db, skill_id=skill_id, user_id=test_user.id
         )
 
         assert retrieved_skill is not None
         assert retrieved_skill.metadata.name == "get-by-id-test"
         assert retrieved_skill.spec.description == "Get by ID test"
 
-    def test_get_skill_by_id_wrong_user(self, test_db: Session, test_user: User, test_admin_user: User):
+    def test_get_skill_by_id_wrong_user(
+        self, test_db: Session, test_user: User, test_admin_user: User
+    ):
         """Test user cannot access another user's skill"""
         service = SkillKindsService()
         skill_md = "---\ndescription: Private skill\n---\n"
@@ -159,16 +162,14 @@ tags: ["debug", "test"]
             namespace="default",
             file_content=zip_content,
             file_name="test.zip",
-            user_id=test_user.id
+            user_id=test_user.id,
         )
 
         skill_id = int(created_skill.metadata.labels["id"])
 
         # Admin user tries to access test_user's skill
         retrieved_skill = service.get_skill_by_id(
-            db=test_db,
-            skill_id=skill_id,
-            user_id=test_admin_user.id
+            db=test_db, skill_id=skill_id, user_id=test_admin_user.id
         )
 
         assert retrieved_skill is None
@@ -185,14 +186,14 @@ tags: ["debug", "test"]
             namespace="default",
             file_content=zip_content,
             file_name="test.zip",
-            user_id=test_user.id
+            user_id=test_user.id,
         )
 
         retrieved_skill = service.get_skill_by_name(
             db=test_db,
             name="get-by-name-test",
             namespace="default",
-            user_id=test_user.id
+            user_id=test_user.id,
         )
 
         assert retrieved_skill is not None
@@ -212,15 +213,11 @@ tags: ["debug", "test"]
                 namespace="default",
                 file_content=zip_content,
                 file_name="test.zip",
-                user_id=test_user.id
+                user_id=test_user.id,
             )
 
         skill_list = service.list_skills(
-            db=test_db,
-            user_id=test_user.id,
-            skip=0,
-            limit=10,
-            namespace="default"
+            db=test_db, user_id=test_user.id, skip=0, limit=10, namespace="default"
         )
 
         assert len(skill_list.items) == 3
@@ -243,25 +240,17 @@ tags: ["debug", "test"]
                 namespace="default",
                 file_content=zip_content,
                 file_name="test.zip",
-                user_id=test_user.id
+                user_id=test_user.id,
             )
 
         # Get first 2 skills
         page1 = service.list_skills(
-            db=test_db,
-            user_id=test_user.id,
-            skip=0,
-            limit=2,
-            namespace="default"
+            db=test_db, user_id=test_user.id, skip=0, limit=2, namespace="default"
         )
 
         # Get next 2 skills
         page2 = service.list_skills(
-            db=test_db,
-            user_id=test_user.id,
-            skip=2,
-            limit=2,
-            namespace="default"
+            db=test_db, user_id=test_user.id, skip=2, limit=2, namespace="default"
         )
 
         assert len(page1.items) == 2
@@ -290,7 +279,7 @@ version: "1.0.0"
             namespace="default",
             file_content=original_zip,
             file_name="original.zip",
-            user_id=test_user.id
+            user_id=test_user.id,
         )
 
         skill_id = int(created_skill.metadata.labels["id"])
@@ -310,7 +299,7 @@ author: "New Author"
             skill_id=skill_id,
             user_id=test_user.id,
             file_content=updated_zip,
-            file_name="updated.zip"
+            file_name="updated.zip",
         )
 
         assert updated_skill.metadata.name == "update-test"
@@ -331,13 +320,15 @@ author: "New Author"
                 skill_id=99999,
                 user_id=test_user.id,
                 file_content=zip_content,
-                file_name="test.zip"
+                file_name="test.zip",
             )
 
         assert exc_info.value.status_code == 404
 
     def test_delete_skill(self, test_db: Session, test_user: User):
-        """Test deleting skill (soft delete)"""
+        """Test deleting skill (soft delete for Kind, hard delete for SkillBinary)"""
+        from app.models.skill_binary import SkillBinary
+
         service = SkillKindsService()
         skill_md = "---\ndescription: Delete test\n---\n"
         zip_content = self.create_test_zip(skill_md)
@@ -348,26 +339,35 @@ author: "New Author"
             namespace="default",
             file_content=zip_content,
             file_name="test.zip",
-            user_id=test_user.id
+            user_id=test_user.id,
         )
 
         skill_id = int(created_skill.metadata.labels["id"])
 
-        # Delete skill
-        service.delete_skill(
-            db=test_db,
-            skill_id=skill_id,
-            user_id=test_user.id
+        # Verify SkillBinary exists before deletion
+        skill_binary_before = (
+            test_db.query(SkillBinary).filter(SkillBinary.kind_id == skill_id).first()
         )
+        assert (
+            skill_binary_before is not None
+        ), "SkillBinary should exist before deletion"
+
+        # Delete skill
+        service.delete_skill(db=test_db, skill_id=skill_id, user_id=test_user.id)
 
         # Verify skill is soft deleted (not accessible)
         retrieved_skill = service.get_skill_by_id(
-            db=test_db,
-            skill_id=skill_id,
-            user_id=test_user.id
+            db=test_db, skill_id=skill_id, user_id=test_user.id
         )
-
         assert retrieved_skill is None
+
+        # Verify SkillBinary is hard deleted (to free storage)
+        skill_binary_after = (
+            test_db.query(SkillBinary).filter(SkillBinary.kind_id == skill_id).first()
+        )
+        assert (
+            skill_binary_after is None
+        ), "SkillBinary should be deleted after skill deletion"
 
     def test_delete_skill_referenced_by_ghost(self, test_db: Session, test_user: User):
         """Test deleting skill fails when referenced by Ghost"""
@@ -382,7 +382,7 @@ author: "New Author"
             namespace="default",
             file_content=zip_content,
             file_name="test.zip",
-            user_id=test_user.id
+            user_id=test_user.id,
         )
 
         skill_id = int(created_skill.metadata.labels["id"])
@@ -392,10 +392,7 @@ author: "New Author"
             "apiVersion": "agent.wecode.io/v1",
             "kind": "Ghost",
             "metadata": {"name": "test-ghost", "namespace": "default"},
-            "spec": {
-                "systemPrompt": "Test prompt",
-                "skills": ["referenced-skill"]
-            }
+            "spec": {"systemPrompt": "Test prompt", "skills": ["referenced-skill"]},
         }
 
         ghost_kind = Kind(
@@ -404,22 +401,21 @@ author: "New Author"
             name="test-ghost",
             namespace="default",
             json=ghost_json,
-            is_active=True
+            is_active=True,
         )
         test_db.add(ghost_kind)
         test_db.commit()
 
         # Try to delete skill
         with pytest.raises(HTTPException) as exc_info:
-            service.delete_skill(
-                db=test_db,
-                skill_id=skill_id,
-                user_id=test_user.id
-            )
+            service.delete_skill(db=test_db, skill_id=skill_id, user_id=test_user.id)
 
         assert exc_info.value.status_code == 400
-        assert "referenced by Ghosts" in exc_info.value.detail
-        assert "test-ghost" in exc_info.value.detail
+        # detail is now a dict with structured error info
+        detail = exc_info.value.detail
+        assert detail["code"] == "SKILL_REFERENCED"
+        assert "referenced by Ghosts" in detail["message"]
+        assert any(g["name"] == "test-ghost" for g in detail["referenced_ghosts"])
 
     def test_get_skill_binary(self, test_db: Session, test_user: User):
         """Test retrieving skill binary data"""
@@ -433,21 +429,21 @@ author: "New Author"
             namespace="default",
             file_content=zip_content,
             file_name="test.zip",
-            user_id=test_user.id
+            user_id=test_user.id,
         )
 
         skill_id = int(created_skill.metadata.labels["id"])
 
         binary_data = service.get_skill_binary(
-            db=test_db,
-            skill_id=skill_id,
-            user_id=test_user.id
+            db=test_db, skill_id=skill_id, user_id=test_user.id
         )
 
         assert binary_data is not None
         assert binary_data == zip_content
 
-    def test_get_skill_binary_wrong_user(self, test_db: Session, test_user: User, test_admin_user: User):
+    def test_get_skill_binary_wrong_user(
+        self, test_db: Session, test_user: User, test_admin_user: User
+    ):
         """Test user cannot access another user's skill binary"""
         service = SkillKindsService()
         skill_md = "---\ndescription: Private binary\n---\n"
@@ -459,16 +455,14 @@ author: "New Author"
             namespace="default",
             file_content=zip_content,
             file_name="test.zip",
-            user_id=test_user.id
+            user_id=test_user.id,
         )
 
         skill_id = int(created_skill.metadata.labels["id"])
 
         # Admin user tries to access test_user's skill binary
         binary_data = service.get_skill_binary(
-            db=test_db,
-            skill_id=skill_id,
-            user_id=test_admin_user.id
+            db=test_db, skill_id=skill_id, user_id=test_admin_user.id
         )
 
         assert binary_data is None

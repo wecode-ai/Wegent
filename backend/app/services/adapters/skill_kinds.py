@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import HTTPException
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.kind import Kind
 from app.models.skill_binary import SkillBinary
@@ -246,6 +247,8 @@ class SkillKindsService:
             {"fileSize": metadata["file_size"], "fileHash": metadata["file_hash"]}
         )
         skill_kind.json = skill_json
+        # Mark JSON field as modified for SQLAlchemy to detect the change
+        flag_modified(skill_kind, "json")
 
         # Update or create SkillBinary
         skill_binary = (
@@ -273,7 +276,7 @@ class SkillKindsService:
 
     def delete_skill(self, db: Session, *, skill_id: int, user_id: int) -> None:
         """
-        Delete Skill (soft delete).
+        Delete Skill (soft delete for Kind, hard delete for SkillBinary).
 
         Checks if the Skill is referenced by any Ghost before deletion.
 
@@ -314,17 +317,158 @@ class SkillKindsService:
         for ghost in ghosts:
             ghost_skills = ghost.json.get("spec", {}).get("skills", [])
             if skill_name in ghost_skills:
-                referenced_ghosts.append(ghost.name)
+                referenced_ghosts.append(
+                    {"id": ghost.id, "name": ghost.name, "namespace": ghost.namespace}
+                )
 
         if referenced_ghosts:
             raise HTTPException(
                 status_code=400,
-                detail=f"Cannot delete Skill '{skill_name}' because it is referenced by Ghosts: {', '.join(referenced_ghosts)}",
+                detail={
+                    "code": "SKILL_REFERENCED",
+                    "message": f"Cannot delete Skill '{skill_name}' because it is referenced by Ghosts",
+                    "skill_name": skill_name,
+                    "referenced_ghosts": referenced_ghosts,
+                },
             )
 
-        # Soft delete
+        # Delete associated SkillBinary (hard delete to free storage)
+        db.query(SkillBinary).filter(SkillBinary.kind_id == skill_id).delete()
+
+        # Soft delete the Kind record
         skill_kind.is_active = False
         db.commit()
+
+    def remove_skill_references(
+        self, db: Session, *, skill_id: int, user_id: int
+    ) -> Dict[str, Any]:
+        """
+        Remove all Ghost references to a Skill.
+
+        This allows the Skill to be deleted afterwards.
+
+        Args:
+            db: Database session
+            skill_id: Skill ID
+            user_id: User ID
+
+        Returns:
+            Dict with removed_count and affected_ghosts
+
+        Raises:
+            HTTPException: If skill not found
+        """
+        skill_kind = (
+            db.query(Kind)
+            .filter(
+                Kind.id == skill_id,
+                Kind.user_id == user_id,
+                Kind.kind == "Skill",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
+        if not skill_kind:
+            raise HTTPException(status_code=404, detail="Skill not found")
+
+        skill_name = skill_kind.name
+
+        # Find all Ghosts that reference this Skill
+        ghosts = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == user_id, Kind.kind == "Ghost", Kind.is_active == True
+            )
+            .all()
+        )
+
+        affected_ghosts = []
+        for ghost in ghosts:
+            ghost_skills = ghost.json.get("spec", {}).get("skills", [])
+            if skill_name in ghost_skills:
+                # Remove the skill reference from Ghost
+                new_skills = [s for s in ghost_skills if s != skill_name]
+                ghost_json = ghost.json.copy()
+                ghost_json["spec"]["skills"] = new_skills
+                ghost.json = ghost_json
+                # Mark JSON field as modified for SQLAlchemy to detect the change
+                flag_modified(ghost, "json")
+                affected_ghosts.append(ghost.name)
+
+        db.commit()
+
+        return {
+            "removed_count": len(affected_ghosts),
+            "affected_ghosts": affected_ghosts,
+        }
+
+    def remove_single_skill_reference(
+        self, db: Session, *, skill_id: int, ghost_id: int, user_id: int
+    ) -> Dict[str, Any]:
+        """
+        Remove a Skill reference from a single Ghost.
+
+        Args:
+            db: Database session
+            skill_id: Skill ID
+            ghost_id: Ghost ID
+            user_id: User ID
+
+        Returns:
+            Dict with success status and ghost name
+
+        Raises:
+            HTTPException: If skill or ghost not found
+        """
+        skill_kind = (
+            db.query(Kind)
+            .filter(
+                Kind.id == skill_id,
+                Kind.user_id == user_id,
+                Kind.kind == "Skill",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
+        if not skill_kind:
+            raise HTTPException(status_code=404, detail="Skill not found")
+
+        ghost = (
+            db.query(Kind)
+            .filter(
+                Kind.id == ghost_id,
+                Kind.user_id == user_id,
+                Kind.kind == "Ghost",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
+        if not ghost:
+            raise HTTPException(status_code=404, detail="Ghost not found")
+
+        skill_name = skill_kind.name
+        ghost_skills = ghost.json.get("spec", {}).get("skills", [])
+
+        if skill_name not in ghost_skills:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Ghost '{ghost.name}' does not reference Skill '{skill_name}'",
+            )
+
+        # Remove the skill reference from Ghost
+        new_skills = [s for s in ghost_skills if s != skill_name]
+        ghost_json = ghost.json.copy()
+        ghost_json["spec"]["skills"] = new_skills
+        ghost.json = ghost_json
+        # Mark JSON field as modified for SQLAlchemy to detect the change
+        flag_modified(ghost, "json")
+
+        db.commit()
+
+        return {"success": True, "ghost_name": ghost.name}
 
     def get_skill_binary(
         self, db: Session, *, skill_id: int, user_id: int
