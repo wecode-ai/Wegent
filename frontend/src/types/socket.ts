@@ -256,6 +256,7 @@ export interface TaskCreatedPayload {
   team_id: number
   team_name: string
   created_at: string
+  is_group_chat?: boolean
 }
 
 export interface TaskDeletedPayload {

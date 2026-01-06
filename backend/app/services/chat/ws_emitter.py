@@ -329,6 +329,7 @@ class WebSocketEmitter:
         title: str,
         team_id: int,
         team_name: str,
+        is_group_chat: bool = False,
     ) -> None:
         """
         Emit task:created event to user room.
@@ -339,6 +340,7 @@ class WebSocketEmitter:
             title: Task title
             team_id: Team ID
             team_name: Team name
+            is_group_chat: Whether this is a group chat task
         """
         await self.sio.emit(
             ServerEvents.TASK_CREATED,
@@ -348,6 +350,7 @@ class WebSocketEmitter:
                 "team_id": team_id,
                 "team_name": team_name,
                 "created_at": datetime.now().isoformat(),
+                "is_group_chat": is_group_chat,
             },
             room=f"user:{user_id}",
             namespace=self.namespace,
