@@ -540,7 +540,6 @@ export async function downloadPublicSkill(skillId: number, skillName: string): P
   document.body.removeChild(link);
   window.URL.revokeObjectURL(downloadUrl);
 }
-
 /**
  * Get the SKILL.md content from a public skill ZIP package
  */
@@ -564,4 +563,122 @@ export async function getPublicSkillContent(skillId: number): Promise<{ content:
   }
 
   return response.json();
+}
+
+// ============================================================================
+// Skill Reference Management API
+// ============================================================================
+
+/**
+ * Referenced Ghost information returned when skill deletion fails
+ */
+export interface ReferencedGhost {
+  id: number;
+  name: string;
+  namespace: string;
+}
+
+/**
+ * Structured error response when skill deletion fails due to references
+ */
+export interface SkillReferenceError {
+  code: 'SKILL_REFERENCED';
+  message: string;
+  skill_name: string;
+  referenced_ghosts: ReferencedGhost[];
+}
+
+/**
+ * Response from remove references API
+ */
+export interface RemoveReferencesResponse {
+  removed_count: number;
+  affected_ghosts: string[];
+}
+
+/**
+ * Response from remove single reference API
+ */
+export interface RemoveSingleReferenceResponse {
+  success: boolean;
+  ghost_name: string;
+}
+
+/**
+ * Remove all Ghost references to a Skill
+ * This allows the Skill to be deleted afterwards
+ */
+export async function removeSkillReferences(skillId: number): Promise<RemoveReferencesResponse> {
+  const token = getToken();
+  if (!token) throw new Error('No authentication token');
+
+  const url = `${API_BASE_URL}/v1/kinds/skills/${skillId}/remove-references`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    try {
+      const json = JSON.parse(error);
+      throw new Error(json.detail || 'Failed to remove skill references');
+    } catch {
+      throw new Error(error || 'Failed to remove skill references');
+    }
+  }
+
+  return response.json();
+}
+
+/**
+ * Remove a Skill reference from a single Ghost
+ */
+export async function removeSingleSkillReference(
+  skillId: number,
+  ghostId: number
+): Promise<RemoveSingleReferenceResponse> {
+  const token = getToken();
+  if (!token) throw new Error('No authentication token');
+
+  const url = `${API_BASE_URL}/v1/kinds/skills/${skillId}/remove-reference/${ghostId}`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    try {
+      const json = JSON.parse(error);
+      throw new Error(json.detail || 'Failed to remove skill reference');
+    } catch {
+      throw new Error(error || 'Failed to remove skill reference');
+    }
+  }
+
+  return response.json();
+}
+
+/**
+ * Helper function to parse skill reference error from API response
+ */
+export function parseSkillReferenceError(errorMessage: string): SkillReferenceError | null {
+  try {
+    const parsed = JSON.parse(errorMessage);
+    if (parsed.code === 'SKILL_REFERENCED') {
+      return parsed as SkillReferenceError;
+    }
+    // Handle nested detail structure
+    if (
+      parsed.detail &&
+      typeof parsed.detail === 'object' &&
+      parsed.detail.code === 'SKILL_REFERENCED'
+    ) {
+      return parsed.detail as SkillReferenceError;
+    }
+  } catch {
+    // Not a JSON error
+  }
+  return null;
 }
