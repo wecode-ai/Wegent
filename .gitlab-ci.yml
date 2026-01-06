@@ -284,7 +284,7 @@ wegent-outer-web:
       - frontend/**/*
       - wecode/docker/frontend_outer/**/*
 
-trigger_update_front_web:
+trigger_update_outer_front_web:
     stage: production
     variables:
         APP: outer-wegent-web
