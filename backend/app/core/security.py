@@ -409,6 +409,9 @@ def get_auth_context(
         # Apply default resources synchronously for new API-created users
         try:
             apply_default_resources_sync(new_user.id)
+            # Commit transaction after applying default resources to ensure
+            # initialized resources are visible to subsequent queries
+            db.commit()
         except Exception as e:
             logger.warning(
                 f"Failed to apply default resources for user {new_user.id}: {e}"
