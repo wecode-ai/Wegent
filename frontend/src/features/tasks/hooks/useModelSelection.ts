@@ -344,12 +344,14 @@ export function useModelSelection({
       }
 
       // Priority 2: Use global preference (for new chat only, i.e. no taskId)
+      // NOTE: Must search in filteredModels to ensure model is compatible with current team's agent_type
       if (!restoredModel && teamId && !taskId) {
         console.log('[useModelSelection] Priority 2: Checking global preference (new chat)...');
         const preference = getGlobalModelPreference(teamId);
         console.log('[useModelSelection] Priority 2: Global preference:', preference);
         if (preference && preference.modelName !== DEFAULT_MODEL_NAME) {
-          const foundModel = models.find(m => {
+          // Search in filteredModels (not models) to ensure compatibility with team's agent_type
+          const foundModel = filteredModels.find(m => {
             if (preference.modelType) {
               return m.name === preference.modelName && m.type === preference.modelType;
             }
@@ -364,7 +366,8 @@ export function useModelSelection({
             setForceOverrideState(preference.forceOverride);
           } else {
             console.log(
-              '[useModelSelection] Priority 2: Global preference model not found in models'
+              '[useModelSelection] Priority 2: Global preference model not compatible with current team (not in filteredModels)',
+              { preferenceName: preference.modelName, compatibleProvider, filteredModelsCount: filteredModels.length }
             );
           }
         }
@@ -426,7 +429,7 @@ export function useModelSelection({
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTeam?.id, showDefaultOption, models, filteredModels, teamId, taskId, taskModelId]);
+  }, [selectedTeam?.id, showDefaultOption, models, filteredModels, teamId, taskId, taskModelId, compatibleProvider]);
 
   // -------------------------------------------------------------------------
   // Save Model Preference (Always save to global when user changes model)
