@@ -223,6 +223,8 @@ def link_contexts_to_subtask(
     user_id: int,
     attachment_ids: List[int] | None = None,
     contexts: List[Any] | None = None,
+    task: Optional["TaskResource"] = None,
+    user_name: Optional[str] = None,
 ) -> List[int]:
     """
     Link attachments and create knowledge base contexts for a subtask.
@@ -232,16 +234,24 @@ def link_contexts_to_subtask(
     2. Knowledge bases: Selected at send time, batch create SubtaskContext records
        (without extracted_text - RAG retrieval is done later via tools/Service)
 
+    When knowledge bases are created, they are automatically synced to the task-level
+    knowledgeBaseRefs for future use across all subtasks.
+
     Args:
         db: Database session
         subtask_id: Subtask ID to link contexts to
         user_id: User ID
         attachment_ids: List of pre-uploaded attachment context IDs to link
         contexts: List of ContextItem objects from payload (for knowledge bases)
+        task: Optional pre-queried TaskResource object for syncing KB to task level
+        user_name: Optional pre-queried user name for KB sync boundBy field
 
     Returns:
         List of all linked/created context IDs
     """
+    # Import TaskResource for type hint
+    from app.models.task import TaskResource
+
     linked_context_ids = []
 
     # Collect attachment IDs to link
@@ -259,12 +269,69 @@ def link_contexts_to_subtask(
             db, attachment_ids, kb_contexts_to_create, subtask_id
         )
         linked_context_ids.extend(created_kb_ids)
+
+        # Sync subtask-level knowledge bases to task level
+        if task and kb_contexts_to_create and user_name:
+            _sync_kb_contexts_to_task(
+                db, kb_contexts_to_create, task, user_id, user_name
+            )
+
     except Exception as e:
         db.rollback()
         logger.exception(f"Failed to link contexts to subtask {subtask_id}: {e}")
         raise
 
     return linked_context_ids
+
+
+def _sync_kb_contexts_to_task(
+    db: Session,
+    kb_contexts: List[SubtaskContext],
+    task: "TaskResource",
+    user_id: int,
+    user_name: str,
+) -> None:
+    """
+    Sync subtask-level knowledge base contexts to task-level knowledgeBaseRefs.
+
+    This function syncs each KB selected in the subtask to the task level using
+    append mode with deduplication. Failures are logged but do not raise exceptions.
+
+    Args:
+        db: Database session
+        kb_contexts: List of KB SubtaskContext objects that were just created
+        task: Pre-queried TaskResource object to sync KBs to
+        user_id: User ID who selected the KBs
+        user_name: Pre-queried user name for boundBy field
+    """
+    from app.services.task_knowledge_base_service import task_knowledge_base_service
+
+    for kb_context in kb_contexts:
+        knowledge_id = (
+            kb_context.type_data.get("knowledge_id") if kb_context.type_data else None
+        )
+        if not knowledge_id:
+            continue
+
+        try:
+            synced = task_knowledge_base_service.sync_subtask_kb_to_task(
+                db=db,
+                task=task,
+                knowledge_id=knowledge_id,
+                user_id=user_id,
+                user_name=user_name,
+            )
+            if synced:
+                logger.info(
+                    f"[_sync_kb_contexts_to_task] Synced KB {knowledge_id} "
+                    f"from subtask to task {task.id}"
+                )
+        except Exception as e:
+            # Log but don't fail - syncing to task level is best-effort
+            logger.warning(
+                f"[_sync_kb_contexts_to_task] Failed to sync KB {knowledge_id} "
+                f"to task {task.id}: {e}"
+            )
 
 
 def _prepare_kb_contexts_for_creation(
@@ -522,8 +589,12 @@ def _prepare_kb_tools_from_contexts(
     """
     Prepare knowledge base tools from context records.
 
-    For group chat tasks, this function also includes knowledge bases
-    bound to the group chat via knowledgeBaseRefs in the task spec.
+    Knowledge base priority rules:
+    1. If subtask has selected knowledge bases (kb_contexts), use ONLY those
+    2. If subtask has no KB selection, fall back to task-level knowledgeBaseRefs
+
+    This ensures user's explicit KB selection in a message takes precedence
+    over task-level bound knowledge bases.
 
     Args:
         kb_contexts: List of knowledge base SubtaskContext records
@@ -539,21 +610,27 @@ def _prepare_kb_tools_from_contexts(
     extra_tools: List[BaseTool] = []
     enhanced_system_prompt = base_system_prompt
 
-    # Extract knowledge_id values from user-selected contexts
-    knowledge_base_ids = [
-        c.knowledge_id for c in kb_contexts if c.knowledge_id is not None
-    ]
+    # Priority 1: Subtask-level knowledge bases (user-selected for this message)
+    subtask_kb_ids = [c.knowledge_id for c in kb_contexts if c.knowledge_id is not None]
 
-    # For group chat tasks, also include bound knowledge bases
-    if task_id:
-        bound_kb_ids = _get_bound_knowledge_base_ids(db, task_id)
-        if bound_kb_ids:
+    # Determine which knowledge bases to use based on priority
+    if subtask_kb_ids:
+        # Use subtask-level KBs only (user's explicit selection takes precedence)
+        knowledge_base_ids = subtask_kb_ids
+        logger.info(
+            f"[_prepare_kb_tools_from_contexts] Using {len(knowledge_base_ids)} "
+            f"subtask-level knowledge bases (priority 1): {knowledge_base_ids}"
+        )
+    elif task_id:
+        # Priority 2: Fall back to task-level bound knowledge bases
+        knowledge_base_ids = _get_bound_knowledge_base_ids(db, task_id)
+        if knowledge_base_ids:
             logger.info(
-                f"[_prepare_kb_tools_from_contexts] Adding {len(bound_kb_ids)} "
-                f"group chat bound knowledge bases: {bound_kb_ids}"
+                f"[_prepare_kb_tools_from_contexts] Using {len(knowledge_base_ids)} "
+                f"task-level bound knowledge bases (priority 2): {knowledge_base_ids}"
             )
-            # Merge and deduplicate
-            knowledge_base_ids = list(set(knowledge_base_ids + bound_kb_ids))
+    else:
+        knowledge_base_ids = []
 
     if not knowledge_base_ids:
         # Even without current knowledge bases, check for historical KB meta
@@ -620,10 +697,10 @@ The user expects answers based on the selected knowledge base content only."""
 
 def _get_bound_knowledge_base_ids(db: Session, task_id: int) -> List[int]:
     """
-    Get knowledge base IDs bound to a group chat task.
+    Get knowledge base IDs bound to a task.
 
-    This function checks if the task is a group chat and retrieves
-    the knowledge base IDs from knowledgeBaseRefs in the task spec.
+    This function retrieves the knowledge base IDs from knowledgeBaseRefs
+    in the task spec. It works for both group chat and non-group chat tasks.
 
     Note: The knowledgeBaseRefs stores display names (spec.name), not Kind.name.
     We need to query by spec.name to find the correct knowledge base.
@@ -633,7 +710,7 @@ def _get_bound_knowledge_base_ids(db: Session, task_id: int) -> List[int]:
         task_id: Task ID
 
     Returns:
-        List of knowledge base IDs bound to the group chat
+        List of knowledge base IDs bound to the task
     """
     from app.models.task import TaskResource
 
@@ -656,18 +733,12 @@ def _get_bound_knowledge_base_ids(db: Session, task_id: int) -> List[int]:
 
         task_json = task.json if isinstance(task.json, dict) else {}
         spec = task_json.get("spec", {})
-        is_group_chat = spec.get("is_group_chat", False)
         kb_refs = spec.get("knowledgeBaseRefs", []) or []
 
         logger.info(
             f"[_get_bound_knowledge_base_ids] task_id={task_id}, "
-            f"is_group_chat={is_group_chat}, kb_refs_count={len(kb_refs)}, "
-            f"kb_refs={kb_refs}"
+            f"kb_refs_count={len(kb_refs)}, kb_refs={kb_refs}"
         )
-
-        # Only process for group chat tasks
-        if not is_group_chat:
-            return []
 
         if not kb_refs:
             return []

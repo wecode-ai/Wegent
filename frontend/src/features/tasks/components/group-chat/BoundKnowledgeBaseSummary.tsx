@@ -2,23 +2,24 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState, useEffect, useCallback } from 'react';
-import { Database, ChevronDown, ChevronUp } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { useTranslation } from '@/hooks/useTranslation';
-import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base';
-import type { BoundKnowledgeBaseDetail } from '@/types/task-knowledge-base';
-import { cn } from '@/lib/utils';
+import { useState, useEffect, useCallback } from 'react'
+import { Database, ChevronDown, ChevronUp } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { useTranslation } from '@/hooks/useTranslation'
+import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base'
+import type { BoundKnowledgeBaseDetail } from '@/types/task-knowledge-base'
+import { cn } from '@/lib/utils'
+import { formatDocumentCount } from '@/lib/i18n-helpers'
 
 interface BoundKnowledgeBaseSummaryProps {
-  taskId: number;
+  taskId: number
   /** Callback when user clicks to manage knowledge bases */
-  onManageClick?: () => void;
+  onManageClick?: () => void
   /** Custom class name */
-  className?: string;
+  className?: string
 }
 
 /**
@@ -30,39 +31,39 @@ export default function BoundKnowledgeBaseSummary({
   onManageClick,
   className,
 }: BoundKnowledgeBaseSummaryProps) {
-  const { t } = useTranslation('chat');
-  const [knowledgeBases, setKnowledgeBases] = useState<BoundKnowledgeBaseDetail[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [open, setOpen] = useState(false);
+  const { t } = useTranslation('chat')
+  const [knowledgeBases, setKnowledgeBases] = useState<BoundKnowledgeBaseDetail[]>([])
+  const [loading, setLoading] = useState(true)
+  const [open, setOpen] = useState(false)
 
   const fetchKnowledgeBases = useCallback(async () => {
-    setLoading(true);
+    setLoading(true)
     try {
-      const response = await taskKnowledgeBaseApi.getBoundKnowledgeBases(taskId);
-      setKnowledgeBases(response.items);
+      const response = await taskKnowledgeBaseApi.getBoundKnowledgeBases(taskId)
+      setKnowledgeBases(response.items)
     } catch (error) {
-      console.error('Failed to fetch bound knowledge bases:', error);
-      setKnowledgeBases([]);
+      console.error('Failed to fetch bound knowledge bases:', error)
+      setKnowledgeBases([])
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  }, [taskId]);
+  }, [taskId])
 
   useEffect(() => {
-    fetchKnowledgeBases();
-  }, [fetchKnowledgeBases]);
+    fetchKnowledgeBases()
+  }, [fetchKnowledgeBases])
 
   // Don't render if no knowledge bases are bound
   if (!loading && knowledgeBases.length === 0) {
-    return null;
+    return null
   }
 
   // Show loading state briefly
   if (loading) {
-    return null;
+    return null
   }
 
-  const totalDocuments = knowledgeBases.reduce((sum, kb) => sum + (kb.document_count || 0), 0);
+  const totalDocuments = knowledgeBases.reduce((sum, kb) => sum + (kb.document_count || 0), 0)
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -113,7 +114,7 @@ export default function BoundKnowledgeBaseSummary({
                       {kb.display_name}
                     </span>
                     <span className="text-xs text-text-muted bg-surface px-1.5 py-0.5 rounded flex-shrink-0">
-                      {kb.document_count} {t('common:document', { count: kb.document_count })}
+                      {formatDocumentCount(kb.document_count || 0, t)}
                     </span>
                   </div>
                   {kb.description && (
@@ -131,8 +132,8 @@ export default function BoundKnowledgeBaseSummary({
               size="sm"
               className="w-full text-xs"
               onClick={() => {
-                setOpen(false);
-                onManageClick();
+                setOpen(false)
+                onManageClick()
               }}
             >
               {t('knowledgeSummary.manage')}
@@ -141,5 +142,5 @@ export default function BoundKnowledgeBaseSummary({
         )}
       </PopoverContent>
     </Popover>
-  );
+  )
 }

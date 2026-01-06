@@ -2,97 +2,98 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState, useEffect, useCallback } from 'react';
-import { Database, Plus, Trash2, AlertCircle, Loader2 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { useTranslation } from '@/hooks/useTranslation';
-import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base';
-import type { BoundKnowledgeBaseDetail } from '@/types/task-knowledge-base';
-import { cn } from '@/lib/utils';
-import { toast } from '@/hooks/use-toast';
-import BindKnowledgeBaseDialog from './BindKnowledgeBaseDialog';
+import { useState, useEffect, useCallback } from 'react'
+import { Database, Plus, Trash2, AlertCircle, Loader2 } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { useTranslation } from '@/hooks/useTranslation'
+import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base'
+import type { BoundKnowledgeBaseDetail } from '@/types/task-knowledge-base'
+import { cn } from '@/lib/utils'
+import { toast } from '@/hooks/use-toast'
+import { formatDocumentCount } from '@/lib/i18n-helpers'
+import BindKnowledgeBaseDialog from './BindKnowledgeBaseDialog'
 
 interface TaskKnowledgeBasePanelProps {
-  taskId: number;
-  onClose?: () => void;
+  taskId: number
+  onClose?: () => void
 }
 
 export default function TaskKnowledgeBasePanel({ taskId, onClose }: TaskKnowledgeBasePanelProps) {
-  const { t } = useTranslation('chat');
-  const [knowledgeBases, setKnowledgeBases] = useState<BoundKnowledgeBaseDetail[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [maxLimit, setMaxLimit] = useState(10);
-  const [removingKb, setRemovingKb] = useState<string | null>(null);
-  const [bindDialogOpen, setBindDialogOpen] = useState(false);
+  const { t } = useTranslation('chat')
+  const [knowledgeBases, setKnowledgeBases] = useState<BoundKnowledgeBaseDetail[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [maxLimit, setMaxLimit] = useState(10)
+  const [removingKb, setRemovingKb] = useState<string | null>(null)
+  const [bindDialogOpen, setBindDialogOpen] = useState(false)
 
   const fetchKnowledgeBases = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+    setLoading(true)
+    setError(null)
     try {
-      const response = await taskKnowledgeBaseApi.getBoundKnowledgeBases(taskId);
-      setKnowledgeBases(response.items);
-      setMaxLimit(response.max_limit);
+      const response = await taskKnowledgeBaseApi.getBoundKnowledgeBases(taskId)
+      setKnowledgeBases(response.items)
+      setMaxLimit(response.max_limit)
     } catch (err) {
-      console.error('Failed to fetch bound knowledge bases:', err);
-      setError(t('groupChat.knowledge.loadFailed'));
+      console.error('Failed to fetch bound knowledge bases:', err)
+      setError(t('groupChat.knowledge.loadFailed'))
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  }, [taskId, t]);
+  }, [taskId, t])
 
   useEffect(() => {
-    fetchKnowledgeBases();
-  }, [fetchKnowledgeBases]);
+    fetchKnowledgeBases()
+  }, [fetchKnowledgeBases])
 
   const handleRemove = async (kb: BoundKnowledgeBaseDetail) => {
-    const kbKey = `${kb.name}:${kb.namespace}`;
-    setRemovingKb(kbKey);
+    const kbKey = `${kb.name}:${kb.namespace}`
+    setRemovingKb(kbKey)
     try {
-      await taskKnowledgeBaseApi.unbindKnowledgeBase(taskId, kb.name, kb.namespace);
+      await taskKnowledgeBaseApi.unbindKnowledgeBase(taskId, kb.name, kb.namespace)
       setKnowledgeBases(prev =>
         prev.filter(item => !(item.name === kb.name && item.namespace === kb.namespace))
-      );
+      )
       toast({
         description: t('groupChat.knowledge.removeSuccess', { name: kb.display_name }),
-      });
+      })
     } catch (err) {
-      console.error('Failed to unbind knowledge base:', err);
+      console.error('Failed to unbind knowledge base:', err)
       toast({
         variant: 'destructive',
         description: t('groupChat.knowledge.removeFailed'),
-      });
+      })
     } finally {
-      setRemovingKb(null);
+      setRemovingKb(null)
     }
-  };
+  }
 
   const handleBindSuccess = (newKb: BoundKnowledgeBaseDetail) => {
-    setKnowledgeBases(prev => [...prev, newKb]);
-    setBindDialogOpen(false);
-  };
+    setKnowledgeBases(prev => [...prev, newKb])
+    setBindDialogOpen(false)
+  }
 
   const formatBoundTime = (boundAt: string) => {
     try {
-      const date = new Date(boundAt);
+      const date = new Date(boundAt)
       return date.toLocaleDateString(undefined, {
         year: 'numeric',
         month: 'short',
         day: 'numeric',
-      });
+      })
     } catch {
-      return boundAt;
+      return boundAt
     }
-  };
+  }
 
   if (loading) {
     return (
       <div className="flex items-center justify-center py-8">
         <Loader2 className="h-6 w-6 animate-spin text-text-muted" />
       </div>
-    );
+    )
   }
 
   if (error) {
@@ -104,7 +105,7 @@ export default function TaskKnowledgeBasePanel({ taskId, onClose }: TaskKnowledg
           {t('common:actions.retry')}
         </Button>
       </div>
-    );
+    )
   }
 
   return (
@@ -144,8 +145,8 @@ export default function TaskKnowledgeBasePanel({ taskId, onClose }: TaskKnowledg
         ) : (
           <div className="space-y-2">
             {knowledgeBases.map(kb => {
-              const kbKey = `${kb.name}:${kb.namespace}`;
-              const isRemoving = removingKb === kbKey;
+              const kbKey = `${kb.name}:${kb.namespace}`
+              const isRemoving = removingKb === kbKey
               return (
                 <div
                   key={kbKey}
@@ -165,7 +166,7 @@ export default function TaskKnowledgeBasePanel({ taskId, onClose }: TaskKnowledg
                       <div className="flex items-center gap-2">
                         <span className="font-medium text-sm truncate">{kb.display_name}</span>
                         <span className="text-xs text-text-muted bg-surface px-1.5 py-0.5 rounded">
-                          {kb.document_count} {t('common:document', { count: kb.document_count })}
+                          {formatDocumentCount(kb.document_count || 0, t)}
                         </span>
                       </div>
                       {kb.description && (
@@ -195,7 +196,7 @@ export default function TaskKnowledgeBasePanel({ taskId, onClose }: TaskKnowledg
                     )}
                   </Button>
                 </div>
-              );
+              )
             })}
           </div>
         )}
@@ -219,5 +220,5 @@ export default function TaskKnowledgeBasePanel({ taskId, onClose }: TaskKnowledg
         onSuccess={handleBindSuccess}
       />
     </div>
-  );
+  )
 }
