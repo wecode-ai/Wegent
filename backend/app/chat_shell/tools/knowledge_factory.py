@@ -20,6 +20,7 @@ def prepare_knowledge_base_tools(
     base_system_prompt: str,
     task_id: Optional[int] = None,
     user_subtask_id: Optional[int] = None,
+    is_user_selected: bool = True,
 ) -> tuple[list, str]:
     """
     Prepare knowledge base tools and enhanced system prompt.
@@ -34,6 +35,9 @@ def prepare_knowledge_base_tools(
         base_system_prompt: Base system prompt to enhance
         task_id: Optional task ID for fetching knowledge base meta from history
         user_subtask_id: Optional user subtask ID for persisting RAG results
+        is_user_selected: Whether KB is explicitly selected by user for this message.
+            True = strict mode (user must use KB only)
+            False = relaxed mode (KB inherited from task, can use general knowledge)
 
     Returns:
         Tuple of (extra_tools list, enhanced_system_prompt string)
@@ -50,9 +54,11 @@ def prepare_knowledge_base_tools(
         return extra_tools, enhanced_system_prompt
 
     logger.info(
-        "[knowledge_factory] Creating KnowledgeBaseTool for %d knowledge bases: %s",
+        "[knowledge_factory] Creating KnowledgeBaseTool for %d knowledge bases: %s, "
+        "is_user_selected=%s",
         len(knowledge_base_ids),
         knowledge_base_ids,
+        is_user_selected,
     )
 
     # Import KnowledgeBaseTool
@@ -68,27 +74,22 @@ def prepare_knowledge_base_tools(
     )
     extra_tools.append(kb_tool)
 
-    # Enhance system prompt to REQUIRE AI to use the knowledge base tool
-    kb_instruction = """
+    # Import shared prompt constants
+    from app.chat_shell.prompts import KB_PROMPT_RELAXED, KB_PROMPT_STRICT
 
-# IMPORTANT: Knowledge Base Requirement
-
-The user has selected specific knowledge bases for this conversation. You MUST use the `knowledge_base_search` tool to retrieve information from these knowledge bases before answering any questions.
-
-## Required Workflow:
-1. **ALWAYS** call `knowledge_base_search` first with the user's query
-2. Wait for the search results
-3. Base your answer **ONLY** on the retrieved information
-4. If the search returns no results or irrelevant information, clearly state: "I cannot find relevant information in the selected knowledge base to answer this question."
-5. **DO NOT** use your general knowledge or make assumptions beyond what's in the knowledge base
-
-## Critical Rules:
-- You MUST search the knowledge base for EVERY user question
-- You MUST NOT answer without searching first
-- You MUST NOT make up information if the knowledge base doesn't contain it
-- If unsure, search again with different keywords
-
-The user expects answers based on the selected knowledge base content only."""
+    # Choose prompt based on whether KB is user-selected or inherited from task
+    if is_user_selected:
+        # Strict mode: User explicitly selected KB for this message
+        kb_instruction = KB_PROMPT_STRICT
+        logger.info(
+            "[knowledge_factory] Using STRICT mode prompt (user explicitly selected KB)"
+        )
+    else:
+        # Relaxed mode: KB inherited from task, AI can use general knowledge as fallback
+        kb_instruction = KB_PROMPT_RELAXED
+        logger.info(
+            "[knowledge_factory] Using RELAXED mode prompt (KB inherited from task)"
+        )
 
     enhanced_system_prompt = f"{base_system_prompt}{kb_instruction}"
 
@@ -97,10 +98,6 @@ The user expects answers based on the selected knowledge base content only."""
         kb_meta_prompt = _build_historical_kb_meta_prompt(db, task_id)
         if kb_meta_prompt:
             enhanced_system_prompt = f"{enhanced_system_prompt}{kb_meta_prompt}"
-
-    logger.info(
-        "[knowledge_factory] Enhanced system prompt with REQUIRED knowledge base usage instructions"
-    )
 
     return extra_tools, enhanced_system_prompt
 
