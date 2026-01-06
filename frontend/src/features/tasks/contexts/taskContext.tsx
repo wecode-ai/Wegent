@@ -325,6 +325,9 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
 
   // Handle new task created via WebSocket
   const handleTaskCreated = useCallback((data: TaskCreatedPayload) => {
+    // Use is_group_chat from WebSocket payload (defaults to false if not provided)
+    const isGroupChat = data.is_group_chat ?? false;
+
     // Check if task already exists in the list
     const newTask: Task = {
       id: data.task_id,
@@ -347,18 +350,28 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
       created_at: data.created_at,
       updated_at: data.created_at,
       completed_at: '',
-      is_group_chat: false,
+      is_group_chat: isGroupChat,
     };
 
     // Initialize view status for the new task
     initializeTaskViewStatus([newTask]);
 
-    // Add to personal tasks (new tasks are always personal initially)
-    setPersonalTasks(prev => {
-      const exists = prev.some(task => task.id === data.task_id);
-      if (exists) return prev;
-      return [newTask, ...prev];
-    });
+    // Add to correct list based on is_group_chat flag
+    if (isGroupChat) {
+      // Add to group tasks for group chats
+      setGroupTasks(prev => {
+        const exists = prev.some(task => task.id === data.task_id);
+        if (exists) return prev;
+        return [newTask, ...prev];
+      });
+    } else {
+      // Add to personal tasks for non-group chats
+      setPersonalTasks(prev => {
+        const exists = prev.some(task => task.id === data.task_id);
+        if (exists) return prev;
+        return [newTask, ...prev];
+      });
+    }
 
     // Also update combined tasks list for backward compatibility
     setTasks(prev => {

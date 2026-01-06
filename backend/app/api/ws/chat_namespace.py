@@ -621,6 +621,12 @@ class ChatNamespace(socketio.AsyncNamespace):
                 team_name = team_crd.metadata.name if team_crd.metadata else team.name
                 task_crd = Task.model_validate(task.json)
                 task_title = task_crd.spec.title or ""
+                # Get is_group_chat from task spec, with fallback to payload
+                task_is_group_chat = (
+                    task_crd.spec.is_group_chat
+                    if task_crd.spec
+                    else payload.is_group_chat
+                )
 
                 await ws_emitter.emit_task_created(
                     user_id=user_id,
@@ -628,6 +634,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                     title=task_title,
                     team_id=team.id,
                     team_name=team_name,
+                    is_group_chat=task_is_group_chat,
                 )
                 logger.info(
                     f"[WS] chat:send emitted task:created event for task_id={task.id}"
