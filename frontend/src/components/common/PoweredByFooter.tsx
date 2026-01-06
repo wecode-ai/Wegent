@@ -26,7 +26,7 @@ export default function PoweredByFooter({ className = '' }: PoweredByFooterProps
 
   return (
     <div
-      className={`fixed bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-3 pointer-events-none ${className}`}
+      className={`fixed bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-3 pointer-events-none flex-nowrap whitespace-nowrap ${className}`}
     >
       <button
         type="button"
