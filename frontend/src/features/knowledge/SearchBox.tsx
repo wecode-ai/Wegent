@@ -2,14 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { SearchIcon } from './SearchIcon';
+import { SearchIcon } from './SearchIcon'
 
 interface SearchBoxProps {
-  value: string;
-  onChange: (value: string) => void;
-  placeholder?: string;
-  className?: string;
-  size?: 'sm' | 'md' | 'lg';
+  value: string
+  onChange: (value: string) => void
+  placeholder?: string
+  className?: string
+  size?: 'sm' | 'md' | 'lg'
 }
 
 /**
@@ -27,13 +27,13 @@ export function SearchBox({
     sm: 'pl-8 pr-3 py-1.5 text-sm',
     md: 'pl-10 pr-3 py-2 text-base',
     lg: 'pl-10 pr-3 py-3 text-base',
-  };
+  }
 
   const iconSizeClasses = {
     sm: 'left-2.5 h-4 w-4',
     md: 'left-3 h-5 w-5',
     lg: 'left-3 h-5 w-5',
-  };
+  }
 
   return (
     <div className={`relative ${className}`}>
@@ -48,5 +48,5 @@ export function SearchBox({
         className={`absolute ${iconSizeClasses[size]} top-1/2 transform -translate-y-1/2 text-text-muted`}
       />
     </div>
-  );
+  )
 }

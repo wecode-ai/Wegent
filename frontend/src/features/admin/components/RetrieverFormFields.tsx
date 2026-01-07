@@ -2,24 +2,24 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React from 'react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Checkbox } from '@/components/ui/checkbox';
+import React from 'react'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline';
-import { Loader2 } from 'lucide-react';
-import { useTranslation } from '@/hooks/useTranslation';
-import { RetrievalMethodType } from '@/apis/retrievers';
+} from '@/components/ui/select'
+import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline'
+import { Loader2 } from 'lucide-react'
+import { useTranslation } from '@/hooks/useTranslation'
+import { RetrievalMethodType } from '@/apis/retrievers'
 
 // Storage type configuration for extensibility
 export const STORAGE_TYPE_CONFIG = {
@@ -41,31 +41,31 @@ export const STORAGE_TYPE_CONFIG = {
     },
     fallbackRetrievalMethods: ['vector'] as const,
   },
-} as const;
+} as const
 
 // Retrieval method labels for display
 export const RETRIEVAL_METHOD_LABELS: Record<string, string> = {
   vector: 'common:retrievers.retrieval_method_vector',
   keyword: 'common:retrievers.retrieval_method_keyword',
   hybrid: 'common:retrievers.retrieval_method_hybrid',
-};
+}
 
-export type IndexModeType = 'fixed' | 'rolling' | 'per_dataset' | 'per_user';
+export type IndexModeType = 'fixed' | 'rolling' | 'per_dataset' | 'per_user'
 
 export interface RetrieverFormData {
-  name: string;
-  displayName: string;
-  namespace: string;
-  storageType: 'elasticsearch' | 'qdrant';
-  url: string;
-  username: string;
-  password: string;
-  apiKey: string;
-  indexMode: IndexModeType;
-  fixedName: string;
-  rollingStep: string;
-  prefix: string;
-  enabledRetrievalMethods: RetrievalMethodType[];
+  name: string
+  displayName: string
+  namespace: string
+  storageType: 'elasticsearch' | 'qdrant'
+  url: string
+  username: string
+  password: string
+  apiKey: string
+  indexMode: IndexModeType
+  fixedName: string
+  rollingStep: string
+  prefix: string
+  enabledRetrievalMethods: RetrievalMethodType[]
 }
 
 export const defaultFormData: RetrieverFormData = {
@@ -82,20 +82,20 @@ export const defaultFormData: RetrieverFormData = {
   rollingStep: '5000',
   prefix: 'wegent',
   enabledRetrievalMethods: ['vector', 'keyword', 'hybrid'],
-};
+}
 
 interface RetrieverFormFieldsProps {
-  formData: RetrieverFormData;
-  setFormData: React.Dispatch<React.SetStateAction<RetrieverFormData>>;
-  isEditDialogOpen: boolean;
-  availableRetrievalMethods: RetrievalMethodType[];
-  loadingRetrievalMethods: boolean;
-  showPassword: boolean;
-  setShowPassword: (show: boolean) => void;
-  showApiKey: boolean;
-  setShowApiKey: (show: boolean) => void;
-  handleStorageTypeChange: (value: 'elasticsearch' | 'qdrant') => void;
-  handleRetrievalMethodToggle: (method: RetrievalMethodType, checked: boolean) => void;
+  formData: RetrieverFormData
+  setFormData: React.Dispatch<React.SetStateAction<RetrieverFormData>>
+  isEditDialogOpen: boolean
+  availableRetrievalMethods: RetrievalMethodType[]
+  loadingRetrievalMethods: boolean
+  showPassword: boolean
+  setShowPassword: (show: boolean) => void
+  showApiKey: boolean
+  setShowApiKey: (show: boolean) => void
+  handleStorageTypeChange: (value: 'elasticsearch' | 'qdrant') => void
+  handleRetrievalMethodToggle: (method: RetrievalMethodType, checked: boolean) => void
 }
 
 export const RetrieverFormFields: React.FC<RetrieverFormFieldsProps> = ({
@@ -111,7 +111,7 @@ export const RetrieverFormFields: React.FC<RetrieverFormFieldsProps> = ({
   handleStorageTypeChange,
   handleRetrievalMethodToggle,
 }) => {
-  const { t } = useTranslation(['admin', 'common', 'wizard']);
+  const { t } = useTranslation(['admin', 'common', 'wizard'])
 
   return (
     <div className="space-y-4 py-4 max-h-[60vh] overflow-y-auto">
@@ -385,7 +385,7 @@ export const RetrieverFormFields: React.FC<RetrieverFormFieldsProps> = ({
         <p className="text-xs text-text-muted">{t('common:retrievers.retrieval_methods_hint')}</p>
       </div>
     </div>
-  );
-};
+  )
+}
 
-export default RetrieverFormFields;
+export default RetrieverFormFields

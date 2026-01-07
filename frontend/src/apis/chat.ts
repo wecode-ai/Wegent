@@ -9,17 +9,17 @@
  * This module provides utility functions for chat operations.
  */
 
-import { getToken } from './user';
+import { getToken } from './user'
 
 // API base URL - uses Next.js API Route
-const API_BASE_URL = '/api';
+const API_BASE_URL = '/api'
 
 /**
  * Response from check direct chat API
  */
 export interface CheckDirectChatResponse {
-  supports_direct_chat: boolean;
-  shell_type: string;
+  supports_direct_chat: boolean
+  shell_type: string
 }
 
 /**
@@ -29,7 +29,7 @@ export interface CheckDirectChatResponse {
  * @returns Whether the team supports direct chat and its shell type
  */
 export async function checkDirectChat(teamId: number): Promise<CheckDirectChatResponse> {
-  const token = getToken();
+  const token = getToken()
 
   const response = await fetch(`${API_BASE_URL}/chat/check-direct-chat/${teamId}`, {
     method: 'GET',
@@ -37,23 +37,23 @@ export async function checkDirectChat(teamId: number): Promise<CheckDirectChatRe
       'Content-Type': 'application/json',
       ...(token && { Authorization: `Bearer ${token}` }),
     },
-  });
+  })
 
   if (!response.ok) {
-    const errorText = await response.text();
-    let errorMsg = errorText;
+    const errorText = await response.text()
+    let errorMsg = errorText
     try {
-      const json = JSON.parse(errorText);
+      const json = JSON.parse(errorText)
       if (json && typeof json.detail === 'string') {
-        errorMsg = json.detail;
+        errorMsg = json.detail
       }
     } catch {
       // Not JSON
     }
-    throw new Error(errorMsg);
+    throw new Error(errorMsg)
   }
 
-  return response.json();
+  return response.json()
 }
 
 /**
@@ -61,17 +61,17 @@ export async function checkDirectChat(teamId: number): Promise<CheckDirectChatRe
  */
 export interface CancelChatRequest {
   /** Subtask ID to cancel */
-  subtask_id: number;
+  subtask_id: number
   /** Partial content received before cancellation (optional) */
-  partial_content?: string;
+  partial_content?: string
 }
 
 /**
  * Response from cancel chat API
  */
 export interface CancelChatResponse {
-  success: boolean;
-  message: string;
+  success: boolean
+  message: string
 }
 
 /**
@@ -86,7 +86,7 @@ export interface CancelChatResponse {
  * @returns Cancel result
  */
 export async function cancelChat(request: CancelChatRequest): Promise<CancelChatResponse> {
-  const token = getToken();
+  const token = getToken()
 
   const response = await fetch(`${API_BASE_URL}/chat/cancel`, {
     method: 'POST',
@@ -95,23 +95,23 @@ export async function cancelChat(request: CancelChatRequest): Promise<CancelChat
       ...(token && { Authorization: `Bearer ${token}` }),
     },
     body: JSON.stringify(request),
-  });
+  })
 
   if (!response.ok) {
-    const errorText = await response.text();
-    let errorMsg = errorText;
+    const errorText = await response.text()
+    let errorMsg = errorText
     try {
-      const json = JSON.parse(errorText);
+      const json = JSON.parse(errorText)
       if (json && typeof json.detail === 'string') {
-        errorMsg = json.detail;
+        errorMsg = json.detail
       }
     } catch {
       // Not JSON
     }
-    throw new Error(errorMsg);
+    throw new Error(errorMsg)
   }
 
-  return response.json();
+  return response.json()
 }
 
 /**
@@ -119,15 +119,15 @@ export async function cancelChat(request: CancelChatRequest): Promise<CancelChat
  */
 export interface StreamingContentResponse {
   /** The accumulated content */
-  content: string;
+  content: string
   /** Source of the content: "redis" (most recent) or "database" (fallback) */
-  source: 'redis' | 'database';
+  source: 'redis' | 'database'
   /** Whether still streaming */
-  streaming: boolean;
+  streaming: boolean
   /** Subtask status */
-  status: string;
+  status: string
   /** Whether content is incomplete (client disconnected) */
-  incomplete: boolean;
+  incomplete: boolean
 }
 
 /**
@@ -141,7 +141,7 @@ export interface StreamingContentResponse {
  * @returns Streaming content and metadata
  */
 export async function getStreamingContent(subtaskId: number): Promise<StreamingContentResponse> {
-  const token = getToken();
+  const token = getToken()
 
   const response = await fetch(`${API_BASE_URL}/chat/streaming-content/${subtaskId}`, {
     method: 'GET',
@@ -149,23 +149,23 @@ export async function getStreamingContent(subtaskId: number): Promise<StreamingC
       'Content-Type': 'application/json',
       ...(token && { Authorization: `Bearer ${token}` }),
     },
-  });
+  })
 
   if (!response.ok) {
-    const errorText = await response.text();
-    let errorMsg = errorText;
+    const errorText = await response.text()
+    let errorMsg = errorText
     try {
-      const json = JSON.parse(errorText);
+      const json = JSON.parse(errorText)
       if (json && typeof json.detail === 'string') {
-        errorMsg = json.detail;
+        errorMsg = json.detail
       }
     } catch {
       // Not JSON
     }
-    throw new Error(errorMsg);
+    throw new Error(errorMsg)
   }
 
-  return response.json();
+  return response.json()
 }
 
 /**
@@ -173,15 +173,15 @@ export async function getStreamingContent(subtaskId: number): Promise<StreamingC
  */
 export interface ChatStreamData {
   /** Content chunk */
-  content?: string;
+  content?: string
   /** Whether stream is done */
-  done?: boolean;
+  done?: boolean
   /** Whether this is cached content */
-  cached?: boolean;
+  cached?: boolean
   /** Current offset in the stream */
-  offset?: number;
+  offset?: number
   /** Error message if any */
-  error?: string;
+  error?: string
 }
 
 /**
@@ -189,11 +189,11 @@ export interface ChatStreamData {
  */
 export interface StreamCallbacks {
   /** Called when a message chunk is received */
-  onMessage: (data: ChatStreamData) => void;
+  onMessage: (data: ChatStreamData) => void
   /** Called when an error occurs */
-  onError: (error: Error) => void;
+  onError: (error: Error) => void
   /** Called when stream completes */
-  onComplete: () => void;
+  onComplete: () => void
 }
 
 /**
@@ -216,8 +216,8 @@ export async function resumeStreamWithOffset(
   _teamId: number,
   callbacks: StreamCallbacks
 ): Promise<{ abort: () => void }> {
-  const token = getToken();
-  const controller = new AbortController();
+  const token = getToken()
+  const controller = new AbortController()
 
   const fetchStream = async () => {
     try {
@@ -231,43 +231,43 @@ export async function resumeStreamWithOffset(
           },
           signal: controller.signal,
         }
-      );
+      )
 
       if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText);
+        const errorText = await response.text()
+        throw new Error(errorText)
       }
 
-      const reader = response.body?.getReader();
+      const reader = response.body?.getReader()
       if (!reader) {
-        throw new Error('No response body');
+        throw new Error('No response body')
       }
 
-      const decoder = new TextDecoder();
-      let buffer = '';
+      const decoder = new TextDecoder()
+      let buffer = ''
 
       while (true) {
-        const { done, value } = await reader.read();
+        const { done, value } = await reader.read()
         if (done) {
-          callbacks.onComplete();
-          break;
+          callbacks.onComplete()
+          break
         }
 
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
 
         for (const line of lines) {
           if (line.startsWith('data: ')) {
-            const dataStr = line.slice(6);
+            const dataStr = line.slice(6)
             if (dataStr === '[DONE]') {
-              callbacks.onMessage({ done: true });
-              callbacks.onComplete();
-              return;
+              callbacks.onMessage({ done: true })
+              callbacks.onComplete()
+              return
             }
             try {
-              const data = JSON.parse(dataStr) as ChatStreamData;
-              callbacks.onMessage(data);
+              const data = JSON.parse(dataStr) as ChatStreamData
+              callbacks.onMessage(data)
             } catch {
               // Ignore parse errors
             }
@@ -276,33 +276,33 @@ export async function resumeStreamWithOffset(
       }
     } catch (error) {
       if ((error as Error).name !== 'AbortError') {
-        callbacks.onError(error as Error);
+        callbacks.onError(error as Error)
       }
     }
-  };
+  }
 
   // Start the stream
-  fetchStream();
+  fetchStream()
 
   return {
     abort: () => controller.abort(),
-  };
+  }
 }
 
 /**
  * Search engine information
  */
 export interface SearchEngine {
-  name: string;
-  display_name: string;
+  name: string
+  display_name: string
 }
 
 /**
  * Response from get search engines API
  */
 export interface SearchEnginesResponse {
-  enabled: boolean;
-  engines: SearchEngine[];
+  enabled: boolean
+  engines: SearchEngine[]
 }
 
 /**
@@ -311,7 +311,7 @@ export interface SearchEnginesResponse {
  * @returns Search engines configuration
  */
 export async function getSearchEngines(): Promise<SearchEnginesResponse> {
-  const token = getToken();
+  const token = getToken()
 
   const response = await fetch(`${API_BASE_URL}/chat/search-engines`, {
     method: 'GET',
@@ -319,23 +319,23 @@ export async function getSearchEngines(): Promise<SearchEnginesResponse> {
       'Content-Type': 'application/json',
       ...(token && { Authorization: `Bearer ${token}` }),
     },
-  });
+  })
 
   if (!response.ok) {
-    const errorText = await response.text();
-    let errorMsg = errorText;
+    const errorText = await response.text()
+    let errorMsg = errorText
     try {
-      const json = JSON.parse(errorText);
+      const json = JSON.parse(errorText)
       if (json && typeof json.detail === 'string') {
-        errorMsg = json.detail;
+        errorMsg = json.detail
       }
     } catch {
       // Not JSON
     }
-    throw new Error(errorMsg);
+    throw new Error(errorMsg)
   }
 
-  return response.json();
+  return response.json()
 }
 
 /**
@@ -347,4 +347,4 @@ export const chatApis = {
   getStreamingContent,
   getSearchEngines,
   resumeStreamWithOffset,
-};
+}

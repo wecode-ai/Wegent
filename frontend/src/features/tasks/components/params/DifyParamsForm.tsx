@@ -2,30 +2,30 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useEffect, useState, useMemo } from 'react';
-import { Team } from '@/types/api';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
+import React, { useEffect, useState, useMemo } from 'react'
+import { Team } from '@/types/api'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
 import {
   Accordion,
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
-} from '@/components/ui/accordion';
-import { AdjustmentsHorizontalIcon } from '@heroicons/react/24/outline';
+} from '@/components/ui/accordion'
+import { AdjustmentsHorizontalIcon } from '@heroicons/react/24/outline'
 
 interface DifyParamsFormProps {
-  selectedTeam: Team | null;
-  selectedAppId: string | null;
-  params: Record<string, unknown>;
-  onParamsChange: (params: Record<string, unknown>) => void;
-  disabled?: boolean;
+  selectedTeam: Team | null
+  selectedAppId: string | null
+  params: Record<string, unknown>
+  onParamsChange: (params: Record<string, unknown>) => void
+  disabled?: boolean
 }
 
-const STORAGE_PREFIX = 'dify_params_team_';
+const STORAGE_PREFIX = 'dify_params_team_'
 
 export default function DifyParamsForm({
   selectedTeam,
@@ -34,74 +34,74 @@ export default function DifyParamsForm({
   onParamsChange,
   disabled = false,
 }: DifyParamsFormProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(false)
 
   // Check if selected team is using Dify runtime
   const isDifyTeam = useMemo(() => {
     if (!selectedTeam || !selectedTeam.bots || selectedTeam.bots.length === 0) {
-      return false;
+      return false
     }
-    const firstBot = selectedTeam.bots[0];
+    const firstBot = selectedTeam.bots[0]
     try {
       if (firstBot.bot_prompt) {
-        const promptData = JSON.parse(firstBot.bot_prompt);
-        return 'difyAppId' in promptData || 'params' in promptData;
+        const promptData = JSON.parse(firstBot.bot_prompt)
+        return 'difyAppId' in promptData || 'params' in promptData
       }
     } catch {
       // Not a JSON, not a Dify team
     }
-    return false;
-  }, [selectedTeam]);
+    return false
+  }, [selectedTeam])
 
   // Load params from localStorage on mount
   useEffect(() => {
-    if (!selectedTeam || !isDifyTeam) return;
+    if (!selectedTeam || !isDifyTeam) return
 
-    const storageKey = `${STORAGE_PREFIX}${selectedTeam.id}`;
-    const stored = localStorage.getItem(storageKey);
+    const storageKey = `${STORAGE_PREFIX}${selectedTeam.id}`
+    const stored = localStorage.getItem(storageKey)
 
     if (stored) {
       try {
-        const parsedParams = JSON.parse(stored);
-        onParamsChange(parsedParams);
+        const parsedParams = JSON.parse(stored)
+        onParamsChange(parsedParams)
       } catch (err) {
-        console.error('Failed to parse stored params:', err);
+        console.error('Failed to parse stored params:', err)
       }
     }
-  }, [selectedTeam?.id, isDifyTeam]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedTeam?.id, isDifyTeam]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Save params to localStorage when they change
   useEffect(() => {
-    if (!selectedTeam || !isDifyTeam) return;
+    if (!selectedTeam || !isDifyTeam) return
 
-    const storageKey = `${STORAGE_PREFIX}${selectedTeam.id}`;
+    const storageKey = `${STORAGE_PREFIX}${selectedTeam.id}`
     if (Object.keys(params).length > 0) {
-      localStorage.setItem(storageKey, JSON.stringify(params));
+      localStorage.setItem(storageKey, JSON.stringify(params))
     }
-  }, [params, selectedTeam, isDifyTeam]);
+  }, [params, selectedTeam, isDifyTeam])
 
   const handleParamChange = (key: string, value: string) => {
     onParamsChange({
       ...params,
       [key]: value,
-    });
-  };
+    })
+  }
 
   const handleJsonChange = (value: string) => {
     try {
-      const parsed = JSON.parse(value);
-      onParamsChange(parsed);
+      const parsed = JSON.parse(value)
+      onParamsChange(parsed)
     } catch {
       // Invalid JSON, ignore
     }
-  };
+  }
 
   // Don't render if not a Dify team
   if (!isDifyTeam) {
-    return null;
+    return null
   }
 
-  const paramsJson = JSON.stringify(params, null, 2);
+  const paramsJson = JSON.stringify(params, null, 2)
 
   return (
     <div className="w-full">
@@ -164,5 +164,5 @@ export default function DifyParamsForm({
         </AccordionItem>
       </Accordion>
     </div>
-  );
+  )
 }

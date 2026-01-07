@@ -1,13 +1,13 @@
-import { Button } from '@/components/ui/button';
-import { PlusIcon } from '@heroicons/react/24/outline';
-import { ReactNode } from 'react';
+import { Button } from '@/components/ui/button'
+import { PlusIcon } from '@heroicons/react/24/outline'
+import { ReactNode } from 'react'
 
 interface UnifiedAddButtonProps {
-  onClick: () => void;
-  children: ReactNode;
-  className?: string;
-  icon?: ReactNode;
-  variant?: 'default' | 'primary' | 'outline' | 'secondary';
+  onClick: () => void
+  children: ReactNode
+  className?: string
+  icon?: ReactNode
+  variant?: 'default' | 'primary' | 'outline' | 'secondary'
 }
 
 export default function UnifiedAddButton({
@@ -27,5 +27,5 @@ export default function UnifiedAddButton({
       {icon || <PlusIcon className="h-4 w-4" />}
       {children}
     </Button>
-  );
+  )
 }

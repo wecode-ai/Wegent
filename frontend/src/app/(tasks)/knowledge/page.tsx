@@ -2,27 +2,27 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import TopNavigation from '@/features/layout/TopNavigation';
+import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import TopNavigation from '@/features/layout/TopNavigation'
 import {
   TaskSidebar,
   ResizableSidebar,
   CollapsedSidebarButtons,
-} from '@/features/tasks/components/sidebar';
-import '@/app/tasks/tasks.css';
-import '@/features/common/scrollbar.css';
-import { GithubStarButton } from '@/features/layout/GithubStarButton';
-import { ThemeToggle } from '@/features/theme/ThemeToggle';
-import { useTranslation } from '@/hooks/useTranslation';
-import { saveLastTab } from '@/utils/userPreferences';
-import { useUser } from '@/features/common/UserContext';
-import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
-import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext';
-import { useTaskContext } from '@/features/tasks/contexts/taskContext';
-import { paths } from '@/config/paths';
+} from '@/features/tasks/components/sidebar'
+import '@/app/tasks/tasks.css'
+import '@/features/common/scrollbar.css'
+import { GithubStarButton } from '@/features/layout/GithubStarButton'
+import { ThemeToggle } from '@/features/theme/ThemeToggle'
+import { useTranslation } from '@/hooks/useTranslation'
+import { saveLastTab } from '@/utils/userPreferences'
+import { useUser } from '@/features/common/UserContext'
+import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
+import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
+import { useTaskContext } from '@/features/tasks/contexts/taskContext'
+import { paths } from '@/config/paths'
 import {
   WikiProjectList,
   AddRepoModal,
@@ -32,15 +32,15 @@ import {
   KnowledgeTabs,
   KnowledgeTabType,
   KnowledgeDocumentPage,
-} from '@/features/knowledge';
+} from '@/features/knowledge'
 
 export default function KnowledgePage() {
-  const { t } = useTranslation();
-  const router = useRouter();
-  const { user } = useUser();
-  const { clearAllStreams } = useChatStreamContext();
-  const { setSelectedTask } = useTaskContext();
-  const isMobile = useIsMobile();
+  const { t } = useTranslation()
+  const router = useRouter()
+  const { user } = useUser()
+  const { clearAllStreams } = useChatStreamContext()
+  const { setSelectedTask } = useTaskContext()
+  const isMobile = useIsMobile()
 
   // Use shared Hook to manage all state and logic
   const {
@@ -67,27 +67,27 @@ export default function KnowledgePage() {
     confirmCancelGeneration,
     setConfirmDialogOpen,
     setPendingCancelProjectId,
-  } = useWikiProjects();
+  } = useWikiProjects()
 
   // Active knowledge tab
-  const [activeTab, setActiveTab] = useState<KnowledgeTabType>('document');
+  const [activeTab, setActiveTab] = useState<KnowledgeTabType>('document')
 
   // Search term for project list
-  const [mainSearchTerm, setMainSearchTerm] = useState('');
+  const [mainSearchTerm, setMainSearchTerm] = useState('')
 
   // Mobile sidebar state
-  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
 
   // Collapsed sidebar state
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(false)
 
   const navigateToKnowledgeDetail = (projectId: number) => {
-    router.push(`/knowledge/${projectId}`);
-  };
+    router.push(`/knowledge/${projectId}`)
+  }
 
   const navigateToTask = (taskId: number) => {
-    router.push(`/code?taskId=${taskId}`);
-  };
+    router.push(`/code?taskId=${taskId}`)
+  }
 
   // Filter projects to show only those with user's generations
   // This ensures the knowledge page only shows projects created by the current user
@@ -101,42 +101,42 @@ export default function KnowledgePage() {
         project.generations[0].status === 'PENDING' ||
         project.generations[0].status === 'FAILED' ||
         project.generations[0].status === 'CANCELLED')
-    );
-  });
+    )
+  })
 
   // Load collapsed state from localStorage
   useEffect(() => {
-    const savedCollapsed = localStorage.getItem('task-sidebar-collapsed');
+    const savedCollapsed = localStorage.getItem('task-sidebar-collapsed')
     if (savedCollapsed === 'true') {
-      setIsCollapsed(true);
+      setIsCollapsed(true)
     }
-  }, []);
+  }, [])
 
   useEffect(() => {
-    saveLastTab('wiki');
-  }, []);
+    saveLastTab('wiki')
+  }, [])
 
   useEffect(() => {
-    if (!user) return;
-    loadProjects();
-  }, [user, loadProjects]);
+    if (!user) return
+    loadProjects()
+  }, [user, loadProjects])
 
   const handleToggleCollapsed = () => {
     setIsCollapsed(prev => {
-      const newValue = !prev;
-      localStorage.setItem('task-sidebar-collapsed', String(newValue));
-      return newValue;
-    });
-  };
+      const newValue = !prev
+      localStorage.setItem('task-sidebar-collapsed', String(newValue))
+      return newValue
+    })
+  }
 
   // Handle new task from collapsed sidebar button
   const handleNewTask = () => {
     // IMPORTANT: Clear selected task FIRST to ensure UI state is reset immediately
     // This prevents the UI from being stuck showing the previous task's messages
-    setSelectedTask(null);
-    clearAllStreams();
-    router.replace(paths.chat.getHref());
-  };
+    setSelectedTask(null)
+    clearAllStreams()
+    router.replace(paths.chat.getHref())
+  }
 
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
@@ -222,11 +222,11 @@ export default function KnowledgePage() {
       <CancelConfirmDialog
         isOpen={confirmDialogOpen}
         onClose={() => {
-          setConfirmDialogOpen(false);
-          setPendingCancelProjectId(null);
+          setConfirmDialogOpen(false)
+          setPendingCancelProjectId(null)
         }}
         onConfirm={confirmCancelGeneration}
       />
     </div>
-  );
+  )
 }

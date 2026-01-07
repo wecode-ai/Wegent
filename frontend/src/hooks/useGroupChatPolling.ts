@@ -6,26 +6,26 @@
  * Hook for polling new messages in group chat
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { pollNewMessages, SubtaskWithSender } from '@/apis/group-chat';
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { pollNewMessages, SubtaskWithSender } from '@/apis/group-chat'
 
 interface UseGroupChatPollingOptions {
-  taskId: number;
-  isGroupChat: boolean;
-  enabled?: boolean;
-  pollingDelay?: number; // delay after response before next poll, in milliseconds, default 5000
-  pollingTimeout?: number; // timeout for each poll request, in milliseconds, default 10000
-  onNewMessages?: (messages: SubtaskWithSender[]) => void;
-  onStreamingDetected?: (subtaskId: number) => void;
+  taskId: number
+  isGroupChat: boolean
+  enabled?: boolean
+  pollingDelay?: number // delay after response before next poll, in milliseconds, default 5000
+  pollingTimeout?: number // timeout for each poll request, in milliseconds, default 10000
+  onNewMessages?: (messages: SubtaskWithSender[]) => void
+  onStreamingDetected?: (subtaskId: number) => void
 }
 
 interface UseGroupChatPollingResult {
-  newMessages: SubtaskWithSender[];
-  isPolling: boolean;
-  hasStreaming: boolean;
-  streamingSubtaskId?: number;
-  error: Error | null;
-  clearMessages: () => void;
+  newMessages: SubtaskWithSender[]
+  isPolling: boolean
+  hasStreaming: boolean
+  streamingSubtaskId?: number
+  error: Error | null
+  clearMessages: () => void
 }
 
 /**
@@ -49,156 +49,156 @@ export function useGroupChatPolling(
     pollingTimeout = 10000,
     onNewMessages,
     onStreamingDetected,
-  } = options;
+  } = options
 
-  const [newMessages, setNewMessages] = useState<SubtaskWithSender[]>([]);
-  const [isPolling, setIsPolling] = useState(false);
-  const [hasStreaming, setHasStreaming] = useState(false);
-  const [streamingSubtaskId, setStreamingSubtaskId] = useState<number>();
-  const [error, setError] = useState<Error | null>(null);
+  const [newMessages, setNewMessages] = useState<SubtaskWithSender[]>([])
+  const [isPolling, setIsPolling] = useState(false)
+  const [hasStreaming, setHasStreaming] = useState(false)
+  const [streamingSubtaskId, setStreamingSubtaskId] = useState<number>()
+  const [error, setError] = useState<Error | null>(null)
 
-  const lastSubtaskIdRef = useRef<number | undefined>(undefined);
-  const pollingTimerRef = useRef<NodeJS.Timeout | undefined>(undefined);
-  const pollFnRef = useRef<() => Promise<void> | undefined>(undefined);
-  const isMountedRef = useRef(true);
+  const lastSubtaskIdRef = useRef<number | undefined>(undefined)
+  const pollingTimerRef = useRef<NodeJS.Timeout | undefined>(undefined)
+  const pollFnRef = useRef<() => Promise<void> | undefined>(undefined)
+  const isMountedRef = useRef(true)
 
   // Store callbacks in refs to avoid re-creating poll function on every render
-  const onNewMessagesRef = useRef(onNewMessages);
-  const onStreamingDetectedRef = useRef(onStreamingDetected);
+  const onNewMessagesRef = useRef(onNewMessages)
+  const onStreamingDetectedRef = useRef(onStreamingDetected)
 
   // Keep refs updated
   useEffect(() => {
-    onNewMessagesRef.current = onNewMessages;
-  }, [onNewMessages]);
+    onNewMessagesRef.current = onNewMessages
+  }, [onNewMessages])
 
   useEffect(() => {
-    onStreamingDetectedRef.current = onStreamingDetected;
-  }, [onStreamingDetected]);
+    onStreamingDetectedRef.current = onStreamingDetected
+  }, [onStreamingDetected])
 
   // Clear messages
   const clearMessages = useCallback(() => {
-    setNewMessages([]);
-  }, []);
+    setNewMessages([])
+  }, [])
 
   // Schedule next poll after delay
   const scheduleNextPoll = useCallback(() => {
     if (!isMountedRef.current || !isGroupChat || !enabled) {
-      return;
+      return
     }
 
     pollingTimerRef.current = setTimeout(() => {
-      pollFnRef.current?.();
-    }, pollingDelay);
-  }, [isGroupChat, enabled, pollingDelay]);
+      pollFnRef.current?.()
+    }, pollingDelay)
+  }, [isGroupChat, enabled, pollingDelay])
 
   // Polling function with timeout
   const poll = useCallback(async () => {
     if (!isGroupChat || !enabled || !isMountedRef.current) {
-      return;
+      return
     }
 
     // Create abort controller for timeout
-    const abortController = new AbortController();
+    const abortController = new AbortController()
     const timeoutId = setTimeout(() => {
-      abortController.abort();
-    }, pollingTimeout);
+      abortController.abort()
+    }, pollingTimeout)
 
     try {
-      setIsPolling(true);
-      setError(null);
+      setIsPolling(true)
+      setError(null)
 
-      const response = await pollNewMessages(taskId, lastSubtaskIdRef.current);
+      const response = await pollNewMessages(taskId, lastSubtaskIdRef.current)
 
-      clearTimeout(timeoutId);
+      clearTimeout(timeoutId)
 
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current) return
 
       // Update last subtask ID
       if (response.messages.length > 0) {
-        const latestMessage = response.messages[response.messages.length - 1];
-        lastSubtaskIdRef.current = latestMessage.id;
+        const latestMessage = response.messages[response.messages.length - 1]
+        lastSubtaskIdRef.current = latestMessage.id
 
         // Add new messages
-        setNewMessages(prev => [...prev, ...response.messages]);
+        setNewMessages(prev => [...prev, ...response.messages])
 
         // Notify callback using ref
-        onNewMessagesRef.current?.(response.messages);
+        onNewMessagesRef.current?.(response.messages)
       }
 
       // Update streaming status
-      setHasStreaming(response.has_streaming);
-      setStreamingSubtaskId(response.streaming_subtask_id);
+      setHasStreaming(response.has_streaming)
+      setStreamingSubtaskId(response.streaming_subtask_id)
 
       // Notify streaming detected using ref
       if (response.has_streaming && response.streaming_subtask_id) {
-        onStreamingDetectedRef.current?.(response.streaming_subtask_id);
+        onStreamingDetectedRef.current?.(response.streaming_subtask_id)
       }
     } catch (err) {
-      clearTimeout(timeoutId);
+      clearTimeout(timeoutId)
 
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current) return
 
-      const error = err as Error;
+      const error = err as Error
       // Only log non-abort errors
       if (error.name !== 'AbortError') {
-        setError(error);
-        console.error('[useGroupChatPolling] Polling error:', error);
+        setError(error)
+        console.error('[useGroupChatPolling] Polling error:', error)
       } else {
-        console.warn('[useGroupChatPolling] Polling request timed out');
+        console.warn('[useGroupChatPolling] Polling request timed out')
       }
     } finally {
       if (isMountedRef.current) {
-        setIsPolling(false);
+        setIsPolling(false)
         // Schedule next poll after this one completes (or times out)
-        scheduleNextPoll();
+        scheduleNextPoll()
       }
     }
-  }, [taskId, isGroupChat, enabled, pollingTimeout, scheduleNextPoll]);
+  }, [taskId, isGroupChat, enabled, pollingTimeout, scheduleNextPoll])
 
   // Keep pollFnRef updated with the latest poll function
   useEffect(() => {
-    pollFnRef.current = poll;
-  }, [poll]);
+    pollFnRef.current = poll
+  }, [poll])
 
   // Track if initial poll has been done for current taskId
-  const initialPollDoneRef = useRef(false);
+  const initialPollDoneRef = useRef(false)
 
   // Start polling - only depends on stable values, not poll function
   useEffect(() => {
     if (!isGroupChat || !enabled) {
-      initialPollDoneRef.current = false;
-      return;
+      initialPollDoneRef.current = false
+      return
     }
 
     // Reset for new taskId
-    initialPollDoneRef.current = false;
-    lastSubtaskIdRef.current = undefined;
+    initialPollDoneRef.current = false
+    lastSubtaskIdRef.current = undefined
 
     // Use setTimeout to ensure pollFnRef is set before calling
     const initialPollTimer = setTimeout(() => {
       if (!initialPollDoneRef.current && isMountedRef.current) {
-        initialPollDoneRef.current = true;
-        pollFnRef.current?.();
+        initialPollDoneRef.current = true
+        pollFnRef.current?.()
       }
-    }, 0);
+    }, 0)
 
     return () => {
-      clearTimeout(initialPollTimer);
+      clearTimeout(initialPollTimer)
       if (pollingTimerRef.current) {
-        clearTimeout(pollingTimerRef.current);
+        clearTimeout(pollingTimerRef.current)
       }
-    };
-  }, [taskId, isGroupChat, enabled]);
+    }
+  }, [taskId, isGroupChat, enabled])
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      isMountedRef.current = false;
+      isMountedRef.current = false
       if (pollingTimerRef.current) {
-        clearTimeout(pollingTimerRef.current);
+        clearTimeout(pollingTimerRef.current)
       }
-    };
-  }, []);
+    }
+  }, [])
 
   return {
     newMessages,
@@ -207,5 +207,5 @@ export function useGroupChatPolling(
     streamingSubtaskId,
     error,
     clearMessages,
-  };
+  }
 }

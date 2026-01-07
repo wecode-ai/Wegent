@@ -2,18 +2,18 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useCallback, useEffect, useState } from 'react';
-import { PencilIcon, TrashIcon, DownloadIcon, PackageIcon } from 'lucide-react';
-import LoadingState from '@/features/common/LoadingState';
-import { Skill } from '@/types/api';
-import { fetchSkillsList, deleteSkill, downloadSkill, formatFileSize } from '@/apis/skills';
-import SkillUploadModal from './SkillUploadModal';
-import UnifiedAddButton from '@/components/common/UnifiedAddButton';
-import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
-import { Tag } from '@/components/ui/tag';
+import { useCallback, useEffect, useState } from 'react'
+import { PencilIcon, TrashIcon, DownloadIcon, PackageIcon } from 'lucide-react'
+import LoadingState from '@/features/common/LoadingState'
+import { Skill } from '@/types/api'
+import { fetchSkillsList, deleteSkill, downloadSkill, formatFileSize } from '@/apis/skills'
+import SkillUploadModal from './SkillUploadModal'
+import UnifiedAddButton from '@/components/common/UnifiedAddButton'
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { Tag } from '@/components/ui/tag'
 import {
   Dialog,
   DialogContent,
@@ -21,14 +21,14 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
-import { useToast } from '@/hooks/use-toast';
-import { useTranslation } from '@/hooks/useTranslation';
+} from '@/components/ui/dialog'
+import { useToast } from '@/hooks/use-toast'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface SkillManagementModalProps {
-  open: boolean;
-  onClose: () => void;
-  onSkillsChange?: () => void;
+  open: boolean
+  onClose: () => void
+  onSkillsChange?: () => void
 }
 
 export default function SkillManagementModal({
@@ -36,104 +36,104 @@ export default function SkillManagementModal({
   onClose,
   onSkillsChange,
 }: SkillManagementModalProps) {
-  const { t } = useTranslation();
-  const { toast } = useToast();
-  const [skills, setSkills] = useState<Skill[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [uploadModalOpen, setUploadModalOpen] = useState(false);
-  const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
-  const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
-  const [skillToDelete, setSkillToDelete] = useState<Skill | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
+  const { t } = useTranslation()
+  const { toast } = useToast()
+  const [skills, setSkills] = useState<Skill[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [uploadModalOpen, setUploadModalOpen] = useState(false)
+  const [editingSkill, setEditingSkill] = useState<Skill | null>(null)
+  const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false)
+  const [skillToDelete, setSkillToDelete] = useState<Skill | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   const loadSkills = useCallback(async () => {
-    setIsLoading(true);
+    setIsLoading(true)
     try {
-      const skillsData = await fetchSkillsList();
-      setSkills(skillsData);
+      const skillsData = await fetchSkillsList()
+      setSkills(skillsData)
     } catch (error) {
       toast({
         variant: 'destructive',
         title: t('common:skills.failed_load'),
         description: error instanceof Error ? error.message : t('common:common.unknown_error'),
-      });
+      })
     } finally {
-      setIsLoading(false);
+      setIsLoading(false)
     }
-  }, [toast]);
+  }, [toast])
 
   useEffect(() => {
     if (open) {
-      loadSkills();
+      loadSkills()
     }
-  }, [open, loadSkills]);
+  }, [open, loadSkills])
 
   const handleCreateSkill = () => {
-    setEditingSkill(null);
-    setUploadModalOpen(true);
-  };
+    setEditingSkill(null)
+    setUploadModalOpen(true)
+  }
 
   const handleEditSkill = (skill: Skill) => {
-    setEditingSkill(skill);
-    setUploadModalOpen(true);
-  };
+    setEditingSkill(skill)
+    setUploadModalOpen(true)
+  }
 
   const handleDeleteSkill = (skill: Skill) => {
-    setSkillToDelete(skill);
-    setDeleteConfirmVisible(true);
-  };
+    setSkillToDelete(skill)
+    setDeleteConfirmVisible(true)
+  }
 
   const handleConfirmDelete = async () => {
-    if (!skillToDelete) return;
+    if (!skillToDelete) return
 
-    setIsDeleting(true);
+    setIsDeleting(true)
     try {
-      const skillId = parseInt(skillToDelete.metadata.labels?.id || '0');
-      await deleteSkill(skillId);
+      const skillId = parseInt(skillToDelete.metadata.labels?.id || '0')
+      await deleteSkill(skillId)
       toast({
         title: t('common:common.success'),
         description: t('common:skills.success_delete', { skillName: skillToDelete.metadata.name }),
-      });
-      await loadSkills();
-      onSkillsChange?.();
-      setDeleteConfirmVisible(false);
-      setSkillToDelete(null);
+      })
+      await loadSkills()
+      onSkillsChange?.()
+      setDeleteConfirmVisible(false)
+      setSkillToDelete(null)
     } catch (error) {
       toast({
         variant: 'destructive',
         title: t('common:skills.failed_delete'),
         description: error instanceof Error ? error.message : t('common:common.unknown_error'),
-      });
+      })
     } finally {
-      setIsDeleting(false);
+      setIsDeleting(false)
     }
-  };
+  }
 
   const handleDownloadSkill = async (skill: Skill) => {
     try {
-      const skillId = parseInt(skill.metadata.labels?.id || '0');
-      await downloadSkill(skillId, skill.metadata.name);
+      const skillId = parseInt(skill.metadata.labels?.id || '0')
+      await downloadSkill(skillId, skill.metadata.name)
       toast({
         title: t('common:common.success'),
         description: t('common:skills.success_download', { skillName: skill.metadata.name }),
-      });
+      })
     } catch (error) {
       toast({
         variant: 'destructive',
         title: t('common:skills.failed_download'),
         description: error instanceof Error ? error.message : t('common:common.unknown_error'),
-      });
+      })
     }
-  };
+  }
 
   const handleModalClose = (saved: boolean) => {
-    setUploadModalOpen(false);
-    setEditingSkill(null);
+    setUploadModalOpen(false)
+    setEditingSkill(null)
     if (saved) {
-      loadSkills();
-      onSkillsChange?.();
+      loadSkills()
+      onSkillsChange?.()
     }
-  };
+  }
 
   return (
     <>
@@ -360,5 +360,5 @@ export default function SkillManagementModal({
         </DialogContent>
       </Dialog>
     </>
-  );
+  )
 }

@@ -2,25 +2,25 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import { Send, ChevronDown, Check } from 'lucide-react';
-import { useTranslation } from '@/hooks/useTranslation';
-import { useUser } from '@/features/common/UserContext';
-import { userApis } from '@/apis/user';
-import { useToast } from '@/hooks/use-toast';
-import type { UserPreferences } from '@/types/api';
-import LoadingDots from '../message/LoadingDots';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
+import { Send, ChevronDown, Check } from 'lucide-react'
+import { useTranslation } from '@/hooks/useTranslation'
+import { useUser } from '@/features/common/UserContext'
+import { userApis } from '@/apis/user'
+import { useToast } from '@/hooks/use-toast'
+import type { UserPreferences } from '@/types/api'
+import LoadingDots from '../message/LoadingDots'
 
 interface SendButtonProps {
-  onClick: () => void;
-  disabled?: boolean;
-  isLoading?: boolean;
-  className?: string;
+  onClick: () => void
+  disabled?: boolean
+  isLoading?: boolean
+  className?: string
 }
 
-type SendKeyOption = 'enter' | 'cmd_enter';
+type SendKeyOption = 'enter' | 'cmd_enter'
 
 export default function SendButton({
   onClick,
@@ -28,21 +28,21 @@ export default function SendButton({
   isLoading = false,
   className = '',
 }: SendButtonProps) {
-  const { t } = useTranslation();
-  const { toast } = useToast();
-  const { user, refresh } = useUser();
-  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null);
+  const { t } = useTranslation()
+  const { toast } = useToast()
+  const { user, refresh } = useUser()
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+  const buttonRef = useRef<HTMLButtonElement>(null)
 
   // Get current send key preference from user context
-  const sendKey: SendKeyOption = (user?.preferences?.send_key as SendKeyOption) || 'enter';
+  const sendKey: SendKeyOption = (user?.preferences?.send_key as SendKeyOption) || 'enter'
 
   // Detect if Mac or Windows for display
   const isMac = useMemo(() => {
-    return typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform);
-  }, []);
+    return typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform)
+  }, [])
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -53,91 +53,91 @@ export default function SendButton({
         buttonRef.current &&
         !buttonRef.current.contains(event.target as Node)
       ) {
-        setIsDropdownOpen(false);
+        setIsDropdownOpen(false)
       }
-    };
+    }
 
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
 
   // Handle send key change
   const handleSendKeyChange = useCallback(
     async (value: SendKeyOption) => {
       if (value === sendKey) {
-        setIsDropdownOpen(false);
-        return;
+        setIsDropdownOpen(false)
+        return
       }
 
-      setIsSaving(true);
+      setIsSaving(true)
       try {
-        const preferences: UserPreferences = { send_key: value };
-        await userApis.updateUser({ preferences });
-        await refresh();
+        const preferences: UserPreferences = { send_key: value }
+        await userApis.updateUser({ preferences })
+        await refresh()
         toast({
           title: t('chat:send_button.preference_saved'),
-        });
+        })
       } catch (error) {
-        console.error('Failed to save send key preference:', error);
+        console.error('Failed to save send key preference:', error)
         toast({
           variant: 'destructive',
           title: t('chat:send_button.preference_save_failed'),
-        });
+        })
       } finally {
-        setIsSaving(false);
-        setIsDropdownOpen(false);
+        setIsSaving(false)
+        setIsDropdownOpen(false)
       }
     },
     [sendKey, refresh, toast, t]
-  );
+  )
 
   // Handle main button click (send message)
   const handleMainClick = useCallback(
     (e: React.MouseEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
+      e.preventDefault()
+      e.stopPropagation()
       if (!disabled && !isLoading) {
-        onClick();
+        onClick()
       }
     },
     [disabled, isLoading, onClick]
-  );
+  )
 
   // Handle dropdown toggle click
   const handleDropdownToggle = useCallback(
     (e: React.MouseEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
+      e.preventDefault()
+      e.stopPropagation()
       if (!isSaving) {
-        setIsDropdownOpen(prev => !prev);
+        setIsDropdownOpen(prev => !prev)
       }
     },
     [isSaving]
-  );
+  )
 
   // Get shortcut display text
   const getShortcutText = useCallback(
     (option: SendKeyOption): string => {
       if (option === 'enter') {
-        return 'Enter';
+        return 'Enter'
       }
-      return isMac ? '⌘ Enter' : 'Ctrl Enter';
+      return isMac ? '⌘ Enter' : 'Ctrl Enter'
     },
     [isMac]
-  );
+  )
 
   // Get option label
   const getOptionLabel = useCallback(
     (option: SendKeyOption): string => {
       if (option === 'enter') {
-        return t('chat:send_button.option_enter');
+        return t('chat:send_button.option_enter')
       }
       return isMac
         ? t('chat:send_button.option_cmd_enter_mac')
-        : t('chat:send_button.option_cmd_enter_win');
+        : t('chat:send_button.option_cmd_enter_win')
     },
     [isMac, t]
-  );
+  )
 
   return (
     <div className={`relative inline-flex ${className}`}>
@@ -231,5 +231,5 @@ export default function SendButton({
         </div>
       )}
     </div>
-  );
+  )
 }

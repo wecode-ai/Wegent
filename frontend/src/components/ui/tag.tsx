@@ -2,11 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import * as React from 'react';
-import { cva, type VariantProps } from 'class-variance-authority';
-import { X } from 'lucide-react';
+import * as React from 'react'
+import { cva, type VariantProps } from 'class-variance-authority'
+import { X } from 'lucide-react'
 
-import { cn } from '@/lib/utils';
+import { cn } from '@/lib/utils'
 
 const tagVariants = cva(
   'inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium transition-colors',
@@ -24,12 +24,12 @@ const tagVariants = cva(
       variant: 'default',
     },
   }
-);
+)
 
 export interface TagProps
   extends React.HTMLAttributes<HTMLSpanElement>, VariantProps<typeof tagVariants> {
-  closable?: boolean;
-  onClose?: () => void;
+  closable?: boolean
+  onClose?: () => void
 }
 
 function Tag({ className, variant, closable, onClose, children, ...props }: TagProps) {
@@ -46,7 +46,7 @@ function Tag({ className, variant, closable, onClose, children, ...props }: TagP
         </button>
       )}
     </span>
-  );
+  )
 }
 
-export { Tag, tagVariants };
+export { Tag, tagVariants }

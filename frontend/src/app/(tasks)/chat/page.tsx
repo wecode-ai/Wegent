@@ -2,165 +2,165 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { Suspense, useState, useEffect, useCallback } from 'react';
-import { useSearchParams, useRouter } from 'next/navigation';
-import { UserGroupIcon } from '@heroicons/react/24/outline';
-import { teamService } from '@/features/tasks/service/teamService';
-import TopNavigation from '@/features/layout/TopNavigation';
+import { Suspense, useState, useEffect, useCallback } from 'react'
+import { useSearchParams, useRouter } from 'next/navigation'
+import { UserGroupIcon } from '@heroicons/react/24/outline'
+import { teamService } from '@/features/tasks/service/teamService'
+import TopNavigation from '@/features/layout/TopNavigation'
 import {
   TaskSidebar,
   ResizableSidebar,
   CollapsedSidebarButtons,
   SearchDialog,
-} from '@/features/tasks/components/sidebar';
-import OnboardingTour from '@/features/onboarding/OnboardingTour';
-import { TaskParamSync } from '@/features/tasks/components/params';
-import { TeamShareHandler, TaskShareHandler } from '@/features/tasks/components/share';
-import { InviteJoinHandler, CreateGroupChatDialog } from '@/features/tasks/components/group-chat';
-import OidcTokenHandler from '@/features/login/components/OidcTokenHandler';
-import '@/app/tasks/tasks.css';
-import '@/features/common/scrollbar.css';
-import { GithubStarButton } from '@/features/layout/GithubStarButton';
-import { ThemeToggle } from '@/features/theme/ThemeToggle';
-import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
-import { Team } from '@/types/api';
-import { saveLastTab } from '@/utils/userPreferences';
-import { useUser } from '@/features/common/UserContext';
-import { useTaskContext } from '@/features/tasks/contexts/taskContext';
-import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext';
-import { paths } from '@/config/paths';
-import { Button } from '@/components/ui/button';
-import { useTranslation } from '@/hooks/useTranslation';
-import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut';
-import { ChatArea } from '@/features/tasks/components/chat';
+} from '@/features/tasks/components/sidebar'
+import OnboardingTour from '@/features/onboarding/OnboardingTour'
+import { TaskParamSync } from '@/features/tasks/components/params'
+import { TeamShareHandler, TaskShareHandler } from '@/features/tasks/components/share'
+import { InviteJoinHandler, CreateGroupChatDialog } from '@/features/tasks/components/group-chat'
+import OidcTokenHandler from '@/features/login/components/OidcTokenHandler'
+import '@/app/tasks/tasks.css'
+import '@/features/common/scrollbar.css'
+import { GithubStarButton } from '@/features/layout/GithubStarButton'
+import { ThemeToggle } from '@/features/theme/ThemeToggle'
+import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
+import { Team } from '@/types/api'
+import { saveLastTab } from '@/utils/userPreferences'
+import { useUser } from '@/features/common/UserContext'
+import { useTaskContext } from '@/features/tasks/contexts/taskContext'
+import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
+import { paths } from '@/config/paths'
+import { Button } from '@/components/ui/button'
+import { useTranslation } from '@/hooks/useTranslation'
+import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut'
+import { ChatArea } from '@/features/tasks/components/chat'
 
 export default function ChatPage() {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
 
   // Team state from service
-  const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams();
+  const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams()
 
   // Task context for refreshing task list
   const { refreshTasks, selectedTaskDetail, setSelectedTask, refreshSelectedTaskDetail } =
-    useTaskContext();
+    useTaskContext()
 
   // Get current task title for top navigation
-  const currentTaskTitle = selectedTaskDetail?.title;
+  const currentTaskTitle = selectedTaskDetail?.title
 
   // Handle task deletion
   const handleTaskDeleted = () => {
-    setSelectedTask(null);
-    refreshTasks();
-  };
+    setSelectedTask(null)
+    refreshTasks()
+  }
 
   // Handle members changed (when converting to group chat or adding/removing members)
   const handleMembersChanged = () => {
-    refreshTasks();
-    refreshSelectedTaskDetail(false);
-  };
+    refreshTasks()
+    refreshSelectedTaskDetail(false)
+  }
 
   // Chat stream context
-  const { clearAllStreams } = useChatStreamContext();
+  const { clearAllStreams } = useChatStreamContext()
 
   // User state for git token check
-  const { user } = useUser();
+  const { user } = useUser()
 
   // Router for navigation
-  const router = useRouter();
+  const router = useRouter()
 
   // Check for share_id in URL
-  const searchParams = useSearchParams();
-  const hasShareId = !!searchParams.get('share_id');
+  const searchParams = useSearchParams()
+  const hasShareId = !!searchParams.get('share_id')
 
   // Check if a task is currently open (support multiple parameter formats)
   const taskId =
-    searchParams.get('task_id') || searchParams.get('taskid') || searchParams.get('taskId');
-  const hasOpenTask = !!taskId;
+    searchParams.get('task_id') || searchParams.get('taskid') || searchParams.get('taskId')
+  const hasOpenTask = !!taskId
 
   // Check for pending task share from public page (after login)
   useEffect(() => {
-    const pendingToken = localStorage.getItem('pendingTaskShare');
+    const pendingToken = localStorage.getItem('pendingTaskShare')
     if (pendingToken) {
       // Clear the pending token
-      localStorage.removeItem('pendingTaskShare');
+      localStorage.removeItem('pendingTaskShare')
       // Redirect to chat page with taskShare parameter to trigger the copy modal
-      router.push(`/chat?taskShare=${pendingToken}`);
+      router.push(`/chat?taskShare=${pendingToken}`)
     }
-  }, [router]);
+  }, [router])
 
   // Mobile detection
-  const isMobile = useIsMobile();
+  const isMobile = useIsMobile()
 
   // Mobile sidebar state
-  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
 
   // Collapsed sidebar state
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(false)
 
   // Selected team state for sharing
-  const [selectedTeamForNewTask, setSelectedTeamForNewTask] = useState<Team | null>(null);
+  const [selectedTeamForNewTask, setSelectedTeamForNewTask] = useState<Team | null>(null)
 
   // Share button state
-  const [shareButton, setShareButton] = useState<React.ReactNode>(null);
+  const [shareButton, setShareButton] = useState<React.ReactNode>(null)
 
   // Create group chat dialog state
-  const [isCreateGroupChatOpen, setIsCreateGroupChatOpen] = useState(false);
+  const [isCreateGroupChatOpen, setIsCreateGroupChatOpen] = useState(false)
 
   // Search dialog state (controlled from page level for global shortcut support)
-  const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false);
+  const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false)
 
   // Toggle search dialog callback
   const toggleSearchDialog = useCallback(() => {
-    setIsSearchDialogOpen(prev => !prev);
-  }, []);
+    setIsSearchDialogOpen(prev => !prev)
+  }, [])
 
   // Global search shortcut hook
   const { shortcutDisplayText } = useSearchShortcut({
     onToggle: toggleSearchDialog,
-  });
+  })
 
   const handleShareButtonRender = (button: React.ReactNode) => {
-    setShareButton(button);
-  };
+    setShareButton(button)
+  }
 
   // Check if user has git token
-  const hasGitToken = !!(user?.git_info && user.git_info.length > 0);
+  const hasGitToken = !!(user?.git_info && user.git_info.length > 0)
 
   // Load collapsed state from localStorage
   useEffect(() => {
-    const savedCollapsed = localStorage.getItem('task-sidebar-collapsed');
+    const savedCollapsed = localStorage.getItem('task-sidebar-collapsed')
     if (savedCollapsed === 'true') {
-      setIsCollapsed(true);
+      setIsCollapsed(true)
     }
-  }, []);
+  }, [])
 
   // Save last active tab to localStorage
   useEffect(() => {
-    saveLastTab('chat');
-  }, []);
+    saveLastTab('chat')
+  }, [])
 
   const handleRefreshTeams = async (): Promise<Team[]> => {
-    return await refreshTeams();
-  };
+    return await refreshTeams()
+  }
 
   const handleToggleCollapsed = () => {
     setIsCollapsed(prev => {
-      const newValue = !prev;
-      localStorage.setItem('task-sidebar-collapsed', String(newValue));
-      return newValue;
-    });
-  };
+      const newValue = !prev
+      localStorage.setItem('task-sidebar-collapsed', String(newValue))
+      return newValue
+    })
+  }
 
   // Handle new task from collapsed sidebar button
   const handleNewTask = () => {
     // IMPORTANT: Clear selected task FIRST to ensure UI state is reset immediately
     // This prevents the UI from being stuck showing the previous task's messages
-    setSelectedTask(null);
-    clearAllStreams();
-    router.replace(paths.chat.getHref());
-  };
+    setSelectedTask(null)
+    clearAllStreams()
+    router.replace(paths.chat.getHref())
+  }
 
   return (
     <>
@@ -259,5 +259,5 @@ export default function ChatPage() {
         pageType="chat"
       />
     </>
-  );
+  )
 }

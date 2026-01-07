@@ -2,19 +2,19 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React from 'react';
-import { Button } from '@/components/ui/button';
+import React from 'react'
+import { Button } from '@/components/ui/button'
 
 interface ActionButtonProps {
-  onClick?: () => void;
-  disabled?: boolean;
-  title?: string;
-  icon: React.ReactNode;
-  variant?: 'default' | 'outline' | 'loading';
-  className?: string;
-  asChild?: boolean;
+  onClick?: () => void
+  disabled?: boolean
+  title?: string
+  icon: React.ReactNode
+  variant?: 'default' | 'outline' | 'loading'
+  className?: string
+  asChild?: boolean
 }
 
 /**
@@ -70,7 +70,7 @@ export function ActionButton({
   className = '',
 }: ActionButtonProps) {
   // Base styles shared by all variants
-  const baseStyles = 'h-9 w-9 rounded-full flex-shrink-0';
+  const baseStyles = 'h-9 w-9 rounded-full flex-shrink-0'
 
   if (variant === 'loading') {
     // Static loading state (non-clickable)
@@ -80,12 +80,12 @@ export function ActionButton({
       >
         {icon}
       </div>
-    );
+    )
   }
 
   // Clickable button (default or outline)
-  const buttonVariant = variant === 'outline' ? 'outline' : 'ghost';
-  const defaultClassName = variant === 'outline' ? '' : 'border border-border';
+  const buttonVariant = variant === 'outline' ? 'outline' : 'ghost'
+  const defaultClassName = variant === 'outline' ? '' : 'border border-border'
 
   return (
     <Button
@@ -98,7 +98,7 @@ export function ActionButton({
     >
       {icon}
     </Button>
-  );
+  )
 }
 
-export default ActionButton;
+export default ActionButton

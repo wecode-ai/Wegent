@@ -2,17 +2,17 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { memo, useState, useRef, useEffect } from 'react';
-import { Brain, ChevronDown, ChevronUp } from 'lucide-react';
-import { useTranslation } from '@/hooks/useTranslation';
+import { memo, useState, useRef, useEffect } from 'react'
+import { Brain, ChevronDown, ChevronUp } from 'lucide-react'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface ReasoningDisplayProps {
   /** Reasoning content from DeepSeek R1 and similar models */
-  reasoningContent: string;
+  reasoningContent: string
   /** Whether the message is still streaming */
-  isStreaming?: boolean;
+  isStreaming?: boolean
 }
 
 /**
@@ -24,41 +24,41 @@ const ReasoningDisplay = memo(function ReasoningDisplay({
   reasoningContent,
   isStreaming = false,
 }: ReasoningDisplayProps) {
-  const { t } = useTranslation();
-  const contentRef = useRef<HTMLDivElement>(null);
+  const { t } = useTranslation()
+  const contentRef = useRef<HTMLDivElement>(null)
 
   // Track if component mounted during active streaming
   // This helps distinguish between live streaming and historical messages
-  const mountedDuringStreamingRef = useRef(isStreaming);
-  const hasAutoCollapsedRef = useRef(false);
+  const mountedDuringStreamingRef = useRef(isStreaming)
+  const hasAutoCollapsedRef = useRef(false)
 
   // Initialize expanded state based on whether we're streaming
   // - Streaming messages: start expanded to show live reasoning
   // - Historical messages (not streaming): start collapsed
-  const [isExpanded, setIsExpanded] = useState(isStreaming);
+  const [isExpanded, setIsExpanded] = useState(isStreaming)
 
   // Auto-scroll to bottom when streaming and expanded
   useEffect(() => {
     if (isStreaming && isExpanded && contentRef.current) {
-      contentRef.current.scrollTop = contentRef.current.scrollHeight;
+      contentRef.current.scrollTop = contentRef.current.scrollHeight
     }
-  }, [reasoningContent, isStreaming, isExpanded]);
+  }, [reasoningContent, isStreaming, isExpanded])
 
   // Auto-collapse when streaming ends
   // Only applies to messages that were streaming when this component mounted
   useEffect(() => {
     if (mountedDuringStreamingRef.current && !isStreaming && !hasAutoCollapsedRef.current) {
-      setIsExpanded(false);
-      hasAutoCollapsedRef.current = true;
+      setIsExpanded(false)
+      hasAutoCollapsedRef.current = true
     }
-  }, [isStreaming]);
+  }, [isStreaming])
 
   if (!reasoningContent) {
-    return null;
+    return null
   }
 
   // Calculate approximate token/character count for display
-  const charCount = reasoningContent.length;
+  const charCount = reasoningContent.length
 
   return (
     <div className="mb-3">
@@ -67,9 +67,7 @@ const ReasoningDisplay = memo(function ReasoningDisplay({
         onClick={() => setIsExpanded(!isExpanded)}
         className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border transition-all hover:bg-surface/50 bg-purple-500/5 border-purple-500/20 text-purple-600 dark:text-purple-400"
       >
-        <Brain
-          className={`h-3.5 w-3.5 flex-shrink-0 ${isStreaming ? 'animate-pulse' : ''}`}
-        />
+        <Brain className={`h-3.5 w-3.5 flex-shrink-0 ${isStreaming ? 'animate-pulse' : ''}`} />
         <span className="text-xs font-medium">
           {isStreaming
             ? t('chat:reasoning.thinking') || 'Thinking...'
@@ -97,7 +95,7 @@ const ReasoningDisplay = memo(function ReasoningDisplay({
         </div>
       )}
     </div>
-  );
-});
+  )
+})
 
-export default ReasoningDisplay;
+export default ReasoningDisplay

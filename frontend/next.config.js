@@ -32,7 +32,7 @@ const nextConfig = {
       },
       // Enable module concatenation to reduce bundle size
       concatenateModules: true,
-    };
+    }
 
     // Handle dynamic imports more gracefully
     if (!isServer) {
@@ -40,10 +40,10 @@ const nextConfig = {
         ...config.resolve.fallback,
         fs: false,
         path: false,
-      };
+      }
     }
 
-    return config;
+    return config
   },
   // Experimental features to improve stability
   experimental: {
@@ -58,6 +58,6 @@ const nextConfig = {
   },
   // Note: API proxying is now handled by /api/[...path]/route.ts
   // This allows RUNTIME_INTERNAL_API_URL to be read at runtime instead of build time
-};
+}
 
-module.exports = nextConfig;
+module.exports = nextConfig

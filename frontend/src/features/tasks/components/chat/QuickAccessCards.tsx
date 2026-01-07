@@ -2,42 +2,42 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useEffect, useState, useCallback, useTransition, useRef, useMemo } from 'react';
-import { useRouter } from 'next/navigation';
-import { HiOutlineCode, HiOutlineChatAlt2 } from 'react-icons/hi';
+import { useEffect, useState, useCallback, useTransition, useRef, useMemo } from 'react'
+import { useRouter } from 'next/navigation'
+import { HiOutlineCode, HiOutlineChatAlt2 } from 'react-icons/hi'
 import {
   ChevronDownIcon,
   Cog6ToothIcon,
   CheckIcon,
   MagnifyingGlassIcon,
-} from '@heroicons/react/24/outline';
-import { Wand2 } from 'lucide-react';
-import { userApis } from '@/apis/user';
-import { QuickAccessTeam, Team } from '@/types/api';
-import { saveLastTeamByMode } from '@/utils/userPreferences';
-import { useTranslation } from '@/hooks/useTranslation';
-import { Tag } from '@/components/ui/tag';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { paths } from '@/config/paths';
-import { getSharedTagStyle as getSharedBadgeStyle } from '@/utils/styles';
-import { TeamIconDisplay } from '@/features/settings/components/teams/TeamIconDisplay';
-import TeamCreationWizard from '@/features/settings/components/wizard/TeamCreationWizard';
+} from '@heroicons/react/24/outline'
+import { Wand2 } from 'lucide-react'
+import { userApis } from '@/apis/user'
+import { QuickAccessTeam, Team } from '@/types/api'
+import { saveLastTeamByMode } from '@/utils/userPreferences'
+import { useTranslation } from '@/hooks/useTranslation'
+import { Tag } from '@/components/ui/tag'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { paths } from '@/config/paths'
+import { getSharedTagStyle as getSharedBadgeStyle } from '@/utils/styles'
+import { TeamIconDisplay } from '@/features/settings/components/teams/TeamIconDisplay'
+import TeamCreationWizard from '@/features/settings/components/wizard/TeamCreationWizard'
 
 // Maximum number of quick access cards to display
-const MAX_QUICK_ACCESS_CARDS = 4;
+const MAX_QUICK_ACCESS_CARDS = 4
 
 interface QuickAccessCardsProps {
-  teams: Team[];
-  selectedTeam: Team | null;
-  onTeamSelect: (team: Team) => void;
-  currentMode: 'chat' | 'code';
-  isLoading?: boolean;
-  isTeamsLoading?: boolean;
-  hideSelected?: boolean; // Whether to hide the selected team from the cards
-  onRefreshTeams?: () => Promise<Team[]>;
-  showWizardButton?: boolean; // Whether to show the wizard button (only for chat mode)
+  teams: Team[]
+  selectedTeam: Team | null
+  onTeamSelect: (team: Team) => void
+  currentMode: 'chat' | 'code'
+  isLoading?: boolean
+  isTeamsLoading?: boolean
+  hideSelected?: boolean // Whether to hide the selected team from the cards
+  onRefreshTeams?: () => Promise<Team[]>
+  showWizardButton?: boolean // Whether to show the wizard button (only for chat mode)
 }
 
 export function QuickAccessCards({
@@ -51,182 +51,182 @@ export function QuickAccessCards({
   onRefreshTeams,
   showWizardButton = false,
 }: QuickAccessCardsProps) {
-  const router = useRouter();
-  const { t } = useTranslation(['common', 'wizard']);
-  const [isPending, startTransition] = useTransition();
-  const [quickAccessTeams, setQuickAccessTeams] = useState<QuickAccessTeam[]>([]);
-  const [isQuickAccessLoading, setIsQuickAccessLoading] = useState(true);
-  const [clickedTeamId, setClickedTeamId] = useState<number | null>(null);
-  const [switchingToMode, setSwitchingToMode] = useState<'chat' | 'code' | null>(null);
-  const [showMoreTeams, setShowMoreTeams] = useState(false);
-  const [showWizard, setShowWizard] = useState(false);
-  const moreButtonRef = useRef<HTMLDivElement>(null);
+  const router = useRouter()
+  const { t } = useTranslation(['common', 'wizard'])
+  const [isPending, startTransition] = useTransition()
+  const [quickAccessTeams, setQuickAccessTeams] = useState<QuickAccessTeam[]>([])
+  const [isQuickAccessLoading, setIsQuickAccessLoading] = useState(true)
+  const [clickedTeamId, setClickedTeamId] = useState<number | null>(null)
+  const [switchingToMode, setSwitchingToMode] = useState<'chat' | 'code' | null>(null)
+  const [showMoreTeams, setShowMoreTeams] = useState(false)
+  const [showWizard, setShowWizard] = useState(false)
+  const moreButtonRef = useRef<HTMLDivElement>(null)
 
   // Define the extended team type for display
-  type DisplayTeam = Team & { is_system: boolean; recommended_mode?: 'chat' | 'code' | 'both' };
+  type DisplayTeam = Team & { is_system: boolean; recommended_mode?: 'chat' | 'code' | 'both' }
 
   // Prefetch both chat and code pages on mount for smoother navigation
   useEffect(() => {
-    router.prefetch('/chat');
-    router.prefetch('/code');
-  }, [router]);
+    router.prefetch('/chat')
+    router.prefetch('/code')
+  }, [router])
 
   // Fetch quick access teams
   useEffect(() => {
     const fetchQuickAccess = async () => {
       try {
-        setIsQuickAccessLoading(true);
-        const response = await userApis.getQuickAccess();
-        setQuickAccessTeams(response.teams);
+        setIsQuickAccessLoading(true)
+        const response = await userApis.getQuickAccess()
+        setQuickAccessTeams(response.teams)
       } catch (error) {
-        console.error('Failed to fetch quick access teams:', error);
+        console.error('Failed to fetch quick access teams:', error)
         // Fallback: use first few teams from the teams list
-        setQuickAccessTeams([]);
+        setQuickAccessTeams([])
       } finally {
-        setIsQuickAccessLoading(false);
+        setIsQuickAccessLoading(false)
       }
-    };
+    }
 
-    fetchQuickAccess();
-  }, []);
+    fetchQuickAccess()
+  }, [])
 
   // Filter teams by bind_mode based on current mode (same logic as TeamSelector)
   const filteredTeams = teams.filter(team => {
     // If bind_mode is not set or is an empty array, filter it out (team has no bound mode)
-    if (!team.bind_mode || team.bind_mode.length === 0) return false;
+    if (!team.bind_mode || team.bind_mode.length === 0) return false
     // Otherwise, only show if current mode is in bind_mode
-    return team.bind_mode.includes(currentMode);
-  });
+    return team.bind_mode.includes(currentMode)
+  })
 
   // Get display teams: quick access teams matched with full team data
   const allDisplayTeams: DisplayTeam[] =
     quickAccessTeams.length > 0
       ? quickAccessTeams
           .map(qa => {
-            const fullTeam = filteredTeams.find(t => t.id === qa.id);
+            const fullTeam = filteredTeams.find(t => t.id === qa.id)
             if (fullTeam) {
               return {
                 ...fullTeam,
                 is_system: qa.is_system,
                 recommended_mode: qa.recommended_mode || fullTeam.recommended_mode,
-              } as DisplayTeam;
+              } as DisplayTeam
             }
-            return null;
+            return null
           })
           .filter((t): t is DisplayTeam => t !== null)
       : // Fallback: show first teams from filtered list if no quick access configured
-        filteredTeams.map(t => ({ ...t, is_system: false }) as DisplayTeam);
+        filteredTeams.map(t => ({ ...t, is_system: false }) as DisplayTeam)
 
   // Filter out selected team if hideSelected is true
   const teamsAfterFilter =
     hideSelected && selectedTeam
       ? allDisplayTeams.filter(t => t.id !== selectedTeam.id)
-      : allDisplayTeams;
+      : allDisplayTeams
 
   // Limit display teams to MAX_QUICK_ACCESS_CARDS
-  const displayTeams = teamsAfterFilter.slice(0, MAX_QUICK_ACCESS_CARDS);
+  const displayTeams = teamsAfterFilter.slice(0, MAX_QUICK_ACCESS_CARDS)
 
   // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (moreButtonRef.current && !moreButtonRef.current.contains(event.target as Node)) {
-        setShowMoreTeams(false);
+        setShowMoreTeams(false)
       }
-    };
+    }
 
     if (showMoreTeams) {
-      document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('mousedown', handleClickOutside)
     }
 
     return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [showMoreTeams]);
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [showMoreTeams])
 
   // Handle team selection from dropdown
   const handleTeamSelectFromDropdown = useCallback(
     (team: Team) => {
-      onTeamSelect(team);
-      setShowMoreTeams(false);
+      onTeamSelect(team)
+      setShowMoreTeams(false)
     },
     [onTeamSelect]
-  );
+  )
 
   // Search state for team list
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState('')
 
   // Filter teams for dropdown based on search query
   const dropdownTeams = useMemo(() => {
-    if (!searchQuery.trim()) return filteredTeams;
-    const query = searchQuery.toLowerCase();
-    return filteredTeams.filter(team => team.name.toLowerCase().includes(query));
-  }, [filteredTeams, searchQuery]);
+    if (!searchQuery.trim()) return filteredTeams
+    const query = searchQuery.toLowerCase()
+    return filteredTeams.filter(team => team.name.toLowerCase().includes(query))
+  }, [filteredTeams, searchQuery])
 
   // Get shared badge style
-  const sharedBadgeStyle = useMemo(() => getSharedBadgeStyle(), []);
+  const sharedBadgeStyle = useMemo(() => getSharedBadgeStyle(), [])
 
   // Reset search when dropdown closes
   useEffect(() => {
     if (!showMoreTeams) {
-      setSearchQuery('');
+      setSearchQuery('')
     }
-  }, [showMoreTeams]);
+  }, [showMoreTeams])
 
   // Determine the target mode for a team based on recommended_mode or bind_mode
   const getTeamTargetMode = (team: DisplayTeam): 'chat' | 'code' | 'both' => {
     // First check recommended_mode (from quick access config)
     if (team.recommended_mode && team.recommended_mode !== 'both') {
-      return team.recommended_mode;
+      return team.recommended_mode
     }
     // Then check bind_mode - if only one mode is allowed, use that
     if (team.bind_mode && team.bind_mode.length === 1) {
-      return team.bind_mode[0];
+      return team.bind_mode[0]
     }
     // Default to both (no mode switch needed)
-    return 'both';
-  };
+    return 'both'
+  }
 
   const handleTeamClick = useCallback(
     (team: DisplayTeam) => {
-      const targetMode = getTeamTargetMode(team);
+      const targetMode = getTeamTargetMode(team)
 
       // Check if we need to switch mode
-      const needsModeSwitch = targetMode !== 'both' && targetMode !== currentMode;
+      const needsModeSwitch = targetMode !== 'both' && targetMode !== currentMode
 
       // Always trigger click animation
-      setClickedTeamId(team.id);
+      setClickedTeamId(team.id)
 
       if (needsModeSwitch) {
-        setSwitchingToMode(targetMode);
+        setSwitchingToMode(targetMode)
 
         // When switching mode, save the team preference to the TARGET mode's localStorage
         // This ensures the new page will restore the correct team
-        saveLastTeamByMode(team.id, targetMode);
+        saveLastTeamByMode(team.id, targetMode)
 
         // Use startTransition for smoother navigation without blocking UI
         // Delay slightly to allow animation to start
         setTimeout(() => {
-          const targetPath = targetMode === 'code' ? '/code' : '/chat';
+          const targetPath = targetMode === 'code' ? '/code' : '/chat'
           startTransition(() => {
-            router.push(targetPath);
-          });
-        }, 200);
+            router.push(targetPath)
+          })
+        }, 200)
       } else {
         // No mode switch needed, just select the team in current page after animation
         // First let the animation play, then select the team
         setTimeout(() => {
-          onTeamSelect(team);
-        }, 300);
+          onTeamSelect(team)
+        }, 300)
 
         // Reset the clicked state after animation completes
         setTimeout(() => {
-          setClickedTeamId(null);
-          setSwitchingToMode(null);
-        }, 400);
+          setClickedTeamId(null)
+          setSwitchingToMode(null)
+        }, 400)
       }
     },
     [currentMode, router, onTeamSelect, startTransition]
-  );
+  )
 
   if (isLoading || isQuickAccessLoading) {
     return (
@@ -241,19 +241,19 @@ export function QuickAccessCards({
           </div>
         ))}
       </div>
-    );
+    )
   }
 
   if (displayTeams.length === 0) {
-    return null;
+    return null
   }
 
   // Render a single team card with optional tooltip
   const renderTeamCard = (team: DisplayTeam) => {
-    const isSelected = selectedTeam?.id === team.id;
-    const isClicked = clickedTeamId === team.id;
-    const targetMode = getTeamTargetMode(team);
-    const willSwitchMode = targetMode !== 'both' && targetMode !== currentMode;
+    const isSelected = selectedTeam?.id === team.id
+    const isClicked = clickedTeamId === team.id
+    const targetMode = getTeamTargetMode(team)
+    const willSwitchMode = targetMode !== 'both' && targetMode !== currentMode
 
     const cardContent = (
       <div
@@ -309,10 +309,10 @@ export function QuickAccessCards({
           </div>
         )}
       </div>
-    );
+    )
 
     // Tooltip content: prioritize description, fallback to name
-    const tooltipText = team.description || team.name;
+    const tooltipText = team.description || team.name
 
     // Always wrap with Tooltip
     return (
@@ -324,8 +324,8 @@ export function QuickAccessCards({
           </TooltipContent>
         </Tooltip>
       </TooltipProvider>
-    );
-  };
+    )
+  }
 
   return (
     <>
@@ -446,9 +446,9 @@ export function QuickAccessCards({
                   </div>
                 ) : (
                   dropdownTeams.map(team => {
-                    const isSelected = selectedTeam?.id === team.id;
-                    const isSharedTeam = team.share_status === 2 && team.user?.user_name;
-                    const isGroupTeam = team.namespace && team.namespace !== 'default';
+                    const isSelected = selectedTeam?.id === team.id
+                    const isSharedTeam = team.share_status === 2 && team.user?.user_name
+                    const isGroupTeam = team.namespace && team.namespace !== 'default'
 
                     return (
                       <div
@@ -490,7 +490,7 @@ export function QuickAccessCards({
                           </Tag>
                         )}
                       </div>
-                    );
+                    )
                   })
                 )}
               </div>
@@ -499,8 +499,8 @@ export function QuickAccessCards({
               <div
                 className="border-t border-border bg-base cursor-pointer group flex items-center space-x-2 px-3 py-2.5 text-xs text-text-secondary hover:bg-muted transition-colors duration-150"
                 onClick={() => {
-                  setShowMoreTeams(false);
-                  router.push(paths.settings.team.getHref());
+                  setShowMoreTeams(false)
+                  router.push(paths.settings.team.getHref())
                 }}
               >
                 <Cog6ToothIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
@@ -543,23 +543,23 @@ export function QuickAccessCards({
           onSuccess={async (teamId, teamName) => {
             // Refresh teams list first to get the new team
             if (onRefreshTeams) {
-              const refreshedTeams = await onRefreshTeams();
+              const refreshedTeams = await onRefreshTeams()
               // Find and select the new team from refreshed list
-              const newTeam = refreshedTeams.find(t => t.id === teamId);
+              const newTeam = refreshedTeams.find(t => t.id === teamId)
               if (newTeam) {
-                onTeamSelect(newTeam);
+                onTeamSelect(newTeam)
               }
             } else {
               // Fallback: try to find in current teams (may not work for newly created)
-              const newTeam = teams.find(t => t.id === teamId);
+              const newTeam = teams.find(t => t.id === teamId)
               if (newTeam) {
-                onTeamSelect(newTeam);
+                onTeamSelect(newTeam)
               }
             }
-            console.log(`Created team: ${teamName} (ID: ${teamId})`);
+            console.log(`Created team: ${teamName} (ID: ${teamId})`)
           }}
         />
       )}
     </>
-  );
+  )
 }

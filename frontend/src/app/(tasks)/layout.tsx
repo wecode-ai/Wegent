@@ -2,12 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { UserProvider } from '@/features/common/UserContext';
-import { TaskContextProvider } from '@/features/tasks/contexts/taskContext';
-import { ChatStreamProvider } from '@/features/tasks/contexts/chatStreamContext';
-import { SocketProvider } from '@/contexts/SocketContext';
+import { UserProvider } from '@/features/common/UserContext'
+import { TaskContextProvider } from '@/features/tasks/contexts/taskContext'
+import { ChatStreamProvider } from '@/features/tasks/contexts/chatStreamContext'
+import { SocketProvider } from '@/contexts/SocketContext'
 
 /**
  * Shared layout for chat and code pages to reuse TaskContextProvider and ChatStreamProvider
@@ -25,5 +25,5 @@ export default function TasksLayout({ children }: { children: React.ReactNode })
         </TaskContextProvider>
       </SocketProvider>
     </UserProvider>
-  );
+  )
 }

@@ -2,133 +2,133 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useEffect, useState, Suspense } from 'react';
-import { useSearchParams, useRouter } from 'next/navigation';
-import { Button } from '@/components/ui/button';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { taskApis, PublicSharedTaskResponse } from '@/apis/tasks';
-import { getToken, userApis } from '@/apis/user';
-import { LogIn } from 'lucide-react';
-import { useTheme } from '@/features/theme/ThemeProvider';
-import TopNavigation from '@/features/layout/TopNavigation';
-import { GithubStarButton } from '@/features/layout/GithubStarButton';
-import { MessageBubble, type Message } from '@/features/tasks/components/message';
-import { useTranslation } from '@/hooks/useTranslation';
-import type { User } from '@/types/api';
-import { InAppBrowserGuard } from '@/components/InAppBrowserGuard';
-import { detectInAppBrowser } from '@/utils/browserDetection';
-import '@/features/common/scrollbar.css';
+import React, { useEffect, useState, Suspense } from 'react'
+import { useSearchParams, useRouter } from 'next/navigation'
+import { Button } from '@/components/ui/button'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { taskApis, PublicSharedTaskResponse } from '@/apis/tasks'
+import { getToken, userApis } from '@/apis/user'
+import { LogIn } from 'lucide-react'
+import { useTheme } from '@/features/theme/ThemeProvider'
+import TopNavigation from '@/features/layout/TopNavigation'
+import { GithubStarButton } from '@/features/layout/GithubStarButton'
+import { MessageBubble, type Message } from '@/features/tasks/components/message'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { User } from '@/types/api'
+import { InAppBrowserGuard } from '@/components/InAppBrowserGuard'
+import { detectInAppBrowser } from '@/utils/browserDetection'
+import '@/features/common/scrollbar.css'
 
 /**
  * Public shared task page - no authentication required
  * Uses the same layout and styling as the chat page for consistency
  */
 function SharedTaskContent() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const { theme } = useTheme();
-  const { t } = useTranslation();
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const { theme } = useTheme()
+  const { t } = useTranslation()
 
-  const [taskData, setTaskData] = useState<PublicSharedTaskResponse | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [showInAppBrowserGuard, setShowInAppBrowserGuard] = useState(false);
+  const [taskData, setTaskData] = useState<PublicSharedTaskResponse | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [currentUser, setCurrentUser] = useState<User | null>(null)
+  const [showInAppBrowserGuard, setShowInAppBrowserGuard] = useState(false)
 
   // Check if user is logged in
-  const isLoggedIn = !!getToken();
+  const isLoggedIn = !!getToken()
 
   // Fetch current user if logged in
   useEffect(() => {
     const fetchUser = async () => {
       if (isLoggedIn) {
         try {
-          const user = await userApis.getCurrentUser();
-          setCurrentUser(user);
+          const user = await userApis.getCurrentUser()
+          setCurrentUser(user)
         } catch (err) {
-          console.error('Failed to fetch user:', err);
+          console.error('Failed to fetch user:', err)
         }
       }
-    };
-    fetchUser();
-  }, [isLoggedIn]);
+    }
+    fetchUser()
+  }, [isLoggedIn])
 
   useEffect(() => {
-    const token = searchParams.get('token');
+    const token = searchParams.get('token')
 
     if (!token) {
-      setError(t('shared-task:error_invalid_link'));
-      setIsLoading(false);
-      return;
+      setError(t('shared-task:error_invalid_link'))
+      setIsLoading(false)
+      return
     }
 
     const fetchSharedTask = async () => {
       try {
-        const data = await taskApis.getPublicSharedTask(token);
-        setTaskData(data);
+        const data = await taskApis.getPublicSharedTask(token)
+        setTaskData(data)
       } catch (err) {
-        console.error('Failed to load shared task:', err);
-        const errorMessage = (err as Error)?.message || '';
+        console.error('Failed to load shared task:', err)
+        const errorMessage = (err as Error)?.message || ''
 
         // Map error messages to i18n keys
         if (
           errorMessage.includes('Invalid share link format') ||
           errorMessage.includes('Invalid share token')
         ) {
-          setError(t('shared-task:error_invalid_link'));
+          setError(t('shared-task:error_invalid_link'))
         } else if (
           errorMessage.includes('no longer available') ||
           errorMessage.includes('deleted')
         ) {
-          setError(t('shared-task:error_task_deleted'));
+          setError(t('shared-task:error_task_deleted'))
         } else {
-          setError(t('shared-task:error_load_failed'));
+          setError(t('shared-task:error_load_failed'))
         }
       } finally {
-        setIsLoading(false);
+        setIsLoading(false)
       }
-    };
+    }
 
-    fetchSharedTask();
-  }, [searchParams, t]);
+    fetchSharedTask()
+  }, [searchParams, t])
 
   const handleLoginAndCopy = () => {
-    const token = searchParams.get('token');
-    if (!token) return;
+    const token = searchParams.get('token')
+    if (!token) return
 
     // Check if we're in an in-app browser
-    const browserInfo = detectInAppBrowser();
+    const browserInfo = detectInAppBrowser()
     if (browserInfo.isInAppBrowser) {
       // Show the in-app browser guard
-      setShowInAppBrowserGuard(true);
-      return;
+      setShowInAppBrowserGuard(true)
+      return
     }
 
     // Not in-app browser, proceed with normal flow
-    proceedToLoginOrChat(token);
-  };
+    proceedToLoginOrChat(token)
+  }
 
   const proceedToLoginOrChat = (token: string) => {
     // Check if user is already logged in
-    const authToken = getToken();
+    const authToken = getToken()
 
     if (authToken) {
       // User is logged in, directly navigate to chat with taskShare parameter
       // Use encodeURIComponent to ensure proper URL encoding
-      router.push(`/chat?taskShare=${encodeURIComponent(token)}`);
+      router.push(`/chat?taskShare=${encodeURIComponent(token)}`)
     } else {
       // User is not logged in, redirect to login with the full chat URL as redirect target
       // This way, after login, the user will be redirected directly to /chat?taskShare=xxx
-      const redirectTarget = `/chat?taskShare=${encodeURIComponent(token)}`;
-      router.push(`/login?redirect=${encodeURIComponent(redirectTarget)}`);
+      const redirectTarget = `/chat?taskShare=${encodeURIComponent(token)}`
+      router.push(`/login?redirect=${encodeURIComponent(redirectTarget)}`)
     }
-  };
+  }
 
   // Helper function to convert subtask to Message format for MessageBubble
   const convertSubtaskToMessage = (subtask: PublicSharedTaskResponse['subtasks'][0]): Message => {
-    const isUser = subtask.role === 'USER';
+    const isUser = subtask.role === 'USER'
 
     // Convert public attachments to Message attachment format
     const attachments =
@@ -143,7 +143,7 @@ function SharedTaskContent() {
         subtask_id: subtask.id,
         file_extension: att.file_extension,
         created_at: subtask.created_at,
-      })) || [];
+      })) || []
 
     // For user messages, use prompt
     if (isUser) {
@@ -154,33 +154,33 @@ function SharedTaskContent() {
         subtaskStatus: subtask.status,
         subtaskId: subtask.id,
         attachments,
-      };
+      }
     }
 
     // For AI messages, extract result value
-    let resultContent = '';
+    let resultContent = ''
     if (subtask.result) {
       if (typeof subtask.result === 'object') {
-        const resultObj = subtask.result as { value?: unknown; thinking?: unknown };
+        const resultObj = subtask.result as { value?: unknown; thinking?: unknown }
         if (resultObj.value !== null && resultObj.value !== undefined && resultObj.value !== '') {
-          resultContent = String(resultObj.value);
+          resultContent = String(resultObj.value)
         } else {
-          resultContent = JSON.stringify(subtask.result);
+          resultContent = JSON.stringify(subtask.result)
         }
       } else {
-        resultContent = String(subtask.result);
+        resultContent = String(subtask.result)
       }
     } else if (subtask.status === 'COMPLETED') {
-      resultContent = 'Task completed';
+      resultContent = 'Task completed'
     } else if (subtask.status === 'FAILED') {
-      resultContent = 'Task failed';
+      resultContent = 'Task failed'
     } else {
-      resultContent = 'Processing...';
+      resultContent = 'Processing...'
     }
 
     // Add ${$$}$ separator to trigger markdown rendering in MessageBubble
     // Format: prompt${$$}$result (empty prompt for shared tasks)
-    const content = '$' + '{$$}$' + resultContent;
+    const content = '$' + '{$$}$' + resultContent
 
     return {
       type: 'ai',
@@ -190,8 +190,8 @@ function SharedTaskContent() {
       subtaskStatus: subtask.status,
       subtaskId: subtask.id,
       attachments,
-    };
-  };
+    }
+  }
 
   if (isLoading) {
     return (
@@ -206,24 +206,24 @@ function SharedTaskContent() {
           </div>
         </div>
       </div>
-    );
+    )
   }
 
   if (error || !taskData) {
     // Determine error title and description based on error type
-    let errorTitle = t('shared-task:error_load_failed');
-    let errorDesc = t('shared-task:error_load_failed_desc');
-    let errorIcon = '⚠️';
+    let errorTitle = t('shared-task:error_load_failed')
+    let errorDesc = t('shared-task:error_load_failed_desc')
+    let errorIcon = '⚠️'
 
     if (error) {
       if (error.includes(t('shared-task:error_invalid_link'))) {
-        errorTitle = t('shared-task:error_invalid_link');
-        errorDesc = t('shared-task:error_invalid_link_desc');
-        errorIcon = '🔗';
+        errorTitle = t('shared-task:error_invalid_link')
+        errorDesc = t('shared-task:error_invalid_link_desc')
+        errorIcon = '🔗'
       } else if (error.includes(t('shared-task:error_task_deleted'))) {
-        errorTitle = t('shared-task:error_task_deleted');
-        errorDesc = t('shared-task:error_task_deleted_desc');
-        errorIcon = '🗑️';
+        errorTitle = t('shared-task:error_task_deleted')
+        errorDesc = t('shared-task:error_task_deleted_desc')
+        errorIcon = '🗑️'
       }
     }
 
@@ -263,7 +263,7 @@ function SharedTaskContent() {
           </div>
         </div>
       </div>
-    );
+    )
   }
 
   return (
@@ -272,9 +272,9 @@ function SharedTaskContent() {
       {showInAppBrowserGuard && (
         <InAppBrowserGuard
           onProceed={() => {
-            const token = searchParams.get('token');
+            const token = searchParams.get('token')
             if (token) {
-              proceedToLoginOrChat(token);
+              proceedToLoginOrChat(token)
             }
           }}
           onCancel={() => setShowInAppBrowserGuard(false)}
@@ -330,7 +330,7 @@ function SharedTaskContent() {
             {/* Messages area - using MessageBubble component for consistency */}
             <div className="flex-1 space-y-6">
               {taskData.subtasks.map((subtask, index) => {
-                const message = convertSubtaskToMessage(subtask);
+                const message = convertSubtaskToMessage(subtask)
                 return (
                   <MessageBubble
                     key={subtask.id}
@@ -343,7 +343,7 @@ function SharedTaskContent() {
                     theme={theme}
                     t={t}
                   />
-                );
+                )
               })}
             </div>
 
@@ -366,7 +366,7 @@ function SharedTaskContent() {
         </div>
       </div>
     </>
-  );
+  )
 }
 
 export default function SharedTaskPage() {
@@ -385,5 +385,5 @@ export default function SharedTaskPage() {
     >
       <SharedTaskContent />
     </Suspense>
-  );
+  )
 }

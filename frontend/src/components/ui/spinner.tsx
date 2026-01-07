@@ -2,9 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import * as React from 'react';
-import { cva, type VariantProps } from 'class-variance-authority';
-import { cn } from '@/lib/utils';
+import * as React from 'react'
+import { cva, type VariantProps } from 'class-variance-authority'
+import { cn } from '@/lib/utils'
 
 const spinnerVariants = cva(
   'inline-block animate-spin rounded-full border-2 border-solid border-transparent border-t-current align-[-0.125em] motion-reduce:animate-[spin_1.5s_linear_infinite]',
@@ -20,12 +20,12 @@ const spinnerVariants = cva(
       size: 'md',
     },
   }
-);
+)
 
 export interface SpinnerProps
   extends React.HTMLAttributes<HTMLDivElement>, VariantProps<typeof spinnerVariants> {
-  text?: string;
-  center?: boolean;
+  text?: string
+  center?: boolean
 }
 
 const Spinner = React.forwardRef<HTMLDivElement, SpinnerProps>(
@@ -46,15 +46,15 @@ const Spinner = React.forwardRef<HTMLDivElement, SpinnerProps>(
         {text && <span className="text-sm text-text-muted">{text}</span>}
         <span className="sr-only">Loading...</span>
       </div>
-    );
+    )
 
     if (center) {
-      return <div className="flex min-h-[200px] w-full items-center justify-center">{spinner}</div>;
+      return <div className="flex min-h-[200px] w-full items-center justify-center">{spinner}</div>
     }
 
-    return spinner;
+    return spinner
   }
-);
-Spinner.displayName = 'Spinner';
+)
+Spinner.displayName = 'Spinner'
 
-export { Spinner, spinnerVariants };
+export { Spinner, spinnerVariants }

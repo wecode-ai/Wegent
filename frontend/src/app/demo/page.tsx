@@ -2,16 +2,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { UserProvider } from '@/features/common/UserContext';
-import OidcTokenHandler from '@/features/login/components/OidcTokenHandler';
-import '@/app/tasks/tasks.css';
-import '@/features/common/scrollbar.css';
-import { useForm } from 'react-hook-form';
-import { Form, FormControl, FormField, FormItem, FormLabel } from '@/components/ui/form';
-import { Textarea } from '@/components/ui/textarea';
-import { Button } from '@/components/ui/button';
+import { UserProvider } from '@/features/common/UserContext'
+import OidcTokenHandler from '@/features/login/components/OidcTokenHandler'
+import '@/app/tasks/tasks.css'
+import '@/features/common/scrollbar.css'
+import { useForm } from 'react-hook-form'
+import { Form, FormControl, FormField, FormItem, FormLabel } from '@/components/ui/form'
+import { Textarea } from '@/components/ui/textarea'
+import { Button } from '@/components/ui/button'
 
 export default function DemoPage() {
   const form = useForm({
@@ -21,11 +21,11 @@ export default function DemoPage() {
       bot2: '',
       bot3: '',
     },
-  });
+  })
 
   const onSubmit = (data: Record<string, string>) => {
-    console.log(data);
-  };
+    console.log(data)
+  }
 
   return (
     <UserProvider>
@@ -95,5 +95,5 @@ export default function DemoPage() {
         </div>
       </div>
     </UserProvider>
-  );
+  )
 }

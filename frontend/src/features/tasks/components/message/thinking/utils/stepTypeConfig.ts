@@ -10,19 +10,19 @@ import {
   MessageSquare,
   FileText,
   type LucideIcon,
-} from 'lucide-react';
+} from 'lucide-react'
 
 /**
  * Configuration for different step types
  */
 export interface StepTypeConfig {
-  icon: LucideIcon;
-  color: string;
-  bgClass: string;
-  borderClass: string;
-  hoverBorderClass: string;
-  iconClass: string;
-  titleClass: string;
+  icon: LucideIcon
+  color: string
+  bgClass: string
+  borderClass: string
+  hoverBorderClass: string
+  iconClass: string
+  titleClass: string
 }
 
 /**
@@ -101,7 +101,7 @@ export const STEP_TYPE_CONFIGS: Record<string, StepTypeConfig> = {
     iconClass: 'text-text-secondary',
     titleClass: 'text-blue-400',
   },
-};
+}
 
 /**
  * Get step type configuration based on step details
@@ -112,19 +112,19 @@ export function getStepTypeConfig(
 ): StepTypeConfig {
   // Check for error first
   if (details?.is_error || details?.error_message) {
-    return STEP_TYPE_CONFIGS.error;
+    return STEP_TYPE_CONFIGS.error
   }
 
   // Get config based on type
-  const type = details?.type;
+  const type = details?.type
   if (type && STEP_TYPE_CONFIGS[type]) {
-    return STEP_TYPE_CONFIGS[type];
+    return STEP_TYPE_CONFIGS[type]
   }
 
   // Legacy fields fallback
   if (hasLegacyFields) {
-    return STEP_TYPE_CONFIGS.default;
+    return STEP_TYPE_CONFIGS.default
   }
 
-  return STEP_TYPE_CONFIGS.default;
+  return STEP_TYPE_CONFIGS.default
 }

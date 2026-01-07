@@ -2,9 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react'
 import {
   CheckCircle,
   AlertCircle,
@@ -14,31 +14,31 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
-} from 'lucide-react';
-import MessageBubble, { Message } from './message/MessageBubble';
-import { useTranslation } from '@/hooks/useTranslation';
-import { cn } from '@/lib/utils';
-import { CorrectionResponse, correctionApis } from '@/apis/correction';
-import { Button } from '@/components/ui/button';
-import { useToast } from '@/hooks/use-toast';
-import { useTheme } from '@/features/theme/ThemeProvider';
+} from 'lucide-react'
+import MessageBubble, { Message } from './message/MessageBubble'
+import { useTranslation } from '@/hooks/useTranslation'
+import { cn } from '@/lib/utils'
+import { CorrectionResponse, correctionApis } from '@/apis/correction'
+import { Button } from '@/components/ui/button'
+import { useToast } from '@/hooks/use-toast'
+import { useTheme } from '@/features/theme/ThemeProvider'
 
 interface CorrectionResultPanelProps {
-  result: CorrectionResponse;
-  isLoading?: boolean;
-  className?: string;
-  onRetry?: () => void;
-  onApply?: (improvedAnswer: string) => void;
-  subtaskId?: number;
+  result: CorrectionResponse
+  isLoading?: boolean
+  className?: string
+  onRetry?: () => void
+  onApply?: (improvedAnswer: string) => void
+  subtaskId?: number
 }
 
 function ScoreBar({ score, label }: { score: number; label: string }) {
   const getScoreColor = (score: number) => {
-    if (score >= 8) return 'bg-green-500';
-    if (score >= 6) return 'bg-yellow-500';
-    if (score >= 4) return 'bg-orange-500';
-    return 'bg-red-500';
-  };
+    if (score >= 8) return 'bg-green-500'
+    if (score >= 6) return 'bg-yellow-500'
+    if (score >= 4) return 'bg-orange-500'
+    return 'bg-red-500'
+  }
 
   return (
     <div className="flex items-center gap-3">
@@ -51,7 +51,7 @@ function ScoreBar({ score, label }: { score: number; label: string }) {
       </div>
       <span className="text-sm font-medium w-10 text-right">{score}/10</span>
     </div>
-  );
+  )
 }
 
 export default function CorrectionResultPanel({
@@ -62,45 +62,45 @@ export default function CorrectionResultPanel({
   onApply,
   subtaskId,
 }: CorrectionResultPanelProps) {
-  const { t } = useTranslation();
-  const { toast } = useToast();
-  const { theme } = useTheme();
-  const [isApplying, setIsApplying] = useState(false);
+  const { t } = useTranslation()
+  const { toast } = useToast()
+  const { theme } = useTheme()
+  const [isApplying, setIsApplying] = useState(false)
   // Initialize isApplied from result.applied (persisted state from backend)
-  const [isApplied, setIsApplied] = useState(result.applied ?? false);
-  const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+  const [isApplied, setIsApplied] = useState(result.applied ?? false)
+  const [isDetailsOpen, setIsDetailsOpen] = useState(false)
 
   // Sync isApplied state when result.applied changes (e.g., when data is reloaded or re-validated)
   useEffect(() => {
-    setIsApplied(result.applied ?? false);
-  }, [result.applied]);
+    setIsApplied(result.applied ?? false)
+  }, [result.applied])
 
   // Handle apply correction
   const handleApply = async () => {
-    if (!result.improved_answer || !subtaskId) return;
+    if (!result.improved_answer || !subtaskId) return
 
-    setIsApplying(true);
+    setIsApplying(true)
     try {
-      await correctionApis.applyCorrection(subtaskId, result.improved_answer);
-      setIsApplied(true);
+      await correctionApis.applyCorrection(subtaskId, result.improved_answer)
+      setIsApplied(true)
       toast({
         title: t('chat:correction.apply_success'),
-      });
+      })
       // Call the onApply callback if provided
       if (onApply) {
-        onApply(result.improved_answer);
+        onApply(result.improved_answer)
       }
     } catch (error) {
-      console.error('Failed to apply correction:', error);
+      console.error('Failed to apply correction:', error)
       toast({
         variant: 'destructive',
         title: t('chat:correction.apply_failed'),
         description: (error as Error)?.message || 'Unknown error',
-      });
+      })
     } finally {
-      setIsApplying(false);
+      setIsApplying(false)
     }
-  };
+  }
 
   if (isLoading) {
     return (
@@ -115,7 +115,7 @@ export default function CorrectionResultPanel({
           ))}
         </div>
       </div>
-    );
+    )
   }
 
   const improvedMessage: Message = {
@@ -125,7 +125,7 @@ export default function CorrectionResultPanel({
     botName: t('chat:correction.result_title'),
     subtaskStatus: 'COMPLETED',
     subtaskId: subtaskId,
-  };
+  }
 
   return (
     <div
@@ -290,5 +290,5 @@ export default function CorrectionResultPanel({
         )}
       </div>
     </div>
-  );
+  )
 }

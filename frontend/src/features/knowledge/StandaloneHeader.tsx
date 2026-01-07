@@ -2,9 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import Image from 'next/image';
-import UserMenu from '@/features/layout/UserMenu';
-import { GithubStarButton } from '@/features/layout/GithubStarButton';
+import Image from 'next/image'
+import UserMenu from '@/features/layout/UserMenu'
+import { GithubStarButton } from '@/features/layout/GithubStarButton'
 
 /**
  * Standalone page header component - shows only Logo and user info
@@ -33,5 +33,5 @@ export default function StandaloneHeader() {
         </div>
       </div>
     </header>
-  );
+  )
 }

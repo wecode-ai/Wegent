@@ -2,22 +2,22 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { Menu } from '@headlessui/react';
+import { Menu } from '@headlessui/react'
 import {
   ClipboardDocumentIcon,
   TrashIcon,
   ArrowRightOnRectangleIcon,
-} from '@heroicons/react/24/outline';
-import { HiOutlineEllipsisVertical } from 'react-icons/hi2';
-import { useTranslation } from '@/hooks/useTranslation';
+} from '@heroicons/react/24/outline'
+import { HiOutlineEllipsisVertical } from 'react-icons/hi2'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface TaskMenuProps {
-  taskId: number;
-  handleCopyTaskId: (taskId: number) => void;
-  handleDeleteTask: (taskId: number) => void;
-  isGroupChat?: boolean;
+  taskId: number
+  handleCopyTaskId: (taskId: number) => void
+  handleDeleteTask: (taskId: number) => void
+  isGroupChat?: boolean
 }
 
 export default function TaskMenu({
@@ -26,7 +26,7 @@ export default function TaskMenu({
   handleDeleteTask,
   isGroupChat = false,
 }: TaskMenuProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
 
   return (
     <Menu as="div" className="relative">
@@ -44,8 +44,8 @@ export default function TaskMenu({
           {({ active }) => (
             <button
               onClick={e => {
-                e.stopPropagation();
-                handleCopyTaskId(taskId);
+                e.stopPropagation()
+                handleCopyTaskId(taskId)
               }}
               className={`w-full px-3 py-2 text-xs text-left text-text-primary flex items-center ${active ? 'bg-muted' : ''}`}
             >
@@ -58,8 +58,8 @@ export default function TaskMenu({
           {({ active }) => (
             <button
               onClick={e => {
-                e.stopPropagation();
-                handleDeleteTask(taskId);
+                e.stopPropagation()
+                handleDeleteTask(taskId)
               }}
               className={`w-full px-3 py-2 text-xs text-left text-text-primary flex items-center ${active ? 'bg-muted' : ''}`}
             >
@@ -79,5 +79,5 @@ export default function TaskMenu({
         </Menu.Item>
       </Menu.Items>
     </Menu>
-  );
+  )
 }

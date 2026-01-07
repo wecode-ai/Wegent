@@ -2,9 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { teamApis, TeamShareResponse, CreateTeamRequest } from '@/apis/team';
-import { CheckRunningTasksResponse } from '@/apis/common';
-import { Team } from '@/types/api';
+import { teamApis, TeamShareResponse, CreateTeamRequest } from '@/apis/team'
+import { CheckRunningTasksResponse } from '@/apis/common'
+import { Team } from '@/types/api'
 
 /**
  * Get team list
@@ -15,15 +15,15 @@ export async function fetchTeamsList(
   scope?: 'personal' | 'group' | 'all',
   groupName?: string
 ): Promise<Team[]> {
-  const teamsData = await teamApis.getTeams(undefined, scope, groupName);
-  return Array.isArray(teamsData.items) ? teamsData.items : [];
+  const teamsData = await teamApis.getTeams(undefined, scope, groupName)
+  return Array.isArray(teamsData.items) ? teamsData.items : []
 }
 
 /**
  * Create team
  */
 export async function createTeam(teamData: CreateTeamRequest): Promise<Team> {
-  return await teamApis.createTeam(teamData);
+  return await teamApis.createTeam(teamData)
 }
 
 /**
@@ -32,21 +32,21 @@ export async function createTeam(teamData: CreateTeamRequest): Promise<Team> {
  * @param force - Force delete even if team has running tasks
  */
 export async function deleteTeam(teamId: number, force: boolean = false): Promise<void> {
-  await teamApis.deleteTeam(teamId, force);
+  await teamApis.deleteTeam(teamId, force)
 }
 
 /**
  * Edit team
  */
 export async function updateTeam(teamId: number, teamData: CreateTeamRequest): Promise<Team> {
-  return await teamApis.updateTeam(teamId, teamData);
+  return await teamApis.updateTeam(teamId, teamData)
 }
 
 /**
  * Share team
  */
 export async function shareTeam(teamId: number): Promise<TeamShareResponse> {
-  return await teamApis.shareTeam(teamId);
+  return await teamApis.shareTeam(teamId)
 }
 
 /**
@@ -55,5 +55,5 @@ export async function shareTeam(teamId: number): Promise<TeamShareResponse> {
  * @returns Running tasks info
  */
 export async function checkTeamRunningTasks(teamId: number): Promise<CheckRunningTasksResponse> {
-  return await teamApis.checkRunningTasks(teamId);
+  return await teamApis.checkRunningTasks(teamId)
 }

@@ -2,14 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React from 'react';
-import { useTranslation } from '@/hooks/useTranslation';
-import type { ChatSloganItem } from '@/types/api';
+import React from 'react'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { ChatSloganItem } from '@/types/api'
 
 interface SloganDisplayProps {
-  slogan: ChatSloganItem | null;
+  slogan: ChatSloganItem | null
 }
 
 /**
@@ -21,9 +21,9 @@ interface SloganDisplayProps {
  * @param slogan - The slogan item containing translations for different languages
  */
 export function SloganDisplay({ slogan }: SloganDisplayProps) {
-  const { i18n } = useTranslation();
-  const currentLang = i18n.language?.startsWith('zh') ? 'zh' : 'en';
-  const sloganText = slogan ? (currentLang === 'zh' ? slogan.zh : slogan.en) : '';
+  const { i18n } = useTranslation()
+  const currentLang = i18n.language?.startsWith('zh') ? 'zh' : 'en'
+  const sloganText = slogan ? (currentLang === 'zh' ? slogan.zh : slogan.en) : ''
 
   // Always render the container to maintain consistent layout height
   // This prevents the chat input from "jumping" when switching between /chat and /code tabs
@@ -35,7 +35,7 @@ export function SloganDisplay({ slogan }: SloganDisplayProps) {
         </h1>
       )}
     </div>
-  );
+  )
 }
 
-export default SloganDisplay;
+export default SloganDisplay

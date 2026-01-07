@@ -2,28 +2,28 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useCallback, useState, useEffect } from 'react';
-import { Download, X, ZoomIn, ZoomOut, RotateCw, Loader2 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import React, { useCallback, useState, useEffect } from 'react'
+import { Download, X, ZoomIn, ZoomOut, RotateCw, Loader2 } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import {
   formatFileSize,
   getFileIcon,
   downloadAttachment,
   isImageExtension,
   getAttachmentPreviewUrl,
-} from '@/apis/attachments';
-import { getToken } from '@/apis/user';
-import type { Attachment } from '@/types/api';
+} from '@/apis/attachments'
+import { getToken } from '@/apis/user'
+import type { Attachment } from '@/types/api'
 
 interface AttachmentPreviewProps {
   /** Attachment data */
-  attachment: Attachment;
+  attachment: Attachment
   /** Whether to show download button */
-  showDownload?: boolean;
+  showDownload?: boolean
   /** Compact mode (smaller size) */
-  compact?: boolean;
+  compact?: boolean
 }
 
 /**
@@ -35,65 +35,65 @@ function ImageLightbox({
   onClose,
   onDownload,
 }: {
-  src: string;
-  alt: string;
-  onClose: () => void;
-  onDownload: () => void;
+  src: string
+  alt: string
+  onClose: () => void
+  onDownload: () => void
 }) {
-  const [scale, setScale] = useState(1);
-  const [rotation, setRotation] = useState(0);
+  const [scale, setScale] = useState(1)
+  const [rotation, setRotation] = useState(0)
 
   const handleZoomIn = useCallback(() => {
-    setScale(prev => Math.min(prev + 0.25, 3));
-  }, []);
+    setScale(prev => Math.min(prev + 0.25, 3))
+  }, [])
 
   const handleZoomOut = useCallback(() => {
-    setScale(prev => Math.max(prev - 0.25, 0.5));
-  }, []);
+    setScale(prev => Math.max(prev - 0.25, 0.5))
+  }, [])
 
   const handleRotate = useCallback(() => {
-    setRotation(prev => (prev + 90) % 360);
-  }, []);
+    setRotation(prev => (prev + 90) % 360)
+  }, [])
 
   const handleBackdropClick = useCallback(
     (e: React.MouseEvent) => {
       if (e.target === e.currentTarget) {
-        onClose();
+        onClose()
       }
     },
     [onClose]
-  );
+  )
 
   // Handle keyboard events
   React.useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       switch (e.key) {
         case 'Escape':
-          onClose();
-          break;
+          onClose()
+          break
         case '+':
         case '=':
-          handleZoomIn();
-          break;
+          handleZoomIn()
+          break
         case '-':
-          handleZoomOut();
-          break;
+          handleZoomOut()
+          break
         case 'r':
         case 'R':
-          handleRotate();
-          break;
+          handleRotate()
+          break
       }
-    };
+    }
 
-    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keydown', handleKeyDown)
     // Prevent body scroll when lightbox is open
-    document.body.style.overflow = 'hidden';
+    document.body.style.overflow = 'hidden'
 
     return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      document.body.style.overflow = '';
-    };
-  }, [onClose, handleZoomIn, handleZoomOut, handleRotate]);
+      window.removeEventListener('keydown', handleKeyDown)
+      document.body.style.overflow = ''
+    }
+  }, [onClose, handleZoomIn, handleZoomOut, handleRotate])
 
   return (
     <div
@@ -172,75 +172,75 @@ function ImageLightbox({
         {alt}
       </div>
     </div>
-  );
+  )
 }
 
 /**
  * Custom hook to fetch image with authentication and return blob URL
  */
 function useAuthenticatedImage(attachmentId: number, isImage: boolean) {
-  const [blobUrl, setBlobUrl] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState(false);
+  const [blobUrl, setBlobUrl] = useState<string | null>(null)
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState(false)
 
   useEffect(() => {
-    if (!isImage) return;
+    if (!isImage) return
 
-    let isMounted = true;
+    let isMounted = true
     const fetchImage = async () => {
-      setIsLoading(true);
-      setError(false);
+      setIsLoading(true)
+      setError(false)
 
       try {
-        const token = getToken();
+        const token = getToken()
         const response = await fetch(getAttachmentPreviewUrl(attachmentId), {
           headers: {
             ...(token && { Authorization: `Bearer ${token}` }),
           },
-        });
+        })
 
         if (!response.ok) {
-          throw new Error(`Failed to fetch image: ${response.status}`);
+          throw new Error(`Failed to fetch image: ${response.status}`)
         }
 
-        const blob = await response.blob();
+        const blob = await response.blob()
         if (isMounted) {
-          const url = URL.createObjectURL(blob);
-          setBlobUrl(url);
+          const url = URL.createObjectURL(blob)
+          setBlobUrl(url)
         }
       } catch (err) {
-        console.error('Failed to load image:', err);
+        console.error('Failed to load image:', err)
         if (isMounted) {
-          setError(true);
+          setError(true)
         }
       } finally {
         if (isMounted) {
-          setIsLoading(false);
+          setIsLoading(false)
         }
       }
-    };
+    }
 
-    fetchImage();
+    fetchImage()
 
     return () => {
-      isMounted = false;
+      isMounted = false
       // Clean up blob URL when component unmounts
       if (blobUrl) {
-        URL.revokeObjectURL(blobUrl);
+        URL.revokeObjectURL(blobUrl)
       }
-    };
-  }, [attachmentId, isImage]);
+    }
+  }, [attachmentId, isImage])
 
   // Clean up blob URL when it changes
   useEffect(() => {
     return () => {
       if (blobUrl) {
-        URL.revokeObjectURL(blobUrl);
+        URL.revokeObjectURL(blobUrl)
       }
-    };
-  }, [blobUrl]);
+    }
+  }, [blobUrl])
 
-  return { blobUrl, isLoading, error };
+  return { blobUrl, isLoading, error }
 }
 
 export default function AttachmentPreview({
@@ -248,33 +248,33 @@ export default function AttachmentPreview({
   showDownload = true,
   compact = false,
 }: AttachmentPreviewProps) {
-  const [showLightbox, setShowLightbox] = useState(false);
+  const [showLightbox, setShowLightbox] = useState(false)
 
   const handleDownload = useCallback(async () => {
     try {
-      await downloadAttachment(attachment.id, attachment.filename);
+      await downloadAttachment(attachment.id, attachment.filename)
     } catch (err) {
-      console.error('Failed to download attachment:', err);
+      console.error('Failed to download attachment:', err)
     }
-  }, [attachment.id, attachment.filename]);
+  }, [attachment.id, attachment.filename])
 
   const handleImageClick = useCallback(() => {
-    setShowLightbox(true);
-  }, []);
+    setShowLightbox(true)
+  }, [])
 
   const handleCloseLightbox = useCallback(() => {
-    setShowLightbox(false);
-  }, []);
+    setShowLightbox(false)
+  }, [])
 
-  const icon = getFileIcon(attachment.file_extension);
-  const isImage = isImageExtension(attachment.file_extension);
+  const icon = getFileIcon(attachment.file_extension)
+  const isImage = isImageExtension(attachment.file_extension)
 
   // Use authenticated image fetching
   const {
     blobUrl: imageUrl,
     isLoading: imageLoading,
     error: imageError,
-  } = useAuthenticatedImage(attachment.id, isImage);
+  } = useAuthenticatedImage(attachment.id, isImage)
 
   // Render image preview for image types
   if (isImage && !imageError) {
@@ -285,13 +285,13 @@ export default function AttachmentPreview({
           <div className="inline-flex items-center justify-center h-12 w-12 rounded-md border border-border bg-muted">
             <Loader2 className="h-4 w-4 animate-spin text-text-muted" />
           </div>
-        );
+        )
       }
       return (
         <div className="flex items-center justify-center max-w-[300px] max-h-[200px] min-h-[100px] rounded-lg border border-border bg-muted mb-2">
           <Loader2 className="h-6 w-6 animate-spin text-text-muted" />
         </div>
-      );
+      )
     }
 
     // Show image preview once loaded
@@ -315,7 +315,7 @@ export default function AttachmentPreview({
               />
             )}
           </>
-        );
+        )
       }
 
       return (
@@ -346,8 +346,8 @@ export default function AttachmentPreview({
                     variant="ghost"
                     size="icon"
                     onClick={e => {
-                      e.stopPropagation();
-                      handleDownload();
+                      e.stopPropagation()
+                      handleDownload()
                     }}
                     className="h-6 w-6 text-white hover:bg-white/20 flex-shrink-0"
                     title="下载"
@@ -367,7 +367,7 @@ export default function AttachmentPreview({
             />
           )}
         </>
-      );
+      )
     }
   }
 
@@ -392,7 +392,7 @@ export default function AttachmentPreview({
           </Button>
         )}
       </div>
-    );
+    )
   }
 
   return (
@@ -412,5 +412,5 @@ export default function AttachmentPreview({
         </div>
       </div>
     </div>
-  );
+  )
 }

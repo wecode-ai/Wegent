@@ -16,36 +16,36 @@
 
 export interface RuntimeConfig {
   /** Backend API URL. Empty string means use '/api' proxy */
-  apiUrl: string;
+  apiUrl: string
   /** Socket.IO direct URL. Empty string means use proxy */
-  socketDirectUrl: string;
+  socketDirectUrl: string
   /** Enable chat context feature (knowledge base background) */
-  enableChatContext: boolean;
+  enableChatContext: boolean
   /** Login mode: 'password', 'oidc', or 'all' */
-  loginMode: string;
+  loginMode: string
   /** OIDC login button text */
-  oidcLoginText: string;
+  oidcLoginText: string
   /** Enable display quotas in frontend */
-  enableDisplayQuotas: boolean;
+  enableDisplayQuotas: boolean
   /** Enable Wiki module */
-  enableWiki: boolean;
+  enableWiki: boolean
   /** VSCode link template for deep linking */
-  vscodeLinkTemplate: string;
+  vscodeLinkTemplate: string
   /** Feedback URL for issue reporting */
-  feedbackUrl: string;
+  feedbackUrl: string
   /** Documentation URL */
-  docsUrl: string;
+  docsUrl: string
   /** Enable OpenTelemetry tracing */
-  otelEnabled: boolean;
+  otelEnabled: boolean
   /** OpenTelemetry service name */
-  otelServiceName: string;
+  otelServiceName: string
   /** OpenTelemetry collector endpoint */
-  otelCollectorEndpoint: string;
+  otelCollectorEndpoint: string
 }
 
 // Cache for runtime config to avoid repeated API calls
-let runtimeConfigCache: RuntimeConfig | null = null;
-let runtimeConfigPromise: Promise<RuntimeConfig> | null = null;
+let runtimeConfigCache: RuntimeConfig | null = null
+let runtimeConfigPromise: Promise<RuntimeConfig> | null = null
 
 /**
  * Fetch runtime configuration from the server
@@ -54,28 +54,28 @@ let runtimeConfigPromise: Promise<RuntimeConfig> | null = null;
 export const fetchRuntimeConfig = async (): Promise<RuntimeConfig> => {
   // Return cached config if available
   if (runtimeConfigCache) {
-    return runtimeConfigCache;
+    return runtimeConfigCache
   }
 
   // Return existing promise if fetch is in progress
   if (runtimeConfigPromise) {
-    return runtimeConfigPromise;
+    return runtimeConfigPromise
   }
 
   // Fetch config from API
   runtimeConfigPromise = fetch('/runtime-config')
     .then(res => {
       if (!res.ok) {
-        throw new Error('Failed to fetch runtime config');
+        throw new Error('Failed to fetch runtime config')
       }
-      return res.json();
+      return res.json()
     })
     .then((config: RuntimeConfig) => {
-      runtimeConfigCache = config;
-      return config;
+      runtimeConfigCache = config
+      return config
     })
     .catch(err => {
-      console.warn('[RuntimeConfig] Failed to fetch, using build-time config:', err);
+      console.warn('[RuntimeConfig] Failed to fetch, using build-time config:', err)
       // Fallback to build-time env vars
       const fallback: RuntimeConfig = {
         apiUrl: process.env.NEXT_PUBLIC_API_URL || '',
@@ -93,16 +93,16 @@ export const fetchRuntimeConfig = async (): Promise<RuntimeConfig> => {
         otelServiceName: process.env.NEXT_PUBLIC_OTEL_SERVICE_NAME || 'wegent-frontend',
         otelCollectorEndpoint:
           process.env.NEXT_PUBLIC_OTEL_COLLECTOR_ENDPOINT || 'http://localhost:4318',
-      };
-      runtimeConfigCache = fallback;
-      return fallback;
+      }
+      runtimeConfigCache = fallback
+      return fallback
     })
     .finally(() => {
-      runtimeConfigPromise = null;
-    });
+      runtimeConfigPromise = null
+    })
 
-  return runtimeConfigPromise;
-};
+  return runtimeConfigPromise
+}
 
 /**
  * Get runtime config synchronously (uses cached value or build-time fallback)
@@ -110,7 +110,7 @@ export const fetchRuntimeConfig = async (): Promise<RuntimeConfig> => {
  */
 export const getRuntimeConfigSync = (): RuntimeConfig => {
   if (runtimeConfigCache) {
-    return runtimeConfigCache;
+    return runtimeConfigCache
   }
   // Fallback to build-time env vars
   return {
@@ -129,8 +129,8 @@ export const getRuntimeConfigSync = (): RuntimeConfig => {
     otelServiceName: process.env.NEXT_PUBLIC_OTEL_SERVICE_NAME || 'wegent-frontend',
     otelCollectorEndpoint:
       process.env.NEXT_PUBLIC_OTEL_COLLECTOR_ENDPOINT || 'http://localhost:4318',
-  };
-};
+  }
+}
 
 /**
  * Get API base URL
@@ -143,60 +143,60 @@ export const getRuntimeConfigSync = (): RuntimeConfig => {
  * - '/api' -> '/api' (unchanged)
  */
 export const getApiBaseUrl = (): string => {
-  const config = getRuntimeConfigSync();
+  const config = getRuntimeConfigSync()
 
   // If apiUrl is not set or empty, use '/api' proxy mode
   if (!config.apiUrl || config.apiUrl.trim() === '') {
-    return '/api';
+    return '/api'
   }
 
-  const apiUrl = config.apiUrl.trim();
+  const apiUrl = config.apiUrl.trim()
 
   // If it's already '/api' or ends with '/api', return as-is
   if (apiUrl === '/api' || apiUrl.endsWith('/api')) {
-    return apiUrl;
+    return apiUrl
   }
 
   // If it's a full URL (http:// or https://), append /api
   if (apiUrl.startsWith('http://') || apiUrl.startsWith('https://')) {
     // Remove trailing slash if present, then append /api
-    return apiUrl.replace(/\/+$/, '') + '/api';
+    return apiUrl.replace(/\/+$/, '') + '/api'
   }
 
   // For other cases (relative paths), return as-is
-  return apiUrl;
-};
+  return apiUrl
+}
 
 /**
  * Get Socket.IO URL
  * Returns the configured socket URL or empty string for proxy mode
  */
 export const getSocketUrl = (): string => {
-  const config = getRuntimeConfigSync();
-  return config.socketDirectUrl;
-};
+  const config = getRuntimeConfigSync()
+  return config.socketDirectUrl
+}
 
 /**
  * Check if chat context feature is enabled
  * Returns true if the feature is enabled, false otherwise
  */
 export const isChatContextEnabled = (): boolean => {
-  const config = getRuntimeConfigSync();
-  return config.enableChatContext;
-};
+  const config = getRuntimeConfigSync()
+  return config.enableChatContext
+}
 
 /**
  * Clear the config cache (useful for testing or forcing refresh)
  */
 export const clearRuntimeConfigCache = (): void => {
-  runtimeConfigCache = null;
-  runtimeConfigPromise = null;
-};
+  runtimeConfigCache = null
+  runtimeConfigPromise = null
+}
 
 /**
  * Initialize runtime config
  * Call this early in app initialization to pre-fetch config
  */
 export const initRuntimeConfig = async (): Promise<RuntimeConfig> => {
-  return fetchRuntimeConfig();
-};
+  return fetchRuntimeConfig()
+}

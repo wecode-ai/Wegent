@@ -2,43 +2,43 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useMemo } from 'react';
-import { Button } from '@/components/ui/button';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import React, { useMemo } from 'react'
+import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import { Tag } from '@/components/ui/tag';
-import { RiRobot2Line } from 'react-icons/ri';
-import { Edit, Plus, Copy } from 'lucide-react';
-import { Bot } from '@/types/api';
-import { useTranslation } from '@/hooks/useTranslation';
-import { getPromptBadgeStyle } from '@/utils/styles';
-import BotTransfer from './BotTransfer';
+} from '@/components/ui/select'
+import { Tag } from '@/components/ui/tag'
+import { RiRobot2Line } from 'react-icons/ri'
+import { Edit, Plus, Copy } from 'lucide-react'
+import { Bot } from '@/types/api'
+import { useTranslation } from '@/hooks/useTranslation'
+import { getPromptBadgeStyle } from '@/utils/styles'
+import BotTransfer from './BotTransfer'
 
 export interface LeaderModeEditorProps {
-  bots: Bot[];
-  selectedBotKeys: React.Key[];
-  setSelectedBotKeys: React.Dispatch<React.SetStateAction<React.Key[]>>;
-  leaderBotId: number | null;
-  setLeaderBotId: React.Dispatch<React.SetStateAction<number | null>>;
-  unsavedPrompts: Record<string, string>;
-  teamPromptMap: Map<number, boolean>;
-  isDifyLeader: boolean;
-  selectedShellType: string | null;
-  leaderOptions: Bot[];
-  toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast'];
-  onEditBot: (botId: number) => void;
-  onCreateBot: () => void;
-  onCloneBot: (botId: number) => void;
-  onOpenPromptDrawer: () => void;
-  onLeaderChange: (botId: number) => void;
+  bots: Bot[]
+  selectedBotKeys: React.Key[]
+  setSelectedBotKeys: React.Dispatch<React.SetStateAction<React.Key[]>>
+  leaderBotId: number | null
+  setLeaderBotId: React.Dispatch<React.SetStateAction<number | null>>
+  unsavedPrompts: Record<string, string>
+  teamPromptMap: Map<number, boolean>
+  isDifyLeader: boolean
+  selectedShellType: string | null
+  leaderOptions: Bot[]
+  toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast']
+  onEditBot: (botId: number) => void
+  onCreateBot: () => void
+  onCloneBot: (botId: number) => void
+  onOpenPromptDrawer: () => void
+  onLeaderChange: (botId: number) => void
 }
 
 export default function LeaderModeEditor({
@@ -58,9 +58,9 @@ export default function LeaderModeEditor({
   onOpenPromptDrawer,
   onLeaderChange,
 }: LeaderModeEditorProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
 
-  const configuredPromptBadgeStyle = useMemo(() => getPromptBadgeStyle('configured'), []);
+  const configuredPromptBadgeStyle = useMemo(() => getPromptBadgeStyle('configured'), [])
 
   return (
     <div className="rounded-md border border-border bg-base p-4 flex flex-col flex-1 min-h-0">
@@ -91,17 +91,17 @@ export default function LeaderModeEditor({
                   <Edit
                     className="h-4 w-4 text-muted-foreground hover:text-foreground cursor-pointer"
                     onPointerDown={e => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      onEditBot(leaderBotId);
+                      e.preventDefault()
+                      e.stopPropagation()
+                      onEditBot(leaderBotId)
                     }}
                   />
                   <Copy
                     className="h-4 w-4 text-muted-foreground hover:text-foreground cursor-pointer"
                     onPointerDown={e => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      onCloneBot(leaderBotId);
+                      e.preventDefault()
+                      e.stopPropagation()
+                      onCloneBot(leaderBotId)
                     }}
                   />
                 </div>
@@ -116,8 +116,8 @@ export default function LeaderModeEditor({
                 <Button
                   size="sm"
                   onClick={e => {
-                    e.stopPropagation();
-                    onCreateBot();
+                    e.stopPropagation()
+                    onCreateBot()
                   }}
                 >
                   <Plus className="mr-2 h-4 w-4" />
@@ -162,17 +162,17 @@ export default function LeaderModeEditor({
                       <Edit
                         className="h-4 w-4 text-muted-foreground hover:text-foreground cursor-pointer"
                         onPointerDown={e => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          onEditBot(b.id);
+                          e.preventDefault()
+                          e.stopPropagation()
+                          onEditBot(b.id)
                         }}
                       />
                       <Copy
                         className="h-4 w-4 text-muted-foreground hover:text-foreground cursor-pointer"
                         onPointerDown={e => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          onCloneBot(b.id);
+                          e.preventDefault()
+                          e.stopPropagation()
+                          onCloneBot(b.id)
                         }}
                       />
                     </div>
@@ -202,5 +202,5 @@ export default function LeaderModeEditor({
         onOpenPromptDrawer={onOpenPromptDrawer}
       />
     </div>
-  );
+  )
 }

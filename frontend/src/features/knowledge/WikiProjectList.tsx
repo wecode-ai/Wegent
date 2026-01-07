@@ -2,32 +2,32 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useEffect, useRef, useCallback } from 'react';
-import { useTranslation } from '@/hooks/useTranslation';
-import { WikiProject, WikiGeneration } from '@/types/wiki';
-import { getProjectDisplayName } from './wikiUtils';
-import { Card } from '@/components/ui/card';
+import { useEffect, useRef, useCallback } from 'react'
+import { useTranslation } from '@/hooks/useTranslation'
+import { WikiProject, WikiGeneration } from '@/types/wiki'
+import { getProjectDisplayName } from './wikiUtils'
+import { Card } from '@/components/ui/card'
 
 interface WikiProjectListProps {
-  projects: (WikiProject & { generations?: WikiGeneration[] })[];
-  loading: boolean;
-  loadingMore?: boolean;
-  error: string | null;
-  onAddRepo: () => void;
-  onProjectClick: (projectId: number) => void;
-  onTaskClick: (taskId: number) => void;
-  onCancelClick: (projectId: number, e: React.MouseEvent) => void;
-  onDeleteClick?: (projectId: number, e: React.MouseEvent) => void;
-  onRegenerateClick?: (projectId: number, e: React.MouseEvent) => void;
-  cancellingIds: Set<number>;
-  deletingIds?: Set<number>;
-  regeneratingIds?: Set<number>;
-  searchTerm?: string;
-  hasMore?: boolean;
-  onLoadMore?: () => void;
-  currentUserId?: number;
+  projects: (WikiProject & { generations?: WikiGeneration[] })[]
+  loading: boolean
+  loadingMore?: boolean
+  error: string | null
+  onAddRepo: () => void
+  onProjectClick: (projectId: number) => void
+  onTaskClick: (taskId: number) => void
+  onCancelClick: (projectId: number, e: React.MouseEvent) => void
+  onDeleteClick?: (projectId: number, e: React.MouseEvent) => void
+  onRegenerateClick?: (projectId: number, e: React.MouseEvent) => void
+  cancellingIds: Set<number>
+  deletingIds?: Set<number>
+  regeneratingIds?: Set<number>
+  searchTerm?: string
+  hasMore?: boolean
+  onLoadMore?: () => void
+  currentUserId?: number
 }
 
 export default function WikiProjectList({
@@ -49,40 +49,40 @@ export default function WikiProjectList({
   onLoadMore,
   currentUserId,
 }: WikiProjectListProps) {
-  const { t } = useTranslation();
-  const observerRef = useRef<IntersectionObserver | null>(null);
-  const loadMoreTriggerRef = useRef<HTMLDivElement | null>(null);
+  const { t } = useTranslation()
+  const observerRef = useRef<IntersectionObserver | null>(null)
+  const loadMoreTriggerRef = useRef<HTMLDivElement | null>(null)
 
   // Setup intersection observer for infinite scroll
   const setupObserver = useCallback(() => {
     if (observerRef.current) {
-      observerRef.current.disconnect();
+      observerRef.current.disconnect()
     }
 
-    if (!hasMore || !onLoadMore) return;
+    if (!hasMore || !onLoadMore) return
 
     observerRef.current = new IntersectionObserver(
       entries => {
         if (entries[0].isIntersecting && hasMore && !loadingMore && onLoadMore) {
-          onLoadMore();
+          onLoadMore()
         }
       },
       { threshold: 0.1 }
-    );
+    )
 
     if (loadMoreTriggerRef.current) {
-      observerRef.current.observe(loadMoreTriggerRef.current);
+      observerRef.current.observe(loadMoreTriggerRef.current)
     }
-  }, [hasMore, loadingMore, onLoadMore]);
+  }, [hasMore, loadingMore, onLoadMore])
 
   useEffect(() => {
-    setupObserver();
+    setupObserver()
     return () => {
       if (observerRef.current) {
-        observerRef.current.disconnect();
+        observerRef.current.disconnect()
       }
-    };
-  }, [setupObserver]);
+    }
+  }, [setupObserver])
   // Filter projects
   const filteredProjects = projects.filter(project => {
     const matchesSearch =
@@ -90,26 +90,26 @@ export default function WikiProjectList({
       (project.description &&
         project.description.toLowerCase().includes(searchTerm.toLowerCase())) ||
       project.project_type.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      project.source_type.toLowerCase().includes(searchTerm.toLowerCase());
+      project.source_type.toLowerCase().includes(searchTerm.toLowerCase())
 
     const hasValidGeneration =
       !project.generations ||
       project.generations.length === 0 ||
-      (project.generations[0].status !== 'FAILED' && project.generations[0].status !== 'CANCELLED');
+      (project.generations[0].status !== 'FAILED' && project.generations[0].status !== 'CANCELLED')
 
-    return matchesSearch && hasValidGeneration;
-  });
+    return matchesSearch && hasValidGeneration
+  })
 
   if (loading) {
     return (
       <div className="flex justify-center py-12">
         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary"></div>
       </div>
-    );
+    )
   }
 
   if (error) {
-    return <div className="bg-red-50 text-red-500 p-4 rounded-md">{error}</div>;
+    return <div className="bg-red-50 text-red-500 p-4 rounded-md">{error}</div>
   }
 
   // Empty state - show centered add button
@@ -145,7 +145,7 @@ export default function WikiProjectList({
           </p>
         </Card>
       </div>
-    );
+    )
   }
 
   return (
@@ -183,13 +183,13 @@ export default function WikiProjectList({
             project.generations &&
             project.generations.length > 0 &&
             (project.generations[0].status === 'RUNNING' ||
-              project.generations[0].status === 'PENDING');
-          const taskId = isGenerating ? project.generations![0].task_id : null;
+              project.generations[0].status === 'PENDING')
+          const taskId = isGenerating ? project.generations![0].task_id : null
           // Check if current user is the task executor
           const isTaskExecutor =
             isGenerating &&
             currentUserId !== undefined &&
-            project.generations![0].user_id === currentUserId;
+            project.generations![0].user_id === currentUserId
 
           return (
             <Card
@@ -198,14 +198,14 @@ export default function WikiProjectList({
               className="hover:bg-hover transition-colors cursor-pointer h-[140px] flex flex-col group"
               onClick={() => {
                 // Always navigate to wiki detail page when clicking the card
-                onProjectClick(project.id);
+                onProjectClick(project.id)
               }}
             >
               {/* Project header - with top padding */}
               <div className="flex items-start pt-1 mb-2 flex-shrink-0">
                 <h3 className="font-medium text-sm leading-relaxed line-clamp-2 flex-1">
                   {(() => {
-                    const displayName = getProjectDisplayName(project);
+                    const displayName = getProjectDisplayName(project)
                     if (displayName.hasSlash) {
                       return (
                         <span className="flex items-center flex-wrap">
@@ -213,9 +213,9 @@ export default function WikiProjectList({
                           <span className="mx-1 text-text-muted font-normal">/</span>
                           <span className="font-semibold">{displayName.parts[1]}</span>
                         </span>
-                      );
+                      )
                     }
-                    return <span className="font-semibold">{displayName.parts[0]}</span>;
+                    return <span className="font-semibold">{displayName.parts[0]}</span>
                   })()}
                 </h3>
               </div>
@@ -297,8 +297,8 @@ export default function WikiProjectList({
                     <button
                       className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors opacity-0 group-hover:opacity-100"
                       onClick={e => {
-                        e.stopPropagation();
-                        onProjectClick(project.id);
+                        e.stopPropagation()
+                        onProjectClick(project.id)
                       }}
                       title={t('knowledge:view_detail')}
                     >
@@ -333,9 +333,9 @@ export default function WikiProjectList({
                         <button
                           className="px-2 py-1 text-xs rounded-full bg-primary/10 text-primary flex items-center gap-1 hover:bg-primary/20 transition-colors"
                           onClick={e => {
-                            e.stopPropagation();
+                            e.stopPropagation()
                             if (taskId) {
-                              onTaskClick(taskId);
+                              onTaskClick(taskId)
                             }
                           }}
                           title={t('knowledge:view_task')}
@@ -366,7 +366,7 @@ export default function WikiProjectList({
                   </div>
                 )}
             </Card>
-          );
+          )
         })}
         {/* Load more trigger - invisible element that triggers loading when scrolled into view */}
         {hasMore && onLoadMore && <div ref={loadMoreTriggerRef} className="col-span-full h-10" />}
@@ -379,5 +379,5 @@ export default function WikiProjectList({
         )}
       </div>
     </div>
-  );
+  )
 }

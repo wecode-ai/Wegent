@@ -2,12 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
-import { Check, Database, ArrowRight, Users } from 'lucide-react';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import Link from 'next/link';
+import React, { useEffect, useState, useMemo, useCallback } from 'react'
+import { Check, Database, ArrowRight, Users } from 'lucide-react'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import Link from 'next/link'
 import {
   Command,
   CommandEmpty,
@@ -16,42 +16,42 @@ import {
   CommandItem,
   CommandList,
   CommandSeparator,
-} from '@/components/ui/command';
-import { knowledgeBaseApi } from '@/apis/knowledge-base';
-import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base';
-import type { KnowledgeBase } from '@/types/api';
-import type { BoundKnowledgeBaseDetail } from '@/types/task-knowledge-base';
-import type { ContextItem, KnowledgeBaseContext } from '@/types/context';
-import { useTranslation } from '@/hooks/useTranslation';
-import { cn } from '@/lib/utils';
-import { formatDocumentCount } from '@/lib/i18n-helpers';
+} from '@/components/ui/command'
+import { knowledgeBaseApi } from '@/apis/knowledge-base'
+import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base'
+import type { KnowledgeBase } from '@/types/api'
+import type { BoundKnowledgeBaseDetail } from '@/types/task-knowledge-base'
+import type { ContextItem, KnowledgeBaseContext } from '@/types/context'
+import { useTranslation } from '@/hooks/useTranslation'
+import { cn } from '@/lib/utils'
+import { formatDocumentCount } from '@/lib/i18n-helpers'
 
 interface ContextSelectorProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  selectedContexts: ContextItem[];
-  onSelect: (context: ContextItem) => void;
-  onDeselect: (id: number | string) => void;
-  children: React.ReactNode;
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  selectedContexts: ContextItem[]
+  onSelect: (context: ContextItem) => void
+  onDeselect: (id: number | string) => void
+  children: React.ReactNode
   /** Task ID for group chat mode - if provided, shows bound knowledge bases */
-  taskId?: number;
+  taskId?: number
   /** Whether this is a group chat - if true, shows bound knowledge bases section */
-  isGroupChat?: boolean;
+  isGroupChat?: boolean
 }
 
 interface KnowledgeBaseItemProps {
-  kb: KnowledgeBase;
-  isSelected: boolean;
-  onSelect: () => void;
+  kb: KnowledgeBase
+  isSelected: boolean
+  onSelect: () => void
 }
 
 /**
  * Knowledge base item component for the selector list
  */
 function KnowledgeBaseItem({ kb, isSelected, onSelect }: KnowledgeBaseItemProps) {
-  const { t } = useTranslation('knowledge');
-  const documentCount = kb.document_count || 0;
-  const documentText = formatDocumentCount(documentCount, t);
+  const { t } = useTranslation('knowledge')
+  const documentCount = kb.document_count || 0
+  const documentText = formatDocumentCount(documentCount, t)
 
   return (
     <CommandItem
@@ -88,7 +88,7 @@ function KnowledgeBaseItem({ kb, isSelected, onSelect }: KnowledgeBaseItemProps)
         )}
       />
     </CommandItem>
-  );
+  )
 }
 
 /**
@@ -109,71 +109,71 @@ export default function ContextSelector({
   taskId,
   isGroupChat,
 }: ContextSelectorProps) {
-  const { t } = useTranslation();
-  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
-  const [boundKnowledgeBases, setBoundKnowledgeBases] = useState<BoundKnowledgeBaseDetail[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [searchValue, setSearchValue] = useState('');
+  const { t } = useTranslation()
+  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([])
+  const [boundKnowledgeBases, setBoundKnowledgeBases] = useState<BoundKnowledgeBaseDetail[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [searchValue, setSearchValue] = useState('')
 
   const fetchKnowledgeBases = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+    setLoading(true)
+    setError(null)
     try {
-      const response = await knowledgeBaseApi.list({ scope: 'all' });
-      setKnowledgeBases(response.items);
+      const response = await knowledgeBaseApi.list({ scope: 'all' })
+      setKnowledgeBases(response.items)
     } catch (error) {
-      console.error('Failed to fetch knowledge bases:', error);
-      setError(t('knowledge:fetch_error'));
+      console.error('Failed to fetch knowledge bases:', error)
+      setError(t('knowledge:fetch_error'))
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  }, [t]);
+  }, [t])
 
   // Fetch bound knowledge bases for group chat
   const fetchBoundKnowledgeBases = useCallback(async () => {
     if (!taskId || !isGroupChat) {
-      setBoundKnowledgeBases([]);
-      return;
+      setBoundKnowledgeBases([])
+      return
     }
     try {
-      const response = await taskKnowledgeBaseApi.getBoundKnowledgeBases(taskId);
-      setBoundKnowledgeBases(response.items);
+      const response = await taskKnowledgeBaseApi.getBoundKnowledgeBases(taskId)
+      setBoundKnowledgeBases(response.items)
     } catch (error) {
-      console.error('Failed to fetch bound knowledge bases:', error);
+      console.error('Failed to fetch bound knowledge bases:', error)
       // Don't show error - just hide the section
-      setBoundKnowledgeBases([]);
+      setBoundKnowledgeBases([])
     }
-  }, [taskId, isGroupChat]);
+  }, [taskId, isGroupChat])
 
   // Fetch knowledge bases on mount (not on every open) - like ModelSelector
   useEffect(() => {
-    fetchKnowledgeBases();
-  }, [fetchKnowledgeBases]);
+    fetchKnowledgeBases()
+  }, [fetchKnowledgeBases])
 
   // Fetch bound knowledge bases when taskId or isGroupChat changes
   useEffect(() => {
-    fetchBoundKnowledgeBases();
-  }, [fetchBoundKnowledgeBases]);
+    fetchBoundKnowledgeBases()
+  }, [fetchBoundKnowledgeBases])
 
   // Sort knowledge bases by name and exclude bound ones from user list
   const sortedKnowledgeBases = useMemo(() => {
-    const boundIds = new Set(boundKnowledgeBases.map(kb => kb.id));
+    const boundIds = new Set(boundKnowledgeBases.map(kb => kb.id))
     return [...knowledgeBases]
       .filter(kb => !boundIds.has(kb.id))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [knowledgeBases, boundKnowledgeBases]);
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }, [knowledgeBases, boundKnowledgeBases])
 
   // Check if a context item is selected
   const isSelected = (id: number) => {
-    return selectedContexts.some(ctx => ctx.id === id);
-  };
+    return selectedContexts.some(ctx => ctx.id === id)
+  }
 
   // Handle knowledge base selection
   // Handle knowledge base selection
   const handleSelect = (kb: KnowledgeBase) => {
     if (isSelected(kb.id)) {
-      onDeselect(kb.id);
+      onDeselect(kb.id)
     } else {
       // Convert KnowledgeBase to KnowledgeBaseContext
       const context: KnowledgeBaseContext = {
@@ -184,15 +184,15 @@ export default function ContextSelector({
         retriever_name: kb.retrieval_config?.retriever_name,
         retriever_namespace: kb.retrieval_config?.retriever_namespace,
         document_count: kb.document_count,
-      };
-      onSelect(context);
+      }
+      onSelect(context)
     }
-  };
+  }
 
   // Handle bound knowledge base selection (from group chat)
   const handleSelectBound = (kb: BoundKnowledgeBaseDetail) => {
     if (isSelected(kb.id)) {
-      onDeselect(kb.id);
+      onDeselect(kb.id)
     } else {
       const context: KnowledgeBaseContext = {
         id: kb.id,
@@ -200,16 +200,16 @@ export default function ContextSelector({
         type: 'knowledge_base',
         description: kb.description ?? undefined,
         document_count: kb.document_count,
-      };
-      onSelect(context);
+      }
+      onSelect(context)
     }
-  };
+  }
   // Reset search when popover closes
   useEffect(() => {
     if (!open) {
-      setSearchValue('');
+      setSearchValue('')
     }
-  }, [open]);
+  }, [open])
 
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
@@ -273,16 +273,18 @@ export default function ContextSelector({
                 {/* Group Chat Bound Knowledge Bases */}
                 {boundKnowledgeBases.length > 0 && (
                   <>
-                    <CommandGroup heading={
-                      <div className="flex items-center gap-1.5 text-xs font-medium text-text-muted">
-                        <Users className="w-3 h-3" />
-                        {t('chat:groupChat.knowledge.groupKnowledgeBases')}
-                      </div>
-                    }>
+                    <CommandGroup
+                      heading={
+                        <div className="flex items-center gap-1.5 text-xs font-medium text-text-muted">
+                          <Users className="w-3 h-3" />
+                          {t('chat:groupChat.knowledge.groupKnowledgeBases')}
+                        </div>
+                      }
+                    >
                       {boundKnowledgeBases.map(kb => {
-                        const documentCount = kb.document_count || 0;
-                        const documentText = formatDocumentCount(documentCount, t);
-                        const selected = isSelected(kb.id);
+                        const documentCount = kb.document_count || 0
+                        const documentText = formatDocumentCount(documentCount, t)
+                        const selected = isSelected(kb.id)
 
                         return (
                           <CommandItem
@@ -301,15 +303,23 @@ export default function ContextSelector({
                             <div className="flex items-start gap-2 min-w-0 flex-1">
                               <Database className="w-4 h-4 text-primary flex-shrink-0 mt-0.5" />
                               <div className="flex flex-col min-w-0 flex-1">
-                                <span className="font-medium text-sm text-text-primary truncate" title={kb.display_name}>
+                                <span
+                                  className="font-medium text-sm text-text-primary truncate"
+                                  title={kb.display_name}
+                                >
                                   {kb.display_name}
                                 </span>
                                 {kb.description && (
-                                  <span className="text-xs text-text-muted truncate" title={kb.description}>
+                                  <span
+                                    className="text-xs text-text-muted truncate"
+                                    title={kb.description}
+                                  >
                                     {kb.description}
                                   </span>
                                 )}
-                                <span className="text-xs text-text-muted mt-0.5">{documentText}</span>
+                                <span className="text-xs text-text-muted mt-0.5">
+                                  {documentText}
+                                </span>
                               </div>
                             </div>
                             <Check
@@ -319,7 +329,7 @@ export default function ContextSelector({
                               )}
                             />
                           </CommandItem>
-                        );
+                        )
                       })}
                     </CommandGroup>
                     {sortedKnowledgeBases.length > 0 && <CommandSeparator />}
@@ -328,11 +338,15 @@ export default function ContextSelector({
 
                 {/* User's Knowledge Bases */}
                 {sortedKnowledgeBases.length > 0 && (
-                  <CommandGroup heading={boundKnowledgeBases.length > 0 ?
-                    <span className="text-xs font-medium text-text-muted">
-                      {t('chat:groupChat.knowledge.otherKnowledgeBases')}
-                    </span> : undefined
-                  }>
+                  <CommandGroup
+                    heading={
+                      boundKnowledgeBases.length > 0 ? (
+                        <span className="text-xs font-medium text-text-muted">
+                          {t('chat:groupChat.knowledge.otherKnowledgeBases')}
+                        </span>
+                      ) : undefined
+                    }
+                  >
                     {sortedKnowledgeBases.map(kb => (
                       <KnowledgeBaseItem
                         key={kb.id}
@@ -349,5 +363,5 @@ export default function ContextSelector({
         </Command>
       </PopoverContent>
     </Popover>
-  );
+  )
 }

@@ -1,6 +1,6 @@
-export { default as MentionAutocomplete } from './MentionAutocomplete';
-export { default as ChatArea } from './ChatArea';
-export { QuickAccessCards } from './QuickAccessCards';
-export { SloganDisplay } from './SloganDisplay';
-export { useChatAreaState } from './useChatAreaState';
-export { useChatStreamHandlers } from './useChatStreamHandlers';
+export { default as MentionAutocomplete } from './MentionAutocomplete'
+export { default as ChatArea } from './ChatArea'
+export { QuickAccessCards } from './QuickAccessCards'
+export { SloganDisplay } from './SloganDisplay'
+export { useChatAreaState } from './useChatAreaState'
+export { useChatStreamHandlers } from './useChatStreamHandlers'

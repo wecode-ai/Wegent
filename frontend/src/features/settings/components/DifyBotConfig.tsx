@@ -2,43 +2,43 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { apiClient } from '@/apis/client';
-import { InformationCircleIcon, CheckCircleIcon } from '@heroicons/react/24/outline';
-import { useTranslation } from 'react-i18next';
+import React, { useState, useEffect, useCallback } from 'react'
+import { Button } from '@/components/ui/button'
+import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
+import { apiClient } from '@/apis/client'
+import { InformationCircleIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
+import { useTranslation } from 'react-i18next'
 import {
   Accordion,
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
-} from '@/components/ui/accordion';
+} from '@/components/ui/accordion'
 
 interface DifyBotConfigProps {
-  agentConfig: string;
-  onAgentConfigChange: (config: string) => void;
-  toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast'];
+  agentConfig: string
+  onAgentConfigChange: (config: string) => void
+  toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast']
   /** Whether the component is in read-only mode */
-  readOnly?: boolean;
+  readOnly?: boolean
 }
 
 interface DifyAppInfo {
-  name: string;
-  description?: string;
-  mode?: string;
-  icon?: string;
-  icon_background?: string;
+  name: string
+  description?: string
+  mode?: string
+  icon?: string
+  icon_background?: string
   user_input_form?: Array<{
-    variable: string;
-    label: Record<string, string>;
-    required: boolean;
-    type: string;
-    options?: string[];
-  }>;
+    variable: string
+    label: Record<string, string>
+    required: boolean
+    type: string
+    options?: string[]
+  }>
 }
 
 const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
@@ -47,42 +47,42 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
   toast,
   readOnly = false,
 }) => {
-  const { t } = useTranslation();
-  const [difyApiKey, setDifyApiKey] = useState<string>('');
-  const [difyBaseUrl, setDifyBaseUrl] = useState<string>('https://api.dify.ai');
-  const [isValidating, setIsValidating] = useState(false);
-  const [appInfo, setAppInfo] = useState<DifyAppInfo | null>(null);
-  const [isValidated, setIsValidated] = useState(false);
-  const [difyParams, setDifyParams] = useState<Record<string, string>>({});
+  const { t } = useTranslation()
+  const [difyApiKey, setDifyApiKey] = useState<string>('')
+  const [difyBaseUrl, setDifyBaseUrl] = useState<string>('https://api.dify.ai')
+  const [isValidating, setIsValidating] = useState(false)
+  const [appInfo, setAppInfo] = useState<DifyAppInfo | null>(null)
+  const [isValidated, setIsValidated] = useState(false)
+  const [difyParams, setDifyParams] = useState<Record<string, string>>({})
 
   // Parse existing agent_config to extract Dify settings
   useEffect(() => {
     if (!agentConfig.trim()) {
-      return;
+      return
     }
 
     try {
-      const config = JSON.parse(agentConfig);
-      const env = config.env || {};
+      const config = JSON.parse(agentConfig)
+      const env = config.env || {}
 
       // Extract Dify API credentials
-      setDifyApiKey(env.DIFY_API_KEY || '');
-      setDifyBaseUrl(env.DIFY_BASE_URL || 'https://api.dify.ai');
+      setDifyApiKey(env.DIFY_API_KEY || '')
+      setDifyBaseUrl(env.DIFY_BASE_URL || 'https://api.dify.ai')
 
       // Extract Dify parameters if exists
       if (env.DIFY_PARAMS) {
         try {
           const params =
-            typeof env.DIFY_PARAMS === 'string' ? JSON.parse(env.DIFY_PARAMS) : env.DIFY_PARAMS;
-          setDifyParams(params);
+            typeof env.DIFY_PARAMS === 'string' ? JSON.parse(env.DIFY_PARAMS) : env.DIFY_PARAMS
+          setDifyParams(params)
         } catch (e) {
-          console.error('Failed to parse DIFY_PARAMS:', e);
+          console.error('Failed to parse DIFY_PARAMS:', e)
         }
       }
     } catch (error) {
-      console.error('Failed to parse agent config:', error);
+      console.error('Failed to parse agent config:', error)
     }
-  }, [agentConfig]);
+  }, [agentConfig])
 
   // Validate Dify API key by fetching app info and parameters
   const validateApiKey = useCallback(async () => {
@@ -91,13 +91,13 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
         variant: 'destructive',
         title:
           t('common:bot.dify_api_key_required') || 'Please enter Dify API Key and Base URL first',
-      });
-      return;
+      })
+      return
     }
 
-    setIsValidating(true);
-    setIsValidated(false);
-    setAppInfo(null);
+    setIsValidating(true)
+    setIsValidated(false)
+    setAppInfo(null)
 
     try {
       // Fetch app info and parameters in parallel
@@ -112,34 +112,34 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
             base_url: difyBaseUrl,
           })
           .catch(() => ({ user_input_form: [] })), // Fallback if parameters endpoint fails
-      ]);
+      ])
 
       // Merge info and parameters
       const completeAppInfo: DifyAppInfo = {
         ...infoResponse,
         user_input_form: paramsResponse.user_input_form || infoResponse.user_input_form || [],
-      };
+      }
 
-      setAppInfo(completeAppInfo);
-      setIsValidated(true);
+      setAppInfo(completeAppInfo)
+      setIsValidated(true)
 
       toast({
         title: t('common:bot.dify_validation_success') || 'API Key validated successfully',
         description: `Application: ${completeAppInfo.name}`,
-      });
+      })
     } catch (error) {
-      console.error('Failed to validate Dify API key:', error);
+      console.error('Failed to validate Dify API key:', error)
       toast({
         variant: 'destructive',
         title: t('common:bot.errors.dify_validation_failed') || 'Failed to validate API key',
         description: 'Please make sure your API key is valid and the base URL is correct.',
-      });
-      setIsValidated(false);
-      setAppInfo(null);
+      })
+      setIsValidated(false)
+      setAppInfo(null)
     } finally {
-      setIsValidating(false);
+      setIsValidating(false)
     }
-  }, [difyApiKey, difyBaseUrl, toast, t]);
+  }, [difyApiKey, difyBaseUrl, toast, t])
 
   // Update agent_config whenever Dify settings change
   const updateAgentConfig = useCallback(() => {
@@ -150,27 +150,24 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
         ...(appInfo?.mode && { DIFY_APP_MODE: appInfo.mode }),
         ...(Object.keys(difyParams).length > 0 && { DIFY_PARAMS: JSON.stringify(difyParams) }),
       },
-    };
+    }
 
-    onAgentConfigChange(JSON.stringify(config, null, 2));
-  }, [difyApiKey, difyBaseUrl, appInfo, difyParams, onAgentConfigChange]);
+    onAgentConfigChange(JSON.stringify(config, null, 2))
+  }, [difyApiKey, difyBaseUrl, appInfo, difyParams, onAgentConfigChange])
 
   useEffect(() => {
-    updateAgentConfig();
-  }, [updateAgentConfig]);
+    updateAgentConfig()
+  }, [updateAgentConfig])
 
   // Reset validation state when API key or base URL changes
   useEffect(() => {
-    setIsValidated(false);
-    setAppInfo(null);
-  }, [difyApiKey, difyBaseUrl]);
+    setIsValidated(false)
+    setAppInfo(null)
+  }, [difyApiKey, difyBaseUrl])
 
   const handleOpenDifyDocs = useCallback(() => {
-    window.open(
-      'https://docs.dify.ai/guides/application-publishing/developing-with-apis',
-      '_blank'
-    );
-  }, []);
+    window.open('https://docs.dify.ai/guides/application-publishing/developing-with-apis', '_blank')
+  }, [])
 
   return (
     <div className="flex flex-col space-y-4 w-full">
@@ -212,8 +209,8 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
               type="password"
               value={difyApiKey}
               onChange={e => {
-                if (readOnly) return;
-                setDifyApiKey(e.target.value);
+                if (readOnly) return
+                setDifyApiKey(e.target.value)
               }}
               disabled={readOnly}
               placeholder="app-xxxxxxxxxxxxxxxxxxxxxxxx"
@@ -236,8 +233,8 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
               type="url"
               value={difyBaseUrl}
               onChange={e => {
-                if (readOnly) return;
-                setDifyBaseUrl(e.target.value);
+                if (readOnly) return
+                setDifyBaseUrl(e.target.value)
               }}
               disabled={readOnly}
               placeholder="https://api.dify.ai"
@@ -339,11 +336,11 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
                                 id={`param-${field.variable}`}
                                 value={difyParams[field.variable] || ''}
                                 onChange={e => {
-                                  if (readOnly) return;
+                                  if (readOnly) return
                                   setDifyParams({
                                     ...difyParams,
                                     [field.variable]: e.target.value,
-                                  });
+                                  })
                                 }}
                                 disabled={readOnly}
                                 className={`w-full px-3 py-2 bg-base rounded-md text-text-primary border border-border focus:outline-none focus:ring-2 focus:ring-primary/40 text-sm ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
@@ -360,11 +357,11 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
                                 id={`param-${field.variable}`}
                                 value={difyParams[field.variable] || ''}
                                 onChange={e => {
-                                  if (readOnly) return;
+                                  if (readOnly) return
                                   setDifyParams({
                                     ...difyParams,
                                     [field.variable]: e.target.value,
-                                  });
+                                  })
                                 }}
                                 disabled={readOnly}
                                 placeholder={field.label?.en || field.label?.['en-US'] || ''}
@@ -377,11 +374,11 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
                                 type="text"
                                 value={difyParams[field.variable] || ''}
                                 onChange={e => {
-                                  if (readOnly) return;
+                                  if (readOnly) return
                                   setDifyParams({
                                     ...difyParams,
                                     [field.variable]: e.target.value,
-                                  });
+                                  })
                                 }}
                                 disabled={readOnly}
                                 placeholder={field.label?.en || field.label?.['en-US'] || ''}
@@ -411,7 +408,7 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
         </div>
       </div>
     </div>
-  );
-};
+  )
+}
 
-export default DifyBotConfig;
+export default DifyBotConfig

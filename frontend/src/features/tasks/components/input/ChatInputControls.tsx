@@ -2,90 +2,90 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React from 'react';
-import { CircleStop } from 'lucide-react';
-import ModelSelector, { Model } from '../selector/ModelSelector';
-import RepositorySelector from '../selector/RepositorySelector';
-import BranchSelector from '../selector/BranchSelector';
-import ClarificationToggle from '../clarification/ClarificationToggle';
-import CorrectionModeToggle from '../CorrectionModeToggle';
-import ChatContextInput from '../chat/ChatContextInput';
-import AttachmentButton from '../AttachmentButton';
-import SendButton from './SendButton';
-import LoadingDots from '../message/LoadingDots';
-import QuotaUsage from '../params/QuotaUsage';
-import { ActionButton } from '@/components/ui/action-button';
+import React from 'react'
+import { CircleStop } from 'lucide-react'
+import ModelSelector, { Model } from '../selector/ModelSelector'
+import RepositorySelector from '../selector/RepositorySelector'
+import BranchSelector from '../selector/BranchSelector'
+import ClarificationToggle from '../clarification/ClarificationToggle'
+import CorrectionModeToggle from '../CorrectionModeToggle'
+import ChatContextInput from '../chat/ChatContextInput'
+import AttachmentButton from '../AttachmentButton'
+import SendButton from './SendButton'
+import LoadingDots from '../message/LoadingDots'
+import QuotaUsage from '../params/QuotaUsage'
+import { ActionButton } from '@/components/ui/action-button'
 import type {
   Team,
   GitRepoInfo,
   GitBranch,
   TaskDetail,
   MultiAttachmentUploadState,
-} from '@/types/api';
-import type { ContextItem } from '@/types/context';
-import { isChatShell } from '../../service/messageService';
-import { supportsAttachments } from '../../service/attachmentService';
+} from '@/types/api'
+import type { ContextItem } from '@/types/context'
+import { isChatShell } from '../../service/messageService'
+import { supportsAttachments } from '../../service/attachmentService'
 
 export interface ChatInputControlsProps {
   // Team and Model
-  selectedTeam: Team | null;
-  selectedModel: Model | null;
-  setSelectedModel: (model: Model | null) => void;
-  forceOverride: boolean;
-  setForceOverride: (value: boolean) => void;
+  selectedTeam: Team | null
+  selectedModel: Model | null
+  setSelectedModel: (model: Model | null) => void
+  forceOverride: boolean
+  setForceOverride: (value: boolean) => void
   /** Current team ID for model preference storage */
-  teamId?: number | null;
+  teamId?: number | null
   /** Current task ID for session-level model preference storage (null for new chat) */
-  taskId?: number | null;
+  taskId?: number | null
   /** Task's model_id from backend - used as fallback when no session preference exists */
-  taskModelId?: string | null;
+  taskModelId?: string | null
 
   // Repository and Branch
-  showRepositorySelector: boolean;
-  selectedRepo: GitRepoInfo | null;
-  setSelectedRepo: (repo: GitRepoInfo | null) => void;
-  selectedBranch: GitBranch | null;
-  setSelectedBranch: (branch: GitBranch | null) => void;
-  selectedTaskDetail: TaskDetail | null;
+  showRepositorySelector: boolean
+  selectedRepo: GitRepoInfo | null
+  setSelectedRepo: (repo: GitRepoInfo | null) => void
+  selectedBranch: GitBranch | null
+  setSelectedBranch: (branch: GitBranch | null) => void
+  selectedTaskDetail: TaskDetail | null
 
   // Deep Thinking and Clarification
-  enableDeepThinking: boolean;
-  setEnableDeepThinking: (value: boolean) => void;
-  enableClarification: boolean;
-  setEnableClarification: (value: boolean) => void;
+  enableDeepThinking: boolean
+  setEnableDeepThinking: (value: boolean) => void
+  enableClarification: boolean
+  setEnableClarification: (value: boolean) => void
 
   // Correction mode
-  enableCorrectionMode?: boolean;
-  correctionModelName?: string | null;
-  onCorrectionModeToggle?: (enabled: boolean, modelId?: string, modelName?: string) => void;
+  enableCorrectionMode?: boolean
+  correctionModelName?: string | null
+  onCorrectionModeToggle?: (enabled: boolean, modelId?: string, modelName?: string) => void
 
   // Context selection (knowledge bases)
-  selectedContexts: ContextItem[];
-  setSelectedContexts: (contexts: ContextItem[]) => void;
+  selectedContexts: ContextItem[]
+  setSelectedContexts: (contexts: ContextItem[]) => void
 
   // Attachment (multi-attachment)
-  attachmentState: MultiAttachmentUploadState;
-  onFileSelect: (files: File | File[]) => void;
-  onAttachmentRemove: (attachmentId: number) => void;
+  attachmentState: MultiAttachmentUploadState
+  onFileSelect: (files: File | File[]) => void
+  onAttachmentRemove: (attachmentId: number) => void
 
   // State flags
-  isLoading: boolean;
-  isStreaming: boolean;
-  isStopping: boolean;
-  hasMessages: boolean;
-  shouldCollapseSelectors: boolean;
-  shouldHideQuotaUsage: boolean;
-  shouldHideChatInput: boolean;
-  isModelSelectionRequired: boolean;
-  isAttachmentReadyToSend: boolean;
-  taskInputMessage: string;
-  isSubtaskStreaming: boolean;
+  isLoading: boolean
+  isStreaming: boolean
+  isStopping: boolean
+  hasMessages: boolean
+  shouldCollapseSelectors: boolean
+  shouldHideQuotaUsage: boolean
+  shouldHideChatInput: boolean
+  isModelSelectionRequired: boolean
+  isAttachmentReadyToSend: boolean
+  taskInputMessage: string
+  isSubtaskStreaming: boolean
 
   // Actions
-  onStopStream: () => void;
-  onSendMessage: () => void;
+  onStopStream: () => void
+  onSendMessage: () => void
 }
 
 /**
@@ -144,7 +144,7 @@ export function ChatInputControls({
   onSendMessage,
 }: ChatInputControlsProps) {
   // Always use compact mode (icon only) to save space
-  const shouldUseCompactQuota = true;
+  const shouldUseCompactQuota = true
 
   // Determine the send button state
   const renderSendButton = () => {
@@ -153,7 +153,7 @@ export function ChatInputControls({
       isStreaming ||
       isModelSelectionRequired ||
       !isAttachmentReadyToSend ||
-      (shouldHideChatInput ? false : !taskInputMessage.trim());
+      (shouldHideChatInput ? false : !taskInputMessage.trim())
 
     if (isStreaming || isStopping) {
       if (isStopping) {
@@ -167,7 +167,7 @@ export function ChatInputControls({
               </>
             }
           />
-        );
+        )
       }
       return (
         <ActionButton
@@ -176,7 +176,7 @@ export function ChatInputControls({
           icon={<CircleStop className="h-4 w-4 text-orange-500" />}
           className="hover:bg-orange-100"
         />
-      );
+      )
     }
 
     // For group chat: if task status is PENDING but no AI subtask is running,
@@ -186,12 +186,12 @@ export function ChatInputControls({
       !isSubtaskStreaming &&
       selectedTaskDetail?.is_group_chat
     ) {
-      return <SendButton onClick={onSendMessage} disabled={isDisabled} isLoading={isLoading} />;
+      return <SendButton onClick={onSendMessage} disabled={isDisabled} isLoading={isLoading} />
     }
 
     // For non-group-chat tasks with PENDING status, show loading animation
     if (selectedTaskDetail?.status === 'PENDING') {
-      return <ActionButton disabled variant="loading" icon={<LoadingDots />} />;
+      return <ActionButton disabled variant="loading" icon={<LoadingDots />} />
     }
 
     // CANCELLING status
@@ -206,12 +206,12 @@ export function ChatInputControls({
             </>
           }
         />
-      );
+      )
     }
 
     // Default send button
-    return <SendButton onClick={onSendMessage} disabled={isDisabled} isLoading={isLoading} />;
-  };
+    return <SendButton onClick={onSendMessage} disabled={isDisabled} isLoading={isLoading} />
+  }
 
   return (
     <div
@@ -313,7 +313,7 @@ export function ChatInputControls({
         {renderSendButton()}
       </div>
     </div>
-  );
+  )
 }
 
-export default ChatInputControls;
+export default ChatInputControls

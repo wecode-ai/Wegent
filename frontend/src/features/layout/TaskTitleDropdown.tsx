@@ -2,37 +2,37 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState } from 'react';
-import { ChevronDownIcon, UserGroupIcon, LinkIcon, TrashIcon } from '@heroicons/react/24/outline';
-import { Users } from 'lucide-react';
+import { useState } from 'react'
+import { ChevronDownIcon, UserGroupIcon, LinkIcon, TrashIcon } from '@heroicons/react/24/outline'
+import { Users } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown';
-import { cn } from '@/lib/utils';
-import { TaskDetail } from '@/types/api';
+} from '@/components/ui/dropdown'
+import { cn } from '@/lib/utils'
+import { TaskDetail } from '@/types/api'
 import {
   TaskMembersPanel,
   InviteLinkDialog,
   BoundKnowledgeBaseSummary,
-} from '@/features/tasks/components/group-chat';
-import { taskApis } from '@/apis/tasks';
-import { useRouter } from 'next/navigation';
-import { useTranslation } from '@/hooks/useTranslation';
-import { useUser } from '@/features/common/UserContext';
+} from '@/features/tasks/components/group-chat'
+import { taskApis } from '@/apis/tasks'
+import { useRouter } from 'next/navigation'
+import { useTranslation } from '@/hooks/useTranslation'
+import { useUser } from '@/features/common/UserContext'
 
 type TaskTitleDropdownProps = {
-  title?: string;
-  taskDetail?: TaskDetail | null;
-  className?: string;
-  onTaskDeleted?: () => void;
-  onMembersChanged?: () => void; // Callback to refresh task detail when converted to group chat
-};
+  title?: string
+  taskDetail?: TaskDetail | null
+  className?: string
+  onTaskDeleted?: () => void
+  onMembersChanged?: () => void // Callback to refresh task detail when converted to group chat
+}
 
 export default function TaskTitleDropdown({
   title,
@@ -41,63 +41,63 @@ export default function TaskTitleDropdown({
   onTaskDeleted,
   onMembersChanged,
 }: TaskTitleDropdownProps) {
-  const { t } = useTranslation();
-  const router = useRouter();
-  const { user } = useUser();
-  const displayTitle = title;
-  const isGroupChat = taskDetail?.is_group_chat || false;
+  const { t } = useTranslation()
+  const router = useRouter()
+  const { user } = useUser()
+  const displayTitle = title
+  const isGroupChat = taskDetail?.is_group_chat || false
 
-  const [showMembersDialog, setShowMembersDialog] = useState(false);
-  const [showInviteLinkDialog, setShowInviteLinkDialog] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
+  const [showMembersDialog, setShowMembersDialog] = useState(false)
+  const [showInviteLinkDialog, setShowInviteLinkDialog] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   const handleViewMembers = () => {
-    setShowMembersDialog(true);
-  };
+    setShowMembersDialog(true)
+  }
 
   const handleManageInviteLink = () => {
-    setShowInviteLinkDialog(true);
-  };
+    setShowInviteLinkDialog(true)
+  }
 
   const handleDeleteGroup = async () => {
-    if (!taskDetail?.id) return;
+    if (!taskDetail?.id) return
 
     const confirmed = confirm(
       isGroupChat
         ? t('groupChat.delete.confirmMessage', '确定要删除这个群聊吗？此操作无法撤销。')
         : t('task.delete.confirmMessage', '确定要删除这个任务吗？此操作无法撤销。')
-    );
+    )
 
-    if (!confirmed) return;
+    if (!confirmed) return
 
-    setIsDeleting(true);
+    setIsDeleting(true)
     try {
-      await taskApis.deleteTask(taskDetail.id);
+      await taskApis.deleteTask(taskDetail.id)
       // Notify parent component
       if (onTaskDeleted) {
-        onTaskDeleted();
+        onTaskDeleted()
       }
       // Clear URL parameters and refresh
       if (typeof window !== 'undefined') {
-        const url = new URL(window.location.href);
-        url.searchParams.delete('taskId');
-        url.searchParams.delete('task_id');
-        router.replace(url.pathname);
+        const url = new URL(window.location.href)
+        url.searchParams.delete('taskId')
+        url.searchParams.delete('task_id')
+        router.replace(url.pathname)
       }
     } catch (error) {
-      console.error('Failed to delete task:', error);
-      alert(t('task.delete.error', '删除失败，请重试'));
+      console.error('Failed to delete task:', error)
+      alert(t('task.delete.error', '删除失败，请重试'))
     } finally {
-      setIsDeleting(false);
+      setIsDeleting(false)
     }
-  };
+  }
 
   // Only show group chat options if it's a true group chat
-  const showGroupChatOptions = isGroupChat;
+  const showGroupChatOptions = isGroupChat
 
   // If no title, don't render anything
   if (!displayTitle) {
-    return null;
+    return null
   }
 
   // If not a group chat, show simple dropdown
@@ -126,7 +126,7 @@ export default function TaskTitleDropdown({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-    );
+    )
   }
 
   // Group chat dropdown with additional options
@@ -201,7 +201,7 @@ export default function TaskTitleDropdown({
             onLeave={() => {
               // Handle leave group chat
               if (onTaskDeleted) {
-                onTaskDeleted();
+                onTaskDeleted()
               }
             }}
             onMembersChanged={onMembersChanged}
@@ -216,5 +216,5 @@ export default function TaskTitleDropdown({
         </>
       )}
     </>
-  );
+  )
 }

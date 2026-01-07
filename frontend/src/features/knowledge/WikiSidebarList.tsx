@@ -2,14 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { WikiProject } from '@/types/wiki';
-import { getProjectDisplayName } from './wikiUtils';
+import { WikiProject } from '@/types/wiki'
+import { getProjectDisplayName } from './wikiUtils'
 
 interface WikiSidebarListProps {
-  projects: WikiProject[];
-  loading: boolean;
-  error: string | null;
-  onProjectClick: (projectId: number) => void;
+  projects: WikiProject[]
+  loading: boolean
+  error: string | null
+  onProjectClick: (projectId: number) => void
 }
 
 /**
@@ -27,11 +27,11 @@ export function WikiSidebarList({
       <div className="flex justify-center py-4">
         <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
       </div>
-    );
+    )
   }
 
   if (error) {
-    return <div className="text-red-500 text-sm">{error}</div>;
+    return <div className="text-red-500 text-sm">{error}</div>
   }
 
   return (
@@ -59,7 +59,7 @@ export function WikiSidebarList({
           </div>
           <span className="min-w-0 break-words text-sm leading-relaxed">
             {(() => {
-              const displayName = getProjectDisplayName(project);
+              const displayName = getProjectDisplayName(project)
               if (displayName.hasSlash) {
                 return (
                   <>
@@ -67,13 +67,13 @@ export function WikiSidebarList({
                     <span className="text-text-muted"> / </span>
                     <span>{displayName.parts[1]}</span>
                   </>
-                );
+                )
               }
-              return displayName.parts[0];
+              return displayName.parts[0]
             })()}
           </span>
         </li>
       ))}
     </ul>
-  );
+  )
 }

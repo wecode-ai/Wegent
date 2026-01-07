@@ -2,22 +2,22 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React from 'react';
-import Modal from '@/features/common/Modal';
-import { Button } from '@/components/ui/button';
-import { useToast } from '@/hooks/use-toast';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { DocumentDuplicateIcon } from '@heroicons/react/24/outline';
-import { useTranslation } from '@/hooks/useTranslation';
-import { useTraceAction } from '@/hooks/useTraceAction';
+import React from 'react'
+import Modal from '@/features/common/Modal'
+import { Button } from '@/components/ui/button'
+import { useToast } from '@/hooks/use-toast'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { DocumentDuplicateIcon } from '@heroicons/react/24/outline'
+import { useTranslation } from '@/hooks/useTranslation'
+import { useTraceAction } from '@/hooks/useTraceAction'
 
 interface TaskShareModalProps {
-  visible: boolean;
-  onClose: () => void;
-  taskTitle: string;
-  shareUrl: string;
+  visible: boolean
+  onClose: () => void
+  taskTitle: string
+  shareUrl: string
 }
 
 export default function TaskShareModal({
@@ -26,9 +26,9 @@ export default function TaskShareModal({
   taskTitle,
   shareUrl,
 }: TaskShareModalProps) {
-  const { t } = useTranslation();
-  const { toast } = useToast();
-  const { traced } = useTraceAction();
+  const { t } = useTranslation()
+  const { toast } = useToast()
+  const { traced } = useTraceAction()
 
   // Create a traced version of the copy function
   const handleCopyLink = traced('copy-share-link', {
@@ -37,27 +37,27 @@ export default function TaskShareModal({
     'task.title': taskTitle,
   })(async () => {
     try {
-      await navigator.clipboard.writeText(shareUrl);
+      await navigator.clipboard.writeText(shareUrl)
       toast({
         title: t('shared-task:link_copied'),
         description: t('shared-task:link_copied_desc'),
-      });
-      onClose();
+      })
+      onClose()
     } catch {
       // Fallback to traditional method if clipboard API is not available
-      const textArea = document.createElement('textarea');
-      textArea.value = shareUrl;
-      document.body.appendChild(textArea);
-      textArea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textArea);
+      const textArea = document.createElement('textarea')
+      textArea.value = shareUrl
+      document.body.appendChild(textArea)
+      textArea.select()
+      document.execCommand('copy')
+      document.body.removeChild(textArea)
       toast({
         title: t('shared-task:link_copied'),
         description: t('shared-task:link_copied_desc'),
-      });
-      onClose();
+      })
+      onClose()
     }
-  });
+  })
 
   return (
     <Modal
@@ -101,5 +101,5 @@ export default function TaskShareModal({
         </div>
       </div>
     </Modal>
-  );
+  )
 }

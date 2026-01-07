@@ -2,46 +2,46 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react'
 
-const REPO_API = 'https://api.github.com/repos/wecode-ai/Wegent';
-const REPO_URL = 'https://github.com/wecode-ai/Wegent';
-const CACHE_KEY = 'github_star_count';
-const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+const REPO_API = 'https://api.github.com/repos/wecode-ai/Wegent'
+const REPO_URL = 'https://github.com/wecode-ai/Wegent'
+const CACHE_KEY = 'github_star_count'
+const CACHE_DURATION = 5 * 60 * 1000 // 5 minutes
 
 interface CachedData {
-  count: number;
-  timestamp: number;
+  count: number
+  timestamp: number
 }
 
 export function GithubStarButton({ className = '' }: { className?: string }) {
-  const [stars, setStars] = useState<number | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [stars, setStars] = useState<number | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
-    let isMounted = true;
+    let isMounted = true
 
     const fetchStars = async () => {
       try {
         // Check cache first
-        const cached = localStorage.getItem(CACHE_KEY);
+        const cached = localStorage.getItem(CACHE_KEY)
         if (cached) {
           try {
-            const data: CachedData = JSON.parse(cached);
-            const now = Date.now();
+            const data: CachedData = JSON.parse(cached)
+            const now = Date.now()
             if (now - data.timestamp < CACHE_DURATION) {
               // Use cached data
               if (isMounted) {
-                setStars(data.count);
-                setIsLoading(false);
+                setStars(data.count)
+                setIsLoading(false)
               }
-              return;
+              return
             }
           } catch {
             // Invalid cache, continue to fetch
-            localStorage.removeItem(CACHE_KEY);
+            localStorage.removeItem(CACHE_KEY)
           }
         }
 
@@ -49,67 +49,67 @@ export function GithubStarButton({ className = '' }: { className?: string }) {
           headers: {
             Accept: 'application/vnd.github+json',
           },
-        });
+        })
 
         if (!response.ok) {
-          throw new Error(`GitHub API responded with ${response.status}`);
+          throw new Error(`GitHub API responded with ${response.status}`)
         }
 
-        const data = await response.json();
+        const data = await response.json()
 
         if (isMounted && typeof data?.stargazers_count === 'number') {
-          setStars(data.stargazers_count);
+          setStars(data.stargazers_count)
           // Cache the result
           const cacheData: CachedData = {
             count: data.stargazers_count,
             timestamp: Date.now(),
-          };
-          localStorage.setItem(CACHE_KEY, JSON.stringify(cacheData));
+          }
+          localStorage.setItem(CACHE_KEY, JSON.stringify(cacheData))
         }
       } catch (error) {
-        console.error('Failed to fetch GitHub stars', error);
+        console.error('Failed to fetch GitHub stars', error)
         if (isMounted) {
-          setStars(null);
+          setStars(null)
         }
       } finally {
         if (isMounted) {
-          setIsLoading(false);
+          setIsLoading(false)
         }
       }
-    };
+    }
 
-    void fetchStars();
+    void fetchStars()
 
     return () => {
-      isMounted = false;
-    };
-  }, []);
+      isMounted = false
+    }
+  }, [])
 
   const mergedClassName = `
     h-8 pl-2 pr-3 rounded-[7px] border border-border
     flex items-center gap-1 text-sm font-normal text-text-primary
     bg-base hover:bg-hover transition-colors duration-200 min-w-[5rem]
     ${className}
-  `.trim();
+  `.trim()
 
   const handleClick = () => {
-    window.open(REPO_URL, '_blank', 'noopener,noreferrer');
-  };
+    window.open(REPO_URL, '_blank', 'noopener,noreferrer')
+  }
 
   const formatStarCount = (value: number | null): string => {
     if (value === null) {
-      return '—';
+      return '—'
     }
     if (value < 1000) {
-      return '🌟' + value.toString();
+      return '🌟' + value.toString()
     }
-    const thousands = value / 1000;
-    const decimals = value >= 100000 ? 0 : 1;
-    const base = Number(thousands.toFixed(decimals));
-    return `${base}k`;
-  };
+    const thousands = value / 1000
+    const decimals = value >= 100000 ? 0 : 1
+    const base = Number(thousands.toFixed(decimals))
+    return `${base}k`
+  }
 
-  const displayValue = isLoading ? '...' : formatStarCount(stars);
+  const displayValue = isLoading ? '...' : formatStarCount(stars)
 
   return (
     <button
@@ -133,5 +133,5 @@ export function GithubStarButton({ className = '' }: { className?: string }) {
       </svg>
       <span className="min-w-[2.5rem] text-center">{displayValue}</span>
     </button>
-  );
+  )
 }

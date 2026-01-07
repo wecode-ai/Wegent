@@ -2,11 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { memo } from 'react';
-import { Brain, ChevronDown, ChevronUp } from 'lucide-react';
-import type { ThinkingHeaderProps } from '../types';
+import { memo } from 'react'
+import { Brain, ChevronDown, ChevronUp } from 'lucide-react'
+import type { ThinkingHeaderProps } from '../types'
 
 /**
  * Header component for thinking display panel
@@ -55,7 +55,7 @@ const ThinkingHeader = memo(function ThinkingHeader({
         )}
       </div>
     </button>
-  );
-});
+  )
+})
 
-export default ThinkingHeader;
+export default ThinkingHeader

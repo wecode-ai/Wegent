@@ -2,25 +2,25 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useMemo } from 'react';
-import { ExternalLink, Globe, Loader2 } from 'lucide-react';
-import { useUrlMetadata } from '@/hooks/useUrlMetadata';
+import React, { useMemo } from 'react'
+import { ExternalLink, Globe, Loader2 } from 'lucide-react'
+import { useUrlMetadata } from '@/hooks/useUrlMetadata'
 
 interface LinkCardProps {
   /** The URL to display as a card */
-  url: string;
+  url: string
   /** Optional link text (from Markdown syntax) - now deprecated, original text shown separately */
-  linkText?: string;
+  linkText?: string
   /** Whether to show a compact version */
-  compact?: boolean;
+  compact?: boolean
   /**
    * Whether to disable metadata fetching.
    * When true, renders as a simple link without fetching metadata.
    * Useful during streaming to avoid excessive API calls.
    */
-  disabled?: boolean;
+  disabled?: boolean
 }
 
 /**
@@ -28,10 +28,10 @@ interface LinkCardProps {
  */
 function getDomain(url: string): string {
   try {
-    const urlObj = new URL(url);
-    return urlObj.hostname.replace(/^www\./, '');
+    const urlObj = new URL(url)
+    return urlObj.hostname.replace(/^www\./, '')
   } catch {
-    return url;
+    return url
   }
 }
 
@@ -50,8 +50,8 @@ export default function LinkCard({
   disabled = false,
 }: LinkCardProps) {
   // Only fetch metadata when not disabled
-  const { metadata, isLoading, error } = useUrlMetadata(disabled ? '' : url);
-  const domain = useMemo(() => getDomain(url), [url]);
+  const { metadata, isLoading, error } = useUrlMetadata(disabled ? '' : url)
+  const domain = useMemo(() => getDomain(url), [url])
 
   // Simple link fallback
   const SimpleLinkFallback = () => (
@@ -65,10 +65,10 @@ export default function LinkCard({
       <span>{linkText || url}</span>
       <ExternalLink className="h-3 w-3 flex-shrink-0" />
     </a>
-  );
+  )
   // When disabled, just render as simple link
   if (disabled) {
-    return <SimpleLinkFallback />;
+    return <SimpleLinkFallback />
   }
 
   // Loading state
@@ -79,7 +79,7 @@ export default function LinkCard({
           <Loader2 className="h-3 w-3 animate-spin" />
           <span className="truncate max-w-[200px]">{linkText || domain}</span>
         </span>
-      );
+      )
     }
 
     // Use span-based layout to avoid HTML nesting issues (div inside p)
@@ -95,12 +95,12 @@ export default function LinkCard({
           </span>
         </span>
       </span>
-    );
+    )
   }
 
   // Error state or no metadata - fallback to simple link
   if (error || !metadata?.success) {
-    return <SimpleLinkFallback />;
+    return <SimpleLinkFallback />
   }
 
   // Compact mode
@@ -119,7 +119,7 @@ export default function LinkCard({
             alt=""
             className="w-4 h-4 rounded-sm"
             onError={e => {
-              (e.target as HTMLImageElement).style.display = 'none';
+              ;(e.target as HTMLImageElement).style.display = 'none'
             }}
           />
         ) : (
@@ -128,7 +128,7 @@ export default function LinkCard({
         <span className="truncate max-w-[200px]">{metadata.title || linkText || domain}</span>
         <ExternalLink className="h-3 w-3 flex-shrink-0" />
       </a>
-    );
+    )
   }
 
   // Full card display - use span-based layout to avoid HTML nesting issues (div/h4 inside p)
@@ -150,14 +150,14 @@ export default function LinkCard({
               alt=""
               className="w-6 h-6 object-contain"
               onError={e => {
-                const img = e.target as HTMLImageElement;
-                img.style.display = 'none';
+                const img = e.target as HTMLImageElement
+                img.style.display = 'none'
                 // Show fallback icon
-                const parent = img.parentElement;
+                const parent = img.parentElement
                 if (parent) {
-                  const icon = document.createElement('span');
-                  icon.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-text-muted"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>`;
-                  parent.appendChild(icon);
+                  const icon = document.createElement('span')
+                  icon.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-text-muted"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>`
+                  parent.appendChild(icon)
                 }
               }}
             />
@@ -188,5 +188,5 @@ export default function LinkCard({
         </span>
       </span>
     </a>
-  );
+  )
 }

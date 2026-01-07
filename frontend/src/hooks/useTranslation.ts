@@ -2,23 +2,23 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useTranslation as useI18nextTranslation } from 'react-i18next';
-import { supportedLanguages } from '@/i18n/setup';
+import { useTranslation as useI18nextTranslation } from 'react-i18next'
+import { supportedLanguages } from '@/i18n/setup'
 
 export function useTranslation(namespace?: string | string[]) {
-  const { t, i18n } = useI18nextTranslation(namespace);
+  const { t, i18n } = useI18nextTranslation(namespace)
 
   const changeLanguage = (language: string) => {
     if (supportedLanguages.includes(language)) {
-      i18n.changeLanguage(language);
+      i18n.changeLanguage(language)
       // Save to localStorage
-      localStorage.setItem('preferred-language', language);
+      localStorage.setItem('preferred-language', language)
     }
-  };
+  }
 
-  const getCurrentLanguage = () => i18n.language;
+  const getCurrentLanguage = () => i18n.language
 
-  const getSupportedLanguages = () => supportedLanguages;
+  const getSupportedLanguages = () => supportedLanguages
 
   return {
     t,
@@ -26,7 +26,7 @@ export function useTranslation(namespace?: string | string[]) {
     getCurrentLanguage,
     getSupportedLanguages,
     i18n,
-  };
+  }
 }
 
 // Language display name mapping
@@ -49,4 +49,4 @@ export const languageNames: Record<string, string> = {
   vi: 'Tiếng Việt',
   'zh-CN': '简体中文',
   'zh-TW': '繁體中文',
-};
+}

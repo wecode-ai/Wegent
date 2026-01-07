@@ -2,43 +2,43 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { Suspense, useState } from 'react';
-import { teamService } from '@/features/tasks/service/teamService';
-import TopNavigation from '@/features/layout/TopNavigation';
-import { TaskSidebar } from '@/features/tasks/components/sidebar';
-import { TaskParamSync } from '@/features/tasks/components/params';
-import { TeamShareHandler } from '@/features/tasks/components/share';
-import OidcTokenHandler from '@/features/login/components/OidcTokenHandler';
-import '@/app/tasks/tasks.css';
-import '@/features/common/scrollbar.css';
-import { GithubStarButton } from '@/features/layout/GithubStarButton';
-import { ThemeToggle } from '@/features/theme/ThemeToggle';
-import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
-import { Team } from '@/types/api';
-import { UserProvider } from '@/features/common/UserContext';
-import { TaskContextProvider } from '@/features/tasks/contexts/taskContext';
-import { ChatStreamProvider } from '@/features/tasks/contexts/chatStreamContext';
-import { SocketProvider } from '@/contexts/SocketContext';
-import { ChatArea } from '@/features/tasks/components/chat';
+import { Suspense, useState } from 'react'
+import { teamService } from '@/features/tasks/service/teamService'
+import TopNavigation from '@/features/layout/TopNavigation'
+import { TaskSidebar } from '@/features/tasks/components/sidebar'
+import { TaskParamSync } from '@/features/tasks/components/params'
+import { TeamShareHandler } from '@/features/tasks/components/share'
+import OidcTokenHandler from '@/features/login/components/OidcTokenHandler'
+import '@/app/tasks/tasks.css'
+import '@/features/common/scrollbar.css'
+import { GithubStarButton } from '@/features/layout/GithubStarButton'
+import { ThemeToggle } from '@/features/theme/ThemeToggle'
+import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
+import { Team } from '@/types/api'
+import { UserProvider } from '@/features/common/UserContext'
+import { TaskContextProvider } from '@/features/tasks/contexts/taskContext'
+import { ChatStreamProvider } from '@/features/tasks/contexts/chatStreamContext'
+import { SocketProvider } from '@/contexts/SocketContext'
+import { ChatArea } from '@/features/tasks/components/chat'
 
 function TasksPageContent() {
   // Team state from service
-  const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams();
+  const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams()
 
   // Mobile detection
-  const isMobile = useIsMobile();
+  const isMobile = useIsMobile()
 
   // Mobile sidebar state
-  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
 
   // Selected team state for sharing
-  const [selectedTeamForNewTask, setSelectedTeamForNewTask] = useState<Team | null>(null);
+  const [selectedTeamForNewTask, setSelectedTeamForNewTask] = useState<Team | null>(null)
 
   const handleRefreshTeams = async (): Promise<Team[]> => {
-    return await refreshTeams();
-  };
+    return await refreshTeams()
+  }
 
   return (
     <>
@@ -81,7 +81,7 @@ function TasksPageContent() {
         </div>
       </div>
     </>
-  );
+  )
 }
 
 export default function TasksPage() {
@@ -95,5 +95,5 @@ export default function TasksPage() {
         </TaskContextProvider>
       </SocketProvider>
     </UserProvider>
-  );
+  )
 }

@@ -2,11 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import Image from 'next/image';
-import { useTranslation } from '@/hooks/useTranslation';
+import Image from 'next/image'
+import { useTranslation } from '@/hooks/useTranslation'
 
 export default function LogoHeader() {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
   return (
     <div className="flex justify-center items-center space-x-3">
       <Image
@@ -20,14 +20,14 @@ export default function LogoHeader() {
     </div>
     /* Subtitle */
     /* Separate subtitle as individual element, for page composition */
-  );
+  )
 }
 
 export function LogoSubTitle() {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
   return (
     <p className="mt-2 text-center text-sm text-text-muted font-light">
       {t('common:auth.login_subtitle')}
     </p>
-  );
+  )
 }

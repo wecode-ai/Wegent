@@ -2,10 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import React, { useState, useCallback, useRef, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import {
   Search,
   Plus,
@@ -18,20 +18,20 @@ import {
   Code2,
   MessageSquare,
   Users,
-} from 'lucide-react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { useTranslation } from '@/hooks/useTranslation';
-import { useTaskContext } from '@/features/tasks/contexts/taskContext';
-import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext';
-import { Task } from '@/types/api';
-import { taskApis } from '@/apis/tasks';
-import { paths } from '@/config/paths';
+} from 'lucide-react'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { useTranslation } from '@/hooks/useTranslation'
+import { useTaskContext } from '@/features/tasks/contexts/taskContext'
+import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
+import { Task } from '@/types/api'
+import { taskApis } from '@/apis/tasks'
+import { paths } from '@/config/paths'
 
 interface SearchDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  shortcutDisplayText?: string;
-  pageType?: 'chat' | 'code' | 'knowledge';
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  shortcutDisplayText?: string
+  pageType?: 'chat' | 'code' | 'knowledge'
 }
 
 export default function SearchDialog({
@@ -40,155 +40,155 @@ export default function SearchDialog({
   shortcutDisplayText = '',
   pageType = 'chat',
 }: SearchDialogProps) {
-  const { t } = useTranslation();
-  const router = useRouter();
-  const { clearAllStreams } = useChatStreamContext();
-  const { tasks, setSelectedTask } = useTaskContext();
+  const { t } = useTranslation()
+  const router = useRouter()
+  const { clearAllStreams } = useChatStreamContext()
+  const { tasks, setSelectedTask } = useTaskContext()
 
-  const searchInputRef = useRef<HTMLInputElement>(null);
-  const [dialogSearchTerm, setDialogSearchTerm] = useState('');
-  const [dialogSearchResults, setDialogSearchResults] = useState<Task[]>([]);
-  const [isDialogSearching, setIsDialogSearching] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const [dialogSearchTerm, setDialogSearchTerm] = useState('')
+  const [dialogSearchResults, setDialogSearchResults] = useState<Task[]>([])
+  const [isDialogSearching, setIsDialogSearching] = useState(false)
 
   // Debounce timer ref
-  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null)
 
   // Focus input when dialog opens
   useEffect(() => {
     if (open && searchInputRef.current) {
       // Small delay to ensure dialog is rendered
       setTimeout(() => {
-        searchInputRef.current?.focus();
-      }, 100);
+        searchInputRef.current?.focus()
+      }, 100)
     }
-  }, [open]);
+  }, [open])
 
   // Clear state when dialog closes
   useEffect(() => {
     if (!open) {
-      setDialogSearchTerm('');
-      setDialogSearchResults([]);
+      setDialogSearchTerm('')
+      setDialogSearchResults([])
     }
-  }, [open]);
+  }, [open])
 
   // Dialog search function
   const searchInDialog = useCallback(async (term: string) => {
     if (!term.trim()) {
-      setDialogSearchResults([]);
-      return;
+      setDialogSearchResults([])
+      return
     }
 
-    setIsDialogSearching(true);
+    setIsDialogSearching(true)
     try {
-      const result = await taskApis.searchTasks(term, { page: 1, limit: 20 });
-      setDialogSearchResults(result.items);
+      const result = await taskApis.searchTasks(term, { page: 1, limit: 20 })
+      setDialogSearchResults(result.items)
     } catch (error) {
-      console.error('Failed to search tasks in dialog:', error);
-      setDialogSearchResults([]);
+      console.error('Failed to search tasks in dialog:', error)
+      setDialogSearchResults([])
     } finally {
-      setIsDialogSearching(false);
+      setIsDialogSearching(false)
     }
-  }, []);
+  }, [])
 
   // Dialog search input change with debounce
   const handleDialogSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    setDialogSearchTerm(value);
+    const value = e.target.value
+    setDialogSearchTerm(value)
 
     // Clear existing timer
     if (debounceTimerRef.current) {
-      clearTimeout(debounceTimerRef.current);
+      clearTimeout(debounceTimerRef.current)
     }
 
     // Set new timer for debounced search
     debounceTimerRef.current = setTimeout(() => {
-      searchInDialog(value);
-    }, 300);
-  };
+      searchInDialog(value)
+    }, 300)
+  }
 
   // Clear dialog search
   const handleClearDialogSearch = () => {
-    setDialogSearchTerm('');
-    setDialogSearchResults([]);
-    searchInputRef.current?.focus();
-  };
+    setDialogSearchTerm('')
+    setDialogSearchResults([])
+    searchInputRef.current?.focus()
+  }
 
   // Handle dialog close
   const handleCloseSearchDialog = () => {
-    setDialogSearchTerm('');
-    setDialogSearchResults([]);
-    onOpenChange(false);
-  };
+    setDialogSearchTerm('')
+    setDialogSearchResults([])
+    onOpenChange(false)
+  }
 
   // Handle task click in dialog
   const handleDialogTaskClick = (task: Task) => {
-    handleCloseSearchDialog();
-    setSelectedTask(task);
+    handleCloseSearchDialog()
+    setSelectedTask(task)
     // Navigate to task with taskId parameter
-    const targetPath = task.task_type === 'code' ? paths.code.getHref() : paths.chat.getHref();
-    router.push(`${targetPath}?taskId=${task.id}`);
-  };
+    const targetPath = task.task_type === 'code' ? paths.code.getHref() : paths.chat.getHref()
+    router.push(`${targetPath}?taskId=${task.id}`)
+  }
 
   // Handle new conversation click
   const handleNewAgentClick = () => {
-    handleCloseSearchDialog();
-    setSelectedTask(null);
-    clearAllStreams();
+    handleCloseSearchDialog()
+    setSelectedTask(null)
+    clearAllStreams()
     // Navigate to appropriate page based on pageType
-    const targetPath = pageType === 'code' ? paths.code.getHref() : paths.chat.getHref();
-    router.replace(targetPath);
-  };
+    const targetPath = pageType === 'code' ? paths.code.getHref() : paths.chat.getHref()
+    router.replace(targetPath)
+  }
 
   // Format time ago
   const formatTimeAgo = (dateString: string) => {
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+    const date = new Date(dateString)
+    const now = new Date()
+    const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000)
 
-    if (diffInSeconds < 60) return 'just now';
-    if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m ago`;
-    if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h ago`;
-    if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)}d ago`;
-    return date.toLocaleDateString();
-  };
+    if (diffInSeconds < 60) return 'just now'
+    if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m ago`
+    if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h ago`
+    if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)}d ago`
+    return date.toLocaleDateString()
+  }
 
   // Get task type icon
   const getTaskTypeIcon = (task: Task) => {
     if (task.is_group_chat) {
-      return <Users className="w-4 h-4 text-text-muted" />;
+      return <Users className="w-4 h-4 text-text-muted" />
     }
     if (task.task_type === 'code') {
-      return <Code2 className="w-4 h-4 text-text-muted" />;
+      return <Code2 className="w-4 h-4 text-text-muted" />
     }
-    return <MessageSquare className="w-4 h-4 text-text-muted" />;
-  };
+    return <MessageSquare className="w-4 h-4 text-text-muted" />
+  }
 
   // Get status icon
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'COMPLETED':
-        return <CheckCircle2 className="w-4 h-4 text-green-500" />;
+        return <CheckCircle2 className="w-4 h-4 text-green-500" />
       case 'FAILED':
-        return <XCircle className="w-4 h-4 text-red-500" />;
+        return <XCircle className="w-4 h-4 text-red-500" />
       case 'CANCELLED':
-        return <StopCircle className="w-4 h-4 text-orange-500" />;
+        return <StopCircle className="w-4 h-4 text-orange-500" />
       case 'PENDING':
-        return <PauseCircle className="w-4 h-4 text-yellow-500" />;
+        return <PauseCircle className="w-4 h-4 text-yellow-500" />
       case 'RUNNING':
-        return <RotateCw className="w-4 h-4 text-blue-500 animate-spin" />;
+        return <RotateCw className="w-4 h-4 text-blue-500 animate-spin" />
       default:
-        return null;
+        return null
     }
-  };
+  }
 
   return (
     <Dialog
       open={open}
       onOpenChange={open => {
         if (!open) {
-          handleCloseSearchDialog();
+          handleCloseSearchDialog()
         } else {
-          onOpenChange(true);
+          onOpenChange(true)
         }
       }}
     >
@@ -299,5 +299,5 @@ export default function SearchDialog({
         </div>
       </DialogContent>
     </Dialog>
-  );
+  )
 }

@@ -2,18 +2,18 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React from 'react';
-import { X, Database } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { useTranslation } from '@/hooks/useTranslation';
-import type { ContextItem } from '@/types/context';
-import { formatDocumentCount } from '@/lib/i18n-helpers';
+import React from 'react'
+import { X, Database } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { ContextItem } from '@/types/context'
+import { formatDocumentCount } from '@/lib/i18n-helpers'
 
 interface ContextBadgeProps {
-  context: ContextItem;
-  onRemove: () => void;
+  context: ContextItem
+  onRemove: () => void
 }
 
 /**
@@ -22,19 +22,19 @@ interface ContextBadgeProps {
 const getContextIcon = (type: ContextItem['type']) => {
   switch (type) {
     case 'knowledge_base':
-      return Database;
+      return Database
     // Future context types will be added here
     // case 'person': return User;
     // case 'bot': return Bot;
     // case 'team': return Users;
     default:
-      return Database;
+      return Database
   }
-};
+}
 
 export default function ContextBadge({ context, onRemove }: ContextBadgeProps) {
-  const { t } = useTranslation('knowledge');
-  const Icon = getContextIcon(context.type);
+  const { t } = useTranslation('knowledge')
+  const Icon = getContextIcon(context.type)
 
   return (
     <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-primary bg-primary/10 text-primary">
@@ -60,5 +60,5 @@ export default function ContextBadge({ context, onRemove }: ContextBadgeProps) {
         <X className="h-3 w-3" />
       </Button>
     </div>
-  );
+  )
 }

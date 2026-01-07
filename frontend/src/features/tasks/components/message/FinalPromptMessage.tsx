@@ -2,23 +2,23 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState } from 'react';
-import { Copy, Check, Plus, Star } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import type { FinalPromptData, Team, GitRepoInfo, GitBranch } from '@/types/api';
-import MarkdownEditor from '@uiw/react-markdown-editor';
-import { useTheme } from '@/features/theme/ThemeProvider';
-import { useTranslation } from '@/hooks/useTranslation';
-import { useRouter } from 'next/navigation';
-import { useToast } from '@/hooks/use-toast';
+import { useState } from 'react'
+import { Copy, Check, Plus, Star } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import type { FinalPromptData, Team, GitRepoInfo, GitBranch } from '@/types/api'
+import MarkdownEditor from '@uiw/react-markdown-editor'
+import { useTheme } from '@/features/theme/ThemeProvider'
+import { useTranslation } from '@/hooks/useTranslation'
+import { useRouter } from 'next/navigation'
+import { useToast } from '@/hooks/use-toast'
 
 interface FinalPromptMessageProps {
-  data: FinalPromptData;
-  selectedTeam?: Team | null;
-  selectedRepo?: GitRepoInfo | null;
-  selectedBranch?: GitBranch | null;
+  data: FinalPromptData
+  selectedTeam?: Team | null
+  selectedRepo?: GitRepoInfo | null
+  selectedBranch?: GitBranch | null
 }
 
 export default function FinalPromptMessage({
@@ -27,11 +27,11 @@ export default function FinalPromptMessage({
   selectedRepo,
   selectedBranch,
 }: FinalPromptMessageProps) {
-  const { t } = useTranslation();
-  const { toast } = useToast();
-  const { theme } = useTheme();
-  const router = useRouter();
-  const [copied, setCopied] = useState(false);
+  const { t } = useTranslation()
+  const { toast } = useToast()
+  const { theme } = useTheme()
+  const router = useRouter()
+  const [copied, setCopied] = useState(false)
 
   const handleCopy = async () => {
     try {
@@ -40,30 +40,30 @@ export default function FinalPromptMessage({
         navigator.clipboard &&
         navigator.clipboard.writeText
       ) {
-        await navigator.clipboard.writeText(data.final_prompt);
+        await navigator.clipboard.writeText(data.final_prompt)
       } else {
         // Fallback
-        const textarea = document.createElement('textarea');
-        textarea.value = data.final_prompt;
-        textarea.style.cssText = 'position:fixed;opacity:0';
-        document.body.appendChild(textarea);
-        textarea.select();
-        document.execCommand('copy');
-        document.body.removeChild(textarea);
+        const textarea = document.createElement('textarea')
+        textarea.value = data.final_prompt
+        textarea.style.cssText = 'position:fixed;opacity:0'
+        document.body.appendChild(textarea)
+        textarea.select()
+        document.execCommand('copy')
+        document.body.removeChild(textarea)
       }
-      setCopied(true);
+      setCopied(true)
       toast({
         title: t('chat:clarification.prompt_copied') || 'Prompt copied to clipboard',
-      });
-      setTimeout(() => setCopied(false), 2000);
+      })
+      setTimeout(() => setCopied(false), 2000)
     } catch (err) {
-      console.error('Failed to copy prompt:', err);
+      console.error('Failed to copy prompt:', err)
       toast({
         variant: 'destructive',
         title: t('chat:clarification.copy_failed') || 'Failed to copy prompt',
-      });
+      })
     }
-  };
+  }
 
   const handleCreateTask = () => {
     if (!selectedTeam || !selectedRepo || !selectedBranch) {
@@ -71,8 +71,8 @@ export default function FinalPromptMessage({
         title:
           t('chat:clarification.select_context') ||
           'Please select Team, Repository and Branch first',
-      });
-      return;
+      })
+      return
     }
 
     // Store prompt data in sessionStorage for the new task page
@@ -82,17 +82,17 @@ export default function FinalPromptMessage({
       repoId: selectedRepo.git_repo_id,
       branch: selectedBranch.name,
       timestamp: Date.now(),
-    };
+    }
 
-    sessionStorage.setItem('pendingTaskPrompt', JSON.stringify(promptData));
+    sessionStorage.setItem('pendingTaskPrompt', JSON.stringify(promptData))
 
     // Navigate to new task page
-    router.push('/code');
+    router.push('/code')
 
     toast({
       title: t('chat:clarification.prompt_ready') || 'Navigating to new task page...',
-    });
-  };
+    })
+  }
 
   return (
     <div className="space-y-3 p-4 rounded-lg border-2 border-blue-500/50 bg-blue-500/10 shadow-lg">
@@ -141,5 +141,5 @@ export default function FinalPromptMessage({
           'This is the refined requirement based on your answers. You can copy it or create a new code task directly.'}
       </div>
     </div>
-  );
+  )
 }

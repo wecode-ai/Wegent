@@ -419,4 +419,4 @@ export const wikiStyles = `
       border: 1px solid #ddd;
     }
   }
-`;
+`

@@ -2,22 +2,22 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { Fragment } from 'react';
-import { Dialog, Transition } from '@headlessui/react';
-import { XMarkIcon } from '@heroicons/react/24/outline';
-import { useTranslation } from '@/hooks/useTranslation';
+import React, { Fragment } from 'react'
+import { Dialog, Transition } from '@headlessui/react'
+import { XMarkIcon } from '@heroicons/react/24/outline'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface MobileSidebarProps {
-  isOpen: boolean;
-  onClose: () => void;
-  children: React.ReactNode;
-  title?: string;
+  isOpen: boolean
+  onClose: () => void
+  children: React.ReactNode
+  title?: string
 }
 
 export function MobileSidebar({ isOpen, onClose, children, title }: MobileSidebarProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
 
   return (
     <Transition.Root show={isOpen} as={Fragment}>
@@ -84,7 +84,7 @@ export function MobileSidebar({ isOpen, onClose, children, title }: MobileSideba
         </div>
       </Dialog>
     </Transition.Root>
-  );
+  )
 }
 
-export default MobileSidebar;
+export default MobileSidebar

@@ -6,8 +6,8 @@
  * Hook for managing file attachment state and upload.
  */
 
-import { useState, useCallback } from 'react';
-import { useTranslation } from '@/hooks/useTranslation';
+import { useState, useCallback } from 'react'
+import { useTranslation } from '@/hooks/useTranslation'
 import {
   uploadAttachment,
   deleteAttachment,
@@ -15,34 +15,34 @@ import {
   isValidFileSize,
   MAX_FILE_SIZE,
   getErrorMessageFromCode,
-} from '@/apis/attachments';
-import type { AttachmentUploadState, TruncationInfo } from '@/types/api';
+} from '@/apis/attachments'
+import type { AttachmentUploadState, TruncationInfo } from '@/types/api'
 
 interface UseAttachmentReturn {
   /** Current attachment state */
-  state: AttachmentUploadState;
+  state: AttachmentUploadState
   /** Handle file selection and upload */
-  handleFileSelect: (file: File) => Promise<void>;
+  handleFileSelect: (file: File) => Promise<void>
   /** Remove current attachment */
-  handleRemove: () => Promise<void>;
+  handleRemove: () => Promise<void>
   /** Reset state */
-  reset: () => void;
+  reset: () => void
   /** Check if ready to send (no upload in progress, attachment ready or no attachment) */
-  isReadyToSend: boolean;
+  isReadyToSend: boolean
   /** Truncation info if content was truncated */
-  truncationInfo: TruncationInfo | null;
+  truncationInfo: TruncationInfo | null
 }
 
 export function useAttachment(): UseAttachmentReturn {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
   const [state, setState] = useState<AttachmentUploadState>({
     file: null,
     attachment: null,
     isUploading: false,
     uploadProgress: 0,
     error: null,
-  });
-  const [truncationInfo, setTruncationInfo] = useState<TruncationInfo | null>(null);
+  })
+  const [truncationInfo, setTruncationInfo] = useState<TruncationInfo | null>(null)
 
   const handleFileSelect = useCallback(
     async (file: File) => {
@@ -55,8 +55,8 @@ export function useAttachment(): UseAttachmentReturn {
           isUploading: false,
           uploadProgress: 0,
           error: `${t('common:attachment.errors.unsupported_type')}: ${t('common:attachment.errors.unsupported_type_hint', { types: t('common:attachment.supported_types') })}`,
-        }));
-        return;
+        }))
+        return
       }
 
       // Validate file size
@@ -68,8 +68,8 @@ export function useAttachment(): UseAttachmentReturn {
           isUploading: false,
           uploadProgress: 0,
           error: `${t('common:attachment.errors.file_too_large')}: ${t('common:attachment.errors.file_too_large_hint', { size: Math.round(MAX_FILE_SIZE / (1024 * 1024)) })}`,
-        }));
-        return;
+        }))
+        return
       }
 
       // Start upload
@@ -80,23 +80,23 @@ export function useAttachment(): UseAttachmentReturn {
         isUploading: true,
         uploadProgress: 0,
         error: null,
-      }));
-      setTruncationInfo(null);
+      }))
+      setTruncationInfo(null)
 
       try {
         const attachment = await uploadAttachment(file, progress => {
           setState(prev => ({
             ...prev,
             uploadProgress: progress,
-          }));
-        });
+          }))
+        })
 
         // Check if parsing succeeded
         if (attachment.status === 'failed') {
           const errorMessage =
             getErrorMessageFromCode(attachment.error_code, t) ||
             attachment.error_message ||
-            t('common:attachment.errors.parse_failed');
+            t('common:attachment.errors.parse_failed')
           setState(prev => ({
             ...prev,
             file: null,
@@ -104,19 +104,19 @@ export function useAttachment(): UseAttachmentReturn {
             isUploading: false,
             uploadProgress: 0,
             error: errorMessage,
-          }));
+          }))
           // Try to delete the failed attachment
           try {
-            await deleteAttachment(attachment.id);
+            await deleteAttachment(attachment.id)
           } catch {
             // Ignore delete errors
           }
-          return;
+          return
         }
 
         // Store truncation info if present
         if (attachment.truncation_info?.is_truncated) {
-          setTruncationInfo(attachment.truncation_info);
+          setTruncationInfo(attachment.truncation_info)
         }
 
         setState(prev => ({
@@ -138,9 +138,9 @@ export function useAttachment(): UseAttachmentReturn {
           isUploading: false,
           uploadProgress: 100,
           error: null,
-        }));
+        }))
       } catch (err) {
-        const errorMessage = (err as Error).message || t('common:attachment.errors.network_error');
+        const errorMessage = (err as Error).message || t('common:attachment.errors.network_error')
         setState(prev => ({
           ...prev,
           file: null,
@@ -148,14 +148,14 @@ export function useAttachment(): UseAttachmentReturn {
           isUploading: false,
           uploadProgress: 0,
           error: `${t('common:attachment.errors.network_error')}: ${errorMessage}`,
-        }));
+        }))
       }
     },
     [t]
-  );
+  )
 
   const handleRemove = useCallback(async () => {
-    const attachmentId = state.attachment?.id;
+    const attachmentId = state.attachment?.id
 
     // Reset state immediately for better UX
     setState({
@@ -164,18 +164,18 @@ export function useAttachment(): UseAttachmentReturn {
       isUploading: false,
       uploadProgress: 0,
       error: null,
-    });
-    setTruncationInfo(null);
+    })
+    setTruncationInfo(null)
 
     // Try to delete from server if it exists and is not linked to a subtask
     if (attachmentId && !state.attachment?.subtask_id) {
       try {
-        await deleteAttachment(attachmentId);
+        await deleteAttachment(attachmentId)
       } catch {
         // Ignore delete errors - attachment might already be linked
       }
     }
-  }, [state.attachment]);
+  }, [state.attachment])
 
   const reset = useCallback(() => {
     setState({
@@ -184,12 +184,12 @@ export function useAttachment(): UseAttachmentReturn {
       isUploading: false,
       uploadProgress: 0,
       error: null,
-    });
-    setTruncationInfo(null);
-  }, []);
+    })
+    setTruncationInfo(null)
+  }, [])
 
   const isReadyToSend =
-    !state.isUploading && (state.attachment === null || state.attachment.status === 'ready');
+    !state.isUploading && (state.attachment === null || state.attachment.status === 'ready')
 
   return {
     state,
@@ -198,5 +198,5 @@ export function useAttachment(): UseAttachmentReturn {
     reset,
     isReadyToSend,
     truncationInfo,
-  };
+  }
 }

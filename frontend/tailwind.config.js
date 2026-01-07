@@ -2,9 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import tailwindcssAnimate from 'tailwindcss-animate';
+import tailwindcssAnimate from 'tailwindcss-animate'
 
-const withOpacity = variable => `rgb(var(${variable}) / <alpha-value>)`;
+const withOpacity = variable => `rgb(var(${variable}) / <alpha-value>)`
 
 /** @type {import('tailwindcss').Config} */
 export default {
@@ -117,4 +117,4 @@ export default {
     },
   },
   plugins: [tailwindcssAnimate],
-};
+}

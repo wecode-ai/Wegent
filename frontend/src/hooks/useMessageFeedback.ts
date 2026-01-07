@@ -2,17 +2,17 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react'
 
 /**
  * Feedback state type: null = no feedback, 'like' = liked, 'dislike' = disliked
  */
-export type FeedbackState = 'like' | 'dislike' | null;
+export type FeedbackState = 'like' | 'dislike' | null
 
 /**
  * localStorage key prefix for message feedback
  */
-const FEEDBACK_STORAGE_KEY_PREFIX = 'wegent_message_feedback_';
+const FEEDBACK_STORAGE_KEY_PREFIX = 'wegent_message_feedback_'
 
 /**
  // Generate a unique storage key for a message
@@ -23,15 +23,15 @@ function generateStorageKey(
   timestamp?: number,
   messageType?: 'original' | 'correction'
 ): string | null {
-  const suffix = messageType === 'correction' ? '_correction' : '';
+  const suffix = messageType === 'correction' ? '_correction' : ''
 
   if (subtaskId) {
-    return `${FEEDBACK_STORAGE_KEY_PREFIX}subtask_${subtaskId}${suffix}`;
+    return `${FEEDBACK_STORAGE_KEY_PREFIX}subtask_${subtaskId}${suffix}`
   }
   if (timestamp) {
-    return `${FEEDBACK_STORAGE_KEY_PREFIX}ts_${timestamp}${suffix}`;
+    return `${FEEDBACK_STORAGE_KEY_PREFIX}ts_${timestamp}${suffix}`
   }
-  return null;
+  return null
 }
 
 /**
@@ -39,17 +39,17 @@ function generateStorageKey(
  */
 function readFeedbackFromStorage(key: string | null): FeedbackState {
   if (!key || typeof window === 'undefined') {
-    return null;
+    return null
   }
   try {
-    const stored = localStorage.getItem(key);
+    const stored = localStorage.getItem(key)
     if (stored === 'like' || stored === 'dislike') {
-      return stored;
+      return stored
     }
-    return null;
+    return null
   } catch {
     // localStorage may be unavailable (e.g., private browsing mode)
-    return null;
+    return null
   }
 }
 
@@ -58,17 +58,17 @@ function readFeedbackFromStorage(key: string | null): FeedbackState {
  */
 function writeFeedbackToStorage(key: string | null, feedback: FeedbackState): void {
   if (!key || typeof window === 'undefined') {
-    return;
+    return
   }
   try {
     if (feedback === null) {
-      localStorage.removeItem(key);
+      localStorage.removeItem(key)
     } else {
-      localStorage.setItem(key, feedback);
+      localStorage.setItem(key, feedback)
     }
   } catch {
     // localStorage may be unavailable or full
-    console.warn('Failed to save feedback to localStorage');
+    console.warn('Failed to save feedback to localStorage')
   }
 }
 
@@ -77,13 +77,13 @@ function writeFeedbackToStorage(key: string | null, feedback: FeedbackState): vo
  */
 export interface UseMessageFeedbackOptions {
   /** Subtask ID - preferred identifier for the message */
-  subtaskId?: number;
+  subtaskId?: number
   /** Message timestamp - fallback identifier if subtaskId is not available */
-  timestamp?: number;
+  timestamp?: number
   /** Message type to differentiate between original message and correction */
-  messageType?: 'original' | 'correction';
+  messageType?: 'original' | 'correction'
   /** Callback when feedback changes */
-  onFeedbackChange?: (feedback: FeedbackState) => void;
+  onFeedbackChange?: (feedback: FeedbackState) => void
 }
 
 /**
@@ -91,13 +91,13 @@ export interface UseMessageFeedbackOptions {
  */
 export interface UseMessageFeedbackReturn {
   /** Current feedback state */
-  feedback: FeedbackState;
+  feedback: FeedbackState
   /** Set feedback to 'like' (toggles if already liked) */
-  handleLike: () => void;
+  handleLike: () => void
   /** Set feedback to 'dislike' (toggles if already disliked) */
-  handleDislike: () => void;
+  handleDislike: () => void
   /** Clear feedback */
-  clearFeedback: () => void;
+  clearFeedback: () => void
 }
 
 /**
@@ -113,55 +113,55 @@ export interface UseMessageFeedbackReturn {
  * ```
  */
 export function useMessageFeedback(options: UseMessageFeedbackOptions): UseMessageFeedbackReturn {
-  const { subtaskId, timestamp, messageType, onFeedbackChange } = options;
+  const { subtaskId, timestamp, messageType, onFeedbackChange } = options
 
   // Generate storage key based on available identifiers
-  const storageKey = generateStorageKey(subtaskId, timestamp, messageType);
+  const storageKey = generateStorageKey(subtaskId, timestamp, messageType)
 
   // Initialize state from localStorage
   const [feedback, setFeedback] = useState<FeedbackState>(() => {
-    return readFeedbackFromStorage(storageKey);
-  });
+    return readFeedbackFromStorage(storageKey)
+  })
 
   // Update state when storage key changes (e.g., when subtaskId becomes available)
   useEffect(() => {
-    const storedFeedback = readFeedbackFromStorage(storageKey);
-    setFeedback(storedFeedback);
-  }, [storageKey]);
+    const storedFeedback = readFeedbackFromStorage(storageKey)
+    setFeedback(storedFeedback)
+  }, [storageKey])
 
   // Handle feedback change with persistence
   const updateFeedback = useCallback(
     (newFeedback: FeedbackState) => {
-      setFeedback(newFeedback);
-      writeFeedbackToStorage(storageKey, newFeedback);
-      onFeedbackChange?.(newFeedback);
+      setFeedback(newFeedback)
+      writeFeedbackToStorage(storageKey, newFeedback)
+      onFeedbackChange?.(newFeedback)
     },
     [storageKey, onFeedbackChange]
-  );
+  )
 
   // Toggle like
   const handleLike = useCallback(() => {
-    const newFeedback = feedback === 'like' ? null : 'like';
-    updateFeedback(newFeedback);
-  }, [feedback, updateFeedback]);
+    const newFeedback = feedback === 'like' ? null : 'like'
+    updateFeedback(newFeedback)
+  }, [feedback, updateFeedback])
 
   // Toggle dislike
   const handleDislike = useCallback(() => {
-    const newFeedback = feedback === 'dislike' ? null : 'dislike';
-    updateFeedback(newFeedback);
-  }, [feedback, updateFeedback]);
+    const newFeedback = feedback === 'dislike' ? null : 'dislike'
+    updateFeedback(newFeedback)
+  }, [feedback, updateFeedback])
 
   // Clear feedback
   const clearFeedback = useCallback(() => {
-    updateFeedback(null);
-  }, [updateFeedback]);
+    updateFeedback(null)
+  }, [updateFeedback])
 
   return {
     feedback,
     handleLike,
     handleDislike,
     clearFeedback,
-  };
+  }
 }
 
-export default useMessageFeedback;
+export default useMessageFeedback
