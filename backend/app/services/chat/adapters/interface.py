@@ -71,6 +71,7 @@ class ChatRequest:
 
     # Knowledge base configuration
     knowledge_base_ids: Optional[list] = None  # Knowledge base IDs to search
+    document_ids: Optional[list] = None  # Document IDs to filter retrieval
 
     # Task data for MCP tools
     task_data: Optional[dict] = None
@@ -110,6 +111,7 @@ class ChatRequest:
             "skill_names": self.skill_names,
             "skill_configs": self.skill_configs,
             "knowledge_base_ids": self.knowledge_base_ids,
+            "document_ids": self.document_ids,
             "task_data": self.task_data,
             "extra_tools": self.extra_tools,
             "mcp_servers": self.mcp_servers,

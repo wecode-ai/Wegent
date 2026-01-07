@@ -29,6 +29,10 @@ class InternalRetrieveRequest(BaseModel):
     query: str = Field(..., description="Search query")
     knowledge_base_id: int = Field(..., description="Knowledge base ID")
     max_results: int = Field(default=5, description="Maximum results to return")
+    document_ids: Optional[list[int]] = Field(
+        default=None,
+        description="Optional list of document IDs to filter. Only chunks from these documents will be returned.",
+    )
 
 
 class RetrieveRecord(BaseModel):
@@ -71,12 +75,34 @@ async def internal_retrieve(
 
         retrieval_service = RetrievalService()
 
+        # Build metadata_condition for document filtering
+        metadata_condition = None
+        if request.document_ids:
+            # Convert document IDs to doc_ref format (stored as strings in vector DB)
+            doc_refs = [str(doc_id) for doc_id in request.document_ids]
+            metadata_condition = {
+                "operator": "and",
+                "conditions": [
+                    {
+                        "key": "doc_ref",
+                        "operator": "in",
+                        "value": doc_refs,
+                    }
+                ],
+            }
+            logger.info(
+                "[internal_rag] Filtering by %d documents: %s",
+                len(request.document_ids),
+                request.document_ids,
+            )
+
         # Use internal method that bypasses user permission check
         # Permission is validated at task level before reaching chat_shell
         result = await retrieval_service.retrieve_from_knowledge_base_internal(
             query=request.query,
             knowledge_base_id=request.knowledge_base_id,
             db=db,
+            metadata_condition=metadata_condition,
         )
 
         records = result.get("records", [])
@@ -85,10 +111,15 @@ async def internal_retrieve(
         records = records[: request.max_results]
 
         logger.info(
-            "[internal_rag] Retrieved %d records for KB %d, query: %s",
+            "[internal_rag] Retrieved %d records for KB %d, query: %s%s",
             len(records),
             request.knowledge_base_id,
             request.query[:50],
+            (
+                f", filtered by {len(request.document_ids)} docs"
+                if request.document_ids
+                else ""
+            ),
         )
 
         return InternalRetrieveResponse(

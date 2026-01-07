@@ -87,6 +87,32 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("Shutting down Chat Shell Service...")
 
+    # Graceful shutdown: wait for active streams to complete
+    from chat_shell.api.v1.response import _active_streams
+    from chat_shell.core.shutdown import shutdown_manager
+
+    if not shutdown_manager.is_shutting_down:
+        await shutdown_manager.initiate_shutdown()
+
+    active_count = shutdown_manager.get_active_stream_count()
+    if active_count > 0:
+        logger.info(
+            f"Waiting for {active_count} active streams to complete "
+            f"(timeout: {settings.GRACEFUL_SHUTDOWN_TIMEOUT}s)..."
+        )
+        streams_completed = await shutdown_manager.wait_for_streams(
+            timeout=settings.GRACEFUL_SHUTDOWN_TIMEOUT
+        )
+        if not streams_completed:
+            remaining = shutdown_manager.get_active_stream_count()
+            logger.warning(
+                f"Timeout waiting for streams. Cancelling {remaining} remaining streams..."
+            )
+            cancelled = await shutdown_manager.cancel_all_streams(_active_streams)
+            logger.info(f"Cancelled {cancelled} streams")
+    else:
+        logger.info("No active streams, proceeding with shutdown")
+
     # Shutdown OpenTelemetry
     from shared.telemetry.core import is_telemetry_enabled, shutdown_telemetry
 
@@ -293,14 +319,23 @@ def create_app(
 
     app.include_router(v1_response_router)
 
-    # Root health check
+    # Include health check router
+    from chat_shell.api.health import router as health_router
+
+    app.include_router(health_router)
+
+    # Root endpoint with basic info
     @app.get("/")
     async def root():
         """Root endpoint with basic info."""
+        from chat_shell.core.shutdown import shutdown_manager
+
         return {
             "service": "chat-shell",
             "version": __version__,
-            "status": "running",
+            "status": (
+                "shutting_down" if shutdown_manager.is_shutting_down else "running"
+            ),
             "docs": "/docs" if settings.ENABLE_API_DOCS else None,
         }
 

@@ -197,6 +197,10 @@ class Metadata(BaseModel):
     knowledge_base_ids: Optional[list[int]] = Field(
         None, description="Knowledge base IDs to search"
     )
+    document_ids: Optional[list[int]] = Field(
+        None,
+        description="Document IDs to filter retrieval (when user references specific documents)",
+    )
     # Task data for MCP tools
     task_data: Optional[dict] = Field(None, description="Task data for MCP tools")
 

@@ -192,6 +192,7 @@ class ChatService(ChatInterface):
                             base_system_prompt=system_prompt,
                             task_id=request.task_id,
                             user_subtask_id=request.subtask_id,
+                            document_ids=request.document_ids,
                         )
                         extra_tools.extend(kb_tools)
 
