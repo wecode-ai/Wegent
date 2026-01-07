@@ -3,10 +3,10 @@
  */
 
 export interface TestUser {
-  username: string;
-  password: string;
-  role: 'admin' | 'user';
-  description: string;
+  username: string
+  password: string
+  role: 'admin' | 'user'
+  description: string
 }
 
 /**
@@ -17,7 +17,7 @@ export const ADMIN_USER: TestUser = {
   password: 'Wegent2025!',
   role: 'admin',
   description: 'Default admin user with full access',
-};
+}
 
 /**
  * Default regular user for E2E tests
@@ -28,13 +28,13 @@ export const REGULAR_USER: TestUser = {
   password: 'Test@12345',
   role: 'user',
   description: 'Regular user with limited access',
-};
+}
 
 /**
  * Get test user by role
  */
 export function getTestUser(role: 'admin' | 'user'): TestUser {
-  return role === 'admin' ? ADMIN_USER : REGULAR_USER;
+  return role === 'admin' ? ADMIN_USER : REGULAR_USER
 }
 
 /**
@@ -46,5 +46,5 @@ export function getEnvTestUser(): TestUser {
     password: process.env.E2E_TEST_password || ADMIN_USER.password,
     role: (process.env.E2E_TEST_ROLE as 'admin' | 'user') || 'admin',
     description: 'User from environment variables',
-  };
+  }
 }

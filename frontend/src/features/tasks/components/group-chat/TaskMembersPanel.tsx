@@ -2,36 +2,36 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState, useEffect, useCallback } from 'react';
-import { Users, Link, X, Crown, UserPlus, Copy, Check, Database } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react'
+import { Users, Link, X, Crown, UserPlus, Copy, Check, Database } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogDescription,
-} from '@/components/ui/dialog';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Spinner } from '@/components/ui/spinner';
-import { useToast } from '@/hooks/use-toast';
-import { taskMemberApi, TaskMember } from '@/apis/task-member';
-import { useTranslation } from '@/hooks/useTranslation';
-import { AddMembersDialog } from './AddMembersDialog';
-import TaskKnowledgeBasePanel from './TaskKnowledgeBasePanel';
-import { cn } from '@/lib/utils';
+} from '@/components/ui/dialog'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Spinner } from '@/components/ui/spinner'
+import { useToast } from '@/hooks/use-toast'
+import { taskMemberApi, TaskMember } from '@/apis/task-member'
+import { useTranslation } from '@/hooks/useTranslation'
+import { AddMembersDialog } from './AddMembersDialog'
+import TaskKnowledgeBasePanel from './TaskKnowledgeBasePanel'
+import { cn } from '@/lib/utils'
 
 interface TaskMembersPanelProps {
-  open: boolean;
-  onClose: () => void;
-  taskId: number;
-  taskTitle: string;
-  currentUserId: number;
-  onLeave?: () => void;
-  onMembersChanged?: () => void; // Callback when members are added/removed to refresh task detail
+  open: boolean
+  onClose: () => void
+  taskId: number
+  taskTitle: string
+  currentUserId: number
+  onLeave?: () => void
+  onMembersChanged?: () => void // Callback when members are added/removed to refresh task detail
 }
 
 export function TaskMembersPanel({
@@ -43,26 +43,26 @@ export function TaskMembersPanel({
   onLeave,
   onMembersChanged,
 }: TaskMembersPanelProps) {
-  const { t } = useTranslation();
-  const { toast } = useToast();
-  const [members, setMembers] = useState<TaskMember[]>([]);
-  const [taskOwnerId, setTaskOwnerId] = useState<number>(0);
-  const [loading, setLoading] = useState(false);
-  const [showAddMembersDialog, setShowAddMembersDialog] = useState(false);
-  const [inviteUrl, setInviteUrl] = useState<string | null>(null);
-  const [generatingLink, setGeneratingLink] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const { t } = useTranslation()
+  const { toast } = useToast()
+  const [members, setMembers] = useState<TaskMember[]>([])
+  const [taskOwnerId, setTaskOwnerId] = useState<number>(0)
+  const [loading, setLoading] = useState(false)
+  const [showAddMembersDialog, setShowAddMembersDialog] = useState(false)
+  const [inviteUrl, setInviteUrl] = useState<string | null>(null)
+  const [generatingLink, setGeneratingLink] = useState(false)
+  const [copied, setCopied] = useState(false)
 
-  const isOwner = currentUserId === taskOwnerId;
+  const isOwner = currentUserId === taskOwnerId
 
   const fetchMembers = useCallback(async () => {
-    if (!open) return;
+    if (!open) return
 
-    setLoading(true);
+    setLoading(true)
     try {
-      const response = await taskMemberApi.getMembers(taskId);
-      setMembers(response.members);
-      setTaskOwnerId(response.task_owner_id);
+      const response = await taskMemberApi.getMembers(taskId)
+      setMembers(response.members)
+      setTaskOwnerId(response.task_owner_id)
       // DO NOT call onMembersChanged here - it should only be called when members are actually changed
       // Calling it here would trigger refresh every time the panel opens
     } catch (error: unknown) {
@@ -70,149 +70,149 @@ export function TaskMembersPanel({
         title: t('chat:groupChat.members.loadFailed'),
         description: error instanceof Error ? error.message : undefined,
         variant: 'destructive',
-      });
+      })
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  }, [open, taskId, toast, t]); // Removed onMembersChanged from dependencies
+  }, [open, taskId, toast, t]) // Removed onMembersChanged from dependencies
 
   useEffect(() => {
-    fetchMembers();
-  }, [fetchMembers]);
+    fetchMembers()
+  }, [fetchMembers])
 
   // Reset invite link state when dialog closes
   useEffect(() => {
     if (!open) {
       // Wait for close animation to complete before resetting state
       const timer = setTimeout(() => {
-        setInviteUrl(null);
-        setCopied(false);
-      }, 200);
-      return () => clearTimeout(timer);
+        setInviteUrl(null)
+        setCopied(false)
+      }, 200)
+      return () => clearTimeout(timer)
     }
-  }, [open]);
+  }, [open])
 
   const handleRemoveMember = async (userId: number, username: string) => {
-    if (!isOwner) return;
+    if (!isOwner) return
 
     try {
-      await taskMemberApi.removeMember(taskId, userId);
+      await taskMemberApi.removeMember(taskId, userId)
       toast({
         title: t('chat:groupChat.members.removeSuccess', { name: username }),
-      });
+      })
       // Refresh member list and trigger parent refresh
       // Use the same pattern as AddMembersDialog
-      fetchMembers();
-      onMembersChanged?.();
+      fetchMembers()
+      onMembersChanged?.()
     } catch (error: unknown) {
       toast({
         title: t('chat:groupChat.members.removeFailed'),
         description: error instanceof Error ? error.message : undefined,
         variant: 'destructive',
-      });
+      })
     }
-  };
+  }
 
   const handleLeaveGroupChat = async () => {
     try {
-      await taskMemberApi.leaveGroupChat(taskId);
+      await taskMemberApi.leaveGroupChat(taskId)
       toast({
         title: t('chat:groupChat.members.leaveSuccess'),
-      });
-      handleClose();
+      })
+      handleClose()
       // Notify parent component that user has left
-      onLeave?.();
+      onLeave?.()
     } catch (error: unknown) {
       toast({
         title: t('chat:groupChat.members.leaveFailed'),
         description: error instanceof Error ? error.message : undefined,
         variant: 'destructive',
-      });
+      })
     }
-  };
+  }
 
   const handleGenerateInviteLink = async () => {
-    setGeneratingLink(true);
+    setGeneratingLink(true)
     try {
       // First, ensure the task is converted to a group chat
-      let wasConverted = false;
+      let wasConverted = false
       try {
-        await taskMemberApi.convertToGroupChat(taskId);
-        wasConverted = true;
+        await taskMemberApi.convertToGroupChat(taskId)
+        wasConverted = true
       } catch (conversionError: unknown) {
         // Ignore conversion errors - task might already be a group chat
-        console.log('Task conversion:', conversionError);
+        console.log('Task conversion:', conversionError)
       }
 
       // Generate the invite link with permanent expiration (0 hours)
-      const response = await taskMemberApi.generateInviteLink(taskId, 0);
-      setInviteUrl(response.invite_url);
+      const response = await taskMemberApi.generateInviteLink(taskId, 0)
+      setInviteUrl(response.invite_url)
 
       // Trigger UI refresh if task was converted to group chat
       if (wasConverted) {
-        onMembersChanged?.();
+        onMembersChanged?.()
       }
     } catch (error: unknown) {
       toast({
         title: t('chat:groupChat.inviteLink.generateFailed'),
         description: error instanceof Error ? error.message : undefined,
         variant: 'destructive',
-      });
+      })
     } finally {
-      setGeneratingLink(false);
+      setGeneratingLink(false)
     }
-  };
+  }
 
   const handleCopyLink = async () => {
-    if (!inviteUrl) return;
+    if (!inviteUrl) return
 
     // Try modern clipboard API first
     if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
       try {
-        await navigator.clipboard.writeText(inviteUrl);
-        setCopied(true);
+        await navigator.clipboard.writeText(inviteUrl)
+        setCopied(true)
         toast({
           title: t('chat:groupChat.inviteLink.copied'),
-        });
+        })
         setTimeout(() => {
-          setCopied(false);
-          handleClose();
-        }, 500);
-        return;
+          setCopied(false)
+          handleClose()
+        }, 500)
+        return
       } catch (err) {
-        console.error('Clipboard API failed: ', err);
+        console.error('Clipboard API failed: ', err)
       }
     }
 
     // Fallback for non-HTTPS environments (e.g., HTTP IP:port)
     try {
-      const textarea = document.createElement('textarea');
-      textarea.value = inviteUrl;
-      textarea.style.cssText = 'position:fixed;opacity:0';
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textarea);
-      setCopied(true);
+      const textarea = document.createElement('textarea')
+      textarea.value = inviteUrl
+      textarea.style.cssText = 'position:fixed;opacity:0'
+      document.body.appendChild(textarea)
+      textarea.select()
+      document.execCommand('copy')
+      document.body.removeChild(textarea)
+      setCopied(true)
       toast({
         title: t('chat:groupChat.inviteLink.copied'),
-      });
+      })
       setTimeout(() => {
-        setCopied(false);
-        handleClose();
-      }, 500);
+        setCopied(false)
+        handleClose()
+      }, 500)
     } catch (err) {
-      console.error('Fallback copy failed: ', err);
+      console.error('Fallback copy failed: ', err)
       toast({
         title: t('chat:groupChat.inviteLink.copyFailed'),
         variant: 'destructive',
-      });
+      })
     }
-  };
+  }
 
   const handleClose = () => {
-    onClose();
-  };
+    onClose()
+  }
 
   return (
     <>
@@ -388,12 +388,12 @@ export function TaskMembersPanel({
         taskTitle={taskTitle}
         onMembersAdded={() => {
           // Refresh member list first
-          fetchMembers();
+          fetchMembers()
           // Then trigger parent refresh (task list + task detail)
-          onMembersChanged?.();
+          onMembersChanged?.()
         }}
         onComplete={handleClose}
       />
     </>
-  );
+  )
 }

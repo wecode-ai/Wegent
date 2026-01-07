@@ -2,101 +2,101 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { useTaskContext } from '../../contexts/taskContext';
-import { useChatStreamContext, computeIsStreaming } from '../../contexts/chatStreamContext';
-import { useSocket } from '@/contexts/SocketContext';
-import { useToast } from '@/hooks/use-toast';
-import { useTranslation } from '@/hooks/useTranslation';
-import { useUser } from '@/features/common/UserContext';
-import { useTraceAction } from '@/hooks/useTraceAction';
-import { parseError } from '@/utils/errorParser';
-import { taskApis } from '@/apis/tasks';
-import { isChatShell } from '../../service/messageService';
-import { Button } from '@/components/ui/button';
-import { DEFAULT_MODEL_NAME } from '../selector/ModelSelector';
-import type { Model } from '../selector/ModelSelector';
-import type { Team, GitRepoInfo, GitBranch, Attachment } from '@/types/api';
-import type { ContextItem } from '@/types/context';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { useTaskContext } from '../../contexts/taskContext'
+import { useChatStreamContext, computeIsStreaming } from '../../contexts/chatStreamContext'
+import { useSocket } from '@/contexts/SocketContext'
+import { useToast } from '@/hooks/use-toast'
+import { useTranslation } from '@/hooks/useTranslation'
+import { useUser } from '@/features/common/UserContext'
+import { useTraceAction } from '@/hooks/useTraceAction'
+import { parseError } from '@/utils/errorParser'
+import { taskApis } from '@/apis/tasks'
+import { isChatShell } from '../../service/messageService'
+import { Button } from '@/components/ui/button'
+import { DEFAULT_MODEL_NAME } from '../selector/ModelSelector'
+import type { Model } from '../selector/ModelSelector'
+import type { Team, GitRepoInfo, GitBranch, Attachment } from '@/types/api'
+import type { ContextItem } from '@/types/context'
 
 export interface UseChatStreamHandlersOptions {
   // Team and model
-  selectedTeam: Team | null;
-  selectedModel: Model | null;
-  forceOverride: boolean;
+  selectedTeam: Team | null
+  selectedModel: Model | null
+  forceOverride: boolean
 
   // Repository
-  selectedRepo: GitRepoInfo | null;
-  selectedBranch: GitBranch | null;
-  showRepositorySelector: boolean;
+  selectedRepo: GitRepoInfo | null
+  selectedBranch: GitBranch | null
+  showRepositorySelector: boolean
 
   // Input
-  taskInputMessage: string;
-  setTaskInputMessage: (message: string) => void;
+  taskInputMessage: string
+  setTaskInputMessage: (message: string) => void
 
   // Loading
-  setIsLoading: (value: boolean) => void;
+  setIsLoading: (value: boolean) => void
 
   // Toggles
-  enableDeepThinking: boolean;
-  enableClarification: boolean;
+  enableDeepThinking: boolean
+  enableClarification: boolean
 
   // External API
-  externalApiParams: Record<string, string>;
+  externalApiParams: Record<string, string>
 
   // Attachment (multi-attachment)
-  attachments: Attachment[];
-  resetAttachment: () => void;
-  isAttachmentReadyToSend: boolean;
+  attachments: Attachment[]
+  resetAttachment: () => void
+  isAttachmentReadyToSend: boolean
 
   // Task type
-  taskType: 'chat' | 'code';
+  taskType: 'chat' | 'code'
 
   // UI flags
-  shouldHideChatInput: boolean;
+  shouldHideChatInput: boolean
 
   // Scroll helper
-  scrollToBottom: (force?: boolean) => void;
+  scrollToBottom: (force?: boolean) => void
 
   // Context selection (knowledge bases)
-  selectedContexts?: ContextItem[];
-  resetContexts?: () => void;
+  selectedContexts?: ContextItem[]
+  resetContexts?: () => void
 }
 
 export interface ChatStreamHandlers {
   // Stream state
   /** Pending task ID - can be tempTaskId (negative) or taskId (positive) before selectedTaskDetail updates */
-  pendingTaskId: number | null;
+  pendingTaskId: number | null
   currentStreamState: ReturnType<typeof useChatStreamContext>['getStreamState'] extends (
     id: number
   ) => infer R
     ? R
-    : never;
-  isStreaming: boolean;
-  isSubtaskStreaming: boolean;
-  isStopping: boolean;
-  hasPendingUserMessage: boolean;
-  localPendingMessage: string | null;
+    : never
+  isStreaming: boolean
+  isSubtaskStreaming: boolean
+  isStopping: boolean
+  hasPendingUserMessage: boolean
+  localPendingMessage: string | null
 
   // Actions
-  handleSendMessage: (overrideMessage?: string) => Promise<void>;
+  handleSendMessage: (overrideMessage?: string) => Promise<void>
   handleRetry: (message: {
-    content: string;
-    type: string;
-    error?: string;
-    subtaskId?: number;
-  }) => Promise<void>;
-  handleCancelTask: () => Promise<void>;
-  stopStream: () => Promise<void>;
-  resetStreamingState: () => void;
+    content: string
+    type: string
+    error?: string
+    subtaskId?: number
+  }) => Promise<void>
+  handleCancelTask: () => Promise<void>
+  stopStream: () => Promise<void>
+  resetStreamingState: () => void
 
   // Group chat handlers
-  handleNewMessages: (messages: unknown[]) => void;
-  handleStreamComplete: (subtaskId: number, result?: Record<string, unknown>) => void;
+  handleNewMessages: (messages: unknown[]) => void
+  handleStreamComplete: (subtaskId: number, result?: Record<string, unknown>) => void
 
   // State
-  isCancelling: boolean;
+  isCancelling: boolean
 }
 
 /**
@@ -135,15 +135,15 @@ export function useChatStreamHandlers({
   selectedContexts = [],
   resetContexts,
 }: UseChatStreamHandlersOptions): ChatStreamHandlers {
-  const { toast } = useToast();
-  const { t } = useTranslation();
-  const { user } = useUser();
-  const { traceAction } = useTraceAction();
-  const router = useRouter();
-  const searchParams = useSearchParams();
+  const { toast } = useToast()
+  const { t } = useTranslation()
+  const { user } = useUser()
+  const { traceAction } = useTraceAction()
+  const router = useRouter()
+  const searchParams = useSearchParams()
 
   const { selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail, markTaskAsViewed } =
-    useTaskContext();
+    useTaskContext()
 
   const {
     getStreamState,
@@ -152,74 +152,74 @@ export function useChatStreamHandlers({
     stopStream: contextStopStream,
     resumeStream: contextResumeStream,
     clearVersion,
-  } = useChatStreamContext();
+  } = useChatStreamContext()
 
-  const { retryMessage } = useSocket();
+  const { retryMessage } = useSocket()
 
   // Local state
-  const [pendingTaskId, setPendingTaskId] = useState<number | null>(null);
-  const [localPendingMessage, setLocalPendingMessage] = useState<string | null>(null);
-  const [isCancelling, setIsCancelling] = useState(false);
+  const [pendingTaskId, setPendingTaskId] = useState<number | null>(null)
+  const [localPendingMessage, setLocalPendingMessage] = useState<string | null>(null)
+  const [isCancelling, setIsCancelling] = useState(false)
 
   // Refs
-  const lastFailedMessageRef = useRef<string | null>(null);
-  const handleSendMessageRef = useRef<((message?: string) => Promise<void>) | null>(null);
-  const previousTaskIdRef = useRef<number | null | undefined>(undefined);
-  const prevTaskIdForModelRef = useRef<number | null | undefined>(undefined);
-  const prevClearVersionRef = useRef(clearVersion);
+  const lastFailedMessageRef = useRef<string | null>(null)
+  const handleSendMessageRef = useRef<((message?: string) => Promise<void>) | null>(null)
+  const previousTaskIdRef = useRef<number | null | undefined>(undefined)
+  const prevTaskIdForModelRef = useRef<number | null | undefined>(undefined)
+  const prevClearVersionRef = useRef(clearVersion)
 
   // Unified function to reset streaming-related state
   const resetStreamingState = useCallback(() => {
-    setLocalPendingMessage(null);
-    setPendingTaskId(null);
-  }, []);
+    setLocalPendingMessage(null)
+    setPendingTaskId(null)
+  }, [])
 
   // Get current display task ID
-  const currentDisplayTaskId = selectedTaskDetail?.id;
+  const currentDisplayTaskId = selectedTaskDetail?.id
 
   // Get stream state for the currently displayed task
   const currentStreamState = useMemo(() => {
     if (!currentDisplayTaskId) {
       if (pendingTaskId) {
-        return getStreamState(pendingTaskId);
+        return getStreamState(pendingTaskId)
       }
-      return undefined;
+      return undefined
     }
-    return getStreamState(currentDisplayTaskId);
-  }, [currentDisplayTaskId, pendingTaskId, getStreamState]);
+    return getStreamState(currentDisplayTaskId)
+  }, [currentDisplayTaskId, pendingTaskId, getStreamState])
 
   // Check streaming states
-  const _isStreamingTaskActive = pendingTaskId ? isTaskStreaming(pendingTaskId) : false;
-  const isContextStreaming = computeIsStreaming(currentStreamState?.messages);
+  const _isStreamingTaskActive = pendingTaskId ? isTaskStreaming(pendingTaskId) : false
+  const isContextStreaming = computeIsStreaming(currentStreamState?.messages)
 
   const isSubtaskStreaming = useMemo(() => {
-    if (!selectedTaskDetail?.subtasks) return false;
+    if (!selectedTaskDetail?.subtasks) return false
     return selectedTaskDetail.subtasks.some(
       subtask => subtask.role === 'assistant' && subtask.status === 'RUNNING'
-    );
-  }, [selectedTaskDetail?.subtasks]);
+    )
+  }, [selectedTaskDetail?.subtasks])
 
-  const isStreaming = isSubtaskStreaming || isContextStreaming;
-  const isStopping = currentStreamState?.isStopping || false;
+  const isStreaming = isSubtaskStreaming || isContextStreaming
+  const isStopping = currentStreamState?.isStopping || false
 
   // Check for pending user messages
   const hasPendingUserMessage = useMemo(() => {
-    if (localPendingMessage) return true;
-    if (!currentStreamState?.messages) return false;
+    if (localPendingMessage) return true
+    if (!currentStreamState?.messages) return false
     for (const msg of currentStreamState.messages.values()) {
-      if (msg.type === 'user' && msg.status === 'pending') return true;
+      if (msg.type === 'user' && msg.status === 'pending') return true
     }
-    return false;
-  }, [localPendingMessage, currentStreamState?.messages]);
+    return false
+  }, [localPendingMessage, currentStreamState?.messages])
 
   // Stop stream wrapper
   const stopStream = useCallback(async () => {
-    const taskIdToStop = currentDisplayTaskId || pendingTaskId;
+    const taskIdToStop = currentDisplayTaskId || pendingTaskId
 
     if (taskIdToStop && taskIdToStop > 0) {
       const team =
-        typeof selectedTaskDetail?.team === 'object' ? selectedTaskDetail.team : undefined;
-      await contextStopStream(taskIdToStop, selectedTaskDetail?.subtasks, team);
+        typeof selectedTaskDetail?.team === 'object' ? selectedTaskDetail.team : undefined
+      await contextStopStream(taskIdToStop, selectedTaskDetail?.subtasks, team)
     }
   }, [
     currentDisplayTaskId,
@@ -227,100 +227,100 @@ export function useChatStreamHandlers({
     contextStopStream,
     selectedTaskDetail?.subtasks,
     selectedTaskDetail?.team,
-  ]);
+  ])
 
   // Group chat handlers
   const handleNewMessages = useCallback(
     (messages: unknown[]) => {
       if (Array.isArray(messages) && messages.length > 0) {
-        refreshSelectedTaskDetail();
+        refreshSelectedTaskDetail()
       }
     },
     [refreshSelectedTaskDetail]
-  );
+  )
 
   const handleStreamComplete = useCallback(
     (_subtaskId: number, _result?: Record<string, unknown>) => {
-      refreshSelectedTaskDetail();
+      refreshSelectedTaskDetail()
     },
     [refreshSelectedTaskDetail]
-  );
+  )
 
   // Reset state when clearVersion changes (e.g., "New Chat")
   useEffect(() => {
     if (clearVersion !== prevClearVersionRef.current) {
-      prevClearVersionRef.current = clearVersion;
+      prevClearVersionRef.current = clearVersion
 
-      setIsLoading(false);
-      setLocalPendingMessage(null);
-      setPendingTaskId(null);
-      previousTaskIdRef.current = undefined;
-      prevTaskIdForModelRef.current = undefined;
-      setIsCancelling(false);
+      setIsLoading(false)
+      setLocalPendingMessage(null)
+      setPendingTaskId(null)
+      previousTaskIdRef.current = undefined
+      prevTaskIdForModelRef.current = undefined
+      setIsCancelling(false)
     }
-  }, [clearVersion, setIsLoading]);
+  }, [clearVersion, setIsLoading])
 
   // Clear pendingTaskId when switching to a different task
   useEffect(() => {
     if (pendingTaskId && selectedTaskDetail?.id && selectedTaskDetail.id !== pendingTaskId) {
-      setPendingTaskId(null);
+      setPendingTaskId(null)
     }
-  }, [selectedTaskDetail?.id, pendingTaskId]);
+  }, [selectedTaskDetail?.id, pendingTaskId])
 
   // Reset when navigating to fresh new task state
   useEffect(() => {
     if (!selectedTaskDetail?.id && !pendingTaskId) {
-      resetStreamingState();
-      setIsLoading(false);
+      resetStreamingState()
+      setIsLoading(false)
     }
-  }, [selectedTaskDetail?.id, pendingTaskId, resetStreamingState, setIsLoading]);
+  }, [selectedTaskDetail?.id, pendingTaskId, resetStreamingState, setIsLoading])
 
   // Reset when switching to a DIFFERENT task
   useEffect(() => {
-    const currentTaskId = selectedTaskDetail?.id;
-    const previousTaskId = previousTaskIdRef.current;
+    const currentTaskId = selectedTaskDetail?.id
+    const previousTaskId = previousTaskIdRef.current
 
     if (
       previousTaskId !== undefined &&
       currentTaskId !== previousTaskId &&
       previousTaskId !== null
     ) {
-      resetStreamingState();
+      resetStreamingState()
     }
 
-    previousTaskIdRef.current = currentTaskId;
-  }, [selectedTaskDetail?.id, resetStreamingState]);
+    previousTaskIdRef.current = currentTaskId
+  }, [selectedTaskDetail?.id, resetStreamingState])
 
   // Try to resume streaming on task change
   useEffect(() => {
-    const taskId = selectedTaskDetail?.id;
-    if (!taskId) return;
-    if (isStreaming) return;
-    if (!selectedTeam || !isChatShell(selectedTeam)) return;
+    const taskId = selectedTaskDetail?.id
+    if (!taskId) return
+    if (isStreaming) return
+    if (!selectedTeam || !isChatShell(selectedTeam)) return
 
     const tryResumeStream = async () => {
       const resumed = await contextResumeStream(taskId, {
         onComplete: (_completedTaskId, _subtaskId) => {
-          refreshSelectedTaskDetail(false);
+          refreshSelectedTaskDetail(false)
         },
         onError: error => {
-          console.error('[ChatStreamHandlers] Resumed stream error', error);
+          console.error('[ChatStreamHandlers] Resumed stream error', error)
         },
-      });
+      })
 
       if (resumed) {
-        setPendingTaskId(taskId);
+        setPendingTaskId(taskId)
       }
-    };
+    }
 
-    tryResumeStream();
+    tryResumeStream()
   }, [
     selectedTaskDetail?.id,
     selectedTeam,
     isStreaming,
     contextResumeStream,
     refreshSelectedTaskDetail,
-  ]);
+  ])
 
   // Helper: create retry button
   const createRetryButton = useCallback(
@@ -330,14 +330,14 @@ export function useChatStreamHandlers({
       </Button>
     ),
     [t]
-  );
+  )
 
   // Helper: handle send errors
   const handleSendError = useCallback(
     (error: Error, message: string) => {
-      resetStreamingState();
-      const parsedError = parseError(error);
-      lastFailedMessageRef.current = message;
+      resetStreamingState()
+      const parsedError = parseError(error)
+      lastFailedMessageRef.current = message
 
       toast({
         variant: 'destructive',
@@ -347,27 +347,27 @@ export function useChatStreamHandlers({
         action: parsedError.retryable
           ? createRetryButton(() => {
               if (lastFailedMessageRef.current && handleSendMessageRef.current) {
-                handleSendMessageRef.current(lastFailedMessageRef.current);
+                handleSendMessageRef.current(lastFailedMessageRef.current)
               }
             })
           : undefined,
-      });
+      })
     },
     [resetStreamingState, toast, t, createRetryButton]
-  );
+  )
 
   // Core message sending logic
   const handleSendMessage = useCallback(
     async (overrideMessage?: string) => {
-      const message = overrideMessage?.trim() || taskInputMessage.trim();
-      if (!message && !shouldHideChatInput) return;
+      const message = overrideMessage?.trim() || taskInputMessage.trim()
+      if (!message && !shouldHideChatInput) return
 
       if (!isAttachmentReadyToSend) {
         toast({
           variant: 'destructive',
           title: '请等待文件上传完成',
-        });
-        return;
+        })
+        return
       }
 
       // For code type tasks, repository is required
@@ -380,36 +380,36 @@ export function useChatStreamHandlers({
               git_repo_id: selectedTaskDetail.git_repo_id,
               git_domain: selectedTaskDetail.git_domain,
             }
-          : null);
+          : null)
 
       if (taskType === 'code' && showRepositorySelector && !effectiveRepo?.git_repo) {
         toast({
           variant: 'destructive',
           title: 'Please select a repository for code tasks',
-        });
-        return;
+        })
+        return
       }
 
-      setIsLoading(true);
+      setIsLoading(true)
 
       // Set local pending state immediately
-      setLocalPendingMessage(message);
-      setTaskInputMessage('');
-      resetAttachment();
-      resetContexts?.();
+      setLocalPendingMessage(message)
+      setTaskInputMessage('')
+      resetAttachment()
+      resetContexts?.()
 
       // Model ID handling
-      const modelId = selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.name;
+      const modelId = selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.name
 
       // Prepare message with external API parameters
-      let finalMessage = message;
+      let finalMessage = message
       if (Object.keys(externalApiParams).length > 0) {
-        const paramsJson = JSON.stringify(externalApiParams);
-        finalMessage = `[EXTERNAL_API_PARAMS]${paramsJson}[/EXTERNAL_API_PARAMS]\n${message}`;
+        const paramsJson = JSON.stringify(externalApiParams)
+        finalMessage = `[EXTERNAL_API_PARAMS]${paramsJson}[/EXTERNAL_API_PARAMS]\n${message}`
       }
 
       try {
-        const immediateTaskId = selectedTaskDetail?.id || -Date.now();
+        const immediateTaskId = selectedTaskDetail?.id || -Date.now()
 
         // Convert selected contexts to backend format
         // Each context item contains type and data fields
@@ -417,8 +417,8 @@ export function useChatStreamHandlers({
           if (ctx.type === 'knowledge_base') {
             // Type assertion for knowledge base context with document_count
             const kbContext = ctx as ContextItem & {
-              document_count?: number;
-            };
+              document_count?: number
+            }
             return {
               type: 'knowledge_base',
               data: {
@@ -426,27 +426,27 @@ export function useChatStreamHandlers({
                 name: ctx.name,
                 document_count: kbContext.document_count,
               },
-            };
+            }
           }
           // Future: handle other context types here
           return {
             type: ctx.type,
             data: { id: ctx.id, name: ctx.name },
-          };
-        });
+          }
+        })
 
         // Build pending contexts for immediate display (SubtaskContextBrief format)
         // This includes both attachments and knowledge bases
         const pendingContexts: Array<{
-          id: number;
-          context_type: 'attachment' | 'knowledge_base';
-          name: string;
-          status: 'pending' | 'ready';
-          file_extension?: string;
-          file_size?: number;
-          mime_type?: string;
-          document_count?: number;
-        }> = [];
+          id: number
+          context_type: 'attachment' | 'knowledge_base'
+          name: string
+          status: 'pending' | 'ready'
+          file_extension?: string
+          file_size?: number
+          mime_type?: string
+          document_count?: number
+        }> = []
 
         // Add attachments as contexts
         for (const attachment of attachments) {
@@ -458,20 +458,20 @@ export function useChatStreamHandlers({
             file_extension: attachment.file_extension,
             file_size: attachment.file_size,
             mime_type: attachment.mime_type,
-          });
+          })
         }
 
         // Add knowledge bases as contexts
         for (const ctx of selectedContexts) {
           if (ctx.type === 'knowledge_base') {
-            const kbContext = ctx as typeof ctx & { document_count?: number };
+            const kbContext = ctx as typeof ctx & { document_count?: number }
             pendingContexts.push({
               id: typeof ctx.id === 'number' ? ctx.id : parseInt(String(ctx.id), 10),
               context_type: 'knowledge_base',
               name: ctx.name,
               status: 'ready',
               document_count: kbContext.document_count,
-            });
+            })
           }
         }
 
@@ -509,14 +509,14 @@ export function useChatStreamHandlers({
               _subtaskId: number
             ) => {
               if (completedTaskId > 0) {
-                setPendingTaskId(completedTaskId);
+                setPendingTaskId(completedTaskId)
               }
 
               if (completedTaskId && !selectedTaskDetail?.id) {
-                const params = new URLSearchParams(Array.from(searchParams.entries()));
-                params.set('taskId', String(completedTaskId));
-                router.push(`?${params.toString()}`);
-                refreshTasks();
+                const params = new URLSearchParams(Array.from(searchParams.entries()))
+                params.set('taskId', String(completedTaskId))
+                router.push(`?${params.toString()}`)
+                refreshTasks()
               }
 
               if (selectedTaskDetail?.is_group_chat && completedTaskId) {
@@ -524,25 +524,25 @@ export function useChatStreamHandlers({
                   completedTaskId,
                   selectedTaskDetail.status,
                   new Date().toISOString()
-                );
+                )
               }
             },
             onError: (error: Error) => {
-              handleSendError(error, message);
+              handleSendError(error, message)
             },
           }
-        );
+        )
 
         if (tempTaskId !== immediateTaskId && tempTaskId > 0) {
-          setPendingTaskId(tempTaskId);
+          setPendingTaskId(tempTaskId)
         }
 
-        setTimeout(() => scrollToBottom(true), 0);
+        setTimeout(() => scrollToBottom(true), 0)
       } catch (err) {
-        handleSendError(err as Error, message);
+        handleSendError(err as Error, message)
       }
 
-      setIsLoading(false);
+      setIsLoading(false)
     },
     [
       taskInputMessage,
@@ -576,12 +576,12 @@ export function useChatStreamHandlers({
       setTaskInputMessage,
       externalApiParams,
     ]
-  );
+  )
 
   // Update ref when handleSendMessage changes
   useEffect(() => {
-    handleSendMessageRef.current = handleSendMessage;
-  }, [handleSendMessage]);
+    handleSendMessageRef.current = handleSendMessage
+  }, [handleSendMessage])
 
   // Handle retry for failed messages
   const handleRetry = useCallback(
@@ -591,8 +591,8 @@ export function useChatStreamHandlers({
           variant: 'destructive',
           title: t('chat:errors.request_failed_retry'),
           description: 'Subtask ID not found',
-        });
-        return;
+        })
+        return
       }
 
       if (!selectedTaskDetail?.id) {
@@ -600,8 +600,8 @@ export function useChatStreamHandlers({
           variant: 'destructive',
           title: t('chat:errors.request_failed_retry'),
           description: 'Task ID not found',
-        });
-        return;
+        })
+        return
       }
 
       await traceAction(
@@ -615,8 +615,8 @@ export function useChatStreamHandlers({
         async () => {
           try {
             const modelId =
-              selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.name;
-            const modelType = modelId ? selectedModel?.type : undefined;
+              selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.name
+            const modelType = modelId ? selectedModel?.type : undefined
 
             const result = await retryMessage(
               selectedTaskDetail.id,
@@ -624,53 +624,53 @@ export function useChatStreamHandlers({
               modelId,
               modelType,
               forceOverride
-            );
+            )
 
             if (result.error) {
               toast({
                 variant: 'destructive',
                 title: t('chat:errors.request_failed_retry'),
-              });
+              })
             }
           } catch (error) {
-            console.error('[ChatStreamHandlers] Retry failed:', error);
+            console.error('[ChatStreamHandlers] Retry failed:', error)
             toast({
               variant: 'destructive',
               title: t('chat:errors.request_failed_retry'),
-            });
-            throw error;
+            })
+            throw error
           }
         }
-      );
+      )
     },
     [retryMessage, selectedTaskDetail?.id, selectedModel, forceOverride, t, toast, traceAction]
-  );
+  )
 
   // Handle cancel task
   const handleCancelTask = useCallback(async () => {
-    if (!selectedTaskDetail?.id || isCancelling) return;
+    if (!selectedTaskDetail?.id || isCancelling) return
 
-    setIsCancelling(true);
+    setIsCancelling(true)
 
     try {
       const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Cancel operation timed out')), 60000);
-      });
+        setTimeout(() => reject(new Error('Cancel operation timed out')), 60000)
+      })
 
-      await Promise.race([taskApis.cancelTask(selectedTaskDetail.id), timeoutPromise]);
+      await Promise.race([taskApis.cancelTask(selectedTaskDetail.id), timeoutPromise])
 
       toast({
         title: 'Task cancelled successfully',
         description: 'The task has been cancelled.',
-      });
+      })
 
-      refreshTasks();
-      refreshSelectedTaskDetail(false);
+      refreshTasks()
+      refreshSelectedTaskDetail(false)
     } catch (err: unknown) {
       const errorMessage =
         err instanceof Error && err.message === 'Cancel operation timed out'
           ? 'Cancel operation timed out, please check task status later'
-          : 'Failed to cancel task';
+          : 'Failed to cancel task'
 
       toast({
         variant: 'destructive',
@@ -680,25 +680,25 @@ export function useChatStreamHandlers({
             variant="outline"
             size="sm"
             onClick={() => {
-              setIsCancelling(false);
-              handleCancelTask();
+              setIsCancelling(false)
+              handleCancelTask()
             }}
           >
             Retry
           </Button>
         ),
-      });
+      })
 
-      console.error('Cancel task failed:', err);
+      console.error('Cancel task failed:', err)
 
       if (err instanceof Error && err.message === 'Cancel operation timed out') {
-        refreshTasks();
-        refreshSelectedTaskDetail(false);
+        refreshTasks()
+        refreshSelectedTaskDetail(false)
       }
     } finally {
-      setIsCancelling(false);
+      setIsCancelling(false)
     }
-  }, [selectedTaskDetail?.id, isCancelling, toast, refreshTasks, refreshSelectedTaskDetail]);
+  }, [selectedTaskDetail?.id, isCancelling, toast, refreshTasks, refreshSelectedTaskDetail])
 
   return {
     // Stream state
@@ -723,7 +723,7 @@ export function useChatStreamHandlers({
 
     // State
     isCancelling,
-  };
+  }
 }
 
-export default useChatStreamHandlers;
+export default useChatStreamHandlers

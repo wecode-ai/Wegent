@@ -2,22 +2,22 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState, useEffect } from 'react';
-import { Label } from '@/components/ui/label';
-import { Input } from '@/components/ui/input';
-import { SearchableSelect } from '@/components/ui/searchable-select';
-import { useTranslation } from '@/hooks/useTranslation';
-import type { SplitterConfig, SplitterType } from '@/types/knowledge';
+import { useState, useEffect } from 'react'
+import { Label } from '@/components/ui/label'
+import { Input } from '@/components/ui/input'
+import { SearchableSelect } from '@/components/ui/searchable-select'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { SplitterConfig, SplitterType } from '@/types/knowledge'
 
 // Re-export SplitterConfig for backward compatibility
-export type { SplitterConfig };
+export type { SplitterConfig }
 
 interface SplitterSettingsSectionProps {
-  config: Partial<SplitterConfig>;
-  onChange: (config: Partial<SplitterConfig>) => void;
-  readOnly?: boolean;
+  config: Partial<SplitterConfig>
+  onChange: (config: Partial<SplitterConfig>) => void
+  readOnly?: boolean
 }
 
 export function SplitterSettingsSection({
@@ -25,28 +25,28 @@ export function SplitterSettingsSection({
   onChange,
   readOnly = false,
 }: SplitterSettingsSectionProps) {
-  const { t } = useTranslation();
-  const [overlapError, setOverlapError] = useState('');
+  const { t } = useTranslation()
+  const [overlapError, setOverlapError] = useState('')
 
-  const splitterType = (config.type as SplitterType) || 'sentence';
+  const splitterType = (config.type as SplitterType) || 'sentence'
 
   // Sentence splitter config
-  const chunkSize = config.type === 'sentence' ? (config.chunk_size ?? 1024) : 1024;
-  const chunkOverlap = config.type === 'sentence' ? (config.chunk_overlap ?? 50) : 50;
-  const separator = config.type === 'sentence' ? (config.separator ?? '\n\n') : '\n\n';
+  const chunkSize = config.type === 'sentence' ? (config.chunk_size ?? 1024) : 1024
+  const chunkOverlap = config.type === 'sentence' ? (config.chunk_overlap ?? 50) : 50
+  const separator = config.type === 'sentence' ? (config.separator ?? '\n\n') : '\n\n'
 
   // Semantic splitter config
-  const bufferSize = config.type === 'semantic' ? (config.buffer_size ?? 1) : 1;
+  const bufferSize = config.type === 'semantic' ? (config.buffer_size ?? 1) : 1
   const breakpointThreshold =
-    config.type === 'semantic' ? (config.breakpoint_percentile_threshold ?? 95) : 95;
+    config.type === 'semantic' ? (config.breakpoint_percentile_threshold ?? 95) : 95
 
   useEffect(() => {
     if (splitterType === 'sentence' && chunkOverlap >= chunkSize) {
-      setOverlapError(t('knowledge:document.splitter.overlapError'));
+      setOverlapError(t('knowledge:document.splitter.overlapError'))
     } else {
-      setOverlapError('');
+      setOverlapError('')
     }
-  }, [chunkSize, chunkOverlap, splitterType, t]);
+  }, [chunkSize, chunkOverlap, splitterType, t])
 
   const handleTypeChange = (newType: string) => {
     if (newType === 'sentence') {
@@ -55,40 +55,40 @@ export function SplitterSettingsSection({
         separator: '\n\n',
         chunk_size: 1024,
         chunk_overlap: 50,
-      });
+      })
     } else if (newType === 'semantic') {
       onChange({
         type: 'semantic',
         buffer_size: 1,
         breakpoint_percentile_threshold: 95,
-      });
+      })
     }
-  };
+  }
 
   const handleChunkSizeChange = (value: number) => {
-    const newValue = Math.max(128, Math.min(8192, value));
-    onChange({ ...config, type: 'sentence', chunk_size: newValue });
-  };
+    const newValue = Math.max(128, Math.min(8192, value))
+    onChange({ ...config, type: 'sentence', chunk_size: newValue })
+  }
 
   const handleChunkOverlapChange = (value: number) => {
-    const newValue = Math.max(0, Math.min(chunkSize - 1, value));
-    onChange({ ...config, type: 'sentence', chunk_overlap: newValue });
-  };
+    const newValue = Math.max(0, Math.min(chunkSize - 1, value))
+    onChange({ ...config, type: 'sentence', chunk_overlap: newValue })
+  }
 
   const handleBufferSizeChange = (value: number) => {
-    const newValue = Math.max(1, Math.min(10, value));
-    onChange({ ...config, type: 'semantic', buffer_size: newValue });
-  };
+    const newValue = Math.max(1, Math.min(10, value))
+    onChange({ ...config, type: 'semantic', buffer_size: newValue })
+  }
 
   const handleBreakpointThresholdChange = (value: number) => {
-    const newValue = Math.max(50, Math.min(100, value));
-    onChange({ ...config, type: 'semantic', breakpoint_percentile_threshold: newValue });
-  };
+    const newValue = Math.max(50, Math.min(100, value))
+    onChange({ ...config, type: 'semantic', breakpoint_percentile_threshold: newValue })
+  }
 
   const splitterTypeItems = [
     { value: 'sentence', label: t('knowledge:document.splitter.sentence') },
     { value: 'semantic', label: t('knowledge:document.splitter.semantic') },
-  ];
+  ]
 
   return (
     <div className="space-y-4">
@@ -219,5 +219,5 @@ export function SplitterSettingsSection({
         </>
       )}
     </div>
-  );
+  )
 }

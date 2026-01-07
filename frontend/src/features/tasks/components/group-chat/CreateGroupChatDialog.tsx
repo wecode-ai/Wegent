@@ -2,94 +2,94 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState, useMemo } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useMemo } from 'react'
+import { useRouter } from 'next/navigation'
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogDescription,
-} from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { useTranslation } from '@/hooks/useTranslation';
-import { useToast } from '@/hooks/use-toast';
-import { Team, Task } from '@/types/api';
+} from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { useTranslation } from '@/hooks/useTranslation'
+import { useToast } from '@/hooks/use-toast'
+import { Team, Task } from '@/types/api'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import { teamService } from '@/features/tasks/service/teamService';
-import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext';
-import { useTaskContext } from '@/features/tasks/contexts/taskContext';
-import { ModelSelector, type Model } from '@/features/tasks/components/selector';
-import { useUser } from '@/features/common/UserContext';
+} from '@/components/ui/select'
+import { teamService } from '@/features/tasks/service/teamService'
+import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
+import { useTaskContext } from '@/features/tasks/contexts/taskContext'
+import { ModelSelector, type Model } from '@/features/tasks/components/selector'
+import { useUser } from '@/features/common/UserContext'
 
 interface CreateGroupChatDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+  open: boolean
+  onOpenChange: (open: boolean) => void
 }
 
 export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDialogProps) {
-  const { t } = useTranslation();
-  const { toast } = useToast();
-  const router = useRouter();
-  const [title, setTitle] = useState('');
-  const [selectedTeamId, setSelectedTeamId] = useState<string>('');
-  const [isCreating, setIsCreating] = useState(false);
-  const [selectedModel, setSelectedModel] = useState<Model | null>(null);
-  const [forceOverride, setForceOverride] = useState(false);
+  const { t } = useTranslation()
+  const { toast } = useToast()
+  const router = useRouter()
+  const [title, setTitle] = useState('')
+  const [selectedTeamId, setSelectedTeamId] = useState<string>('')
+  const [isCreating, setIsCreating] = useState(false)
+  const [selectedModel, setSelectedModel] = useState<Model | null>(null)
+  const [forceOverride, setForceOverride] = useState(false)
 
-  const { teams, isTeamsLoading } = teamService.useTeams();
-  const { sendMessage } = useChatStreamContext();
-  const { refreshTasks, setSelectedTask } = useTaskContext();
-  const { user } = useUser();
+  const { teams, isTeamsLoading } = teamService.useTeams()
+  const { sendMessage } = useChatStreamContext()
+  const { refreshTasks, setSelectedTask } = useTaskContext()
+  const { user } = useUser()
 
   // Filter teams to only show chat-type teams (agent_type === 'chat')
   const chatTeams = useMemo(() => {
-    return teams.filter(team => team.agent_type === 'chat');
-  }, [teams]);
+    return teams.filter(team => team.agent_type === 'chat')
+  }, [teams])
 
   // Get selected team object
   const selectedTeam = useMemo(() => {
-    if (!selectedTeamId) return null;
-    return chatTeams.find(t => t.id === parseInt(selectedTeamId)) || null;
-  }, [selectedTeamId, chatTeams]);
+    if (!selectedTeamId) return null
+    return chatTeams.find(t => t.id === parseInt(selectedTeamId)) || null
+  }, [selectedTeamId, chatTeams])
 
   // Check if form is valid and ready to submit
   const isFormValid = useMemo(() => {
-    return title.trim().length > 0 && selectedTeamId.length > 0 && selectedModel !== null;
-  }, [title, selectedTeamId, selectedModel]);
+    return title.trim().length > 0 && selectedTeamId.length > 0 && selectedModel !== null
+  }, [title, selectedTeamId, selectedModel])
 
   const handleCreate = async () => {
     if (!title.trim()) {
       toast({
         title: t('groupChat.create.titleRequired'),
         variant: 'destructive',
-      });
-      return;
+      })
+      return
     }
 
     if (!selectedTeamId) {
       toast({
         title: t('groupChat.create.teamRequired'),
         variant: 'destructive',
-      });
-      return;
+      })
+      return
     }
 
-    setIsCreating(true);
+    setIsCreating(true)
 
     try {
       if (!selectedTeam) {
-        throw new Error('Selected team not found');
+        throw new Error('Selected team not found')
       }
 
       console.log('[CreateGroupChatDialog] Creating group chat with ChatStreamContext', {
@@ -98,7 +98,7 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
         title: title,
         modelName: selectedModel?.name || null,
         forceOverride: forceOverride,
-      });
+      })
 
       // Use ChatStreamContext to send the message
       // This ensures the stream is registered globally and the task page can display it
@@ -125,15 +125,15 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
           // Called when message is sent successfully with the real task ID
           onMessageSent: (_localMessageId: string, realTaskId: number, _subtaskId: number) => {
             // Close dialog and reset form when task ID is resolved
-            onOpenChange(false);
-            setTitle('');
-            setSelectedTeamId('');
-            setSelectedModel(null);
-            setForceOverride(false);
-            setIsCreating(false);
+            onOpenChange(false)
+            setTitle('')
+            setSelectedTeamId('')
+            setSelectedModel(null)
+            setForceOverride(false)
+            setIsCreating(false)
 
             // Refresh task list to show the new group chat
-            refreshTasks();
+            refreshTasks()
 
             // Set selected task with is_group_chat flag BEFORE navigation
             // This ensures ChatArea receives the correct isGroupChat prop immediately
@@ -142,37 +142,37 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
               title: title,
               team_id: selectedTeam?.id || 0,
               is_group_chat: true,
-            } as Task);
+            } as Task)
 
             // Navigate to the new task to show streaming output
-            router.push(`/chat?taskId=${realTaskId}`);
+            router.push(`/chat?taskId=${realTaskId}`)
 
             // Success toast
             toast({
               title: t('groupChat.create.success'),
               description: t('groupChat.create.successDesc'),
-            });
+            })
           },
           onError: error => {
             toast({
               title: t('groupChat.create.failed'),
               description: error.message || t('groupChat.create.failedDesc'),
               variant: 'destructive',
-            });
-            setIsCreating(false);
+            })
+            setIsCreating(false)
           },
         }
-      );
+      )
     } catch (error) {
-      console.error('[CreateGroupChatDialog] Failed to create group chat:', error);
+      console.error('[CreateGroupChatDialog] Failed to create group chat:', error)
       toast({
         title: t('groupChat.create.failed'),
         description: error instanceof Error ? error.message : t('groupChat.create.failedDesc'),
         variant: 'destructive',
-      });
-      setIsCreating(false);
+      })
+      setIsCreating(false)
     }
-  };
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -247,5 +247,5 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
         </div>
       </DialogContent>
     </Dialog>
-  );
+  )
 }

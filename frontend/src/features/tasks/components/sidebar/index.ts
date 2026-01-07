@@ -1,7 +1,7 @@
-export { default as TaskSidebar } from './TaskSidebar';
-export { default as PublicTaskSidebar } from './PublicTaskSidebar';
-export { default as ResizableSidebar } from './ResizableSidebar';
-export { default as TaskListSection } from './TaskListSection';
-export { default as CollapsedSidebarButtons } from './CollapsedSidebarButtons';
-export { default as TaskMenu } from './TaskMenu';
-export { default as SearchDialog } from './SearchDialog';
+export { default as TaskSidebar } from './TaskSidebar'
+export { default as PublicTaskSidebar } from './PublicTaskSidebar'
+export { default as ResizableSidebar } from './ResizableSidebar'
+export { default as TaskListSection } from './TaskListSection'
+export { default as CollapsedSidebarButtons } from './CollapsedSidebarButtons'
+export { default as TaskMenu } from './TaskMenu'
+export { default as SearchDialog } from './SearchDialog'

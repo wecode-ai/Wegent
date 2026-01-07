@@ -2,21 +2,21 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React from 'react';
-import Modal from '@/features/common/Modal';
-import { Button } from '@/components/ui/button';
-import { useToast } from '@/hooks/use-toast';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { DocumentDuplicateIcon } from '@heroicons/react/24/outline';
-import { useTranslation } from '@/hooks/useTranslation';
+import React from 'react'
+import Modal from '@/features/common/Modal'
+import { Button } from '@/components/ui/button'
+import { useToast } from '@/hooks/use-toast'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { DocumentDuplicateIcon } from '@heroicons/react/24/outline'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface TeamShareModalProps {
-  visible: boolean;
-  onClose: () => void;
-  teamName: string;
-  shareUrl: string;
+  visible: boolean
+  onClose: () => void
+  teamName: string
+  shareUrl: string
 }
 
 export default function TeamShareModal({
@@ -25,30 +25,30 @@ export default function TeamShareModal({
   teamName,
   shareUrl,
 }: TeamShareModalProps) {
-  const { t } = useTranslation();
-  const { toast } = useToast();
+  const { t } = useTranslation()
+  const { toast } = useToast()
 
   const handleCopyLink = async () => {
     try {
-      await navigator.clipboard.writeText(shareUrl);
+      await navigator.clipboard.writeText(shareUrl)
       toast({
         title: t('common:teams.copy_success'),
-      });
-      onClose();
+      })
+      onClose()
     } catch {
       // Fallback to traditional method if clipboard API is not available
-      const textArea = document.createElement('textarea');
-      textArea.value = shareUrl;
-      document.body.appendChild(textArea);
-      textArea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textArea);
+      const textArea = document.createElement('textarea')
+      textArea.value = shareUrl
+      document.body.appendChild(textArea)
+      textArea.select()
+      document.execCommand('copy')
+      document.body.removeChild(textArea)
       toast({
         title: t('common:teams.copy_success'),
-      });
-      onClose();
+      })
+      onClose()
     }
-  };
+  }
 
   return (
     <Modal
@@ -92,5 +92,5 @@ export default function TeamShareModal({
         </div>
       </div>
     </Modal>
-  );
+  )
 }

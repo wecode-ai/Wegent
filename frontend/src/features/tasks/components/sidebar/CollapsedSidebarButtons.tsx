@@ -2,31 +2,31 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React from 'react';
-import { PanelLeftOpen, Plus } from 'lucide-react';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { useTranslation } from '@/hooks/useTranslation';
-import { useTaskContext } from '@/features/tasks/contexts/taskContext';
+import React from 'react'
+import { PanelLeftOpen, Plus } from 'lucide-react'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { useTranslation } from '@/hooks/useTranslation'
+import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 
 interface CollapsedSidebarButtonsProps {
-  onExpand: () => void;
-  onNewTask: () => void;
+  onExpand: () => void
+  onNewTask: () => void
 }
 
 export default function CollapsedSidebarButtons({
   onExpand,
   onNewTask,
 }: CollapsedSidebarButtonsProps) {
-  const { t } = useTranslation();
-  const { tasks, getUnreadCount, viewStatusVersion } = useTaskContext();
+  const { t } = useTranslation()
+  const { tasks, getUnreadCount, viewStatusVersion } = useTaskContext()
 
   // Calculate unread count from task context, same as TaskSidebar
   const hasUnreadTasks = React.useMemo(() => {
-    return getUnreadCount(tasks) > 0;
+    return getUnreadCount(tasks) > 0
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tasks, getUnreadCount, viewStatusVersion]);
+  }, [tasks, getUnreadCount, viewStatusVersion])
 
   return (
     <div className="fixed top-2 sm:top-3 left-4 z-50">
@@ -72,5 +72,5 @@ export default function CollapsedSidebarButtons({
         )}
       </div>
     </div>
-  );
+  )
 }

@@ -2,17 +2,17 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState, useRef, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import Link from 'next/link';
-import { useUser } from '@/features/common/UserContext';
-import { useTranslation, languageNames } from '@/hooks/useTranslation';
-import { DocsButton } from '@/features/layout/DocsButton';
-import { FeedbackButton } from '@/features/layout/FeedbackButton';
-import { ThemeToggle } from '@/features/theme/ThemeToggle';
-import { paths } from '@/config/paths';
+import { useState, useRef, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import Link from 'next/link'
+import { useUser } from '@/features/common/UserContext'
+import { useTranslation, languageNames } from '@/hooks/useTranslation'
+import { DocsButton } from '@/features/layout/DocsButton'
+import { FeedbackButton } from '@/features/layout/FeedbackButton'
+import { ThemeToggle } from '@/features/theme/ThemeToggle'
+import { paths } from '@/config/paths'
 import {
   UserCircleIcon,
   Cog6ToothIcon,
@@ -20,65 +20,65 @@ import {
   ChevronUpIcon,
   ShieldCheckIcon,
   LanguageIcon,
-} from '@heroicons/react/24/outline';
+} from '@heroicons/react/24/outline'
 
 interface UserFloatingMenuProps {
-  className?: string;
+  className?: string
 }
 
 export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
-  const { t, changeLanguage, getCurrentLanguage, getSupportedLanguages } = useTranslation();
-  const router = useRouter();
-  const { user, logout } = useUser();
-  const [isExpanded, setIsExpanded] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const { t, changeLanguage, getCurrentLanguage, getSupportedLanguages } = useTranslation()
+  const router = useRouter()
+  const { user, logout } = useUser()
+  const [isExpanded, setIsExpanded] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null)
 
-  const userDisplayName = user?.user_name || t('common:user.default_name');
-  const isAdmin = user?.role === 'admin';
-  const currentLanguage = getCurrentLanguage();
-  const supportedLanguages = getSupportedLanguages();
+  const userDisplayName = user?.user_name || t('common:user.default_name')
+  const isAdmin = user?.role === 'admin'
+  const currentLanguage = getCurrentLanguage()
+  const supportedLanguages = getSupportedLanguages()
 
   const handleLanguageClick = () => {
-    const currentIndex = supportedLanguages.indexOf(currentLanguage);
-    const nextIndex = (currentIndex + 1) % supportedLanguages.length;
-    const nextLang = supportedLanguages[nextIndex];
-    changeLanguage(nextLang);
-    setIsExpanded(false);
-  };
+    const currentIndex = supportedLanguages.indexOf(currentLanguage)
+    const nextIndex = (currentIndex + 1) % supportedLanguages.length
+    const nextLang = supportedLanguages[nextIndex]
+    changeLanguage(nextLang)
+    setIsExpanded(false)
+  }
 
   const handleMouseEnter = () => {
     if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
+      clearTimeout(timeoutRef.current)
+      timeoutRef.current = null
     }
-    setIsExpanded(true);
-  };
+    setIsExpanded(true)
+  }
 
   const handleMouseLeave = () => {
     timeoutRef.current = setTimeout(() => {
-      setIsExpanded(false);
-    }, 150);
-  };
+      setIsExpanded(false)
+    }, 150)
+  }
 
   const handleSettingsClick = () => {
-    router.push(paths.settings.root.getHref());
-    setIsExpanded(false);
-  };
+    router.push(paths.settings.root.getHref())
+    setIsExpanded(false)
+  }
 
   const handleLogout = () => {
-    logout();
-    setIsExpanded(false);
-  };
+    logout()
+    setIsExpanded(false)
+  }
 
   // Cleanup timeout on unmount
   useEffect(() => {
     return () => {
       if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
+        clearTimeout(timeoutRef.current)
       }
-    };
-  }, []);
+    }
+  }, [])
 
   return (
     <div
@@ -190,5 +190,5 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
         </div>
       </div>
     </div>
-  );
+  )
 }

@@ -2,22 +2,22 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useEffect, useState, useCallback } from 'react';
-import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
-import { Tag } from '@/components/ui/tag';
+import React, { useEffect, useState, useCallback } from 'react'
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { Tag } from '@/components/ui/tag'
 import {
   CircleStackIcon,
   PencilIcon,
   TrashIcon,
   GlobeAltIcon,
   BeakerIcon,
-} from '@heroicons/react/24/outline';
-import { Loader2 } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
-import { useTranslation } from '@/hooks/useTranslation';
+} from '@heroicons/react/24/outline'
+import { Loader2 } from 'lucide-react'
+import { useToast } from '@/hooks/use-toast'
+import { useTranslation } from '@/hooks/useTranslation'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -27,7 +27,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+} from '@/components/ui/alert-dialog'
 import {
   Dialog,
   DialogContent,
@@ -35,17 +35,17 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
-import { adminApis, AdminPublicRetriever, RetrieverCRD } from '@/apis/admin';
-import { retrieverApis, RetrievalMethodType } from '@/apis/retrievers';
-import UnifiedAddButton from '@/components/common/UnifiedAddButton';
+} from '@/components/ui/dialog'
+import { adminApis, AdminPublicRetriever, RetrieverCRD } from '@/apis/admin'
+import { retrieverApis, RetrievalMethodType } from '@/apis/retrievers'
+import UnifiedAddButton from '@/components/common/UnifiedAddButton'
 import {
   RetrieverFormFields,
   RetrieverFormData,
   defaultFormData,
   STORAGE_TYPE_CONFIG,
   IndexModeType,
-} from './RetrieverFormFields';
+} from './RetrieverFormFields'
 
 /**
  * Kubernetes-style resource name validation pattern.
@@ -55,7 +55,7 @@ import {
  * - Single character names are allowed (just alphanumeric)
  * - Examples: "my-retriever", "retriever1", "a", "my-test-retriever-01"
  */
-const KUBERNETES_NAME_REGEX = /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/;
+const KUBERNETES_NAME_REGEX = /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/
 
 /**
  * Default weights for hybrid retrieval methods.
@@ -63,103 +63,103 @@ const KUBERNETES_NAME_REGEX = /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/;
  * Keyword search complements with exact term matching.
  * Total should sum to 1.0 for normalized scoring.
  */
-const DEFAULT_VECTOR_WEIGHT = 0.7;
-const DEFAULT_KEYWORD_WEIGHT = 0.3;
+const DEFAULT_VECTOR_WEIGHT = 0.7
+const DEFAULT_KEYWORD_WEIGHT = 0.3
 
 /**
  * Default page size for fetching public retrievers.
  * Using a larger value to minimize pagination requests in admin view.
  */
-const DEFAULT_PAGE_SIZE = 100;
+const DEFAULT_PAGE_SIZE = 100
 
 const PublicRetrieverList: React.FC = () => {
-  const { t } = useTranslation(['admin', 'common', 'wizard']);
-  const { toast } = useToast();
-  const [retrievers, setRetrievers] = useState<AdminPublicRetriever[]>([]);
-  const [_total, setTotal] = useState(0);
-  const [page, _setPage] = useState(1);
-  const [loading, setLoading] = useState(true);
+  const { t } = useTranslation(['admin', 'common', 'wizard'])
+  const { toast } = useToast()
+  const [retrievers, setRetrievers] = useState<AdminPublicRetriever[]>([])
+  const [_total, setTotal] = useState(0)
+  const [page, _setPage] = useState(1)
+  const [loading, setLoading] = useState(true)
 
   // Dialog states
-  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
-  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
-  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
-  const [selectedRetriever, setSelectedRetriever] = useState<AdminPublicRetriever | null>(null);
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
+  const [selectedRetriever, setSelectedRetriever] = useState<AdminPublicRetriever | null>(null)
 
   // Form states
-  const [formData, setFormData] = useState<RetrieverFormData>(defaultFormData);
-  const [saving, setSaving] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
-  const [showApiKey, setShowApiKey] = useState(false);
+  const [formData, setFormData] = useState<RetrieverFormData>(defaultFormData)
+  const [saving, setSaving] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [showPassword, setShowPassword] = useState(false)
+  const [showApiKey, setShowApiKey] = useState(false)
 
   // Retrieval methods state
   const [availableRetrievalMethods, setAvailableRetrievalMethods] = useState<RetrievalMethodType[]>(
     [...STORAGE_TYPE_CONFIG.elasticsearch.fallbackRetrievalMethods]
-  );
-  const [loadingRetrievalMethods, setLoadingRetrievalMethods] = useState(false);
+  )
+  const [loadingRetrievalMethods, setLoadingRetrievalMethods] = useState(false)
 
   const fetchRetrievers = useCallback(async () => {
-    setLoading(true);
+    setLoading(true)
     try {
-      const response = await adminApis.getPublicRetrievers(page, DEFAULT_PAGE_SIZE);
-      setRetrievers(response.items);
-      setTotal(response.total);
+      const response = await adminApis.getPublicRetrievers(page, DEFAULT_PAGE_SIZE)
+      setRetrievers(response.items)
+      setTotal(response.total)
     } catch (_error) {
       toast({
         variant: 'destructive',
         title: t('admin:public_retrievers.errors.load_failed'),
-      });
+      })
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  }, [page, toast, t]);
+  }, [page, toast, t])
 
   useEffect(() => {
-    fetchRetrievers();
-  }, [fetchRetrievers]);
+    fetchRetrievers()
+  }, [fetchRetrievers])
 
   // Fetch retrieval methods for a storage type from API
   const fetchRetrievalMethods = useCallback(async (type: 'elasticsearch' | 'qdrant') => {
-    setLoadingRetrievalMethods(true);
+    setLoadingRetrievalMethods(true)
     try {
-      const response = await retrieverApis.getStorageTypeRetrievalMethods(type);
-      const methods = response.retrieval_methods as RetrievalMethodType[];
-      setAvailableRetrievalMethods(methods);
-      return methods;
+      const response = await retrieverApis.getStorageTypeRetrievalMethods(type)
+      const methods = response.retrieval_methods as RetrievalMethodType[]
+      setAvailableRetrievalMethods(methods)
+      return methods
     } catch (error) {
-      console.error('Failed to fetch retrieval methods:', error);
-      const fallback = [...STORAGE_TYPE_CONFIG[type].fallbackRetrievalMethods];
-      setAvailableRetrievalMethods(fallback);
-      return fallback;
+      console.error('Failed to fetch retrieval methods:', error)
+      const fallback = [...STORAGE_TYPE_CONFIG[type].fallbackRetrievalMethods]
+      setAvailableRetrievalMethods(fallback)
+      return fallback
     } finally {
-      setLoadingRetrievalMethods(false);
+      setLoadingRetrievalMethods(false)
     }
-  }, []);
+  }, [])
 
   // Handle retrieval method toggle
   const handleRetrievalMethodToggle = useCallback(
     (method: RetrievalMethodType, checked: boolean) => {
       setFormData(prev => {
-        const currentMethods = prev.enabledRetrievalMethods;
+        const currentMethods = prev.enabledRetrievalMethods
         if (checked) {
           return {
             ...prev,
             enabledRetrievalMethods: currentMethods.includes(method)
               ? currentMethods
               : [...currentMethods, method],
-          };
+          }
         } else {
-          const newMethods = currentMethods.filter(m => m !== method);
+          const newMethods = currentMethods.filter(m => m !== method)
           return {
             ...prev,
             enabledRetrievalMethods: newMethods.length > 0 ? newMethods : currentMethods,
-          };
+          }
         }
-      });
+      })
     },
     []
-  );
+  )
 
   const formToRetrieverCRD = (data: RetrieverFormData): RetrieverCRD => {
     // Build retrieval methods config
@@ -175,7 +175,7 @@ const PublicRetrieverList: React.FC = () => {
       hybrid: {
         enabled: data.enabledRetrievalMethods.includes('hybrid'),
       },
-    };
+    }
 
     return {
       apiVersion: 'agent.wecode.io/v1',
@@ -201,24 +201,24 @@ const PublicRetrieverList: React.FC = () => {
         },
         retrievalMethods: retrievalMethodsConfig,
       },
-    };
-  };
+    }
+  }
 
   const retrieverToFormData = (retriever: AdminPublicRetriever): RetrieverFormData => {
-    const json = retriever.json;
-    const spec = json?.spec || ({} as RetrieverCRD['spec']);
-    const storageConfig = spec?.storageConfig || {};
-    const indexStrategy = storageConfig?.indexStrategy || {};
+    const json = retriever.json
+    const spec = json?.spec || ({} as RetrieverCRD['spec'])
+    const storageConfig = spec?.storageConfig || {}
+    const indexStrategy = storageConfig?.indexStrategy || {}
 
     // Parse enabled retrieval methods
-    const enabledMethods: RetrievalMethodType[] = [];
+    const enabledMethods: RetrievalMethodType[] = []
     if (spec.retrievalMethods) {
-      if (spec.retrievalMethods.vector?.enabled) enabledMethods.push('vector');
-      if (spec.retrievalMethods.keyword?.enabled) enabledMethods.push('keyword');
-      if (spec.retrievalMethods.hybrid?.enabled) enabledMethods.push('hybrid');
+      if (spec.retrievalMethods.vector?.enabled) enabledMethods.push('vector')
+      if (spec.retrievalMethods.keyword?.enabled) enabledMethods.push('keyword')
+      if (spec.retrievalMethods.hybrid?.enabled) enabledMethods.push('hybrid')
     }
     if (enabledMethods.length === 0) {
-      enabledMethods.push('vector');
+      enabledMethods.push('vector')
     }
 
     return {
@@ -235,12 +235,12 @@ const PublicRetrieverList: React.FC = () => {
       rollingStep: String(indexStrategy.rollingStep || 5000),
       prefix: indexStrategy.prefix || 'wegent',
       enabledRetrievalMethods: enabledMethods,
-    };
-  };
+    }
+  }
 
   const handleStorageTypeChange = async (value: 'elasticsearch' | 'qdrant') => {
-    const config = STORAGE_TYPE_CONFIG[value];
-    const availableMethods = await fetchRetrievalMethods(value);
+    const config = STORAGE_TYPE_CONFIG[value]
+    const availableMethods = await fetchRetrievalMethods(value)
 
     setFormData(prev => ({
       ...prev,
@@ -248,19 +248,19 @@ const PublicRetrieverList: React.FC = () => {
       url: config.defaultUrl,
       indexMode: config.recommendedIndexMode,
       enabledRetrievalMethods: [...availableMethods],
-    }));
-  };
+    }))
+  }
 
   const handleTestConnection = async () => {
     if (!formData.url) {
       toast({
         variant: 'destructive',
         title: t('common:retrievers.url_required'),
-      });
-      return;
+      })
+      return
     }
 
-    setTesting(true);
+    setTesting(true)
     try {
       const result = await retrieverApis.testConnection({
         storage_type: formData.storageType,
@@ -268,189 +268,189 @@ const PublicRetrieverList: React.FC = () => {
         username: formData.username || undefined,
         password: formData.password || undefined,
         api_key: formData.apiKey || undefined,
-      });
+      })
 
       if (result.success) {
         toast({
           title: t('common:retrievers.test_success'),
           description: result.message,
-        });
+        })
       } else {
         toast({
           variant: 'destructive',
           title: t('common:retrievers.test_failed'),
           description: result.message,
-        });
+        })
       }
     } catch (error) {
       toast({
         variant: 'destructive',
         title: t('common:retrievers.test_failed'),
         description: (error as Error).message,
-      });
+      })
     } finally {
-      setTesting(false);
+      setTesting(false)
     }
-  };
+  }
 
   // Validation helper: show error toast and return false
   const showValidationError = (title: string, description?: string): false => {
-    toast({ variant: 'destructive', title, description });
-    return false;
-  };
+    toast({ variant: 'destructive', title, description })
+    return false
+  }
 
   // Validate retriever name (required + Kubernetes naming convention)
   const validateName = (): boolean => {
     if (!formData.name.trim()) {
-      return showValidationError(t('admin:public_retrievers.errors.name_required'));
+      return showValidationError(t('admin:public_retrievers.errors.name_required'))
     }
     if (!KUBERNETES_NAME_REGEX.test(formData.name)) {
       return showValidationError(
         t('common:retrievers.name_invalid'),
         t('common:retrievers.name_invalid_hint')
-      );
+      )
     }
-    return true;
-  };
+    return true
+  }
 
   // Validate URL (required)
   const validateUrl = (): boolean => {
     if (!formData.url.trim()) {
-      return showValidationError(t('admin:public_retrievers.errors.url_required'));
+      return showValidationError(t('admin:public_retrievers.errors.url_required'))
     }
-    return true;
-  };
+    return true
+  }
 
   // Validate index strategy specific fields
   const validateIndexStrategy = (): boolean => {
-    const { indexMode, fixedName, rollingStep, prefix } = formData;
+    const { indexMode, fixedName, rollingStep, prefix } = formData
 
     if (indexMode === 'fixed' && !fixedName.trim()) {
-      return showValidationError(t('common:retrievers.fixed_index_name_empty'));
+      return showValidationError(t('common:retrievers.fixed_index_name_empty'))
     }
 
     if (indexMode === 'rolling') {
-      const step = parseInt(rollingStep);
+      const step = parseInt(rollingStep)
       if (isNaN(step) || step <= 0) {
-        return showValidationError(t('common:retrievers.rolling_step_invalid'));
+        return showValidationError(t('common:retrievers.rolling_step_invalid'))
       }
       if (!prefix.trim()) {
-        return showValidationError(t('common:retrievers.rolling_prefix_required'));
+        return showValidationError(t('common:retrievers.rolling_prefix_required'))
       }
     }
 
     if ((indexMode === 'per_dataset' || indexMode === 'per_user') && !prefix.trim()) {
-      return showValidationError(t('common:retrievers.per_dataset_prefix_required'));
+      return showValidationError(t('common:retrievers.per_dataset_prefix_required'))
     }
 
-    return true;
-  };
+    return true
+  }
 
   // Main form validation - combines all validators
   const validateForm = (): boolean => {
-    return validateName() && validateUrl() && validateIndexStrategy();
-  };
+    return validateName() && validateUrl() && validateIndexStrategy()
+  }
 
   const handleCreateRetriever = async () => {
-    if (!validateForm()) return;
+    if (!validateForm()) return
 
-    setSaving(true);
+    setSaving(true)
     try {
-      const retrieverData = formToRetrieverCRD(formData);
-      await adminApis.createPublicRetriever(retrieverData);
-      toast({ title: t('admin:public_retrievers.success.created') });
-      setIsCreateDialogOpen(false);
-      resetForm();
-      fetchRetrievers();
+      const retrieverData = formToRetrieverCRD(formData)
+      await adminApis.createPublicRetriever(retrieverData)
+      toast({ title: t('admin:public_retrievers.success.created') })
+      setIsCreateDialogOpen(false)
+      resetForm()
+      fetchRetrievers()
     } catch (error) {
       toast({
         variant: 'destructive',
         title: t('admin:public_retrievers.errors.create_failed'),
         description: (error as Error).message,
-      });
+      })
     } finally {
-      setSaving(false);
+      setSaving(false)
     }
-  };
+  }
 
   const handleUpdateRetriever = async () => {
-    if (!selectedRetriever) return;
-    if (!validateForm()) return;
+    if (!selectedRetriever) return
+    if (!validateForm()) return
 
-    setSaving(true);
+    setSaving(true)
     try {
-      const retrieverData = formToRetrieverCRD(formData);
-      await adminApis.updatePublicRetriever(selectedRetriever.id, retrieverData);
-      toast({ title: t('admin:public_retrievers.success.updated') });
-      setIsEditDialogOpen(false);
-      resetForm();
-      fetchRetrievers();
+      const retrieverData = formToRetrieverCRD(formData)
+      await adminApis.updatePublicRetriever(selectedRetriever.id, retrieverData)
+      toast({ title: t('admin:public_retrievers.success.updated') })
+      setIsEditDialogOpen(false)
+      resetForm()
+      fetchRetrievers()
     } catch (error) {
       toast({
         variant: 'destructive',
         title: t('admin:public_retrievers.errors.update_failed'),
         description: (error as Error).message,
-      });
+      })
     } finally {
-      setSaving(false);
+      setSaving(false)
     }
-  };
+  }
 
   const handleDeleteRetriever = async () => {
-    if (!selectedRetriever) return;
+    if (!selectedRetriever) return
 
-    setSaving(true);
+    setSaving(true)
     try {
-      await adminApis.deletePublicRetriever(selectedRetriever.id);
-      toast({ title: t('admin:public_retrievers.success.deleted') });
-      setIsDeleteDialogOpen(false);
-      setSelectedRetriever(null);
-      fetchRetrievers();
+      await adminApis.deletePublicRetriever(selectedRetriever.id)
+      toast({ title: t('admin:public_retrievers.success.deleted') })
+      setIsDeleteDialogOpen(false)
+      setSelectedRetriever(null)
+      fetchRetrievers()
     } catch (error) {
       toast({
         variant: 'destructive',
         title: t('admin:public_retrievers.errors.delete_failed'),
         description: (error as Error).message,
-      });
+      })
     } finally {
-      setSaving(false);
+      setSaving(false)
     }
-  };
+  }
 
   const resetForm = () => {
-    setFormData(defaultFormData);
-    setSelectedRetriever(null);
-    setShowPassword(false);
-    setShowApiKey(false);
-  };
+    setFormData(defaultFormData)
+    setSelectedRetriever(null)
+    setShowPassword(false)
+    setShowApiKey(false)
+  }
 
   const openCreateDialog = async () => {
-    resetForm();
-    const methods = await fetchRetrievalMethods('elasticsearch');
+    resetForm()
+    const methods = await fetchRetrievalMethods('elasticsearch')
     setFormData(prev => ({
       ...prev,
       enabledRetrievalMethods: [...methods],
-    }));
-    setIsCreateDialogOpen(true);
-  };
+    }))
+    setIsCreateDialogOpen(true)
+  }
 
   const openEditDialog = async (retriever: AdminPublicRetriever) => {
-    setSelectedRetriever(retriever);
-    const formDataFromRetriever = retrieverToFormData(retriever);
-    setFormData(formDataFromRetriever);
-    await fetchRetrievalMethods(formDataFromRetriever.storageType);
-    setIsEditDialogOpen(true);
-  };
+    setSelectedRetriever(retriever)
+    const formDataFromRetriever = retrieverToFormData(retriever)
+    setFormData(formDataFromRetriever)
+    await fetchRetrievalMethods(formDataFromRetriever.storageType)
+    setIsEditDialogOpen(true)
+  }
 
   const getDisplayName = (retriever: AdminPublicRetriever): string => {
-    return retriever.displayName || retriever.name;
-  };
+    return retriever.displayName || retriever.name
+  }
 
   const getStorageTypeLabel = (storageType: string): string => {
-    if (storageType === 'elasticsearch') return 'Elasticsearch';
-    if (storageType === 'qdrant') return 'Qdrant';
-    return storageType;
-  };
+    if (storageType === 'elasticsearch') return 'Elasticsearch'
+    if (storageType === 'qdrant') return 'Qdrant'
+    return storageType
+  }
 
   return (
     <div className="space-y-3">
@@ -525,8 +525,8 @@ const PublicRetrieverList: React.FC = () => {
                       size="icon"
                       className="h-8 w-8 hover:text-error"
                       onClick={() => {
-                        setSelectedRetriever(retriever);
-                        setIsDeleteDialogOpen(true);
+                        setSelectedRetriever(retriever)
+                        setIsDeleteDialogOpen(true)
                       }}
                       title={t('admin:public_retrievers.delete_retriever')}
                     >
@@ -659,7 +659,7 @@ const PublicRetrieverList: React.FC = () => {
         </AlertDialogContent>
       </AlertDialog>
     </div>
-  );
-};
+  )
+}
 
-export default PublicRetrieverList;
+export default PublicRetrieverList

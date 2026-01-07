@@ -2,31 +2,31 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState } from 'react';
-import { useTranslation, languageNames } from '@/hooks/useTranslation';
-import { ChevronDownIcon, LanguageIcon } from '@heroicons/react/24/outline';
+import { useState } from 'react'
+import { useTranslation, languageNames } from '@/hooks/useTranslation'
+import { ChevronDownIcon, LanguageIcon } from '@heroicons/react/24/outline'
 
 interface LanguageSwitcherProps {
-  className?: string;
-  showLabel?: boolean;
+  className?: string
+  showLabel?: boolean
 }
 
 export default function LanguageSwitcher({
   className = '',
   showLabel = true,
 }: LanguageSwitcherProps) {
-  const { changeLanguage, getCurrentLanguage, getSupportedLanguages } = useTranslation();
-  const [isOpen, setIsOpen] = useState(false);
+  const { changeLanguage, getCurrentLanguage, getSupportedLanguages } = useTranslation()
+  const [isOpen, setIsOpen] = useState(false)
 
-  const currentLanguage = getCurrentLanguage();
-  const supportedLanguages = getSupportedLanguages();
+  const currentLanguage = getCurrentLanguage()
+  const supportedLanguages = getSupportedLanguages()
 
   const handleLanguageChange = (language: string) => {
-    changeLanguage(language);
-    setIsOpen(false);
-  };
+    changeLanguage(language)
+    setIsOpen(false)
+  }
 
   return (
     <div className={`relative ${className}`}>
@@ -66,5 +66,5 @@ export default function LanguageSwitcher({
         </>
       )}
     </div>
-  );
+  )
 }

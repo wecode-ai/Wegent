@@ -4,9 +4,9 @@
  */
 
 export interface BrowserInfo {
-  isInAppBrowser: boolean;
-  browserName?: string;
-  userAgent: string;
+  isInAppBrowser: boolean
+  browserName?: string
+  userAgent: string
 }
 
 /**
@@ -18,10 +18,10 @@ export function detectInAppBrowser(): BrowserInfo {
     return {
       isInAppBrowser: false,
       userAgent: '',
-    };
+    }
   }
 
-  const ua = navigator.userAgent.toLowerCase();
+  const ua = navigator.userAgent.toLowerCase()
 
   // Common in-app browser patterns
   const inAppBrowserPatterns = [
@@ -47,7 +47,7 @@ export function detectInAppBrowser(): BrowserInfo {
     // Other patterns
     { pattern: /\bgsasafari\b/i, name: 'Google App' }, // Google App
     { pattern: /\bsafari.*webview\b/i, name: 'WebView' }, // Generic WebView
-  ];
+  ]
 
   for (const { pattern, name } of inAppBrowserPatterns) {
     if (pattern.test(ua)) {
@@ -55,14 +55,14 @@ export function detectInAppBrowser(): BrowserInfo {
         isInAppBrowser: true,
         browserName: name,
         userAgent: navigator.userAgent,
-      };
+      }
     }
   }
 
   return {
     isInAppBrowser: false,
     userAgent: navigator.userAgent,
-  };
+  }
 }
 
 /**
@@ -80,7 +80,7 @@ export function getOpenInBrowserInstruction(browserName?: string): string {
     Facebook: 'facebook',
     Instagram: 'instagram',
     Twitter: 'twitter',
-  };
+  }
 
-  return instructionMap[browserName || ''] || 'default';
+  return instructionMap[browserName || ''] || 'default'
 }

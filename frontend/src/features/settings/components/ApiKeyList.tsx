@@ -2,17 +2,17 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
-import '@/features/common/scrollbar.css';
+'use client'
+import '@/features/common/scrollbar.css'
 
-import React, { useEffect, useState, useCallback } from 'react';
-import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { KeyIcon, TrashIcon, ClipboardDocumentIcon, CheckIcon } from '@heroicons/react/24/outline';
-import { Loader2 } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
-import { useTranslation } from '@/hooks/useTranslation';
+import React, { useEffect, useState, useCallback } from 'react'
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { KeyIcon, TrashIcon, ClipboardDocumentIcon, CheckIcon } from '@heroicons/react/24/outline'
+import { Loader2 } from 'lucide-react'
+import { useToast } from '@/hooks/use-toast'
+import { useTranslation } from '@/hooks/useTranslation'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -22,7 +22,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+} from '@/components/ui/alert-dialog'
 import {
   Dialog,
   DialogContent,
@@ -30,136 +30,136 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
-import { apiKeyApis, ApiKey, ApiKeyCreated } from '@/apis/api-keys';
-import UnifiedAddButton from '@/components/common/UnifiedAddButton';
+} from '@/components/ui/dialog'
+import { apiKeyApis, ApiKey, ApiKeyCreated } from '@/apis/api-keys'
+import UnifiedAddButton from '@/components/common/UnifiedAddButton'
 
 const ApiKeyList: React.FC = () => {
-  const { t } = useTranslation();
-  const { toast } = useToast();
-  const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [deleteConfirmKey, setDeleteConfirmKey] = useState<ApiKey | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
+  const { t } = useTranslation()
+  const { toast } = useToast()
+  const [apiKeys, setApiKeys] = useState<ApiKey[]>([])
+  const [loading, setLoading] = useState(true)
+  const [deleteConfirmKey, setDeleteConfirmKey] = useState<ApiKey | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   // Create dialog state
-  const [createDialogOpen, setCreateDialogOpen] = useState(false);
-  const [keyName, setKeyName] = useState('');
-  const [isCreating, setIsCreating] = useState(false);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false)
+  const [keyName, setKeyName] = useState('')
+  const [isCreating, setIsCreating] = useState(false)
 
   // Created key display state
-  const [createdKey, setCreatedKey] = useState<ApiKeyCreated | null>(null);
-  const [showCreatedDialog, setShowCreatedDialog] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [createdKey, setCreatedKey] = useState<ApiKeyCreated | null>(null)
+  const [showCreatedDialog, setShowCreatedDialog] = useState(false)
+  const [copied, setCopied] = useState(false)
 
   const fetchApiKeys = useCallback(async () => {
-    setLoading(true);
+    setLoading(true)
     try {
-      const response = await apiKeyApis.getApiKeys();
-      setApiKeys(response.items || []);
+      const response = await apiKeyApis.getApiKeys()
+      setApiKeys(response.items || [])
     } catch (error) {
-      console.error('Failed to fetch API keys:', error);
+      console.error('Failed to fetch API keys:', error)
       toast({
         variant: 'destructive',
         title: t('common:api_keys.errors.load_failed'),
-      });
+      })
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  }, [toast, t]);
+  }, [toast, t])
 
   useEffect(() => {
-    fetchApiKeys();
-  }, [fetchApiKeys]);
+    fetchApiKeys()
+  }, [fetchApiKeys])
 
   const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
+    const date = new Date(dateString)
     return date.toLocaleDateString(undefined, {
       year: 'numeric',
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
       minute: '2-digit',
-    });
-  };
+    })
+  }
 
   const isNeverExpires = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.getFullYear() >= 9999;
-  };
+    const date = new Date(dateString)
+    return date.getFullYear() >= 9999
+  }
 
   const handleCreate = async () => {
     if (!keyName.trim()) {
       toast({
         variant: 'destructive',
         title: t('common:api_keys.errors.name_required'),
-      });
-      return;
+      })
+      return
     }
 
-    setIsCreating(true);
+    setIsCreating(true)
     try {
-      const created = await apiKeyApis.createApiKey({ name: keyName.trim() });
-      setCreatedKey(created);
-      setCreateDialogOpen(false);
-      setKeyName('');
-      setShowCreatedDialog(true);
+      const created = await apiKeyApis.createApiKey({ name: keyName.trim() })
+      setCreatedKey(created)
+      setCreateDialogOpen(false)
+      setKeyName('')
+      setShowCreatedDialog(true)
       toast({
         title: t('common:api_keys.create_success'),
-      });
-      fetchApiKeys();
+      })
+      fetchApiKeys()
     } catch (error) {
       toast({
         variant: 'destructive',
         title: t('common:api_keys.errors.create_failed'),
         description: (error as Error).message,
-      });
+      })
     } finally {
-      setIsCreating(false);
+      setIsCreating(false)
     }
-  };
+  }
 
   const handleDelete = async () => {
-    if (!deleteConfirmKey) return;
+    if (!deleteConfirmKey) return
 
-    setIsDeleting(true);
+    setIsDeleting(true)
     try {
-      await apiKeyApis.deleteApiKey(deleteConfirmKey.id);
+      await apiKeyApis.deleteApiKey(deleteConfirmKey.id)
       toast({
         title: t('common:api_keys.delete_success'),
-      });
-      setDeleteConfirmKey(null);
-      fetchApiKeys();
+      })
+      setDeleteConfirmKey(null)
+      fetchApiKeys()
     } catch (error) {
       toast({
         variant: 'destructive',
         title: t('common:api_keys.errors.delete_failed'),
         description: (error as Error).message,
-      });
+      })
     } finally {
-      setIsDeleting(false);
+      setIsDeleting(false)
     }
-  };
+  }
 
   const handleCopyKey = async () => {
-    if (!createdKey) return;
+    if (!createdKey) return
     try {
-      await navigator.clipboard.writeText(createdKey.key);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      await navigator.clipboard.writeText(createdKey.key)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
     } catch {
       toast({
         variant: 'destructive',
         title: 'Failed to copy',
-      });
+      })
     }
-  };
+  }
 
   const handleCloseCreatedDialog = () => {
-    setShowCreatedDialog(false);
-    setCreatedKey(null);
-    setCopied(false);
-  };
+    setShowCreatedDialog(false)
+    setCreatedKey(null)
+    setCopied(false)
+  }
 
   return (
     <div className="space-y-3">
@@ -371,7 +371,7 @@ const ApiKeyList: React.FC = () => {
         </AlertDialogContent>
       </AlertDialog>
     </div>
-  );
-};
+  )
+}
 
-export default ApiKeyList;
+export default ApiKeyList

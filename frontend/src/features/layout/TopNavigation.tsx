@@ -2,28 +2,28 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import Image from 'next/image';
-import { Bars3Icon } from '@heroicons/react/24/outline';
+import Image from 'next/image'
+import { Bars3Icon } from '@heroicons/react/24/outline'
 
-import { useTranslation } from '@/hooks/useTranslation';
-import { useIsMobile, useIsDesktop } from './hooks/useMediaQuery';
-import TaskTitleDropdown from './TaskTitleDropdown';
-import { TaskDetail } from '@/types/api';
+import { useTranslation } from '@/hooks/useTranslation'
+import { useIsMobile, useIsDesktop } from './hooks/useMediaQuery'
+import TaskTitleDropdown from './TaskTitleDropdown'
+import { TaskDetail } from '@/types/api'
 
 type TopNavigationProps = {
-  activePage?: 'chat' | 'code' | 'wiki' | 'dashboard';
-  variant?: 'with-sidebar' | 'standalone';
-  showLogo?: boolean;
-  title?: string;
-  taskDetail?: TaskDetail | null;
-  children?: React.ReactNode;
-  onMobileSidebarToggle?: () => void;
-  onTaskDeleted?: () => void;
-  onMembersChanged?: () => void; // Callback to refresh task detail when converted to group chat
-  isSidebarCollapsed?: boolean;
-};
+  activePage?: 'chat' | 'code' | 'wiki' | 'dashboard'
+  variant?: 'with-sidebar' | 'standalone'
+  showLogo?: boolean
+  title?: string
+  taskDetail?: TaskDetail | null
+  children?: React.ReactNode
+  onMobileSidebarToggle?: () => void
+  onTaskDeleted?: () => void
+  onMembersChanged?: () => void // Callback to refresh task detail when converted to group chat
+  isSidebarCollapsed?: boolean
+}
 
 export default function TopNavigation({
   variant = 'standalone',
@@ -36,15 +36,15 @@ export default function TopNavigation({
   onMembersChanged,
   isSidebarCollapsed = false,
 }: TopNavigationProps) {
-  const { t } = useTranslation();
-  const isMobile = useIsMobile();
-  const isDesktop = useIsDesktop();
+  const { t } = useTranslation()
+  const isMobile = useIsMobile()
+  const isDesktop = useIsDesktop()
 
   // Determine if we should show the hamburger menu
-  const showHamburgerMenu = variant === 'with-sidebar' && !isDesktop && onMobileSidebarToggle;
+  const showHamburgerMenu = variant === 'with-sidebar' && !isDesktop && onMobileSidebarToggle
 
   // Determine if we should show the logo
-  const shouldShowLogo = showLogo || (variant === 'standalone' && !isMobile);
+  const shouldShowLogo = showLogo || (variant === 'standalone' && !isMobile)
 
   return (
     <div
@@ -101,5 +101,5 @@ export default function TopNavigation({
       {/* Right side - User menu and other controls */}
       {children && <div className="flex items-center gap-2 sm:gap-3">{children}</div>}
     </div>
-  );
+  )
 }

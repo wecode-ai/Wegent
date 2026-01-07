@@ -2,28 +2,28 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { memo, useState, useMemo } from 'react';
-import { ChevronDown, ChevronUp } from 'lucide-react';
-import { useTranslation } from '@/hooks/useTranslation';
+import React, { memo, useState, useMemo } from 'react'
+import { ChevronDown, ChevronUp } from 'lucide-react'
+import { useTranslation } from '@/hooks/useTranslation'
 
 /**
  * Default configuration for collapsible messages
  */
-const DEFAULT_COLLAPSE_LINES = 10;
+const DEFAULT_COLLAPSE_LINES = 10
 
 export interface CollapsibleMessageProps {
   /** The content to render */
-  children: React.ReactNode;
+  children: React.ReactNode
   /** Raw text content to calculate line count */
-  content: string;
+  content: string
   /** Maximum lines before collapsing (default: 10) */
-  maxLines?: number;
+  maxLines?: number
   /** Whether collapsing is enabled (default: true) */
-  enabled?: boolean;
+  enabled?: boolean
   /** Custom class name for the container */
-  className?: string;
+  className?: string
 }
 
 /**
@@ -31,11 +31,11 @@ export interface CollapsibleMessageProps {
  */
 function shouldCollapseContent(content: string, maxLines: number): boolean {
   if (!content || typeof content !== 'string') {
-    return false;
+    return false
   }
 
-  const lines = content.split('\n');
-  return lines.length > maxLines;
+  const lines = content.split('\n')
+  return lines.length > maxLines
 }
 
 /**
@@ -51,17 +51,17 @@ const CollapsibleMessage = memo(function CollapsibleMessage({
   enabled = true,
   className = '',
 }: CollapsibleMessageProps) {
-  const { t } = useTranslation('chat');
-  const [isExpanded, setIsExpanded] = useState(false);
+  const { t } = useTranslation('chat')
+  const [isExpanded, setIsExpanded] = useState(false)
 
   const isCollapsible = useMemo(() => {
-    if (!enabled) return false;
-    return shouldCollapseContent(content, maxLines);
-  }, [content, maxLines, enabled]);
+    if (!enabled) return false
+    return shouldCollapseContent(content, maxLines)
+  }, [content, maxLines, enabled])
 
   // If not collapsible, render children directly
   if (!isCollapsible) {
-    return <div className={className}>{children}</div>;
+    return <div className={className}>{children}</div>
   }
 
   return (
@@ -99,7 +99,7 @@ const CollapsibleMessage = memo(function CollapsibleMessage({
         </button>
       </div>
     </div>
-  );
-});
+  )
+})
 
-export default CollapsibleMessage;
+export default CollapsibleMessage

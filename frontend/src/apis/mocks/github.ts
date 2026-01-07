@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { http, HttpResponse } from 'msw';
+import { http, HttpResponse } from 'msw'
 
 export const MOCK_REPOS = [
   {
@@ -29,24 +29,24 @@ export const MOCK_REPOS = [
     git_domain: 'github.com',
     private: true,
   },
-];
+]
 
 export const MOCK_BRANCHES = [
   { name: 'master', protected: true, default: true },
   { name: 'develop', protected: false, default: false },
   { name: 'feature/ui-updatelonglonglonglonglong', protected: false, default: false },
-];
+]
 
 export const githubHandlers = [
   http.get('/api/github/validate-token', () => {
-    return HttpResponse.json({ valid: true, user: { login: 'mock-user' } });
+    return HttpResponse.json({ valid: true, user: { login: 'mock-user' } })
   }),
   // Repository list
   http.get('/api/github/repositories', () => {
-    return HttpResponse.json(MOCK_REPOS);
+    return HttpResponse.json(MOCK_REPOS)
   }),
   // Branch list
   http.get('/api/github/repositories/branches', () => {
-    return HttpResponse.json(MOCK_BRANCHES);
+    return HttpResponse.json(MOCK_BRANCHES)
   }),
-];
+]

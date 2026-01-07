@@ -589,6 +589,9 @@ class LangGraphAgentBuilder:
                                 "data": tool_input_data,
                             },
                         )
+                        # Yield empty string to trigger _emit_pending_events() in chat_service
+                        # This ensures tool events are sent immediately instead of being buffered
+                        yield ""
 
                     # Special handling for gemini_search: intercept and stream directly
                     # This provides real-time streaming output instead of waiting for
@@ -694,6 +697,9 @@ class LangGraphAgentBuilder:
                                 "data": tool_data,
                             },
                         )
+                        # Yield empty string to trigger _emit_pending_events() in chat_service
+                        # This ensures tool events are sent immediately instead of being buffered
+                        yield ""
 
             # If no content was streamed but we have final content, yield it
             # This handles non-streaming models

@@ -90,22 +90,22 @@ Chrome 内核的 E2E 测试出现大量失败（187个测试中约100+失败）�
 ```typescript
 // 1. 需要测试登录功能的测试（如 auth/login.spec.ts）
 test.describe('Authentication - Login', () => {
-  test.use({ storageState: { cookies: [], origins: [] } });
+  test.use({ storageState: { cookies: [], origins: [] } })
   // 测试登录流程
-});
+})
 
 // 2. 需要 API 操作的 UI 测试
 test.beforeEach(async ({ page, request }) => {
-  apiClient = createApiClient(request);
-  await apiClient.login(ADMIN_USER.username, ADMIN_USER.password); // 仅 API 登录
+  apiClient = createApiClient(request)
+  await apiClient.login(ADMIN_USER.username, ADMIN_USER.password) // 仅 API 登录
   // page 已通过 storageState 认证，无需 UI 登录
-});
+})
 
 // 3. 纯 UI 测试
 test.beforeEach(async ({ page }) => {
   // page 已通过 storageState 认证，无需任何登录
-  await page.goto('/some-page');
-});
+  await page.goto('/some-page')
+})
 ```
 
 ### 测试分类

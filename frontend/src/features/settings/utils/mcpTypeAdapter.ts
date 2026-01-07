@@ -10,9 +10,9 @@
  * - Agno: supports sse, streamable-http, stdio
  */
 
-export type ClaudeCodeMcpType = 'sse' | 'http' | 'stdio';
-export type AgnoMcpType = 'sse' | 'streamable-http' | 'stdio';
-export type AgentType = 'ClaudeCode' | 'Agno';
+export type ClaudeCodeMcpType = 'sse' | 'http' | 'stdio'
+export type AgnoMcpType = 'sse' | 'streamable-http' | 'stdio'
+export type AgentType = 'ClaudeCode' | 'Agno'
 
 /**
  * Validate if a string is a valid AgentType
@@ -21,7 +21,7 @@ export type AgentType = 'ClaudeCode' | 'Agno';
  * @returns True if the value is a valid AgentType
  */
 export function isValidAgentType(value: string): value is AgentType {
-  return value === 'ClaudeCode' || value === 'Agno';
+  return value === 'ClaudeCode' || value === 'Agno'
 }
 
 /**
@@ -31,7 +31,7 @@ const CLAUDE_TO_AGNO_TYPE_MAP: Record<ClaudeCodeMcpType, AgnoMcpType> = {
   sse: 'sse',
   http: 'streamable-http',
   stdio: 'stdio',
-};
+}
 
 /**
  * Type mapping from Agno to ClaudeCode
@@ -40,7 +40,7 @@ const AGNO_TO_CLAUDE_TYPE_MAP: Record<AgnoMcpType, ClaudeCodeMcpType> = {
   sse: 'sse',
   'streamable-http': 'http',
   stdio: 'stdio',
-};
+}
 
 /**
  * Normalize MCP type string to handle various format variations
@@ -52,22 +52,22 @@ const AGNO_TO_CLAUDE_TYPE_MAP: Record<AgnoMcpType, ClaudeCodeMcpType> = {
  * - HTTP, http, Http → http
  */
 function normalizeMcpType(type: string): string {
-  if (!type) return 'stdio';
+  if (!type) return 'stdio'
 
   // Handle camelCase variants first: streamableHttp → streamable-http
   // Insert hyphen before capital letters that follow lowercase letters
-  let normalized = type.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase();
+  let normalized = type.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase()
 
   // Replace underscores with hyphens
-  normalized = normalized.replace(/_/g, '-');
+  normalized = normalized.replace(/_/g, '-')
 
   // Handle specific variations for streamable-http
   // Match patterns like: streamablehttp, streamable-http, streamable_http
   if (normalized.includes('streamable')) {
-    return 'streamable-http';
+    return 'streamable-http'
   }
 
-  return normalized;
+  return normalized
 }
 
 /**
@@ -82,54 +82,54 @@ export function adaptMcpConfigForAgent(
   targetAgentType: AgentType
 ): Record<string, unknown> {
   if (!mcpConfig || typeof mcpConfig !== 'object') {
-    return mcpConfig;
+    return mcpConfig
   }
 
-  const adaptedConfig: Record<string, unknown> = {};
+  const adaptedConfig: Record<string, unknown> = {}
 
   // Process each MCP server configuration
   for (const [serverName, serverConfig] of Object.entries(mcpConfig)) {
     if (!serverConfig || typeof serverConfig !== 'object') {
-      adaptedConfig[serverName] = serverConfig;
-      continue;
+      adaptedConfig[serverName] = serverConfig
+      continue
     }
 
-    const config = { ...serverConfig } as Record<string, unknown>;
-    const currentType = normalizeMcpType((config.type as string) || 'stdio');
+    const config = { ...serverConfig } as Record<string, unknown>
+    const currentType = normalizeMcpType((config.type as string) || 'stdio')
 
     // Convert type based on target agent
     if (targetAgentType === 'Agno') {
       // Convert to Agno format
-      const claudeType = currentType as ClaudeCodeMcpType;
+      const claudeType = currentType as ClaudeCodeMcpType
       if (CLAUDE_TO_AGNO_TYPE_MAP[claudeType]) {
-        config.type = CLAUDE_TO_AGNO_TYPE_MAP[claudeType];
+        config.type = CLAUDE_TO_AGNO_TYPE_MAP[claudeType]
       } else {
         // If not recognized, try to map from normalized type
         if (currentType === 'streamable-http') {
-          config.type = 'streamable-http';
+          config.type = 'streamable-http'
         } else {
-          config.type = currentType;
+          config.type = currentType
         }
       }
     } else if (targetAgentType === 'ClaudeCode') {
       // Convert to ClaudeCode format
-      const agnoType = currentType as AgnoMcpType;
+      const agnoType = currentType as AgnoMcpType
       if (AGNO_TO_CLAUDE_TYPE_MAP[agnoType]) {
-        config.type = AGNO_TO_CLAUDE_TYPE_MAP[agnoType];
+        config.type = AGNO_TO_CLAUDE_TYPE_MAP[agnoType]
       } else {
         // If not recognized, default to sse or keep as is
         if (currentType === 'http') {
-          config.type = 'http';
+          config.type = 'http'
         } else {
-          config.type = currentType;
+          config.type = currentType
         }
       }
     }
 
-    adaptedConfig[serverName] = config;
+    adaptedConfig[serverName] = config
   }
 
-  return adaptedConfig;
+  return adaptedConfig
 }
 
 /**
@@ -140,15 +140,15 @@ export function adaptMcpConfigForAgent(
  * @returns True if the type is valid for the agent
  */
 export function isValidMcpTypeForAgent(type: string, agentType: AgentType): boolean {
-  const normalizedType = normalizeMcpType(type);
+  const normalizedType = normalizeMcpType(type)
 
   if (agentType === 'ClaudeCode') {
-    return ['sse', 'http', 'stdio'].includes(normalizedType);
+    return ['sse', 'http', 'stdio'].includes(normalizedType)
   } else if (agentType === 'Agno') {
-    return ['sse', 'streamable-http', 'stdio'].includes(normalizedType);
+    return ['sse', 'streamable-http', 'stdio'].includes(normalizedType)
   }
 
-  return false;
+  return false
 }
 
 /**
@@ -159,9 +159,9 @@ export function isValidMcpTypeForAgent(type: string, agentType: AgentType): bool
  */
 export function getSupportedMcpTypes(agentType: AgentType): string[] {
   if (agentType === 'ClaudeCode') {
-    return ['sse', 'http', 'stdio'];
+    return ['sse', 'http', 'stdio']
   } else if (agentType === 'Agno') {
-    return ['sse', 'streamable-http', 'stdio'];
+    return ['sse', 'streamable-http', 'stdio']
   }
-  return [];
+  return []
 }

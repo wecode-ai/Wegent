@@ -2,21 +2,21 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { Bot } from '@/types/api';
-import { UnifiedShell } from '@/apis/shells';
+import { Bot } from '@/types/api'
+import { UnifiedShell } from '@/apis/shells'
 
-export { default as SoloModeEditor } from './SoloModeEditor';
-export { default as PipelineModeEditor } from './PipelineModeEditor';
-export { default as LeaderModeEditor } from './LeaderModeEditor';
-export { default as BotTransfer } from './BotTransfer';
-export * from './types';
+export { default as SoloModeEditor } from './SoloModeEditor'
+export { default as PipelineModeEditor } from './PipelineModeEditor'
+export { default as LeaderModeEditor } from './LeaderModeEditor'
+export { default as BotTransfer } from './BotTransfer'
+export * from './types'
 
-export type TeamMode = 'solo' | 'pipeline' | 'route' | 'coordinate' | 'collaborate';
+export type TeamMode = 'solo' | 'pipeline' | 'route' | 'coordinate' | 'collaborate'
 
 /**
  * Agent types supported by the system
  */
-export type AgentType = 'ClaudeCode' | 'Agno' | 'Dify';
+export type AgentType = 'ClaudeCode' | 'Agno' | 'Dify'
 
 /**
  * Mode to supported agent types mapping
@@ -30,7 +30,7 @@ const MODE_AGENT_FILTER: Record<TeamMode, AgentType[] | null> = {
   route: ['Agno'],
   coordinate: ['Agno'],
   collaborate: ['Agno'],
-};
+}
 
 /**
  * Get the actual shell type for a bot's shell_type
@@ -43,19 +43,19 @@ const MODE_AGENT_FILTER: Record<TeamMode, AgentType[] | null> = {
  */
 function getActualShellType(shellType: string, shellMap: Map<string, UnifiedShell>): string {
   // First check if shellType is already a known agent type
-  const knownAgentTypes: AgentType[] = ['ClaudeCode', 'Agno', 'Dify'];
+  const knownAgentTypes: AgentType[] = ['ClaudeCode', 'Agno', 'Dify']
   if (knownAgentTypes.includes(shellType as AgentType)) {
-    return shellType;
+    return shellType
   }
 
   // Otherwise, look up the shell to get its shellType
-  const shell = shellMap.get(shellType);
+  const shell = shellMap.get(shellType)
   if (shell) {
-    return shell.shellType;
+    return shell.shellType
   }
 
   // Fallback to the original shell_type if shell not found
-  return shellType;
+  return shellType
 }
 
 /**
@@ -70,24 +70,24 @@ export function getFilteredBotsForMode(
   mode: TeamMode,
   shells?: UnifiedShell[]
 ): Bot[] {
-  const allowedAgents = MODE_AGENT_FILTER[mode];
+  const allowedAgents = MODE_AGENT_FILTER[mode]
 
   // If null, all agents are allowed
   if (allowedAgents === null) {
-    return bots;
+    return bots
   }
 
   // Build shell map for quick lookup
-  const shellMap = new Map<string, UnifiedShell>();
+  const shellMap = new Map<string, UnifiedShell>()
   if (shells) {
     shells.forEach(shell => {
-      shellMap.set(shell.name, shell);
-    });
+      shellMap.set(shell.name, shell)
+    })
   }
 
   // Filter bots by allowed agent types, resolving custom shell types
   return bots.filter(bot => {
-    const actualShellType = getActualShellType(bot.shell_type, shellMap);
-    return allowedAgents.includes(actualShellType as AgentType);
-  });
+    const actualShellType = getActualShellType(bot.shell_type, shellMap)
+    return allowedAgents.includes(actualShellType as AgentType)
+  })
 }

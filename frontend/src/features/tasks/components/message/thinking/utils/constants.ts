@@ -15,27 +15,27 @@ export const TOOL_ICONS: Record<string, string> = {
   Task: '🤖',
   WebFetch: '🌐',
   WebSearch: '🔎',
-};
+}
 
 /**
  * Default max lines for collapsible content
  */
-export const DEFAULT_MAX_LINES = 3;
+export const DEFAULT_MAX_LINES = 3
 
 /**
  * Default max length for content preview
  */
-export const DEFAULT_MAX_LENGTH = 300;
+export const DEFAULT_MAX_LENGTH = 300
 
 /**
  * Max height for scrollable content area
  */
-export const MAX_CONTENT_HEIGHT = 400;
+export const MAX_CONTENT_HEIGHT = 400
 
 /**
  * Distance from bottom to trigger auto-scroll
  */
-export const SCROLL_THRESHOLD = 24;
+export const SCROLL_THRESHOLD = 24
 
 /**
  * Todo status colors
@@ -53,7 +53,7 @@ export const TODO_STATUS_COLORS = {
     bg: 'bg-green-400',
     text: 'text-green-400',
   },
-} as const;
+} as const
 
 /**
  * MCP server status colors
@@ -67,4 +67,4 @@ export const MCP_STATUS_COLORS = {
     bg: 'bg-red-500/10',
     text: 'text-red-400',
   },
-} as const;
+} as const

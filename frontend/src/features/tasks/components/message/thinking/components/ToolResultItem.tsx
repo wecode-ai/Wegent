@@ -2,13 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { memo, useState } from 'react';
-import { Maximize2, Minimize2 } from 'lucide-react';
-import { useTranslation } from '@/hooks/useTranslation';
-import type { ToolResultItemProps } from '../types';
-import { shouldCollapse, getContentPreview } from '../utils/thinkingUtils';
+import { memo, useState } from 'react'
+import { Maximize2, Minimize2 } from 'lucide-react'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { ToolResultItemProps } from '../types'
+import { shouldCollapse, getContentPreview } from '../utils/thinkingUtils'
 
 /**
  * Component to display a tool execution result
@@ -18,18 +18,18 @@ const ToolResultItem = memo(function ToolResultItem({
   isError = false,
   itemIndex,
 }: ToolResultItemProps) {
-  const { t } = useTranslation();
-  const [isExpanded, setIsExpanded] = useState(false);
+  const { t } = useTranslation()
+  const [isExpanded, setIsExpanded] = useState(false)
 
-  const resultContent = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
-  const isCollapsible = shouldCollapse(resultContent);
+  const resultContent = typeof content === 'string' ? content : JSON.stringify(content, null, 2)
+  const isCollapsible = shouldCollapse(resultContent)
   const displayContent =
-    isCollapsible && !isExpanded ? getContentPreview(resultContent) : resultContent;
+    isCollapsible && !isExpanded ? getContentPreview(resultContent) : resultContent
 
-  const textClass = isError ? 'text-red-400' : 'text-green-400';
+  const textClass = isError ? 'text-red-400' : 'text-green-400'
   const buttonClass = isError
     ? 'text-red-400 hover:text-red-500 hover:font-semibold'
-    : 'text-green-400 hover:text-green-500 hover:font-semibold';
+    : 'text-green-400 hover:text-green-500 hover:font-semibold'
 
   return (
     <div className="mt-1">
@@ -68,7 +68,7 @@ const ToolResultItem = memo(function ToolResultItem({
         {isCollapsible && !isExpanded && <span className="text-blue-400">...</span>}
       </pre>
     </div>
-  );
-});
+  )
+})
 
-export default ToolResultItem;
+export default ToolResultItem

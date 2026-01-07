@@ -2,57 +2,57 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState, useEffect } from 'react';
-import { ChevronDownIcon, ChevronRightIcon, DocumentTextIcon } from '@heroicons/react/24/outline';
-import { BranchDiffResponse, GitDiffFile } from '@/apis/tasks';
-import { useTranslation } from '@/hooks/useTranslation';
+import { useState, useEffect } from 'react'
+import { ChevronDownIcon, ChevronRightIcon, DocumentTextIcon } from '@heroicons/react/24/outline'
+import { BranchDiffResponse, GitDiffFile } from '@/apis/tasks'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface FileChange {
-  old_path: string;
-  new_path: string;
-  new_file: boolean;
-  renamed_file: boolean;
-  deleted_file: boolean;
-  added_lines: number;
-  removed_lines: number;
-  diff_title: string;
+  old_path: string
+  new_path: string
+  new_file: boolean
+  renamed_file: boolean
+  deleted_file: boolean
+  added_lines: number
+  removed_lines: number
+  diff_title: string
 }
 
 interface DiffViewerProps {
-  diffData: BranchDiffResponse | null;
-  isLoading?: boolean;
-  gitType: 'github' | 'gitlab';
-  fileChanges?: FileChange[];
-  showDiffContent?: boolean;
+  diffData: BranchDiffResponse | null
+  isLoading?: boolean
+  gitType: 'github' | 'gitlab'
+  fileChanges?: FileChange[]
+  showDiffContent?: boolean
 }
 
 interface DiffFile {
-  filename: string;
-  status: 'added' | 'removed' | 'modified' | 'renamed';
-  additions: number;
-  deletions: number;
-  changes: number;
-  diff: string;
-  oldPath?: string;
-  newPath?: string;
-  isExpanded: boolean;
+  filename: string
+  status: 'added' | 'removed' | 'modified' | 'renamed'
+  additions: number
+  deletions: number
+  changes: number
+  diff: string
+  oldPath?: string
+  newPath?: string
+  isExpanded: boolean
 }
 
 function _getStatusIcon(status: string) {
-  const iconClasses = 'w-4 h-4';
+  const iconClasses = 'w-4 h-4'
   switch (status) {
     case 'added':
-      return <DocumentTextIcon className={`${iconClasses} text-green-600`} />;
+      return <DocumentTextIcon className={`${iconClasses} text-green-600`} />
     case 'removed':
-      return <DocumentTextIcon className={`${iconClasses} text-red-600`} />;
+      return <DocumentTextIcon className={`${iconClasses} text-red-600`} />
     case 'modified':
-      return <DocumentTextIcon className={`${iconClasses} text-blue-600`} />;
+      return <DocumentTextIcon className={`${iconClasses} text-blue-600`} />
     case 'renamed':
-      return <DocumentTextIcon className={`${iconClasses} text-purple-600`} />;
+      return <DocumentTextIcon className={`${iconClasses} text-purple-600`} />
     default:
-      return <DocumentTextIcon className={`${iconClasses} text-gray-600`} />;
+      return <DocumentTextIcon className={`${iconClasses} text-gray-600`} />
   }
 }
 
@@ -73,7 +73,7 @@ function normalizeFileChanges(fileChanges: FileChange[]): DiffFile[] {
     oldPath: change.old_path,
     newPath: change.new_path,
     isExpanded: false,
-  }));
+  }))
 }
 
 function normalizeGitFiles(files: GitDiffFile[]): DiffFile[] {
@@ -94,28 +94,28 @@ function normalizeGitFiles(files: GitDiffFile[]): DiffFile[] {
     oldPath: file.previous_filename,
     newPath: file.filename,
     isExpanded: false,
-  }));
+  }))
 }
 
 function renderDiffContent(diff: string) {
-  if (!diff) return null;
+  if (!diff) return null
 
-  const lines = diff.split('tasks:\n');
+  const lines = diff.split('tasks:\n')
   return lines.map((line, index) => {
-    let lineClass = 'text-gray-700';
-    let prefix = '';
+    let lineClass = 'text-gray-700'
+    let prefix = ''
 
     if (line.startsWith('@@')) {
-      lineClass = 'text-purple-600 bg-purple-50';
+      lineClass = 'text-purple-600 bg-purple-50'
     } else if (line.startsWith('+')) {
-      lineClass = 'text-green-700 bg-green-50';
-      prefix = '+';
+      lineClass = 'text-green-700 bg-green-50'
+      prefix = '+'
     } else if (line.startsWith('-')) {
-      lineClass = 'text-red-700 bg-red-50';
-      prefix = '-';
+      lineClass = 'text-red-700 bg-red-50'
+      prefix = '-'
     } else if (line.startsWith(' ')) {
-      lineClass = 'text-gray-600';
-      prefix = ' ';
+      lineClass = 'text-gray-600'
+      prefix = ' '
     }
 
     return (
@@ -126,8 +126,8 @@ function renderDiffContent(diff: string) {
         <span className="flex-shrink-0 w-4 text-right pr-2 select-none">{prefix}</span>
         <span className="flex-1 whitespace-pre-wrap break-all">{line.substring(1)}</span>
       </div>
-    );
-  });
+    )
+  })
 }
 
 export default function DiffViewer({
@@ -137,45 +137,45 @@ export default function DiffViewer({
   fileChanges,
   showDiffContent = true,
 }: DiffViewerProps) {
-  const [diffFiles, setDiffFiles] = useState<DiffFile[]>([]);
-  const { t } = useTranslation();
+  const [diffFiles, setDiffFiles] = useState<DiffFile[]>([])
+  const { t } = useTranslation()
 
   const _getStatusText = (status: string) => {
     switch (status) {
       case 'added':
-        return t('tasks:workbench.file_status.added');
+        return t('tasks:workbench.file_status.added')
       case 'removed':
-        return t('tasks:workbench.file_status.removed');
+        return t('tasks:workbench.file_status.removed')
       case 'modified':
-        return t('tasks:workbench.file_status.modified');
+        return t('tasks:workbench.file_status.modified')
       case 'renamed':
-        return t('tasks:workbench.file_status.renamed');
+        return t('tasks:workbench.file_status.renamed')
       default:
-        return t('tasks:workbench.file_status.modified');
+        return t('tasks:workbench.file_status.modified')
     }
-  };
+  }
 
   // Normalize diff data when it changes
   useEffect(() => {
     if (fileChanges && fileChanges.length > 0) {
       // Use simple file changes without diff content
-      setDiffFiles(normalizeFileChanges(fileChanges));
+      setDiffFiles(normalizeFileChanges(fileChanges))
     } else if (diffData) {
       if (diffData.files) {
-        setDiffFiles(normalizeGitFiles(diffData.files));
+        setDiffFiles(normalizeGitFiles(diffData.files))
       }
     }
-  }, [diffData, gitType, fileChanges]);
+  }, [diffData, gitType, fileChanges])
 
   const toggleFile = (index: number) => {
     setDiffFiles(prev =>
       prev.map((file, i) => (i === index ? { ...file, isExpanded: !file.isExpanded } : file))
-    );
-  };
+    )
+  }
 
   const toggleAllFiles = (expanded: boolean) => {
-    setDiffFiles(prev => prev.map(file => ({ ...file, isExpanded: expanded })));
-  };
+    setDiffFiles(prev => prev.map(file => ({ ...file, isExpanded: expanded })))
+  }
 
   if (isLoading) {
     return (
@@ -183,7 +183,7 @@ export default function DiffViewer({
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
         <span className="ml-3 text-text-muted">{t('tasks:workbench.loading_diff_message')}</span>
       </div>
-    );
+    )
   }
 
   if ((!diffData && !fileChanges) || diffFiles.length === 0) {
@@ -191,14 +191,14 @@ export default function DiffViewer({
       <div className="rounded-lg border border-border bg-surface p-8 text-center">
         <p className="text-text-muted">{t('tasks:workbench.no_changes_found')}</p>
       </div>
-    );
+    )
   }
 
-  const totalAdditions = diffFiles.reduce((sum, file) => sum + file.additions, 0);
-  const totalDeletions = diffFiles.reduce((sum, file) => sum + file.deletions, 0);
-  const totalChanges = diffFiles.reduce((sum, file) => sum + file.changes, 0);
-  const allExpanded = diffFiles.length > 0 && diffFiles.every(file => file.isExpanded);
-  const hasDiffContent = diffFiles.some(file => file.diff);
+  const totalAdditions = diffFiles.reduce((sum, file) => sum + file.additions, 0)
+  const totalDeletions = diffFiles.reduce((sum, file) => sum + file.deletions, 0)
+  const totalChanges = diffFiles.reduce((sum, file) => sum + file.changes, 0)
+  const allExpanded = diffFiles.length > 0 && diffFiles.every(file => file.isExpanded)
+  const hasDiffContent = diffFiles.some(file => file.diff)
 
   return (
     <div className="space-y-4">
@@ -243,10 +243,10 @@ export default function DiffViewer({
       {/* Files */}
       <div className="space-y-2">
         {diffFiles.map((file, index) => {
-          const totalFileChanges = file.additions + file.deletions;
-          const addedPercent = totalFileChanges > 0 ? (file.additions / totalFileChanges) * 100 : 0;
+          const totalFileChanges = file.additions + file.deletions
+          const addedPercent = totalFileChanges > 0 ? (file.additions / totalFileChanges) * 100 : 0
           const removedPercent =
-            totalFileChanges > 0 ? (file.deletions / totalFileChanges) * 100 : 0;
+            totalFileChanges > 0 ? (file.deletions / totalFileChanges) * 100 : 0
 
           return (
             <div key={index} className="border border-border rounded-lg overflow-hidden">
@@ -342,9 +342,9 @@ export default function DiffViewer({
                 </div>
               )}
             </div>
-          );
+          )
         })}
       </div>
     </div>
-  );
+  )
 }

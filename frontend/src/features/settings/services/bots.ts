@@ -2,10 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { botApis } from '@/apis/bots';
-import { CheckRunningTasksResponse } from '@/apis/common';
-import { Bot, PaginationParams } from '@/types/api';
-import { CreateBotRequest, UpdateBotRequest } from '@/apis/bots';
+import { botApis } from '@/apis/bots'
+import { CheckRunningTasksResponse } from '@/apis/common'
+import { Bot, PaginationParams } from '@/types/api'
+import { CreateBotRequest, UpdateBotRequest } from '@/apis/bots'
 
 /**
  * Get Bot list
@@ -14,33 +14,33 @@ export async function fetchBotsList(
   scope?: 'personal' | 'group' | 'all',
   groupName?: string
 ): Promise<Bot[]> {
-  const params: PaginationParams = {};
-  const botsData = await botApis.getBots(params, scope, groupName);
-  console.log('[DEBUG] fetchBotsList response:', JSON.stringify(botsData, null, 2));
-  const items = Array.isArray(botsData.items) ? botsData.items : [];
+  const params: PaginationParams = {}
+  const botsData = await botApis.getBots(params, scope, groupName)
+  console.log('[DEBUG] fetchBotsList response:', JSON.stringify(botsData, null, 2))
+  const items = Array.isArray(botsData.items) ? botsData.items : []
   // Log each bot's agent_config for debugging
   items.forEach((bot, index) => {
     console.log(`[DEBUG] Bot ${index} (${bot.name}):`, {
       id: bot.id,
       shell_type: bot.shell_type,
       agent_config: bot.agent_config,
-    });
-  });
-  return items;
+    })
+  })
+  return items
 }
 
 /**
  * Create Bot
  */
 export async function createBot(data: CreateBotRequest): Promise<Bot> {
-  return await botApis.createBot(data);
+  return await botApis.createBot(data)
 }
 
 /**
  * Update Bot
  */
 export async function updateBot(id: number, data: UpdateBotRequest): Promise<Bot> {
-  return await botApis.updateBot(id, data);
+  return await botApis.updateBot(id, data)
 }
 
 /**
@@ -49,7 +49,7 @@ export async function updateBot(id: number, data: UpdateBotRequest): Promise<Bot
  * @param force - Force delete even if bot has running tasks
  */
 export async function deleteBot(id: number, force: boolean = false): Promise<void> {
-  await botApis.deleteBot(id, force);
+  await botApis.deleteBot(id, force)
 }
 
 /**
@@ -58,7 +58,7 @@ export async function deleteBot(id: number, force: boolean = false): Promise<voi
  * @returns Running tasks info
  */
 export async function checkBotRunningTasks(id: number): Promise<CheckRunningTasksResponse> {
-  return await botApis.checkRunningTasks(id);
+  return await botApis.checkRunningTasks(id)
 }
 /**
  * Check if the agent config is for a predefined model.
@@ -67,12 +67,12 @@ export async function checkBotRunningTasks(id: number): Promise<CheckRunningTask
  * @returns True if it's a predefined model, false otherwise.
  */
 export const isPredefinedModel = (config: Record<string, unknown>): boolean => {
-  if (!config) return false;
-  const keys = new Set(Object.keys(config));
+  if (!config) return false
+  const keys = new Set(Object.keys(config))
   // Allow bind_model, optional bind_model_type, and optional bind_model_namespace
-  const allowedKeys = new Set(['bind_model', 'bind_model_type', 'bind_model_namespace']);
-  return keys.has('bind_model') && [...keys].every(k => allowedKeys.has(k));
-};
+  const allowedKeys = new Set(['bind_model', 'bind_model_type', 'bind_model_namespace'])
+  return keys.has('bind_model') && [...keys].every(k => allowedKeys.has(k))
+}
 
 /**
  * Get the model name from a predefined model configuration.
@@ -80,9 +80,9 @@ export const isPredefinedModel = (config: Record<string, unknown>): boolean => {
  * @returns The model name, or an empty string if not found.
  */
 export const getModelFromConfig = (config: Record<string, unknown>): string => {
-  if (!config) return '';
-  return (config.bind_model as string) || '';
-};
+  if (!config) return ''
+  return (config.bind_model as string) || ''
+}
 
 /**
  /**
@@ -93,13 +93,13 @@ export const getModelFromConfig = (config: Record<string, unknown>): string => {
 export const getModelTypeFromConfig = (
   config: Record<string, unknown>
 ): 'public' | 'user' | 'group' | undefined => {
-  if (!config) return undefined;
-  const modelType = config.bind_model_type as string | undefined;
+  if (!config) return undefined
+  const modelType = config.bind_model_type as string | undefined
   if (modelType === 'public' || modelType === 'user' || modelType === 'group') {
-    return modelType;
+    return modelType
   }
-  return undefined;
-};
+  return undefined
+}
 
 /**
  * Get the model namespace from a predefined model configuration.
@@ -109,9 +109,9 @@ export const getModelTypeFromConfig = (
 export const getModelNamespaceFromConfig = (
   config: Record<string, unknown>
 ): string | undefined => {
-  if (!config) return undefined;
-  return config.bind_model_namespace as string | undefined;
-};
+  if (!config) return undefined
+  return config.bind_model_namespace as string | undefined
+}
 
 /**
  * Create a predefined model configuration with type and namespace.
@@ -125,12 +125,12 @@ export const createPredefinedModelConfig = (
   modelType?: 'public' | 'user' | 'group',
   modelNamespace?: string
 ): Record<string, unknown> => {
-  const config: Record<string, unknown> = { bind_model: modelName };
+  const config: Record<string, unknown> = { bind_model: modelName }
   if (modelType) {
-    config.bind_model_type = modelType;
+    config.bind_model_type = modelType
   }
   if (modelNamespace && modelNamespace !== 'default') {
-    config.bind_model_namespace = modelNamespace;
+    config.bind_model_namespace = modelNamespace
   }
-  return config;
-};
+  return config
+}

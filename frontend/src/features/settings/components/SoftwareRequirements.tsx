@@ -2,23 +2,23 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useState } from 'react';
-import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { CheckIcon } from '@heroicons/react/24/outline';
-import { useTranslation } from '@/hooks/useTranslation';
+import React, { useState } from 'react'
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import { CheckIcon } from '@heroicons/react/24/outline'
+import { useTranslation } from '@/hooks/useTranslation'
 
 // Software requirement data structure
 export interface SoftwareRequirement {
-  name: string; // Software name (e.g., node, python, claude-code)
-  command: string; // Check command (e.g., node --version)
-  minVersion: string; // Minimum version requirement (e.g., 20.0.0)
-  versionRegex?: string; // Version extraction regex (optional)
-  required: boolean; // Whether it's required
-  description?: string; // Software description (optional)
+  name: string // Software name (e.g., node, python, claude-code)
+  command: string // Check command (e.g., node --version)
+  minVersion: string // Minimum version requirement (e.g., 20.0.0)
+  versionRegex?: string // Version extraction regex (optional)
+  required: boolean // Whether it's required
+  description?: string // Software description (optional)
 }
 
 // Shell type to requirements mapping
@@ -63,34 +63,34 @@ const shellRequirements: Record<string, SoftwareRequirement[]> = {
     },
   ],
   Dify: [],
-};
+}
 
 interface SoftwareRequirementsProps {
-  shellType: string; // Shell type (e.g., ClaudeCode, Agno, Dify)
+  shellType: string // Shell type (e.g., ClaudeCode, Agno, Dify)
 }
 
 const SoftwareRequirements: React.FC<SoftwareRequirementsProps> = ({ shellType }) => {
-  const { t } = useTranslation();
-  const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
+  const { t } = useTranslation()
+  const [copiedCommand, setCopiedCommand] = useState<string | null>(null)
 
   // Get requirements for the shell type
-  const requirements = shellRequirements[shellType] || [];
+  const requirements = shellRequirements[shellType] || []
 
   // No requirements to display
   if (requirements.length === 0) {
-    return null;
+    return null
   }
 
   // Copy command to clipboard
   const copyCommand = async (command: string) => {
     try {
-      await navigator.clipboard.writeText(command);
-      setCopiedCommand(command);
-      setTimeout(() => setCopiedCommand(null), 2000);
+      await navigator.clipboard.writeText(command)
+      setCopiedCommand(command)
+      setTimeout(() => setCopiedCommand(null), 2000)
     } catch (error) {
-      console.error('Failed to copy command:', error);
+      console.error('Failed to copy command:', error)
     }
-  };
+  }
 
   return (
     <Card className="mt-4 p-4 bg-surface border-border">
@@ -151,7 +151,7 @@ const SoftwareRequirements: React.FC<SoftwareRequirementsProps> = ({ shellType }
         ))}
       </div>
     </Card>
-  );
-};
+  )
+}
 
-export default SoftwareRequirements;
+export default SoftwareRequirements

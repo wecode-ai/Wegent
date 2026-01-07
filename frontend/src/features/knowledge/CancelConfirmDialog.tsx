@@ -2,9 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useTranslation } from '@/hooks/useTranslation';
+import { useTranslation } from '@/hooks/useTranslation'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -14,12 +14,12 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+} from '@/components/ui/alert-dialog'
 
 interface CancelConfirmDialogProps {
-  isOpen: boolean;
-  onClose: () => void;
-  onConfirm: () => void;
+  isOpen: boolean
+  onClose: () => void
+  onConfirm: () => void
 }
 
 /**
@@ -31,12 +31,12 @@ export default function CancelConfirmDialog({
   onClose,
   onConfirm,
 }: CancelConfirmDialogProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
 
   const handleConfirm = () => {
-    onConfirm();
-    onClose();
-  };
+    onConfirm()
+    onClose()
+  }
 
   return (
     <AlertDialog open={isOpen} onOpenChange={open => !open && onClose()}>
@@ -58,5 +58,5 @@ export default function CancelConfirmDialog({
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
-  );
+  )
 }
