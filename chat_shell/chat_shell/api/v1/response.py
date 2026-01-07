@@ -72,6 +72,7 @@ async def _stream_response(
     emitted_tool_run_ids: set[str] = (
         set()
     )  # Track emitted tool events to avoid duplicates
+    accumulated_sources: list[dict] = []  # Track knowledge base sources for citation
 
     try:
         # Send response.start event
@@ -280,7 +281,7 @@ async def _stream_response(
                         ContentDelta(type="text", text=chunk_text).model_dump(),
                     )
 
-                # Check for thinking data in result and emit tool events
+                # Check for thinking data and sources in result
                 result = event.data.get("result")
                 logger.debug(
                     "[RESPONSE] CHUNK event: content_len=%d, has_result=%s, "
@@ -289,6 +290,17 @@ async def _stream_response(
                     result is not None,
                     len(result.get("thinking", [])) if result else 0,
                 )
+                # Accumulate sources from result (knowledge base citations)
+                if result and result.get("sources"):
+                    for source in result["sources"]:
+                        # Avoid duplicates based on (kb_id, title)
+                        key = (source.get("kb_id"), source.get("title"))
+                        existing_keys = {
+                            (s.get("kb_id"), s.get("title"))
+                            for s in accumulated_sources
+                        }
+                        if key not in existing_keys:
+                            accumulated_sources.append(source)
                 if result and result.get("thinking"):
                     for step in result["thinking"]:
                         details = step.get("details", {})
@@ -387,7 +399,7 @@ async def _stream_response(
                 )
                 return
 
-        # Send response.done event
+        # Send response.done event with accumulated sources
         yield _format_sse_event(
             ResponseEventType.RESPONSE_DONE.value,
             ResponseDone(
@@ -402,6 +414,7 @@ async def _stream_response(
                     else None
                 ),
                 stop_reason="end_turn",
+                sources=accumulated_sources if accumulated_sources else None,
             ).model_dump(),
         )
 

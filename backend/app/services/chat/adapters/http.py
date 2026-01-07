@@ -442,13 +442,14 @@ class HTTPAdapter(ChatInterface):
                     if text:
                         event_data["content"] = text
                 elif event_type == ChatEventType.DONE:
-                    # Done event - chat_shell's ResponseDone has {id, usage, stop_reason}
+                    # Done event - chat_shell's ResponseDone has {id, usage, stop_reason, sources}
                     # The actual response content is NOT in this event, it's accumulated from CHUNK events
-                    # We pass through the metadata (usage, stop_reason) and let the caller set 'value'
+                    # We pass through the metadata (usage, stop_reason, sources) and let the caller set 'value'
                     event_data["result"] = {
                         "usage": data.get("usage"),
                         "stop_reason": data.get("stop_reason"),
                         "id": data.get("id"),
+                        "sources": data.get("sources"),  # Knowledge base citations
                     }
                 elif event_type in (
                     ChatEventType.TOOL_START,

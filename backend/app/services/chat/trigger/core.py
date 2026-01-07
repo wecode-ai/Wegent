@@ -871,6 +871,14 @@ async def _stream_with_http_adapter(
                     result["thinking"] = thinking_steps
                     result["shell_type"] = "Chat"
 
+                # Preserve sources from result (knowledge base citations)
+                # Sources are passed through from chat_shell's ResponseDone event
+                if result.get("sources"):
+                    logger.debug(
+                        "[HTTP_ADAPTER] Sources in result: %d items",
+                        len(result["sources"]),
+                    )
+
                 # Update subtask status to COMPLETED in database
                 # This is critical for persistence - without this, messages show as "running" after refresh
                 from app.services.chat.storage.db import db_handler
