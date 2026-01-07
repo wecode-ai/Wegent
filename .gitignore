@@ -73,3 +73,6 @@ Thumbs.db
 .python-version
 *.tsbuildinfo
 coverage/
+
+# claude
+.claude/settings.local.json

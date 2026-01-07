@@ -1,47 +1,47 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useMemo, useState } from 'react';
-import { Textarea } from '@/components/ui/textarea';
-import { useTranslation } from '@/hooks/useTranslation';
-import { FileText, RotateCcw, History, Wand2, RefreshCw, GitCompare } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Spinner } from '@/components/ui/spinner';
-import { cn } from '@/lib/utils';
+import { useMemo, useState } from 'react'
+import { Textarea } from '@/components/ui/textarea'
+import { useTranslation } from '@/hooks/useTranslation'
+import { FileText, RotateCcw, History, Wand2, RefreshCw, GitCompare } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
+import { cn } from '@/lib/utils'
 
 interface PromptComparePanelProps {
-  originalPrompt: string;
-  currentPrompt: string;
-  onPromptChange: (prompt: string) => void;
-  onReset: () => void;
+  originalPrompt: string
+  currentPrompt: string
+  onPromptChange: (prompt: string) => void
+  onReset: () => void
   // New props for iterate functionality
-  userFeedback?: string;
-  setUserFeedback?: (feedback: string) => void;
-  isIteratingPrompt?: boolean;
-  onIteratePrompt?: () => Promise<void>;
-  hasAiResponse?: boolean;
+  userFeedback?: string
+  setUserFeedback?: (feedback: string) => void
+  isIteratingPrompt?: boolean
+  onIteratePrompt?: () => Promise<void>
+  hasAiResponse?: boolean
 }
 
 // Simple line-based diff implementation
 interface DiffLine {
-  type: 'added' | 'removed' | 'unchanged';
-  content: string;
-  lineNumber?: number;
+  type: 'added' | 'removed' | 'unchanged'
+  content: string
+  lineNumber?: number
 }
 
 function computeLineDiff(original: string, current: string): DiffLine[] {
-  const originalLines = original.split('\n');
-  const currentLines = current.split('\n');
-  const result: DiffLine[] = [];
+  const originalLines = original.split('\n')
+  const currentLines = current.split('\n')
+  const result: DiffLine[] = []
 
   // Simple LCS-based diff algorithm
-  const lcs = computeLCS(originalLines, currentLines);
-  let origIdx = 0;
-  let currIdx = 0;
-  let lcsIdx = 0;
+  const lcs = computeLCS(originalLines, currentLines)
+  let origIdx = 0
+  let currIdx = 0
+  let lcsIdx = 0
 
   while (origIdx < originalLines.length || currIdx < currentLines.length) {
     if (
@@ -51,70 +51,70 @@ function computeLineDiff(original: string, current: string): DiffLine[] {
     ) {
       // Check if current also matches
       if (currIdx < currentLines.length && currentLines[currIdx] === lcs[lcsIdx]) {
-        result.push({ type: 'unchanged', content: lcs[lcsIdx], lineNumber: currIdx + 1 });
-        origIdx++;
-        currIdx++;
-        lcsIdx++;
+        result.push({ type: 'unchanged', content: lcs[lcsIdx], lineNumber: currIdx + 1 })
+        origIdx++
+        currIdx++
+        lcsIdx++
       } else if (currIdx < currentLines.length) {
         // Current line is added
-        result.push({ type: 'added', content: currentLines[currIdx], lineNumber: currIdx + 1 });
-        currIdx++;
+        result.push({ type: 'added', content: currentLines[currIdx], lineNumber: currIdx + 1 })
+        currIdx++
       } else {
         // Original line is removed
-        result.push({ type: 'removed', content: originalLines[origIdx] });
-        origIdx++;
+        result.push({ type: 'removed', content: originalLines[origIdx] })
+        origIdx++
       }
     } else if (
       origIdx < originalLines.length &&
       (lcsIdx >= lcs.length || originalLines[origIdx] !== lcs[lcsIdx])
     ) {
       // Original line is removed
-      result.push({ type: 'removed', content: originalLines[origIdx] });
-      origIdx++;
+      result.push({ type: 'removed', content: originalLines[origIdx] })
+      origIdx++
     } else if (currIdx < currentLines.length) {
       // Current line is added
-      result.push({ type: 'added', content: currentLines[currIdx], lineNumber: currIdx + 1 });
-      currIdx++;
+      result.push({ type: 'added', content: currentLines[currIdx], lineNumber: currIdx + 1 })
+      currIdx++
     }
   }
 
-  return result;
+  return result
 }
 
 function computeLCS(a: string[], b: string[]): string[] {
-  const m = a.length;
-  const n = b.length;
+  const m = a.length
+  const n = b.length
   const dp: number[][] = Array(m + 1)
     .fill(null)
-    .map(() => Array(n + 1).fill(0));
+    .map(() => Array(n + 1).fill(0))
 
   for (let i = 1; i <= m; i++) {
     for (let j = 1; j <= n; j++) {
       if (a[i - 1] === b[j - 1]) {
-        dp[i][j] = dp[i - 1][j - 1] + 1;
+        dp[i][j] = dp[i - 1][j - 1] + 1
       } else {
-        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1])
       }
     }
   }
 
   // Backtrack to find LCS
-  const lcs: string[] = [];
+  const lcs: string[] = []
   let i = m,
-    j = n;
+    j = n
   while (i > 0 && j > 0) {
     if (a[i - 1] === b[j - 1]) {
-      lcs.unshift(a[i - 1]);
-      i--;
-      j--;
+      lcs.unshift(a[i - 1])
+      i--
+      j--
     } else if (dp[i - 1][j] > dp[i][j - 1]) {
-      i--;
+      i--
     } else {
-      j--;
+      j--
     }
   }
 
-  return lcs;
+  return lcs
 }
 
 export default function PromptComparePanel({
@@ -128,24 +128,24 @@ export default function PromptComparePanel({
   onIteratePrompt,
   hasAiResponse = false,
 }: PromptComparePanelProps) {
-  const { t } = useTranslation('wizard');
-  const [activeTab, setActiveTab] = useState<'current' | 'original' | 'diff'>('current');
+  const { t } = useTranslation('wizard')
+  const [activeTab, setActiveTab] = useState<'current' | 'original' | 'diff'>('current')
 
   // Check if prompt has been modified
   const isModified = useMemo(() => {
-    return originalPrompt !== currentPrompt;
-  }, [originalPrompt, currentPrompt]);
+    return originalPrompt !== currentPrompt
+  }, [originalPrompt, currentPrompt])
 
   // Compute diff when needed
   const diffLines = useMemo(() => {
-    if (!isModified) return [];
-    return computeLineDiff(originalPrompt, currentPrompt);
-  }, [originalPrompt, currentPrompt, isModified]);
+    if (!isModified) return []
+    return computeLineDiff(originalPrompt, currentPrompt)
+  }, [originalPrompt, currentPrompt, isModified])
 
   const handleIterateSubmit = async () => {
-    if (!userFeedback?.trim() || isIteratingPrompt || !onIteratePrompt) return;
-    await onIteratePrompt();
-  };
+    if (!userFeedback?.trim() || isIteratingPrompt || !onIteratePrompt) return
+    await onIteratePrompt()
+  }
 
   return (
     <div className="h-full flex flex-col">
@@ -269,8 +269,8 @@ export default function PromptComparePanel({
               className="min-h-[60px] flex-1 text-sm resize-none"
               onKeyDown={e => {
                 if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  handleIterateSubmit();
+                  e.preventDefault()
+                  handleIterateSubmit()
                 }
               }}
             />
@@ -291,5 +291,5 @@ export default function PromptComparePanel({
         </div>
       )}
     </div>
-  );
+  )
 }

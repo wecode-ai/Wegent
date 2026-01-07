@@ -1,10 +1,10 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useRef, useCallback, useState, useEffect } from 'react';
+import { useRef, useCallback, useState, useEffect } from 'react'
 import {
   Upload,
   X,
@@ -17,143 +17,143 @@ import {
   ClipboardPaste,
   ArrowLeft,
   Pencil,
-} from 'lucide-react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
-import { Progress } from '@/components/ui/progress';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { Label } from '@/components/ui/label';
+} from 'lucide-react'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
+import { Progress } from '@/components/ui/progress'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import { Label } from '@/components/ui/label'
 import {
   Accordion,
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
-} from '@/components/ui/accordion';
-import { useTranslation } from '@/hooks/useTranslation';
+} from '@/components/ui/accordion'
+import { useTranslation } from '@/hooks/useTranslation'
 import {
   useBatchAttachment,
   MAX_BATCH_FILES,
   type FileUploadStatus,
-} from '@/hooks/useBatchAttachment';
-import { SplitterSettingsSection, type SplitterConfig } from './SplitterSettingsSection';
-import type { Attachment } from '@/types/api';
-import { cn } from '@/lib/utils';
+} from '@/hooks/useBatchAttachment'
+import { SplitterSettingsSection, type SplitterConfig } from './SplitterSettingsSection'
+import type { Attachment } from '@/types/api'
+import { cn } from '@/lib/utils'
 
 // Upload mode type
-type UploadMode = 'file' | 'text';
+type UploadMode = 'file' | 'text'
 
 interface DocumentUploadProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+  open: boolean
+  onOpenChange: (open: boolean) => void
   onUploadComplete: (
     attachments: { attachment: Attachment; file: File }[],
     splitterConfig?: Partial<SplitterConfig>
-  ) => Promise<void>;
+  ) => Promise<void>
 }
 
 export function DocumentUpload({ open, onOpenChange, onUploadComplete }: DocumentUploadProps) {
-  const { t } = useTranslation('knowledge');
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const { t } = useTranslation('knowledge')
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const { state, addFiles, removeFile, clearFiles, startUpload, retryFile, renameFile, reset } =
-    useBatchAttachment();
+    useBatchAttachment()
   const [splitterConfig, setSplitterConfig] = useState<Partial<SplitterConfig>>({
     type: 'sentence',
     separator: '\n\n',
     chunk_size: 1024,
     chunk_overlap: 50,
-  });
-  const [isDragOver, setIsDragOver] = useState(false);
-  const [validationError, setValidationError] = useState<string | null>(null);
-  const [isConfirming, setIsConfirming] = useState(false);
+  })
+  const [isDragOver, setIsDragOver] = useState(false)
+  const [validationError, setValidationError] = useState<string | null>(null)
+  const [isConfirming, setIsConfirming] = useState(false)
 
   // Upload mode state
-  const [uploadMode, setUploadMode] = useState<UploadMode>('file');
+  const [uploadMode, setUploadMode] = useState<UploadMode>('file')
 
   // Text input state
-  const [textContent, setTextContent] = useState('');
-  const [textFileName, setTextFileName] = useState('');
-  const [textError, setTextError] = useState<string | null>(null);
+  const [textContent, setTextContent] = useState('')
+  const [textFileName, setTextFileName] = useState('')
+  const [textError, setTextError] = useState<string | null>(null)
 
   // File rename editing state
-  const [editingFileId, setEditingFileId] = useState<string | null>(null);
-  const [editingFileName, setEditingFileName] = useState('');
+  const [editingFileId, setEditingFileId] = useState<string | null>(null)
+  const [editingFileName, setEditingFileName] = useState('')
 
   // Track pending files count to auto-start upload
-  const pendingCount = state.files.filter(f => f.status === 'pending').length;
+  const pendingCount = state.files.filter(f => f.status === 'pending').length
 
   // Auto-start upload when there are pending files and not currently uploading
   useEffect(() => {
     if (pendingCount > 0 && !state.isUploading) {
-      startUpload();
+      startUpload()
     }
-  }, [pendingCount, state.isUploading, startUpload]);
+  }, [pendingCount, state.isUploading, startUpload])
 
   // Handle files added - just add them, upload will auto-start via useEffect
   const handleFilesAdded = useCallback(
     (files: File[]) => {
-      if (files.length === 0) return;
+      if (files.length === 0) return
 
-      const result = addFiles(files);
+      const result = addFiles(files)
       if (result.rejected > 0 && result.reason) {
-        setValidationError(result.reason);
-        setTimeout(() => setValidationError(null), 5000);
+        setValidationError(result.reason)
+        setTimeout(() => setValidationError(null), 5000)
       }
     },
     [addFiles]
-  );
+  )
 
   const handleFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      const files = Array.from(e.target.files || []);
-      handleFilesAdded(files);
+      const files = Array.from(e.target.files || [])
+      handleFilesAdded(files)
       // Reset input value to allow selecting the same files again
       if (fileInputRef.current) {
-        fileInputRef.current.value = '';
+        fileInputRef.current.value = ''
       }
     },
     [handleFilesAdded]
-  );
+  )
 
   const handleDrop = useCallback(
     (e: React.DragEvent<HTMLDivElement>) => {
-      e.preventDefault();
-      setIsDragOver(false);
-      const files = Array.from(e.dataTransfer.files || []);
-      handleFilesAdded(files);
+      e.preventDefault()
+      setIsDragOver(false)
+      const files = Array.from(e.dataTransfer.files || [])
+      handleFilesAdded(files)
     },
     [handleFilesAdded]
-  );
+  )
 
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setIsDragOver(true);
-  };
+    e.preventDefault()
+    setIsDragOver(true)
+  }
 
   const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setIsDragOver(false);
-  };
+    e.preventDefault()
+    setIsDragOver(false)
+  }
 
   // Handle retry - auto-start upload after retry
   const handleRetryFile = useCallback(
     async (id: string) => {
-      await retryFile(id);
+      await retryFile(id)
     },
     [retryFile]
-  );
+  )
 
   // Confirm and create documents
   const handleConfirm = async () => {
     // If there's an active edit, apply it first
     if (editingFileId && editingFileName.trim()) {
-      const currentItem = state.files.find(f => f.id === editingFileId);
-      const currentDisplayName = currentItem?.attachment?.filename || currentItem?.file.name;
+      const currentItem = state.files.find(f => f.id === editingFileId)
+      const currentDisplayName = currentItem?.attachment?.filename || currentItem?.file.name
       if (editingFileName !== currentDisplayName) {
-        renameFile(editingFileId, editingFileName.trim());
+        renameFile(editingFileId, editingFileName.trim())
       }
-      setEditingFileId(null);
-      setEditingFileName('');
+      setEditingFileId(null)
+      setEditingFileName('')
     }
 
     // Build attachments list directly from state, applying any pending rename
@@ -164,134 +164,134 @@ export function DocumentUpload({ open, onOpenChange, onUploadComplete }: Documen
         const finalFilename =
           f.id === editingFileId && editingFileName.trim()
             ? editingFileName.trim()
-            : f.attachment!.filename;
+            : f.attachment!.filename
         return {
           attachment: { ...f.attachment!, filename: finalFilename },
           file: f.file,
-        };
-      });
+        }
+      })
 
-    if (successfulAttachments.length === 0) return;
+    if (successfulAttachments.length === 0) return
 
-    setIsConfirming(true);
+    setIsConfirming(true)
     try {
-      await onUploadComplete(successfulAttachments, splitterConfig);
-      reset();
+      await onUploadComplete(successfulAttachments, splitterConfig)
+      reset()
       setSplitterConfig({
         type: 'sentence',
         separator: '\n\n',
         chunk_size: 1024,
         chunk_overlap: 50,
-      });
+      })
     } catch {
       // Error handled by parent
     } finally {
-      setIsConfirming(false);
+      setIsConfirming(false)
     }
-  };
+  }
 
   const handleClose = () => {
-    reset();
+    reset()
     setSplitterConfig({
       type: 'sentence',
       separator: '\n\n',
       chunk_size: 1024,
       chunk_overlap: 50,
-    });
-    setValidationError(null);
-    setUploadMode('file');
-    setTextContent('');
-    setTextFileName('');
-    setTextError(null);
-    onOpenChange(false);
-  };
+    })
+    setValidationError(null)
+    setUploadMode('file')
+    setTextContent('')
+    setTextFileName('')
+    setTextError(null)
+    onOpenChange(false)
+  }
 
   // Handle text content submission - convert to file and upload
   const handleTextSubmit = useCallback(() => {
     // Validate text content
     if (!textContent.trim()) {
-      setTextError(t('document.upload.textRequired'));
-      return;
+      setTextError(t('document.upload.textRequired'))
+      return
     }
 
     // Generate filename if not provided
-    const fileName = textFileName.trim() || `document_${Date.now()}.txt`;
-    const finalFileName = fileName.endsWith('.txt') ? fileName : `${fileName}.txt`;
+    const fileName = textFileName.trim() || `document_${Date.now()}.txt`
+    const finalFileName = fileName.endsWith('.txt') ? fileName : `${fileName}.txt`
 
     // Create a File object from text content
-    const blob = new Blob([textContent], { type: 'text/plain' });
-    const file = new File([blob], finalFileName, { type: 'text/plain' });
+    const blob = new Blob([textContent], { type: 'text/plain' })
+    const file = new File([blob], finalFileName, { type: 'text/plain' })
 
     // Add file to upload queue
-    handleFilesAdded([file]);
+    handleFilesAdded([file])
 
     // Reset text input state and switch back to file mode
-    setTextContent('');
-    setTextFileName('');
-    setTextError(null);
-    setUploadMode('file');
-  }, [textContent, textFileName, handleFilesAdded, t]);
+    setTextContent('')
+    setTextFileName('')
+    setTextError(null)
+    setUploadMode('file')
+  }, [textContent, textFileName, handleFilesAdded, t])
 
   // Handle back from text mode
   const handleBackFromTextMode = () => {
-    setUploadMode('file');
-    setTextContent('');
-    setTextFileName('');
-    setTextError(null);
-  };
+    setUploadMode('file')
+    setTextContent('')
+    setTextFileName('')
+    setTextError(null)
+  }
 
   const formatFileSize = (bytes: number) => {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  };
+    if (bytes < 1024) return `${bytes} B`
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  }
 
   const getStatusIcon = (status: FileUploadStatus) => {
     switch (status) {
       case 'pending':
       case 'uploading':
-        return <Loader2 className="w-4 h-4 text-primary animate-spin" />;
+        return <Loader2 className="w-4 h-4 text-primary animate-spin" />
       case 'success':
-        return <CheckCircle2 className="w-4 h-4 text-success" />;
+        return <CheckCircle2 className="w-4 h-4 text-success" />
       case 'error':
-        return <AlertCircle className="w-4 h-4 text-error" />;
+        return <AlertCircle className="w-4 h-4 text-error" />
     }
-  };
+  }
 
   const getStatusText = (status: FileUploadStatus) => {
     switch (status) {
       case 'pending':
-        return t('knowledge:document.upload.status.pending');
+        return t('knowledge:document.upload.status.pending')
       case 'uploading':
-        return t('knowledge:document.upload.status.uploading');
+        return t('knowledge:document.upload.status.uploading')
       case 'success':
-        return t('knowledge:document.upload.status.success');
+        return t('knowledge:document.upload.status.success')
       case 'error':
-        return t('knowledge:document.upload.status.error');
+        return t('knowledge:document.upload.status.error')
     }
-  };
+  }
 
-  const successCount = state.files.filter(f => f.status === 'success').length;
-  const errorCount = state.files.filter(f => f.status === 'error').length;
-  const hasFiles = state.files.length > 0;
+  const successCount = state.files.filter(f => f.status === 'success').length
+  const errorCount = state.files.filter(f => f.status === 'error').length
+  const hasFiles = state.files.length > 0
   // Can confirm when all uploads are done (no pending/uploading) and at least one success
   const allUploadsComplete =
-    !state.isUploading && state.files.every(f => f.status === 'success' || f.status === 'error');
-  const canConfirm = successCount > 0 && allUploadsComplete && !isConfirming;
+    !state.isUploading && state.files.every(f => f.status === 'success' || f.status === 'error')
+  const canConfirm = successCount > 0 && allUploadsComplete && !isConfirming
 
   // Reset state when dialog opens
   useEffect(() => {
     if (open) {
-      reset();
+      reset()
       setSplitterConfig({
         type: 'sentence',
         separator: '\n\n',
         chunk_size: 1024,
         chunk_overlap: 50,
-      });
-      setValidationError(null);
+      })
+      setValidationError(null)
     }
-  }, [open, reset]);
+  }, [open, reset])
 
   // Render text input mode
   const renderTextMode = () => (
@@ -335,8 +335,8 @@ export function DocumentUpload({ open, onOpenChange, onUploadComplete }: Documen
             placeholder={t('document.upload.textPlaceholder')}
             value={textContent}
             onChange={e => {
-              setTextContent(e.target.value);
-              if (textError) setTextError(null);
+              setTextContent(e.target.value)
+              if (textError) setTextError(null)
             }}
             className="min-h-[200px] resize-y"
           />
@@ -360,7 +360,7 @@ export function DocumentUpload({ open, onOpenChange, onUploadComplete }: Documen
         </Button>
       </div>
     </>
-  );
+  )
 
   // Render file upload mode
   const renderFileMode = () => (
@@ -454,9 +454,9 @@ export function DocumentUpload({ open, onOpenChange, onUploadComplete }: Documen
 
             <div className="border border-border rounded-lg divide-y divide-border max-h-[200px] overflow-y-auto">
               {state.files.map(item => {
-                const displayName = item.attachment?.filename || item.file.name;
-                const isEditing = editingFileId === item.id;
-                const canEdit = item.status === 'success' && !state.isUploading;
+                const displayName = item.attachment?.filename || item.file.name
+                const isEditing = editingFileId === item.id
+                const canEdit = item.status === 'success' && !state.isUploading
 
                 return (
                   <div key={item.id} className="p-3">
@@ -471,21 +471,21 @@ export function DocumentUpload({ open, onOpenChange, onUploadComplete }: Documen
                               onChange={e => setEditingFileName(e.target.value)}
                               onBlur={() => {
                                 if (editingFileName.trim() && editingFileName !== displayName) {
-                                  renameFile(item.id, editingFileName.trim());
+                                  renameFile(item.id, editingFileName.trim())
                                 }
-                                setEditingFileId(null);
-                                setEditingFileName('');
+                                setEditingFileId(null)
+                                setEditingFileName('')
                               }}
                               onKeyDown={e => {
                                 if (e.key === 'Enter') {
                                   if (editingFileName.trim() && editingFileName !== displayName) {
-                                    renameFile(item.id, editingFileName.trim());
+                                    renameFile(item.id, editingFileName.trim())
                                   }
-                                  setEditingFileId(null);
-                                  setEditingFileName('');
+                                  setEditingFileId(null)
+                                  setEditingFileName('')
                                 } else if (e.key === 'Escape') {
-                                  setEditingFileId(null);
-                                  setEditingFileName('');
+                                  setEditingFileId(null)
+                                  setEditingFileName('')
                                 }
                               }}
                               className="h-7 text-sm font-medium flex-1 min-w-0"
@@ -504,8 +504,8 @@ export function DocumentUpload({ open, onOpenChange, onUploadComplete }: Documen
                                   size="icon"
                                   className="h-5 w-5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
                                   onClick={() => {
-                                    setEditingFileId(item.id);
-                                    setEditingFileName(displayName);
+                                    setEditingFileId(item.id)
+                                    setEditingFileName(displayName)
                                   }}
                                   title={t('document.upload.clickToRename')}
                                 >
@@ -565,7 +565,7 @@ export function DocumentUpload({ open, onOpenChange, onUploadComplete }: Documen
                       </div>
                     </div>
                   </div>
-                );
+                )
               })}
             </div>
 
@@ -624,7 +624,7 @@ export function DocumentUpload({ open, onOpenChange, onUploadComplete }: Documen
         </Button>
       </div>
     </>
-  );
+  )
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -632,5 +632,5 @@ export function DocumentUpload({ open, onOpenChange, onUploadComplete }: Documen
         {uploadMode === 'text' ? renderTextMode() : renderFileMode()}
       </DialogContent>
     </Dialog>
-  );
+  )
 }

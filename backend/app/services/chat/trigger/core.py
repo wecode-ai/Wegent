@@ -285,9 +285,10 @@ async def _stream_chat_response(
     span_manager.create_span()
     span_manager.enter_span()
 
-    from app.chat_shell.agent import ChatAgent
+    from chat_shell.agent import ChatAgent
+
     from app.services.chat.config import ChatConfigBuilder, WebSocketStreamConfig
-    from app.services.chat.streaming import WebSocketStreamingHandler
+    from app.services.chat.streaming import WebSocketBridge, WebSocketStreamingHandler
 
     db = SessionLocal()
 
@@ -409,31 +410,9 @@ async def _stream_chat_response(
         )
         logger.info("[ai_trigger] chat:start emitted")
 
-        # Prepare load_skill tool if skills are configured
-        # Pass task_id to preload previously used skills for follow-up messages
-        from app.chat_shell.tools.skill_factory import (
-            prepare_load_skill_tool,
-            prepare_skill_tools,
-        )
-
-        load_skill_tool = prepare_load_skill_tool(
-            skill_names=chat_config.skill_names,
-            user_id=stream_data.user_id,
-            db=db,
-            task_id=stream_data.task_id,
-        )
-        if load_skill_tool:
-            extra_tools.append(load_skill_tool)
-
-        # Prepare skill tools dynamically using SkillToolRegistry
-        skill_tools = prepare_skill_tools(
-            task_id=stream_data.task_id,
-            subtask_id=stream_data.subtask_id,
-            user_id=stream_data.user_id,
-            db_session=db,
-            skill_configs=chat_config.skill_configs,
-        )
-        extra_tools.extend(skill_tools)
+        # Check streaming mode early to determine if we need to create tools here
+        streaming_mode = settings.STREAMING_MODE.lower()
+        chat_shell_mode = settings.CHAT_SHELL_MODE.lower()
 
         # Build skill metadata for prompt injection
         # Extract name and description from skill_configs for prompt enhancement
@@ -442,6 +421,35 @@ async def _stream_chat_response(
             for s in chat_config.skill_configs
             if "name" in s and "description" in s
         ]
+
+        # Only create tools locally for bridge/legacy modes
+        # In HTTP mode, chat_shell service creates its own tools
+        if chat_shell_mode != "http":
+            # Prepare load_skill tool if skills are configured
+            # Pass task_id to preload previously used skills for follow-up messages
+            from chat_shell.tools.skill_factory import (
+                prepare_load_skill_tool,
+                prepare_skill_tools,
+            )
+
+            load_skill_tool = prepare_load_skill_tool(
+                skill_names=chat_config.skill_names,
+                user_id=stream_data.user_id,
+                db=db,
+                task_id=stream_data.task_id,
+            )
+            if load_skill_tool:
+                extra_tools.append(load_skill_tool)
+
+            # Prepare skill tools dynamically using SkillToolRegistry
+            skill_tools = prepare_skill_tools(
+                task_id=stream_data.task_id,
+                subtask_id=stream_data.subtask_id,
+                user_id=stream_data.user_id,
+                db_session=db,
+                skill_configs=chat_config.skill_configs,
+            )
+            extra_tools.extend(skill_tools)
 
         # Create WebSocket stream config
         ws_config = WebSocketStreamConfig(
@@ -466,16 +474,56 @@ async def _stream_chat_response(
             skills=skill_metadata,  # Skill metadata for prompt injection
         )
 
-        # Create ChatAgent and WebSocketStreamingHandler for streaming
-        agent = ChatAgent()
-        handler = WebSocketStreamingHandler(agent)
-        await handler.stream_to_websocket(
-            message=final_message,
-            model_config=chat_config.model_config,
-            system_prompt=enhanced_system_prompt,  # Use enhanced system prompt
-            config=ws_config,
-            namespace=namespace,
-        )
+        if chat_shell_mode == "http":
+            # HTTP mode: Call chat_shell service via HTTP/SSE
+            # Get knowledge_base_ids from user subtask's contexts
+            knowledge_base_ids = None
+            if user_subtask_id:
+                from app.services.chat.preprocessing.contexts import (
+                    get_knowledge_base_ids_from_subtask,
+                )
+
+                knowledge_base_ids = get_knowledge_base_ids_from_subtask(
+                    db, user_subtask_id
+                )
+                if knowledge_base_ids:
+                    logger.info(
+                        "[ai_trigger] HTTP mode: knowledge_base_ids=%s",
+                        knowledge_base_ids,
+                    )
+
+            await _stream_with_http_adapter(
+                stream_data=stream_data,
+                message=final_message,
+                model_config=chat_config.model_config,
+                system_prompt=enhanced_system_prompt,
+                ws_config=ws_config,
+                extra_tools=extra_tools,
+                skill_names=chat_config.skill_names,
+                skill_configs=chat_config.skill_configs,
+                knowledge_base_ids=knowledge_base_ids,
+            )
+        elif streaming_mode == "bridge":
+            # New architecture: StreamingCore publishes to Redis, WebSocketBridge forwards
+            await _stream_with_bridge(
+                stream_data=stream_data,
+                message=final_message,
+                model_config=chat_config.model_config,
+                system_prompt=enhanced_system_prompt,
+                ws_config=ws_config,
+                namespace=namespace,
+            )
+        else:
+            # Legacy architecture: WebSocketStreamingHandler emits directly
+            agent = ChatAgent()
+            handler = WebSocketStreamingHandler(agent)
+            await handler.stream_to_websocket(
+                message=final_message,
+                model_config=chat_config.model_config,
+                system_prompt=enhanced_system_prompt,  # Use enhanced system prompt
+                config=ws_config,
+                namespace=namespace,
+            )
 
         # Mark span as successful
         span_manager.record_success(
@@ -505,3 +553,665 @@ async def _stream_chat_response(
         span_manager.exit_span()
 
         db.close()
+
+
+async def _stream_with_http_adapter(
+    stream_data: StreamTaskData,
+    message: str,
+    model_config: dict,
+    system_prompt: str,
+    ws_config: Any,
+    extra_tools: list,
+    skill_names: list = None,
+    skill_configs: list = None,
+    knowledge_base_ids: list = None,
+) -> None:
+    """Stream using HTTP adapter to call remote chat_shell service.
+
+    This function:
+    1. Builds a ChatRequest from the parameters
+    2. Uses HTTPAdapter to call chat_shell's /v1/response API
+    3. Processes SSE events and forwards them to WebSocket
+    4. Checks Redis cancel flag and disconnects from chat_shell when cancelled
+
+    Args:
+        stream_data: StreamTaskData containing all extracted ORM data
+        message: User message
+        model_config: Model configuration
+        system_prompt: System prompt
+        ws_config: WebSocket stream configuration
+        extra_tools: Extra tools (note: tools are not sent via HTTP, handled by chat_shell)
+        skill_names: List of available skill names for dynamic loading
+        skill_configs: List of skill tool configurations
+        knowledge_base_ids: List of knowledge base IDs to search
+    """
+    from app.core.config import settings
+    from app.services.chat.adapters.http import HTTPAdapter
+    from app.services.chat.adapters.interface import ChatEventType, ChatRequest
+    from app.services.chat.storage import session_manager
+    from app.services.chat.ws_emitter import get_ws_emitter
+
+    task_id = ws_config.task_id
+    subtask_id = ws_config.subtask_id
+
+    # Register stream for cancellation support
+    # This creates a local asyncio.Event and clears any existing Redis cancel flag
+    cancel_event = await session_manager.register_stream(subtask_id)
+
+    logger.info(
+        "[HTTP_ADAPTER] Starting HTTP streaming: task_id=%d, subtask_id=%d",
+        task_id,
+        subtask_id,
+    )
+
+    # Parse MCP server configuration for HTTP mode
+    mcp_servers = []
+    if settings.CHAT_MCP_ENABLED:
+        import json
+
+        mcp_servers_config = getattr(settings, "CHAT_MCP_SERVERS", "{}")
+        if mcp_servers_config:
+            try:
+                config = json.loads(mcp_servers_config)
+                servers = config.get("mcpServers", {})
+                for name, server_config in servers.items():
+                    server_type = server_config.get("type", "streamable-http")
+                    url = server_config.get("url", "")
+                    headers = server_config.get("headers", {})
+                    if url:
+                        mcp_servers.append(
+                            {
+                                "name": name,
+                                "type": server_type,
+                                "url": url,
+                                "auth": headers if headers else None,
+                            }
+                        )
+                logger.info(
+                    "[HTTP_ADAPTER] Parsed MCP servers: %d servers",
+                    len(mcp_servers),
+                )
+            except json.JSONDecodeError as e:
+                logger.warning("[HTTP_ADAPTER] Failed to parse CHAT_MCP_SERVERS: %s", e)
+
+    # Build ChatRequest
+    # Note: enable_web_search should follow settings.WEB_SEARCH_ENABLED for consistency with bridge mode
+    # The ws_config.enable_web_search is for user override, but server-side setting takes precedence
+    enable_web_search = ws_config.enable_web_search or getattr(
+        settings, "WEB_SEARCH_ENABLED", False
+    )
+
+    # Build task_data for MCP tools
+    task_data = {
+        "user": {
+            "name": str(stream_data.user_name or ""),
+            "id": stream_data.user_id,
+        },
+        "task_id": task_id,
+        "team_id": stream_data.team_id,
+    }
+
+    chat_request = ChatRequest(
+        task_id=task_id,
+        subtask_id=subtask_id,
+        message=message,
+        user_id=stream_data.user_id,
+        user_name=stream_data.user_name,
+        team_id=stream_data.team_id,
+        team_name=stream_data.team_name,
+        message_id=ws_config.message_id,
+        is_group_chat=ws_config.is_group_chat,
+        model_config=model_config,
+        system_prompt=system_prompt,
+        enable_tools=ws_config.enable_tools,
+        enable_web_search=enable_web_search,
+        enable_clarification=ws_config.enable_clarification,
+        enable_deep_thinking=ws_config.enable_deep_thinking,
+        search_engine=ws_config.search_engine,
+        bot_name=ws_config.bot_name,
+        bot_namespace=ws_config.bot_namespace,
+        skills=ws_config.skills or [],
+        # Add skill and knowledge base parameters for HTTP mode
+        skill_names=skill_names or [],
+        skill_configs=skill_configs or [],
+        knowledge_base_ids=knowledge_base_ids,
+        task_data=task_data,
+        mcp_servers=mcp_servers,
+    )
+
+    logger.info(
+        "[HTTP_ADAPTER] ChatRequest built: task_id=%d, skill_names=%s, "
+        "skill_configs_count=%d, knowledge_base_ids=%s",
+        task_id,
+        skill_names,
+        len(skill_configs) if skill_configs else 0,
+        knowledge_base_ids,
+    )
+
+    # Create HTTP adapter
+    chat_shell_url = getattr(settings, "CHAT_SHELL_URL", "http://localhost:8100")
+    chat_shell_token = getattr(settings, "CHAT_SHELL_TOKEN", "")
+
+    adapter = HTTPAdapter(
+        base_url=chat_shell_url,
+        token=chat_shell_token,
+        timeout=300.0,
+    )
+
+    # Get WebSocket emitter
+    ws_emitter = get_ws_emitter()
+
+    # Track full response and offset for WebSocket events
+    full_response = ""
+    offset = 0
+    # Track thinking steps for tool events (to match frontend expectations)
+    thinking_steps: list[dict] = []
+    # Track if we were cancelled
+    was_cancelled = False
+
+    try:
+        # Stream events from chat_shell and forward to WebSocket
+        async for event in adapter.chat(chat_request):
+            # Check for cancellation (both local event and Redis flag)
+            # This enables cross-worker cancellation: when user clicks cancel,
+            # it may go to a different backend worker which sets Redis flag,
+            # and this worker detects it here and disconnects from chat_shell
+            if cancel_event.is_set() or await session_manager.is_cancelled(subtask_id):
+                logger.info(
+                    "[HTTP_ADAPTER] Cancellation detected, disconnecting from chat_shell: "
+                    "task_id=%d, subtask_id=%d",
+                    task_id,
+                    subtask_id,
+                )
+                was_cancelled = True
+                break
+
+            if event.type == ChatEventType.CHUNK:
+                # Text chunk - forward to WebSocket
+                chunk_text = event.data.get("content", "")
+                if chunk_text:
+                    full_response += chunk_text
+                    await ws_emitter.emit_chat_chunk(
+                        task_id=task_id,
+                        subtask_id=subtask_id,
+                        content=chunk_text,
+                        offset=offset,
+                    )
+                    offset += len(chunk_text)
+
+            elif event.type == ChatEventType.THINKING:
+                # Thinking token - emit as chunk with special handling
+                # The frontend distinguishes thinking by looking at result.thinking
+                thinking_text = event.data.get("content", "")
+                if thinking_text:
+                    # Thinking content is sent as a separate chunk
+                    # The chat_shell SSE should include thinking in result
+                    pass  # Thinking is handled via result in DONE event
+
+            elif event.type == ChatEventType.TOOL_START:
+                # Tool start - add to thinking steps and emit chunk with result
+                tool_id = event.data.get("id", "")
+                tool_name = event.data.get("name", event.data.get("tool_name", ""))
+                tool_input = event.data.get("input", event.data.get("tool_input", {}))
+                display_name = event.data.get("display_name", tool_name)
+
+                logger.info(
+                    "[HTTP_ADAPTER] TOOL_START: id=%s, name=%s, display_name=%s, event.data=%s",
+                    tool_id,
+                    tool_name,
+                    display_name,
+                    event.data,
+                )
+
+                thinking_steps.append(
+                    {
+                        "title": display_name,
+                        "next_action": "continue",
+                        "run_id": tool_id,
+                        "details": {
+                            "type": "tool_use",
+                            "tool_name": tool_name,
+                            "name": tool_name,
+                            "status": "started",
+                            "input": tool_input,
+                        },
+                    }
+                )
+
+                # Emit chunk with thinking data
+                await ws_emitter.emit_chat_chunk(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    content="",
+                    offset=offset,
+                    result={
+                        "shell_type": "Chat",
+                        "thinking": thinking_steps.copy(),
+                    },
+                )
+
+            elif event.type == ChatEventType.TOOL_RESULT:
+                # Tool result - update thinking steps and emit chunk with result
+                tool_id = event.data.get("id", "")
+                tool_name = event.data.get("name", event.data.get("tool_name", ""))
+                tool_output = event.data.get(
+                    "output", event.data.get("tool_output", "")
+                )
+
+                logger.info(
+                    "[HTTP_ADAPTER] TOOL_RESULT: id=%s, name=%s, event.data=%s",
+                    tool_id,
+                    tool_name,
+                    {
+                        k: v for k, v in event.data.items() if k != "output"
+                    },  # Skip output to reduce log size
+                )
+
+                # Find matching start step and update display name
+                display_name = f"Tool completed: {tool_name}"
+                for step in thinking_steps:
+                    if (
+                        step.get("run_id") == tool_id
+                        and step.get("details", {}).get("status") == "started"
+                    ):
+                        # Get the original title and remove "正在" prefix
+                        orig_title = step.get("title", "")
+                        if orig_title.startswith("正在"):
+                            display_name = orig_title[2:]
+                        else:
+                            display_name = orig_title
+                        break
+
+                thinking_steps.append(
+                    {
+                        "title": display_name,
+                        "next_action": "continue",
+                        "run_id": tool_id,
+                        "details": {
+                            "type": "tool_result",
+                            "tool_name": tool_name,
+                            "status": "completed",
+                            "output": tool_output,
+                            "content": tool_output,
+                        },
+                    }
+                )
+
+                # Emit chunk with thinking data
+                await ws_emitter.emit_chat_chunk(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    content="",
+                    offset=offset,
+                    result={
+                        "shell_type": "Chat",
+                        "thinking": thinking_steps.copy(),
+                    },
+                )
+
+            elif event.type == ChatEventType.DONE:
+                # Streaming done - emit done event
+                result = event.data.get("result", {"value": full_response})
+
+                # Ensure result has 'value' key
+                if "value" not in result:
+                    result["value"] = full_response
+
+                # Include thinking steps if any
+                if thinking_steps:
+                    result["thinking"] = thinking_steps
+                    result["shell_type"] = "Chat"
+
+                # Update subtask status to COMPLETED in database
+                # This is critical for persistence - without this, messages show as "running" after refresh
+                from app.services.chat.storage.db import db_handler
+
+                await db_handler.update_subtask_status(
+                    subtask_id=subtask_id,
+                    status="COMPLETED",
+                    result=result,
+                )
+
+                await ws_emitter.emit_chat_done(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    offset=offset,
+                    result=result,
+                    message_id=ws_config.message_id,
+                )
+                # Also emit bot complete for multi-device sync
+                await ws_emitter.emit_chat_bot_complete(
+                    user_id=stream_data.user_id,
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    content=full_response,
+                    result=result,
+                )
+
+            elif event.type == ChatEventType.ERROR:
+                # Error - emit error event
+                error_msg = event.data.get("error", "Unknown error")
+                logger.error(
+                    "[HTTP_ADAPTER] Stream error: task_id=%d, error=%s",
+                    task_id,
+                    error_msg,
+                )
+
+                # Update subtask status to FAILED in database
+                from app.services.chat.storage.db import db_handler
+
+                await db_handler.update_subtask_status(
+                    subtask_id=subtask_id,
+                    status="FAILED",
+                    error=error_msg,
+                )
+
+                await ws_emitter.emit_chat_error(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    error=error_msg,
+                    message_id=ws_config.message_id,
+                )
+
+            elif event.type == ChatEventType.CANCELLED:
+                # Cancelled - emit cancelled event
+
+                # Update subtask status to CANCELLED in database
+                from app.services.chat.storage.db import db_handler
+
+                await db_handler.update_subtask_status(
+                    subtask_id=subtask_id,
+                    status="CANCELLED",
+                )
+
+                await ws_emitter.emit_chat_cancelled(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                )
+
+        # Handle cancellation detected in the loop
+        if was_cancelled:
+            from app.services.chat.storage.db import db_handler
+
+            # Build partial result
+            result = {"value": full_response, "cancelled": True}
+            if thinking_steps:
+                result["thinking"] = thinking_steps
+                result["shell_type"] = "Chat"
+
+            # Update subtask status to COMPLETED with partial content
+            await db_handler.update_subtask_status(
+                subtask_id=subtask_id,
+                status="COMPLETED",
+                result=result,
+            )
+
+            # Emit cancelled event to WebSocket
+            await ws_emitter.emit_chat_cancelled(
+                task_id=task_id,
+                subtask_id=subtask_id,
+            )
+
+            logger.info(
+                "[HTTP_ADAPTER] Cancelled and cleaned up: task_id=%d, subtask_id=%d, "
+                "partial_response_len=%d",
+                task_id,
+                subtask_id,
+                len(full_response),
+            )
+
+    except Exception as e:
+        logger.exception(
+            "[HTTP_ADAPTER] Error during HTTP streaming: task_id=%d, error=%s",
+            task_id,
+            e,
+        )
+
+        # Update subtask status to FAILED in database
+        from app.services.chat.storage.db import db_handler
+
+        await db_handler.update_subtask_status(
+            subtask_id=subtask_id,
+            status="FAILED",
+            error=str(e),
+        )
+
+        await ws_emitter.emit_chat_error(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            error=str(e),
+        )
+
+    finally:
+        # Unregister stream to clean up local event and Redis cancel flag
+        await session_manager.unregister_stream(subtask_id)
+
+
+async def _stream_with_bridge(
+    stream_data: StreamTaskData,
+    message: str,
+    model_config: dict,
+    system_prompt: str,
+    ws_config: Any,
+    namespace: Any,
+) -> None:
+    """Stream using the new bridge architecture.
+
+    This function:
+    1. Starts WebSocketBridge to subscribe to Redis channel
+    2. Uses chat_shell's StreamingCore with publish_to_channel=True
+    3. StreamingCore publishes events to Redis
+    4. WebSocketBridge forwards events to WebSocket
+
+    Args:
+        stream_data: StreamTaskData containing all extracted ORM data
+        message: User message
+        model_config: Model configuration
+        system_prompt: System prompt
+        ws_config: WebSocket stream configuration
+        namespace: ChatNamespace instance
+    """
+    from chat_shell.agent import AgentConfig, ChatAgent
+    from chat_shell.history import get_chat_history
+    from chat_shell.services.streaming import (
+        StreamingConfig,
+        StreamingCore,
+        StreamingState,
+    )
+    from chat_shell.services.streaming.emitters import NullEmitter
+    from chat_shell.tools import WebSearchTool
+    from chat_shell.tools.events import create_tool_event_handler
+    from chat_shell.tools.mcp import load_mcp_tools
+    from langchain_core.tools.base import BaseTool
+
+    from app.core.shutdown import shutdown_manager
+    from app.services.chat.streaming import WebSocketBridge
+    from app.services.chat.ws_emitter import get_ws_emitter
+
+    subtask_id = ws_config.subtask_id
+    task_id = ws_config.task_id
+    task_room = ws_config.task_room
+
+    # Create WebSocket bridge for Redis -> WebSocket forwarding
+    bridge = WebSocketBridge(namespace, task_room, task_id)
+
+    # Create a null emitter since we're publishing to Redis channel instead
+    # The WebSocketBridge will handle WebSocket emission
+    emitter = NullEmitter()
+
+    # Create streaming state
+    state = StreamingState(
+        task_id=task_id,
+        subtask_id=subtask_id,
+        user_id=ws_config.user_id,
+        user_name=ws_config.user_name,
+        is_group_chat=ws_config.is_group_chat,
+        message_id=ws_config.message_id,
+        shell_type=ws_config.shell_type,
+    )
+
+    # Create streaming config with publish_to_channel enabled
+    config = StreamingConfig(publish_to_channel=True)
+
+    # Create streaming core
+    core = StreamingCore(emitter, state, config)
+
+    try:
+        # Register with shutdown manager
+        await shutdown_manager.register_stream(subtask_id)
+
+        # Start the bridge to listen for Redis events
+        if not await bridge.start(subtask_id):
+            logger.error(
+                "[BRIDGE] Failed to start WebSocket bridge: task_id=%d, subtask_id=%d",
+                task_id,
+                subtask_id,
+            )
+            return
+
+        # Acquire resources (semaphore, cancel event)
+        if not await core.acquire_resources():
+            await bridge.stop()
+            return
+
+        # Prepare extra tools
+        extra_tools: list[BaseTool] = (
+            list(ws_config.extra_tools) if ws_config.extra_tools else []
+        )
+
+        if ws_config.enable_tools:
+            # Load MCP tools if enabled
+            if settings.CHAT_MCP_ENABLED:
+                mcp_task_data = {
+                    "user": {
+                        "name": str(ws_config.user_name or ""),
+                        "id": ws_config.user_id,
+                    }
+                }
+                mcp_client = await load_mcp_tools(
+                    task_id,
+                    ws_config.bot_name,
+                    ws_config.bot_namespace,
+                    task_data=mcp_task_data,
+                )
+                if mcp_client:
+                    extra_tools.extend(mcp_client.get_tools())
+                    core.set_mcp_client(mcp_client)
+
+            # Add web search tool if enabled
+            if settings.WEB_SEARCH_ENABLED:
+                search_engine = (
+                    ws_config.search_engine if ws_config.search_engine else None
+                )
+                extra_tools.append(
+                    WebSearchTool(
+                        engine_name=search_engine,
+                        default_max_results=settings.WEB_SEARCH_DEFAULT_MAX_RESULTS,
+                    )
+                )
+
+        # Get chat history
+        history = await get_chat_history(
+            task_id,
+            ws_config.is_group_chat,
+            exclude_after_message_id=ws_config.user_message_id,
+        )
+
+        # Find LoadSkillTool for dynamic skill prompt injection
+        load_skill_tool = None
+        for tool in extra_tools:
+            if tool.name == "load_skill":
+                load_skill_tool = tool
+                break
+
+        # Create agent config
+        agent = ChatAgent()
+        agent_config = AgentConfig(
+            model_config=model_config,
+            system_prompt=system_prompt,
+            max_iterations=settings.CHAT_TOOL_MAX_REQUESTS,
+            extra_tools=extra_tools,
+            load_skill_tool=load_skill_tool,
+            enable_clarification=ws_config.enable_clarification,
+            enable_deep_thinking=ws_config.enable_deep_thinking,
+            skills=ws_config.skills,
+        )
+
+        # Build messages
+        username = ws_config.get_username_for_message()
+        model_id = model_config.get("model_id", "")
+        messages = agent.build_messages(
+            history,
+            message,
+            system_prompt,
+            username=username,
+            config=agent_config,
+            model_id=model_id,
+        )
+
+        # Create agent builder for tool event handler
+        agent_builder = agent.create_agent_builder(agent_config)
+
+        logger.info(
+            "[BRIDGE] Starting token streaming: task_id=%d, subtask_id=%d, tools=%d",
+            task_id,
+            subtask_id,
+            len(extra_tools),
+        )
+
+        # Create tool event handler
+        handle_tool_event = create_tool_event_handler(state, emitter, agent_builder)
+
+        # Stream tokens
+        token_count = 0
+        async for token in agent.stream(
+            messages,
+            agent_config,
+            cancel_event=core.cancel_event,
+            on_tool_event=handle_tool_event,
+        ):
+            token_count += 1
+            if not await core.process_token(token):
+                logger.info(
+                    "[BRIDGE] Streaming cancelled: task_id=%d, tokens=%d",
+                    task_id,
+                    token_count,
+                )
+                return
+
+        logger.info(
+            "[BRIDGE] Token streaming completed: task_id=%d, tokens=%d, response_len=%d",
+            task_id,
+            token_count,
+            len(state.full_response),
+        )
+
+        # Finalize
+        result = await core.finalize()
+
+        # Notify user room for multi-device sync
+        ws_emitter = get_ws_emitter()
+        if ws_emitter:
+            await ws_emitter.emit_chat_bot_complete(
+                user_id=ws_config.user_id,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                content=state.full_response,
+                result=result,
+            )
+
+    except Exception as e:
+        logger.exception("[BRIDGE] subtask=%s error", subtask_id)
+        await core.handle_error(e)
+
+    finally:
+        # Stop the bridge
+        await bridge.stop()
+        # Release resources
+        await core.release_resources()
+        await shutdown_manager.unregister_stream(subtask_id)
+
+        if subtask_id in getattr(namespace, "_active_streams", {}):
+            del namespace._active_streams[subtask_id]
+        if subtask_id in getattr(namespace, "_stream_versions", {}):
+            del namespace._stream_versions[subtask_id]

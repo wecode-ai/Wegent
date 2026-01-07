@@ -1,22 +1,22 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState, useEffect, useRef } from 'react';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { Button } from '@/components/ui/button';
-import { Spinner } from '@/components/ui/spinner';
+import { useState, useEffect, useRef } from 'react'
+import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
+import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import { useTranslation } from '@/hooks/useTranslation';
+} from '@/components/ui/select'
+import { useTranslation } from '@/hooks/useTranslation'
 import {
   RefreshCw,
   MessageSquare,
@@ -28,27 +28,27 @@ import {
   Quote,
   ChevronLeft,
   ChevronRight,
-} from 'lucide-react';
-import { modelApis, type UnifiedModel } from '@/apis/models';
-import type { TestConversation } from '../types';
-import type { ModelRecommendation } from '@/apis/wizard';
-import GeneratingLoader from './GeneratingLoader';
+} from 'lucide-react'
+import { modelApis, type UnifiedModel } from '@/apis/models'
+import type { TestConversation } from '../types'
+import type { ModelRecommendation } from '@/apis/wizard'
+import GeneratingLoader from './GeneratingLoader'
 import {
   MessageBubble,
   type Message,
   type ParagraphAction,
-} from '@/features/tasks/components/message';
-import { useTheme } from '@/features/theme/ThemeProvider';
-import '../wizard-animations.css';
+} from '@/features/tasks/components/message'
+import { useTheme } from '@/features/theme/ThemeProvider'
+import '../wizard-animations.css'
 
 // Popover content component for paragraph optimization
 // This is a separate component to allow using React hooks
 interface ParagraphOptimizePopoverProps {
-  paragraphText: string;
-  onClose: () => void;
-  onIteratePrompt: (feedback: string, selectedText?: string) => Promise<void>;
-  isIteratingPrompt: boolean;
-  t: (key: string) => string;
+  paragraphText: string
+  onClose: () => void
+  onIteratePrompt: (feedback: string, selectedText?: string) => Promise<void>
+  isIteratingPrompt: boolean
+  t: (key: string) => string
 }
 
 function ParagraphOptimizePopover({
@@ -58,25 +58,25 @@ function ParagraphOptimizePopover({
   isIteratingPrompt,
   t,
 }: ParagraphOptimizePopoverProps) {
-  const [localFeedback, setLocalFeedback] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [localFeedback, setLocalFeedback] = useState('')
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   const handleSubmit = async () => {
-    if (!localFeedback.trim() || isSubmitting) return;
-    setIsSubmitting(true);
+    if (!localFeedback.trim() || isSubmitting) return
+    setIsSubmitting(true)
     try {
       // Pass feedback and selectedText separately - let the backend handle the context
-      await onIteratePrompt(localFeedback, paragraphText || undefined);
+      await onIteratePrompt(localFeedback, paragraphText || undefined)
       // Close popover after successful optimization
-      onClose();
+      onClose()
     } catch (error) {
-      console.error('Failed to iterate prompt:', error);
-      setIsSubmitting(false);
+      console.error('Failed to iterate prompt:', error)
+      setIsSubmitting(false)
     }
-  };
+  }
 
   // Determine if we're in loading state (either local submitting or parent iterating)
-  const isLoading = isSubmitting || isIteratingPrompt;
+  const isLoading = isSubmitting || isIteratingPrompt
 
   return (
     <div className="p-3 space-y-3">
@@ -133,8 +133,8 @@ function ParagraphOptimizePopover({
             disabled={isLoading}
             onKeyDown={e => {
               if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                handleSubmit();
+                e.preventDefault()
+                handleSubmit()
               }
             }}
           />
@@ -154,23 +154,23 @@ function ParagraphOptimizePopover({
         </>
       )}
     </div>
-  );
+  )
 }
 
 interface PreviewAdjustStepProps {
-  systemPrompt: string;
-  testConversations: TestConversation[];
-  isTestingPrompt: boolean;
-  isIteratingPrompt: boolean;
-  selectedModel: ModelRecommendation | null;
-  onTestPrompt: (testMessage: string) => Promise<void>;
-  onIteratePrompt: (feedback: string, selectedText?: string) => Promise<void>;
-  onPromptChange: (prompt: string) => void;
-  onModelChange: (model: ModelRecommendation | null) => void;
-  onClearConversations: () => void;
-  isLoading: boolean;
-  promptRefreshed?: boolean;
-  sampleTestMessage?: string;
+  systemPrompt: string
+  testConversations: TestConversation[]
+  isTestingPrompt: boolean
+  isIteratingPrompt: boolean
+  selectedModel: ModelRecommendation | null
+  onTestPrompt: (testMessage: string) => Promise<void>
+  onIteratePrompt: (feedback: string, selectedText?: string) => Promise<void>
+  onPromptChange: (prompt: string) => void
+  onModelChange: (model: ModelRecommendation | null) => void
+  onClearConversations: () => void
+  isLoading: boolean
+  promptRefreshed?: boolean
+  sampleTestMessage?: string
 }
 
 export default function PreviewAdjustStep({
@@ -188,140 +188,140 @@ export default function PreviewAdjustStep({
   promptRefreshed = false,
   sampleTestMessage = '',
 }: PreviewAdjustStepProps) {
-  const { t } = useTranslation(['common', 'wizard']);
-  const { theme } = useTheme();
-  const [testMessage, setTestMessage] = useState(sampleTestMessage);
-  const [feedbackMessage, setFeedbackMessage] = useState('');
-  const [quotedText, setQuotedText] = useState(''); // Quoted text from AI response
-  const [availableModels, setAvailableModels] = useState<UnifiedModel[]>([]);
-  const [isLoadingModels, setIsLoadingModels] = useState(false);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [showRefreshSuccess, setShowRefreshSuccess] = useState(false);
-  const [isFadingOut, setIsFadingOut] = useState(false); // Separate state for fade-out animation
-  const [showIteratePanel, setShowIteratePanel] = useState(false); // Hidden by default
-  const [isPromptExpanded, setIsPromptExpanded] = useState(false); // Prompt panel collapsed by default
-  const iteratePanelRef = useRef<HTMLDivElement>(null);
+  const { t } = useTranslation(['common', 'wizard'])
+  const { theme } = useTheme()
+  const [testMessage, setTestMessage] = useState(sampleTestMessage)
+  const [feedbackMessage, setFeedbackMessage] = useState('')
+  const [quotedText, setQuotedText] = useState('') // Quoted text from AI response
+  const [availableModels, setAvailableModels] = useState<UnifiedModel[]>([])
+  const [isLoadingModels, setIsLoadingModels] = useState(false)
+  const [isRefreshing, setIsRefreshing] = useState(false)
+  const [showRefreshSuccess, setShowRefreshSuccess] = useState(false)
+  const [isFadingOut, setIsFadingOut] = useState(false) // Separate state for fade-out animation
+  const [showIteratePanel, setShowIteratePanel] = useState(false) // Hidden by default
+  const [isPromptExpanded, setIsPromptExpanded] = useState(false) // Prompt panel collapsed by default
+  const iteratePanelRef = useRef<HTMLDivElement>(null)
 
   // Unified state for floating popover (used by both paragraph action and text selection)
   const [optimizePopover, setOptimizePopover] = useState<{
-    isOpen: boolean;
-    text: string;
-    position: { x: number; y: number };
-  }>({ isOpen: false, text: '', position: { x: 0, y: 0 } });
-  const messagesAreaRef = useRef<HTMLDivElement>(null);
-  const popoverRef = useRef<HTMLDivElement>(null);
+    isOpen: boolean
+    text: string
+    position: { x: number; y: number }
+  }>({ isOpen: false, text: '', position: { x: 0, y: 0 } })
+  const messagesAreaRef = useRef<HTMLDivElement>(null)
+  const popoverRef = useRef<HTMLDivElement>(null)
 
   // Handle prompt refresh animation when promptRefreshed changes
   useEffect(() => {
     if (promptRefreshed) {
-      setIsRefreshing(true);
-      setShowRefreshSuccess(true);
-      setIsFadingOut(true); // Start fade-out animation
+      setIsRefreshing(true)
+      setShowRefreshSuccess(true)
+      setIsFadingOut(true) // Start fade-out animation
 
       // Get the last test message before clearing conversations
       const lastTestMessage =
         testConversations.length > 0
           ? testConversations[testConversations.length - 1].testMessage
-          : '';
+          : ''
 
       // Clear conversations after a short delay for animation
       const clearTimer = setTimeout(() => {
-        onClearConversations();
-        setIsFadingOut(false); // Stop fade-out animation after clearing
+        onClearConversations()
+        setIsFadingOut(false) // Stop fade-out animation after clearing
         // Fill the input with the last test message for easy re-testing
         if (lastTestMessage) {
-          setTestMessage(lastTestMessage);
+          setTestMessage(lastTestMessage)
         }
-      }, 300);
+      }, 300)
 
       // End refresh animation
       const refreshTimer = setTimeout(() => {
-        setIsRefreshing(false);
-      }, 800);
+        setIsRefreshing(false)
+      }, 800)
 
       // Hide success message
       const successTimer = setTimeout(() => {
-        setShowRefreshSuccess(false);
-      }, 2500);
+        setShowRefreshSuccess(false)
+      }, 2500)
 
       return () => {
-        clearTimeout(clearTimer);
-        clearTimeout(refreshTimer);
-        clearTimeout(successTimer);
-      };
+        clearTimeout(clearTimer)
+        clearTimeout(refreshTimer)
+        clearTimeout(successTimer)
+      }
     }
-  }, [promptRefreshed, onClearConversations, testConversations]);
+  }, [promptRefreshed, onClearConversations, testConversations])
 
   // Update testMessage when sampleTestMessage prop changes
   useEffect(() => {
     if (sampleTestMessage && !testMessage) {
-      setTestMessage(sampleTestMessage);
+      setTestMessage(sampleTestMessage)
     }
-  }, [sampleTestMessage]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sampleTestMessage]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load available models on mount
   useEffect(() => {
     const loadModels = async () => {
-      setIsLoadingModels(true);
+      setIsLoadingModels(true)
       try {
         // Get models compatible with Chat shell type, filtered to LLM category only
-        const response = await modelApis.getUnifiedModels('Chat', false, 'all', undefined, 'llm');
-        setAvailableModels(response.data || []);
+        const response = await modelApis.getUnifiedModels('Chat', false, 'all', undefined, 'llm')
+        setAvailableModels(response.data || [])
 
         // If no model is selected and we have models, select the first one
         if (!selectedModel && response.data && response.data.length > 0) {
-          const firstModel = response.data[0];
+          const firstModel = response.data[0]
           onModelChange({
             model_name: firstModel.name,
             model_id: firstModel.modelId || undefined,
             reason: '',
             confidence: 1.0,
-          });
+          })
         }
       } catch (error) {
-        console.error('Failed to load models:', error);
+        console.error('Failed to load models:', error)
       } finally {
-        setIsLoadingModels(false);
+        setIsLoadingModels(false)
       }
-    };
-    loadModels();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    }
+    loadModels()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Handle click outside to close iterate panel
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (iteratePanelRef.current && !iteratePanelRef.current.contains(event.target as Node)) {
-        setShowIteratePanel(false);
+        setShowIteratePanel(false)
       }
-    };
+    }
 
     if (showIteratePanel) {
-      document.addEventListener('mousedown', handleClickOutside);
-      return () => document.removeEventListener('mousedown', handleClickOutside);
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => document.removeEventListener('mousedown', handleClickOutside)
     }
-  }, [showIteratePanel]);
+  }, [showIteratePanel])
 
   // Handle click outside to close optimize popover (but not during optimization)
   useEffect(() => {
     const handleClickOutsidePopover = (event: MouseEvent) => {
       // Don't close if we're iterating/optimizing
-      if (isIteratingPrompt) return;
+      if (isIteratingPrompt) return
 
       if (popoverRef.current && !popoverRef.current.contains(event.target as Node)) {
-        setOptimizePopover(prev => ({ ...prev, isOpen: false }));
+        setOptimizePopover(prev => ({ ...prev, isOpen: false }))
       }
-    };
+    }
 
     if (optimizePopover.isOpen) {
-      document.addEventListener('mousedown', handleClickOutsidePopover);
-      return () => document.removeEventListener('mousedown', handleClickOutsidePopover);
+      document.addEventListener('mousedown', handleClickOutsidePopover)
+      return () => document.removeEventListener('mousedown', handleClickOutsidePopover)
     }
-  }, [optimizePopover.isOpen, isIteratingPrompt]);
+  }, [optimizePopover.isOpen, isIteratingPrompt])
 
   // Reference to the test input textarea
-  const testInputRef = useRef<HTMLTextAreaElement>(null);
+  const testInputRef = useRef<HTMLTextAreaElement>(null)
   // Reference to the "single round hint" label for popover anchoring
-  const singleRoundHintRef = useRef<HTMLSpanElement>(null);
+  const singleRoundHintRef = useRef<HTMLSpanElement>(null)
 
   // Helper function to open optimize popover (position is handled by CSS relative positioning)
   const openOptimizePopover = (text: string, _event?: React.MouseEvent) => {
@@ -329,64 +329,64 @@ export default function PreviewAdjustStep({
       isOpen: true,
       text,
       position: { x: 0, y: 0 }, // Position is now handled by CSS
-    });
-  };
+    })
+  }
 
   const closeOptimizePopover = () => {
-    setOptimizePopover(prev => ({ ...prev, isOpen: false }));
-  };
+    setOptimizePopover(prev => ({ ...prev, isOpen: false }))
+  }
 
   if (isLoading) {
-    return <GeneratingLoader />;
+    return <GeneratingLoader />
   }
 
   const handleTestSubmit = async () => {
-    if (!testMessage.trim()) return;
-    const messageToSend = testMessage;
+    if (!testMessage.trim()) return
+    const messageToSend = testMessage
     // Clear input immediately before sending
-    setTestMessage('');
-    await onTestPrompt(messageToSend);
-  };
+    setTestMessage('')
+    await onTestPrompt(messageToSend)
+  }
 
   const handleIterateSubmit = async () => {
-    if (!feedbackMessage.trim() && !quotedText.trim()) return;
+    if (!feedbackMessage.trim() && !quotedText.trim()) return
     // Pass feedback and selectedText separately - let the backend handle the context
-    await onIteratePrompt(feedbackMessage, quotedText || undefined);
-    setFeedbackMessage('');
-    setQuotedText('');
-  };
+    await onIteratePrompt(feedbackMessage, quotedText || undefined)
+    setFeedbackMessage('')
+    setQuotedText('')
+  }
 
   const handleModelSelect = (modelName: string) => {
-    const model = availableModels.find(m => m.name === modelName);
+    const model = availableModels.find(m => m.name === modelName)
     if (model) {
       onModelChange({
         model_name: model.name,
         model_id: model.modelId || undefined,
         reason: '',
         confidence: 1.0,
-      });
+      })
     }
-  };
+  }
 
   // Handle text selection from AI message - open optimize popover
   const handleTextSelect = (selectedText: string) => {
-    openOptimizePopover(selectedText);
-  };
+    openOptimizePopover(selectedText)
+  }
 
   // Get the latest conversation for single-round preview
   const latestConversation =
-    testConversations.length > 0 ? testConversations[testConversations.length - 1] : null;
+    testConversations.length > 0 ? testConversations[testConversations.length - 1] : null
 
   // Convert test conversation to Message format for MessageBubble
   const convertToMessages = (conversation: TestConversation): Message[] => {
-    const messages: Message[] = [];
+    const messages: Message[] = []
 
     // User message
     messages.push({
       type: 'user',
       content: conversation.testMessage,
       timestamp: Date.now(),
-    });
+    })
 
     // AI response (if available)
     if (conversation.modelResponse || isTestingPrompt) {
@@ -396,11 +396,11 @@ export default function PreviewAdjustStep({
         timestamp: Date.now(),
         botName: selectedModel?.model_name || 'AI',
         isWaiting: isTestingPrompt && !conversation.modelResponse,
-      });
+      })
     }
 
-    return messages;
-  };
+    return messages
+  }
 
   // Paragraph action configuration for AI messages
   // When user clicks the action button on a paragraph, open the unified optimize popover
@@ -408,9 +408,9 @@ export default function PreviewAdjustStep({
     icon: <Wand2 className="w-4 h-4" />,
     tooltip: t('wizard:optimize_paragraph'),
     onAction: (paragraphText: string, event?: React.MouseEvent) => {
-      openOptimizePopover(paragraphText, event);
+      openOptimizePopover(paragraphText, event)
     },
-  };
+  }
 
   // Render the right side prompt panel content
   const renderPromptPanelContent = () => (
@@ -494,8 +494,8 @@ export default function PreviewAdjustStep({
           className="min-h-[80px] text-sm border-border focus:border-primary/50"
           onKeyDown={e => {
             if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              handleIterateSubmit();
+              e.preventDefault()
+              handleIterateSubmit()
             }
           }}
         />
@@ -518,7 +518,7 @@ export default function PreviewAdjustStep({
         </div>
       </div>
     </div>
-  );
+  )
 
   return (
     <>
@@ -641,7 +641,7 @@ export default function PreviewAdjustStep({
                               className="h-7 gap-1.5 text-xs text-text-muted hover:text-primary hover:bg-primary/10"
                               onClick={e => {
                                 // Open optimize popover with the full AI response content
-                                openOptimizePopover('', e);
+                                openOptimizePopover('', e)
                               }}
                             >
                               <Wand2 className="w-3.5 h-3.5" />
@@ -686,8 +686,8 @@ export default function PreviewAdjustStep({
                     className="min-h-[50px] max-h-[80px] flex-1 text-sm resize-none"
                     onKeyDown={e => {
                       if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        handleTestSubmit();
+                        e.preventDefault()
+                        handleTestSubmit()
                       }
                     }}
                   />
@@ -728,5 +728,5 @@ export default function PreviewAdjustStep({
         )}
       </div>
     </>
-  );
+  )
 }

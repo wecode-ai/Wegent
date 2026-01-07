@@ -8,7 +8,7 @@ This module provides configuration builders for chat sessions and model resoluti
 """
 
 # Re-export LangChainModelFactory from chat_shell for backward compatibility
-from app.chat_shell.models import LangChainModelFactory
+from chat_shell.models import LangChainModelFactory
 
 from .chat_config import ChatConfig, ChatConfigBuilder
 from .model_resolver import (

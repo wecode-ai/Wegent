@@ -1,11 +1,11 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
-import { useTranslation } from '@/hooks/useTranslation';
+import { useEffect, useRef, useState, useMemo, useCallback } from 'react'
+import { useTranslation } from '@/hooks/useTranslation'
 import {
   Select,
   SelectContent,
@@ -14,18 +14,18 @@ import {
   SelectLabel,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
+} from '@/components/ui/select'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown';
-import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
-import { User, Users, Settings, ChevronDown, Check } from 'lucide-react';
-import { listGroups } from '@/apis/groups';
-import type { Group } from '@/types/group';
+} from '@/components/ui/dropdown'
+import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
+import { User, Users, Settings, ChevronDown, Check } from 'lucide-react'
+import { listGroups } from '@/apis/groups'
+import type { Group } from '@/types/group'
 
 export type SettingsTabId =
   | 'personal-models'
@@ -41,31 +41,31 @@ export type SettingsTabId =
   | 'group-retrievers'
   | 'general'
   | 'integrations'
-  | 'api-keys';
+  | 'api-keys'
 
 // Scope type for resource tabs
-type ResourceScope = 'personal' | 'group';
+type ResourceScope = 'personal' | 'group'
 
 interface SettingsTabNavProps {
-  activeTab: SettingsTabId;
-  onTabChange: (tab: SettingsTabId) => void;
-  selectedGroup?: string | null;
-  onGroupChange?: (groupName: string | null) => void;
-  refreshTrigger?: number;
+  activeTab: SettingsTabId
+  onTabChange: (tab: SettingsTabId) => void
+  selectedGroup?: string | null
+  onGroupChange?: (groupName: string | null) => void
+  refreshTrigger?: number
 }
 
 interface TabItem {
-  id: SettingsTabId;
-  label: string;
-  category?: 'resource' | 'other';
-  scope?: ResourceScope;
+  id: SettingsTabId
+  label: string
+  category?: 'resource' | 'other'
+  scope?: ResourceScope
 }
 
 interface ResourceTabConfig {
-  key: string;
-  personalId: SettingsTabId;
-  groupId: SettingsTabId;
-  label: string;
+  key: string
+  personalId: SettingsTabId
+  groupId: SettingsTabId
+  label: string
 }
 
 export function SettingsTabNav({
@@ -75,32 +75,32 @@ export function SettingsTabNav({
   onGroupChange,
   refreshTrigger,
 }: SettingsTabNavProps) {
-  const { t } = useTranslation(['common', 'groups']);
-  const isMobile = useIsMobile();
-  const indicatorContainerRef = useRef<HTMLDivElement | null>(null);
-  const itemRefs = useRef<Record<string, HTMLButtonElement | null>>({});
-  const [indicatorStyle, setIndicatorStyle] = useState({ width: 0, left: 0 });
+  const { t } = useTranslation(['common', 'groups'])
+  const isMobile = useIsMobile()
+  const indicatorContainerRef = useRef<HTMLDivElement | null>(null)
+  const itemRefs = useRef<Record<string, HTMLButtonElement | null>>({})
+  const [indicatorStyle, setIndicatorStyle] = useState({ width: 0, left: 0 })
 
   // Groups state
-  const [groups, setGroups] = useState<Group[]>([]);
-  const [groupsLoading, setGroupsLoading] = useState(false);
+  const [groups, setGroups] = useState<Group[]>([])
+  const [groupsLoading, setGroupsLoading] = useState(false)
 
   // Load groups on mount
   const loadGroups = useCallback(async () => {
     try {
-      setGroupsLoading(true);
-      const response = await listGroups({ page: 1, limit: 100 });
-      setGroups(response.items || []);
+      setGroupsLoading(true)
+      const response = await listGroups({ page: 1, limit: 100 })
+      setGroups(response.items || [])
     } catch (error) {
-      console.error('Failed to load groups:', error);
+      console.error('Failed to load groups:', error)
     } finally {
-      setGroupsLoading(false);
+      setGroupsLoading(false)
     }
-  }, []);
+  }, [])
 
   useEffect(() => {
-    loadGroups();
-  }, [loadGroups, refreshTrigger]);
+    loadGroups()
+  }, [loadGroups, refreshTrigger])
 
   // Resource tabs that have both personal and group versions
   // Team (智能体) is placed first as the default entry module
@@ -138,7 +138,7 @@ export function SettingsTabNav({
       },
     ],
     [t]
-  );
+  )
 
   // Other tabs (not resource-based) - order: general, integrations, api-keys
   // Note: group-manager is now accessed via the group dropdown menu
@@ -149,101 +149,101 @@ export function SettingsTabNav({
       { id: 'api-keys', label: t('settings.api_keys'), category: 'other' },
     ],
     [t]
-  );
+  )
 
   // Handle navigation to group manager
   const handleGroupManagerClick = () => {
-    onTabChange('group-manager');
-  };
+    onTabChange('group-manager')
+  }
 
   // Handle group selection
   const handleGroupSelect = (groupName: string | null) => {
-    onGroupChange?.(groupName);
+    onGroupChange?.(groupName)
     // Switch to group scope when selecting a group
-    handleScopeChange('group');
-  };
+    handleScopeChange('group')
+  }
   // Determine current scope based on active tab
   const getCurrentScope = (): ResourceScope => {
     if (activeTab.startsWith('group-') && activeTab !== 'group-manager') {
-      return 'group';
+      return 'group'
     }
-    return 'personal';
-  };
+    return 'personal'
+  }
 
-  const [currentScope, setCurrentScope] = useState<ResourceScope>(getCurrentScope());
+  const [currentScope, setCurrentScope] = useState<ResourceScope>(getCurrentScope())
 
   // Update scope when active tab changes
   useEffect(() => {
-    const newScope = getCurrentScope();
+    const newScope = getCurrentScope()
     if (newScope !== currentScope) {
-      setCurrentScope(newScope);
+      setCurrentScope(newScope)
     }
-  }, [activeTab, currentScope, getCurrentScope]);
+  }, [activeTab, currentScope, getCurrentScope])
 
   // Get the current resource tab key
   const getCurrentResourceKey = (): string | null => {
     for (const tab of resourceTabs) {
       if (activeTab === tab.personalId || activeTab === tab.groupId) {
-        return tab.key;
+        return tab.key
       }
     }
-    return null;
-  };
+    return null
+  }
 
   // Handle scope change
   const handleScopeChange = (newScope: ResourceScope) => {
-    setCurrentScope(newScope);
-    const currentKey = getCurrentResourceKey();
+    setCurrentScope(newScope)
+    const currentKey = getCurrentResourceKey()
     if (currentKey) {
-      const tab = resourceTabs.find(t => t.key === currentKey);
+      const tab = resourceTabs.find(t => t.key === currentKey)
       if (tab) {
-        onTabChange(newScope === 'personal' ? tab.personalId : tab.groupId);
+        onTabChange(newScope === 'personal' ? tab.personalId : tab.groupId)
       }
     } else {
       // If not on a resource tab, switch to the first resource tab of the new scope
-      const firstTab = resourceTabs[0];
-      onTabChange(newScope === 'personal' ? firstTab.personalId : firstTab.groupId);
+      const firstTab = resourceTabs[0]
+      onTabChange(newScope === 'personal' ? firstTab.personalId : firstTab.groupId)
     }
-  };
+  }
 
   // Handle resource tab click
   const handleResourceTabClick = (tab: ResourceTabConfig) => {
-    onTabChange(currentScope === 'personal' ? tab.personalId : tab.groupId);
-  };
+    onTabChange(currentScope === 'personal' ? tab.personalId : tab.groupId)
+  }
 
   // Check if a resource tab is active
   const isResourceTabActive = (tab: ResourceTabConfig): boolean => {
-    return activeTab === tab.personalId || activeTab === tab.groupId;
-  };
+    return activeTab === tab.personalId || activeTab === tab.groupId
+  }
 
   // Update the indicator position when the active tab changes
   useEffect(() => {
     const updateIndicator = () => {
-      const container = indicatorContainerRef.current;
-      const current = itemRefs.current[activeTab];
+      const container = indicatorContainerRef.current
+      const current = itemRefs.current[activeTab]
 
       if (!container || !current) {
         setIndicatorStyle(prev =>
           prev.width === 0 && prev.left === 0 ? prev : { width: 0, left: 0 }
-        );
-        return;
+        )
+        return
       }
 
-      const containerRect = container.getBoundingClientRect();
-      const currentRect = current.getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect()
+      const currentRect = current.getBoundingClientRect()
       setIndicatorStyle({
         width: currentRect.width,
         left: currentRect.left - containerRect.left,
-      });
-    };
+      })
+    }
 
-    updateIndicator();
-    window.addEventListener('resize', updateIndicator);
+    updateIndicator()
+    window.addEventListener('resize', updateIndicator)
 
     return () => {
-      window.removeEventListener('resize', updateIndicator);
-    };
-  }, [activeTab]);
+      window.removeEventListener('resize', updateIndicator)
+    }
+  }, [activeTab])
 
   // Mobile: Dropdown select with groups
   if (isMobile) {
@@ -338,7 +338,7 @@ export function SettingsTabNav({
           </SelectContent>
         </Select>
       </div>
-    );
+    )
   }
 
   // Desktop: Horizontal tab navigation with scope toggle
@@ -423,7 +423,7 @@ export function SettingsTabNav({
           key={tab.key}
           type="button"
           ref={element => {
-            itemRefs.current[currentScope === 'personal' ? tab.personalId : tab.groupId] = element;
+            itemRefs.current[currentScope === 'personal' ? tab.personalId : tab.groupId] = element
           }}
           onClick={() => handleResourceTabClick(tab)}
           className={`relative px-3 py-2 text-sm font-medium whitespace-nowrap rounded-md transition-colors duration-200 ${
@@ -446,7 +446,7 @@ export function SettingsTabNav({
           key={tab.id}
           type="button"
           ref={element => {
-            itemRefs.current[tab.id] = element;
+            itemRefs.current[tab.id] = element
           }}
           onClick={() => onTabChange(tab.id)}
           className={`relative px-3 py-2 text-sm font-medium whitespace-nowrap rounded-md transition-colors duration-200 ${
@@ -460,7 +460,7 @@ export function SettingsTabNav({
         </button>
       ))}
     </div>
-  );
+  )
 }
 
-export default SettingsTabNav;
+export default SettingsTabNav

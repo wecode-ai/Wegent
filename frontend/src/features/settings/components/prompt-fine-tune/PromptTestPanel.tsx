@@ -1,40 +1,40 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState, useRef, useEffect } from 'react';
-import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
-import { Spinner } from '@/components/ui/spinner';
+import { useState, useRef, useEffect } from 'react'
+import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
+import { Spinner } from '@/components/ui/spinner'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import { useTranslation } from '@/hooks/useTranslation';
-import { MessageSquare, Send, Wand2, RefreshCw, Cpu } from 'lucide-react';
-import { modelApis, type UnifiedModel } from '@/apis/models';
-import { MessageBubble, type Message } from '@/features/tasks/components/message';
-import { useTheme } from '@/features/theme/ThemeProvider';
+} from '@/components/ui/select'
+import { useTranslation } from '@/hooks/useTranslation'
+import { MessageSquare, Send, Wand2, RefreshCw, Cpu } from 'lucide-react'
+import { modelApis, type UnifiedModel } from '@/apis/models'
+import { MessageBubble, type Message } from '@/features/tasks/components/message'
+import { useTheme } from '@/features/theme/ThemeProvider'
 
 interface PromptTestPanelProps {
-  systemPrompt: string;
-  testMessage: string;
-  setTestMessage: (message: string) => void;
-  aiResponse: string;
-  isTestingPrompt: boolean;
-  isIteratingPrompt: boolean;
-  userFeedback: string;
-  setUserFeedback: (feedback: string) => void;
-  selectedModel: string;
-  onModelChange: (model: string) => void;
-  onTestPrompt: () => Promise<void>;
-  onIteratePrompt: () => Promise<void>;
-  hideIterateSection?: boolean;
+  systemPrompt: string
+  testMessage: string
+  setTestMessage: (message: string) => void
+  aiResponse: string
+  isTestingPrompt: boolean
+  isIteratingPrompt: boolean
+  userFeedback: string
+  setUserFeedback: (feedback: string) => void
+  selectedModel: string
+  onModelChange: (model: string) => void
+  onTestPrompt: () => Promise<void>
+  onIteratePrompt: () => Promise<void>
+  hideIterateSection?: boolean
 }
 
 export default function PromptTestPanel({
@@ -51,59 +51,59 @@ export default function PromptTestPanel({
   onIteratePrompt,
   hideIterateSection = false,
 }: PromptTestPanelProps) {
-  const { t } = useTranslation('wizard');
-  const { theme } = useTheme();
-  const [availableModels, setAvailableModels] = useState<UnifiedModel[]>([]);
-  const [isLoadingModels, setIsLoadingModels] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const { t } = useTranslation('wizard')
+  const { theme } = useTheme()
+  const [availableModels, setAvailableModels] = useState<UnifiedModel[]>([])
+  const [isLoadingModels, setIsLoadingModels] = useState(false)
+  const messagesEndRef = useRef<HTMLDivElement>(null)
 
   // Load available models on mount
   useEffect(() => {
     const loadModels = async () => {
-      setIsLoadingModels(true);
+      setIsLoadingModels(true)
       try {
         // Get models compatible with Chat shell type, filtered to LLM category only
-        const response = await modelApis.getUnifiedModels('Chat', false, 'all', undefined, 'llm');
-        setAvailableModels(response.data || []);
+        const response = await modelApis.getUnifiedModels('Chat', false, 'all', undefined, 'llm')
+        setAvailableModels(response.data || [])
 
         // If no model is selected and we have models, select the first one
         if (!selectedModel && response.data && response.data.length > 0) {
-          onModelChange(response.data[0].name);
+          onModelChange(response.data[0].name)
         }
       } catch (error) {
-        console.error('Failed to load models:', error);
+        console.error('Failed to load models:', error)
       } finally {
-        setIsLoadingModels(false);
+        setIsLoadingModels(false)
       }
-    };
-    loadModels();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    }
+    loadModels()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Scroll to bottom when AI response updates
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [aiResponse]);
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [aiResponse])
 
   const handleTestSubmit = async () => {
-    if (!testMessage.trim() || isTestingPrompt) return;
-    await onTestPrompt();
-  };
+    if (!testMessage.trim() || isTestingPrompt) return
+    await onTestPrompt()
+  }
 
   const handleIterateSubmit = async () => {
-    if (!userFeedback.trim() || isIteratingPrompt) return;
-    await onIteratePrompt();
-  };
+    if (!userFeedback.trim() || isIteratingPrompt) return
+    await onIteratePrompt()
+  }
 
   // Convert conversation to Message format for MessageBubble
   const getMessages = (): Message[] => {
-    const messages: Message[] = [];
+    const messages: Message[] = []
 
     if (testMessage) {
       messages.push({
         type: 'user',
         content: testMessage,
         timestamp: Date.now(),
-      });
+      })
     }
 
     if (aiResponse || isTestingPrompt) {
@@ -113,13 +113,13 @@ export default function PromptTestPanel({
         timestamp: Date.now(),
         botName: selectedModel || 'AI',
         isWaiting: isTestingPrompt && !aiResponse,
-      });
+      })
     }
 
-    return messages;
-  };
+    return messages
+  }
 
-  const messages = getMessages();
+  const messages = getMessages()
 
   return (
     <div className="h-full flex flex-col">
@@ -197,8 +197,8 @@ export default function PromptTestPanel({
             className="min-h-[60px] flex-1 text-sm resize-none"
             onKeyDown={e => {
               if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                handleTestSubmit();
+                e.preventDefault()
+                handleTestSubmit()
               }
             }}
           />
@@ -229,8 +229,8 @@ export default function PromptTestPanel({
               className="min-h-[60px] text-sm resize-none"
               onKeyDown={e => {
                 if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  handleIterateSubmit();
+                  e.preventDefault()
+                  handleIterateSubmit()
                 }
               }}
             />
@@ -255,5 +255,5 @@ export default function PromptTestPanel({
         )}
       </div>
     </div>
-  );
+  )
 }

@@ -2,47 +2,49 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import { paths } from '@/config/paths';
-import { useTranslation } from '@/hooks/useTranslation';
-import LanguageSwitcher from '@/components/LanguageSwitcher';
-import PoweredByFooter from '@/components/common/PoweredByFooter';
-import { getToken } from '@/apis/user';
-import { ThemeToggle } from '@/features/theme/ThemeToggle';
-import { GithubStarButton } from '@/features/layout/GithubStarButton';
-import { getLastTab } from '@/utils/userPreferences';
-import { Button } from '@/components/ui/button';
-import { isAuthModeDingTalk } from '@/dingtalk/lib/environment';
+import { useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import { paths } from '@/config/paths'
+import { useTranslation } from '@/hooks/useTranslation'
+import LanguageSwitcher from '@/components/LanguageSwitcher'
+import PoweredByFooter from '@/components/common/PoweredByFooter'
+import { getToken } from '@/apis/user'
+import { ThemeToggle } from '@/features/theme/ThemeToggle'
+import { GithubStarButton } from '@/features/layout/GithubStarButton'
+import { getLastTab } from '@/utils/userPreferences'
+import { Button } from '@/components/ui/button'
+import { isAuthModeDingTalk } from '@/dingtalk/lib/environment'
 
 export default function Home() {
-  const router = useRouter();
-  const { t } = useTranslation('common');
+  const router = useRouter()
+  const { t } = useTranslation('common')
 
   // DingTalk mode: skip landing page, go directly to auth
   useEffect(() => {
     if (isAuthModeDingTalk()) {
-      router.replace('/auth/dingtalk');
+      router.replace('/auth/dingtalk')
     }
-  }, [router]);
+  }, [router])
 
   const handleGetStarted = () => {
-    const token = getToken();
+    const token = getToken()
     if (token) {
       // Try to restore user's last active tab
-      const lastTab = getLastTab();
+      const lastTab = getLastTab()
       if (lastTab === 'code') {
-        router.replace(paths.code.getHref());
+        router.replace(paths.code.getHref())
+      } else if (lastTab === 'wiki') {
+        router.replace(paths.wiki.getHref())
       } else {
         // Default to chat if no preference or preference is chat
-        router.replace(paths.chat.getHref());
+        router.replace(paths.chat.getHref())
       }
     } else {
-      router.push(paths.auth.login.getHref());
+      router.push(paths.auth.login.getHref())
     }
-  };
+  }
 
   // DingTalk mode: show loading while redirecting
   if (isAuthModeDingTalk()) {
@@ -53,7 +55,7 @@ export default function Home() {
           <p className="mt-4 text-text-secondary">正在跳转...</p>
         </div>
       </div>
-    );
+    )
   }
 
   return (
@@ -77,5 +79,5 @@ export default function Home() {
       </div>
       <PoweredByFooter />
     </main>
-  );
+  )
 }

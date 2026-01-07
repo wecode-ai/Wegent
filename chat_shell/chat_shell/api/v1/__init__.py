@@ -1,0 +1,66 @@
+"""
+API v1 module for chat_shell.
+"""
+
+from chat_shell.api.v1.schemas import (  # Request schemas; Response/Event schemas; Other
+    AttachmentConfig,
+    CancelRequest,
+    CancelResponse,
+    Clarification,
+    ContentDelta,
+    ErrorEvent,
+    FeaturesConfig,
+    HealthResponse,
+    InputConfig,
+    KnowledgeContext,
+    Metadata,
+    ModelConfig,
+    ReasoningDelta,
+    ResponseCancelled,
+    ResponseDone,
+    ResponseEvent,
+    ResponseEventType,
+    ResponseRequest,
+    SourcesUpdate,
+    ThinkingDelta,
+    ToolCallRequired,
+    ToolDone,
+    ToolLimitReached,
+    ToolProgress,
+    ToolsConfig,
+    ToolStart,
+    UsageInfo,
+)
+
+__all__ = [
+    # Request schemas
+    "ResponseRequest",
+    "ModelConfig",
+    "InputConfig",
+    "ToolsConfig",
+    "FeaturesConfig",
+    "Metadata",
+    "AttachmentConfig",
+    "KnowledgeContext",
+    # Response/Event schemas
+    "ResponseEvent",
+    "ResponseEventType",
+    "ContentDelta",
+    "ThinkingDelta",
+    "ReasoningDelta",
+    "ToolStart",
+    "ToolProgress",
+    "ToolDone",
+    "ToolCallRequired",
+    "SourcesUpdate",
+    "Clarification",
+    "ToolLimitReached",
+    "ResponseDone",
+    "ResponseCancelled",
+    "ErrorEvent",
+    # Other
+    "CancelRequest",
+    "CancelResponse",
+    "HealthResponse",
+    "UsageInfo",
+]

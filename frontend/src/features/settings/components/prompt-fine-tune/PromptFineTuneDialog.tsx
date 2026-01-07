@@ -1,10 +1,10 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback } from 'react'
 import {
   Dialog,
   DialogContent,
@@ -12,21 +12,21 @@ import {
   DialogTitle,
   DialogDescription,
   DialogFooter,
-} from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
-import { useTranslation } from '@/hooks/useTranslation';
-import { Wand2 } from 'lucide-react';
-import { wizardApis } from '@/apis/wizard';
-import PromptTestPanel from './PromptTestPanel';
-import PromptComparePanel from './PromptComparePanel';
-import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
+} from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
+import { useTranslation } from '@/hooks/useTranslation'
+import { Wand2 } from 'lucide-react'
+import { wizardApis } from '@/apis/wizard'
+import PromptTestPanel from './PromptTestPanel'
+import PromptComparePanel from './PromptComparePanel'
+import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 
 interface PromptFineTuneDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  initialPrompt: string;
-  onSave: (newPrompt: string) => void;
-  modelName?: string;
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  initialPrompt: string
+  onSave: (newPrompt: string) => void
+  modelName?: string
 }
 
 export default function PromptFineTuneDialog({
@@ -36,55 +36,55 @@ export default function PromptFineTuneDialog({
   onSave,
   modelName,
 }: PromptFineTuneDialogProps) {
-  const { t } = useTranslation('promptTune');
-  const isMobile = useIsMobile();
+  const { t } = useTranslation('promptTune')
+  const isMobile = useIsMobile()
 
   // State
-  const [currentPrompt, setCurrentPrompt] = useState(initialPrompt);
-  const [originalPrompt, setOriginalPrompt] = useState(initialPrompt);
-  const [testMessage, setTestMessage] = useState('');
-  const [aiResponse, setAiResponse] = useState('');
-  const [isTestingPrompt, setIsTestingPrompt] = useState(false);
-  const [isIteratingPrompt, setIsIteratingPrompt] = useState(false);
-  const [userFeedback, setUserFeedback] = useState('');
-  const [selectedModel, setSelectedModel] = useState(modelName || '');
-  const [lastTestMessage, setLastTestMessage] = useState('');
+  const [currentPrompt, setCurrentPrompt] = useState(initialPrompt)
+  const [originalPrompt, setOriginalPrompt] = useState(initialPrompt)
+  const [testMessage, setTestMessage] = useState('')
+  const [aiResponse, setAiResponse] = useState('')
+  const [isTestingPrompt, setIsTestingPrompt] = useState(false)
+  const [isIteratingPrompt, setIsIteratingPrompt] = useState(false)
+  const [userFeedback, setUserFeedback] = useState('')
+  const [selectedModel, setSelectedModel] = useState(modelName || '')
+  const [lastTestMessage, setLastTestMessage] = useState('')
 
   // Reset state when dialog opens
   const handleOpenChange = useCallback(
     (newOpen: boolean) => {
       if (newOpen) {
-        setCurrentPrompt(initialPrompt);
-        setOriginalPrompt(initialPrompt);
-        setTestMessage('');
-        setAiResponse('');
-        setUserFeedback('');
-        setLastTestMessage('');
+        setCurrentPrompt(initialPrompt)
+        setOriginalPrompt(initialPrompt)
+        setTestMessage('')
+        setAiResponse('')
+        setUserFeedback('')
+        setLastTestMessage('')
       }
-      onOpenChange(newOpen);
+      onOpenChange(newOpen)
     },
     [initialPrompt, onOpenChange]
-  );
+  )
 
   // Test prompt with streaming
   const handleTestPrompt = useCallback(async () => {
-    if (!testMessage.trim() || !selectedModel) return;
+    if (!testMessage.trim() || !selectedModel) return
 
-    setIsTestingPrompt(true);
-    setAiResponse('');
-    setLastTestMessage(testMessage);
+    setIsTestingPrompt(true)
+    setAiResponse('')
+    setLastTestMessage(testMessage)
 
     try {
-      let fullResponse = '';
+      let fullResponse = ''
       const generator = wizardApis.testPromptStream(
         currentPrompt,
         testMessage,
         selectedModel,
         chunk => {
-          fullResponse += chunk;
-          setAiResponse(fullResponse);
+          fullResponse += chunk
+          setAiResponse(fullResponse)
         }
-      );
+      )
 
       // Consume the generator
       for await (const _ of generator) {
@@ -92,20 +92,20 @@ export default function PromptFineTuneDialog({
       }
 
       // Clear test message input after successful test
-      setTestMessage('');
+      setTestMessage('')
     } catch (error) {
-      console.error('Failed to test prompt:', error);
-      setAiResponse(t('common:errors.request_failed'));
+      console.error('Failed to test prompt:', error)
+      setAiResponse(t('common:errors.request_failed'))
     } finally {
-      setIsTestingPrompt(false);
+      setIsTestingPrompt(false)
     }
-  }, [testMessage, selectedModel, currentPrompt, t]);
+  }, [testMessage, selectedModel, currentPrompt, t])
 
   // Iterate prompt based on feedback
   const handleIteratePrompt = useCallback(async () => {
-    if (!userFeedback.trim()) return;
+    if (!userFeedback.trim()) return
 
-    setIsIteratingPrompt(true);
+    setIsIteratingPrompt(true)
 
     try {
       const response = await wizardApis.iteratePrompt(
@@ -114,36 +114,36 @@ export default function PromptFineTuneDialog({
         aiResponse,
         userFeedback,
         selectedModel
-      );
+      )
 
-      setCurrentPrompt(response.improved_prompt);
-      setUserFeedback('');
+      setCurrentPrompt(response.improved_prompt)
+      setUserFeedback('')
       // Clear conversation to test new prompt
-      setAiResponse('');
-      setTestMessage(lastTestMessage); // Pre-fill with last test message for convenience
+      setAiResponse('')
+      setTestMessage(lastTestMessage) // Pre-fill with last test message for convenience
     } catch (error) {
-      console.error('Failed to iterate prompt:', error);
-      setAiResponse(t('common:errors.request_failed'));
+      console.error('Failed to iterate prompt:', error)
+      setAiResponse(t('common:errors.request_failed'))
     } finally {
-      setIsIteratingPrompt(false);
+      setIsIteratingPrompt(false)
     }
-  }, [userFeedback, currentPrompt, lastTestMessage, aiResponse, selectedModel, t]);
+  }, [userFeedback, currentPrompt, lastTestMessage, aiResponse, selectedModel, t])
 
   // Reset to original prompt
   const handleReset = useCallback(() => {
-    setCurrentPrompt(originalPrompt);
-    setAiResponse('');
-    setUserFeedback('');
-  }, [originalPrompt]);
+    setCurrentPrompt(originalPrompt)
+    setAiResponse('')
+    setUserFeedback('')
+  }, [originalPrompt])
 
   // Save and close
   const handleSave = useCallback(() => {
-    onSave(currentPrompt);
-    onOpenChange(false);
-  }, [currentPrompt, onSave, onOpenChange]);
+    onSave(currentPrompt)
+    onOpenChange(false)
+  }, [currentPrompt, onSave, onOpenChange])
 
   // Check if prompt has been modified
-  const isModified = currentPrompt !== originalPrompt;
+  const isModified = currentPrompt !== originalPrompt
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -215,5 +215,5 @@ export default function PromptFineTuneDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
+  )
 }

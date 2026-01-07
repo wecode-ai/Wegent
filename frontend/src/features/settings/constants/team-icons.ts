@@ -1,8 +1,8 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { IconType } from 'react-icons';
+import { IconType } from 'react-icons'
 import {
   FaUsers,
   FaRobot,
@@ -34,26 +34,26 @@ import {
   FaFire,
   FaLeaf,
   FaAnchor,
-} from 'react-icons/fa';
+} from 'react-icons/fa'
 import {
   HiOutlineCode,
   HiOutlineChatAlt2,
   HiOutlineSparkles,
   HiOutlineLightningBolt,
   HiOutlineGlobe,
-} from 'react-icons/hi';
+} from 'react-icons/hi'
 import {
   AiOutlineTeam,
   AiOutlineRobot,
   AiOutlineExperiment,
   AiOutlineThunderbolt,
   AiOutlineApi,
-} from 'react-icons/ai';
+} from 'react-icons/ai'
 
 export interface TeamIconConfig {
-  id: string; // Unique identifier
-  icon: IconType; // React Icon component
-  label: string; // Display name (for tooltip)
+  id: string // Unique identifier
+  icon: IconType // React Icon component
+  label: string // Display name (for tooltip)
 }
 
 export const TEAM_ICONS: TeamIconConfig[] = [
@@ -114,14 +114,14 @@ export const TEAM_ICONS: TeamIconConfig[] = [
   { id: 'fire', icon: FaFire, label: 'Fire' },
   { id: 'leaf', icon: FaLeaf, label: 'Nature' },
   { id: 'anchor', icon: FaAnchor, label: 'Anchor' },
-];
+]
 
-export const DEFAULT_TEAM_ICON_ID = 'users';
+export const DEFAULT_TEAM_ICON_ID = 'users'
 
 export function getTeamIconById(id: string | null | undefined): TeamIconConfig {
-  return TEAM_ICONS.find(icon => icon.id === id) || TEAM_ICONS[0];
+  return TEAM_ICONS.find(icon => icon.id === id) || TEAM_ICONS[0]
 }
 
 export function getTeamIconComponent(id: string | null | undefined): IconType {
-  return getTeamIconById(id).icon;
+  return getTeamIconById(id).icon
 }

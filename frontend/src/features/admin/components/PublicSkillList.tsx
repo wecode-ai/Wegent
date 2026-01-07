@@ -1,27 +1,27 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useEffect, useState, useCallback } from 'react';
-import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
-import { Tag } from '@/components/ui/tag';
-import { Progress } from '@/components/ui/progress';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Alert, AlertDescription } from '@/components/ui/alert';
+import React, { useEffect, useState, useCallback } from 'react'
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { Tag } from '@/components/ui/tag'
+import { Progress } from '@/components/ui/progress'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   SparklesIcon,
   PencilIcon,
   TrashIcon,
   ArrowDownTrayIcon,
   EyeIcon,
-} from '@heroicons/react/24/outline';
-import { Loader2, UploadIcon, FileIcon, AlertCircle } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
-import { useTranslation } from '@/hooks/useTranslation';
+} from '@heroicons/react/24/outline'
+import { Loader2, UploadIcon, FileIcon, AlertCircle } from 'lucide-react'
+import { useToast } from '@/hooks/use-toast'
+import { useTranslation } from '@/hooks/useTranslation'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -31,7 +31,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+} from '@/components/ui/alert-dialog'
 import {
   Dialog,
   DialogContent,
@@ -39,7 +39,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
+} from '@/components/ui/dialog'
 import {
   fetchPublicSkillsList,
   uploadPublicSkill,
@@ -48,238 +48,238 @@ import {
   downloadPublicSkill,
   getPublicSkillContent,
   UnifiedSkill,
-} from '@/apis/skills';
-import UnifiedAddButton from '@/components/common/UnifiedAddButton';
+} from '@/apis/skills'
+import UnifiedAddButton from '@/components/common/UnifiedAddButton'
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
 
 const PublicSkillList: React.FC = () => {
-  const { t } = useTranslation('admin');
-  const { toast } = useToast();
-  const [skills, setSkills] = useState<UnifiedSkill[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { t } = useTranslation('admin')
+  const { toast } = useToast()
+  const [skills, setSkills] = useState<UnifiedSkill[]>([])
+  const [loading, setLoading] = useState(true)
 
   // Dialog states
-  const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
-  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
-  const [isViewContentDialogOpen, setIsViewContentDialogOpen] = useState(false);
-  const [selectedSkill, setSelectedSkill] = useState<UnifiedSkill | null>(null);
-  const [skillContent, setSkillContent] = useState<string>('');
-  const [loadingContent, setLoadingContent] = useState(false);
+  const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false)
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
+  const [isViewContentDialogOpen, setIsViewContentDialogOpen] = useState(false)
+  const [selectedSkill, setSelectedSkill] = useState<UnifiedSkill | null>(null)
+  const [skillContent, setSkillContent] = useState<string>('')
+  const [loadingContent, setLoadingContent] = useState(false)
 
   // Upload form states
-  const [skillName, setSkillName] = useState('');
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [error, setError] = useState<string | null>(null);
-  const [dragActive, setDragActive] = useState(false);
-  const [isEditMode, setIsEditMode] = useState(false);
+  const [skillName, setSkillName] = useState('')
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(0)
+  const [error, setError] = useState<string | null>(null)
+  const [dragActive, setDragActive] = useState(false)
+  const [isEditMode, setIsEditMode] = useState(false)
 
   const fetchSkills = useCallback(async () => {
-    setLoading(true);
+    setLoading(true)
     try {
-      const data = await fetchPublicSkillsList({ limit: 100 });
-      setSkills(data);
+      const data = await fetchPublicSkillsList({ limit: 100 })
+      setSkills(data)
     } catch (_error) {
       toast({
         variant: 'destructive',
         title: t('public_skills.errors.load_failed'),
-      });
+      })
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  }, [toast, t]);
+  }, [toast, t])
 
   useEffect(() => {
-    fetchSkills();
-  }, [fetchSkills]);
+    fetchSkills()
+  }, [fetchSkills])
 
   const validateFile = (file: File): string | null => {
     if (!file.name.endsWith('.zip')) {
-      return 'File must be a ZIP archive';
+      return 'File must be a ZIP archive'
     }
     if (file.size > MAX_FILE_SIZE) {
-      return `File size exceeds 10MB limit (${(file.size / (1024 * 1024)).toFixed(1)} MB)`;
+      return `File size exceeds 10MB limit (${(file.size / (1024 * 1024)).toFixed(1)} MB)`
     }
-    return null;
-  };
+    return null
+  }
 
   const handleFileSelect = useCallback(
     (file: File) => {
-      const validationError = validateFile(file);
+      const validationError = validateFile(file)
       if (validationError) {
-        setError(validationError);
-        setSelectedFile(null);
-        return;
+        setError(validationError)
+        setSelectedFile(null)
+        return
       }
 
-      setSelectedFile(file);
-      setError(null);
+      setSelectedFile(file)
+      setError(null)
 
       // Auto-fill skill name from filename (without .zip extension)
       if (!isEditMode && !skillName) {
-        const nameFromFile = file.name.replace(/\.zip$/i, '');
-        setSkillName(nameFromFile);
+        const nameFromFile = file.name.replace(/\.zip$/i, '')
+        setSkillName(nameFromFile)
       }
     },
     [isEditMode, skillName]
-  );
+  )
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    const file = e.target.files?.[0]
     if (file) {
-      handleFileSelect(file);
+      handleFileSelect(file)
     }
-  };
+  }
 
   const handleDrag = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
+    e.preventDefault()
+    e.stopPropagation()
     if (e.type === 'dragenter' || e.type === 'dragover') {
-      setDragActive(true);
+      setDragActive(true)
     } else if (e.type === 'dragleave') {
-      setDragActive(false);
+      setDragActive(false)
     }
-  }, []);
+  }, [])
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setDragActive(false);
+      e.preventDefault()
+      e.stopPropagation()
+      setDragActive(false)
 
-      const file = e.dataTransfer.files?.[0];
+      const file = e.dataTransfer.files?.[0]
       if (file) {
-        handleFileSelect(file);
+        handleFileSelect(file)
       }
     },
     [handleFileSelect]
-  );
+  )
 
   const handleUploadSubmit = async () => {
     if (!selectedFile) {
-      setError('Please select a file');
-      return;
+      setError('Please select a file')
+      return
     }
 
     if (!isEditMode && !skillName.trim()) {
-      setError('Please enter a skill name');
-      return;
+      setError('Please enter a skill name')
+      return
     }
 
-    setUploading(true);
-    setError(null);
-    setUploadProgress(0);
+    setUploading(true)
+    setError(null)
+    setUploadProgress(0)
 
     try {
       if (isEditMode && selectedSkill) {
-        await updatePublicSkillWithUpload(selectedSkill.id, selectedFile, setUploadProgress);
-        toast({ title: t('public_skills.success.updated') });
+        await updatePublicSkillWithUpload(selectedSkill.id, selectedFile, setUploadProgress)
+        toast({ title: t('public_skills.success.updated') })
       } else {
-        await uploadPublicSkill(selectedFile, skillName.trim(), setUploadProgress);
-        toast({ title: t('public_skills.success.uploaded') });
+        await uploadPublicSkill(selectedFile, skillName.trim(), setUploadProgress)
+        toast({ title: t('public_skills.success.uploaded') })
       }
-      setIsUploadDialogOpen(false);
-      resetUploadForm();
-      fetchSkills();
+      setIsUploadDialogOpen(false)
+      resetUploadForm()
+      fetchSkills()
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Upload failed';
-      setError(errorMessage);
+      const errorMessage = err instanceof Error ? err.message : 'Upload failed'
+      setError(errorMessage)
       toast({
         variant: 'destructive',
         title: isEditMode
           ? t('public_skills.errors.update_failed')
           : t('public_skills.errors.upload_failed'),
         description: errorMessage,
-      });
+      })
     } finally {
-      setUploading(false);
+      setUploading(false)
     }
-  };
+  }
 
   const handleDeleteSkill = async () => {
-    if (!selectedSkill) return;
+    if (!selectedSkill) return
 
     try {
-      await deletePublicSkill(selectedSkill.id);
-      toast({ title: t('public_skills.success.deleted') });
-      setIsDeleteDialogOpen(false);
-      setSelectedSkill(null);
-      fetchSkills();
+      await deletePublicSkill(selectedSkill.id)
+      toast({ title: t('public_skills.success.deleted') })
+      setIsDeleteDialogOpen(false)
+      setSelectedSkill(null)
+      fetchSkills()
     } catch (error) {
       toast({
         variant: 'destructive',
         title: t('public_skills.errors.delete_failed'),
         description: (error as Error).message,
-      });
+      })
     }
-  };
+  }
 
   const handleDownloadSkill = async (skill: UnifiedSkill) => {
     try {
-      await downloadPublicSkill(skill.id, skill.name);
+      await downloadPublicSkill(skill.id, skill.name)
     } catch (error) {
       toast({
         variant: 'destructive',
         title: t('public_skills.errors.download_failed'),
         description: (error as Error).message,
-      });
+      })
     }
-  };
+  }
 
   const handleViewContent = async (skill: UnifiedSkill) => {
-    setSelectedSkill(skill);
-    setLoadingContent(true);
-    setSkillContent('');
-    setIsViewContentDialogOpen(true);
+    setSelectedSkill(skill)
+    setLoadingContent(true)
+    setSkillContent('')
+    setIsViewContentDialogOpen(true)
 
     try {
-      const result = await getPublicSkillContent(skill.id);
-      setSkillContent(result.content);
+      const result = await getPublicSkillContent(skill.id)
+      setSkillContent(result.content)
     } catch (err) {
       toast({
         variant: 'destructive',
         title: t('public_skills.errors.view_content_failed'),
         description: (err as Error).message,
-      });
-      setSkillContent('');
+      })
+      setSkillContent('')
     } finally {
-      setLoadingContent(false);
+      setLoadingContent(false)
     }
-  };
+  }
 
   const resetUploadForm = () => {
-    setSkillName('');
-    setSelectedFile(null);
-    setUploadProgress(0);
-    setError(null);
-    setSelectedSkill(null);
-    setIsEditMode(false);
-  };
+    setSkillName('')
+    setSelectedFile(null)
+    setUploadProgress(0)
+    setError(null)
+    setSelectedSkill(null)
+    setIsEditMode(false)
+  }
 
   const openUploadDialog = (skill?: UnifiedSkill) => {
     if (skill) {
-      setSelectedSkill(skill);
-      setSkillName(skill.name);
-      setIsEditMode(true);
+      setSelectedSkill(skill)
+      setSkillName(skill.name)
+      setIsEditMode(true)
     } else {
-      resetUploadForm();
+      resetUploadForm()
     }
-    setIsUploadDialogOpen(true);
-  };
+    setIsUploadDialogOpen(true)
+  }
 
   const handleCloseUploadDialog = () => {
     if (!uploading) {
-      setIsUploadDialogOpen(false);
-      resetUploadForm();
+      setIsUploadDialogOpen(false)
+      resetUploadForm()
     }
-  };
+  }
 
   const formatDate = (dateString?: string) => {
-    if (!dateString) return '-';
-    return new Date(dateString).toLocaleDateString();
-  };
+    if (!dateString) return '-'
+    return new Date(dateString).toLocaleDateString()
+  }
 
   return (
     <div className="space-y-3">
@@ -383,8 +383,8 @@ const PublicSkillList: React.FC = () => {
                       size="icon"
                       className="h-8 w-8 hover:text-error"
                       onClick={() => {
-                        setSelectedSkill(skill);
-                        setIsDeleteDialogOpen(true);
+                        setSelectedSkill(skill)
+                        setIsDeleteDialogOpen(true)
                       }}
                       title={t('public_skills.delete_skill')}
                     >
@@ -602,7 +602,7 @@ const PublicSkillList: React.FC = () => {
         </DialogContent>
       </Dialog>
     </div>
-  );
-};
+  )
+}
 
-export default PublicSkillList;
+export default PublicSkillList

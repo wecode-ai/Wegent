@@ -1,59 +1,59 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState, useCallback, useEffect, useMemo } from 'react';
-import { Search, FileText, Target, ChevronDown, ChevronUp, Settings2 } from 'lucide-react';
+import { useState, useCallback, useEffect, useMemo } from 'react'
+import { Search, FileText, Target, ChevronDown, ChevronUp, Settings2 } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogDescription,
-} from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
-import { Input } from '@/components/ui/input';
-import { Spinner } from '@/components/ui/spinner';
-import { Badge } from '@/components/ui/badge';
+} from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
+import { Input } from '@/components/ui/input'
+import { Spinner } from '@/components/ui/spinner'
+import { Badge } from '@/components/ui/badge'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Label } from '@/components/ui/label';
-import { useTranslation } from '@/hooks/useTranslation';
-import { apiClient } from '@/apis/client';
-import { retrieverApis, type RetrievalMethodType } from '@/apis/retrievers';
-import type { KnowledgeBase } from '@/types/knowledge';
+} from '@/components/ui/select'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Label } from '@/components/ui/label'
+import { useTranslation } from '@/hooks/useTranslation'
+import { apiClient } from '@/apis/client'
+import { retrieverApis, type RetrievalMethodType } from '@/apis/retrievers'
+import type { KnowledgeBase } from '@/types/knowledge'
 
 interface RetrievalResult {
-  content: string;
-  score: number;
-  title: string;
-  metadata?: Record<string, unknown>;
+  content: string
+  score: number
+  title: string
+  metadata?: Record<string, unknown>
 }
 
 interface RetrieveResponse {
-  records: RetrievalResult[];
+  records: RetrievalResult[]
 }
 
 interface RetrievalTestDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  knowledgeBase: KnowledgeBase;
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  knowledgeBase: KnowledgeBase
 }
 
 // Test config stored in frontend only
 interface TestConfig {
-  retrieval_mode: RetrievalMethodType;
-  score_threshold: number;
-  top_k: number;
+  retrieval_mode: RetrievalMethodType
+  score_threshold: number
+  top_k: number
 }
 
 export function RetrievalTestDialog({
@@ -61,80 +61,80 @@ export function RetrievalTestDialog({
   onOpenChange,
   knowledgeBase,
 }: RetrievalTestDialogProps) {
-  const { t } = useTranslation();
-  const [query, setQuery] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [results, setResults] = useState<RetrievalResult[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [hasSearched, setHasSearched] = useState(false);
-  const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
+  const { t } = useTranslation()
+  const [query, setQuery] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [results, setResults] = useState<RetrievalResult[]>([])
+  const [error, setError] = useState<string | null>(null)
+  const [hasSearched, setHasSearched] = useState(false)
+  const [expandedIndex, setExpandedIndex] = useState<number | null>(null)
 
   // Retrieval methods supported by the retriever
-  const [supportedMethods, setSupportedMethods] = useState<RetrievalMethodType[]>([]);
-  const [loadingMethods, setLoadingMethods] = useState(false);
+  const [supportedMethods, setSupportedMethods] = useState<RetrievalMethodType[]>([])
+  const [loadingMethods, setLoadingMethods] = useState(false)
 
   // Test config - frontend only, overrides database config
   const [testConfig, setTestConfig] = useState<TestConfig>({
     retrieval_mode: 'vector',
     score_threshold: 0.7,
     top_k: 5,
-  });
+  })
 
-  const maxQueryLength = 200;
+  const maxQueryLength = 200
 
   // Check if retrieval config is available
   const hasRetrievalConfig =
     knowledgeBase.retrieval_config?.retriever_name &&
-    knowledgeBase.retrieval_config?.embedding_config?.model_name;
+    knowledgeBase.retrieval_config?.embedding_config?.model_name
 
   // Load supported retrieval methods based on retriever's storage type
   useEffect(() => {
     const loadSupportedMethods = async () => {
-      if (!open || !hasRetrievalConfig) return;
+      if (!open || !hasRetrievalConfig) return
 
-      const retrieverName = knowledgeBase.retrieval_config?.retriever_name;
-      const retrieverNamespace = knowledgeBase.retrieval_config?.retriever_namespace || 'default';
+      const retrieverName = knowledgeBase.retrieval_config?.retriever_name
+      const retrieverNamespace = knowledgeBase.retrieval_config?.retriever_namespace || 'default'
 
-      if (!retrieverName) return;
+      if (!retrieverName) return
 
-      setLoadingMethods(true);
+      setLoadingMethods(true)
       try {
         // Get retriever details to find storage type
-        const retriever = await retrieverApis.getRetriever(retrieverName, retrieverNamespace);
-        const storageType = retriever.spec.storageConfig.type;
+        const retriever = await retrieverApis.getRetriever(retrieverName, retrieverNamespace)
+        const storageType = retriever.spec.storageConfig.type
 
         // Get supported methods for this storage type
-        const methodsResponse = await retrieverApis.getStorageTypeRetrievalMethods(storageType);
-        setSupportedMethods(methodsResponse.retrieval_methods || ['vector']);
+        const methodsResponse = await retrieverApis.getStorageTypeRetrievalMethods(storageType)
+        setSupportedMethods(methodsResponse.retrieval_methods || ['vector'])
 
         // Initialize test config from knowledge base config
-        const config = knowledgeBase.retrieval_config!;
+        const config = knowledgeBase.retrieval_config!
         setTestConfig({
           retrieval_mode: config.retrieval_mode ?? 'vector',
           score_threshold: config.score_threshold ?? 0.7,
           top_k: config.top_k ?? 5,
-        });
+        })
       } catch (err) {
-        console.error('Failed to load retrieval methods:', err);
+        console.error('Failed to load retrieval methods:', err)
         // Fallback to vector only
-        setSupportedMethods(['vector']);
+        setSupportedMethods(['vector'])
       } finally {
-        setLoadingMethods(false);
+        setLoadingMethods(false)
       }
-    };
+    }
 
-    loadSupportedMethods();
-  }, [open, hasRetrievalConfig, knowledgeBase.retrieval_config]);
+    loadSupportedMethods()
+  }, [open, hasRetrievalConfig, knowledgeBase.retrieval_config])
 
   const handleSearch = useCallback(async () => {
-    if (!query.trim() || !hasRetrievalConfig) return;
+    if (!query.trim() || !hasRetrievalConfig) return
 
-    setLoading(true);
-    setError(null);
-    setHasSearched(true);
+    setLoading(true)
+    setError(null)
+    setHasSearched(true)
 
     try {
-      const config = knowledgeBase.retrieval_config!;
+      const config = knowledgeBase.retrieval_config!
 
       // Build request using test config (overrides database config)
       const request = {
@@ -160,61 +160,61 @@ export function RetrievalTestDialog({
               keyword_weight: config.hybrid_weights.keyword_weight,
             },
           }),
-      };
+      }
 
-      const response = await apiClient.post<RetrieveResponse>('/rag/retrieve', request);
-      setResults(response.records || []);
+      const response = await apiClient.post<RetrieveResponse>('/rag/retrieve', request)
+      setResults(response.records || [])
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('knowledge:document.retrievalTest.error'));
-      setResults([]);
+      setError(err instanceof Error ? err.message : t('knowledge:document.retrievalTest.error'))
+      setResults([])
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  }, [query, knowledgeBase, hasRetrievalConfig, testConfig, t]);
+  }, [query, knowledgeBase, hasRetrievalConfig, testConfig, t])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSearch();
+      e.preventDefault()
+      handleSearch()
     }
-  };
+  }
 
   const handleClose = () => {
-    setQuery('');
-    setResults([]);
-    setError(null);
-    setHasSearched(false);
-    setExpandedIndex(null);
-    onOpenChange(false);
-  };
+    setQuery('')
+    setResults([])
+    setError(null)
+    setHasSearched(false)
+    setExpandedIndex(null)
+    onOpenChange(false)
+  }
 
   const toggleExpand = (index: number) => {
-    setExpandedIndex(expandedIndex === index ? null : index);
-  };
+    setExpandedIndex(expandedIndex === index ? null : index)
+  }
 
   // Get retrieval mode display text
   const getRetrievalModeText = (mode: RetrievalMethodType) => {
     switch (mode) {
       case 'hybrid':
-        return t('knowledge:document.retrieval.hybrid');
+        return t('knowledge:document.retrieval.hybrid')
       case 'keyword':
-        return t('knowledge:document.retrieval.keyword');
+        return t('knowledge:document.retrieval.keyword')
       default:
-        return t('knowledge:document.retrieval.vector');
+        return t('knowledge:document.retrieval.vector')
     }
-  };
+  }
 
   // Check if config differs from database
   const hasConfigChanges = useMemo(() => {
-    const dbConfig = knowledgeBase.retrieval_config;
-    if (!dbConfig) return false;
+    const dbConfig = knowledgeBase.retrieval_config
+    if (!dbConfig) return false
 
     return (
       testConfig.retrieval_mode !== (dbConfig.retrieval_mode ?? 'vector') ||
       testConfig.score_threshold !== (dbConfig.score_threshold ?? 0.7) ||
       testConfig.top_k !== (dbConfig.top_k ?? 5)
-    );
-  }, [testConfig, knowledgeBase.retrieval_config]);
+    )
+  }, [testConfig, knowledgeBase.retrieval_config])
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -305,9 +305,9 @@ export function RetrievalTestDialog({
                           step={0.1}
                           value={testConfig.score_threshold}
                           onChange={e => {
-                            const value = parseFloat(e.target.value);
+                            const value = parseFloat(e.target.value)
                             if (!isNaN(value) && value >= 0 && value <= 1) {
-                              setTestConfig(prev => ({ ...prev, score_threshold: value }));
+                              setTestConfig(prev => ({ ...prev, score_threshold: value }))
                             }
                           }}
                           className="h-8 text-sm"
@@ -329,9 +329,9 @@ export function RetrievalTestDialog({
                           step={1}
                           value={testConfig.top_k}
                           onChange={e => {
-                            const value = parseInt(e.target.value, 10);
+                            const value = parseInt(e.target.value, 10)
                             if (!isNaN(value) && value >= 1 && value <= 20) {
-                              setTestConfig(prev => ({ ...prev, top_k: value }));
+                              setTestConfig(prev => ({ ...prev, top_k: value }))
                             }
                           }}
                           className="h-8 text-sm"
@@ -423,7 +423,7 @@ export function RetrievalTestDialog({
               ) : (
                 <div className="space-y-3">
                   {results.map((result, index) => {
-                    const isExpanded = expandedIndex === index;
+                    const isExpanded = expandedIndex === index
                     return (
                       <div
                         key={index}
@@ -473,7 +473,7 @@ export function RetrievalTestDialog({
                           </div>
                         )}
                       </div>
-                    );
+                    )
                   })}
                 </div>
               )}
@@ -482,5 +482,5 @@ export function RetrievalTestDialog({
         </div>
       </DialogContent>
     </Dialog>
-  );
+  )
 }

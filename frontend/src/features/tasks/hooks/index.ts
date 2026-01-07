@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -7,7 +7,7 @@ export {
   default as useModelSelectionDefault,
   allBotsHavePredefinedModel,
   DEFAULT_MODEL_NAME,
-} from './useModelSelection';
+} from './useModelSelection'
 
 export type {
   Model,
@@ -15,4 +15,4 @@ export type {
   TeamWithBotDetails,
   UseModelSelectionOptions,
   UseModelSelectionReturn,
-} from './useModelSelection';
+} from './useModelSelection'

@@ -88,3 +88,6 @@ docker buildx build --network=host ${PUSH_FLAG} --platform linux/amd64,linux/arm
 
 # Build executor manager image
 docker buildx build --network=host ${PUSH_FLAG} --platform linux/amd64,linux/arm64 -t ghcr.io/wecode-ai/wegent-executor-manager:${VERSION} -f docker/executor_manager/Dockerfile .
+
+# Build chat shell image
+docker buildx build --network=host ${PUSH_FLAG} --platform linux/amd64,linux/arm64 -t ghcr.io/wecode-ai/wegent-chat-shell:${VERSION} -f docker/chat_shell/Dockerfile .

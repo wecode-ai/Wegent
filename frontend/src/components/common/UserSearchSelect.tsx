@@ -1,38 +1,38 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState, useEffect, useRef, ReactNode } from 'react';
-import { Search, X, Check } from 'lucide-react';
-import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { userApis } from '@/apis/user';
-import { useTranslation } from '@/hooks/useTranslation';
-import type { SearchUser } from '@/types/api';
+import { useState, useEffect, useRef, ReactNode } from 'react'
+import { Search, X, Check } from 'lucide-react'
+import { Input } from '@/components/ui/input'
+import { Badge } from '@/components/ui/badge'
+import { userApis } from '@/apis/user'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { SearchUser } from '@/types/api'
 
 interface UserSearchSelectProps<T extends SearchUser = SearchUser> {
   /** Currently selected users */
-  selectedUsers: T[];
+  selectedUsers: T[]
   /** Callback when selected users change */
-  onSelectedUsersChange: (users: T[]) => void;
+  onSelectedUsersChange: (users: T[]) => void
   /** Whether the component is disabled */
-  disabled?: boolean;
+  disabled?: boolean
   /** Placeholder text for the search input */
-  placeholder?: string;
+  placeholder?: string
   /** Whether to allow multiple selection (default: true) */
-  multiple?: boolean;
+  multiple?: boolean
   /** Custom class name for the container */
-  className?: string;
+  className?: string
   /** Auto focus on input (default: false) */
-  autoFocus?: boolean;
+  autoFocus?: boolean
   /** Custom render for no results state - receives searchQuery and clearSearch function */
-  renderNoResults?: (searchQuery: string, clearSearch: () => void) => ReactNode;
+  renderNoResults?: (searchQuery: string, clearSearch: () => void) => ReactNode
   /** Custom render for selected users - if provided, replaces default badge rendering */
-  renderSelectedUsers?: (users: T[], onRemove: (userId: number) => void) => ReactNode;
+  renderSelectedUsers?: (users: T[], onRemove: (userId: number) => void) => ReactNode
   /** Hide the default selected users display (use when handling display externally) */
-  hideSelectedUsers?: boolean;
+  hideSelectedUsers?: boolean
 }
 
 /**
@@ -54,38 +54,38 @@ export function UserSearchSelect<T extends SearchUser = SearchUser>({
   renderSelectedUsers,
   hideSelectedUsers = false,
 }: UserSearchSelectProps<T>) {
-  const { t } = useTranslation();
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<SearchUser[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
-  const [showDropdown, setShowDropdown] = useState(false);
-  const searchInputRef = useRef<HTMLInputElement>(null);
-  const dropdownRef = useRef<HTMLDivElement>(null);
+  const { t } = useTranslation()
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<SearchUser[]>([])
+  const [isSearching, setIsSearching] = useState(false)
+  const [showDropdown, setShowDropdown] = useState(false)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const dropdownRef = useRef<HTMLDivElement>(null)
 
   // Search users with 300ms debounce
   useEffect(() => {
     if (!searchQuery.trim()) {
-      setSearchResults([]);
-      setShowDropdown(false);
-      return;
+      setSearchResults([])
+      setShowDropdown(false)
+      return
     }
 
     const timeoutId = setTimeout(async () => {
-      setIsSearching(true);
+      setIsSearching(true)
       try {
-        const response = await userApis.searchUsers(searchQuery);
-        setSearchResults(response.users || []);
-        setShowDropdown(true);
+        const response = await userApis.searchUsers(searchQuery)
+        setSearchResults(response.users || [])
+        setShowDropdown(true)
       } catch (error) {
-        console.error('Failed to search users:', error);
-        setSearchResults([]);
+        console.error('Failed to search users:', error)
+        setSearchResults([])
       } finally {
-        setIsSearching(false);
+        setIsSearching(false)
       }
-    }, 300);
+    }, 300)
 
-    return () => clearTimeout(timeoutId);
-  }, [searchQuery]);
+    return () => clearTimeout(timeoutId)
+  }, [searchQuery])
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -96,46 +96,46 @@ export function UserSearchSelect<T extends SearchUser = SearchUser>({
         searchInputRef.current &&
         !searchInputRef.current.contains(event.target as Node)
       ) {
-        setShowDropdown(false);
+        setShowDropdown(false)
       }
-    };
+    }
 
-    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('mousedown', handleClickOutside)
     return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, []);
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [])
 
   // Handle selecting a user from search results
   const handleSelectUser = (user: SearchUser) => {
     if (multiple) {
       // Multi-select mode: add to selected list
       if (!selectedUsers.find(u => u.id === user.id)) {
-        onSelectedUsersChange([...selectedUsers, user as T]);
+        onSelectedUsersChange([...selectedUsers, user as T])
       }
     } else {
       // Single-select mode: replace selected
-      onSelectedUsersChange([user as T]);
+      onSelectedUsersChange([user as T])
     }
-    setSearchQuery('');
-    setSearchResults([]);
-    setShowDropdown(false);
-  };
+    setSearchQuery('')
+    setSearchResults([])
+    setShowDropdown(false)
+  }
 
   // Handle removing a selected user
   const handleRemoveUser = (userId: number) => {
-    onSelectedUsersChange(selectedUsers.filter(u => u.id !== userId));
-  };
+    onSelectedUsersChange(selectedUsers.filter(u => u.id !== userId))
+  }
 
   // Clear search query
   const clearSearch = () => {
-    setSearchQuery('');
-    setSearchResults([]);
-    setShowDropdown(false);
-  };
+    setSearchQuery('')
+    setSearchResults([])
+    setShowDropdown(false)
+  }
 
   // Check if we should show no results
-  const showNoResults = searchQuery.trim() && !isSearching && searchResults.length === 0;
+  const showNoResults = searchQuery.trim() && !isSearching && searchResults.length === 0
 
   return (
     <div className={`space-y-2 ${className}`}>
@@ -149,7 +149,7 @@ export function UserSearchSelect<T extends SearchUser = SearchUser>({
             onChange={e => setSearchQuery(e.target.value)}
             onFocus={() => {
               if (searchResults.length > 0) {
-                setShowDropdown(true);
+                setShowDropdown(true)
               }
             }}
             placeholder={placeholder || t('common:userSearch.placeholder')}
@@ -171,7 +171,7 @@ export function UserSearchSelect<T extends SearchUser = SearchUser>({
               </div>
             ) : (
               searchResults.map(user => {
-                const isSelected = selectedUsers.some(u => u.id === user.id);
+                const isSelected = selectedUsers.some(u => u.id === user.id)
                 return (
                   <button
                     key={user.id}
@@ -187,7 +187,7 @@ export function UserSearchSelect<T extends SearchUser = SearchUser>({
                     </div>
                     {isSelected && <Check className="h-4 w-4 text-green-500" />}
                   </button>
-                );
+                )
               })
             )}
           </div>
@@ -226,5 +226,5 @@ export function UserSearchSelect<T extends SearchUser = SearchUser>({
           </div>
         ))}
     </div>
-  );
+  )
 }

@@ -2,15 +2,15 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState, useCallback } from 'react';
-import { Skill } from '@/types/api';
-import { uploadSkill, updateSkill, fetchSkillByName } from '@/apis/skills';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Progress } from '@/components/ui/progress';
-import { Alert, AlertDescription } from '@/components/ui/alert';
+import { useState, useCallback } from 'react'
+import { Skill } from '@/types/api'
+import { uploadSkill, updateSkill, fetchSkillByName } from '@/apis/skills'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Progress } from '@/components/ui/progress'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   Dialog,
   DialogContent,
@@ -18,7 +18,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
+} from '@/components/ui/dialog'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,166 +28,166 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
-import { Label } from '@/components/ui/label';
-import { UploadIcon, FileIcon, AlertCircle } from 'lucide-react';
-import { useTranslation } from '@/hooks/useTranslation';
+} from '@/components/ui/alert-dialog'
+import { Label } from '@/components/ui/label'
+import { UploadIcon, FileIcon, AlertCircle } from 'lucide-react'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface SkillUploadModalProps {
-  open: boolean;
-  onClose: (saved: boolean) => void;
-  skill?: Skill | null;
+  open: boolean
+  onClose: (saved: boolean) => void
+  skill?: Skill | null
 }
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
 
 export default function SkillUploadModal({ open, onClose, skill }: SkillUploadModalProps) {
-  const { t } = useTranslation();
-  const [skillName, setSkillName] = useState(skill?.metadata.name || '');
-  const [namespace] = useState('default');
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [error, setError] = useState<string | null>(null);
-  const [dragActive, setDragActive] = useState(false);
-  const [overwriteDialogOpen, setOverwriteDialogOpen] = useState(false);
-  const [existingSkill, setExistingSkill] = useState<Skill | null>(null);
+  const { t } = useTranslation()
+  const [skillName, setSkillName] = useState(skill?.metadata.name || '')
+  const [namespace] = useState('default')
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(0)
+  const [error, setError] = useState<string | null>(null)
+  const [dragActive, setDragActive] = useState(false)
+  const [overwriteDialogOpen, setOverwriteDialogOpen] = useState(false)
+  const [existingSkill, setExistingSkill] = useState<Skill | null>(null)
 
-  const isEditMode = !!skill;
+  const isEditMode = !!skill
 
   const validateFile = (file: File): string | null => {
     if (!file.name.endsWith('.zip')) {
-      return t('common:skills.error_file_format');
+      return t('common:skills.error_file_format')
     }
     if (file.size > MAX_FILE_SIZE) {
       return t('common:skills.error_file_size', {
         fileSize: (file.size / (1024 * 1024)).toFixed(1),
-      });
+      })
     }
-    return null;
-  };
+    return null
+  }
 
   const handleFileSelect = useCallback(
     (file: File) => {
-      const validationError = validateFile(file);
+      const validationError = validateFile(file)
       if (validationError) {
-        setError(validationError);
-        setSelectedFile(null);
-        return;
+        setError(validationError)
+        setSelectedFile(null)
+        return
       }
 
-      setSelectedFile(file);
-      setError(null);
+      setSelectedFile(file)
+      setError(null)
 
       // Auto-fill skill name from filename (without .zip extension)
       if (!isEditMode && !skillName) {
-        const nameFromFile = file.name.replace(/\.zip$/i, '');
-        setSkillName(nameFromFile);
+        const nameFromFile = file.name.replace(/\.zip$/i, '')
+        setSkillName(nameFromFile)
       }
     },
     [isEditMode, skillName]
-  );
+  )
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    const file = e.target.files?.[0]
     if (file) {
-      handleFileSelect(file);
+      handleFileSelect(file)
     }
-  };
+  }
 
   const handleDrag = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
+    e.preventDefault()
+    e.stopPropagation()
     if (e.type === 'dragenter' || e.type === 'dragover') {
-      setDragActive(true);
+      setDragActive(true)
     } else if (e.type === 'dragleave') {
-      setDragActive(false);
+      setDragActive(false)
     }
-  }, []);
+  }, [])
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setDragActive(false);
+      e.preventDefault()
+      e.stopPropagation()
+      setDragActive(false)
 
-      const file = e.dataTransfer.files?.[0];
+      const file = e.dataTransfer.files?.[0]
       if (file) {
-        handleFileSelect(file);
+        handleFileSelect(file)
       }
     },
     [handleFileSelect]
-  );
+  )
 
   const handleSubmit = async () => {
     if (!selectedFile) {
-      setError(t('common:skills.error_select_file'));
-      return;
+      setError(t('common:skills.error_select_file'))
+      return
     }
 
     if (!isEditMode && !skillName.trim()) {
-      setError(t('common:skills.error_enter_name'));
-      return;
+      setError(t('common:skills.error_enter_name'))
+      return
     }
 
     // Check if skill with same name already exists (only for create mode)
     if (!isEditMode) {
       try {
-        const existing = await fetchSkillByName(skillName.trim(), namespace);
+        const existing = await fetchSkillByName(skillName.trim(), namespace)
         if (existing) {
-          setExistingSkill(existing);
-          setOverwriteDialogOpen(true);
-          return;
+          setExistingSkill(existing)
+          setOverwriteDialogOpen(true)
+          return
         }
       } catch {
         // Ignore errors when checking for existing skill
       }
     }
 
-    await performUpload();
-  };
+    await performUpload()
+  }
 
   const performUpload = async (overwrite: boolean = false) => {
-    if (!selectedFile) return;
+    if (!selectedFile) return
 
-    setUploading(true);
-    setError(null);
-    setUploadProgress(0);
+    setUploading(true)
+    setError(null)
+    setUploadProgress(0)
 
     try {
       if (isEditMode && skill) {
-        const skillId = parseInt(skill.metadata.labels?.id || '0');
-        await updateSkill(skillId, selectedFile, setUploadProgress);
+        const skillId = parseInt(skill.metadata.labels?.id || '0')
+        await updateSkill(skillId, selectedFile, setUploadProgress)
       } else if (overwrite && existingSkill) {
         // Update existing skill
-        const skillId = parseInt(existingSkill.metadata.labels?.id || '0');
-        await updateSkill(skillId, selectedFile, setUploadProgress);
+        const skillId = parseInt(existingSkill.metadata.labels?.id || '0')
+        await updateSkill(skillId, selectedFile, setUploadProgress)
       } else {
-        await uploadSkill(selectedFile, skillName.trim(), namespace, setUploadProgress);
+        await uploadSkill(selectedFile, skillName.trim(), namespace, setUploadProgress)
       }
-      onClose(true);
+      onClose(true)
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('common:skills.error_upload_failed'));
+      setError(err instanceof Error ? err.message : t('common:skills.error_upload_failed'))
     } finally {
-      setUploading(false);
+      setUploading(false)
     }
-  };
+  }
 
   const handleOverwriteConfirm = async () => {
-    setOverwriteDialogOpen(false);
-    await performUpload(true);
-  };
+    setOverwriteDialogOpen(false)
+    await performUpload(true)
+  }
 
   const handleOverwriteCancel = () => {
-    setOverwriteDialogOpen(false);
-    setExistingSkill(null);
-  };
+    setOverwriteDialogOpen(false)
+    setExistingSkill(null)
+  }
 
   const handleClose = () => {
     if (!uploading) {
-      onClose(false);
+      onClose(false)
     }
-  };
+  }
 
   return (
     <>
@@ -357,5 +357,5 @@ export default function SkillUploadModal({ open, onClose, skill }: SkillUploadMo
         </AlertDialogContent>
       </AlertDialog>
     </>
-  );
+  )
 }

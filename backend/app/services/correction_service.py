@@ -18,15 +18,14 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from chat_shell.agents import LangGraphAgentBuilder
+from chat_shell.messages import MessageConverter
+from chat_shell.models import LangChainModelFactory
+from chat_shell.tools import ToolRegistry
+from chat_shell.tools.builtin import SubmitEvaluationResultTool
 from langchain_core.messages import AIMessage
 from langchain_core.tools import BaseTool
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_async
-
-from app.chat_shell.agents import LangGraphAgentBuilder
-from app.chat_shell.messages import MessageConverter
-from app.chat_shell.models import LangChainModelFactory
-from app.chat_shell.tools import ToolRegistry
-from app.chat_shell.tools.builtin import SubmitEvaluationResultTool
 
 # Type aliases for progress callbacks
 ProgressCallback = Callable[[str, str | None], Awaitable[None]]

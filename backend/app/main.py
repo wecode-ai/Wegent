@@ -234,7 +234,7 @@ async def lifespan(app: FastAPI):
     # Initialize PendingRequestRegistry for skill frontend interactions
     # This starts the Redis Pub/Sub listener for cross-worker communication
     logger.info("Initializing PendingRequestRegistry...")
-    from app.chat_shell.tools import (
+    from chat_shell.tools import (
         get_pending_request_registry,
     )
 
@@ -291,7 +291,7 @@ async def lifespan(app: FastAPI):
     logger.info("✓ Background jobs stopped")
 
     # Step 4: Shutdown PendingRequestRegistry
-    from app.chat_shell.tools import (
+    from chat_shell.tools import (
         shutdown_pending_request_registry,
     )
 

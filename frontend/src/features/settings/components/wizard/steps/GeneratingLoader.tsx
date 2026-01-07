@@ -1,14 +1,14 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState, useEffect } from 'react';
-import { useTranslation } from '@/hooks/useTranslation';
+import { useState, useEffect } from 'react'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface GeneratingLoaderProps {
-  className?: string;
+  className?: string
 }
 
 // Robot part component with animation
@@ -18,10 +18,10 @@ function RobotPart({
   isVisible,
   fill = 'currentColor',
 }: {
-  d: string;
-  delay: number;
-  isVisible: boolean;
-  fill?: string;
+  d: string
+  delay: number
+  isVisible: boolean
+  fill?: string
 }) {
   return (
     <path
@@ -34,14 +34,14 @@ function RobotPart({
         transitionDelay: `${delay}ms`,
       }}
     />
-  );
+  )
 }
 
 export default function GeneratingLoader({ className }: GeneratingLoaderProps) {
-  const { t } = useTranslation();
-  const [tipIndex, setTipIndex] = useState(0);
-  const [dots, setDots] = useState('');
-  const [assemblyStep, setAssemblyStep] = useState(0);
+  const { t } = useTranslation()
+  const [tipIndex, setTipIndex] = useState(0)
+  const [dots, setDots] = useState('')
+  const [assemblyStep, setAssemblyStep] = useState(0)
 
   // Tips to cycle through - now synced with robot assembly
   const tips = [
@@ -50,40 +50,40 @@ export default function GeneratingLoader({ className }: GeneratingLoaderProps) {
     t('wizard:loading_tip_generating_test_data'),
     t('wizard:loading_tip_optimizing'),
     t('wizard:loading_tip_almost_done'),
-  ];
+  ]
 
   // Robot assembly animation - each step reveals more parts (slower pace)
   useEffect(() => {
     const assemblyInterval = setInterval(() => {
       setAssemblyStep(prev => {
-        if (prev >= 5) return prev; // Stop at fully assembled
-        return prev + 1;
-      });
-    }, 1500);
+        if (prev >= 5) return prev // Stop at fully assembled
+        return prev + 1
+      })
+    }, 1500)
 
-    return () => clearInterval(assemblyInterval);
-  }, []);
+    return () => clearInterval(assemblyInterval)
+  }, [])
 
   // Cycle through tips every 4 seconds, stop at the last one
   useEffect(() => {
     const tipInterval = setInterval(() => {
       setTipIndex(prev => {
-        if (prev >= tips.length - 1) return prev;
-        return prev + 1;
-      });
-    }, 4000);
+        if (prev >= tips.length - 1) return prev
+        return prev + 1
+      })
+    }, 4000)
 
-    return () => clearInterval(tipInterval);
-  }, [tips.length]);
+    return () => clearInterval(tipInterval)
+  }, [tips.length])
 
   // Animate dots
   useEffect(() => {
     const dotsInterval = setInterval(() => {
-      setDots(prev => (prev.length >= 3 ? '' : prev + '.'));
-    }, 500);
+      setDots(prev => (prev.length >= 3 ? '' : prev + '.'))
+    }, 500)
 
-    return () => clearInterval(dotsInterval);
-  }, []);
+    return () => clearInterval(dotsInterval)
+  }, [])
 
   return (
     <div className={`flex flex-col items-center justify-center py-12 ${className || ''}`}>
@@ -250,5 +250,5 @@ export default function GeneratingLoader({ className }: GeneratingLoaderProps) {
       {/* Progress hint */}
       <p className="mt-4 text-xs text-text-muted/70">{t('wizard:loading_patience_hint')}</p>
     </div>
-  );
+  )
 }

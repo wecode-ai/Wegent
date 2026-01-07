@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+"""Internal API endpoints for service-to-service communication."""
+
+from .chat_storage import router as chat_storage_router
+from .rag import router as rag_router
+from .skills import router as skills_router
+
+__all__ = ["chat_storage_router", "rag_router", "skills_router"]

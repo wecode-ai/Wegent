@@ -232,9 +232,7 @@ class TestKBPriorityLogic:
         ) as mock_get_bound:
             mock_get_bound.return_value = [20, 30]  # Task-level KBs
 
-            with patch(
-                "app.chat_shell.tools.builtin.KnowledgeBaseTool"
-            ) as mock_kb_tool:
+            with patch("chat_shell.tools.builtin.KnowledgeBaseTool") as mock_kb_tool:
                 mock_kb_tool.return_value = Mock()
 
                 _tools, _prompt = _prepare_kb_tools_from_contexts(
@@ -263,9 +261,7 @@ class TestKBPriorityLogic:
         ) as mock_get_bound:
             mock_get_bound.return_value = [20, 30]  # Task-level KBs
 
-            with patch(
-                "app.chat_shell.tools.builtin.KnowledgeBaseTool"
-            ) as mock_kb_tool:
+            with patch("chat_shell.tools.builtin.KnowledgeBaseTool") as mock_kb_tool:
                 mock_kb_tool.return_value = Mock()
 
                 _tools, _prompt = _prepare_kb_tools_from_contexts(
