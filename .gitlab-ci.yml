@@ -205,7 +205,7 @@ wegent-chat-shell:
 trigger_update_chat_shell:
     stage: production
     variables:
-        APP: wegent-chat-shell-web;simulation-wegent-chat-shell-web
+        APP: wegent-chat-shell-web;simulation-wegent-chat-shell-web;beta-wegent-chat-shell-web
         SERVICE: wegent-chat-shell-web
         IMAGE_NAME: wegent-chat-shell-web
         UPSTREAM_CI_PROJECT_ID: $CI_PROJECT_ID
@@ -227,9 +227,9 @@ trigger_update_chat_shell:
 trigger_update_simulation_chat_shell:
     stage: production
     variables:
-        APP: simulation-wegent-chat-shell
-        SERVICE: wegent-chat-shell
-        IMAGE_NAME: wegent-chat-shell
+        APP: simulation-wegent-chat-shell-web
+        SERVICE: wegent-chat-shell-web
+        IMAGE_NAME: wegent-chat-shell-web
         MASTER_BRANCH: master
         UPSTREAM_CI_PROJECT_ID: $CI_PROJECT_ID
         UPSTREAM_CI_PIPELINE_ID: $CI_PIPELINE_ID
