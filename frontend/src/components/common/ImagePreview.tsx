@@ -192,8 +192,8 @@ function ImageLightbox({ src, alt, onClose }: { src: string; alt: string; onClos
 export default function ImagePreview({
   src,
   alt,
-  maxWidth = 300,
-  maxHeight = 200,
+  maxWidth = 600,
+  maxHeight = 400,
   showLinkOnError = true,
 }: ImagePreviewProps) {
   const [showLightbox, setShowLightbox] = useState(false);

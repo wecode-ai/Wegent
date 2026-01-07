@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -26,6 +26,6 @@ export {
   createSpan,
   getTracer,
   type FrontendTracerConfig,
-} from './FrontendTracer';
+} from './FrontendTracer'
 
-export { default } from './FrontendTracer';
+export { default } from './FrontendTracer'

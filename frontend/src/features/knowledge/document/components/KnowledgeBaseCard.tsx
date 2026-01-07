@@ -1,20 +1,20 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { FolderOpen, Pencil, Trash2, FileText, ArrowRight, Clock } from 'lucide-react';
-import { Card } from '@/components/ui/card';
-import type { KnowledgeBase } from '@/types/knowledge';
-import { useTranslation } from '@/hooks/useTranslation';
+import { FolderOpen, Pencil, Trash2, FileText, ArrowRight, Clock } from 'lucide-react'
+import { Card } from '@/components/ui/card'
+import type { KnowledgeBase } from '@/types/knowledge'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface KnowledgeBaseCardProps {
-  knowledgeBase: KnowledgeBase;
-  onEdit?: (kb: KnowledgeBase) => void;
-  onDelete?: (kb: KnowledgeBase) => void;
-  onClick?: (kb: KnowledgeBase) => void;
-  canManage?: boolean;
+  knowledgeBase: KnowledgeBase
+  onEdit?: (kb: KnowledgeBase) => void
+  onDelete?: (kb: KnowledgeBase) => void
+  onClick?: (kb: KnowledgeBase) => void
+  canManage?: boolean
 }
 
 export function KnowledgeBaseCard({
@@ -24,32 +24,32 @@ export function KnowledgeBaseCard({
   onClick,
   canManage = true,
 }: KnowledgeBaseCardProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
 
   const handleCardClick = () => {
-    onClick?.(knowledgeBase);
-  };
+    onClick?.(knowledgeBase)
+  }
 
   const handleEdit = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onEdit?.(knowledgeBase);
-  };
+    e.stopPropagation()
+    onEdit?.(knowledgeBase)
+  }
 
   const handleDelete = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onDelete?.(knowledgeBase);
-  };
+    e.stopPropagation()
+    onDelete?.(knowledgeBase)
+  }
 
   const formatDate = (dateString: string) => {
-    if (!dateString) return '';
-    const date = new Date(dateString);
+    if (!dateString) return ''
+    const date = new Date(dateString)
     // Format as MM-DD HH:mm for compact display
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    return `${month}-${day} ${hours}:${minutes}`;
-  };
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    const hours = String(date.getHours()).padStart(2, '0')
+    const minutes = String(date.getMinutes()).padStart(2, '0')
+    return `${month}-${day} ${hours}:${minutes}`
+  }
 
   return (
     <Card
@@ -113,8 +113,8 @@ export function KnowledgeBaseCard({
           <button
             className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors opacity-0 group-hover:opacity-100"
             onClick={e => {
-              e.stopPropagation();
-              onClick?.(knowledgeBase);
+              e.stopPropagation()
+              onClick?.(knowledgeBase)
             }}
             title={t('actions.view')}
           >
@@ -123,5 +123,5 @@ export function KnowledgeBaseCard({
         </div>
       </div>
     </Card>
-  );
+  )
 }

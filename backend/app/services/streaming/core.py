@@ -133,11 +133,18 @@ class StreamingState:
         self.thinking.append(step)
 
     def add_sources(self, sources: list[dict[str, Any]]) -> None:
-        """Add knowledge base sources for citation."""
+        """Add knowledge base sources for citation.
+
+        Only accepts knowledge base sources with kb_id and title.
+        URL sources from web search are currently not supported by frontend.
+        """
         # Merge sources, avoiding duplicates based on (kb_id, title)
-        # Skip sources with missing required fields to prevent incorrect deduplication
         existing_keys = {(s.get("kb_id"), s.get("title")) for s in self.sources}
         for source in sources:
+            # Skip URL type sources (not supported by frontend yet)
+            if source.get("type") == "url":
+                continue
+
             kb_id = source.get("kb_id")
             title = source.get("title")
 

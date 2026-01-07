@@ -1,11 +1,11 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React from 'react';
-import { Button } from '@/components/ui/button';
+import React from 'react'
+import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
@@ -13,14 +13,14 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
-import { useTranslation } from '@/hooks/useTranslation';
+} from '@/components/ui/dialog'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface TeamModeChangeDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onConfirm: () => void;
-  onCancel: () => void;
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onConfirm: () => void
+  onCancel: () => void
 }
 
 export default function TeamModeChangeDialog({
@@ -29,7 +29,7 @@ export default function TeamModeChangeDialog({
   onConfirm,
   onCancel,
 }: TeamModeChangeDialogProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -48,5 +48,5 @@ export default function TeamModeChangeDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
+  )
 }

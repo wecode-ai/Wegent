@@ -1,128 +1,128 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState, useEffect } from 'react';
-import { useTranslation } from '@/hooks/useTranslation';
-import Modal from '@/features/common/Modal';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
+import { useState, useEffect } from 'react'
+import { useTranslation } from '@/hooks/useTranslation'
+import Modal from '@/features/common/Modal'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import { createGroup, listGroups } from '@/apis/groups';
-import { toast } from 'sonner';
-import type { GroupCreate, Group, GroupVisibility } from '@/types/group';
+} from '@/components/ui/select'
+import { createGroup, listGroups } from '@/apis/groups'
+import { toast } from 'sonner'
+import type { GroupCreate, Group, GroupVisibility } from '@/types/group'
 
 interface CreateGroupDialogProps {
-  isOpen: boolean;
-  onClose: () => void;
-  onSuccess: () => void;
+  isOpen: boolean
+  onClose: () => void
+  onSuccess: () => void
 }
 
 export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDialogProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
   const [formData, setFormData] = useState<GroupCreate>({
     name: '',
     display_name: '',
     visibility: 'internal',
     description: '',
-  });
-  const [parentGroup, setParentGroup] = useState<string>('__none__');
-  const [availableGroups, setAvailableGroups] = useState<Group[]>([]);
-  const [loadingGroups, setLoadingGroups] = useState(false);
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  })
+  const [parentGroup, setParentGroup] = useState<string>('__none__')
+  const [availableGroups, setAvailableGroups] = useState<Group[]>([])
+  const [loadingGroups, setLoadingGroups] = useState(false)
+  const [errors, setErrors] = useState<Record<string, string>>({})
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   // Load available groups when dialog opens
   useEffect(() => {
     if (isOpen) {
-      loadAvailableGroups();
+      loadAvailableGroups()
     }
-  }, [isOpen]);
+  }, [isOpen])
 
   const loadAvailableGroups = async () => {
     try {
-      setLoadingGroups(true);
-      const response = await listGroups({ page: 1, limit: 100 });
+      setLoadingGroups(true)
+      const response = await listGroups({ page: 1, limit: 100 })
       // Filter groups that can be parent (max nesting level is 5)
       const eligibleGroups = (response.items || []).filter(group => {
-        const depth = group.name.split('groups:/').length;
-        return depth < 5; // Can only be parent if depth < 5
-      });
-      setAvailableGroups(eligibleGroups);
+        const depth = group.name.split('groups:/').length
+        return depth < 5 // Can only be parent if depth < 5
+      })
+      setAvailableGroups(eligibleGroups)
     } catch (error) {
-      console.error('Failed to load groups:', error);
+      console.error('Failed to load groups:', error)
     } finally {
-      setLoadingGroups(false);
+      setLoadingGroups(false)
     }
-  };
+  }
 
   const validateName = (name: string): string | null => {
     if (!name) {
-      return t('common:validation.required');
+      return t('common:validation.required')
     }
     if (name.length > 100) {
-      return t('common:validation.max_length', { max: 100 });
+      return t('common:validation.max_length', { max: 100 })
     }
     // Check if name starts with "default" (case-insensitive)
     if (name.toLowerCase().startsWith('default')) {
-      return t('groups:groupCreate.nameCannotStartWithDefault');
+      return t('groups:groupCreate.nameCannotStartWithDefault')
     }
     // Name must be alphanumeric with dashes/underscores, no spaces
     if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
-      return t('groups:groupCreate.nameValidation');
+      return t('groups:groupCreate.nameValidation')
     }
-    return null;
-  };
+    return null
+  }
 
   const validateForm = (): boolean => {
-    const newErrors: Record<string, string> = {};
+    const newErrors: Record<string, string> = {}
 
-    const nameError = validateName(formData.name);
+    const nameError = validateName(formData.name)
     if (nameError) {
-      newErrors.name = nameError;
+      newErrors.name = nameError
     }
 
     if (formData.display_name && formData.display_name.length > 100) {
-      newErrors.display_name = t('common:validation.max_length', { max: 100 });
+      newErrors.display_name = t('common:validation.max_length', { max: 100 })
     }
 
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
+    setErrors(newErrors)
+    return Object.keys(newErrors).length === 0
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+    e.preventDefault()
 
     if (!validateForm()) {
-      return;
+      return
     }
 
-    setIsSubmitting(true);
+    setIsSubmitting(true)
     try {
       // Construct the final group name
-      const baseName = formData.name.trim();
+      const baseName = formData.name.trim()
       const finalName =
-        parentGroup && parentGroup !== '__none__' ? `${parentGroup}/${baseName}` : baseName;
+        parentGroup && parentGroup !== '__none__' ? `${parentGroup}/${baseName}` : baseName
 
       const payload: GroupCreate = {
         name: finalName,
         display_name: formData.display_name?.trim() || baseName,
         visibility: formData.visibility,
         description: formData.description?.trim() || undefined,
-      };
+      }
 
-      await createGroup(payload);
-      toast.success(t('groups:groups.messages.createSuccess'));
+      await createGroup(payload)
+      toast.success(t('groups:groups.messages.createSuccess'))
 
       // Reset form
       setFormData({
@@ -130,20 +130,20 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
         display_name: '',
         visibility: 'internal',
         description: '',
-      });
-      setParentGroup('__none__');
-      setErrors({});
-      onSuccess();
-      onClose();
+      })
+      setParentGroup('__none__')
+      setErrors({})
+      onSuccess()
+      onClose()
     } catch (error: unknown) {
-      console.error('Failed to create group:', error);
-      const err = error as { response?: { data?: { detail?: string } }; message?: string };
-      const errorMessage = err?.response?.data?.detail || err?.message || 'Failed to create group';
-      toast.error(errorMessage);
+      console.error('Failed to create group:', error)
+      const err = error as { response?: { data?: { detail?: string } }; message?: string }
+      const errorMessage = err?.response?.data?.detail || err?.message || 'Failed to create group'
+      toast.error(errorMessage)
     } finally {
-      setIsSubmitting(false);
+      setIsSubmitting(false)
     }
-  };
+  }
 
   const handleClose = () => {
     if (!isSubmitting) {
@@ -152,12 +152,12 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
         display_name: '',
         visibility: 'internal',
         description: '',
-      });
-      setParentGroup('__none__');
-      setErrors({});
-      onClose();
+      })
+      setParentGroup('__none__')
+      setErrors({})
+      onClose()
     }
-  };
+  }
 
   return (
     <Modal isOpen={isOpen} onClose={handleClose} title={t('groups:groups.create')} maxWidth="md">
@@ -171,9 +171,9 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
             id="name"
             value={formData.name}
             onChange={e => {
-              setFormData({ ...formData, name: e.target.value });
+              setFormData({ ...formData, name: e.target.value })
               if (errors.name) {
-                setErrors({ ...errors, name: '' });
+                setErrors({ ...errors, name: '' })
               }
             }}
             placeholder={t('groups:groupCreate.namePlaceholder')}
@@ -195,9 +195,9 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
             id="display_name"
             value={formData.display_name}
             onChange={e => {
-              setFormData({ ...formData, display_name: e.target.value });
+              setFormData({ ...formData, display_name: e.target.value })
               if (errors.display_name) {
-                setErrors({ ...errors, display_name: '' });
+                setErrors({ ...errors, display_name: '' })
               }
             }}
             placeholder={t('groups:groupCreate.displayNamePlaceholder')}
@@ -312,5 +312,5 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
         </div>
       </form>
     </Modal>
-  );
+  )
 }

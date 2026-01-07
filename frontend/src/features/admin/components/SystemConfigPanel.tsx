@@ -1,18 +1,18 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useEffect, useState, useCallback } from 'react';
-import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { PlusIcon, TrashIcon, PencilIcon } from '@heroicons/react/24/outline';
-import { Loader2 } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
-import { useTranslation } from '@/hooks/useTranslation';
+import React, { useEffect, useState, useCallback } from 'react'
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
+import { PlusIcon, TrashIcon, PencilIcon } from '@heroicons/react/24/outline'
+import { Loader2 } from 'lucide-react'
+import { useToast } from '@/hooks/use-toast'
+import { useTranslation } from '@/hooks/useTranslation'
 import {
   Dialog,
   DialogContent,
@@ -20,7 +20,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
+} from '@/components/ui/dialog'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -30,231 +30,231 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+} from '@/components/ui/alert-dialog'
 import {
   adminApis,
   ChatSloganItem,
   ChatTipItem,
   ChatSloganTipsResponse,
   SloganTipMode,
-} from '@/apis/admin';
+} from '@/apis/admin'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
+} from '@/components/ui/select'
 
 // Common form data type for both slogans and tips
 type ItemFormData = {
-  zh: string;
-  en: string;
-  mode: SloganTipMode;
-};
+  zh: string
+  en: string
+  mode: SloganTipMode
+}
 
 const SystemConfigPanel: React.FC = () => {
-  const { t } = useTranslation();
-  const { toast } = useToast();
+  const { t } = useTranslation()
+  const { toast } = useToast()
 
   // State
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [slogans, setSlogans] = useState<ChatSloganItem[]>([]);
-  const [tips, setTips] = useState<ChatTipItem[]>([]);
-  const [version, setVersion] = useState(0);
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [slogans, setSlogans] = useState<ChatSloganItem[]>([])
+  const [tips, setTips] = useState<ChatTipItem[]>([])
+  const [version, setVersion] = useState(0)
 
   // Slogan dialog states
-  const [isSloganDialogOpen, setIsSloganDialogOpen] = useState(false);
-  const [isDeleteSloganDialogOpen, setIsDeleteSloganDialogOpen] = useState(false);
-  const [editingSlogan, setEditingSlogan] = useState<ChatSloganItem | null>(null);
-  const [editingSloganIndex, setEditingSloganIndex] = useState<number>(-1);
+  const [isSloganDialogOpen, setIsSloganDialogOpen] = useState(false)
+  const [isDeleteSloganDialogOpen, setIsDeleteSloganDialogOpen] = useState(false)
+  const [editingSlogan, setEditingSlogan] = useState<ChatSloganItem | null>(null)
+  const [editingSloganIndex, setEditingSloganIndex] = useState<number>(-1)
   const [sloganFormData, setSloganFormData] = useState<ItemFormData>({
     zh: '',
     en: '',
     mode: 'both',
-  });
+  })
 
   // Tip dialog states
-  const [isTipDialogOpen, setIsTipDialogOpen] = useState(false);
-  const [isDeleteTipDialogOpen, setIsDeleteTipDialogOpen] = useState(false);
-  const [editingTip, setEditingTip] = useState<ChatTipItem | null>(null);
-  const [editingTipIndex, setEditingTipIndex] = useState<number>(-1);
+  const [isTipDialogOpen, setIsTipDialogOpen] = useState(false)
+  const [isDeleteTipDialogOpen, setIsDeleteTipDialogOpen] = useState(false)
+  const [editingTip, setEditingTip] = useState<ChatTipItem | null>(null)
+  const [editingTipIndex, setEditingTipIndex] = useState<number>(-1)
   const [tipFormData, setTipFormData] = useState<ItemFormData>({
     zh: '',
     en: '',
     mode: 'both',
-  });
+  })
 
   // Fetch config
   const fetchConfig = useCallback(async () => {
-    setLoading(true);
+    setLoading(true)
     try {
-      const response: ChatSloganTipsResponse = await adminApis.getSloganTipsConfig();
-      setSlogans(response.slogans);
-      setTips(response.tips);
-      setVersion(response.version);
+      const response: ChatSloganTipsResponse = await adminApis.getSloganTipsConfig()
+      setSlogans(response.slogans)
+      setTips(response.tips)
+      setVersion(response.version)
     } catch (error) {
-      console.error('Failed to fetch slogan tips config:', error);
+      console.error('Failed to fetch slogan tips config:', error)
       toast({
         title: t('admin:system_config.errors.load_failed'),
         variant: 'destructive',
-      });
+      })
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  }, [t, toast]);
+  }, [t, toast])
 
   useEffect(() => {
-    fetchConfig();
-  }, [fetchConfig]);
+    fetchConfig()
+  }, [fetchConfig])
 
   // Save config
   const handleSave = async () => {
-    setSaving(true);
+    setSaving(true)
     try {
       const response = await adminApis.updateSloganTipsConfig({
         slogans,
         tips,
-      });
-      setVersion(response.version);
+      })
+      setVersion(response.version)
       toast({
         title: t('admin:system_config.success.updated'),
-      });
+      })
     } catch (error) {
-      console.error('Failed to save slogan tips config:', error);
+      console.error('Failed to save slogan tips config:', error)
       toast({
         title: t('admin:system_config.errors.save_failed'),
         variant: 'destructive',
-      });
+      })
     } finally {
-      setSaving(false);
+      setSaving(false)
     }
-  };
+  }
 
   // ==================== Slogan Operations ====================
 
   const handleAddSlogan = () => {
-    setEditingSlogan(null);
-    setEditingSloganIndex(-1);
-    setSloganFormData({ zh: '', en: '', mode: 'both' });
-    setIsSloganDialogOpen(true);
-  };
+    setEditingSlogan(null)
+    setEditingSloganIndex(-1)
+    setSloganFormData({ zh: '', en: '', mode: 'both' })
+    setIsSloganDialogOpen(true)
+  }
 
   const handleEditSlogan = (slogan: ChatSloganItem, index: number) => {
-    setEditingSlogan(slogan);
-    setEditingSloganIndex(index);
-    setSloganFormData({ zh: slogan.zh, en: slogan.en, mode: slogan.mode || 'both' });
-    setIsSloganDialogOpen(true);
-  };
+    setEditingSlogan(slogan)
+    setEditingSloganIndex(index)
+    setSloganFormData({ zh: slogan.zh, en: slogan.en, mode: slogan.mode || 'both' })
+    setIsSloganDialogOpen(true)
+  }
 
   const handleSaveSlogan = () => {
     if (!sloganFormData.zh.trim() || !sloganFormData.en.trim()) {
       toast({
         title: t('admin:system_config.errors.slogan_required'),
         variant: 'destructive',
-      });
-      return;
+      })
+      return
     }
 
     if (editingSlogan && editingSloganIndex >= 0) {
-      const newSlogans = [...slogans];
+      const newSlogans = [...slogans]
       newSlogans[editingSloganIndex] = {
         ...editingSlogan,
         zh: sloganFormData.zh,
         en: sloganFormData.en,
         mode: sloganFormData.mode,
-      };
-      setSlogans(newSlogans);
+      }
+      setSlogans(newSlogans)
     } else {
-      const newId = slogans.length > 0 ? Math.max(...slogans.map(s => s.id)) + 1 : 1;
+      const newId = slogans.length > 0 ? Math.max(...slogans.map(s => s.id)) + 1 : 1
       setSlogans([
         ...slogans,
         { id: newId, zh: sloganFormData.zh, en: sloganFormData.en, mode: sloganFormData.mode },
-      ]);
+      ])
     }
 
-    setIsSloganDialogOpen(false);
-    setEditingSlogan(null);
-    setEditingSloganIndex(-1);
-  };
+    setIsSloganDialogOpen(false)
+    setEditingSlogan(null)
+    setEditingSloganIndex(-1)
+  }
 
   const handleDeleteSloganClick = (slogan: ChatSloganItem, index: number) => {
-    setEditingSlogan(slogan);
-    setEditingSloganIndex(index);
-    setIsDeleteSloganDialogOpen(true);
-  };
+    setEditingSlogan(slogan)
+    setEditingSloganIndex(index)
+    setIsDeleteSloganDialogOpen(true)
+  }
 
   const handleConfirmDeleteSlogan = () => {
     if (editingSloganIndex >= 0) {
-      setSlogans(slogans.filter((_, i) => i !== editingSloganIndex));
+      setSlogans(slogans.filter((_, i) => i !== editingSloganIndex))
     }
-    setIsDeleteSloganDialogOpen(false);
-    setEditingSlogan(null);
-    setEditingSloganIndex(-1);
-  };
+    setIsDeleteSloganDialogOpen(false)
+    setEditingSlogan(null)
+    setEditingSloganIndex(-1)
+  }
 
   // ==================== Tip Operations ====================
 
   const handleAddTip = () => {
-    setEditingTip(null);
-    setEditingTipIndex(-1);
-    setTipFormData({ zh: '', en: '', mode: 'both' });
-    setIsTipDialogOpen(true);
-  };
+    setEditingTip(null)
+    setEditingTipIndex(-1)
+    setTipFormData({ zh: '', en: '', mode: 'both' })
+    setIsTipDialogOpen(true)
+  }
 
   const handleEditTip = (tip: ChatTipItem, index: number) => {
-    setEditingTip(tip);
-    setEditingTipIndex(index);
-    setTipFormData({ zh: tip.zh, en: tip.en, mode: tip.mode || 'both' });
-    setIsTipDialogOpen(true);
-  };
+    setEditingTip(tip)
+    setEditingTipIndex(index)
+    setTipFormData({ zh: tip.zh, en: tip.en, mode: tip.mode || 'both' })
+    setIsTipDialogOpen(true)
+  }
 
   const handleSaveTip = () => {
     if (!tipFormData.zh.trim() || !tipFormData.en.trim()) {
       toast({
         title: t('admin:system_config.errors.tip_required'),
         variant: 'destructive',
-      });
-      return;
+      })
+      return
     }
 
     if (editingTip && editingTipIndex >= 0) {
-      const newTips = [...tips];
+      const newTips = [...tips]
       newTips[editingTipIndex] = {
         ...editingTip,
         zh: tipFormData.zh,
         en: tipFormData.en,
         mode: tipFormData.mode,
-      };
-      setTips(newTips);
+      }
+      setTips(newTips)
     } else {
-      const newId = tips.length > 0 ? Math.max(...tips.map(t => t.id)) + 1 : 1;
+      const newId = tips.length > 0 ? Math.max(...tips.map(t => t.id)) + 1 : 1
       setTips([
         ...tips,
         { id: newId, zh: tipFormData.zh, en: tipFormData.en, mode: tipFormData.mode },
-      ]);
+      ])
     }
 
-    setIsTipDialogOpen(false);
-    setEditingTip(null);
-    setEditingTipIndex(-1);
-  };
+    setIsTipDialogOpen(false)
+    setEditingTip(null)
+    setEditingTipIndex(-1)
+  }
 
   const handleDeleteTipClick = (tip: ChatTipItem, index: number) => {
-    setEditingTip(tip);
-    setEditingTipIndex(index);
-    setIsDeleteTipDialogOpen(true);
-  };
+    setEditingTip(tip)
+    setEditingTipIndex(index)
+    setIsDeleteTipDialogOpen(true)
+  }
 
   const handleConfirmDeleteTip = () => {
     if (editingTipIndex >= 0) {
-      setTips(tips.filter((_, i) => i !== editingTipIndex));
+      setTips(tips.filter((_, i) => i !== editingTipIndex))
     }
-    setIsDeleteTipDialogOpen(false);
-    setEditingTip(null);
-    setEditingTipIndex(-1);
-  };
+    setIsDeleteTipDialogOpen(false)
+    setEditingTip(null)
+    setEditingTipIndex(-1)
+  }
 
   // ==================== Render ====================
 
@@ -264,7 +264,7 @@ const SystemConfigPanel: React.FC = () => {
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
         <span className="ml-2 text-text-muted">{t('admin:system_config.loading')}</span>
       </div>
-    );
+    )
   }
 
   // Reusable item list component
@@ -275,7 +275,7 @@ const SystemConfigPanel: React.FC = () => {
     emptyMessage: string
   ) => {
     if (items.length === 0) {
-      return <div className="text-center py-8 text-text-muted">{emptyMessage}</div>;
+      return <div className="text-center py-8 text-text-muted">{emptyMessage}</div>
     }
 
     return (
@@ -315,8 +315,8 @@ const SystemConfigPanel: React.FC = () => {
           </div>
         ))}
       </div>
-    );
-  };
+    )
+  }
 
   // Reusable edit dialog component
   const renderEditDialog = (
@@ -385,7 +385,7 @@ const SystemConfigPanel: React.FC = () => {
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
+  )
 
   // Reusable delete confirmation dialog
   const renderDeleteDialog = (
@@ -407,7 +407,7 @@ const SystemConfigPanel: React.FC = () => {
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
-  );
+  )
 
   return (
     <div className="space-y-6">
@@ -510,7 +510,7 @@ const SystemConfigPanel: React.FC = () => {
         handleConfirmDeleteTip
       )}
     </div>
-  );
-};
+  )
+}
 
-export default SystemConfigPanel;
+export default SystemConfigPanel

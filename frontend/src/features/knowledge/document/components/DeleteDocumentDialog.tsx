@@ -1,8 +1,8 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
 import {
   Dialog,
@@ -11,17 +11,17 @@ import {
   DialogTitle,
   DialogFooter,
   DialogDescription,
-} from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
-import { useTranslation } from '@/hooks/useTranslation';
-import type { KnowledgeDocument } from '@/types/knowledge';
+} from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { KnowledgeDocument } from '@/types/knowledge'
 
 interface DeleteDocumentDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  document: KnowledgeDocument | null;
-  onConfirm: () => Promise<void>;
-  loading?: boolean;
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  document: KnowledgeDocument | null
+  onConfirm: () => Promise<void>
+  loading?: boolean
 }
 
 export function DeleteDocumentDialog({
@@ -31,15 +31,15 @@ export function DeleteDocumentDialog({
   onConfirm,
   loading,
 }: DeleteDocumentDialogProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
 
   const handleConfirm = async () => {
     try {
-      await onConfirm();
+      await onConfirm()
     } catch {
       // Error handled by parent
     }
-  };
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -63,5 +63,5 @@ export function DeleteDocumentDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
+  )
 }

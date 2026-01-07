@@ -89,7 +89,7 @@ async def process_rag_if_needed(
             return context_metadata, None
 
         # Retrieve and assemble RAG prompt
-        from app.chat_shell.tools.rag_integration import (
+        from chat_shell.tools.rag_integration import (
             retrieve_and_assemble_rag_prompt,
         )
 

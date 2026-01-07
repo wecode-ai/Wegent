@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -9,18 +9,18 @@
  * for recovery when user refreshes during streaming.
  */
 
-import { NextRequest, NextResponse } from 'next/server';
-import { getInternalApiUrl } from '@/lib/server-config';
+import { NextRequest, NextResponse } from 'next/server'
+import { getInternalApiUrl } from '@/lib/server-config'
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ subtaskId: string }> }
 ) {
   try {
-    const { subtaskId } = await params;
+    const { subtaskId } = await params
 
     // Get authorization header
-    const authHeader = request.headers.get('Authorization');
+    const authHeader = request.headers.get('Authorization')
 
     // Forward request to backend
     const backendResponse = await fetch(
@@ -32,22 +32,22 @@ export async function GET(
           ...(authHeader && { Authorization: authHeader }),
         },
       }
-    );
+    )
 
     if (!backendResponse.ok) {
-      const errorText = await backendResponse.text();
+      const errorText = await backendResponse.text()
       return new NextResponse(errorText, {
         status: backendResponse.status,
         headers: {
           'Content-Type': 'application/json',
         },
-      });
+      })
     }
 
-    const data = await backendResponse.json();
-    return NextResponse.json(data);
+    const data = await backendResponse.json()
+    return NextResponse.json(data)
   } catch (error) {
-    console.error('Streaming content proxy error:', error);
-    return NextResponse.json({ error: 'Failed to get streaming content' }, { status: 500 });
+    console.error('Streaming content proxy error:', error)
+    return NextResponse.json({ error: 'Failed to get streaming content' }, { status: 500 })
   }
 }
