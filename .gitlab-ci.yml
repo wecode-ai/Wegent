@@ -185,7 +185,7 @@ wegent-chat-shell:
   stage: package
   retry: 1
   variables:
-    SERVICE: wegent-chat-shell
+    SERVICE: wegent-chat-shell-web
     DOCKERFILE_PATH: wecode/docker/chat_shell
   script:
     - build_image
