@@ -21,7 +21,16 @@ RUN pip install --no-cache-dir uv -i http://mirrors.cloud.aliyuncs.com/pypi/simp
 ENV UV_INDEX_URL="http://mirrors.cloud.aliyuncs.com/pypi/simple/"
 ENV UV_EXTRA_INDEX_URL=""
 
+# Copy and install shared module first
+COPY shared /app/shared
+RUN uv pip install --system --no-cache /app/shared
+
+# Copy and install chat_shell module
+COPY chat_shell /app/chat_shell
+RUN uv pip install --system --no-cache /app/chat_shell
+
 # Copy pyproject.toml and install dependencies
+# Remove [tool.uv.sources] section as shared is already installed
 COPY backend/pyproject.toml .
 ENV EXECUTOR_ENV='{"DEFAULT_HEADERS":{"wecode-source":"agent","wecode-user":"${task_data.user.name}","wecode-action":"wegent","wecode-executor":"chat"}}'
 
@@ -38,10 +47,12 @@ ENV GRACEFUL_SHUTDOWN_TIMEOUT=600
 # Reject new requests during shutdown with 503 Service Unavailable
 ENV SHUTDOWN_REJECT_NEW_REQUESTS=true
 
-RUN uv pip install --system --no-cache -r pyproject.toml
+RUN sed -i '/\[tool\.uv\.sources\]/,/^$/d' pyproject.toml && \
+    uv pip install --system --no-cache -r pyproject.toml
 
 # Copy application code
 COPY backend /app
+# Also copy shared to /app/shared for PYTHONPATH imports
 COPY shared /app/shared
 COPY resource.json /app/resource.json
 # Create .env file (if it doesn't exist)
