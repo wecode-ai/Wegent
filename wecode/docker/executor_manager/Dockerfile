@@ -13,6 +13,10 @@ RUN pip install --no-cache-dir uv -i http://mirrors.cloud.aliyuncs.com/pypi/simp
 ENV UV_INDEX_URL="http://mirrors.cloud.aliyuncs.com/pypi/simple/"
 ENV UV_EXTRA_INDEX_URL=""
 
+# Copy and install shared module first
+COPY shared /app/shared
+RUN uv pip install --system --no-cache /app/shared
+
 # OpenTelemetry configuration
 ENV OTEL_ENABLED=true
 ENV OTEL_MAX_BODY_SIZE=1048576
@@ -22,8 +26,11 @@ ENV OTEL_TRACES_SAMPLER_ARG=1.0
 ENV OTEL_EXPORTER_OTLP_ENDPOINT=http://wegent-otel-web.wb-plat-ide.svc.cluster.local:4317
 
 # Copy pyproject.toml and install dependencies
+# Remove wegent-shared line as it's already installed
 COPY executor_manager/pyproject.toml /app/executor_manager/pyproject.toml
-RUN cd /app/executor_manager && uv pip install --system --no-cache -r pyproject.toml
+RUN cd /app/executor_manager && \
+    sed -i '/wegent-shared.*file:/d' pyproject.toml && \
+    uv pip install --system --no-cache -r pyproject.toml
 
 ENV EXECUTOR_ENV='{"DEFAULT_HEADERS":{"wecode-user":"${task_data.user.name}","wecode-action":"wegent","wecode-executor":"agno","wecode-model-id":"${agent_config.env.model_id}"}}'
 

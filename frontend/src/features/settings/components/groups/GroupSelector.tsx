@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -7,65 +7,65 @@
  * A dropdown selector for choosing groups in resource management pages
  */
 
-'use client';
+'use client'
 
-import { useEffect, useState } from 'react';
-import { useTranslation } from '@/hooks/useTranslation';
+import { useEffect, useState } from 'react'
+import { useTranslation } from '@/hooks/useTranslation'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import { listGroups } from '@/apis/groups';
-import type { Group } from '@/types/group';
+} from '@/components/ui/select'
+import { listGroups } from '@/apis/groups'
+import type { Group } from '@/types/group'
 
 interface GroupSelectorProps {
-  value: string | null;
-  onChange: (value: string | null) => void;
-  scope?: 'personal' | 'group' | 'all';
+  value: string | null
+  onChange: (value: string | null) => void
+  scope?: 'personal' | 'group' | 'all'
 }
 
-const ALL_GROUPS_VALUE = '__all__';
+const ALL_GROUPS_VALUE = '__all__'
 
 export function GroupSelector({ value, onChange, scope = 'all' }: GroupSelectorProps) {
-  const { t } = useTranslation();
-  const [groups, setGroups] = useState<Group[]>([]);
-  const [loading, setLoading] = useState(false);
+  const { t } = useTranslation()
+  const [groups, setGroups] = useState<Group[]>([])
+  const [loading, setLoading] = useState(false)
 
   useEffect(() => {
     if (scope === 'group' || scope === 'all') {
-      loadGroups();
+      loadGroups()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope]);
+  }, [scope])
 
   const loadGroups = async () => {
     try {
-      setLoading(true);
-      const response = await listGroups({ page: 1, limit: 100 });
-      setGroups(response.items || []);
+      setLoading(true)
+      const response = await listGroups({ page: 1, limit: 100 })
+      setGroups(response.items || [])
       // Set default to "all groups" if no value is set
       if (value === null && (response.items || []).length > 0) {
-        onChange(null); // null means all groups
+        onChange(null) // null means all groups
       }
     } catch (error) {
-      console.error('Failed to load groups:', error);
+      console.error('Failed to load groups:', error)
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  };
+  }
 
   if (scope === 'personal') {
-    return null;
+    return null
   }
 
   // Convert between internal value (null for all groups) and Select value (special string)
-  const selectValue = value === null ? ALL_GROUPS_VALUE : value;
+  const selectValue = value === null ? ALL_GROUPS_VALUE : value
   const handleChange = (val: string) => {
-    onChange(val === ALL_GROUPS_VALUE ? null : val);
-  };
+    onChange(val === ALL_GROUPS_VALUE ? null : val)
+  }
 
   return (
     <div className="space-y-2">
@@ -92,5 +92,5 @@ export function GroupSelector({ value, onChange, scope = 'all' }: GroupSelectorP
         </SelectContent>
       </Select>
     </div>
-  );
+  )
 }

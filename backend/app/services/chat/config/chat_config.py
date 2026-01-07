@@ -380,7 +380,15 @@ class ChatConfigBuilder:
         from app.schemas.kind import Ghost, Skill
 
         bot_crd = Bot.model_validate(bot.json)
+        logger.info(
+            "[_get_bot_skills] Bot: name=%s, ghostRef=%s",
+            bot.name,
+            bot_crd.spec.ghostRef if bot_crd.spec else None,
+        )
         if not bot_crd.spec or not bot_crd.spec.ghostRef:
+            logger.warning(
+                "[_get_bot_skills] Bot has no ghostRef, returning empty skills"
+            )
             return []
 
         # Query Ghost
@@ -397,10 +405,21 @@ class ChatConfigBuilder:
         )
 
         if not ghost or not ghost.json:
+            logger.warning(
+                "[_get_bot_skills] Ghost not found: name=%s, namespace=%s",
+                bot_crd.spec.ghostRef.name,
+                bot_crd.spec.ghostRef.namespace,
+            )
             return []
 
         ghost_crd = Ghost.model_validate(ghost.json)
+        logger.info(
+            "[_get_bot_skills] Ghost: name=%s, skills=%s",
+            ghost.name,
+            ghost_crd.spec.skills,
+        )
         if not ghost_crd.spec.skills:
+            logger.warning("[_get_bot_skills] Ghost has no skills configured")
             return []
 
         # Query each skill (user's first, then public)
@@ -412,6 +431,8 @@ class ChatConfigBuilder:
                 skill_data = {
                     "name": skill_crd.metadata.name,
                     "description": skill_crd.spec.description,
+                    "prompt": skill_crd.spec.prompt,  # Include prompt for LoadSkillTool
+                    "displayName": skill_crd.spec.displayName,  # Include displayName
                     "skill_id": skill.id,  # Include skill ID for provider loading
                     "skill_user_id": skill.user_id,  # Include user_id for security check
                 }
@@ -428,6 +449,16 @@ class ChatConfigBuilder:
                         "module": skill_crd.spec.provider.module,
                         "class": skill_crd.spec.provider.class_name,
                     }
+                    # For HTTP mode: include download URL for remote skill binary loading
+                    # Only for public skills (user_id=0) for security
+                    if skill.user_id == 0:
+                        from app.core.config import settings
+
+                        # Build internal API URL for skill binary download
+                        base_url = settings.BACKEND_INTERNAL_URL.rstrip("/")
+                        skill_data["binary_download_url"] = (
+                            f"{base_url}/api/internal/skills/{skill.id}/binary"
+                        )
                 skills.append(skill_data)
 
         return skills

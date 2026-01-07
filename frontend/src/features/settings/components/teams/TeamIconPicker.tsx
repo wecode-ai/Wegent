@@ -1,18 +1,18 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React from 'react';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { TEAM_ICONS, getTeamIconById, DEFAULT_TEAM_ICON_ID } from '../../constants/team-icons';
-import { useTranslation } from '@/hooks/useTranslation';
+import React from 'react'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { TEAM_ICONS, getTeamIconById, DEFAULT_TEAM_ICON_ID } from '../../constants/team-icons'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface TeamIconPickerProps {
-  value: string | null | undefined;
-  onChange: (iconId: string) => void;
-  disabled?: boolean;
+  value: string | null | undefined
+  onChange: (iconId: string) => void
+  disabled?: boolean
 }
 
 /**
@@ -20,16 +20,16 @@ interface TeamIconPickerProps {
  * Shows a grid of preset icons in a popover
  */
 export function TeamIconPicker({ value, onChange, disabled = false }: TeamIconPickerProps) {
-  const { t } = useTranslation();
-  const [open, setOpen] = React.useState(false);
+  const { t } = useTranslation()
+  const [open, setOpen] = React.useState(false)
 
-  const selectedIcon = getTeamIconById(value || DEFAULT_TEAM_ICON_ID);
-  const SelectedIconComponent = selectedIcon.icon;
+  const selectedIcon = getTeamIconById(value || DEFAULT_TEAM_ICON_ID)
+  const SelectedIconComponent = selectedIcon.icon
 
   const handleSelectIcon = (iconId: string) => {
-    onChange(iconId);
-    setOpen(false);
-  };
+    onChange(iconId)
+    setOpen(false)
+  }
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -54,8 +54,8 @@ export function TeamIconPicker({ value, onChange, disabled = false }: TeamIconPi
           </div>
           <div className="grid grid-cols-7 gap-1.5">
             {TEAM_ICONS.map(iconConfig => {
-              const IconComponent = iconConfig.icon;
-              const isSelected = iconConfig.id === (value || DEFAULT_TEAM_ICON_ID);
+              const IconComponent = iconConfig.icon
+              const isSelected = iconConfig.id === (value || DEFAULT_TEAM_ICON_ID)
 
               return (
                 <button
@@ -74,11 +74,11 @@ export function TeamIconPicker({ value, onChange, disabled = false }: TeamIconPi
                 >
                   <IconComponent className="w-5 h-5" />
                 </button>
-              );
+              )
             })}
           </div>
         </div>
       </PopoverContent>
     </Popover>
-  );
+  )
 }

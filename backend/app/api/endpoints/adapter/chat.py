@@ -268,7 +268,7 @@ async def correct_response(
     # Get search tool if enabled (use LangChain-compatible WebSearchTool for LangGraph)
     tools = None
     if request.enable_web_search:
-        from app.chat_shell.tools import WebSearchTool
+        from chat_shell.tools import WebSearchTool
 
         # Use a reasonable default for correction (API limit is 50)
         search_tool = WebSearchTool(

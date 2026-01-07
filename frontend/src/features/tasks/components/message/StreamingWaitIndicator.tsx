@@ -1,20 +1,20 @@
-// SPDX-FileCopyrightText: 2025 Wecode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useState, useEffect, useMemo } from 'react';
-import { useTranslation } from '@/hooks/useTranslation';
+import React, { useState, useEffect, useMemo } from 'react'
+import { useTranslation } from '@/hooks/useTranslation'
 
 /**
  * Props for StreamingWaitIndicator component
  */
 interface StreamingWaitIndicatorProps {
   /** Whether the indicator should be shown (waiting for first character) */
-  isWaiting: boolean;
+  isWaiting: boolean
   /** Optional start time for calculating wait duration (defaults to current time when isWaiting becomes true) */
-  startTime?: number;
+  startTime?: number
 }
 
 /**
@@ -23,9 +23,9 @@ interface StreamingWaitIndicatorProps {
  */
 interface WaitStage {
   /** Minimum wait time in ms to show this stage */
-  minTime: number;
+  minTime: number
   /** Translation key for the message */
-  messageKey: string;
+  messageKey: string
 }
 
 /**
@@ -41,7 +41,7 @@ const WAIT_STAGES: WaitStage[] = [
   { minTime: 6000, messageKey: 'tasks:streaming_wait.generating_response' },
   { minTime: 3000, messageKey: 'tasks:streaming_wait.analyzing' },
   { minTime: 500, messageKey: 'tasks:streaming_wait.thinking' },
-];
+]
 
 /**
  * StreamingWaitIndicator - Displays a typing indicator with progressive text
@@ -62,44 +62,44 @@ export default function StreamingWaitIndicator({
   isWaiting,
   startTime: externalStartTime,
 }: StreamingWaitIndicatorProps) {
-  const { t } = useTranslation();
-  const [internalStartTime, setInternalStartTime] = useState<number | null>(null);
-  const [elapsedTime, setElapsedTime] = useState(0);
+  const { t } = useTranslation()
+  const [internalStartTime, setInternalStartTime] = useState<number | null>(null)
+  const [elapsedTime, setElapsedTime] = useState(0)
 
   // Track when waiting started
   useEffect(() => {
     if (isWaiting) {
       if (externalStartTime) {
-        setInternalStartTime(externalStartTime);
+        setInternalStartTime(externalStartTime)
       } else if (!internalStartTime) {
-        setInternalStartTime(Date.now());
+        setInternalStartTime(Date.now())
       }
     } else {
-      setInternalStartTime(null);
-      setElapsedTime(0);
+      setInternalStartTime(null)
+      setElapsedTime(0)
     }
-  }, [isWaiting, externalStartTime, internalStartTime]);
+  }, [isWaiting, externalStartTime, internalStartTime])
 
   // Update elapsed time every 100ms for smooth stage transitions
   useEffect(() => {
-    if (!isWaiting || !internalStartTime) return;
+    if (!isWaiting || !internalStartTime) return
 
     const intervalId = setInterval(() => {
-      setElapsedTime(Date.now() - internalStartTime);
-    }, 100);
+      setElapsedTime(Date.now() - internalStartTime)
+    }, 100)
 
-    return () => clearInterval(intervalId);
-  }, [isWaiting, internalStartTime]);
+    return () => clearInterval(intervalId)
+  }, [isWaiting, internalStartTime])
 
   // Determine current stage message based on elapsed time
   const stageMessage = useMemo(() => {
     // Find the first stage whose minTime is <= elapsedTime (stages are sorted descending)
-    const stage = WAIT_STAGES.find(s => elapsedTime >= s.minTime);
-    return stage ? t(stage.messageKey) : null;
-  }, [elapsedTime, t]);
+    const stage = WAIT_STAGES.find(s => elapsedTime >= s.minTime)
+    return stage ? t(stage.messageKey) : null
+  }, [elapsedTime, t])
 
   // Don't render if not waiting
-  if (!isWaiting) return null;
+  if (!isWaiting) return null
 
   return (
     <div className="flex items-center gap-1">
@@ -122,5 +122,5 @@ export default function StreamingWaitIndicator({
         />
       </div>
     </div>
-  );
+  )
 }

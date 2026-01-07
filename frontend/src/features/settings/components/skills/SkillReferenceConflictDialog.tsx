@@ -1,11 +1,11 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState } from 'react';
-import { useTranslation } from '@/hooks/useTranslation';
+import { useState } from 'react'
+import { useTranslation } from '@/hooks/useTranslation'
 import {
   Dialog,
   DialogContent,
@@ -13,40 +13,40 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { AlertTriangle, Trash2, Loader2 } from 'lucide-react';
-import { toast } from 'sonner';
+} from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { AlertTriangle, Trash2, Loader2 } from 'lucide-react'
+import { toast } from 'sonner'
 
 /**
  * Represents a Ghost that references a Skill
  */
 export interface ReferencedGhost {
-  id: number;
-  name: string;
-  namespace: string;
+  id: number
+  name: string
+  namespace: string
 }
 
 /**
  * Structured error response when skill deletion fails due to references
  */
 export interface SkillReferenceError {
-  code: 'SKILL_REFERENCED';
-  message: string;
-  skill_name: string;
-  referenced_ghosts: ReferencedGhost[];
+  code: 'SKILL_REFERENCED'
+  message: string
+  skill_name: string
+  referenced_ghosts: ReferencedGhost[]
 }
 
 interface SkillReferenceConflictDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  skillName: string;
-  skillId: number;
-  referencedGhosts: ReferencedGhost[];
-  onRemoveAllReferences: () => Promise<void>;
-  onRemoveSingleReference: (ghostId: number) => Promise<void>;
-  onDeleteSuccess: () => void;
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  skillName: string
+  skillId: number
+  referencedGhosts: ReferencedGhost[]
+  onRemoveAllReferences: () => Promise<void>
+  onRemoveSingleReference: (ghostId: number) => Promise<void>
+  onDeleteSuccess: () => void
 }
 
 /**
@@ -69,50 +69,50 @@ export function SkillReferenceConflictDialog({
   onRemoveSingleReference,
   onDeleteSuccess,
 }: SkillReferenceConflictDialogProps) {
-  const { t } = useTranslation('common');
-  const [removingAll, setRemovingAll] = useState(false);
-  const [removingGhostId, setRemovingGhostId] = useState<number | null>(null);
-  const [localGhosts, setLocalGhosts] = useState<ReferencedGhost[]>(referencedGhosts);
+  const { t } = useTranslation('common')
+  const [removingAll, setRemovingAll] = useState(false)
+  const [removingGhostId, setRemovingGhostId] = useState<number | null>(null)
+  const [localGhosts, setLocalGhosts] = useState<ReferencedGhost[]>(referencedGhosts)
 
   // Update local ghosts when props change
   if (referencedGhosts !== localGhosts && referencedGhosts.length > 0) {
-    setLocalGhosts(referencedGhosts);
+    setLocalGhosts(referencedGhosts)
   }
 
   const handleRemoveAll = async () => {
     try {
-      setRemovingAll(true);
-      await onRemoveAllReferences();
-      toast.success(t('skills.references_removed_success'));
-      onDeleteSuccess();
-      onOpenChange(false);
+      setRemovingAll(true)
+      await onRemoveAllReferences()
+      toast.success(t('skills.references_removed_success'))
+      onDeleteSuccess()
+      onOpenChange(false)
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : t('skills.references_remove_failed'));
+      toast.error(error instanceof Error ? error.message : t('skills.references_remove_failed'))
     } finally {
-      setRemovingAll(false);
+      setRemovingAll(false)
     }
-  };
+  }
 
   const handleRemoveSingle = async (ghost: ReferencedGhost) => {
     try {
-      setRemovingGhostId(ghost.id);
-      await onRemoveSingleReference(ghost.id);
+      setRemovingGhostId(ghost.id)
+      await onRemoveSingleReference(ghost.id)
       // Remove from local list
-      const newGhosts = localGhosts.filter(g => g.id !== ghost.id);
-      setLocalGhosts(newGhosts);
-      toast.success(t('skills.reference_removed_success', { ghostName: ghost.name }));
+      const newGhosts = localGhosts.filter(g => g.id !== ghost.id)
+      setLocalGhosts(newGhosts)
+      toast.success(t('skills.reference_removed_success', { ghostName: ghost.name }))
 
       // If no more references, close dialog and trigger delete
       if (newGhosts.length === 0) {
-        onDeleteSuccess();
-        onOpenChange(false);
+        onDeleteSuccess()
+        onOpenChange(false)
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : t('skills.reference_remove_failed'));
+      toast.error(error instanceof Error ? error.message : t('skills.reference_remove_failed'))
     } finally {
-      setRemovingGhostId(null);
+      setRemovingGhostId(null)
     }
-  };
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -192,18 +192,18 @@ export function SkillReferenceConflictDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
+  )
 }
 
 /**
  * Helper function to check if an error is a skill reference error
  */
 export function isSkillReferenceError(error: unknown): error is { detail: SkillReferenceError } {
-  if (typeof error !== 'object' || error === null) return false;
-  const err = error as { detail?: unknown };
-  if (typeof err.detail !== 'object' || err.detail === null) return false;
-  const detail = err.detail as { code?: string };
-  return detail.code === 'SKILL_REFERENCED';
+  if (typeof error !== 'object' || error === null) return false
+  const err = error as { detail?: unknown }
+  if (typeof err.detail !== 'object' || err.detail === null) return false
+  const detail = err.detail as { code?: string }
+  return detail.code === 'SKILL_REFERENCED'
 }
 
 /**
@@ -211,9 +211,9 @@ export function isSkillReferenceError(error: unknown): error is { detail: SkillR
  */
 export function parseSkillReferenceError(errorMessage: string): SkillReferenceError | null {
   try {
-    const parsed = JSON.parse(errorMessage);
+    const parsed = JSON.parse(errorMessage)
     if (parsed.code === 'SKILL_REFERENCED') {
-      return parsed as SkillReferenceError;
+      return parsed as SkillReferenceError
     }
     // Handle nested detail structure
     if (
@@ -221,10 +221,10 @@ export function parseSkillReferenceError(errorMessage: string): SkillReferenceEr
       typeof parsed.detail === 'object' &&
       parsed.detail.code === 'SKILL_REFERENCED'
     ) {
-      return parsed.detail as SkillReferenceError;
+      return parsed.detail as SkillReferenceError
     }
   } catch {
     // Not a JSON error, try to extract from string
   }
-  return null;
+  return null
 }

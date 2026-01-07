@@ -1,25 +1,25 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useEffect, useRef, useState } from 'react';
-import { Bot, User, Loader2 } from 'lucide-react';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { Checkbox } from '@/components/ui/checkbox';
-import { useTranslation } from '@/hooks/useTranslation';
-import type { FollowUpRound } from '../types';
+import { useEffect, useRef, useState } from 'react'
+import { Bot, User, Loader2 } from 'lucide-react'
+import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { Checkbox } from '@/components/ui/checkbox'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { FollowUpRound } from '../types'
 
 interface AiFollowUpStepProps {
-  rounds: FollowUpRound[];
-  currentRound: number;
-  isComplete: boolean;
-  isLoading: boolean;
-  onAnswerChange: (questionKey: string, answer: string, roundIndex?: number) => void;
-  onAdditionalThoughtsChange: (thoughts: string, roundIndex?: number) => void;
+  rounds: FollowUpRound[]
+  currentRound: number
+  isComplete: boolean
+  isLoading: boolean
+  onAnswerChange: (questionKey: string, answer: string, roundIndex?: number) => void
+  onAdditionalThoughtsChange: (thoughts: string, roundIndex?: number) => void
 }
 
 export default function AiFollowUpStep({
@@ -30,11 +30,11 @@ export default function AiFollowUpStep({
   onAnswerChange,
   onAdditionalThoughtsChange,
 }: AiFollowUpStepProps) {
-  const { t } = useTranslation();
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const roundRefs = useRef<Map<number, HTMLDivElement>>(new Map());
-  const [highlightedRound, setHighlightedRound] = useState<number | null>(null);
-  const prevRoundsLengthRef = useRef(rounds.length);
+  const { t } = useTranslation()
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const roundRefs = useRef<Map<number, HTMLDivElement>>(new Map())
+  const [highlightedRound, setHighlightedRound] = useState<number | null>(null)
+  const prevRoundsLengthRef = useRef(rounds.length)
 
   // Auto-scroll to bottom only when loading starts (to show "Thinking..." indicator)
   useEffect(() => {
@@ -45,49 +45,49 @@ export default function AiFollowUpStep({
           scrollContainerRef.current.scrollTo({
             top: scrollContainerRef.current.scrollHeight,
             behavior: 'smooth',
-          });
+          })
         }
-      }, 100);
+      }, 100)
     }
-  }, [isLoading]);
+  }, [isLoading])
 
   // When new round is added, scroll to show the first question at the top and highlight it
   useEffect(() => {
-    const prevLength = prevRoundsLengthRef.current;
-    const currentLength = rounds.length;
+    const prevLength = prevRoundsLengthRef.current
+    const currentLength = rounds.length
 
     // Check if a new round was added (not the initial load)
     if (currentLength > prevLength && prevLength > 0) {
-      const newRoundIndex = currentLength - 1;
+      const newRoundIndex = currentLength - 1
 
       // Highlight the new round
-      setHighlightedRound(newRoundIndex);
+      setHighlightedRound(newRoundIndex)
 
       // Scroll to the new round's first question
       setTimeout(() => {
-        const roundElement = roundRefs.current.get(newRoundIndex);
+        const roundElement = roundRefs.current.get(newRoundIndex)
         if (roundElement && scrollContainerRef.current) {
           // Calculate the position to scroll to (element top relative to container)
-          const containerRect = scrollContainerRef.current.getBoundingClientRect();
-          const elementRect = roundElement.getBoundingClientRect();
+          const containerRect = scrollContainerRef.current.getBoundingClientRect()
+          const elementRect = roundElement.getBoundingClientRect()
           const scrollTop =
-            scrollContainerRef.current.scrollTop + (elementRect.top - containerRect.top) - 16; // 16px padding from top
+            scrollContainerRef.current.scrollTop + (elementRect.top - containerRect.top) - 16 // 16px padding from top
 
           scrollContainerRef.current.scrollTo({
             top: scrollTop,
             behavior: 'smooth',
-          });
+          })
         }
-      }, 100);
+      }, 100)
 
       // Remove highlight after animation completes
       setTimeout(() => {
-        setHighlightedRound(null);
-      }, 2000);
+        setHighlightedRound(null)
+      }, 2000)
     }
 
-    prevRoundsLengthRef.current = currentLength;
-  }, [rounds.length]);
+    prevRoundsLengthRef.current = currentLength
+  }, [rounds.length])
 
   if (rounds.length === 0 && isLoading) {
     return (
@@ -95,7 +95,7 @@ export default function AiFollowUpStep({
         <Loader2 className="w-8 h-8 text-primary animate-spin" />
         <p className="mt-4 text-text-muted">{t('wizard:generating_questions')}</p>
       </div>
-    );
+    )
   }
 
   if (rounds.length === 0) {
@@ -103,7 +103,7 @@ export default function AiFollowUpStep({
       <div className="flex flex-col items-center justify-center py-12">
         <p className="text-text-muted">{t('wizard:no_questions')}</p>
       </div>
-    );
+    )
   }
 
   return (
@@ -116,7 +116,7 @@ export default function AiFollowUpStep({
           <div
             key={roundIndex}
             ref={el => {
-              if (el) roundRefs.current.set(roundIndex, el);
+              if (el) roundRefs.current.set(roundIndex, el)
             }}
             className={`space-y-4 transition-all duration-500 ${
               highlightedRound === roundIndex
@@ -135,8 +135,8 @@ export default function AiFollowUpStep({
 
             {/* Questions and answers for this round */}
             {round.questions.map((question, qIndex) => {
-              const questionKey = `${question.question.substring(0, 30)}`;
-              const answer = round.answers[questionKey] || '';
+              const questionKey = `${question.question.substring(0, 30)}`
+              const answer = round.answers[questionKey] || ''
 
               return (
                 <div key={`${roundIndex}-${qIndex}`} className="space-y-3">
@@ -174,7 +174,7 @@ export default function AiFollowUpStep({
                     </div>
                   </div>
                 </div>
-              );
+              )
             })}
 
             {/* Additional thoughts input - all rounds are editable */}
@@ -230,17 +230,17 @@ export default function AiFollowUpStep({
         )}
       </div>
     </div>
-  );
+  )
 }
 
 interface QuestionInputProps {
-  question: { question: string; input_type: string; options?: string[] };
-  value: string;
-  onChange: (value: string) => void;
+  question: { question: string; input_type: string; options?: string[] }
+  value: string
+  onChange: (value: string) => void
 }
 
 function QuestionInput({ question, value, onChange }: QuestionInputProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
 
   if (question.input_type === 'single_choice' && question.options) {
     return (
@@ -254,15 +254,15 @@ function QuestionInput({ question, value, onChange }: QuestionInputProps) {
           </div>
         ))}
       </RadioGroup>
-    );
+    )
   }
 
   if (question.input_type === 'multiple_choice' && question.options) {
-    const selected = value ? value.split(',').filter(Boolean) : [];
+    const selected = value ? value.split(',').filter(Boolean) : []
     return (
       <div className="space-y-2">
         {question.options.map(option => {
-          const isChecked = selected.includes(option);
+          const isChecked = selected.includes(option)
           return (
             <div key={option} className="flex items-center space-x-2">
               <Checkbox
@@ -271,18 +271,18 @@ function QuestionInput({ question, value, onChange }: QuestionInputProps) {
                 onCheckedChange={checked => {
                   const newSelected = checked
                     ? [...selected, option]
-                    : selected.filter(s => s !== option);
-                  onChange(newSelected.join(','));
+                    : selected.filter(s => s !== option)
+                  onChange(newSelected.join(','))
                 }}
               />
               <Label htmlFor={`mc-${option}`} className="font-normal cursor-pointer text-sm">
                 {option}
               </Label>
             </div>
-          );
+          )
         })}
       </div>
-    );
+    )
   }
 
   // Default: text input
@@ -293,5 +293,5 @@ function QuestionInput({ question, value, onChange }: QuestionInputProps) {
       placeholder={t('wizard:answer_placeholder')}
       className="min-h-[60px] text-sm"
     />
-  );
+  )
 }

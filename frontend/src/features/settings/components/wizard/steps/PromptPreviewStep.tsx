@@ -1,24 +1,24 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { Label } from '@/components/ui/label';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { useTranslation } from '@/hooks/useTranslation';
-import { FileText, Settings } from 'lucide-react';
-import GeneratingLoader from './GeneratingLoader';
+import { Label } from '@/components/ui/label'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import { useTranslation } from '@/hooks/useTranslation'
+import { FileText, Settings } from 'lucide-react'
+import GeneratingLoader from './GeneratingLoader'
 
 interface PromptPreviewStepProps {
-  systemPrompt: string;
-  agentName: string;
-  agentDescription: string;
-  onPromptChange: (prompt: string) => void;
-  onNameChange: (name: string) => void;
-  onDescriptionChange: (desc: string) => void;
-  isLoading: boolean;
+  systemPrompt: string
+  agentName: string
+  agentDescription: string
+  onPromptChange: (prompt: string) => void
+  onNameChange: (name: string) => void
+  onDescriptionChange: (desc: string) => void
+  isLoading: boolean
 }
 
 export default function PromptPreviewStep({
@@ -30,10 +30,10 @@ export default function PromptPreviewStep({
   onDescriptionChange,
   isLoading,
 }: PromptPreviewStepProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
 
   if (isLoading) {
-    return <GeneratingLoader />;
+    return <GeneratingLoader />
   }
 
   return (
@@ -100,5 +100,5 @@ export default function PromptPreviewStep({
         </div>
       </div>
     </div>
-  );
+  )
 }

@@ -163,7 +163,7 @@ wegent-backend:
 trigger_update_backend_web:
     stage: production
     variables:
-        APP: wegent-backend-web;simulation-wegent-backend-web;beta-wegent-backend-web;outer-wegent-backend-web
+        APP: wegent-backend-web;simulation-wegent-backend-web;beta-wegent-backend-web
         SERVICE: wegent-backend-web
         IMAGE_NAME: wegent-backend-web
         UPSTREAM_CI_PROJECT_ID: $CI_PROJECT_ID
@@ -180,6 +180,72 @@ trigger_update_backend_web:
         changes:
           - backend/**/*
           - wecode/docker/backend/**/*
+
+wegent-chat-shell:
+  stage: package
+  retry: 1
+  variables:
+    SERVICE: wegent-chat-shell-web
+    DOCKERFILE_PATH: wecode/docker/chat_shell
+  script:
+    - build_image
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "develop"'
+      when: never
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - chat_shell/**/*
+        - wecode/docker/chat_shell/**/*
+        - shared/**/*
+    - changes:
+      - chat_shell/**/*
+      - wecode/docker/chat_shell/**/*
+      - shared/**/*
+
+trigger_update_chat_shell:
+    stage: production
+    variables:
+        APP: wegent-chat-shell-web;simulation-wegent-chat-shell-web;beta-wegent-chat-shell-web
+        SERVICE: wegent-chat-shell-web
+        IMAGE_NAME: wegent-chat-shell-web
+        UPSTREAM_CI_PROJECT_ID: $CI_PROJECT_ID
+        UPSTREAM_CI_PIPELINE_ID: $CI_PIPELINE_ID
+        UPSTREAM_CI_COMMIT_REF_NAME: $CI_COMMIT_REF_NAME
+        UPSTREAM_CI_COMMIT_SHA: $CI_COMMIT_SHA
+        MASTER_BRANCH: master
+    trigger:
+        project: weibo_rd/cloudnative/aigc_gitops_manifest
+        branch: master
+        strategy: depend
+    rules:
+      - if: '$CI_COMMIT_BRANCH == "main"'
+        changes:
+          - chat_shell/**/*
+          - wecode/docker/chat_shell/**/*
+          - shared/**/*
+
+trigger_update_simulation_chat_shell:
+    stage: production
+    variables:
+        APP: simulation-wegent-chat-shell-web
+        SERVICE: wegent-chat-shell-web
+        IMAGE_NAME: wegent-chat-shell-web
+        MASTER_BRANCH: master
+        UPSTREAM_CI_PROJECT_ID: $CI_PROJECT_ID
+        UPSTREAM_CI_PIPELINE_ID: $CI_PIPELINE_ID
+        UPSTREAM_CI_COMMIT_REF_NAME: $CI_COMMIT_REF_NAME
+        UPSTREAM_CI_COMMIT_SHA: $CI_COMMIT_SHA
+        CD_AUTO_PRODUCTION: 1
+    trigger:
+        project: weibo_rd/cloudnative/aigc_gitops_manifest
+        branch: master
+        strategy: depend
+    rules:
+      - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == "develop" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"'
+        changes:
+          - chat_shell/**/*
+          - wecode/docker/chat_shell/**/*
+          - shared/**/*
 
 wegent-web:
   stage: package
@@ -265,46 +331,6 @@ trigger_update_simulation_backend_web:
           - backend/**/*
           - wecode/docker/backend/**/*
 
-wegent-outer-web:
-  stage: package
-  retry: 1
-  variables:
-    SERVICE:  outer-wegent-web
-    DOCKERFILE_PATH: wecode/docker/frontend_outer
-  script:
-    - build_image
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "develop"'
-      when: never
-    - if: '$CI_COMMIT_BRANCH == "main"'
-      changes:
-        - frontend/**/*
-        - wecode/docker/frontend_outer/**/*
-    - changes:
-      - frontend/**/*
-      - wecode/docker/frontend_outer/**/*
-
-trigger_update_outer_front_web:
-    stage: production
-    variables:
-        APP: outer-wegent-web
-        SERVICE: outer-wegent-web
-        IMAGE_NAME: outer-wegent-web
-        MASTER_BRANCH: master
-        UPSTREAM_CI_PROJECT_ID: $CI_PROJECT_ID
-        UPSTREAM_CI_PIPELINE_ID: $CI_PIPELINE_ID
-        UPSTREAM_CI_COMMIT_REF_NAME: $CI_COMMIT_REF_NAME
-        UPSTREAM_CI_COMMIT_SHA: $CI_COMMIT_SHA
-    trigger:
-        project: weibo_rd/cloudnative/aigc_gitops_manifest
-        branch: master
-        strategy: depend
-    rules:
-      - if: '$CI_COMMIT_BRANCH == "main"'
-        changes:
-          - frontend/**/*
-          - wecode/docker/frontend/**/*
-
 wegent-ops-web:
   stage: package
   retry: 1
@@ -322,7 +348,6 @@ wegent-ops-web:
       - frontend/**/*
       - wecode/docker/frontend_ops/**/*
       when: manual
-
 # Auto create MR from develop to main when branch merged to develop
 auto-create-develop-to-main-mr:
   stage: auto-merge-request

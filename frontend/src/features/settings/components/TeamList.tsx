@@ -1,13 +1,13 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useCallback, useEffect, useState, useMemo } from 'react';
-import '@/features/common/scrollbar.css';
-import { RiRobot2Line } from 'react-icons/ri';
-import LoadingState from '@/features/common/LoadingState';
+import React, { useCallback, useEffect, useState, useMemo } from 'react'
+import '@/features/common/scrollbar.css'
+import { RiRobot2Line } from 'react-icons/ri'
+import LoadingState from '@/features/common/LoadingState'
 import {
   PencilIcon,
   TrashIcon,
@@ -18,23 +18,23 @@ import {
   LinkSlashIcon,
   SparklesIcon,
   ClipboardDocumentIcon,
-} from '@heroicons/react/24/outline';
-import { Bot, Team } from '@/types/api';
-import { fetchTeamsList, deleteTeam, shareTeam, checkTeamRunningTasks } from '../services/teams';
-import { CheckRunningTasksResponse } from '@/apis/common';
-import { fetchBotsList } from '../services/bots';
-import TeamEditDialog from './TeamEditDialog';
-import BotList from './BotList';
-import UnifiedAddButton from '@/components/common/UnifiedAddButton';
-import TeamShareModal from './TeamShareModal';
-import TeamCreationWizard from './wizard/TeamCreationWizard';
-import { useTranslation } from '@/hooks/useTranslation';
-import { useToast } from '@/hooks/use-toast';
-import { sortTeamsByUpdatedAt } from '@/utils/team';
-import { sortBotsByUpdatedAt } from '@/utils/bot';
-import { useRouter } from 'next/navigation';
-import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
+} from '@heroicons/react/24/outline'
+import { Bot, Team } from '@/types/api'
+import { fetchTeamsList, deleteTeam, shareTeam, checkTeamRunningTasks } from '../services/teams'
+import { CheckRunningTasksResponse } from '@/apis/common'
+import { fetchBotsList } from '../services/bots'
+import TeamEditDialog from './TeamEditDialog'
+import BotList from './BotList'
+import UnifiedAddButton from '@/components/common/UnifiedAddButton'
+import TeamShareModal from './TeamShareModal'
+import TeamCreationWizard from './wizard/TeamCreationWizard'
+import { useTranslation } from '@/hooks/useTranslation'
+import { useToast } from '@/hooks/use-toast'
+import { sortTeamsByUpdatedAt } from '@/utils/team'
+import { sortBotsByUpdatedAt } from '@/utils/bot'
+import { useRouter } from 'next/navigation'
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
 import {
   Dialog,
   DialogContent,
@@ -42,20 +42,20 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
-import { ResourceListItem } from '@/components/common/ResourceListItem';
-import { TeamIconDisplay } from './teams/TeamIconDisplay';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+} from '@/components/ui/dialog'
+import { ResourceListItem } from '@/components/common/ResourceListItem'
+import { TeamIconDisplay } from './teams/TeamIconDisplay'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
 interface TeamListProps {
-  scope?: 'personal' | 'group' | 'all';
-  groupName?: string;
-  groupRoleMap?: Map<string, 'Owner' | 'Maintainer' | 'Developer' | 'Reporter'>;
-  onEditResource?: (namespace: string) => void;
+  scope?: 'personal' | 'group' | 'all'
+  groupName?: string
+  groupRoleMap?: Map<string, 'Owner' | 'Maintainer' | 'Developer' | 'Reporter'>
+  onEditResource?: (namespace: string) => void
 }
 
 // Mode filter type
-type ModeFilter = 'all' | 'chat' | 'code';
+type ModeFilter = 'all' | 'chat' | 'code'
 
 export default function TeamList({
   scope = 'personal',
@@ -63,78 +63,78 @@ export default function TeamList({
   groupRoleMap,
   onEditResource,
 }: TeamListProps) {
-  const { t } = useTranslation(['common', 'wizard']);
-  const { toast } = useToast();
-  const [teams, setTeams] = useState<Team[]>([]);
-  const [bots, setBots] = useState<Bot[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [editingTeamId, setEditingTeamId] = useState<number | null>(null);
-  const [prefillTeam, setPrefillTeam] = useState<Team | null>(null);
-  const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
-  const [forceDeleteConfirmVisible, setForceDeleteConfirmVisible] = useState(false);
-  const [teamToDelete, setTeamToDelete] = useState<number | null>(null);
-  const [isUnbindingSharedTeam, setIsUnbindingSharedTeam] = useState(false);
-  const [runningTasksInfo, setRunningTasksInfo] = useState<CheckRunningTasksResponse | null>(null);
-  const [isCheckingTasks, setIsCheckingTasks] = useState(false);
-  const [shareModalVisible, setShareModalVisible] = useState(false);
-  const [shareData, setShareData] = useState<{ teamName: string; shareUrl: string } | null>(null);
-  const [sharingId, setSharingId] = useState<number | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [botListVisible, setBotListVisible] = useState(false);
-  const [editDialogOpen, setEditDialogOpen] = useState(false);
-  const [modeFilter, setModeFilter] = useState<ModeFilter>('all');
-  const [wizardOpen, setWizardOpen] = useState(false);
-  const router = useRouter();
+  const { t } = useTranslation(['common', 'wizard'])
+  const { toast } = useToast()
+  const [teams, setTeams] = useState<Team[]>([])
+  const [bots, setBots] = useState<Bot[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [editingTeamId, setEditingTeamId] = useState<number | null>(null)
+  const [prefillTeam, setPrefillTeam] = useState<Team | null>(null)
+  const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false)
+  const [forceDeleteConfirmVisible, setForceDeleteConfirmVisible] = useState(false)
+  const [teamToDelete, setTeamToDelete] = useState<number | null>(null)
+  const [isUnbindingSharedTeam, setIsUnbindingSharedTeam] = useState(false)
+  const [runningTasksInfo, setRunningTasksInfo] = useState<CheckRunningTasksResponse | null>(null)
+  const [isCheckingTasks, setIsCheckingTasks] = useState(false)
+  const [shareModalVisible, setShareModalVisible] = useState(false)
+  const [shareData, setShareData] = useState<{ teamName: string; shareUrl: string } | null>(null)
+  const [sharingId, setSharingId] = useState<number | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [botListVisible, setBotListVisible] = useState(false)
+  const [editDialogOpen, setEditDialogOpen] = useState(false)
+  const [modeFilter, setModeFilter] = useState<ModeFilter>('all')
+  const [wizardOpen, setWizardOpen] = useState(false)
+  const router = useRouter()
 
   const setTeamsSorted = useCallback<React.Dispatch<React.SetStateAction<Team[]>>>(
     updater => {
       setTeams(prev => {
         const next =
-          typeof updater === 'function' ? (updater as (value: Team[]) => Team[])(prev) : updater;
-        return sortTeamsByUpdatedAt(next);
-      });
+          typeof updater === 'function' ? (updater as (value: Team[]) => Team[])(prev) : updater
+        return sortTeamsByUpdatedAt(next)
+      })
     },
     [setTeams]
-  );
+  )
 
   const setBotsSorted = useCallback<React.Dispatch<React.SetStateAction<Bot[]>>>(
     updater => {
       setBots(prev => {
         const next =
-          typeof updater === 'function' ? (updater as (value: Bot[]) => Bot[])(prev) : updater;
-        return sortBotsByUpdatedAt(next);
-      });
+          typeof updater === 'function' ? (updater as (value: Bot[]) => Bot[])(prev) : updater
+        return sortBotsByUpdatedAt(next)
+      })
     },
     [setBots]
-  );
+  )
 
   useEffect(() => {
     async function loadData() {
-      setIsLoading(true);
+      setIsLoading(true)
       try {
         const [teamsData, botsData] = await Promise.all([
           fetchTeamsList(scope, groupName),
           fetchBotsList(scope, groupName),
-        ]);
-        setTeamsSorted(teamsData);
-        setBotsSorted(botsData);
+        ])
+        setTeamsSorted(teamsData)
+        setBotsSorted(botsData)
       } catch {
         toast({
           variant: 'destructive',
           title: t('teams.loading'),
-        });
+        })
       } finally {
-        setIsLoading(false);
+        setIsLoading(false)
       }
     }
-    loadData();
-  }, [toast, setBotsSorted, setTeamsSorted, t, scope, groupName]);
+    loadData()
+  }, [toast, setBotsSorted, setTeamsSorted, t, scope, groupName])
 
   useEffect(() => {
     if (editingTeamId === null) {
-      setPrefillTeam(null);
+      setPrefillTeam(null)
     }
-  }, [editingTeamId]);
+  }, [editingTeamId])
 
   const handleCreateTeam = () => {
     // Validation for group scope: must have groupName
@@ -143,68 +143,68 @@ export default function TeamList({
         variant: 'destructive',
         title: t('teams.group_required_title'),
         description: t('teams.group_required_message'),
-      });
-      return;
+      })
+      return
     }
 
-    setPrefillTeam(null);
-    setEditingTeamId(0); // Use 0 to mark new creation
-    setEditDialogOpen(true);
-  };
+    setPrefillTeam(null)
+    setEditingTeamId(0) // Use 0 to mark new creation
+    setEditDialogOpen(true)
+  }
 
   const handleEditTeam = (team: Team) => {
     // Notify parent to update group selector if editing a group resource
     if (onEditResource && team.namespace && team.namespace !== 'default') {
-      onEditResource(team.namespace);
+      onEditResource(team.namespace)
     }
-    setPrefillTeam(null);
-    setEditingTeamId(team.id);
-    setEditDialogOpen(true);
-  };
+    setPrefillTeam(null)
+    setEditingTeamId(team.id)
+    setEditDialogOpen(true)
+  }
 
   const handleCopyTeam = (team: Team) => {
     const clone: Team = {
       ...team,
       bots: team.bots.map(bot => ({ ...bot })),
       workflow: team.workflow ? { ...team.workflow } : {},
-    };
-    setPrefillTeam(clone);
-    setEditingTeamId(0);
-    setEditDialogOpen(true);
-  };
+    }
+    setPrefillTeam(clone)
+    setEditingTeamId(0)
+    setEditDialogOpen(true)
+  }
 
   const handleCopyTeamName = async (team: Team) => {
-    const teamNameString = `${team.namespace || 'default'}#${team.name}`;
+    const teamNameString = `${team.namespace || 'default'}#${team.name}`
     try {
-      await navigator.clipboard.writeText(teamNameString);
+      await navigator.clipboard.writeText(teamNameString)
       toast({
         title: t('teams.copy_name_success'),
         description: teamNameString,
-      });
+      })
     } catch {
       toast({
         variant: 'destructive',
         title: t('teams.copy_name_failed'),
-      });
+      })
     }
-  };
+  }
 
   const handleCloseEditDialog = () => {
-    setEditDialogOpen(false);
-    setEditingTeamId(null);
-    setPrefillTeam(null);
-  };
+    setEditDialogOpen(false)
+    setEditingTeamId(null)
+    setPrefillTeam(null)
+  }
 
   const handleWizardSuccess = async (teamId: number, teamName: string) => {
     toast({
       title: t('wizard:create_agent'),
       description: `${teamName}`,
-    });
+    })
     // Reload teams list
-    const teamsData = await fetchTeamsList(scope, groupName);
-    setTeamsSorted(teamsData);
-    setWizardOpen(false);
-  };
+    const teamsData = await fetchTeamsList(scope, groupName)
+    setTeamsSorted(teamsData)
+    setWizardOpen(false)
+  }
 
   const handleOpenWizard = () => {
     // Validation for group scope: must have groupName
@@ -213,226 +213,226 @@ export default function TeamList({
         variant: 'destructive',
         title: t('teams.group_required_title'),
         description: t('teams.group_required_message'),
-      });
-      return;
+      })
+      return
     }
-    setWizardOpen(true);
-  };
+    setWizardOpen(true)
+  }
 
   // Get target page based on team's bind_mode and current filter
   const getTargetPage = (team: Team): 'chat' | 'code' => {
-    const bindMode = team.bind_mode || ['chat', 'code'];
+    const bindMode = team.bind_mode || ['chat', 'code']
     // If team only supports one mode, use that
     if (bindMode.length === 1) {
-      return bindMode[0];
+      return bindMode[0]
     }
     // If team supports both, use current filter (default to 'chat' if filter is 'all')
     if (modeFilter !== 'all') {
-      return modeFilter;
+      return modeFilter
     }
     // Default to 'chat' when filter is 'all' and team supports both
-    return 'chat';
-  };
+    return 'chat'
+  }
 
   const handleChatTeam = (team: Team) => {
-    const params = new URLSearchParams();
-    params.set('teamId', String(team.id));
-    const targetPage = getTargetPage(team);
-    router.push(`/${targetPage}?${params.toString()}`);
-  };
+    const params = new URLSearchParams()
+    params.set('teamId', String(team.id))
+    const targetPage = getTargetPage(team)
+    router.push(`/${targetPage}?${params.toString()}`)
+  }
 
   // Filter teams based on mode filter
   const filteredTeams = useMemo(() => {
     if (modeFilter === 'all') {
-      return teams;
+      return teams
     }
     return teams.filter(team => {
-      const bindMode = team.bind_mode || ['chat', 'code'];
-      return bindMode.includes(modeFilter);
-    });
-  }, [teams, modeFilter]);
+      const bindMode = team.bind_mode || ['chat', 'code']
+      return bindMode.includes(modeFilter)
+    })
+  }, [teams, modeFilter])
 
   // Helper function to check if a team is a group resource
   const isGroupTeam = (team: Team) => {
-    return team.namespace && team.namespace !== 'default';
-  };
+    return team.namespace && team.namespace !== 'default'
+  }
 
   // Helper function to check permissions for a specific group resource
   const canEditGroupResource = (namespace: string) => {
-    if (!groupRoleMap) return false;
-    const role = groupRoleMap.get(namespace);
-    return role === 'Owner' || role === 'Maintainer' || role === 'Developer';
-  };
+    if (!groupRoleMap) return false
+    const role = groupRoleMap.get(namespace)
+    return role === 'Owner' || role === 'Maintainer' || role === 'Developer'
+  }
 
   const canDeleteGroupResource = (namespace: string) => {
-    if (!groupRoleMap) return false;
-    const role = groupRoleMap.get(namespace);
-    return role === 'Owner' || role === 'Maintainer';
-  };
+    if (!groupRoleMap) return false
+    const role = groupRoleMap.get(namespace)
+    return role === 'Owner' || role === 'Maintainer'
+  }
 
   // Check if user can create in the current group context
   // When scope is 'group', check the specific groupName; only Owner/Maintainer can create
   const canCreateInCurrentGroup = (() => {
-    if (scope !== 'group' || !groupName || !groupRoleMap) return false;
-    const role = groupRoleMap.get(groupName);
-    return role === 'Owner' || role === 'Maintainer';
-  })();
+    if (scope !== 'group' || !groupName || !groupRoleMap) return false
+    const role = groupRoleMap.get(groupName)
+    return role === 'Owner' || role === 'Maintainer'
+  })()
 
   const handleDelete = async (teamId: number) => {
-    setTeamToDelete(teamId);
-    setIsCheckingTasks(true);
+    setTeamToDelete(teamId)
+    setIsCheckingTasks(true)
 
     // Check if this is a shared team
-    const team = teams.find(t => t.id === teamId);
-    const isShared = team?.share_status === 2;
-    setIsUnbindingSharedTeam(isShared);
+    const team = teams.find(t => t.id === teamId)
+    const isShared = team?.share_status === 2
+    setIsUnbindingSharedTeam(isShared)
 
     // For shared teams, skip running tasks check and show unbind confirmation directly
     if (isShared) {
-      setIsCheckingTasks(false);
-      setDeleteConfirmVisible(true);
-      return;
+      setIsCheckingTasks(false)
+      setDeleteConfirmVisible(true)
+      return
     }
 
     try {
       // Check if team has running tasks
-      const result = await checkTeamRunningTasks(teamId);
-      setRunningTasksInfo(result);
+      const result = await checkTeamRunningTasks(teamId)
+      setRunningTasksInfo(result)
 
       if (result.has_running_tasks) {
         // Show force delete confirmation dialog
-        setForceDeleteConfirmVisible(true);
+        setForceDeleteConfirmVisible(true)
       } else {
         // Show normal delete confirmation dialog
-        setDeleteConfirmVisible(true);
+        setDeleteConfirmVisible(true)
       }
     } catch (e) {
       // If check fails, show normal delete dialog
-      console.error('Failed to check running tasks:', e);
-      setDeleteConfirmVisible(true);
+      console.error('Failed to check running tasks:', e)
+      setDeleteConfirmVisible(true)
     } finally {
-      setIsCheckingTasks(false);
+      setIsCheckingTasks(false)
     }
-  };
+  }
 
   const handleConfirmDelete = async () => {
-    if (!teamToDelete) return;
+    if (!teamToDelete) return
 
-    setIsDeleting(true);
+    setIsDeleting(true)
     try {
-      await deleteTeam(teamToDelete);
-      setTeamsSorted(prev => prev.filter(team => team.id !== teamToDelete));
-      setDeleteConfirmVisible(false);
-      setTeamToDelete(null);
-      setRunningTasksInfo(null);
+      await deleteTeam(teamToDelete)
+      setTeamsSorted(prev => prev.filter(team => team.id !== teamToDelete))
+      setDeleteConfirmVisible(false)
+      setTeamToDelete(null)
+      setRunningTasksInfo(null)
     } catch {
       toast({
         variant: 'destructive',
         title: t('teams.delete'),
-      });
+      })
     } finally {
-      setIsDeleting(false);
+      setIsDeleting(false)
     }
-  };
+  }
 
   const handleForceDelete = async () => {
-    if (!teamToDelete) return;
+    if (!teamToDelete) return
 
-    setIsDeleting(true);
+    setIsDeleting(true)
     try {
-      await deleteTeam(teamToDelete, true);
-      setTeamsSorted(prev => prev.filter(team => team.id !== teamToDelete));
-      setForceDeleteConfirmVisible(false);
-      setTeamToDelete(null);
-      setRunningTasksInfo(null);
+      await deleteTeam(teamToDelete, true)
+      setTeamsSorted(prev => prev.filter(team => team.id !== teamToDelete))
+      setForceDeleteConfirmVisible(false)
+      setTeamToDelete(null)
+      setRunningTasksInfo(null)
     } catch {
       toast({
         variant: 'destructive',
         title: t('teams.delete'),
-      });
+      })
     } finally {
-      setIsDeleting(false);
+      setIsDeleting(false)
     }
-  };
+  }
 
   const handleCancelDelete = () => {
-    setDeleteConfirmVisible(false);
-    setForceDeleteConfirmVisible(false);
-    setTeamToDelete(null);
-    setRunningTasksInfo(null);
-    setIsUnbindingSharedTeam(false);
-  };
+    setDeleteConfirmVisible(false)
+    setForceDeleteConfirmVisible(false)
+    setTeamToDelete(null)
+    setRunningTasksInfo(null)
+    setIsUnbindingSharedTeam(false)
+  }
 
   const handleShareTeam = async (team: Team) => {
-    setSharingId(team.id);
+    setSharingId(team.id)
     try {
-      const response = await shareTeam(team.id);
+      const response = await shareTeam(team.id)
       setShareData({
         teamName: team.name,
         shareUrl: response.share_url,
-      });
-      setShareModalVisible(true);
+      })
+      setShareModalVisible(true)
       // Update team status to sharing
-      setTeamsSorted(prev => prev.map(t => (t.id === team.id ? { ...t, share_status: 1 } : t)));
+      setTeamsSorted(prev => prev.map(t => (t.id === team.id ? { ...t, share_status: 1 } : t)))
     } catch {
       toast({
         variant: 'destructive',
         title: t('teams.share_failed'),
-      });
+      })
     } finally {
-      setSharingId(null);
+      setSharingId(null)
     }
-  };
+  }
 
   const handleCloseShareModal = () => {
-    setShareModalVisible(false);
-    setShareData(null);
-  };
+    setShareModalVisible(false)
+    setShareData(null)
+  }
 
   // Check if edit button should be shown
   const shouldShowEdit = (team: Team) => {
     // Shared teams don't show edit button
-    if (team.share_status === 2) return false;
+    if (team.share_status === 2) return false
     // For group teams, check group permissions
     if (isGroupTeam(team)) {
-      return canEditGroupResource(team.namespace!);
+      return canEditGroupResource(team.namespace!)
     }
     // For personal teams, always show
-    return true;
-  };
+    return true
+  }
 
   // Check if delete/unbind button should be shown
   const shouldShowDelete = (team: Team) => {
     // For group teams, check group permissions
     if (isGroupTeam(team)) {
-      return canDeleteGroupResource(team.namespace!);
+      return canDeleteGroupResource(team.namespace!)
     }
     // For personal teams, always show
-    return true;
-  };
+    return true
+  }
 
   // Check if this is a shared team (need to show "unbind" instead of "delete")
   const isSharedTeam = (team: Team) => {
-    return team.share_status === 2;
-  };
+    return team.share_status === 2
+  }
 
   // Check if share button should be shown
   const shouldShowShare = (team: Team) => {
     // Group teams don't support sharing (for now)
-    if (isGroupTeam(team)) return false;
+    if (isGroupTeam(team)) return false
     // Personal teams (no share_status or share_status=0 or share_status=1) show share button
-    return !team.share_status || team.share_status === 0 || team.share_status === 1;
-  };
+    return !team.share_status || team.share_status === 0 || team.share_status === 1
+  }
 
   // Check if copy button should be shown (same permission as create)
   const shouldShowCopy = (team: Team) => {
     // For group teams, check group permissions (need create permission)
     if (isGroupTeam(team)) {
-      return canDeleteGroupResource(team.namespace!); // Maintainer/Owner can create
+      return canDeleteGroupResource(team.namespace!) // Maintainer/Owner can create
     }
     // For personal teams, always show
-    return true;
-  };
+    return true
+  }
 
   return (
     <>
@@ -842,12 +842,12 @@ export default function TeamList({
       <Dialog
         open={botListVisible}
         onOpenChange={open => {
-          setBotListVisible(open);
+          setBotListVisible(open)
           // Refresh bots list when dialog is closed to sync any changes made in BotList
           if (!open) {
             fetchBotsList(scope, groupName)
               .then(setBotsSorted)
-              .catch(() => {});
+              .catch(() => {})
           }
         }}
       >
@@ -872,5 +872,5 @@ export default function TeamList({
       />
       {/* Error prompt unified with antd message, no local rendering */}
     </>
-  );
+  )
 }

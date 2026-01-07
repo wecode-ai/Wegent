@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -10,14 +10,14 @@
  * don't support streaming.
  */
 
-import { NextRequest } from 'next/server';
-import { getInternalApiUrl } from './server-config';
+import { NextRequest } from 'next/server'
+import { getInternalApiUrl } from './server-config'
 
 export interface StreamProxyOptions {
   /** Custom headers to forward to backend */
-  customHeaders?: Record<string, string>;
+  customHeaders?: Record<string, string>
   /** Headers to extract from backend response and forward to client */
-  forwardHeaders?: string[];
+  forwardHeaders?: string[]
 }
 
 /**
@@ -35,63 +35,63 @@ export async function createStreamProxy(
 ): Promise<Response> {
   try {
     // Get the request body
-    const body = await request.json();
+    const body = await request.json()
 
     // Get authorization header
-    const authHeader = request.headers.get('Authorization');
+    const authHeader = request.headers.get('Authorization')
 
     // Build headers
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...(authHeader && { Authorization: authHeader }),
       ...options.customHeaders,
-    };
+    }
 
     // Forward request to backend
     const backendResponse = await fetch(`${getInternalApiUrl()}${backendPath}`, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
-    });
+    })
 
     if (!backendResponse.ok) {
-      const errorText = await backendResponse.text();
+      const errorText = await backendResponse.text()
       return new Response(errorText, {
         status: backendResponse.status,
         headers: {
           'Content-Type': 'application/json',
         },
-      });
+      })
     }
 
     // Check if response body exists
     if (!backendResponse.body) {
-      return new Response('No response body from backend', { status: 500 });
+      return new Response('No response body from backend', { status: 500 })
     }
 
     // Create a TransformStream to pass through the data
-    const { readable, writable } = new TransformStream();
+    const { readable, writable } = new TransformStream()
 
     // Pipe the backend response to the client
     // This is done asynchronously to allow streaming
-    (async () => {
-      const reader = backendResponse.body!.getReader();
-      const writer = writable.getWriter();
+    ;(async () => {
+      const reader = backendResponse.body!.getReader()
+      const writer = writable.getWriter()
 
       try {
         while (true) {
-          const { done, value } = await reader.read();
+          const { done, value } = await reader.read()
           if (done) {
-            await writer.close();
-            break;
+            await writer.close()
+            break
           }
-          await writer.write(value);
+          await writer.write(value)
         }
       } catch (error) {
-        console.error('Stream error:', error);
-        await writer.abort(error as Error);
+        console.error('Stream error:', error)
+        await writer.abort(error as Error)
       }
-    })();
+    })()
 
     // Build response headers
     const responseHeaders: Record<string, string> = {
@@ -99,27 +99,27 @@ export async function createStreamProxy(
       'Cache-Control': 'no-cache',
       Connection: 'keep-alive',
       'X-Accel-Buffering': 'no',
-    };
+    }
 
     // Forward specified headers from backend response
     if (options.forwardHeaders) {
       for (const headerName of options.forwardHeaders) {
-        const headerValue = backendResponse.headers.get(headerName);
+        const headerValue = backendResponse.headers.get(headerName)
         if (headerValue) {
-          responseHeaders[headerName] = headerValue;
+          responseHeaders[headerName] = headerValue
         }
       }
     }
 
     // Return streaming response with proper headers
-    return new Response(readable, { headers: responseHeaders });
+    return new Response(readable, { headers: responseHeaders })
   } catch (error) {
-    console.error('Stream proxy error:', error);
+    console.error('Stream proxy error:', error)
     return new Response(JSON.stringify({ error: 'Failed to proxy stream' }), {
       status: 500,
       headers: {
         'Content-Type': 'application/json',
       },
-    });
+    })
   }
 }

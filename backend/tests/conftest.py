@@ -5,6 +5,7 @@
 import hashlib
 import os
 import tempfile
+import uuid
 from datetime import datetime, timedelta
 from typing import Generator, Tuple
 
@@ -40,9 +41,20 @@ def get_test_database_url(worker_id: str = "master") -> str:
         return "sqlite:///file:testdb?mode=memory&cache=shared&uri=true"
     else:
         # Parallel: use unique file-based database per worker
+        # Use a unique suffix to avoid conflicts even if worker_id is reused
+        unique_suffix = f"{worker_id}_{uuid.uuid4().hex[:8]}"
         tmp_dir = tempfile.gettempdir()
-        db_path = os.path.join(tmp_dir, f"test_wegent_{worker_id}.db")
+        db_path = os.path.join(tmp_dir, f"test_wegent_{unique_suffix}.db")
         return f"sqlite:///{db_path}"
+
+
+def _set_sqlite_pragma(dbapi_conn, connection_record):
+    """Set SQLite PRAGMA settings for better concurrent access."""
+    cursor = dbapi_conn.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.execute("PRAGMA busy_timeout=30000")  # 30 seconds timeout
+    cursor.close()
 
 
 # Session-scoped engine and tables - created once per test session (per worker)
@@ -53,17 +65,47 @@ def test_engine(worker_id):
     This significantly speeds up tests by avoiding repeated engine creation.
     """
     db_url = get_test_database_url(worker_id)
-    engine = create_engine(db_url, connect_args={"check_same_thread": False})
+    # Add timeout setting to reduce database lock issues
+    connect_args = {
+        "check_same_thread": False,
+        "timeout": 30,  # Wait up to 30 seconds for locks
+    }
+    # Use NullPool for file-based databases to avoid connection pool issues
+    # For in-memory database, use StaticPool
+    from sqlalchemy.pool import NullPool, StaticPool
+
+    poolclass = StaticPool if worker_id == "master" else NullPool
+
+    engine = create_engine(
+        db_url,
+        connect_args=connect_args,
+        poolclass=poolclass,
+        pool_pre_ping=True,
+    )
+
+    # Enable WAL mode for better concurrent access (only for file-based databases)
+    if worker_id != "master":
+        event.listen(engine, "connect", _set_sqlite_pragma)
+
     Base.metadata.create_all(bind=engine)
     yield engine
     Base.metadata.drop_all(bind=engine)
     engine.dispose()
     # Clean up file-based database if used
     if worker_id != "master":
+        # Clean up all test_wegent_*.db files for this worker
         tmp_dir = tempfile.gettempdir()
-        db_path = os.path.join(tmp_dir, f"test_wegent_{worker_id}.db")
+        unique_suffix = f"{worker_id}_{uuid.uuid4().hex[:8]}"
+        db_path = os.path.join(tmp_dir, f"test_wegent_{unique_suffix}.db")
         if os.path.exists(db_path):
             os.remove(db_path)
+        # Also clean up WAL and SHM files
+        wal_path = db_path + "-wal"
+        shm_path = db_path + "-shm"
+        if os.path.exists(wal_path):
+            os.remove(wal_path)
+        if os.path.exists(shm_path):
+            os.remove(shm_path)
 
 
 @pytest.fixture(scope="session")
@@ -127,7 +169,7 @@ def test_settings() -> Settings:
     """
     return Settings(
         PROJECT_NAME="Test Project",
-        DATABASE_URL=TEST_DATABASE_URL,
+        DATABASE_URL="sqlite:///test.db",
         SECRET_KEY="test-secret-key-for-testing-only",
         ALGORITHM="HS256",
         ACCESS_TOKEN_EXPIRE_MINUTES=30,
