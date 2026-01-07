@@ -111,6 +111,18 @@ async function svgToPng(svg: string, maxWidth: number): Promise<SvgToPngResult> 
         svgElement.setAttribute('viewBox', `0 0 ${svgWidth} ${svgHeight}`)
       }
 
+      // Remove external image references that could taint the canvas
+      // Note: foreignObject elements are kept as they contain text labels
+      // When using base64 data URL for SVG, foreignObject content renders correctly
+      const images = svgElement.querySelectorAll('image')
+      images.forEach(img => {
+        const href = img.getAttribute('href') || img.getAttribute('xlink:href')
+        // Remove images with external URLs (http/https) as they will taint the canvas
+        if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
+          img.remove()
+        }
+      })
+
       // Create canvas
       const canvas = document.createElement('canvas')
       const ctx = canvas.getContext('2d')
@@ -130,33 +142,40 @@ async function svgToPng(svg: string, maxWidth: number): Promise<SvgToPngResult> 
       ctx.fillStyle = '#ffffff'
       ctx.fillRect(0, 0, outputWidth, outputHeight)
 
-      // Convert SVG to data URL
+      // Convert SVG to data URL instead of Blob URL to avoid cross-origin issues
+      // Using base64 encoded data URL ensures the image is treated as same-origin
       const svgData = new XMLSerializer().serializeToString(svgElement)
-      const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' })
-      const svgUrl = URL.createObjectURL(svgBlob)
+      const base64Svg = btoa(unescape(encodeURIComponent(svgData)))
+      const svgDataUrl = `data:image/svg+xml;base64,${base64Svg}`
 
       // Load image and draw to canvas
       const img = new Image()
 
-      img.onload = () => {
-        ctx.drawImage(img, 0, 0, outputWidth, outputHeight)
-        URL.revokeObjectURL(svgUrl)
+      // Set crossOrigin to anonymous to handle any remaining cross-origin resources
+      img.crossOrigin = 'anonymous'
 
-        // Get PNG data URL
-        const dataUrl = canvas.toDataURL('image/png')
-        resolve({
-          dataUrl,
-          width: outputWidth,
-          height: outputHeight,
-        })
+      img.onload = () => {
+        try {
+          ctx.drawImage(img, 0, 0, outputWidth, outputHeight)
+
+          // Get PNG data URL
+          const dataUrl = canvas.toDataURL('image/png')
+          resolve({
+            dataUrl,
+            width: outputWidth,
+            height: outputHeight,
+          })
+        } catch (canvasError) {
+          // If canvas is still tainted, reject with error
+          reject(new Error(`Canvas tainted: ${canvasError}`))
+        }
       }
 
       img.onerror = () => {
-        URL.revokeObjectURL(svgUrl)
         reject(new Error('Failed to load SVG image'))
       }
 
-      img.src = svgUrl
+      img.src = svgDataUrl
     } catch (error) {
       reject(error)
     }

@@ -262,3 +262,49 @@ class WebSocketEmitter(StreamEmitter):
             subtask_id=subtask_id,
         )
         logger.info("[WS_EMITTER] chat:cancelled emitted")
+
+    def emit_json(self, data: dict[str, Any]) -> None:
+        """Emit JSON data synchronously by scheduling async emit.
+
+        This method is used in synchronous contexts (like tool event callbacks)
+        where we need to emit data but can't use await directly.
+
+        Args:
+            data: Dictionary data to emit (typically a chunk event)
+        """
+        import asyncio
+
+        from app.services.chat.ws_emitter import get_main_event_loop, get_ws_emitter
+
+        emitter = get_ws_emitter()
+        if emitter is None:
+            logger.warning("[WS_EMITTER] emit_json: no emitter available")
+            return
+
+        # Extract data for emit_chat_chunk
+        subtask_id = data.get("subtask_id", 0)
+        content = data.get("content", "")
+        offset = data.get("offset", 0)
+        result = data.get("result")
+
+        # Get the main event loop
+        loop = get_main_event_loop()
+        if loop is None:
+            logger.warning("[WS_EMITTER] emit_json: no event loop available")
+            return
+
+        # Schedule the async emit on the main event loop
+        asyncio.run_coroutine_threadsafe(
+            emitter.emit_chat_chunk(
+                task_id=self.task_id,
+                subtask_id=subtask_id,
+                content=content,
+                offset=offset,
+                result=result,
+            ),
+            loop,
+        )
+        logger.debug(
+            "[WS_EMITTER] emit_json: scheduled chunk emission for subtask=%d",
+            subtask_id,
+        )

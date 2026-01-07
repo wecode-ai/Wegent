@@ -31,6 +31,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # Import telemetry config (always available)
 from shared.telemetry.config import get_otel_config
+from starlette.responses import StreamingResponse
 
 from chat_shell import __version__
 from chat_shell.core.config import settings
@@ -263,10 +264,27 @@ def create_app(
         response = await call_next(request)
         process_time = (time.time() - start_time) * 1000
 
-        # Post-request logging
-        logger.info(
-            f"response: {request.method} {request.url.path} {response.status_code} {process_time:.2f}ms {request_id}"
-        )
+        # For streaming responses, wrap the body iterator to log after completion
+        if isinstance(response, StreamingResponse):
+            original_body_iterator = response.body_iterator
+
+            async def logging_body_iterator():
+                try:
+                    async for chunk in original_body_iterator:
+                        yield chunk
+                finally:
+                    # Log after streaming completes
+                    total_time = (time.time() - start_time) * 1000
+                    logger.info(
+                        f"response: {request.method} {request.url.path} {response.status_code} {total_time:.2f}ms {request_id} (streamed)"
+                    )
+
+            response.body_iterator = logging_body_iterator()
+        else:
+            # Post-request logging for non-streaming responses
+            logger.info(
+                f"response: {request.method} {request.url.path} {response.status_code} {process_time:.2f}ms {request_id}"
+            )
 
         return response
 

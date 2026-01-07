@@ -274,6 +274,13 @@ async def _stream_response(
 
                 # Check for thinking data in result and emit tool events
                 result = event.data.get("result")
+                logger.debug(
+                    "[RESPONSE] CHUNK event: content_len=%d, has_result=%s, "
+                    "thinking_count=%d",
+                    len(chunk_text),
+                    result is not None,
+                    len(result.get("thinking", [])) if result else 0,
+                )
                 if result and result.get("thinking"):
                     for step in result["thinking"]:
                         details = step.get("details", {})

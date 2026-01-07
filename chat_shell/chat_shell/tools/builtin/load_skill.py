@@ -170,6 +170,36 @@ class LoadSkillTool(BaseTool):
         # Fallback to skill_name
         return skill_name
 
+    def preload_skill_prompt(self, skill_name: str, skill_config: dict) -> None:
+        """Preload a skill's prompt for system prompt injection.
+
+        This method is called by prepare_skill_tools to preload skill prompts
+        when skill tools are directly available. This ensures the skill instructions
+        are injected into the system message via prompt_modifier.
+
+        Args:
+            skill_name: The name of the skill
+            skill_config: The skill configuration containing prompt and displayName
+        """
+        prompt = skill_config.get("prompt", "")
+        if not prompt:
+            return
+
+        # Store the prompt for injection
+        self._loaded_skill_prompts[skill_name] = prompt
+        self._expanded_skills.add(skill_name)
+
+        # Cache the display name
+        display_name = skill_config.get("displayName")
+        if display_name:
+            self._skill_display_names[skill_name] = display_name
+
+        logger.info(
+            "[LoadSkillTool] Preloaded skill prompt for '%s' (len=%d)",
+            skill_name,
+            len(prompt),
+        )
+
     def get_combined_skill_prompt(self) -> str:
         """Get combined skill prompts for system prompt injection.
 

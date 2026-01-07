@@ -136,6 +136,7 @@ async def prepare_skill_tools(
     user_id: int,
     skill_configs: list[dict[str, Any]],
     ws_emitter: Any = None,
+    load_skill_tool: Optional[Any] = None,
 ) -> list[Any]:
     """
     Prepare skill tools dynamically using SkillToolRegistry.
@@ -146,6 +147,10 @@ async def prepare_skill_tools(
 
     Skill binaries are downloaded from backend API using REMOTE_STORAGE_URL.
 
+    When a load_skill_tool is provided, this function will also preload the skill
+    prompts into the LoadSkillTool so they are injected into the system prompt
+    via prompt_modifier.
+
     Args:
         task_id: Task ID for WebSocket room
         subtask_id: Subtask ID for correlation
@@ -154,6 +159,7 @@ async def prepare_skill_tools(
             Each config contains: {"name": "...", "description": "...", "tools": [...],
                                    "provider": {...}, "skill_id": int}
         ws_emitter: Optional WebSocket emitter for real-time communication
+        load_skill_tool: Optional LoadSkillTool instance to preload skill prompts
 
     Returns:
         List of tool instances created from skill configurations
@@ -163,8 +169,9 @@ async def prepare_skill_tools(
     tools: list[Any] = []
 
     if not ws_emitter:
-        logger.warning(
-            "[skill_factory] WebSocket emitter not available, some skill tools may not work"
+        # In HTTP mode, WebSocket is not used, so this is expected
+        logger.debug(
+            "[skill_factory] WebSocket emitter not available (expected in HTTP mode)"
         )
 
     # Get the registry instance
@@ -267,6 +274,18 @@ async def prepare_skill_tools(
                 skill_name,
                 [t.name for t in skill_tools],
             )
+
+            # Preload skill prompt into LoadSkillTool if provided
+            # This ensures the skill prompt is injected into system message
+            # via prompt_modifier when skill tools are directly available
+            if load_skill_tool is not None:
+                skill_prompt = skill_config.get("prompt", "")
+                if skill_prompt:
+                    load_skill_tool.preload_skill_prompt(skill_name, skill_config)
+                    logger.info(
+                        "[skill_factory] Preloaded skill prompt for '%s' into LoadSkillTool",
+                        skill_name,
+                    )
 
     logger.info(
         "[skill_factory] Total skill tools created: %d",

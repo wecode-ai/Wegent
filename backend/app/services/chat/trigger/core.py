@@ -435,18 +435,16 @@ async def _stream_chat_response(
             load_skill_tool = prepare_load_skill_tool(
                 skill_names=chat_config.skill_names,
                 user_id=stream_data.user_id,
-                db=db,
-                task_id=stream_data.task_id,
+                skill_configs=chat_config.skill_configs,
             )
             if load_skill_tool:
                 extra_tools.append(load_skill_tool)
 
             # Prepare skill tools dynamically using SkillToolRegistry
-            skill_tools = prepare_skill_tools(
+            skill_tools = await prepare_skill_tools(
                 task_id=stream_data.task_id,
                 subtask_id=stream_data.subtask_id,
                 user_id=stream_data.user_id,
-                db_session=db,
                 skill_configs=chat_config.skill_configs,
             )
             extra_tools.extend(skill_tools)
@@ -779,15 +777,16 @@ async def _stream_with_http_adapter(
                 )
 
                 # Emit chunk with thinking data
+                result_data = {
+                    "shell_type": "Chat",
+                    "thinking": thinking_steps.copy(),
+                }
                 await ws_emitter.emit_chat_chunk(
                     task_id=task_id,
                     subtask_id=subtask_id,
                     content="",
                     offset=offset,
-                    result={
-                        "shell_type": "Chat",
-                        "thinking": thinking_steps.copy(),
-                    },
+                    result=result_data,
                 )
 
             elif event.type == ChatEventType.TOOL_RESULT:
@@ -838,15 +837,16 @@ async def _stream_with_http_adapter(
                 )
 
                 # Emit chunk with thinking data
+                result_data = {
+                    "shell_type": "Chat",
+                    "thinking": thinking_steps.copy(),
+                }
                 await ws_emitter.emit_chat_chunk(
                     task_id=task_id,
                     subtask_id=subtask_id,
                     content="",
                     offset=offset,
-                    result={
-                        "shell_type": "Chat",
-                        "thinking": thinking_steps.copy(),
-                    },
+                    result=result_data,
                 )
 
             elif event.type == ChatEventType.DONE:

@@ -98,12 +98,13 @@ def _handle_tool_start(
 
     # Emit chunk with thinking data synchronously using emit_json
     # Note: emit_json is sync method, emit_chunk is async but we're in sync callback
+    current_result = state.get_current_result(include_value=False, slim_thinking=True)
     chunk_data = {
         "type": "chunk",
         "content": "",
         "offset": state.offset,
         "subtask_id": state.subtask_id,
-        "result": state.get_current_result(include_value=False, slim_thinking=True),
+        "result": current_result,
     }
     emitter.emit_json(chunk_data)
     logger.info(
@@ -169,16 +170,20 @@ def _handle_tool_end(
         state.add_thinking_step(result_step)
 
     # Emit chunk with thinking data synchronously using emit_json
+    current_result = state.get_current_result(include_value=False, slim_thinking=True)
     chunk_data = {
         "type": "chunk",
         "content": "",
         "offset": state.offset,
         "subtask_id": state.subtask_id,
-        "result": state.get_current_result(include_value=False, slim_thinking=True),
+        "result": current_result,
     }
     emitter.emit_json(chunk_data)
     logger.info(
-        "[TOOL_EVENT] Emitted chunk for tool_end: subtask_id=%d", state.subtask_id
+        "[TOOL_EVENT] Emitted chunk for tool_end: subtask_id=%d, thinking_count=%d, result_keys=%s",
+        state.subtask_id,
+        len(current_result.get("thinking", [])) if current_result else 0,
+        list(current_result.keys()) if current_result else [],
     )
 
 
