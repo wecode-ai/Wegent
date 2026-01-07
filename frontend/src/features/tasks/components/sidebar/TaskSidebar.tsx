@@ -2,14 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import './task-list-scrollbar.css';
-import React, { useRef, useEffect, useState } from 'react';
-import { Button } from '@/components/ui/button';
-import Image from 'next/image';
-import { useRouter } from 'next/navigation';
-import { paths } from '@/config/paths';
+import './task-list-scrollbar.css'
+import React, { useRef, useEffect, useState } from 'react'
+import { Button } from '@/components/ui/button'
+import Image from 'next/image'
+import { useRouter } from 'next/navigation'
+import { paths } from '@/config/paths'
 import {
   Search,
   Plus,
@@ -20,26 +20,26 @@ import {
   BookOpen,
   ChevronDown,
   ChevronUp,
-} from 'lucide-react';
-import { useTaskContext } from '@/features/tasks/contexts/taskContext';
-import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext';
-import TaskListSection from './TaskListSection';
-import { useTranslation } from '@/hooks/useTranslation';
-import { isTaskUnread } from '@/utils/taskViewStatus';
-import MobileSidebar from '@/features/layout/MobileSidebar';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { UserFloatingMenu } from '@/features/layout/components/UserFloatingMenu';
+} from 'lucide-react'
+import { useTaskContext } from '@/features/tasks/contexts/taskContext'
+import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
+import TaskListSection from './TaskListSection'
+import { useTranslation } from '@/hooks/useTranslation'
+import { isTaskUnread } from '@/utils/taskViewStatus'
+import MobileSidebar from '@/features/layout/MobileSidebar'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { UserFloatingMenu } from '@/features/layout/components/UserFloatingMenu'
 
 interface TaskSidebarProps {
-  isMobileSidebarOpen: boolean;
-  setIsMobileSidebarOpen: (open: boolean) => void;
-  pageType?: 'chat' | 'code' | 'knowledge';
-  isCollapsed?: boolean;
-  onToggleCollapsed?: () => void;
+  isMobileSidebarOpen: boolean
+  setIsMobileSidebarOpen: (open: boolean) => void
+  pageType?: 'chat' | 'code' | 'knowledge'
+  isCollapsed?: boolean
+  onToggleCollapsed?: () => void
   // Search dialog control from parent (for global shortcut support)
-  isSearchDialogOpen?: boolean;
-  onSearchDialogOpenChange?: (open: boolean) => void;
-  shortcutDisplayText?: string;
+  isSearchDialogOpen?: boolean
+  onSearchDialogOpenChange?: (open: boolean) => void
+  shortcutDisplayText?: string
 }
 
 export default function TaskSidebar({
@@ -52,9 +52,9 @@ export default function TaskSidebar({
   onSearchDialogOpenChange,
   shortcutDisplayText: externalShortcutDisplayText,
 }: TaskSidebarProps) {
-  const { t } = useTranslation();
-  const router = useRouter();
-  const { clearAllStreams } = useChatStreamContext();
+  const { t } = useTranslation()
+  const router = useRouter()
+  const { clearAllStreams } = useChatStreamContext()
   const {
     tasks,
     groupTasks,
@@ -76,29 +76,29 @@ export default function TaskSidebar({
     markAllTasksAsViewed,
     viewStatusVersion,
     setSelectedTask,
-  } = useTaskContext();
-  const scrollRef = useRef<HTMLDivElement>(null);
+  } = useTaskContext()
+  const scrollRef = useRef<HTMLDivElement>(null)
 
   // Use external state for search dialog (controlled by parent page)
-  const setIsSearchDialogOpen = onSearchDialogOpenChange ?? (() => {});
+  const setIsSearchDialogOpen = onSearchDialogOpenChange ?? (() => {})
 
   // Group chats collapse/expand state
-  const [isGroupChatsExpanded, setIsGroupChatsExpanded] = useState(false);
-  const maxVisibleGroupChats = 5;
+  const [isGroupChatsExpanded, setIsGroupChatsExpanded] = useState(false)
+  const maxVisibleGroupChats = 5
 
   // Use external shortcut display text from parent
-  const shortcutDisplayText = externalShortcutDisplayText ?? '';
+  const shortcutDisplayText = externalShortcutDisplayText ?? ''
 
   // Clear search for sidebar (used when clearing search results)
   const handleClearSearch = () => {
-    setSearchTerm('');
-    searchTasks('');
-  };
+    setSearchTerm('')
+    searchTasks('')
+  }
 
   // Open search dialog (controlled by parent)
   const handleOpenSearchDialog = () => {
-    setIsSearchDialogOpen(true);
-  };
+    setIsSearchDialogOpen(true)
+  }
 
   // Navigation buttons - always show all buttons
   const navigationButtons = [
@@ -115,94 +115,94 @@ export default function TaskSidebar({
       path: paths.wiki.getHref(),
       isActive: pageType === 'knowledge',
     },
-  ];
+  ]
 
   // New conversation - always navigate to chat page
   const handleNewAgentClick = () => {
     // IMPORTANT: Clear selected task FIRST to ensure UI state is reset immediately
     // This prevents the UI from being stuck showing the previous task's messages
-    setSelectedTask(null);
+    setSelectedTask(null)
 
     // Clear all stream states to reset the chat area to initial state
-    clearAllStreams();
+    clearAllStreams()
 
     if (typeof window !== 'undefined') {
       // Always navigate to chat page for new conversation
-      router.replace(paths.chat.getHref());
+      router.replace(paths.chat.getHref())
     }
     // Close mobile sidebar after navigation
-    setIsMobileSidebarOpen(false);
-  };
+    setIsMobileSidebarOpen(false)
+  }
 
   // Handle navigation button click - for code mode, clear streams to create new task
   const handleNavigationClick = (path: string, isActive: boolean) => {
     if (isActive) {
       // IMPORTANT: Clear selected task FIRST to ensure UI state is reset immediately
-      setSelectedTask(null);
+      setSelectedTask(null)
 
       // If already on this page, clear streams to create new task
-      clearAllStreams();
-      router.replace(path);
+      clearAllStreams()
+      router.replace(path)
     } else {
-      router.push(path);
+      router.push(path)
     }
-    setIsMobileSidebarOpen(false);
-  };
+    setIsMobileSidebarOpen(false)
+  }
 
   // Mark all tasks as viewed
   const handleMarkAllAsViewed = () => {
-    markAllTasksAsViewed();
-  };
+    markAllTasksAsViewed()
+  }
 
   // Calculate total unread count
   // Include viewStatusVersion in dependencies to recalculate when view status changes
   const totalUnreadCount = React.useMemo(() => {
-    return getUnreadCount(tasks);
+    return getUnreadCount(tasks)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tasks, getUnreadCount, viewStatusVersion]);
+  }, [tasks, getUnreadCount, viewStatusVersion])
 
   // Refs for separate scroll containers
-  const groupScrollRef = useRef<HTMLDivElement>(null);
-  const personalScrollRef = useRef<HTMLDivElement>(null);
+  const groupScrollRef = useRef<HTMLDivElement>(null)
+  const personalScrollRef = useRef<HTMLDivElement>(null)
 
   // Scroll to bottom to load more (for group tasks)
   useEffect(() => {
-    const el = groupScrollRef.current;
-    if (!el) return;
+    const el = groupScrollRef.current
+    if (!el) return
     const handleScroll = () => {
       if (el.scrollTop + el.clientHeight >= el.scrollHeight - 10) {
-        loadMoreGroupTasks();
+        loadMoreGroupTasks()
       }
-    };
-    el.addEventListener('scroll', handleScroll);
-    return () => el.removeEventListener('scroll', handleScroll);
-  }, [loadMoreGroupTasks]);
+    }
+    el.addEventListener('scroll', handleScroll)
+    return () => el.removeEventListener('scroll', handleScroll)
+  }, [loadMoreGroupTasks])
 
   // Scroll to bottom to load more (for personal tasks)
   useEffect(() => {
-    const el = personalScrollRef.current;
-    if (!el) return;
+    const el = personalScrollRef.current
+    if (!el) return
     const handleScroll = () => {
       if (el.scrollTop + el.clientHeight >= el.scrollHeight - 10) {
-        loadMorePersonalTasks();
+        loadMorePersonalTasks()
       }
-    };
-    el.addEventListener('scroll', handleScroll);
-    return () => el.removeEventListener('scroll', handleScroll);
-  }, [loadMorePersonalTasks]);
+    }
+    el.addEventListener('scroll', handleScroll)
+    return () => el.removeEventListener('scroll', handleScroll)
+  }, [loadMorePersonalTasks])
 
   // Scroll to bottom to load more (legacy - for search results)
   useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
+    const el = scrollRef.current
+    if (!el) return
     const handleScroll = () => {
       if (el.scrollTop + el.clientHeight >= el.scrollHeight - 10) {
-        loadMore();
+        loadMore()
       }
-    };
-    el.addEventListener('scroll', handleScroll);
-    return () => el.removeEventListener('scroll', handleScroll);
-  }, [loadMore]);
+    }
+    el.addEventListener('scroll', handleScroll)
+    return () => el.removeEventListener('scroll', handleScroll)
+  }, [loadMore])
 
   const sidebarContent = (
     <>
@@ -220,8 +220,8 @@ export default function TaskSidebar({
                   <PanelLeftOpen className="h-4 w-4 text-text-primary flex-shrink-0" />
                   <button
                     onClick={e => {
-                      e.stopPropagation();
-                      handleNewAgentClick();
+                      e.stopPropagation()
+                      handleNewAgentClick()
                     }}
                     className="flex-shrink-0"
                     aria-label={t('common:tasks.new_conversation')}
@@ -324,8 +324,8 @@ export default function TaskSidebar({
                         <TooltipTrigger asChild>
                           <button
                             onClick={e => {
-                              e.stopPropagation();
-                              handleNavigationClick(btn.path, btn.isActive);
+                              e.stopPropagation()
+                              handleNavigationClick(btn.path, btn.isActive)
                             }}
                             className="flex items-center gap-1 px-1.5 py-0.5 text-xs bg-primary text-white rounded-md hover:bg-primary/90 transition-colors"
                           >
@@ -382,14 +382,10 @@ export default function TaskSidebar({
               // Separate group chats and regular tasks from search results
               const allGroupChats = tasks
                 .filter(task => task.is_group_chat)
-                .sort(
-                  (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
-                );
+                .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
               const regularTasks = tasks
                 .filter(task => !task.is_group_chat)
-                .sort(
-                  (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-                );
+                .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
 
               return (
                 <>
@@ -437,7 +433,7 @@ export default function TaskSidebar({
                     </>
                   )}
                 </>
-              );
+              )
             })()
           )
         ) : groupTasks.length === 0 && personalTasks.length === 0 ? (
@@ -448,36 +444,36 @@ export default function TaskSidebar({
           (() => {
             // Use separated lists from context
             // Sort group chats: unread first, then by updated_at
-            const unreadGroupChats = groupTasks.filter(isTaskUnread);
-            const readGroupChats = groupTasks.filter(task => !isTaskUnread(task));
-            const orderedGroupChats = [...unreadGroupChats, ...readGroupChats];
+            const unreadGroupChats = groupTasks.filter(isTaskUnread)
+            const readGroupChats = groupTasks.filter(task => !isTaskUnread(task))
+            const orderedGroupChats = [...unreadGroupChats, ...readGroupChats]
 
             // Calculate visible group chats based on collapse state
-            let visibleGroupChats: typeof orderedGroupChats;
+            let visibleGroupChats: typeof orderedGroupChats
             if (unreadGroupChats.length === 0) {
               // No unread: show max 5 or all if expanded
               visibleGroupChats = isGroupChatsExpanded
                 ? orderedGroupChats
-                : orderedGroupChats.slice(0, maxVisibleGroupChats);
+                : orderedGroupChats.slice(0, maxVisibleGroupChats)
             } else {
               // Has unread: always show all unread + remaining slots for read
-              const remainingSlots = maxVisibleGroupChats - unreadGroupChats.length;
+              const remainingSlots = maxVisibleGroupChats - unreadGroupChats.length
               visibleGroupChats = isGroupChatsExpanded
                 ? orderedGroupChats
-                : [...unreadGroupChats, ...readGroupChats.slice(0, Math.max(0, remainingSlots))];
+                : [...unreadGroupChats, ...readGroupChats.slice(0, Math.max(0, remainingSlots))]
             }
 
             // Calculate how many read chats are collapsed (for display text)
             const collapsedReadCount =
-              readGroupChats.length - (visibleGroupChats.length - unreadGroupChats.length);
+              readGroupChats.length - (visibleGroupChats.length - unreadGroupChats.length)
 
             // Determine if expand/collapse button should be shown
             const maxReadSlotsWhenCollapsed = Math.max(
               0,
               maxVisibleGroupChats - unreadGroupChats.length
-            );
+            )
             const shouldShowExpandCollapseButton =
-              readGroupChats.length > maxReadSlotsWhenCollapsed || hasMoreGroupTasks;
+              readGroupChats.length > maxReadSlotsWhenCollapsed || hasMoreGroupTasks
 
             return (
               <>
@@ -503,9 +499,9 @@ export default function TaskSidebar({
                       <button
                         onClick={() => {
                           if (!isGroupChatsExpanded && hasMoreGroupTasks) {
-                            loadMoreGroupTasks();
+                            loadMoreGroupTasks()
                           }
-                          setIsGroupChatsExpanded(!isGroupChatsExpanded);
+                          setIsGroupChatsExpanded(!isGroupChatsExpanded)
                         }}
                         className="flex items-center gap-1 px-1 py-1.5 text-xs text-text-muted hover:text-text-primary transition-colors w-full"
                       >
@@ -535,9 +531,9 @@ export default function TaskSidebar({
                             <button
                               onClick={() => {
                                 if (!isGroupChatsExpanded && hasMoreGroupTasks) {
-                                  loadMoreGroupTasks();
+                                  loadMoreGroupTasks()
                                 }
-                                setIsGroupChatsExpanded(!isGroupChatsExpanded);
+                                setIsGroupChatsExpanded(!isGroupChatsExpanded)
                               }}
                               className="flex items-center justify-center w-full py-1.5 text-text-muted hover:text-text-primary transition-colors"
                             >
@@ -646,7 +642,7 @@ export default function TaskSidebar({
                   </>
                 )}
               </>
-            );
+            )
           })()
         )}
         {loadingMore && isSearchResult && (
@@ -661,7 +657,7 @@ export default function TaskSidebar({
         <UserFloatingMenu />
       </div>
     </>
-  );
+  )
 
   return (
     <>
@@ -683,5 +679,5 @@ export default function TaskSidebar({
         {sidebarContent}
       </MobileSidebar>
     </>
-  );
+  )
 }

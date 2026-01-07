@@ -2,105 +2,105 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useEffect, useState } from 'react';
-import '@/features/common/scrollbar.css';
-import { Button } from '@/components/ui/button';
-import { PencilIcon, TrashIcon } from '@heroicons/react/24/outline';
-import { FiGithub, FiGitlab, FiGitBranch } from 'react-icons/fi';
-import { SiGitea } from 'react-icons/si';
-import GitHubEdit from './GitHubEdit';
-import UnifiedAddButton from '@/components/common/UnifiedAddButton';
-import LoadingState from '@/features/common/LoadingState';
-import { GitInfo } from '@/types/api';
-import { useUser } from '@/features/common/UserContext';
-import { fetchGitInfo, deleteGitToken } from '../services/github';
-import { useTranslation } from '@/hooks/useTranslation';
-import { useToast } from '@/hooks/use-toast';
+import { useEffect, useState } from 'react'
+import '@/features/common/scrollbar.css'
+import { Button } from '@/components/ui/button'
+import { PencilIcon, TrashIcon } from '@heroicons/react/24/outline'
+import { FiGithub, FiGitlab, FiGitBranch } from 'react-icons/fi'
+import { SiGitea } from 'react-icons/si'
+import GitHubEdit from './GitHubEdit'
+import UnifiedAddButton from '@/components/common/UnifiedAddButton'
+import LoadingState from '@/features/common/LoadingState'
+import { GitInfo } from '@/types/api'
+import { useUser } from '@/features/common/UserContext'
+import { fetchGitInfo, deleteGitToken } from '../services/github'
+import { useTranslation } from '@/hooks/useTranslation'
+import { useToast } from '@/hooks/use-toast'
 
 export default function GitHubIntegration() {
-  const { t } = useTranslation();
-  const { toast } = useToast();
-  const { user, refresh } = useUser();
-  const [gitInfo, setGitInfo] = useState<GitInfo[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [showModal, setShowModal] = useState(false);
-  const [modalType, setModalType] = useState<'add' | 'edit'>('add');
-  const [currentEditInfo, setCurrentEditInfo] = useState<GitInfo | null>(null);
+  const { t } = useTranslation()
+  const { toast } = useToast()
+  const { user, refresh } = useUser()
+  const [gitInfo, setGitInfo] = useState<GitInfo[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [showModal, setShowModal] = useState(false)
+  const [modalType, setModalType] = useState<'add' | 'edit'>('add')
+  const [currentEditInfo, setCurrentEditInfo] = useState<GitInfo | null>(null)
 
   useEffect(() => {
     async function loadGitInfo() {
-      setIsLoading(true);
+      setIsLoading(true)
       try {
         if (user) {
-          const info = await fetchGitInfo(user);
-          setGitInfo(info);
+          const info = await fetchGitInfo(user)
+          setGitInfo(info)
         } else {
           // If no user, set empty array to show the "no tokens" state
-          setGitInfo([]);
+          setGitInfo([])
         }
       } catch {
         toast({
           variant: 'destructive',
           title: t('common:integrations.loading'),
-        });
-        setGitInfo([]);
+        })
+        setGitInfo([])
       } finally {
-        setIsLoading(false);
+        setIsLoading(false)
       }
     }
-    loadGitInfo();
-  }, [user, toast, t]);
+    loadGitInfo()
+  }, [user, toast, t])
 
-  const platforms = gitInfo || [];
+  const platforms = gitInfo || []
 
   const getMaskedTokenDisplay = (token: string) => {
-    if (!token) return null;
+    if (!token) return null
     if (token.length >= 8) {
       return (
         token.substring(0, 4) +
         '*'.repeat(Math.max(32, token.length - 8)) +
         token.substring(token.length - 4)
-      );
+      )
     }
-    return token;
-  };
+    return token
+  }
 
   // Edit
   const handleEdit = (info: GitInfo) => {
-    setModalType('edit');
-    setCurrentEditInfo(info);
-    setShowModal(true);
-  };
+    setModalType('edit')
+    setCurrentEditInfo(info)
+    setShowModal(true)
+  }
 
   // Add
   const handleAdd = () => {
-    setModalType('add');
-    setCurrentEditInfo(null);
-    setShowModal(true);
-  };
+    setModalType('add')
+    setCurrentEditInfo(null)
+    setShowModal(true)
+  }
 
   // Token deletion - uses git_info id for precise deletion
   const handleDelete = async (gitInfo: GitInfo) => {
-    if (!user) return;
+    if (!user) return
     try {
-      const success = await deleteGitToken(user, gitInfo);
+      const success = await deleteGitToken(user, gitInfo)
       if (!success) {
         toast({
           variant: 'destructive',
           title: t('common:integrations.delete'),
-        });
-        return;
+        })
+        return
       }
-      await refresh();
+      await refresh()
     } catch {
       toast({
         variant: 'destructive',
         title: t('common:integrations.delete'),
-      });
+      })
     }
-  };
+  }
 
   return (
     <div className="space-y-3">
@@ -195,5 +195,5 @@ export default function GitHubIntegration() {
         editInfo={currentEditInfo}
       />
     </div>
-  );
+  )
 }

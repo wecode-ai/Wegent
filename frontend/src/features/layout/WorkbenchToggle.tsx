@@ -2,15 +2,15 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useIsMobile } from './hooks/useMediaQuery';
+import { useIsMobile } from './hooks/useMediaQuery'
 
 interface WorkbenchToggleProps {
-  isOpen: boolean;
-  onOpen: () => void;
-  onClose: () => void;
-  className?: string;
+  isOpen: boolean
+  onOpen: () => void
+  onClose: () => void
+  className?: string
 }
 
 export default function WorkbenchToggle({
@@ -19,11 +19,11 @@ export default function WorkbenchToggle({
   onClose,
   className = '',
 }: WorkbenchToggleProps) {
-  const isMobile = useIsMobile();
+  const isMobile = useIsMobile()
 
   // 在移动端不显示按钮
   if (isMobile) {
-    return null;
+    return null
   }
 
   return (
@@ -49,5 +49,5 @@ export default function WorkbenchToggle({
         />
       </svg>
     </button>
-  );
+  )
 }

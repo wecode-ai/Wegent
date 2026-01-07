@@ -1,39 +1,39 @@
-import { Page, Route } from '@playwright/test';
+import { Page, Route } from '@playwright/test'
 
 /**
  * Captured request data for verification
  */
 export interface CapturedChatRequest {
-  message: string;
-  team_id: number;
-  task_id?: number;
-  attachment_id?: number;
-  model_id?: string;
-  enable_web_search?: boolean;
+  message: string
+  team_id: number
+  task_id?: number
+  attachment_id?: number
+  model_id?: string
+  enable_web_search?: boolean
 }
 
 /**
  * Image URL content structure (OpenAI vision format)
  */
 export interface ImageUrlContent {
-  type: 'image_url';
+  type: 'image_url'
   image_url: {
-    url: string;
-  };
+    url: string
+  }
 }
 
 /**
  * Text content structure
  */
 export interface TextContent {
-  type: 'text';
-  text: string;
+  type: 'text'
+  text: string
 }
 
 /**
  * Vision message content (array of text and image_url)
  */
-export type VisionContent = (TextContent | ImageUrlContent)[];
+export type VisionContent = (TextContent | ImageUrlContent)[]
 
 /**
  * Mock response data for AI APIs
@@ -58,7 +58,7 @@ export const MOCK_AI_RESPONSE = {
     completion_tokens: 20,
     total_tokens: 30,
   },
-};
+}
 
 /**
  * Mock streaming response for SSE
@@ -73,7 +73,7 @@ data: {"type":"content_block_stop","index":0}
 
 data: {"type":"message_stop"}
 
-`;
+`
 
 /**
  * Setup API mocks for E2E tests
@@ -86,8 +86,8 @@ export async function setupApiMocks(page: Page): Promise<void> {
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify(MOCK_AI_RESPONSE),
-    });
-  });
+    })
+  })
 
   // Mock OpenAI API
   await page.route('**/api.openai.com/**', async (route: Route) => {
@@ -95,8 +95,8 @@ export async function setupApiMocks(page: Page): Promise<void> {
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify(MOCK_AI_RESPONSE),
-    });
-  });
+    })
+  })
 }
 
 /**
@@ -115,11 +115,11 @@ export async function mockTaskExecution(page: Page): Promise<void> {
           status: 'pending',
           created_at: new Date().toISOString(),
         }),
-      });
+      })
     } else {
-      await route.continue();
+      await route.continue()
     }
-  });
+  })
 
   // Mock SSE stream for task messages
   await page.route('**/api/tasks/*/stream', async (route: Route) => {
@@ -127,8 +127,8 @@ export async function mockTaskExecution(page: Page): Promise<void> {
       status: 200,
       contentType: 'text/event-stream',
       body: MOCK_SSE_RESPONSE,
-    });
-  });
+    })
+  })
 }
 
 /**
@@ -148,7 +148,7 @@ export async function waitForApiResponse(
         ? response.url().includes(urlPattern)
         : urlPattern.test(response.url())) && response.status() === 200,
     { timeout }
-  );
+  )
 }
 
 /**
@@ -158,15 +158,15 @@ export async function waitForApiResponse(
 export async function logApiRequests(page: Page): Promise<void> {
   page.on('request', request => {
     if (request.url().includes('/api/')) {
-      console.log(`>> ${request.method()} ${request.url()}`);
+      console.log(`>> ${request.method()} ${request.url()}`)
     }
-  });
+  })
 
   page.on('response', response => {
     if (response.url().includes('/api/')) {
-      console.log(`<< ${response.status()} ${response.url()}`);
+      console.log(`<< ${response.status()} ${response.url()}`)
     }
-  });
+  })
 }
 
 /**
@@ -186,7 +186,7 @@ data: {"content": ${JSON.stringify(content)}, "done": false}
 
 data: {"content": "", "done": true, "result": {"value": ${JSON.stringify(content)}}}
 
-`;
+`
 }
 
 /**
@@ -203,20 +203,20 @@ export async function mockChatStreamWithCapture(
   mockResponse: string = 'I can see the image you uploaded. It appears to be a test image.'
 ): Promise<void> {
   await page.route('**/api/chat/stream', async (route: Route) => {
-    const request = route.request();
+    const request = route.request()
 
     // Only handle POST requests
     if (request.method() !== 'POST') {
-      await route.continue();
-      return;
+      await route.continue()
+      return
     }
 
     try {
-      const postData = request.postDataJSON() as CapturedChatRequest;
+      const postData = request.postDataJSON() as CapturedChatRequest
 
       // Capture request for verification
       if (onRequestCapture) {
-        onRequestCapture(postData);
+        onRequestCapture(postData)
       }
 
       // Return mock SSE response
@@ -231,12 +231,12 @@ export async function mockChatStreamWithCapture(
           'X-Subtask-Id': '1',
         },
         body: generateMockChatSSEResponse(mockResponse),
-      });
+      })
     } catch {
       // If parsing fails, continue with the original request
-      await route.continue();
+      await route.continue()
     }
-  });
+  })
 }
 
 /**
@@ -250,23 +250,23 @@ export async function mockAttachmentUpload(
   page: Page,
   onUploadCapture?: (filename: string, size: number) => void
 ): Promise<void> {
-  let attachmentIdCounter = 1;
+  let attachmentIdCounter = 1
 
   await page.route('**/api/attachments/upload', async (route: Route) => {
-    const request = route.request();
+    const request = route.request()
 
     if (request.method() !== 'POST') {
-      await route.continue();
-      return;
+      await route.continue()
+      return
     }
 
-    const attachmentId = attachmentIdCounter++;
+    const attachmentId = attachmentIdCounter++
 
     // Capture upload info if callback provided
     if (onUploadCapture) {
       // Note: In real tests, we'd parse the multipart form data
       // For now, we just acknowledge the upload
-      onUploadCapture('test-image.png', 75);
+      onUploadCapture('test-image.png', 75)
     }
 
     // Return mock attachment response
@@ -282,8 +282,8 @@ export async function mockAttachmentUpload(
         text_length: 0,
         error_message: null,
       }),
-    });
-  });
+    })
+  })
 }
 
 /**
@@ -293,23 +293,23 @@ export async function mockAttachmentUpload(
  */
 export async function mockAttachmentDetail(page: Page): Promise<void> {
   await page.route('**/api/attachments/*', async (route: Route) => {
-    const request = route.request();
-    const url = request.url();
+    const request = route.request()
+    const url = request.url()
 
     // Skip upload endpoint
     if (url.includes('/upload')) {
-      await route.continue();
-      return;
+      await route.continue()
+      return
     }
 
     if (request.method() !== 'GET') {
-      await route.continue();
-      return;
+      await route.continue()
+      return
     }
 
     // Extract attachment ID from URL
-    const match = url.match(/\/api\/attachments\/(\d+)/);
-    const attachmentId = match ? parseInt(match[1]) : 1;
+    const match = url.match(/\/api\/attachments\/(\d+)/)
+    const attachmentId = match ? parseInt(match[1]) : 1
 
     await route.fulfill({
       status: 200,
@@ -326,8 +326,8 @@ export async function mockAttachmentDetail(page: Page): Promise<void> {
         file_extension: '.png',
         created_at: new Date().toISOString(),
       }),
-    });
-  });
+    })
+  })
 }
 
 /**
@@ -337,11 +337,11 @@ export async function mockAttachmentDetail(page: Page): Promise<void> {
  * @returns Object with validation result and details
  */
 export function verifyImageUrlFormat(content: unknown): {
-  isValid: boolean;
-  hasText: boolean;
-  hasImageUrl: boolean;
-  imageUrlPrefix?: string;
-  error?: string;
+  isValid: boolean
+  hasText: boolean
+  hasImageUrl: boolean
+  imageUrlPrefix?: string
+  error?: string
 } {
   // Check if content is an array (vision format)
   if (!Array.isArray(content)) {
@@ -350,33 +350,33 @@ export function verifyImageUrlFormat(content: unknown): {
       hasText: false,
       hasImageUrl: false,
       error: 'Content is not an array (not vision format)',
-    };
+    }
   }
 
-  let hasText = false;
-  let hasImageUrl = false;
-  let imageUrlPrefix: string | undefined;
+  let hasText = false
+  let hasImageUrl = false
+  let imageUrlPrefix: string | undefined
 
   for (const item of content) {
     if (typeof item !== 'object' || item === null) {
-      continue;
+      continue
     }
 
-    const typedItem = item as Record<string, unknown>;
+    const typedItem = item as Record<string, unknown>
 
     if (typedItem.type === 'text' && typeof typedItem.text === 'string') {
-      hasText = true;
+      hasText = true
     }
 
     if (typedItem.type === 'image_url') {
-      const imageUrl = typedItem.image_url as Record<string, unknown> | undefined;
+      const imageUrl = typedItem.image_url as Record<string, unknown> | undefined
       if (imageUrl && typeof imageUrl.url === 'string') {
-        hasImageUrl = true;
+        hasImageUrl = true
         // Extract prefix (e.g., "data:image/png;base64,")
-        const url = imageUrl.url as string;
-        const prefixMatch = url.match(/^(data:image\/[^;]+;base64,)/);
+        const url = imageUrl.url as string
+        const prefixMatch = url.match(/^(data:image\/[^;]+;base64,)/)
         if (prefixMatch) {
-          imageUrlPrefix = prefixMatch[1];
+          imageUrlPrefix = prefixMatch[1]
         }
       }
     }
@@ -391,7 +391,7 @@ export function verifyImageUrlFormat(content: unknown): {
       !hasText || !hasImageUrl
         ? `Missing required content: hasText=${hasText}, hasImageUrl=${hasImageUrl}`
         : undefined,
-  };
+  }
 }
 
 /**
@@ -406,7 +406,7 @@ export async function setupImageChatMocks(
   onChatRequest?: (request: CapturedChatRequest) => void,
   onUpload?: (filename: string, size: number) => void
 ): Promise<void> {
-  await mockAttachmentUpload(page, onUpload);
-  await mockAttachmentDetail(page);
-  await mockChatStreamWithCapture(page, onChatRequest);
+  await mockAttachmentUpload(page, onUpload)
+  await mockAttachmentDetail(page)
+  await mockChatStreamWithCapture(page, onChatRequest)
 }

@@ -71,20 +71,20 @@ Coverage settings are configured in [`.nycrc.json`](../.nycrc.json):
 To enable coverage collection in your tests, use the coverage helper:
 
 ```typescript
-import { test } from '@playwright/test';
-import { startCoverage, stopCoverage } from '../helpers/coverage';
+import { test } from '@playwright/test'
+import { startCoverage, stopCoverage } from '../helpers/coverage'
 
 test('my test with coverage', async ({ page }) => {
   // Start coverage collection
-  await startCoverage(page);
+  await startCoverage(page)
 
   // Your test code here
-  await page.goto('/');
+  await page.goto('/')
   // ... test actions ...
 
   // Stop coverage and save results
-  await stopCoverage(page, 'my-test-name');
-});
+  await stopCoverage(page, 'my-test-name')
+})
 ```
 
 ### Coverage in CI/CD
@@ -121,14 +121,14 @@ e2e/
 Tests use the Page Object Model pattern for better maintainability:
 
 ```typescript
-import { LoginPage } from '../pages/auth/login.page';
+import { LoginPage } from '../pages/auth/login.page'
 
 test('login test', async ({ page }) => {
-  const loginPage = new LoginPage(page);
-  await loginPage.navigate();
-  await loginPage.login('username', 'password');
-  expect(await loginPage.isLoggedIn()).toBe(true);
-});
+  const loginPage = new LoginPage(page)
+  await loginPage.navigate()
+  await loginPage.login('username', 'password')
+  expect(await loginPage.isLoggedIn()).toBe(true)
+})
 ```
 
 ## Best Practices

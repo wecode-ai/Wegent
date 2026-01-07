@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
 /**
  * Source References Component
@@ -11,26 +11,26 @@
  * Shows document titles with index numbers (e.g., [1], [2], [3]).
  */
 
-import React from 'react';
-import { FileText } from 'lucide-react';
-import { useTranslation } from '@/hooks/useTranslation';
+import React from 'react'
+import { FileText } from 'lucide-react'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface SourceReference {
-  index: number;
-  title: string;
-  kb_id: number;
+  index: number
+  title: string
+  kb_id: number
 }
 
 interface SourceReferencesProps {
-  sources: SourceReference[];
-  className?: string;
+  sources: SourceReference[]
+  className?: string
 }
 
 export function SourceReferences({ sources, className = '' }: SourceReferencesProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
 
   if (!sources || sources.length === 0) {
-    return null;
+    return null
   }
 
   return (
@@ -50,5 +50,5 @@ export function SourceReferences({ sources, className = '' }: SourceReferencesPr
         </div>
       </div>
     </div>
-  );
+  )
 }

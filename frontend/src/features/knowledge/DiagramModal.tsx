@@ -2,21 +2,21 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useEffect, useCallback, useState, useRef } from 'react';
+import { useEffect, useCallback, useState, useRef } from 'react'
 import {
   XMarkIcon,
   MagnifyingGlassPlusIcon,
   MagnifyingGlassMinusIcon,
   ArrowsPointingOutIcon,
-} from '@heroicons/react/24/outline';
+} from '@heroicons/react/24/outline'
 
 interface DiagramModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  diagramContent: string;
-  title?: string;
+  isOpen: boolean
+  onClose: () => void
+  diagramContent: string
+  title?: string
 }
 
 /**
@@ -33,97 +33,97 @@ export function DiagramModal({
   diagramContent,
   title = 'Diagram',
 }: DiagramModalProps) {
-  const [scale, setScale] = useState(1);
-  const [position, setPosition] = useState({ x: 0, y: 0 });
-  const [isDragging, setIsDragging] = useState(false);
-  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-  const containerRef = useRef<HTMLDivElement>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
+  const [scale, setScale] = useState(1)
+  const [position, setPosition] = useState({ x: 0, y: 0 })
+  const [isDragging, setIsDragging] = useState(false)
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
+  const containerRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
 
   // Reset state when modal opens
   useEffect(() => {
     if (isOpen) {
-      setScale(1);
-      setPosition({ x: 0, y: 0 });
+      setScale(1)
+      setPosition({ x: 0, y: 0 })
     }
-  }, [isOpen]);
+  }, [isOpen])
 
   // Handle keyboard shortcuts
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) return
 
     const handleKeyDown = (e: KeyboardEvent) => {
       switch (e.key) {
         case 'Escape':
-          onClose();
-          break;
+          onClose()
+          break
         case '+':
         case '=':
-          setScale(prev => Math.min(prev + 0.25, 3));
-          break;
+          setScale(prev => Math.min(prev + 0.25, 3))
+          break
         case '-':
-          setScale(prev => Math.max(prev - 0.25, 0.5));
-          break;
+          setScale(prev => Math.max(prev - 0.25, 0.5))
+          break
         case '0':
-          setScale(1);
-          setPosition({ x: 0, y: 0 });
-          break;
+          setScale(1)
+          setPosition({ x: 0, y: 0 })
+          break
       }
-    };
+    }
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isOpen, onClose])
 
   // Handle wheel zoom
   const handleWheel = useCallback((e: React.WheelEvent) => {
-    e.preventDefault();
-    const delta = e.deltaY > 0 ? -0.1 : 0.1;
-    setScale(prev => Math.max(0.5, Math.min(3, prev + delta)));
-  }, []);
+    e.preventDefault()
+    const delta = e.deltaY > 0 ? -0.1 : 0.1
+    setScale(prev => Math.max(0.5, Math.min(3, prev + delta)))
+  }, [])
 
   // Handle drag start
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
-      if (e.button !== 0) return; // Only left mouse button
-      setIsDragging(true);
-      setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y });
+      if (e.button !== 0) return // Only left mouse button
+      setIsDragging(true)
+      setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y })
     },
     [position]
-  );
+  )
 
   // Handle drag move
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
-      if (!isDragging) return;
+      if (!isDragging) return
       setPosition({
         x: e.clientX - dragStart.x,
         y: e.clientY - dragStart.y,
-      });
+      })
     },
     [isDragging, dragStart]
-  );
+  )
 
   // Handle drag end
   const handleMouseUp = useCallback(() => {
-    setIsDragging(false);
-  }, []);
+    setIsDragging(false)
+  }, [])
 
   // Zoom controls
   const zoomIn = useCallback(() => {
-    setScale(prev => Math.min(prev + 0.25, 3));
-  }, []);
+    setScale(prev => Math.min(prev + 0.25, 3))
+  }, [])
 
   const zoomOut = useCallback(() => {
-    setScale(prev => Math.max(prev - 0.25, 0.5));
-  }, []);
+    setScale(prev => Math.max(prev - 0.25, 0.5))
+  }, [])
 
   const resetZoom = useCallback(() => {
-    setScale(1);
-    setPosition({ x: 0, y: 0 });
-  }, []);
+    setScale(1)
+    setPosition({ x: 0, y: 0 })
+  }, [])
 
-  if (!isOpen) return null;
+  if (!isOpen) return null
 
   return (
     <div
@@ -239,5 +239,5 @@ export function DiagramModal({
         </div>
       </div>
     </div>
-  );
+  )
 }

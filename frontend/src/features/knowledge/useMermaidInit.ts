@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect } from 'react';
+import { useEffect } from 'react'
 
 /**
  * Mermaid initialization Hook
@@ -14,33 +14,33 @@ export function useMermaidInit(selectedContent: unknown) {
     const setCodeTheme = () => {
       const isDarkTheme =
         document.documentElement.classList.contains('dark') ||
-        window.matchMedia('(prefers-color-scheme: dark)').matches;
+        window.matchMedia('(prefers-color-scheme: dark)').matches
 
       if (isDarkTheme) {
-        document.documentElement.classList.remove('light');
+        document.documentElement.classList.remove('light')
       } else {
-        document.documentElement.classList.add('light');
+        document.documentElement.classList.add('light')
       }
-    };
+    }
 
     // Initial setup
-    setCodeTheme();
+    setCodeTheme()
 
     // Monitor theme changes
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
     const handleThemeChange = (_e: MediaQueryListEvent) => {
-      setCodeTheme();
-    };
+      setCodeTheme()
+    }
 
-    mediaQuery.addEventListener('change', handleThemeChange);
+    mediaQuery.addEventListener('change', handleThemeChange)
 
     // Dynamically import Mermaid library
     const initMermaid = async () => {
       try {
         // Only execute in client environment
         if (typeof window !== 'undefined') {
-          const mermaidModule = await import('mermaid');
-          const mermaid = mermaidModule.default;
+          const mermaidModule = await import('mermaid')
+          const mermaid = mermaidModule.default
 
           mermaid.initialize({
             startOnLoad: true,
@@ -365,25 +365,25 @@ export function useMermaidInit(selectedContent: unknown) {
               fill: #1e293b !important;
             }
           `,
-          });
+          })
 
           // Manually render all mermaid diagrams on the page
           setTimeout(() => {
-            mermaid.init(undefined, document.querySelectorAll('.mermaid'));
-          }, 200);
+            mermaid.init(undefined, document.querySelectorAll('.mermaid'))
+          }, 200)
         }
       } catch (error) {
-        console.error('Failed to initialize mermaid:', error);
+        console.error('Failed to initialize mermaid:', error)
       }
-    };
+    }
 
     if (selectedContent) {
-      initMermaid();
+      initMermaid()
     }
 
     // Cleanup function
     return () => {
-      mediaQuery.removeEventListener('change', handleThemeChange);
-    };
-  }, [selectedContent]);
+      mediaQuery.removeEventListener('change', handleThemeChange)
+    }
+  }, [selectedContent])
 }

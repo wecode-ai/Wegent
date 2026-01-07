@@ -2,17 +2,17 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { WikiGenerationDetail, WikiContent } from '@/types/wiki';
-import { getSortedContents } from './wikiUtils';
-import { useTranslation } from '@/hooks/useTranslation';
+import { WikiGenerationDetail, WikiContent } from '@/types/wiki'
+import { getSortedContents } from './wikiUtils'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface WikiDetailSidebarProps {
-  wikiDetail: WikiGenerationDetail | null;
-  loading: boolean;
-  error: string | null;
-  selectedContentId: number | null;
-  onBackToList: () => void;
-  onSelectContent: (contentId: number) => void;
+  wikiDetail: WikiGenerationDetail | null
+  loading: boolean
+  error: string | null
+  selectedContentId: number | null
+  onBackToList: () => void
+  onSelectContent: (contentId: number) => void
 }
 
 /**
@@ -26,7 +26,7 @@ export function WikiDetailSidebar({
   onBackToList,
   onSelectContent,
 }: WikiDetailSidebarProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
 
   return (
     <div className="w-64 border-r border-border overflow-y-auto bg-surface/10">
@@ -128,5 +128,5 @@ export function WikiDetailSidebar({
         )}
       </div>
     </div>
-  );
+  )
 }

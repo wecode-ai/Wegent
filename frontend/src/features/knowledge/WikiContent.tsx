@@ -2,31 +2,31 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { WikiContent as WikiContentType } from '@/types/wiki';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import rehypeRaw from 'rehype-raw';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { ReactNode, useState, useCallback, useEffect, useRef } from 'react';
-import type { HTMLAttributes } from 'react';
-import { CheckIcon, ClipboardIcon, ArrowsPointingOutIcon } from '@heroicons/react/24/outline';
-import { DiagramModal } from './DiagramModal';
-import { useTranslation } from '@/hooks/useTranslation';
+import { WikiContent as WikiContentType } from '@/types/wiki'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import rehypeRaw from 'rehype-raw'
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
+import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
+import { ReactNode, useState, useCallback, useEffect, useRef } from 'react'
+import type { HTMLAttributes } from 'react'
+import { CheckIcon, ClipboardIcon, ArrowsPointingOutIcon } from '@heroicons/react/24/outline'
+import { DiagramModal } from './DiagramModal'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface MarkdownComponentProps extends HTMLAttributes<HTMLElement> {
-  node?: unknown;
-  className?: string;
-  children?: ReactNode;
+  node?: unknown
+  className?: string
+  children?: ReactNode
 }
 
 interface WikiContentProps {
-  content: WikiContentType | null;
-  loading: boolean;
-  error: string | null;
+  content: WikiContentType | null
+  loading: boolean
+  error: string | null
 }
 
 /**
@@ -37,21 +37,21 @@ function CopyButton({
   copiedText,
   copyText,
 }: {
-  code: string;
-  copiedText: string;
-  copyText: string;
+  code: string
+  copiedText: string
+  copyText: string
 }) {
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState(false)
 
   const handleCopy = useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(code);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      await navigator.clipboard.writeText(code)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
     } catch (err) {
-      console.error('Failed to copy:', err);
+      console.error('Failed to copy:', err)
     }
-  }, [code]);
+  }, [code])
 
   return (
     <button
@@ -65,7 +65,7 @@ function CopyButton({
         <ClipboardIcon className="w-4 h-4" />
       )}
     </button>
-  );
+  )
 }
 
 /**
@@ -99,13 +99,13 @@ function LanguageBadge({ language }: { language: string }) {
     markdown: 'Markdown',
     dockerfile: 'Dockerfile',
     graphql: 'GraphQL',
-  };
+  }
 
   return (
     <span className="absolute top-0 left-4 px-2 py-0.5 text-xs font-medium bg-primary/80 text-white rounded-b-md shadow-sm">
       {displayName[language.toLowerCase()] || language.toUpperCase()}
     </span>
-  );
+  )
 }
 
 /**
@@ -116,24 +116,24 @@ function MermaidDiagram({
   diagramText,
   clickToExpandText,
 }: {
-  children: ReactNode;
-  diagramText: string;
-  clickToExpandText: string;
+  children: ReactNode
+  diagramText: string
+  clickToExpandText: string
 }) {
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [diagramHtml, setDiagramHtml] = useState('');
-  const diagramRef = useRef<HTMLDivElement>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [diagramHtml, setDiagramHtml] = useState('')
+  const diagramRef = useRef<HTMLDivElement>(null)
 
   // Capture rendered SVG for modal display
   const handleOpenModal = useCallback(() => {
     if (diagramRef.current) {
-      const svgElement = diagramRef.current.querySelector('svg');
+      const svgElement = diagramRef.current.querySelector('svg')
       if (svgElement) {
-        setDiagramHtml(svgElement.outerHTML);
-        setIsModalOpen(true);
+        setDiagramHtml(svgElement.outerHTML)
+        setIsModalOpen(true)
       }
     }
-  }, []);
+  }, [])
 
   return (
     <>
@@ -187,7 +187,7 @@ function MermaidDiagram({
         title={diagramText}
       />
     </>
-  );
+  )
 }
 
 /**
@@ -199,31 +199,31 @@ function CodeBlock({
   copiedText,
   copyText,
 }: {
-  language: string;
-  code: string;
-  copiedText: string;
-  copyText: string;
+  language: string
+  code: string
+  copiedText: string
+  copyText: string
 }) {
-  const [isDark, setIsDark] = useState(true);
+  const [isDark, setIsDark] = useState(true)
 
   useEffect(() => {
     // Check if dark mode
     const checkDarkMode = () => {
-      const isDarkMode = document.documentElement.classList.contains('dark');
-      setIsDark(isDarkMode);
-    };
+      const isDarkMode = document.documentElement.classList.contains('dark')
+      setIsDark(isDarkMode)
+    }
 
-    checkDarkMode();
+    checkDarkMode()
 
     // Listen for theme changes
-    const observer = new MutationObserver(checkDarkMode);
+    const observer = new MutationObserver(checkDarkMode)
     observer.observe(document.documentElement, {
       attributes: true,
       attributeFilter: ['class'],
-    });
+    })
 
-    return () => observer.disconnect();
-  }, []);
+    return () => observer.disconnect()
+  }, [])
 
   return (
     <div className="group relative my-6 rounded-xl overflow-hidden shadow-lg border border-border/50">
@@ -279,7 +279,7 @@ function CodeBlock({
         />
       </div>
     </div>
-  );
+  )
 }
 
 /**
@@ -287,7 +287,7 @@ function CodeBlock({
  * Encapsulates complex ReactMarkdown config and custom components
  */
 export function WikiContent({ content, loading, error }: WikiContentProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
 
   if (loading) {
     return (
@@ -297,7 +297,7 @@ export function WikiContent({ content, loading, error }: WikiContentProps) {
         </div>
         <p className="mt-4 text-sm text-text-secondary">{t('knowledge:loading_content')}</p>
       </div>
-    );
+    )
   }
 
   if (error) {
@@ -318,7 +318,7 @@ export function WikiContent({ content, loading, error }: WikiContentProps) {
         </svg>
         <span>{error}</span>
       </div>
-    );
+    )
   }
 
   if (!content) {
@@ -340,7 +340,7 @@ export function WikiContent({ content, loading, error }: WikiContentProps) {
         <p className="text-lg font-medium">{t('knowledge:select_content')}</p>
         <p className="text-sm mt-1">{t('knowledge:select_content_hint')}</p>
       </div>
-    );
+    )
   }
 
   return (
@@ -514,7 +514,7 @@ export function WikiContent({ content, loading, error }: WikiContentProps) {
                 ),
                 // Code component - handles inline code, mermaid, and code blocks
                 code: ({ node: _node, className, children, ...props }: MarkdownComponentProps) => {
-                  const isInline = !className;
+                  const isInline = !className
 
                   // Inline code
                   if (isInline) {
@@ -525,7 +525,7 @@ export function WikiContent({ content, loading, error }: WikiContentProps) {
                       >
                         {children}
                       </code>
-                    );
+                    )
                   }
 
                   // Mermaid diagrams
@@ -537,14 +537,14 @@ export function WikiContent({ content, loading, error }: WikiContentProps) {
                       >
                         {children}
                       </MermaidDiagram>
-                    );
+                    )
                   }
 
                   // Code blocks
-                  const match = /language-(\w+)/.exec(className || '');
+                  const match = /language-(\w+)/.exec(className || '')
                   if (match) {
-                    let language = match[1];
-                    const codeContent = String(children).replace(/\n$/, '');
+                    let language = match[1]
+                    const codeContent = String(children).replace(/\n$/, '')
 
                     // Language mapping
                     const languageMap: Record<string, string> = {
@@ -555,10 +555,10 @@ export function WikiContent({ content, loading, error }: WikiContentProps) {
                       sh: 'bash',
                       shell: 'bash',
                       yml: 'yaml',
-                    };
+                    }
 
                     if (languageMap[language.toLowerCase()]) {
-                      language = languageMap[language.toLowerCase()];
+                      language = languageMap[language.toLowerCase()]
                     }
 
                     return (
@@ -568,7 +568,7 @@ export function WikiContent({ content, loading, error }: WikiContentProps) {
                         copiedText={t('knowledge:copied')}
                         copyText={t('knowledge:copy_code')}
                       />
-                    );
+                    )
                   }
 
                   return (
@@ -579,7 +579,7 @@ export function WikiContent({ content, loading, error }: WikiContentProps) {
                     >
                       {children}
                     </code>
-                  );
+                  )
                 },
               }}
             >
@@ -589,5 +589,5 @@ export function WikiContent({ content, loading, error }: WikiContentProps) {
         </div>
       </article>
     </div>
-  );
+  )
 }

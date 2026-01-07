@@ -2,16 +2,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { XMarkIcon } from '@heroicons/react/24/outline';
-import type { Team } from '@/types/api';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { XMarkIcon } from '@heroicons/react/24/outline'
+import type { Team } from '@/types/api'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
 interface SelectedTeamBadgeProps {
-  team: Team;
-  onClear?: () => void;
-  showClearButton?: boolean;
+  team: Team
+  onClear?: () => void
+  showClearButton?: boolean
 }
 
 /**
@@ -30,8 +30,8 @@ export function SelectedTeamBadge({
       {showClearButton && onClear && (
         <button
           onClick={e => {
-            e.stopPropagation();
-            onClear();
+            e.stopPropagation()
+            onClear()
           }}
           className="ml-0.5 p-0.5 rounded-full hover:bg-primary/10 transition-colors"
           title="Clear selection"
@@ -40,10 +40,10 @@ export function SelectedTeamBadge({
         </button>
       )}
     </div>
-  );
+  )
 
   // Tooltip content: prioritize description, fallback to name
-  const tooltipText = team.description || team.name;
+  const tooltipText = team.description || team.name
 
   return (
     <TooltipProvider>
@@ -56,5 +56,5 @@ export function SelectedTeamBadge({
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>
-  );
+  )
 }

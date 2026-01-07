@@ -2,50 +2,49 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { memo, useState } from 'react';
-import { Maximize2, Minimize2 } from 'lucide-react';
-import { useTranslation } from '@/hooks/useTranslation';
-import type { ToolCallItemProps } from '../types';
-import { shouldCollapse, getContentPreview } from '../utils/thinkingUtils';
-import TodoListDisplay from './TodoListDisplay';
-import type { TodoItem } from '../types';
+import { memo, useState } from 'react'
+import { Maximize2, Minimize2 } from 'lucide-react'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { ToolCallItemProps } from '../types'
+import { shouldCollapse, getContentPreview } from '../utils/thinkingUtils'
+import TodoListDisplay from './TodoListDisplay'
+import type { TodoItem } from '../types'
 
 /**
  * Component to display a single tool call with name and parameters
  */
 const ToolCallItem = memo(function ToolCallItem({ toolName, input, itemIndex }: ToolCallItemProps) {
-  const { t } = useTranslation();
-  const [expandedParams, setExpandedParams] = useState<Set<string>>(new Set());
+  const { t } = useTranslation()
+  const [expandedParams, setExpandedParams] = useState<Set<string>>(new Set())
 
   const toggleParamExpansion = (paramKey: string) => {
     setExpandedParams(prev => {
-      const newSet = new Set(prev);
+      const newSet = new Set(prev)
       if (newSet.has(paramKey)) {
-        newSet.delete(paramKey);
+        newSet.delete(paramKey)
       } else {
-        newSet.add(paramKey);
+        newSet.add(paramKey)
       }
-      return newSet;
-    });
-  };
+      return newSet
+    })
+  }
 
   // Special handling for TodoWrite tool
   if (toolName === 'TodoWrite' && input && 'todos' in input) {
-    const todos = input.todos as TodoItem[];
+    const todos = input.todos as TodoItem[]
     if (Array.isArray(todos)) {
-      return <TodoListDisplay todos={todos} />;
+      return <TodoListDisplay todos={todos} />
     }
   }
 
   const renderParamValue = (key: string, value: unknown, uniqueId: string) => {
-    const stringValue = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
-    const isCollapsible = shouldCollapse(stringValue);
-    const paramKey = `${uniqueId}-${key}`;
-    const isExpanded = expandedParams.has(paramKey);
-    const displayValue =
-      isCollapsible && !isExpanded ? getContentPreview(stringValue) : stringValue;
+    const stringValue = typeof value === 'string' ? value : JSON.stringify(value, null, 2)
+    const isCollapsible = shouldCollapse(stringValue)
+    const paramKey = `${uniqueId}-${key}`
+    const isExpanded = expandedParams.has(paramKey)
+    const displayValue = isCollapsible && !isExpanded ? getContentPreview(stringValue) : stringValue
 
     return (
       <div key={paramKey} className="text-xs">
@@ -76,8 +75,8 @@ const ToolCallItem = memo(function ToolCallItem({ toolName, input, itemIndex }: 
           {isCollapsible && !isExpanded && <span className="text-blue-400">...</span>}
         </pre>
       </div>
-    );
-  };
+    )
+  }
 
   return (
     <div className="mt-1">
@@ -98,7 +97,7 @@ const ToolCallItem = memo(function ToolCallItem({ toolName, input, itemIndex }: 
         </div>
       )}
     </div>
-  );
-});
+  )
+})
 
-export default ToolCallItem;
+export default ToolCallItem

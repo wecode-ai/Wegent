@@ -2,25 +2,25 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { WikiProjectsResponse, WikiGenerationsResponse, WikiGenerationDetail } from '@/types/wiki';
-import { apiClient } from './client';
+import { WikiProjectsResponse, WikiGenerationsResponse, WikiGenerationDetail } from '@/types/wiki'
+import { apiClient } from './client'
 
 /**
  /**
   * Wiki config response type
   */
 export interface WikiConfigResponse {
-  default_team_name: string;
+  default_team_name: string
   default_team: {
-    id: number;
-    name: string;
-    agent_type: string;
-  } | null;
-  default_user_id: number;
-  has_bound_model: boolean;
-  bound_model_name: string | null;
-  enabled: boolean;
-  default_language: string;
+    id: number
+    name: string
+    agent_type: string
+  } | null
+  default_user_id: number
+  has_bound_model: boolean
+  bound_model_name: string | null
+  enabled: boolean
+  default_language: string
 }
 /**
  * Get all Wiki projects
@@ -33,12 +33,12 @@ export async function fetchWikiProjects(page = 1, limit = 100): Promise<WikiProj
     const queryParams = new URLSearchParams({
       page: page.toString(),
       limit: limit.toString(),
-    });
+    })
 
-    return await apiClient.get(`/wiki/projects?${queryParams.toString()}`);
+    return await apiClient.get(`/wiki/projects?${queryParams.toString()}`)
   } catch (error) {
-    console.error('Error fetching wiki projects:', error);
-    throw error;
+    console.error('Error fetching wiki projects:', error)
+    throw error
   }
 }
 /**
@@ -61,12 +61,12 @@ export async function fetchWikiGenerations(
       page: page.toString(),
       limit: limit.toString(),
       project_id: projectId.toString(),
-    });
+    })
 
-    return await apiClient.get(`/wiki/generations?${queryParams.toString()}`);
+    return await apiClient.get(`/wiki/generations?${queryParams.toString()}`)
   } catch (error) {
-    console.error('Error fetching wiki generations:', error);
-    throw error;
+    console.error('Error fetching wiki generations:', error)
+    throw error
   }
 }
 
@@ -79,10 +79,10 @@ export async function fetchWikiGenerationDetail(
   generationId: number
 ): Promise<WikiGenerationDetail> {
   try {
-    return await apiClient.get(`/wiki/generations/${generationId}`);
+    return await apiClient.get(`/wiki/generations/${generationId}`)
   } catch (error) {
-    console.error('Error fetching wiki generation detail:', error);
-    throw error;
+    console.error('Error fetching wiki generation detail:', error)
+    throw error
   }
 }
 
@@ -95,37 +95,34 @@ export async function fetchLatestCompletedWikiGeneration(
   projectId: number
 ): Promise<number | null> {
   try {
-    const generations = await fetchWikiGenerations(projectId);
+    const generations = await fetchWikiGenerations(projectId)
 
     // Check if API response is valid
     if (!generations || !generations.items || !Array.isArray(generations.items)) {
-      console.error('Invalid API response from fetchWikiGenerations:', generations);
-      return null;
+      console.error('Invalid API response from fetchWikiGenerations:', generations)
+      return null
     }
 
     // Sort by update time and find the latest completed record
     const completedGenerations = generations.items
       .filter(gen => gen && gen.status === 'COMPLETED')
-      .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+      .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
 
     if (completedGenerations.length > 0) {
-      return completedGenerations[0].id;
+      return completedGenerations[0].id
     }
 
     // If no completed records, but other records exist, return the first record ID (for testing)
     if (generations.items.length > 0) {
-      console.log(
-        'No completed generations found, using first available:',
-        generations.items[0].id
-      );
-      return generations.items[0].id;
+      console.log('No completed generations found, using first available:', generations.items[0].id)
+      return generations.items[0].id
     }
 
-    return null;
+    return null
   } catch (error) {
-    console.error('Error fetching latest completed wiki generation:', error);
+    console.error('Error fetching latest completed wiki generation:', error)
     // Return null instead of throwing error for better error handling
-    return null;
+    return null
   }
 }
 
@@ -136,15 +133,15 @@ export async function fetchLatestCompletedWikiGeneration(
  */
 export async function createWikiGeneration(data: Record<string, unknown>): Promise<unknown> {
   try {
-    return await apiClient.post('/wiki/generations', data);
+    return await apiClient.post('/wiki/generations', data)
   } catch (error) {
-    console.error('Error creating wiki generation:', error);
+    console.error('Error creating wiki generation:', error)
     // If it's an Error object, extract the error message
     if (error instanceof Error) {
-      throw new Error(error.message);
+      throw new Error(error.message)
     }
     // Otherwise, throw the error directly
-    throw error;
+    throw error
   }
 }
 
@@ -155,15 +152,15 @@ export async function createWikiGeneration(data: Record<string, unknown>): Promi
  */
 export async function cancelWikiGeneration(generationId: number): Promise<unknown> {
   try {
-    return await apiClient.post(`/wiki/generations/${generationId}/cancel`);
+    return await apiClient.post(`/wiki/generations/${generationId}/cancel`)
   } catch (error) {
-    console.error('Error cancelling wiki generation:', error);
+    console.error('Error cancelling wiki generation:', error)
     // If it's an Error object, extract the error message
     if (error instanceof Error) {
-      throw new Error(error.message);
+      throw new Error(error.message)
     }
     // Otherwise, throw the error directly
-    throw error;
+    throw error
   }
 }
 
@@ -173,9 +170,9 @@ export async function cancelWikiGeneration(generationId: number): Promise<unknow
  */
 export async function fetchWikiConfig(): Promise<WikiConfigResponse> {
   try {
-    return await apiClient.get('/wiki/config');
+    return await apiClient.get('/wiki/config')
   } catch (error) {
-    console.error('Error fetching wiki config:', error);
-    throw error;
+    console.error('Error fetching wiki config:', error)
+    throw error
   }
 }

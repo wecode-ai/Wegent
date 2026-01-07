@@ -2,9 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useEffect } from 'react';
+import { useEffect } from 'react'
 
 /**
  * Component to register Service Worker for notification handling
@@ -13,7 +13,7 @@ import { useEffect } from 'react';
 export default function ServiceWorkerRegistration() {
   useEffect(() => {
     if (typeof window === 'undefined' || !('serviceWorker' in navigator)) {
-      return;
+      return
     }
 
     // Register the service worker
@@ -22,12 +22,12 @@ export default function ServiceWorkerRegistration() {
         scope: '/',
       })
       .then(registration => {
-        console.log('Service Worker registered successfully:', registration);
+        console.log('Service Worker registered successfully:', registration)
       })
       .catch(error => {
-        console.error('Service Worker registration failed:', error);
-      });
-  }, []);
+        console.error('Service Worker registration failed:', error)
+      })
+  }, [])
 
-  return null; // This component doesn't render anything
+  return null // This component doesn't render anything
 }

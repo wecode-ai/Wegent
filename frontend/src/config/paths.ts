@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { getRuntimeConfigSync } from '@/lib/runtime-config';
+import { getRuntimeConfigSync } from '@/lib/runtime-config'
 
 export const paths = {
   home: {
@@ -17,9 +17,9 @@ export const paths = {
     },
     login: {
       getHref: () => {
-        console.log(typeof window === 'undefined');
+        console.log(typeof window === 'undefined')
         // Always return local login page in SSR/Node environment
-        return paths.auth.password_login.getHref();
+        return paths.auth.password_login.getHref()
       },
     },
   },
@@ -49,4 +49,4 @@ export const paths = {
       getHref: () => '/settings?tab=models',
     },
   },
-} as const;
+} as const

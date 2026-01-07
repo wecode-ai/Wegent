@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { getErrorMessageFromCode } from '@/apis/attachments';
+import { getErrorMessageFromCode } from '@/apis/attachments'
 
 describe('getErrorMessageFromCode', () => {
   // Mock translation function
@@ -23,69 +23,69 @@ describe('getErrorMessageFromCode', () => {
       'attachment.errors.legacy_xls': 'Outdated file format',
       'attachment.errors.legacy_xls_hint': 'Please save as .xlsx format',
       'attachment.supported_types': 'PDF, Word, Excel',
-    };
-    return translations[key] || key;
-  });
+    }
+    return translations[key] || key
+  })
 
   it('should return undefined for null error code', () => {
-    const result = getErrorMessageFromCode(null, mockT);
-    expect(result).toBeUndefined();
-  });
+    const result = getErrorMessageFromCode(null, mockT)
+    expect(result).toBeUndefined()
+  })
 
   it('should return undefined for undefined error code', () => {
-    const result = getErrorMessageFromCode(undefined, mockT);
-    expect(result).toBeUndefined();
-  });
+    const result = getErrorMessageFromCode(undefined, mockT)
+    expect(result).toBeUndefined()
+  })
 
   it('should return undefined for unknown error code', () => {
-    const result = getErrorMessageFromCode('unknown_error', mockT);
-    expect(result).toBeUndefined();
-  });
+    const result = getErrorMessageFromCode('unknown_error', mockT)
+    expect(result).toBeUndefined()
+  })
 
   it('should return localized message for unsupported_type error', () => {
-    const result = getErrorMessageFromCode('unsupported_type', mockT);
-    expect(result).toBeDefined();
-    expect(result).toContain('Unsupported file format');
-  });
+    const result = getErrorMessageFromCode('unsupported_type', mockT)
+    expect(result).toBeDefined()
+    expect(result).toContain('Unsupported file format')
+  })
 
   it('should return localized message for encrypted_pdf error', () => {
-    const result = getErrorMessageFromCode('encrypted_pdf', mockT);
-    expect(result).toBeDefined();
-    expect(result).toContain('Cannot parse encrypted file');
-    expect(result).toContain('password protection');
-  });
+    const result = getErrorMessageFromCode('encrypted_pdf', mockT)
+    expect(result).toBeDefined()
+    expect(result).toContain('Cannot parse encrypted file')
+    expect(result).toContain('password protection')
+  })
 
   it('should return localized message for legacy_doc error', () => {
-    const result = getErrorMessageFromCode('legacy_doc', mockT);
-    expect(result).toBeDefined();
-    expect(result).toContain('Outdated file format');
-    expect(result).toContain('.docx');
-  });
+    const result = getErrorMessageFromCode('legacy_doc', mockT)
+    expect(result).toBeDefined()
+    expect(result).toContain('Outdated file format')
+    expect(result).toContain('.docx')
+  })
 
   it('should return localized message for legacy_ppt error', () => {
-    const result = getErrorMessageFromCode('legacy_ppt', mockT);
-    expect(result).toBeDefined();
-    expect(result).toContain('Outdated file format');
-    expect(result).toContain('.pptx');
-  });
+    const result = getErrorMessageFromCode('legacy_ppt', mockT)
+    expect(result).toBeDefined()
+    expect(result).toContain('Outdated file format')
+    expect(result).toContain('.pptx')
+  })
 
   it('should return localized message for legacy_xls error', () => {
-    const result = getErrorMessageFromCode('legacy_xls', mockT);
-    expect(result).toBeDefined();
-    expect(result).toContain('Outdated file format');
-    expect(result).toContain('.xlsx');
-  });
+    const result = getErrorMessageFromCode('legacy_xls', mockT)
+    expect(result).toBeDefined()
+    expect(result).toContain('Outdated file format')
+    expect(result).toContain('.xlsx')
+  })
 
   it('should return localized message for parse_failed error', () => {
-    const result = getErrorMessageFromCode('parse_failed', mockT);
-    expect(result).toBeDefined();
-    expect(result).toContain('Failed to parse file');
-  });
+    const result = getErrorMessageFromCode('parse_failed', mockT)
+    expect(result).toBeDefined()
+    expect(result).toContain('Failed to parse file')
+  })
 
   it('should return localized message for file_too_large error', () => {
-    const result = getErrorMessageFromCode('file_too_large', mockT);
-    expect(result).toBeDefined();
-    expect(result).toContain('File is too large');
-    expect(result).toContain('100');
-  });
-});
+    const result = getErrorMessageFromCode('file_too_large', mockT)
+    expect(result).toBeDefined()
+    expect(result).toContain('File is too large')
+    expect(result).toContain('100')
+  })
+})

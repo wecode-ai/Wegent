@@ -2,9 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { TeamListResponse } from '@/apis/team';
-import { Team } from '@/types/api';
-import { http, HttpResponse } from 'msw';
+import { TeamListResponse } from '@/apis/team'
+import { Team } from '@/types/api'
+import { http, HttpResponse } from 'msw'
 
 export const MOCK_TEAMS: Team[] = [
   {
@@ -35,19 +35,19 @@ export const MOCK_TEAMS: Team[] = [
     created_at: '2024-07-01T00:00:00Z',
     updated_at: '2024-07-01T00:00:00Z',
   },
-];
+]
 
 export const teamHandlers = [
   http.get('/api/teams', () => {
     const response: TeamListResponse = {
       total: MOCK_TEAMS.length,
       items: MOCK_TEAMS,
-    };
-    return HttpResponse.json(response);
+    }
+    return HttpResponse.json(response)
   }),
 
   http.post<never, Record<string, unknown>>('/api/teams', async ({ request }) => {
-    const teamData = (await request.json()) as Partial<Team>;
+    const teamData = (await request.json()) as Partial<Team>
     const newTeam: Team = {
       id: MOCK_TEAMS.length + 1,
       name: teamData.name || 'New Team',
@@ -58,38 +58,38 @@ export const teamHandlers = [
       user_id: 1,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
-    };
-    MOCK_TEAMS.push(newTeam);
-    return HttpResponse.json(newTeam, { status: 201 });
+    }
+    MOCK_TEAMS.push(newTeam)
+    return HttpResponse.json(newTeam, { status: 201 })
   }),
 
   http.put<{ id: string }, Record<string, unknown>>(
     '/api/teams/:id',
     async ({ params, request }) => {
-      const { id } = params;
-      const teamData = await request.json();
-      const index = MOCK_TEAMS.findIndex(t => t.id === Number(id));
+      const { id } = params
+      const teamData = await request.json()
+      const index = MOCK_TEAMS.findIndex(t => t.id === Number(id))
       if (index !== -1) {
         MOCK_TEAMS[index] = {
           ...MOCK_TEAMS[index],
           ...teamData,
           updated_at: new Date().toISOString(),
-        };
-        return HttpResponse.json(MOCK_TEAMS[index]);
+        }
+        return HttpResponse.json(MOCK_TEAMS[index])
       } else {
-        return new HttpResponse(null, { status: 404 });
+        return new HttpResponse(null, { status: 404 })
       }
     }
   ),
 
   http.delete('/api/teams/:id', ({ params }) => {
-    const { id } = params;
-    const index = MOCK_TEAMS.findIndex(t => t.id === Number(id));
+    const { id } = params
+    const index = MOCK_TEAMS.findIndex(t => t.id === Number(id))
     if (index !== -1) {
-      MOCK_TEAMS.splice(index, 1);
-      return HttpResponse.json({ message: 'Team deleted successfully' });
+      MOCK_TEAMS.splice(index, 1)
+      return HttpResponse.json({ message: 'Team deleted successfully' })
     } else {
-      return new HttpResponse(null, { status: 404 });
+      return new HttpResponse(null, { status: 404 })
     }
   }),
-];
+]

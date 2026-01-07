@@ -2,29 +2,29 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useEffect, useState, useMemo } from 'react';
-import { useSearchParams, useRouter } from 'next/navigation';
-import { Button } from '@/components/ui/button';
-import { useToast } from '@/hooks/use-toast';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { taskApis, TaskShareInfo } from '@/apis/tasks';
-import { teamApis } from '@/apis/team';
-import { githubApis } from '@/apis/github';
-import { useTranslation } from '@/hooks/useTranslation';
-import { useUser } from '@/features/common/UserContext';
-import Modal from '@/features/common/Modal';
+import React, { useEffect, useState, useMemo } from 'react'
+import { useSearchParams, useRouter } from 'next/navigation'
+import { Button } from '@/components/ui/button'
+import { useToast } from '@/hooks/use-toast'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { taskApis, TaskShareInfo } from '@/apis/tasks'
+import { teamApis } from '@/apis/team'
+import { githubApis } from '@/apis/github'
+import { useTranslation } from '@/hooks/useTranslation'
+import { useUser } from '@/features/common/UserContext'
+import Modal from '@/features/common/Modal'
 import ModelSelector, {
   Model,
   DEFAULT_MODEL_NAME,
   allBotsHavePredefinedModel,
-} from '../selector/ModelSelector';
-import RepositorySelector from '../selector/RepositorySelector';
-import BranchSelector from '../selector/BranchSelector';
-import { Check } from 'lucide-react';
-import { UsersIcon } from '@heroicons/react/24/outline';
-import { cn } from '@/lib/utils';
+} from '../selector/ModelSelector'
+import RepositorySelector from '../selector/RepositorySelector'
+import BranchSelector from '../selector/BranchSelector'
+import { Check } from 'lucide-react'
+import { UsersIcon } from '@heroicons/react/24/outline'
+import { cn } from '@/lib/utils'
 import {
   Command,
   CommandEmpty,
@@ -32,178 +32,178 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
-} from '@/components/ui/command';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import type { Team, GitRepoInfo, GitBranch } from '@/types/api';
+} from '@/components/ui/command'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import type { Team, GitRepoInfo, GitBranch } from '@/types/api'
 
 interface TaskShareHandlerProps {
-  onTaskCopied?: () => void;
+  onTaskCopied?: () => void
 }
 
 /**
  * Handle task sharing URL parameter detection, copy logic, and modal display
  */
 export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps) {
-  const { t } = useTranslation();
-  const { toast } = useToast();
-  const { user } = useUser();
-  const searchParams = useSearchParams();
-  const router = useRouter();
+  const { t } = useTranslation()
+  const { toast } = useToast()
+  const { user } = useUser()
+  const searchParams = useSearchParams()
+  const router = useRouter()
 
-  const [shareInfo, setShareInfo] = useState<TaskShareInfo | null>(null);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [_isLoading, setIsLoading] = useState(false);
-  const [isCopying, setIsCopying] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [teams, setTeams] = useState<Team[]>([]);
-  const [selectedTeamId, setSelectedTeamId] = useState<number | null>(null);
-  const [selectedModel, setSelectedModel] = useState<Model | null>(null);
-  const [forceOverride, setForceOverride] = useState(false);
-  const [isTeamSelectorOpen, setIsTeamSelectorOpen] = useState(false);
-  const [teamSearchValue, setTeamSearchValue] = useState('');
+  const [shareInfo, setShareInfo] = useState<TaskShareInfo | null>(null)
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [_isLoading, setIsLoading] = useState(false)
+  const [isCopying, setIsCopying] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [teams, setTeams] = useState<Team[]>([])
+  const [selectedTeamId, setSelectedTeamId] = useState<number | null>(null)
+  const [selectedModel, setSelectedModel] = useState<Model | null>(null)
+  const [forceOverride, setForceOverride] = useState(false)
+  const [isTeamSelectorOpen, setIsTeamSelectorOpen] = useState(false)
+  const [teamSearchValue, setTeamSearchValue] = useState('')
   // Repository and branch selection for code tasks
-  const [selectedRepo, setSelectedRepo] = useState<GitRepoInfo | null>(null);
-  const [selectedBranch, setSelectedBranch] = useState<GitBranch | null>(null);
+  const [selectedRepo, setSelectedRepo] = useState<GitRepoInfo | null>(null)
+  const [selectedBranch, setSelectedBranch] = useState<GitBranch | null>(null)
 
-  const isSelfShare = shareInfo && user && shareInfo.user_id === user.id;
-  const isCodeTask = shareInfo?.task_type === 'code';
+  const isSelfShare = shareInfo && user && shareInfo.user_id === user.id
+  const isCodeTask = shareInfo?.task_type === 'code'
 
   // Find the selected team with full details
   const selectedTeam = useMemo(() => {
-    return teams.find(team => team.id === selectedTeamId) || null;
-  }, [teams, selectedTeamId]);
+    return teams.find(team => team.id === selectedTeamId) || null
+  }, [teams, selectedTeamId])
 
   // Check if model selection is required
   const isModelSelectionRequired = useMemo(() => {
     // Skip check if team is not selected, or if team type is 'dify' (external API)
-    if (!selectedTeam || selectedTeam.agent_type === 'dify') return false;
+    if (!selectedTeam || selectedTeam.agent_type === 'dify') return false
     // If team's bots have predefined models, "Default" option is available, no need to force selection
-    const hasDefaultOption = allBotsHavePredefinedModel(selectedTeam);
-    if (hasDefaultOption) return false;
+    const hasDefaultOption = allBotsHavePredefinedModel(selectedTeam)
+    if (hasDefaultOption) return false
     // Model selection is required when no model is selected
-    return !selectedModel;
-  }, [selectedTeam, selectedModel]);
+    return !selectedModel
+  }, [selectedTeam, selectedModel])
 
   // Check if repository and branch are required for code tasks
   const isRepoSelectionRequired = useMemo(() => {
-    return isCodeTask && (!selectedRepo || !selectedBranch);
-  }, [isCodeTask, selectedRepo, selectedBranch]);
+    return isCodeTask && (!selectedRepo || !selectedBranch)
+  }, [isCodeTask, selectedRepo, selectedBranch])
 
   const cleanupUrlParams = React.useCallback(() => {
-    const url = new URL(window.location.href);
-    url.searchParams.delete('taskShare');
-    router.replace(url.pathname + url.search);
-  }, [router]);
+    const url = new URL(window.location.href)
+    url.searchParams.delete('taskShare')
+    router.replace(url.pathname + url.search)
+  }, [router])
 
   useEffect(() => {
-    const taskShareToken = searchParams.get('taskShare');
+    const taskShareToken = searchParams.get('taskShare')
 
     if (!taskShareToken) {
-      return;
+      return
     }
 
     const fetchShareInfoAndTeams = async () => {
-      setIsLoading(true);
+      setIsLoading(true)
       try {
         // Fetch share info and teams in parallel
         const [info, teamsResponse] = await Promise.all([
           taskApis.getTaskShareInfo(taskShareToken),
           teamApis.getTeams({ page: 1, limit: 100 }),
-        ]);
+        ])
 
-        setShareInfo(info);
-        setTeams(teamsResponse.items);
+        setShareInfo(info)
+        setTeams(teamsResponse.items)
 
         // Auto-select first team
         if (teamsResponse.items.length > 0) {
-          setSelectedTeamId(teamsResponse.items[0].id);
+          setSelectedTeamId(teamsResponse.items[0].id)
         }
 
-        setIsModalOpen(true);
+        setIsModalOpen(true)
       } catch (err) {
-        console.error('Failed to fetch task share info:', err);
+        console.error('Failed to fetch task share info:', err)
         toast({
           variant: 'destructive',
           title: t('shared-task:handler_load_failed'),
           description: (err as Error)?.message || t('common:messages.unknown_error'),
-        });
-        cleanupUrlParams();
+        })
+        cleanupUrlParams()
       } finally {
-        setIsLoading(false);
+        setIsLoading(false)
       }
-    };
+    }
 
-    fetchShareInfoAndTeams();
-  }, [searchParams, toast, t, cleanupUrlParams]);
+    fetchShareInfoAndTeams()
+  }, [searchParams, toast, t, cleanupUrlParams])
 
   // Auto-fill repository and branch for code tasks
   useEffect(() => {
     if (!shareInfo || !isCodeTask) {
-      return;
+      return
     }
 
     // Need at least git_repo_id and git_type to identify a repository
     if (!shareInfo.git_repo_id || !shareInfo.git_type) {
-      return;
+      return
     }
 
     const autoFillRepo = async () => {
       try {
         // Load all repositories
-        const repos = await githubApis.getRepositories();
+        const repos = await githubApis.getRepositories()
 
         // Find the repository by matching multiple fields for precision
         // Priority: git_repo_id + git_domain + git_type > git_repo_id + git_type
         const matchedRepo = repos.find(repo => {
           // Must match git_repo_id and git_type
-          const idMatch = repo.git_repo_id === shareInfo.git_repo_id;
-          const typeMatch = repo.type === shareInfo.git_type;
+          const idMatch = repo.git_repo_id === shareInfo.git_repo_id
+          const typeMatch = repo.type === shareInfo.git_type
 
           if (!idMatch || !typeMatch) {
-            return false;
+            return false
           }
 
           // Additionally match git_domain if available
           if (shareInfo.git_domain) {
-            return repo.git_domain === shareInfo.git_domain;
+            return repo.git_domain === shareInfo.git_domain
           }
 
           // Additionally match git_repo (owner/repo) if available
           if (shareInfo.git_repo) {
-            return repo.git_repo === shareInfo.git_repo;
+            return repo.git_repo === shareInfo.git_repo
           }
 
-          return true;
-        });
+          return true
+        })
 
         if (matchedRepo) {
           // Only set the repository, let BranchSelector handle branch loading and selection
           // BranchSelector will use tempTaskDetail.branch_name to auto-select the branch
-          setSelectedRepo(matchedRepo);
+          setSelectedRepo(matchedRepo)
         }
       } catch (error) {
-        console.error('Failed to auto-fill repository:', error);
+        console.error('Failed to auto-fill repository:', error)
         // Silently fail - user can manually select
       }
-    };
+    }
 
-    autoFillRepo();
-  }, [shareInfo, isCodeTask]);
+    autoFillRepo()
+  }, [shareInfo, isCodeTask])
 
   const handleConfirmCopy = async () => {
-    if (!shareInfo) return;
+    if (!shareInfo) return
 
     if (isSelfShare) {
-      handleSelfShare();
-      return;
+      handleSelfShare()
+      return
     }
 
     if (!selectedTeamId) {
       toast({
         variant: 'destructive',
         title: t('shared-task:handler_select_team'),
-      });
-      return;
+      })
+      return
     }
 
     // Validate model selection if required
@@ -211,8 +211,8 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
       toast({
         variant: 'destructive',
         title: t('common:task_submit.model_required'),
-      });
-      return;
+      })
+      return
     }
 
     // Validate repository and branch selection for code tasks
@@ -221,30 +221,30 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
         toast({
           variant: 'destructive',
           title: t('shared-task:handler_repo_required'),
-        });
-        return;
+        })
+        return
       }
       if (!selectedBranch) {
         toast({
           variant: 'destructive',
           title: t('shared-task:handler_branch_required'),
-        });
-        return;
+        })
+        return
       }
     }
 
-    setIsCopying(true);
-    setError(null);
+    setIsCopying(true)
+    setError(null)
     try {
-      const shareToken = searchParams.get('taskShare');
+      const shareToken = searchParams.get('taskShare')
       if (!shareToken) {
-        throw new Error('Share token not found');
+        throw new Error('Share token not found')
       }
 
       // Determine model_id based on selection
-      let modelId: string | undefined = undefined;
+      let modelId: string | undefined = undefined
       if (selectedModel && selectedModel.name !== DEFAULT_MODEL_NAME) {
-        modelId = selectedModel.name;
+        modelId = selectedModel.name
       }
 
       const response = await taskApis.joinSharedTask({
@@ -257,52 +257,52 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
         git_repo: selectedRepo?.git_repo,
         git_domain: selectedRepo?.git_domain,
         branch_name: selectedBranch?.name,
-      });
+      })
 
       toast({
         title: t('shared-task:handler_copy_success'),
         description: `"${shareInfo.task_title}" ${t('shared-task:handler_copy_success_desc')}`,
-      });
+      })
 
       // Refresh task list in parent component
       if (onTaskCopied) {
-        onTaskCopied();
+        onTaskCopied()
       }
 
-      handleCloseModal();
+      handleCloseModal()
 
       // Navigate to the appropriate page based on task type
-      const targetPage = isCodeTask ? '/code' : '/chat';
-      router.push(`${targetPage}?taskId=${response.task_id}`);
+      const targetPage = isCodeTask ? '/code' : '/chat'
+      router.push(`${targetPage}?taskId=${response.task_id}`)
     } catch (err) {
-      console.error('Failed to copy shared task:', err);
-      const errorMessage = (err as Error)?.message || 'Failed to copy task';
+      console.error('Failed to copy shared task:', err)
+      const errorMessage = (err as Error)?.message || 'Failed to copy task'
       toast({
         variant: 'destructive',
         title: errorMessage,
-      });
-      setError(errorMessage);
+      })
+      setError(errorMessage)
     } finally {
-      setIsCopying(false);
+      setIsCopying(false)
     }
-  };
+  }
 
   const handleCloseModal = () => {
-    setIsModalOpen(false);
-    setShareInfo(null);
-    setError(null);
-    cleanupUrlParams();
-  };
+    setIsModalOpen(false)
+    setShareInfo(null)
+    setError(null)
+    cleanupUrlParams()
+  }
 
   const handleSelfShare = () => {
     toast({
       title: t('shared-task:handler_self_task_title'),
       description: t('shared-task:handler_self_task_desc'),
-    });
-    handleCloseModal();
-  };
+    })
+    handleCloseModal()
+  }
 
-  if (!shareInfo || !isModalOpen) return null;
+  if (!shareInfo || !isModalOpen) return null
 
   return (
     <Modal
@@ -418,8 +418,8 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
                                 key={team.id}
                                 value={`${team.id} ${team.name}`}
                                 onSelect={() => {
-                                  setSelectedTeamId(team.id);
-                                  setIsTeamSelectorOpen(false);
+                                  setSelectedTeamId(team.id)
+                                  setIsTeamSelectorOpen(false)
                                 }}
                                 className={cn(
                                   'flex items-center gap-2 px-3 py-2 text-sm cursor-pointer',
@@ -554,5 +554,5 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
         </Button>
       </div>
     </Modal>
-  );
+  )
 }

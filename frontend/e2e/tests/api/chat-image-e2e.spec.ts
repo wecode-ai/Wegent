@@ -14,79 +14,79 @@
  * - Backend services running
  */
 
-import { test, expect } from '@playwright/test';
-import { createApiClient, ApiClient } from '../../utils/api-client';
-import { ADMIN_USER } from '../../config/test-users';
-import * as fs from 'fs';
-import * as path from 'path';
+import { test, expect } from '@playwright/test'
+import { createApiClient, ApiClient } from '../../utils/api-client'
+import { ADMIN_USER } from '../../config/test-users'
+import * as fs from 'fs'
+import * as path from 'path'
 
 // Mock model server configuration
-const MOCK_MODEL_SERVER_URL = process.env.MOCK_MODEL_SERVER_URL || 'http://localhost:9999';
-const API_BASE_URL = process.env.E2E_API_URL || 'http://localhost:8000';
+const MOCK_MODEL_SERVER_URL = process.env.MOCK_MODEL_SERVER_URL || 'http://localhost:9999'
+const API_BASE_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 
 // Test resource names (unique per test run)
-const TEST_PREFIX = `e2e-image-test-${Date.now()}`;
-const TEST_MODEL_NAME = `${TEST_PREFIX}-model`;
-const TEST_BOT_NAME = `${TEST_PREFIX}-bot`;
-const TEST_TEAM_NAME = `${TEST_PREFIX}-team`;
+const TEST_PREFIX = `e2e-image-test-${Date.now()}`
+const TEST_MODEL_NAME = `${TEST_PREFIX}-model`
+const TEST_BOT_NAME = `${TEST_PREFIX}-bot`
+const TEST_TEAM_NAME = `${TEST_PREFIX}-team`
 
 interface CapturedRequest {
-  timestamp: string;
-  method: string;
-  url: string;
-  headers: Record<string, string>;
+  timestamp: string
+  method: string
+  url: string
+  headers: Record<string, string>
   body: {
-    model: string;
+    model: string
     messages: Array<{
-      role: string;
+      role: string
       content:
         | string
         | Array<{
-            type: string;
-            text?: string;
+            type: string
+            text?: string
             image_url?: {
-              url: string;
-            };
-          }>;
-    }>;
-    stream?: boolean;
-  };
+              url: string
+            }
+          }>
+    }>
+    stream?: boolean
+  }
 }
 
 test.describe('Chat Image E2E with Mock Model Server', () => {
-  let apiClient: ApiClient;
-  let token: string;
-  const testImagePath = path.join(__dirname, '../../fixtures/test-image.png');
+  let apiClient: ApiClient
+  let token: string
+  const testImagePath = path.join(__dirname, '../../fixtures/test-image.png')
 
   // Created resource IDs for cleanup
-  let createdModelId: number | null = null;
-  let createdBotId: number | null = null;
-  let createdTeamId: number | null = null;
+  let createdModelId: number | null = null
+  let createdBotId: number | null = null
+  let createdTeamId: number | null = null
 
   test.beforeAll(async ({ request }) => {
     // Login and get token
-    apiClient = createApiClient(request);
-    await apiClient.login(ADMIN_USER.username, ADMIN_USER.password);
-    token = (apiClient as unknown as { token: string }).token;
+    apiClient = createApiClient(request)
+    await apiClient.login(ADMIN_USER.username, ADMIN_USER.password)
+    token = (apiClient as unknown as { token: string }).token
 
     // Check if mock model server is running
     try {
-      const healthResponse = await request.get(`${MOCK_MODEL_SERVER_URL}/health`);
+      const healthResponse = await request.get(`${MOCK_MODEL_SERVER_URL}/health`)
       if (healthResponse.status() !== 200) {
-        console.warn('Mock model server is not running. Some tests will be skipped.');
-        return;
+        console.warn('Mock model server is not running. Some tests will be skipped.')
+        return
       }
     } catch {
       console.warn(
         'Mock model server is not reachable. Start it with: npx ts-node frontend/e2e/utils/mock-model-server.ts'
-      );
-      return;
+      )
+      return
     }
 
     // Create test resources
     try {
       // Step 1: Create Model pointing to mock server
-      console.log('Creating test model...');
+      console.log('Creating test model...')
       const modelResponse = await request.post(`${API_BASE_URL}/api/models`, {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -109,18 +109,18 @@ test.describe('Chat Image E2E with Mock Model Server', () => {
             isCustomConfig: true,
           },
         },
-      });
+      })
 
       if (modelResponse.status() === 200 || modelResponse.status() === 201) {
-        const modelData = await modelResponse.json();
-        createdModelId = modelData.id;
-        console.log(`Created model: ${TEST_MODEL_NAME} (ID: ${createdModelId})`);
+        const modelData = await modelResponse.json()
+        createdModelId = modelData.id
+        console.log(`Created model: ${TEST_MODEL_NAME} (ID: ${createdModelId})`)
       } else {
-        console.error('Failed to create model:', await modelResponse.text());
+        console.error('Failed to create model:', await modelResponse.text())
       }
 
       // Step 2: Create Bot with Chat Shell and the mock model
-      console.log('Creating test bot...');
+      console.log('Creating test bot...')
       const botResponse = await request.post(`${API_BASE_URL}/api/bots`, {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -152,18 +152,18 @@ test.describe('Chat Image E2E with Mock Model Server', () => {
             },
           },
         },
-      });
+      })
 
       if (botResponse.status() === 200 || botResponse.status() === 201) {
-        const botData = await botResponse.json();
-        createdBotId = botData.id;
-        console.log(`Created bot: ${TEST_BOT_NAME} (ID: ${createdBotId})`);
+        const botData = await botResponse.json()
+        createdBotId = botData.id
+        console.log(`Created bot: ${TEST_BOT_NAME} (ID: ${createdBotId})`)
       } else {
-        console.error('Failed to create bot:', await botResponse.text());
+        console.error('Failed to create bot:', await botResponse.text())
       }
 
       // Step 3: Create Team using the bot
-      console.log('Creating test team...');
+      console.log('Creating test team...')
       const teamResponse = await request.post(`${API_BASE_URL}/api/teams`, {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -190,32 +190,32 @@ test.describe('Chat Image E2E with Mock Model Server', () => {
             collaborationModel: 'single',
           },
         },
-      });
+      })
 
       if (teamResponse.status() === 200 || teamResponse.status() === 201) {
-        const teamData = await teamResponse.json();
-        createdTeamId = teamData.id;
-        console.log(`Created team: ${TEST_TEAM_NAME} (ID: ${createdTeamId})`);
+        const teamData = await teamResponse.json()
+        createdTeamId = teamData.id
+        console.log(`Created team: ${TEST_TEAM_NAME} (ID: ${createdTeamId})`)
       } else {
-        console.error('Failed to create team:', await teamResponse.text());
+        console.error('Failed to create team:', await teamResponse.text())
       }
     } catch (error) {
-      console.error('Error creating test resources:', error);
+      console.error('Error creating test resources:', error)
     }
-  });
+  })
 
   test.afterAll(async ({ request }) => {
     // Cleanup created resources
-    console.log('Cleaning up test resources...');
+    console.log('Cleaning up test resources...')
 
     if (createdTeamId) {
       try {
         await request.delete(`${API_BASE_URL}/api/v1/namespaces/default/teams/${TEST_TEAM_NAME}`, {
           headers: { Authorization: `Bearer ${token}` },
-        });
-        console.log(`Deleted team: ${TEST_TEAM_NAME}`);
+        })
+        console.log(`Deleted team: ${TEST_TEAM_NAME}`)
       } catch (e) {
-        console.warn(`Failed to delete team: ${e}`);
+        console.warn(`Failed to delete team: ${e}`)
       }
     }
 
@@ -223,10 +223,10 @@ test.describe('Chat Image E2E with Mock Model Server', () => {
       try {
         await request.delete(`${API_BASE_URL}/api/v1/namespaces/default/bots/${TEST_BOT_NAME}`, {
           headers: { Authorization: `Bearer ${token}` },
-        });
-        console.log(`Deleted bot: ${TEST_BOT_NAME}`);
+        })
+        console.log(`Deleted bot: ${TEST_BOT_NAME}`)
       } catch (e) {
-        console.warn(`Failed to delete bot: ${e}`);
+        console.warn(`Failed to delete bot: ${e}`)
       }
     }
 
@@ -234,53 +234,53 @@ test.describe('Chat Image E2E with Mock Model Server', () => {
       try {
         await request.delete(`${API_BASE_URL}/api/models/${TEST_MODEL_NAME}`, {
           headers: { Authorization: `Bearer ${token}` },
-        });
-        console.log(`Deleted model: ${TEST_MODEL_NAME}`);
+        })
+        console.log(`Deleted model: ${TEST_MODEL_NAME}`)
       } catch (e) {
-        console.warn(`Failed to delete model: ${e}`);
+        console.warn(`Failed to delete model: ${e}`)
       }
     }
-  });
+  })
 
   test.beforeEach(async ({ request }) => {
     // Clear captured requests before each test
     try {
-      await request.post(`${MOCK_MODEL_SERVER_URL}/clear-requests`);
+      await request.post(`${MOCK_MODEL_SERVER_URL}/clear-requests`)
     } catch {
       // Server might not be running
     }
-  });
+  })
 
   test('should verify mock model server is running', async ({ request }) => {
-    const response = await request.get(`${MOCK_MODEL_SERVER_URL}/health`);
+    const response = await request.get(`${MOCK_MODEL_SERVER_URL}/health`)
 
     if (response.status() !== 200) {
-      test.skip();
-      return;
+      test.skip()
+      return
     }
 
-    const data = await response.json();
-    expect(data.status).toBe('ok');
-  });
+    const data = await response.json()
+    expect(data.status).toBe('ok')
+  })
 
   test('should send image_url to model when image is attached', async ({ request }) => {
     // Skip if mock server is not running
-    const healthCheck = await request.get(`${MOCK_MODEL_SERVER_URL}/health`).catch(() => null);
+    const healthCheck = await request.get(`${MOCK_MODEL_SERVER_URL}/health`).catch(() => null)
     if (!healthCheck || healthCheck.status() !== 200) {
-      console.warn('Mock model server not running, skipping test');
-      test.skip();
-      return;
+      console.warn('Mock model server not running, skipping test')
+      test.skip()
+      return
     }
 
     // Skip if team was not created
     if (!createdTeamId) {
-      console.warn('Test team was not created, skipping test');
-      test.skip();
-      return;
+      console.warn('Test team was not created, skipping test')
+      test.skip()
+      return
     }
 
     // Step 1: Upload image
-    const imageBuffer = fs.readFileSync(testImagePath);
+    const imageBuffer = fs.readFileSync(testImagePath)
 
     const uploadResponse = await request.post(`${API_BASE_URL}/api/attachments/upload`, {
       headers: {
@@ -293,16 +293,16 @@ test.describe('Chat Image E2E with Mock Model Server', () => {
           buffer: imageBuffer,
         },
       },
-    });
+    })
 
-    expect(uploadResponse.status()).toBe(200);
-    const uploadData = await uploadResponse.json();
-    const attachmentId = uploadData.id;
+    expect(uploadResponse.status()).toBe(200)
+    const uploadData = await uploadResponse.json()
+    const attachmentId = uploadData.id
 
-    console.log(`Uploaded attachment with ID: ${attachmentId}`);
+    console.log(`Uploaded attachment with ID: ${attachmentId}`)
 
     // Step 2: Send chat message with attachment using the created team
-    console.log(`Sending chat message with team ID: ${createdTeamId}`);
+    console.log(`Sending chat message with team ID: ${createdTeamId}`)
 
     const chatResponse = await request.post(`${API_BASE_URL}/api/chat/stream`, {
       headers: {
@@ -314,94 +314,94 @@ test.describe('Chat Image E2E with Mock Model Server', () => {
         team_id: createdTeamId,
         attachment_id: attachmentId,
       },
-    });
+    })
 
-    console.log(`Chat response status: ${chatResponse.status()}`);
+    console.log(`Chat response status: ${chatResponse.status()}`)
 
     // Wait for the request to be processed
-    await new Promise(resolve => setTimeout(resolve, 3000));
+    await new Promise(resolve => setTimeout(resolve, 3000))
 
     // Step 3: Check captured requests on mock server
-    const capturedResponse = await request.get(`${MOCK_MODEL_SERVER_URL}/captured-requests`);
-    expect(capturedResponse.status()).toBe(200);
+    const capturedResponse = await request.get(`${MOCK_MODEL_SERVER_URL}/captured-requests`)
+    expect(capturedResponse.status()).toBe(200)
 
-    const capturedRequests = (await capturedResponse.json()) as CapturedRequest[];
-    console.log(`Captured ${capturedRequests.length} requests`);
+    const capturedRequests = (await capturedResponse.json()) as CapturedRequest[]
+    console.log(`Captured ${capturedRequests.length} requests`)
 
     // Find the chat completion request
-    const chatRequest = capturedRequests.find(req => req.url?.includes('/chat/completions'));
+    const chatRequest = capturedRequests.find(req => req.url?.includes('/chat/completions'))
 
     if (!chatRequest) {
-      console.error('No chat completion request captured!');
-      console.log('Captured requests:', JSON.stringify(capturedRequests, null, 2));
-      expect(chatRequest).toBeDefined();
-      return;
+      console.error('No chat completion request captured!')
+      console.log('Captured requests:', JSON.stringify(capturedRequests, null, 2))
+      expect(chatRequest).toBeDefined()
+      return
     }
 
     // Step 4: Verify the request contains image_url
-    expect(chatRequest.body).toBeDefined();
-    expect(chatRequest.body.messages).toBeDefined();
+    expect(chatRequest.body).toBeDefined()
+    expect(chatRequest.body.messages).toBeDefined()
 
-    console.log('Captured messages:', JSON.stringify(chatRequest.body.messages, null, 2));
+    console.log('Captured messages:', JSON.stringify(chatRequest.body.messages, null, 2))
 
     // Find user message with image
     const userMessage = chatRequest.body.messages.find(
       msg => msg.role === 'user' && Array.isArray(msg.content)
-    );
+    )
 
-    expect(userMessage).toBeDefined();
+    expect(userMessage).toBeDefined()
 
     if (userMessage && Array.isArray(userMessage.content)) {
       // Verify text content exists
-      const textContent = userMessage.content.find(c => c.type === 'text');
-      expect(textContent).toBeDefined();
-      expect(textContent?.text).toContain('What is in this image?');
+      const textContent = userMessage.content.find(c => c.type === 'text')
+      expect(textContent).toBeDefined()
+      expect(textContent?.text).toContain('What is in this image?')
 
       // Verify image_url content exists
-      const imageContent = userMessage.content.find(c => c.type === 'image_url');
-      expect(imageContent).toBeDefined();
-      expect(imageContent?.image_url).toBeDefined();
-      expect(imageContent?.image_url?.url).toMatch(/^data:image\/png;base64,/);
+      const imageContent = userMessage.content.find(c => c.type === 'image_url')
+      expect(imageContent).toBeDefined()
+      expect(imageContent?.image_url).toBeDefined()
+      expect(imageContent?.image_url?.url).toMatch(/^data:image\/png;base64,/)
 
-      console.log('✅ Image URL format verified successfully!');
-      console.log(`   Prefix: ${imageContent?.image_url?.url.substring(0, 50)}...`);
+      console.log('✅ Image URL format verified successfully!')
+      console.log(`   Prefix: ${imageContent?.image_url?.url.substring(0, 50)}...`)
     }
-  });
-});
+  })
+})
 
 test.describe('Image URL Format Unit Tests', () => {
   test('should validate PNG image data URL format', () => {
     const pngDataUrl =
-      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAAEklEQVR4nGP4z8CAB+GTG8HSALfKY52fTcuYAAAAAElFTkSuQmCC';
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAAEklEQVR4nGP4z8CAB+GTG8HSALfKY52fTcuYAAAAAElFTkSuQmCC'
 
     // Verify format
-    expect(pngDataUrl).toMatch(/^data:image\/png;base64,/);
+    expect(pngDataUrl).toMatch(/^data:image\/png;base64,/)
 
     // Extract and verify base64
-    const base64 = pngDataUrl.split(',')[1];
-    const buffer = Buffer.from(base64, 'base64');
+    const base64 = pngDataUrl.split(',')[1]
+    const buffer = Buffer.from(base64, 'base64')
 
     // PNG signature: 89 50 4E 47 0D 0A 1A 0A
-    expect(buffer[0]).toBe(0x89);
-    expect(buffer[1]).toBe(0x50);
-    expect(buffer[2]).toBe(0x4e);
-    expect(buffer[3]).toBe(0x47);
-  });
+    expect(buffer[0]).toBe(0x89)
+    expect(buffer[1]).toBe(0x50)
+    expect(buffer[2]).toBe(0x4e)
+    expect(buffer[3]).toBe(0x47)
+  })
 
   test('should validate JPEG image data URL format', () => {
     // Minimal JPEG header
-    const jpegDataUrl = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/';
+    const jpegDataUrl = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/'
 
-    expect(jpegDataUrl).toMatch(/^data:image\/jpeg;base64,/);
+    expect(jpegDataUrl).toMatch(/^data:image\/jpeg;base64,/)
 
-    const base64 = jpegDataUrl.split(',')[1];
-    const buffer = Buffer.from(base64, 'base64');
+    const base64 = jpegDataUrl.split(',')[1]
+    const buffer = Buffer.from(base64, 'base64')
 
     // JPEG signature: FF D8 FF
-    expect(buffer[0]).toBe(0xff);
-    expect(buffer[1]).toBe(0xd8);
-    expect(buffer[2]).toBe(0xff);
-  });
+    expect(buffer[0]).toBe(0xff)
+    expect(buffer[1]).toBe(0xd8)
+    expect(buffer[2]).toBe(0xff)
+  })
 
   test('should validate vision message structure', () => {
     const visionMessage = {
@@ -415,22 +415,22 @@ test.describe('Image URL Format Unit Tests', () => {
           },
         },
       ],
-    };
+    }
 
     // Validate structure
-    expect(visionMessage.role).toBe('user');
-    expect(Array.isArray(visionMessage.content)).toBe(true);
+    expect(visionMessage.role).toBe('user')
+    expect(Array.isArray(visionMessage.content)).toBe(true)
 
     // Find text content
-    const textContent = visionMessage.content.find(c => c.type === 'text');
-    expect(textContent).toBeDefined();
-    expect(textContent?.text).toBe('Describe this image');
+    const textContent = visionMessage.content.find(c => c.type === 'text')
+    expect(textContent).toBeDefined()
+    expect(textContent?.text).toBe('Describe this image')
 
     // Find image content
-    const imageContent = visionMessage.content.find(c => c.type === 'image_url');
-    expect(imageContent).toBeDefined();
-    expect(imageContent?.image_url?.url).toMatch(/^data:image\//);
-  });
+    const imageContent = visionMessage.content.find(c => c.type === 'image_url')
+    expect(imageContent).toBeDefined()
+    expect(imageContent?.image_url?.url).toMatch(/^data:image\//)
+  })
 
   test('should reject invalid image URL formats', () => {
     const invalidFormats = [
@@ -438,10 +438,10 @@ test.describe('Image URL Format Unit Tests', () => {
       'data:text/plain;base64,abc123', // Wrong MIME type
       'data:image/png,abc123', // Missing base64 encoding
       'abc123', // Not a data URL at all
-    ];
+    ]
 
     for (const url of invalidFormats) {
-      expect(url).not.toMatch(/^data:image\/(png|jpeg|gif|webp);base64,/);
+      expect(url).not.toMatch(/^data:image\/(png|jpeg|gif|webp);base64,/)
     }
-  });
-});
+  })
+})

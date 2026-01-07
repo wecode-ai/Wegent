@@ -2,25 +2,25 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState } from 'react';
-import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { Checkbox } from '@/components/ui/checkbox';
-import type { ClarificationQuestion as ClarificationQuestionType } from '@/types/api';
-import { useTranslation } from '@/hooks/useTranslation';
-import { FiEdit3 } from 'react-icons/fi';
+import { useState } from 'react'
+import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { Checkbox } from '@/components/ui/checkbox'
+import type { ClarificationQuestion as ClarificationQuestionType } from '@/types/api'
+import { useTranslation } from '@/hooks/useTranslation'
+import { FiEdit3 } from 'react-icons/fi'
 
 interface ClarificationQuestionProps {
-  question: ClarificationQuestionType;
+  question: ClarificationQuestionType
   answer: {
-    answer_type: 'choice' | 'custom';
-    value: string | string[];
-  } | null;
-  onChange: (answer: { answer_type: 'choice' | 'custom'; value: string | string[] }) => void;
-  readonly?: boolean;
+    answer_type: 'choice' | 'custom'
+    value: string | string[]
+  } | null
+  onChange: (answer: { answer_type: 'choice' | 'custom'; value: string | string[] }) => void
+  readonly?: boolean
 }
 
 export default function ClarificationQuestion({
@@ -29,20 +29,20 @@ export default function ClarificationQuestion({
   onChange,
   readonly = false,
 }: ClarificationQuestionProps) {
-  const { t } = useTranslation();
-  const [isCustomMode, setIsCustomMode] = useState(answer?.answer_type === 'custom');
+  const { t } = useTranslation()
+  const [isCustomMode, setIsCustomMode] = useState(answer?.answer_type === 'custom')
 
   const handleToggleCustomMode = () => {
-    if (readonly) return;
-    const newCustomMode = !isCustomMode;
-    setIsCustomMode(newCustomMode);
+    if (readonly) return
+    const newCustomMode = !isCustomMode
+    setIsCustomMode(newCustomMode)
 
     if (newCustomMode) {
       // Switch to custom mode, clear current selection
-      onChange({ answer_type: 'custom', value: '' });
+      onChange({ answer_type: 'custom', value: '' })
     } else {
       // Switch back to choice mode, set default selected option
-      const defaultOption = question.options?.find(opt => opt.recommended);
+      const defaultOption = question.options?.find(opt => opt.recommended)
       if (defaultOption) {
         onChange({
           answer_type: 'choice',
@@ -50,15 +50,15 @@ export default function ClarificationQuestion({
             question.question_type === 'multiple_choice'
               ? [defaultOption.value]
               : defaultOption.value,
-        });
+        })
       } else {
         onChange({
           answer_type: 'choice',
           value: question.question_type === 'multiple_choice' ? [] : '',
-        });
+        })
       }
     }
-  };
+  }
 
   const renderChoices = () => {
     if (question.question_type === 'single_choice') {
@@ -90,19 +90,19 @@ export default function ClarificationQuestion({
             </div>
           ))}
         </RadioGroup>
-      );
+      )
     }
 
     if (question.question_type === 'multiple_choice') {
       const selectedValues =
-        answer?.answer_type === 'choice' && Array.isArray(answer.value) ? answer.value : [];
+        answer?.answer_type === 'choice' && Array.isArray(answer.value) ? answer.value : []
 
       const handleCheckboxChange = (optionValue: string, checked: boolean) => {
         const newValues = checked
           ? [...selectedValues, optionValue]
-          : selectedValues.filter(v => v !== optionValue);
-        onChange({ answer_type: 'choice', value: newValues });
-      };
+          : selectedValues.filter(v => v !== optionValue)
+        onChange({ answer_type: 'choice', value: newValues })
+      }
 
       return (
         <div className="flex flex-col gap-2">
@@ -128,11 +128,11 @@ export default function ClarificationQuestion({
             </div>
           ))}
         </div>
-      );
+      )
     }
 
-    return null;
-  };
+    return null
+  }
 
   const renderCustomInput = () => {
     return (
@@ -146,8 +146,8 @@ export default function ClarificationQuestion({
         rows={3}
         className="w-full"
       />
-    );
-  };
+    )
+  }
 
   return (
     <div className="space-y-3">
@@ -188,5 +188,5 @@ export default function ClarificationQuestion({
         </div>
       )}
     </div>
-  );
+  )
 }

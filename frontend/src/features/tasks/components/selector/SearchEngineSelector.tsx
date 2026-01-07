@@ -2,31 +2,31 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useEffect, useMemo } from 'react';
-import { Globe, Check, ChevronDown } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { useTranslation } from '@/hooks/useTranslation';
+import React, { useEffect, useMemo } from 'react'
+import { Globe, Check, ChevronDown } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { useTranslation } from '@/hooks/useTranslation'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown';
-import { cn } from '@/lib/utils';
-import { SearchEngine } from '@/apis/chat';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+} from '@/components/ui/dropdown'
+import { cn } from '@/lib/utils'
+import { SearchEngine } from '@/apis/chat'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
 interface SearchEngineSelectorProps {
-  enabled: boolean;
-  onToggle: (enabled: boolean) => void;
-  selectedEngine: string | null;
-  onSelectEngine: (engine: string) => void;
-  disabled?: boolean;
-  engines: SearchEngine[];
+  enabled: boolean
+  onToggle: (enabled: boolean) => void
+  selectedEngine: string | null
+  onSelectEngine: (engine: string) => void
+  disabled?: boolean
+  engines: SearchEngine[]
   /** When true, hide engine name and show only icon (for responsive collapse) */
-  compact?: boolean;
+  compact?: boolean
 }
 
 export default function SearchEngineSelector({
@@ -37,34 +37,34 @@ export default function SearchEngineSelector({
   disabled = false,
   engines,
 }: SearchEngineSelectorProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
 
   // Initialize selected engine if not set and engines are available
   useEffect(() => {
     if (!selectedEngine && engines.length > 0) {
-      onSelectEngine(engines[0].name);
+      onSelectEngine(engines[0].name)
     }
-  }, [engines, selectedEngine, onSelectEngine]);
+  }, [engines, selectedEngine, onSelectEngine])
 
   const currentEngine = useMemo(() => {
-    return engines.find(e => e.name === selectedEngine) || engines[0];
-  }, [engines, selectedEngine]);
+    return engines.find(e => e.name === selectedEngine) || engines[0]
+  }, [engines, selectedEngine])
 
   // If no engines defined or only one engine defined (and no need for selection),
   // revert to simple toggle behavior appearance (but still wrapped in this component for consistency if needed)
   // However, requirements say "let user select search engine", so we provide the UI.
 
   const handleToggle = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onToggle(!enabled);
-  };
+    e.stopPropagation()
+    onToggle(!enabled)
+  }
 
   const handleSelect = (engineId: string) => {
-    onSelectEngine(engineId);
+    onSelectEngine(engineId)
     if (!enabled) {
-      onToggle(true);
+      onToggle(true)
     }
-  };
+  }
 
   if (engines.length === 0) {
     // Fallback if no engines configured but feature is enabled (shouldn't happen based on env logic)
@@ -92,7 +92,7 @@ export default function SearchEngineSelector({
           </TooltipContent>
         </Tooltip>
       </TooltipProvider>
-    );
+    )
   }
 
   return (
@@ -155,5 +155,5 @@ export default function SearchEngineSelector({
         </DropdownMenu>
       </div>
     </TooltipProvider>
-  );
+  )
 }

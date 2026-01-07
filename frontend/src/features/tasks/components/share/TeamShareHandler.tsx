@@ -2,23 +2,23 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useEffect, useState } from 'react';
-import { useSearchParams, useRouter } from 'next/navigation';
-import { Button } from '@/components/ui/button';
-import { useToast } from '@/hooks/use-toast';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { teamApis, TeamShareInfoResponse } from '@/apis/team';
-import { Team } from '@/types/api';
-import { useTranslation } from '@/hooks/useTranslation';
-import { useUser } from '@/features/common/UserContext';
-import Modal from '@/features/common/Modal';
+import React, { useEffect, useState } from 'react'
+import { useSearchParams, useRouter } from 'next/navigation'
+import { Button } from '@/components/ui/button'
+import { useToast } from '@/hooks/use-toast'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { teamApis, TeamShareInfoResponse } from '@/apis/team'
+import { Team } from '@/types/api'
+import { useTranslation } from '@/hooks/useTranslation'
+import { useUser } from '@/features/common/UserContext'
+import Modal from '@/features/common/Modal'
 
 interface TeamShareHandlerProps {
-  teams: Team[];
-  onTeamSelected: (team: Team) => void;
-  onRefreshTeams: () => Promise<Team[]>;
+  teams: Team[]
+  onTeamSelected: (team: Team) => void
+  onRefreshTeams: () => Promise<Team[]>
 }
 
 /**
@@ -29,118 +29,118 @@ export default function TeamShareHandler({
   onTeamSelected,
   onRefreshTeams,
 }: TeamShareHandlerProps) {
-  const { t } = useTranslation();
-  const { toast } = useToast();
-  const { user } = useUser();
-  const searchParams = useSearchParams();
-  const router = useRouter();
+  const { t } = useTranslation()
+  const { toast } = useToast()
+  const { user } = useUser()
+  const searchParams = useSearchParams()
+  const router = useRouter()
 
-  const [shareInfo, setShareInfo] = useState<TeamShareInfoResponse | null>(null);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [_isLoading, setIsLoading] = useState(false);
-  const [isJoining, setIsJoining] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [shareInfo, setShareInfo] = useState<TeamShareInfoResponse | null>(null)
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [_isLoading, setIsLoading] = useState(false)
+  const [isJoining, setIsJoining] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  const isTeamAlreadyJoined = shareInfo ? teams.some(team => team.id === shareInfo.team_id) : false;
-  const isSelfShare = shareInfo && user && shareInfo.user_id === user.id;
+  const isTeamAlreadyJoined = shareInfo ? teams.some(team => team.id === shareInfo.team_id) : false
+  const isSelfShare = shareInfo && user && shareInfo.user_id === user.id
 
   const cleanupUrlParams = React.useCallback(() => {
-    const url = new URL(window.location.href);
-    url.searchParams.delete('teamShare');
-    router.replace(url.pathname + url.search);
-  }, [router]);
+    const url = new URL(window.location.href)
+    url.searchParams.delete('teamShare')
+    router.replace(url.pathname + url.search)
+  }, [router])
 
   useEffect(() => {
-    const teamShareToken = searchParams.get('teamShare');
+    const teamShareToken = searchParams.get('teamShare')
 
     if (!teamShareToken) {
-      return;
+      return
     }
 
     const fetchShareInfo = async () => {
-      setIsLoading(true);
+      setIsLoading(true)
       try {
-        const info = await teamApis.getTeamShareInfo(encodeURIComponent(teamShareToken));
-        setShareInfo(info);
-        setIsModalOpen(true);
+        const info = await teamApis.getTeamShareInfo(encodeURIComponent(teamShareToken))
+        setShareInfo(info)
+        setIsModalOpen(true)
       } catch {
-        console.error('Failed to fetch team share info:', error);
+        console.error('Failed to fetch team share info:', error)
         toast({
           variant: 'destructive',
           title: t('common:teams.share.fetch_info_failed'),
-        });
-        cleanupUrlParams();
+        })
+        cleanupUrlParams()
       } finally {
-        setIsLoading(false);
+        setIsLoading(false)
       }
-    };
+    }
 
-    fetchShareInfo();
-  }, [searchParams, toast, t, cleanupUrlParams, error]);
+    fetchShareInfo()
+  }, [searchParams, toast, t, cleanupUrlParams, error])
 
   const handleConfirmJoin = async () => {
-    if (!shareInfo) return;
+    if (!shareInfo) return
 
     if (isSelfShare) {
-      handleSelfShare();
-      return;
+      handleSelfShare()
+      return
     }
 
     if (isTeamAlreadyJoined) {
       // Find the existing team and select it
-      const existingTeam = teams.find((team: Team) => team.id === shareInfo?.team_id);
+      const existingTeam = teams.find((team: Team) => team.id === shareInfo?.team_id)
       if (existingTeam) {
-        onTeamSelected(existingTeam);
+        onTeamSelected(existingTeam)
       }
-      handleCloseModal();
-      return;
+      handleCloseModal()
+      return
     }
 
-    setIsJoining(true);
-    setError(null);
+    setIsJoining(true)
+    setError(null)
     try {
-      await teamApis.joinSharedTeam({ share_token: searchParams.get('teamShare')! });
+      await teamApis.joinSharedTeam({ share_token: searchParams.get('teamShare')! })
 
       toast({
         title: t('common:teams.share.join_success', { teamName: shareInfo?.team_name || '' }),
-      });
+      })
 
       // First refresh team list, wait for refresh to complete and get latest team list
-      const updatedTeams = await onRefreshTeams();
+      const updatedTeams = await onRefreshTeams()
 
       // Find the newly joined team from the refreshed team list and select it
-      const newTeam = updatedTeams.find(team => team.id === shareInfo.team_id);
+      const newTeam = updatedTeams.find(team => team.id === shareInfo.team_id)
       if (newTeam) {
-        onTeamSelected(newTeam);
+        onTeamSelected(newTeam)
       }
 
-      handleCloseModal();
+      handleCloseModal()
     } catch (err) {
-      console.error('Failed to join shared team:', err);
-      const errorMessage = (err as Error)?.message || t('common:teams.share.join_failed');
+      console.error('Failed to join shared team:', err)
+      const errorMessage = (err as Error)?.message || t('common:teams.share.join_failed')
       toast({
         variant: 'destructive',
         title: errorMessage,
-      });
-      setError(errorMessage);
+      })
+      setError(errorMessage)
     } finally {
-      setIsJoining(false);
+      setIsJoining(false)
     }
-  };
+  }
 
   const handleCloseModal = () => {
-    setIsModalOpen(false);
-    setShareInfo(null);
-    setError(null);
-    cleanupUrlParams();
-  };
+    setIsModalOpen(false)
+    setShareInfo(null)
+    setError(null)
+    cleanupUrlParams()
+  }
 
   const handleSelfShare = () => {
-    handleCloseModal();
-  };
+    handleCloseModal()
+  }
 
   const renderMessageWithHighlight = (messageKey: string, teamName: string, userName?: string) => {
-    const highlightClass = 'text-lg font-semibold text-blue-600';
+    const highlightClass = 'text-lg font-semibold text-blue-600'
 
     const messageRenderers = {
       'teams.share.self_share_message': () => (
@@ -172,13 +172,13 @@ export default function TeamShareHandler({
           {t('common:teams.share.join_description_suffix')}
         </span>
       ),
-    };
+    }
 
-    const renderer = messageRenderers[messageKey as keyof typeof messageRenderers];
-    return renderer ? renderer() : t(messageKey, { teamName, userName });
-  };
+    const renderer = messageRenderers[messageKey as keyof typeof messageRenderers]
+    return renderer ? renderer() : t(messageKey, { teamName, userName })
+  }
 
-  if (!shareInfo || !isModalOpen) return null;
+  if (!shareInfo || !isModalOpen) return null
 
   return (
     <Modal
@@ -256,5 +256,5 @@ export default function TeamShareHandler({
         </Button>
       </div>
     </Modal>
-  );
+  )
 }

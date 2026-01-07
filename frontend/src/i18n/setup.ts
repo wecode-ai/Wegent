@@ -2,15 +2,15 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import i18next from 'i18next';
-import { initReactI18next } from 'react-i18next';
+import i18next from 'i18next'
+import { initReactI18next } from 'react-i18next'
 
 // Supported languages list
-export const supportedLanguages = ['en', 'zh-CN'];
+export const supportedLanguages = ['en', 'zh-CN']
 
 // Function to dynamically import translation resources
 async function loadTranslations() {
-  const resources: Record<string, Record<string, unknown>> = {};
+  const resources: Record<string, Record<string, unknown>> = {}
 
   // Namespace list
   const namespaces = [
@@ -26,29 +26,29 @@ async function loadTranslations() {
     'knowledge',
     'shared-task',
     'promptTune',
-  ];
+  ]
 
   for (const lng of supportedLanguages) {
-    resources[lng] = {};
+    resources[lng] = {}
     for (const ns of namespaces) {
       try {
         // Dynamically import JSON file with error handling
-        const translationModule = await import(`./locales/${lng}/${ns}.json`);
-        resources[lng][ns] = translationModule.default;
+        const translationModule = await import(`./locales/${lng}/${ns}.json`)
+        resources[lng][ns] = translationModule.default
       } catch (error) {
         // If file doesn't exist, use empty object
-        console.warn(`Translation file not found: ./locales/${lng}/${ns}.json`, error);
-        resources[lng][ns] = {};
+        console.warn(`Translation file not found: ./locales/${lng}/${ns}.json`, error)
+        resources[lng][ns] = {}
       }
     }
   }
 
-  return resources;
+  return resources
 }
 
 // Initialize i18next
 export async function initI18n() {
-  const resources = await loadTranslations();
+  const resources = await loadTranslations()
 
   await i18next.use(initReactI18next).init({
     lng: process.env.I18N_LNG || 'en', // default language is English
@@ -76,9 +76,9 @@ export async function initI18n() {
       'shared-task',
       'promptTune',
     ],
-  });
+  })
 
-  return i18next;
+  return i18next
 }
 
-export default i18next;
+export default i18next
