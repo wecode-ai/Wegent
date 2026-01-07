@@ -207,7 +207,7 @@ class Settings(BaseSettings):
     # Chat Shell mode configuration
     # "package" - use local app/chat_shell module directly (default, single process)
     # "http" - call external Chat Shell service via HTTP/SSE
-    CHAT_SHELL_MODE: str = "package"
+    CHAT_SHELL_MODE: str = "http"
     # Chat Shell service URL (only used when CHAT_SHELL_MODE="http")
     CHAT_SHELL_URL: str = "http://localhost:8100"
     # Chat Shell service authentication token (only used when CHAT_SHELL_MODE="http")

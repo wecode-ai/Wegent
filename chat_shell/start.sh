@@ -29,7 +29,7 @@ NC='\033[0m' # No Color
 # Default configuration
 DEFAULT_PORT=8100
 DEFAULT_HOST="0.0.0.0"
-DEFAULT_BACKEND_URL="http://localhost:9000/api/internal"
+DEFAULT_BACKEND_URL="http://localhost:8000/api/internal"
 DEFAULT_BACKEND_TOKEN="chat-shell-token"
 
 PORT=$DEFAULT_PORT
@@ -62,14 +62,14 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --port PORT              Chat Shell server port (default: 8100)"
             echo "  --host HOST              Chat Shell server host (default: 0.0.0.0)"
-            echo "  --backend-url URL        Backend internal API URL (default: http://localhost:9000/api/internal)"
+            echo "  --backend-url URL        Backend internal API URL (default: http://localhost:8000/api/internal)"
             echo "  --backend-token TOKEN    Backend service token (default: chat-shell-token)"
             echo "  -h, --help               Show this help message"
             echo ""
             echo "Examples:"
             echo "  $0                                    # Use default configuration"
             echo "  $0 --port 8200                        # Use custom port"
-            echo "  $0 --backend-url http://backend:9000/api/internal"
+            echo "  $0 --backend-url http://backend:8000/api/internal"
             exit 0
             ;;
         *)
