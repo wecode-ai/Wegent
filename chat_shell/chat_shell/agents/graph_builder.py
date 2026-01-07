@@ -420,6 +420,9 @@ class LangGraphAgentBuilder:
                                 "data": event.get("data", {}),
                             },
                         )
+                        # Yield empty string to trigger _emit_pending_events() in chat_service
+                        # This ensures tool events are sent immediately instead of being buffered
+                        yield ""
 
                 elif kind == "on_tool_end":
                     tool_name = event.get("name", "unknown")
@@ -460,6 +463,9 @@ class LangGraphAgentBuilder:
                                 "data": tool_data,
                             },
                         )
+                        # Yield empty string to trigger _emit_pending_events() in chat_service
+                        # This ensures tool events are sent immediately instead of being buffered
+                        yield ""
 
             # If no content was streamed but we have final content, yield it
             # This handles non-streaming models

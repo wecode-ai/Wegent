@@ -199,11 +199,27 @@ def _process_tool_output(
     Returns:
         Tuple of (title, sources)
     """
+    import json
+
     title = f"Tool completed: {tool_name}"
     sources: list[dict[str, Any]] = []
 
+    # Extract sources from knowledge_base_search results
+    if tool_name == "knowledge_base_search":
+        if isinstance(tool_output, str):
+            try:
+                parsed = json.loads(tool_output)
+                if isinstance(parsed, dict) and "sources" in parsed:
+                    kb_sources = parsed.get("sources", [])
+                    if isinstance(kb_sources, list):
+                        sources.extend(kb_sources)
+                    result_count = parsed.get("count", 0)
+                    title = f"检索完成，找到 {result_count} 条结果"
+            except json.JSONDecodeError:
+                pass
+
     # Extract sources from web_search results
-    if tool_name == "web_search":
+    elif tool_name == "web_search":
         if isinstance(tool_output, str):
             # Try to extract URLs from the output
             import re

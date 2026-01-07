@@ -383,10 +383,12 @@ class ToolCallRequired(BaseModel):
 
 
 class SourceItem(BaseModel):
-    """Source reference item."""
+    """Source reference item for knowledge base citations."""
 
-    title: str = Field(..., description="Source title")
-    url: Optional[str] = Field(None, description="Source URL")
+    index: Optional[int] = Field(None, description="Source index number (1, 2, 3...)")
+    title: str = Field(..., description="Source title/document name")
+    kb_id: Optional[int] = Field(None, description="Knowledge base ID")
+    url: Optional[str] = Field(None, description="Source URL (for web sources)")
     snippet: Optional[str] = Field(None, description="Content snippet")
 
 
