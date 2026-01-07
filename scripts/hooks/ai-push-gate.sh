@@ -263,7 +263,8 @@ if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
         else
             echo -e "   Running pytest..."
             if [ -d "tests" ]; then
-                pytest tests/ --tb=short -q > "$TEMP_DIR/backend_pytest.log" 2>&1
+                # Limit parallel workers to 4 to reduce memory usage
+                pytest tests/ --tb=short -q -n4 > "$TEMP_DIR/backend_pytest.log" 2>&1
                 PYTEST_EXIT=$?
                 if [ $PYTEST_EXIT -eq 0 ]; then
                     echo -e "   ${GREEN}✅ Pytest: PASSED${NC}"
@@ -344,7 +345,9 @@ if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
         else
             echo -e "   Running pytest..."
             if [ -d "tests" ]; then
-                uv run pytest tests/ --tb=short -q > "$TEMP_DIR/backend_pytest.log" 2>&1
+                # Use -p no:randomly to disable random ordering, -n4 to limit parallel workers to 4
+                # This reduces memory usage significantly in CI environments while maintaining some parallelism
+                uv run pytest tests/ --tb=short -q -p no:randomly -n4 > "$TEMP_DIR/backend_pytest.log" 2>&1
                 PYTEST_EXIT=$?
                 if [ $PYTEST_EXIT -eq 0 ]; then
                     echo -e "   ${GREEN}✅ Pytest: PASSED${NC}"
@@ -432,7 +435,8 @@ if [ "$EXECUTOR_COUNT" -gt 0 ] 2>/dev/null; then
     else
         echo -e "   Running pytest..."
         if [ -d "tests" ]; then
-            uv run pytest tests/ --tb=short -q > "$TEMP_DIR/executor_pytest.log" 2>&1
+            # Limit parallel workers to 4 to reduce memory usage
+            uv run pytest tests/ --tb=short -q -n4 > "$TEMP_DIR/executor_pytest.log" 2>&1
             PYTEST_EXIT=$?
             if [ $PYTEST_EXIT -eq 0 ]; then
                 echo -e "   ${GREEN}✅ Pytest: PASSED${NC}"
@@ -466,7 +470,8 @@ if [ "$EXECUTOR_MGR_COUNT" -gt 0 ] 2>/dev/null; then
     else
         echo -e "   Running pytest..."
         if [ -d "tests" ]; then
-            uv run pytest tests/ --tb=short -q > "$TEMP_DIR/exec_mgr_pytest.log" 2>&1
+            # Limit parallel workers to 4 to reduce memory usage
+            uv run pytest tests/ --tb=short -q -n4 > "$TEMP_DIR/exec_mgr_pytest.log" 2>&1
             PYTEST_EXIT=$?
             # Check if tests passed (look for "passed" in output and no "failed")
             if grep -q "passed" "$TEMP_DIR/exec_mgr_pytest.log" && ! grep -q "[0-9]* failed" "$TEMP_DIR/exec_mgr_pytest.log"; then
