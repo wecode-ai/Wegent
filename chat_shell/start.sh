@@ -29,7 +29,7 @@ NC='\033[0m' # No Color
 # Default configuration
 DEFAULT_PORT=8100
 DEFAULT_HOST="0.0.0.0"
-DEFAULT_BACKEND_URL="http://localhost:8000/api/internal"
+DEFAULT_BACKEND_URL="http://localhost:8000"
 DEFAULT_BACKEND_TOKEN="chat-shell-token"
 
 PORT=$DEFAULT_PORT
@@ -198,7 +198,7 @@ echo -e "${BLUE}[4/4] Starting Chat Shell server...${NC}"
 # Set environment variables
 export CHAT_SHELL_MODE="http"
 export CHAT_SHELL_STORAGE_TYPE="remote"
-export CHAT_SHELL_REMOTE_STORAGE_URL="$BACKEND_URL"
+export CHAT_SHELL_REMOTE_STORAGE_URL="$BACKEND_URL/api/internal"
 export CHAT_SHELL_REMOTE_STORAGE_TOKEN="$BACKEND_TOKEN"
 
 # Pass web search configuration if set

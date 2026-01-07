@@ -45,6 +45,9 @@ env/
 logs/
 *.log
 
+# Start script runtime files
+.pids/
+
 # Coverage reports
 .coverage
 .coverage.*
