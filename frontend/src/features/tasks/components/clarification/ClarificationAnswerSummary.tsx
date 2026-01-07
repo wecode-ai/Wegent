@@ -2,33 +2,33 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState } from 'react';
-import { Code, FileText } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import type { ClarificationAnswerPayload } from '@/types/api';
-import { useTranslation } from '@/hooks/useTranslation';
+import { useState } from 'react'
+import { Code, FileText } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import type { ClarificationAnswerPayload } from '@/types/api'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface ClarificationAnswerSummaryProps {
-  data: ClarificationAnswerPayload;
+  data: ClarificationAnswerPayload
   /** Raw markdown content for display when toggling to raw view */
-  rawContent?: string;
+  rawContent?: string
 }
 
 export default function ClarificationAnswerSummary({
   data,
   rawContent,
 }: ClarificationAnswerSummaryProps) {
-  const { t } = useTranslation();
-  const [showRawContent, setShowRawContent] = useState(false);
+  const { t } = useTranslation()
+  const [showRawContent, setShowRawContent] = useState(false)
 
   if (!data.answers || data.answers.length === 0) {
     return (
       <div className="text-sm text-text-secondary">
         <div>✓ {t('chat:clarification.answers_submitted') || 'Answers submitted'}</div>
       </div>
-    );
+    )
   }
 
   return (
@@ -106,5 +106,5 @@ export default function ClarificationAnswerSummary({
         </div>
       )}
     </div>
-  );
+  )
 }

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useState, useRef, useMemo, useCallback, useEffect } from 'react';
+import { useState, useRef, useMemo, useCallback, useEffect } from 'react'
 import type {
   Team,
   GitRepoInfo,
@@ -11,107 +11,107 @@ import type {
   ChatSloganItem,
   ChatTipItem,
   MultiAttachmentUploadState,
-} from '@/types/api';
-import type { ContextItem } from '@/types/context';
-import type { Model } from '../selector/ModelSelector';
-import { useMultiAttachment } from '@/hooks/useMultiAttachment';
-import { userApis } from '@/apis/user';
-import { correctionApis } from '@/apis/correction';
-import { getLastTeamIdByMode, saveLastTeamByMode, saveLastRepo } from '@/utils/userPreferences';
-import { useTaskContext } from '../../contexts/taskContext';
-import { useMediaQuery } from '@/hooks/useMediaQuery';
+} from '@/types/api'
+import type { ContextItem } from '@/types/context'
+import type { Model } from '../selector/ModelSelector'
+import { useMultiAttachment } from '@/hooks/useMultiAttachment'
+import { userApis } from '@/apis/user'
+import { correctionApis } from '@/apis/correction'
+import { getLastTeamIdByMode, saveLastTeamByMode, saveLastRepo } from '@/utils/userPreferences'
+import { useTaskContext } from '../../contexts/taskContext'
+import { useMediaQuery } from '@/hooks/useMediaQuery'
 
-const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18;
+const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18
 
 export interface UseChatAreaStateOptions {
-  teams: Team[];
-  taskType: 'chat' | 'code';
-  selectedTeamForNewTask?: Team | null;
+  teams: Team[]
+  taskType: 'chat' | 'code'
+  selectedTeamForNewTask?: Team | null
 }
 
 export interface ChatAreaState {
   // Team state
-  selectedTeam: Team | null;
-  setSelectedTeam: (team: Team | null) => void;
-  handleTeamChange: (team: Team | null) => void;
+  selectedTeam: Team | null
+  setSelectedTeam: (team: Team | null) => void
+  handleTeamChange: (team: Team | null) => void
 
   // Repository state
-  selectedRepo: GitRepoInfo | null;
-  setSelectedRepo: (repo: GitRepoInfo | null) => void;
+  selectedRepo: GitRepoInfo | null
+  setSelectedRepo: (repo: GitRepoInfo | null) => void
 
   // Branch state
-  selectedBranch: GitBranch | null;
-  setSelectedBranch: (branch: GitBranch | null) => void;
+  selectedBranch: GitBranch | null
+  setSelectedBranch: (branch: GitBranch | null) => void
 
   // Model state
-  selectedModel: Model | null;
-  setSelectedModel: (model: Model | null) => void;
-  forceOverride: boolean;
-  setForceOverride: (value: boolean) => void;
+  selectedModel: Model | null
+  setSelectedModel: (model: Model | null) => void
+  forceOverride: boolean
+  setForceOverride: (value: boolean) => void
 
   // Input state
-  taskInputMessage: string;
-  setTaskInputMessage: (message: string) => void;
+  taskInputMessage: string
+  setTaskInputMessage: (message: string) => void
 
   // Loading state
-  isLoading: boolean;
-  setIsLoading: (value: boolean) => void;
+  isLoading: boolean
+  setIsLoading: (value: boolean) => void
 
   // Deep thinking state
-  enableDeepThinking: boolean;
-  setEnableDeepThinking: (value: boolean) => void;
+  enableDeepThinking: boolean
+  setEnableDeepThinking: (value: boolean) => void
 
   // Clarification state
-  enableClarification: boolean;
-  setEnableClarification: (value: boolean) => void;
+  enableClarification: boolean
+  setEnableClarification: (value: boolean) => void
 
   // Correction mode state
-  enableCorrectionMode: boolean;
-  correctionModelId: string | null;
-  correctionModelName: string | null;
-  enableCorrectionWebSearch: boolean;
-  handleCorrectionModeToggle: (enabled: boolean, modelId?: string, modelName?: string) => void;
+  enableCorrectionMode: boolean
+  correctionModelId: string | null
+  correctionModelName: string | null
+  enableCorrectionWebSearch: boolean
+  handleCorrectionModeToggle: (enabled: boolean, modelId?: string, modelName?: string) => void
 
   // External API params
-  externalApiParams: Record<string, string>;
-  handleExternalApiParamsChange: (params: Record<string, string>) => void;
-  appMode: string | undefined;
-  handleAppModeChange: (mode: string | undefined) => void;
+  externalApiParams: Record<string, string>
+  handleExternalApiParamsChange: (params: Record<string, string>) => void
+  appMode: string | undefined
+  handleAppModeChange: (mode: string | undefined) => void
 
   // Attachment state (multi-attachment)
-  attachmentState: MultiAttachmentUploadState;
-  handleFileSelect: (files: File | File[]) => Promise<void>;
-  handleAttachmentRemove: (attachmentId: number) => Promise<void>;
-  resetAttachment: () => void;
-  isAttachmentReadyToSend: boolean;
-  isUploading: boolean;
+  attachmentState: MultiAttachmentUploadState
+  handleFileSelect: (files: File | File[]) => Promise<void>
+  handleAttachmentRemove: (attachmentId: number) => Promise<void>
+  resetAttachment: () => void
+  isAttachmentReadyToSend: boolean
+  isUploading: boolean
 
   // Welcome config
-  welcomeConfig: WelcomeConfigResponse | null;
-  randomSlogan: ChatSloganItem | null;
-  randomTip: ChatTipItem | null;
+  welcomeConfig: WelcomeConfigResponse | null
+  randomSlogan: ChatSloganItem | null
+  randomTip: ChatTipItem | null
 
   // UI state
-  isMobile: boolean;
-  shouldHideQuotaUsage: boolean;
-  shouldHideChatInput: boolean;
-  hasRestoredPreferences: boolean;
-  setHasRestoredPreferences: (value: boolean) => void;
+  isMobile: boolean
+  shouldHideQuotaUsage: boolean
+  shouldHideChatInput: boolean
+  hasRestoredPreferences: boolean
+  setHasRestoredPreferences: (value: boolean) => void
 
   // Drag and drop state
-  isDragging: boolean;
-  setIsDragging: (value: boolean) => void;
+  isDragging: boolean
+  setIsDragging: (value: boolean) => void
 
   // Context selection state (knowledge bases)
-  selectedContexts: ContextItem[];
-  setSelectedContexts: (contexts: ContextItem[]) => void;
-  resetContexts: () => void;
+  selectedContexts: ContextItem[]
+  setSelectedContexts: (contexts: ContextItem[]) => void
+  resetContexts: () => void
 
   // Refs
-  initialTeamIdRef: React.MutableRefObject<number | null>;
+  initialTeamIdRef: React.MutableRefObject<number | null>
 
   // Helper functions
-  isTeamCompatibleWithMode: (team: Team) => boolean;
+  isTeamCompatibleWithMode: (team: Team) => boolean
 }
 
 /**
@@ -133,60 +133,60 @@ export function useChatAreaState({
   taskType,
   selectedTeamForNewTask,
 }: UseChatAreaStateOptions): ChatAreaState {
-  const { selectedTaskDetail } = useTaskContext();
+  const { selectedTaskDetail } = useTaskContext()
 
   // Pre-load team preference from localStorage to use as initial value
-  const initialTeamIdRef = useRef<number | null>(null);
+  const initialTeamIdRef = useRef<number | null>(null)
   if (initialTeamIdRef.current === null && typeof window !== 'undefined') {
-    initialTeamIdRef.current = getLastTeamIdByMode(taskType);
+    initialTeamIdRef.current = getLastTeamIdByMode(taskType)
   }
 
   // Team state
-  const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
-  const [hasRestoredPreferences, setHasRestoredPreferences] = useState(false);
+  const [selectedTeam, setSelectedTeam] = useState<Team | null>(null)
+  const [hasRestoredPreferences, setHasRestoredPreferences] = useState(false)
 
   // Repository and branch state
-  const [selectedRepo, setSelectedRepo] = useState<GitRepoInfo | null>(null);
-  const [selectedBranch, setSelectedBranch] = useState<GitBranch | null>(null);
+  const [selectedRepo, setSelectedRepo] = useState<GitRepoInfo | null>(null)
+  const [selectedBranch, setSelectedBranch] = useState<GitBranch | null>(null)
 
   // Model state
-  const [selectedModel, setSelectedModel] = useState<Model | null>(null);
-  const [forceOverride, setForceOverride] = useState(false);
+  const [selectedModel, setSelectedModel] = useState<Model | null>(null)
+  const [forceOverride, setForceOverride] = useState(false)
 
   // Input state
-  const [taskInputMessage, setTaskInputMessage] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+  const [taskInputMessage, setTaskInputMessage] = useState('')
+  const [isLoading, setIsLoading] = useState(false)
 
   // Toggle states
-  const [enableDeepThinking, setEnableDeepThinking] = useState(true);
-  const [enableClarification, setEnableClarification] = useState(false);
+  const [enableDeepThinking, setEnableDeepThinking] = useState(true)
+  const [enableClarification, setEnableClarification] = useState(false)
 
   // Correction mode state (persisted in localStorage)
-  const [enableCorrectionMode, setEnableCorrectionMode] = useState(false);
-  const [correctionModelId, setCorrectionModelId] = useState<string | null>(null);
-  const [correctionModelName, setCorrectionModelName] = useState<string | null>(null);
-  const [enableCorrectionWebSearch, setEnableCorrectionWebSearch] = useState(false);
+  const [enableCorrectionMode, setEnableCorrectionMode] = useState(false)
+  const [correctionModelId, setCorrectionModelId] = useState<string | null>(null)
+  const [correctionModelName, setCorrectionModelName] = useState<string | null>(null)
+  const [enableCorrectionWebSearch, setEnableCorrectionWebSearch] = useState(false)
 
   // External API params
-  const [externalApiParams, setExternalApiParams] = useState<Record<string, string>>({});
-  const [appMode, setAppMode] = useState<string | undefined>(undefined);
+  const [externalApiParams, setExternalApiParams] = useState<Record<string, string>>({})
+  const [appMode, setAppMode] = useState<string | undefined>(undefined)
 
   // Welcome config
-  const [welcomeConfig, setWelcomeConfig] = useState<WelcomeConfigResponse | null>(null);
+  const [welcomeConfig, setWelcomeConfig] = useState<WelcomeConfigResponse | null>(null)
 
   // Drag and drop
-  const [isDragging, setIsDragging] = useState(false);
+  const [isDragging, setIsDragging] = useState(false)
 
   // Context selection state (knowledge bases)
-  const [selectedContexts, setSelectedContexts] = useState<ContextItem[]>([]);
+  const [selectedContexts, setSelectedContexts] = useState<ContextItem[]>([])
 
   // Reset contexts helper
   const resetContexts = useCallback(() => {
-    setSelectedContexts([]);
-  }, []);
+    setSelectedContexts([])
+  }, [])
 
   // Media query
-  const isMobile = useMediaQuery('(max-width: 640px)');
+  const isMobile = useMediaQuery('(max-width: 640px)')
 
   // Attachment state (multi-attachment)
   const {
@@ -196,151 +196,151 @@ export function useChatAreaState({
     reset: resetAttachment,
     isReadyToSend: isAttachmentReadyToSend,
     isUploading,
-  } = useMultiAttachment();
+  } = useMultiAttachment()
 
   // Refs for random indices (stable across taskType changes)
-  const sloganRandomIndexRef = useRef<number | null>(null);
-  const tipRandomIndexRef = useRef<number | null>(null);
+  const sloganRandomIndexRef = useRef<number | null>(null)
+  const tipRandomIndexRef = useRef<number | null>(null)
 
   // Fetch welcome config
   useEffect(() => {
     const fetchWelcomeConfig = async () => {
       try {
-        const response = await userApis.getWelcomeConfig();
-        setWelcomeConfig(response);
+        const response = await userApis.getWelcomeConfig()
+        setWelcomeConfig(response)
       } catch (error) {
-        console.error('Failed to fetch welcome config:', error);
+        console.error('Failed to fetch welcome config:', error)
       }
-    };
+    }
 
-    fetchWelcomeConfig();
-  }, []);
+    fetchWelcomeConfig()
+  }, [])
 
   // Get random slogan for display
   const randomSlogan = useMemo<ChatSloganItem | null>(() => {
     if (!welcomeConfig?.slogans || welcomeConfig.slogans.length === 0) {
-      return null;
+      return null
     }
     const filteredSlogans = welcomeConfig.slogans.filter(slogan => {
-      const sloganMode = slogan.mode || 'both';
-      return sloganMode === taskType || sloganMode === 'both';
-    });
+      const sloganMode = slogan.mode || 'both'
+      return sloganMode === taskType || sloganMode === 'both'
+    })
 
     if (filteredSlogans.length === 0) {
-      return null;
+      return null
     }
 
     if (sloganRandomIndexRef.current === null) {
-      sloganRandomIndexRef.current = Math.floor(Math.random() * filteredSlogans.length);
+      sloganRandomIndexRef.current = Math.floor(Math.random() * filteredSlogans.length)
     }
-    const index = sloganRandomIndexRef.current % filteredSlogans.length;
-    return filteredSlogans[index];
-  }, [welcomeConfig?.slogans, taskType]);
+    const index = sloganRandomIndexRef.current % filteredSlogans.length
+    return filteredSlogans[index]
+  }, [welcomeConfig?.slogans, taskType])
 
   // Get random tip for placeholder
   const randomTip = useMemo<ChatTipItem | null>(() => {
     if (!welcomeConfig?.tips || welcomeConfig.tips.length === 0) {
-      return null;
+      return null
     }
     const filteredTips = welcomeConfig.tips.filter(tip => {
-      const tipMode = tip.mode || 'both';
-      return tipMode === taskType || tipMode === 'both';
-    });
+      const tipMode = tip.mode || 'both'
+      return tipMode === taskType || tipMode === 'both'
+    })
 
     if (filteredTips.length === 0) {
-      return null;
+      return null
     }
 
     if (tipRandomIndexRef.current === null) {
-      tipRandomIndexRef.current = Math.floor(Math.random() * filteredTips.length);
+      tipRandomIndexRef.current = Math.floor(Math.random() * filteredTips.length)
     }
-    const index = tipRandomIndexRef.current % filteredTips.length;
-    return filteredTips[index];
-  }, [welcomeConfig?.tips, taskType]);
+    const index = tipRandomIndexRef.current % filteredTips.length
+    return filteredTips[index]
+  }, [welcomeConfig?.tips, taskType])
 
   // Memoized handlers
   const handleExternalApiParamsChange = useCallback((params: Record<string, string>) => {
-    setExternalApiParams(params);
-  }, []);
+    setExternalApiParams(params)
+  }, [])
 
   const handleAppModeChange = useCallback((mode: string | undefined) => {
-    setAppMode(mode);
-  }, []);
+    setAppMode(mode)
+  }, [])
 
   // Handle correction mode toggle
   const handleCorrectionModeToggle = useCallback(
     (enabled: boolean, modelId?: string, modelName?: string) => {
-      setEnableCorrectionMode(enabled);
-      setCorrectionModelId(modelId || null);
-      setCorrectionModelName(modelName || null);
+      setEnableCorrectionMode(enabled)
+      setCorrectionModelId(modelId || null)
+      setCorrectionModelName(modelName || null)
       // When correction mode is enabled, read web search settings from localStorage
-      const taskId = selectedTaskDetail?.id ?? null;
+      const taskId = selectedTaskDetail?.id ?? null
       if (enabled) {
-        const savedState = correctionApis.getCorrectionModeState(taskId);
-        setEnableCorrectionWebSearch(savedState.enableWebSearch ?? true);
+        const savedState = correctionApis.getCorrectionModeState(taskId)
+        setEnableCorrectionWebSearch(savedState.enableWebSearch ?? true)
       } else {
-        setEnableCorrectionWebSearch(false);
+        setEnableCorrectionWebSearch(false)
       }
     },
     [selectedTaskDetail?.id]
-  );
+  )
 
   // Check if a team is compatible with the current mode
   const isTeamCompatibleWithMode = useCallback(
     (team: Team): boolean => {
-      if (!team.bind_mode || team.bind_mode.length === 0) return false;
-      return team.bind_mode.includes(taskType);
+      if (!team.bind_mode || team.bind_mode.length === 0) return false
+      return team.bind_mode.includes(taskType)
     },
     [taskType]
-  );
+  )
 
   // Handle team change with localStorage persistence
   const handleTeamChange = useCallback(
     (team: Team | null) => {
-      console.log('[ChatArea] handleTeamChange called:', team?.name || 'null', team?.id || 'null');
-      setSelectedTeam(team);
+      console.log('[ChatArea] handleTeamChange called:', team?.name || 'null', team?.id || 'null')
+      setSelectedTeam(team)
 
       // Reset external API params when team changes
-      setExternalApiParams({});
-      setAppMode(undefined);
+      setExternalApiParams({})
+      setAppMode(undefined)
 
       // Save team preference to localStorage by mode
       if (team && team.id) {
-        console.log('[ChatArea] Saving team to localStorage for mode:', taskType, team.id);
-        saveLastTeamByMode(team.id, taskType);
+        console.log('[ChatArea] Saving team to localStorage for mode:', taskType, team.id)
+        saveLastTeamByMode(team.id, taskType)
       }
     },
     [taskType]
-  );
+  )
 
   // Save repository preference when it changes
   useEffect(() => {
     if (selectedRepo) {
-      saveLastRepo(selectedRepo.git_repo_id, selectedRepo.git_repo);
+      saveLastRepo(selectedRepo.git_repo_id, selectedRepo.git_repo)
     }
-  }, [selectedRepo]);
+  }, [selectedRepo])
 
   // Handle external team selection for new tasks
   useEffect(() => {
     if (selectedTeamForNewTask && !selectedTaskDetail) {
-      setSelectedTeam(selectedTeamForNewTask);
+      setSelectedTeam(selectedTeamForNewTask)
     }
-  }, [selectedTeamForNewTask, selectedTaskDetail]);
+  }, [selectedTeamForNewTask, selectedTaskDetail])
 
   // Compute UI flags
   const shouldHideQuotaUsage = useMemo(() => {
-    if (!isMobile || !selectedTeam?.name) return false;
+    if (!isMobile || !selectedTeam?.name) return false
 
     if (selectedTeam.share_status === 2 && selectedTeam.user?.user_name) {
-      return selectedTeam.name.trim().length > 12;
+      return selectedTeam.name.trim().length > 12
     }
 
-    return selectedTeam.name.trim().length > SHOULD_HIDE_QUOTA_NAME_LIMIT;
-  }, [selectedTeam, isMobile]);
+    return selectedTeam.name.trim().length > SHOULD_HIDE_QUOTA_NAME_LIMIT
+  }, [selectedTeam, isMobile])
 
   const shouldHideChatInput = useMemo(() => {
-    return appMode === 'workflow';
-  }, [appMode]);
+    return appMode === 'workflow'
+  }, [appMode])
 
   return {
     // Team state
@@ -425,7 +425,7 @@ export function useChatAreaState({
 
     // Helper functions
     isTeamCompatibleWithMode,
-  };
+  }
 }
 
-export default useChatAreaState;
+export default useChatAreaState

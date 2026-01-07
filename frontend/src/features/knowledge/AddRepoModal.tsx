@@ -2,28 +2,28 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import Modal from '@/features/common/Modal';
-import { GitRepoInfo } from '@/types/api';
-import { useUser } from '@/features/common/UserContext';
-import { useRouter } from 'next/navigation';
-import { Button } from '@/components/ui/button';
-import { paths } from '@/config/paths';
-import { useTranslation } from '@/hooks/useTranslation';
-import { RepositorySelector } from '@/features/tasks/components/selector';
-import { WikiConfigResponse } from '@/apis/wiki';
+import Modal from '@/features/common/Modal'
+import { GitRepoInfo } from '@/types/api'
+import { useUser } from '@/features/common/UserContext'
+import { useRouter } from 'next/navigation'
+import { Button } from '@/components/ui/button'
+import { paths } from '@/config/paths'
+import { useTranslation } from '@/hooks/useTranslation'
+import { RepositorySelector } from '@/features/tasks/components/selector'
+import { WikiConfigResponse } from '@/apis/wiki'
 
 interface AddRepoModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  formErrors: Record<string, string>;
-  isSubmitting: boolean;
-  onRepoChange: (repo: GitRepoInfo | null) => void;
-  onSubmit: (e: React.FormEvent) => void;
-  selectedRepo: GitRepoInfo | null;
+  isOpen: boolean
+  onClose: () => void
+  formErrors: Record<string, string>
+  isSubmitting: boolean
+  onRepoChange: (repo: GitRepoInfo | null) => void
+  onSubmit: (e: React.FormEvent) => void
+  selectedRepo: GitRepoInfo | null
   // Wiki config (system-level configuration)
-  wikiConfig: WikiConfigResponse | null;
+  wikiConfig: WikiConfigResponse | null
 }
 
 export default function AddRepoModal({
@@ -36,18 +36,18 @@ export default function AddRepoModal({
   selectedRepo,
   wikiConfig,
 }: AddRepoModalProps) {
-  const { t } = useTranslation();
-  const { user } = useUser();
-  const router = useRouter();
+  const { t } = useTranslation()
+  const { user } = useUser()
+  const router = useRouter()
 
   const hasGitInfo = () => {
-    return user && user.git_info && user.git_info.length > 0;
-  };
+    return user && user.git_info && user.git_info.length > 0
+  }
 
   const handleGoToSettings = () => {
-    onClose();
-    router.push(paths.settings.integrations.getHref());
-  };
+    onClose()
+    router.push(paths.settings.integrations.getHref())
+  }
 
   // Check if user has git info configured
   if (!hasGitInfo()) {
@@ -62,7 +62,7 @@ export default function AddRepoModal({
           </Button>
         </div>
       </Modal>
-    );
+    )
   }
 
   return (
@@ -142,5 +142,5 @@ export default function AddRepoModal({
         </div>
       </form>
     </Modal>
-  );
+  )
 }

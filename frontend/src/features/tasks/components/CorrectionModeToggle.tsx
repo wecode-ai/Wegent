@@ -2,33 +2,33 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useState, useEffect, useRef } from 'react';
-import { CheckCircle } from 'lucide-react';
-import { ActionButton } from '@/components/ui/action-button';
-import { useTranslation } from '@/hooks/useTranslation';
-import { cn } from '@/lib/utils';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import React, { useState, useEffect, useRef } from 'react'
+import { CheckCircle } from 'lucide-react'
+import { ActionButton } from '@/components/ui/action-button'
+import { useTranslation } from '@/hooks/useTranslation'
+import { cn } from '@/lib/utils'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogDescription,
-} from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Button } from '@/components/ui/button';
-import { modelApis, UnifiedModel } from '@/apis/models';
-import { correctionApis, CorrectionModeState } from '@/apis/correction';
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { Button } from '@/components/ui/button'
+import { modelApis, UnifiedModel } from '@/apis/models'
+import { correctionApis, CorrectionModeState } from '@/apis/correction'
 
 interface CorrectionModeToggleProps {
-  enabled: boolean;
-  onToggle: (enabled: boolean, modelId?: string, modelName?: string) => void;
-  disabled?: boolean;
-  correctionModelName?: string | null;
-  taskId: number | null;
+  enabled: boolean
+  onToggle: (enabled: boolean, modelId?: string, modelName?: string) => void
+  disabled?: boolean
+  correctionModelName?: string | null
+  taskId: number | null
 }
 
 export default function CorrectionModeToggle({
@@ -38,85 +38,85 @@ export default function CorrectionModeToggle({
   correctionModelName,
   taskId,
 }: CorrectionModeToggleProps) {
-  const { t } = useTranslation();
-  const [showModelSelector, setShowModelSelector] = useState(false);
-  const [models, setModels] = useState<UnifiedModel[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
+  const { t } = useTranslation()
+  const [showModelSelector, setShowModelSelector] = useState(false)
+  const [models, setModels] = useState<UnifiedModel[]>([])
+  const [isLoading, setIsLoading] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
 
   // Track previous taskId to detect transitions from null to real taskId
-  const prevTaskIdRef = useRef<number | null | undefined>(undefined);
+  const prevTaskIdRef = useRef<number | null | undefined>(undefined)
 
   // Load models when dialog opens
   useEffect(() => {
     if (showModelSelector) {
-      loadModels();
+      loadModels()
     }
-  }, [showModelSelector]);
+  }, [showModelSelector])
 
   // Restore state from localStorage when taskId changes
   // Also handle migration from "new" task to real taskId
   useEffect(() => {
-    const prevTaskId = prevTaskIdRef.current;
+    const prevTaskId = prevTaskIdRef.current
 
     // Check if this is a transition from null (new task) to a real taskId
     // This happens when a new task is created after sending a message
     if (prevTaskId === null && taskId !== null && taskId > 0) {
       // Try to migrate state from "new" task to real taskId
-      const migratedState = correctionApis.migrateCorrectionModeState(null, taskId);
+      const migratedState = correctionApis.migrateCorrectionModeState(null, taskId)
       if (migratedState && migratedState.enabled && migratedState.correctionModelId) {
         // State was migrated, apply it
         onToggle(
           true,
           migratedState.correctionModelId,
           migratedState.correctionModelName || undefined
-        );
-        prevTaskIdRef.current = taskId;
-        return;
+        )
+        prevTaskIdRef.current = taskId
+        return
       }
     }
 
     // Normal case: restore state from localStorage for the current taskId
-    const savedState = correctionApis.getCorrectionModeState(taskId);
+    const savedState = correctionApis.getCorrectionModeState(taskId)
     if (savedState.enabled && savedState.correctionModelId) {
-      onToggle(true, savedState.correctionModelId, savedState.correctionModelName || undefined);
+      onToggle(true, savedState.correctionModelId, savedState.correctionModelName || undefined)
     } else {
       // Reset correction mode when switching to a task without saved state
-      onToggle(false);
+      onToggle(false)
     }
 
     // Update previous taskId ref
-    prevTaskIdRef.current = taskId;
+    prevTaskIdRef.current = taskId
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [taskId]);
+  }, [taskId])
 
   const loadModels = async () => {
-    setIsLoading(true);
+    setIsLoading(true)
     try {
       // Get all unified models (both public and user-defined) for LLM type
-      const response = await modelApis.getUnifiedModels(undefined, false, 'all', undefined, 'llm');
-      setModels(response.data || []);
+      const response = await modelApis.getUnifiedModels(undefined, false, 'all', undefined, 'llm')
+      setModels(response.data || [])
     } catch (error) {
-      console.error('Failed to load models:', error);
+      console.error('Failed to load models:', error)
     } finally {
-      setIsLoading(false);
+      setIsLoading(false)
     }
-  };
+  }
 
   const handleToggle = () => {
     if (!enabled) {
       // Opening: show model selector
-      setShowModelSelector(true);
+      setShowModelSelector(true)
     } else {
       // Closing: disable correction mode
-      onToggle(false);
-      correctionApis.clearCorrectionModeState(taskId);
+      onToggle(false)
+      correctionApis.clearCorrectionModeState(taskId)
     }
-  };
+  }
 
   const handleModelSelect = (model: UnifiedModel) => {
-    const displayName = model.displayName || model.name;
-    onToggle(true, model.name, displayName);
+    const displayName = model.displayName || model.name
+    onToggle(true, model.name, displayName)
 
     // Save to localStorage with web search enabled by default
     const state: CorrectionModeState = {
@@ -124,25 +124,25 @@ export default function CorrectionModeToggle({
       correctionModelId: model.name,
       correctionModelName: displayName,
       enableWebSearch: true, // Enable web search by default for fact verification
-    };
-    correctionApis.saveCorrectionModeState(taskId, state);
+    }
+    correctionApis.saveCorrectionModeState(taskId, state)
 
-    setShowModelSelector(false);
-    setSearchQuery('');
-  };
+    setShowModelSelector(false)
+    setSearchQuery('')
+  }
 
   const handleDialogClose = () => {
-    setShowModelSelector(false);
-    setSearchQuery('');
-  };
+    setShowModelSelector(false)
+    setSearchQuery('')
+  }
 
   // Filter models by search query
   const filteredModels = models.filter(model => {
-    const searchLower = searchQuery.toLowerCase();
-    const nameMatch = model.name.toLowerCase().includes(searchLower);
-    const displayNameMatch = model.displayName?.toLowerCase().includes(searchLower);
-    return nameMatch || displayNameMatch;
-  });
+    const searchLower = searchQuery.toLowerCase()
+    const nameMatch = model.name.toLowerCase().includes(searchLower)
+    const displayNameMatch = model.displayName?.toLowerCase().includes(searchLower)
+    return nameMatch || displayNameMatch
+  })
 
   return (
     <>
@@ -230,5 +230,5 @@ export default function CorrectionModeToggle({
         </DialogContent>
       </Dialog>
     </>
-  );
+  )
 }

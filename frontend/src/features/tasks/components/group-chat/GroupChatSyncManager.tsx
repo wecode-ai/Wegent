@@ -14,18 +14,18 @@
  * This simplifies the architecture by using a single mechanism for all streaming recovery.
  */
 
-import { useEffect, useRef } from 'react';
-import { useGroupChatPolling } from '@/hooks/useGroupChatPolling';
-import type { SubtaskWithSender } from '@/apis/group-chat';
+import { useEffect, useRef } from 'react'
+import { useGroupChatPolling } from '@/hooks/useGroupChatPolling'
+import type { SubtaskWithSender } from '@/apis/group-chat'
 
 interface GroupChatSyncManagerProps {
-  taskId: number;
-  isGroupChat: boolean;
-  enabled?: boolean;
+  taskId: number
+  isGroupChat: boolean
+  enabled?: boolean
   /** Callback when new messages are detected via polling */
-  onNewMessages?: (messages: SubtaskWithSender[]) => void;
+  onNewMessages?: (messages: SubtaskWithSender[]) => void
   /** Callback when a stream completes (detected via polling) */
-  onStreamComplete?: (subtaskId: number, result?: Record<string, unknown>) => void;
+  onStreamComplete?: (subtaskId: number, result?: Record<string, unknown>) => void
 }
 
 /**
@@ -69,37 +69,37 @@ export function GroupChatSyncManager({
     enabled,
     onNewMessages,
     onStreamingDetected: subtaskId => {
-      console.log('[GroupChatSync] Stream detected:', subtaskId);
+      console.log('[GroupChatSync] Stream detected:', subtaskId)
     },
-  });
+  })
 
   // When streaming completes (hasStreaming becomes false after being true),
   // notify the parent to refresh
-  const prevHasStreamingRef = useRef<boolean>(false);
+  const prevHasStreamingRef = useRef<boolean>(false)
   useEffect(() => {
     // If we were streaming and now we're not, stream completed
     if (prevHasStreamingRef.current && !hasStreaming && streamingSubtaskId) {
       if (onStreamComplete) {
-        onStreamComplete(streamingSubtaskId);
+        onStreamComplete(streamingSubtaskId)
       }
     }
-    prevHasStreamingRef.current = hasStreaming;
-  }, [hasStreaming, streamingSubtaskId, onStreamComplete]);
+    prevHasStreamingRef.current = hasStreaming
+  }, [hasStreaming, streamingSubtaskId, onStreamComplete])
 
   // Log errors
   useEffect(() => {
     if (pollingError) {
-      console.error('[GroupChatSync] Polling error:', pollingError);
+      console.error('[GroupChatSync] Polling error:', pollingError)
     }
-  }, [pollingError]);
+  }, [pollingError])
 
   // Cleanup messages when unmounting
   useEffect(() => {
     return () => {
-      clearMessages();
-    };
-  }, [clearMessages]);
+      clearMessages()
+    }
+  }, [clearMessages])
 
   // This component doesn't render anything - it's purely for side effects
-  return null;
+  return null
 }

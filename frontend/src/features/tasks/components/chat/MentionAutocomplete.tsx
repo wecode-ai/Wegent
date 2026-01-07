@@ -2,26 +2,26 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react';
-import { useTranslation } from '@/hooks/useTranslation';
-import type { Team } from '@/types/api';
-import { TeamIconDisplay } from '@/features/settings/components/teams/TeamIconDisplay';
+import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { Team } from '@/types/api'
+import { TeamIconDisplay } from '@/features/settings/components/teams/TeamIconDisplay'
 
 interface MentionableAgent {
-  id: number;
-  name: string;
-  type: 'team' | 'bot';
-  iconId?: string | null; // Team icon ID
+  id: number
+  name: string
+  type: 'team' | 'bot'
+  iconId?: string | null // Team icon ID
 }
 
 interface MentionAutocompleteProps {
-  team: Team | null;
-  query?: string;
-  onSelect: (mention: string) => void;
-  onClose: () => void;
-  position: { top: number; left: number };
+  team: Team | null
+  query?: string
+  onSelect: (mention: string) => void
+  onClose: () => void
+  position: { top: number; left: number }
 }
 
 export default function MentionAutocomplete({
@@ -31,14 +31,14 @@ export default function MentionAutocomplete({
   onClose,
   position,
 }: MentionAutocompleteProps) {
-  const { t } = useTranslation();
-  const menuRef = useRef<HTMLDivElement>(null);
-  const [selectedIndex, setSelectedIndex] = useState(0);
+  const { t } = useTranslation()
+  const menuRef = useRef<HTMLDivElement>(null)
+  const [selectedIndex, setSelectedIndex] = useState(0)
 
   // Build mentionable agents list (team only, no individual bots)
   const mentionableAgents = useMemo<MentionableAgent[]>(() => {
-    if (!team) return [];
-    const agents: MentionableAgent[] = [];
+    if (!team) return []
+    const agents: MentionableAgent[] = []
 
     // Only add team itself
     agents.push({
@@ -46,80 +46,80 @@ export default function MentionAutocomplete({
       name: team.name,
       type: 'team',
       iconId: team.icon,
-    });
+    })
 
-    return agents;
-  }, [team]);
+    return agents
+  }, [team])
 
   // Filter agents based on query
   const filteredAgents = useMemo(() => {
     if (!query || query.trim() === '') {
-      return mentionableAgents;
+      return mentionableAgents
     }
 
-    const lowerQuery = query.toLowerCase();
-    return mentionableAgents.filter(agent => agent.name.toLowerCase().includes(lowerQuery));
-  }, [mentionableAgents, query]);
+    const lowerQuery = query.toLowerCase()
+    return mentionableAgents.filter(agent => agent.name.toLowerCase().includes(lowerQuery))
+  }, [mentionableAgents, query])
 
   // Reset selected index when filtered agents change
   useEffect(() => {
-    setSelectedIndex(0);
-  }, [filteredAgents]);
+    setSelectedIndex(0)
+  }, [filteredAgents])
 
   // Close on outside click
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        onClose();
+        onClose()
       }
-    };
+    }
 
-    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('mousedown', handleClickOutside)
     return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [onClose]);
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [onClose])
 
   const handleSelect = useCallback(
     (agent: MentionableAgent) => {
-      onSelect(`@${agent.name}`);
-      onClose();
+      onSelect(`@${agent.name}`)
+      onClose()
     },
     [onSelect, onClose]
-  );
+  )
 
   // Handle keyboard navigation
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        event.preventDefault();
-        event.stopPropagation();
-        onClose();
+        event.preventDefault()
+        event.stopPropagation()
+        onClose()
       } else if (event.key === 'ArrowDown') {
-        event.preventDefault();
-        event.stopPropagation();
-        setSelectedIndex(prev => Math.min(prev + 1, filteredAgents.length - 1));
+        event.preventDefault()
+        event.stopPropagation()
+        setSelectedIndex(prev => Math.min(prev + 1, filteredAgents.length - 1))
       } else if (event.key === 'ArrowUp') {
-        event.preventDefault();
-        event.stopPropagation();
-        setSelectedIndex(prev => Math.max(prev - 1, 0));
+        event.preventDefault()
+        event.stopPropagation()
+        setSelectedIndex(prev => Math.max(prev - 1, 0))
       } else if (event.key === 'Enter') {
-        event.preventDefault();
-        event.stopPropagation();
+        event.preventDefault()
+        event.stopPropagation()
         if (filteredAgents[selectedIndex]) {
-          handleSelect(filteredAgents[selectedIndex]);
+          handleSelect(filteredAgents[selectedIndex])
         }
       }
-    };
+    }
 
-    document.addEventListener('keydown', handleKeyDown, true); // Use capture phase
+    document.addEventListener('keydown', handleKeyDown, true) // Use capture phase
     return () => {
-      document.removeEventListener('keydown', handleKeyDown, true);
-    };
-  }, [onClose, filteredAgents, selectedIndex, handleSelect]);
+      document.removeEventListener('keydown', handleKeyDown, true)
+    }
+  }, [onClose, filteredAgents, selectedIndex, handleSelect])
 
   if (!team || filteredAgents.length === 0) {
-    return null;
+    return null
   }
 
   return (
@@ -142,8 +142,8 @@ export default function MentionAutocomplete({
           tabIndex={0}
           onKeyDown={e => {
             if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              handleSelect(agent);
+              e.preventDefault()
+              handleSelect(agent)
             }
           }}
         >
@@ -161,5 +161,5 @@ export default function MentionAutocomplete({
         {t('chat:groupChat.mentionAutocomplete.title')}
       </div>
     </div>
-  );
+  )
 }

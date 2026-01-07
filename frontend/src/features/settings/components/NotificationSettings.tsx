@@ -2,139 +2,139 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import { useTranslation } from '@/hooks/useTranslation';
+import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import { useTranslation } from '@/hooks/useTranslation'
 import {
   isNotificationSupported,
   isNotificationEnabled,
   requestNotificationPermission,
   setNotificationEnabled,
-} from '@/utils/notification';
-import { useToast } from '@/hooks/use-toast';
-import { Button } from '@/components/ui/button';
-import { Switch } from '@/components/ui/switch';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { Label } from '@/components/ui/label';
-import { useUser } from '@/features/common/UserContext';
-import { userApis } from '@/apis/user';
-import type { UserPreferences } from '@/types/api';
+} from '@/utils/notification'
+import { useToast } from '@/hooks/use-toast'
+import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { Label } from '@/components/ui/label'
+import { useUser } from '@/features/common/UserContext'
+import { userApis } from '@/apis/user'
+import type { UserPreferences } from '@/types/api'
 
 export default function NotificationSettings() {
-  const { t } = useTranslation();
-  const { toast } = useToast();
-  const router = useRouter();
-  const { user, refresh } = useUser();
-  const [enabled, setEnabled] = useState(false);
-  const [supported, setSupported] = useState(true);
-  const [sendKey, setSendKey] = useState<'enter' | 'cmd_enter'>('enter');
-  const [searchKey, setSearchKey] = useState<'cmd_k' | 'cmd_f' | 'disabled'>('cmd_k');
-  const [isSaving, setIsSaving] = useState(false);
+  const { t } = useTranslation()
+  const { toast } = useToast()
+  const router = useRouter()
+  const { user, refresh } = useUser()
+  const [enabled, setEnabled] = useState(false)
+  const [supported, setSupported] = useState(true)
+  const [sendKey, setSendKey] = useState<'enter' | 'cmd_enter'>('enter')
+  const [searchKey, setSearchKey] = useState<'cmd_k' | 'cmd_f' | 'disabled'>('cmd_k')
+  const [isSaving, setIsSaving] = useState(false)
 
   useEffect(() => {
-    setSupported(isNotificationSupported());
-    setEnabled(isNotificationEnabled());
-  }, []);
+    setSupported(isNotificationSupported())
+    setEnabled(isNotificationEnabled())
+  }, [])
 
   useEffect(() => {
     // Only update sendKey and searchKey when user data is loaded and has preferences
     // Use 'enter' as default if send_key is not set
     // Use 'cmd_k' as default if search_key is not set
     if (user) {
-      const userSendKey = user.preferences?.send_key || 'enter';
-      const userSearchKey = user.preferences?.search_key || 'cmd_k';
-      setSendKey(userSendKey);
-      setSearchKey(userSearchKey);
+      const userSendKey = user.preferences?.send_key || 'enter'
+      const userSearchKey = user.preferences?.search_key || 'cmd_k'
+      setSendKey(userSendKey)
+      setSearchKey(userSearchKey)
     }
-  }, [user]);
+  }, [user])
 
   const handleToggle = async () => {
     if (!supported) {
       toast({
         title: t('common:notifications.not_supported'),
-      });
-      return;
+      })
+      return
     }
 
     if (!enabled) {
-      const granted = await requestNotificationPermission();
+      const granted = await requestNotificationPermission()
       if (granted) {
-        setEnabled(true);
+        setEnabled(true)
         toast({
           title: t('common:notifications.enable_success'),
-        });
+        })
       } else {
         toast({
           variant: 'destructive',
           title: t('common:notifications.permission_denied'),
-        });
+        })
       }
     } else {
-      setNotificationEnabled(false);
-      setEnabled(false);
+      setNotificationEnabled(false)
+      setEnabled(false)
       toast({
         title: t('common:notifications.disable_success'),
-      });
+      })
     }
-  };
+  }
 
   const handleSendKeyChange = async (value: 'enter' | 'cmd_enter') => {
-    setSendKey(value);
-    setIsSaving(true);
+    setSendKey(value)
+    setIsSaving(true)
     try {
-      const preferences: UserPreferences = { send_key: value };
-      await userApis.updateUser({ preferences });
-      await refresh();
+      const preferences: UserPreferences = { send_key: value }
+      await userApis.updateUser({ preferences })
+      await refresh()
       toast({
         title: t('common:send_key.save_success'),
-      });
+      })
     } catch (error) {
-      console.error('Failed to save send key preference:', error);
+      console.error('Failed to save send key preference:', error)
       toast({
         variant: 'destructive',
         title: t('common:send_key.save_failed'),
-      });
+      })
       // Revert to previous value
-      setSendKey(user?.preferences?.send_key || 'enter');
+      setSendKey(user?.preferences?.send_key || 'enter')
     } finally {
-      setIsSaving(false);
+      setIsSaving(false)
     }
-  };
+  }
 
   const handleSearchKeyChange = async (value: 'cmd_k' | 'cmd_f' | 'disabled') => {
-    setSearchKey(value);
-    setIsSaving(true);
+    setSearchKey(value)
+    setIsSaving(true)
     try {
       const preferences: UserPreferences = {
         send_key: user?.preferences?.send_key || 'enter',
         search_key: value,
-      };
-      await userApis.updateUser({ preferences });
-      await refresh();
+      }
+      await userApis.updateUser({ preferences })
+      await refresh()
       toast({
         title: t('common:search_key.save_success'),
-      });
+      })
     } catch (error) {
-      console.error('Failed to save search key preference:', error);
+      console.error('Failed to save search key preference:', error)
       toast({
         variant: 'destructive',
         title: t('common:search_key.save_failed'),
-      });
+      })
       // Revert to previous value
-      setSearchKey(user?.preferences?.search_key || 'cmd_k');
+      setSearchKey(user?.preferences?.search_key || 'cmd_k')
     } finally {
-      setIsSaving(false);
+      setIsSaving(false)
     }
-  };
+  }
 
   const handleRestartOnboarding = () => {
-    localStorage.removeItem('user_onboarding_completed');
-    localStorage.removeItem('onboarding_in_progress');
-    localStorage.removeItem('onboarding_current_step');
-    router.push('/chat');
-  };
+    localStorage.removeItem('user_onboarding_completed')
+    localStorage.removeItem('onboarding_in_progress')
+    localStorage.removeItem('onboarding_current_step')
+    router.push('/chat')
+  }
 
   return (
     <div className="space-y-4">
@@ -238,5 +238,5 @@ export default function NotificationSettings() {
         </Button>
       </div>
     </div>
-  );
+  )
 }

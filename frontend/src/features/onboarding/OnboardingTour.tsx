@@ -2,16 +2,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useOnboarding } from './useOnboarding';
+import { useOnboarding } from './useOnboarding'
 
 interface OnboardingTourProps {
-  hasTeams: boolean;
-  hasGitToken: boolean;
-  currentPage: 'chat' | 'code';
-  isLoading?: boolean;
-  hasShareId?: boolean;
+  hasTeams: boolean
+  hasGitToken: boolean
+  currentPage: 'chat' | 'code'
+  isLoading?: boolean
+  hasShareId?: boolean
 }
 
 /**
@@ -34,8 +34,8 @@ export default function OnboardingTour({
     currentPage,
     isLoading,
     hasShareId,
-  });
+  })
 
   // This component doesn't render any UI, it just manages the tour logic
-  return null;
+  return null
 }

@@ -2,10 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState } from 'react';
-import { UserPlus, X, Check, Copy } from 'lucide-react';
+import { useState } from 'react'
+import { UserPlus, X, Check, Copy } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -13,27 +13,27 @@ import {
   DialogTitle,
   DialogDescription,
   DialogFooter,
-} from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { useToast } from '@/hooks/use-toast';
-import { taskMemberApi } from '@/apis/task-member';
-import { useTranslation } from '@/hooks/useTranslation';
-import type { SearchUser } from '@/types/api';
-import { UserSearchSelect } from '@/components/common/UserSearchSelect';
+} from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Badge } from '@/components/ui/badge'
+import { useToast } from '@/hooks/use-toast'
+import { taskMemberApi } from '@/apis/task-member'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { SearchUser } from '@/types/api'
+import { UserSearchSelect } from '@/components/common/UserSearchSelect'
 
 interface User extends SearchUser {
-  isUnregistered?: boolean; // Mark user as not registered in platform
+  isUnregistered?: boolean // Mark user as not registered in platform
 }
 
 interface AddMembersDialogProps {
-  open: boolean;
-  onClose: () => void;
-  taskId: number;
-  taskTitle: string;
-  onMembersAdded?: () => void;
-  onComplete?: () => void; // Called when the entire flow is completed (after copying link)
+  open: boolean
+  onClose: () => void
+  taskId: number
+  taskTitle: string
+  onMembersAdded?: () => void
+  onComplete?: () => void // Called when the entire flow is completed (after copying link)
 }
 
 export function AddMembersDialog({
@@ -44,24 +44,24 @@ export function AddMembersDialog({
   onMembersAdded,
   onComplete,
 }: AddMembersDialogProps) {
-  const { t } = useTranslation();
-  const { toast } = useToast();
+  const { t } = useTranslation()
+  const { toast } = useToast()
 
-  const [selectedUsers, setSelectedUsers] = useState<User[]>([]);
-  const [isAdding, setIsAdding] = useState(false);
-  const [showInviteLink, setShowInviteLink] = useState(false);
-  const [addedCount, setAddedCount] = useState(0);
-  const [unregisteredUsers, setUnregisteredUsers] = useState<string[]>([]);
-  const [inviteUrl, setInviteUrl] = useState<string>('');
-  const [copied, setCopied] = useState(false);
+  const [selectedUsers, setSelectedUsers] = useState<User[]>([])
+  const [isAdding, setIsAdding] = useState(false)
+  const [showInviteLink, setShowInviteLink] = useState(false)
+  const [addedCount, setAddedCount] = useState(0)
+  const [unregisteredUsers, setUnregisteredUsers] = useState<string[]>([])
+  const [inviteUrl, setInviteUrl] = useState<string>('')
+  const [copied, setCopied] = useState(false)
 
   // Add unregistered user by name
   const handleAddUnregisteredUser = (username: string) => {
-    if (!username.trim()) return;
+    if (!username.trim()) return
 
     // Check if already added
     if (selectedUsers.find(u => u.user_name === username)) {
-      return;
+      return
     }
 
     // Add as unregistered user (use negative ID to avoid conflicts)
@@ -69,107 +69,107 @@ export function AddMembersDialog({
       id: -Date.now(),
       user_name: username,
       isUnregistered: true,
-    };
+    }
 
-    setSelectedUsers([...selectedUsers, unregisteredUser]);
-  };
+    setSelectedUsers([...selectedUsers, unregisteredUser])
+  }
 
   const handleRemoveUser = (userId: number) => {
-    setSelectedUsers(selectedUsers.filter(u => u.id !== userId));
-  };
+    setSelectedUsers(selectedUsers.filter(u => u.id !== userId))
+  }
 
   const handleAddMembers = async () => {
-    if (selectedUsers.length === 0) return;
+    if (selectedUsers.length === 0) return
 
     // Separate registered and unregistered users
-    const registeredUsers = selectedUsers.filter(u => !u.isUnregistered);
-    const unregisteredUsersList = selectedUsers.filter(u => u.isUnregistered);
+    const registeredUsers = selectedUsers.filter(u => !u.isUnregistered)
+    const unregisteredUsersList = selectedUsers.filter(u => u.isUnregistered)
 
     // If all users are unregistered, generate invite link immediately
     if (unregisteredUsersList.length > 0 && registeredUsers.length === 0) {
-      setIsAdding(true);
-      setUnregisteredUsers(unregisteredUsersList.map(u => u.user_name));
+      setIsAdding(true)
+      setUnregisteredUsers(unregisteredUsersList.map(u => u.user_name))
 
       try {
         // Ensure task is converted to group chat before generating link
         try {
-          await taskMemberApi.convertToGroupChat(taskId);
+          await taskMemberApi.convertToGroupChat(taskId)
           // Trigger callback immediately after conversion to update UI
-          onMembersAdded?.();
+          onMembersAdded?.()
         } catch (conversionError) {
-          console.log('Task conversion for invite link:', conversionError);
+          console.log('Task conversion for invite link:', conversionError)
         }
 
         // Generate invite link
-        const response = await taskMemberApi.generateInviteLink(taskId, 0);
-        setInviteUrl(response.invite_url);
-        setShowInviteLink(true);
+        const response = await taskMemberApi.generateInviteLink(taskId, 0)
+        setInviteUrl(response.invite_url)
+        setShowInviteLink(true)
 
         toast({
           title: t('chat:groupChat.addMembers.allUnregistered'),
           description: t('chat:groupChat.addMembers.useInviteLink'),
           variant: 'default',
-        });
+        })
       } catch (error) {
-        console.error('Failed to generate invite link:', error);
+        console.error('Failed to generate invite link:', error)
         toast({
           title: t('chat:groupChat.inviteLink.generateFailed'),
           description: error instanceof Error ? error.message : undefined,
           variant: 'destructive',
-        });
+        })
       } finally {
-        setIsAdding(false);
+        setIsAdding(false)
       }
-      return;
+      return
     }
 
-    setIsAdding(true);
-    let successCount = 0;
-    let alreadyMemberCount = 0;
-    const errors: string[] = [];
+    setIsAdding(true)
+    let successCount = 0
+    let alreadyMemberCount = 0
+    const errors: string[] = []
 
     try {
       // First, ensure the task is converted to a group chat
-      let wasConverted = false;
+      let wasConverted = false
       try {
-        await taskMemberApi.convertToGroupChat(taskId);
-        wasConverted = true;
+        await taskMemberApi.convertToGroupChat(taskId)
+        wasConverted = true
         // Note: Don't call onMembersAdded here yet - wait until members are added
         // to avoid race condition where UI refreshes before additions complete
       } catch (conversionError) {
         // Ignore conversion errors - task might already be a group chat
-        console.log('Task conversion:', conversionError);
+        console.log('Task conversion:', conversionError)
       }
 
       // Add registered members one by one
       for (const user of registeredUsers) {
         try {
-          await taskMemberApi.addMember(taskId, user.id);
-          successCount++;
+          await taskMemberApi.addMember(taskId, user.id)
+          successCount++
         } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error'
           // Check if error is "already member"
           if (errorMessage.includes('already') || errorMessage.includes('已经')) {
-            alreadyMemberCount++;
+            alreadyMemberCount++
           } else {
-            errors.push(`${user.user_name}: ${errorMessage}`);
+            errors.push(`${user.user_name}: ${errorMessage}`)
           }
         }
       }
 
-      setAddedCount(successCount);
+      setAddedCount(successCount)
 
       // Now that all operations are complete, trigger UI refresh
       // This ensures the member list is accurate when refreshed
       if (wasConverted || successCount > 0) {
-        onMembersAdded?.();
+        onMembersAdded?.()
       }
 
       // Show toast messages based on results
       if (successCount > 0) {
         toast({
           title: t('chat:groupChat.addMembers.success', { count: successCount }),
-        });
+        })
       }
 
       if (alreadyMemberCount > 0 && successCount === 0 && errors.length === 0) {
@@ -177,107 +177,107 @@ export function AddMembersDialog({
         toast({
           title: t('chat:groupChat.addMembers.allAlreadyMembers'),
           variant: 'default',
-        });
+        })
       }
 
       // If there are unregistered users, auto-generate invite link
       if (unregisteredUsersList.length > 0) {
-        setUnregisteredUsers(unregisteredUsersList.map(u => u.user_name));
+        setUnregisteredUsers(unregisteredUsersList.map(u => u.user_name))
 
         // Auto-generate invite link
         try {
           // Ensure task is converted to group chat before generating link
           try {
-            await taskMemberApi.convertToGroupChat(taskId);
+            await taskMemberApi.convertToGroupChat(taskId)
           } catch (conversionError) {
             // Ignore conversion errors - task might already be a group chat
-            console.log('Task conversion for invite link:', conversionError);
+            console.log('Task conversion for invite link:', conversionError)
           }
 
-          const response = await taskMemberApi.generateInviteLink(taskId, 0);
-          setInviteUrl(response.invite_url);
-          setShowInviteLink(true);
+          const response = await taskMemberApi.generateInviteLink(taskId, 0)
+          setInviteUrl(response.invite_url)
+          setShowInviteLink(true)
         } catch (error) {
-          console.error('Failed to generate invite link:', error);
+          console.error('Failed to generate invite link:', error)
           toast({
             title: t('chat:groupChat.inviteLink.generateFailed'),
             description: error instanceof Error ? error.message : undefined,
             variant: 'destructive',
-          });
+          })
           // Still show the invite link view even if link generation failed
-          setShowInviteLink(true);
+          setShowInviteLink(true)
         }
       } else {
         // All registered users processed (successfully added or already members), close dialog
-        handleClose();
+        handleClose()
       }
     } catch (error) {
       toast({
         title: t('chat:groupChat.addMembers.failed'),
         description: error instanceof Error ? error.message : undefined,
         variant: 'destructive',
-      });
+      })
     } finally {
-      setIsAdding(false);
+      setIsAdding(false)
     }
-  };
+  }
 
   const handleClose = () => {
-    setSelectedUsers([]);
-    setShowInviteLink(false);
-    setAddedCount(0);
-    setUnregisteredUsers([]);
-    setInviteUrl('');
-    setCopied(false);
-    onClose();
-  };
+    setSelectedUsers([])
+    setShowInviteLink(false)
+    setAddedCount(0)
+    setUnregisteredUsers([])
+    setInviteUrl('')
+    setCopied(false)
+    onClose()
+  }
 
   const handleCopyInviteLink = async () => {
-    if (!inviteUrl) return;
+    if (!inviteUrl) return
 
     // Try modern clipboard API first
     if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
       try {
-        await navigator.clipboard.writeText(inviteUrl);
-        setCopied(true);
+        await navigator.clipboard.writeText(inviteUrl)
+        setCopied(true)
         toast({
           title: t('chat:groupChat.inviteLink.copied'),
-        });
+        })
         setTimeout(() => {
-          handleClose();
-          onComplete?.(); // Notify parent that the entire flow is completed
-        }, 500);
-        return;
+          handleClose()
+          onComplete?.() // Notify parent that the entire flow is completed
+        }, 500)
+        return
       } catch (err) {
-        console.error('Clipboard API failed: ', err);
+        console.error('Clipboard API failed: ', err)
       }
     }
 
     // Fallback for non-HTTPS environments (e.g., HTTP IP:port)
     try {
-      const textarea = document.createElement('textarea');
-      textarea.value = inviteUrl;
-      textarea.style.cssText = 'position:fixed;opacity:0';
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textarea);
-      setCopied(true);
+      const textarea = document.createElement('textarea')
+      textarea.value = inviteUrl
+      textarea.style.cssText = 'position:fixed;opacity:0'
+      document.body.appendChild(textarea)
+      textarea.select()
+      document.execCommand('copy')
+      document.body.removeChild(textarea)
+      setCopied(true)
       toast({
         title: t('chat:groupChat.inviteLink.copied'),
-      });
+      })
       setTimeout(() => {
-        handleClose();
-        onComplete?.(); // Notify parent that the entire flow is completed
-      }, 500);
+        handleClose()
+        onComplete?.() // Notify parent that the entire flow is completed
+      }, 500)
     } catch (err) {
-      console.error('Fallback copy failed: ', err);
+      console.error('Fallback copy failed: ', err)
       toast({
         title: t('chat:groupChat.inviteLink.copyFailed'),
         variant: 'destructive',
-      });
+      })
     }
-  };
+  }
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -309,8 +309,8 @@ export function AddMembersDialog({
                     variant="outline"
                     className="w-full"
                     onClick={() => {
-                      handleAddUnregisteredUser(searchQuery);
-                      clearSearch();
+                      handleAddUnregisteredUser(searchQuery)
+                      clearSearch()
                     }}
                   >
                     <UserPlus className="h-4 w-4 mr-2" />
@@ -412,5 +412,5 @@ export function AddMembersDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
+  )
 }

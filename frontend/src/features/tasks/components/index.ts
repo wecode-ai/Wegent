@@ -1,33 +1,33 @@
 // Re-export all components from subdirectories for backward compatibility
 // Input components
-export * from './input';
+export * from './input'
 
 // Message components
-export * from './message';
+export * from './message'
 
 // Sidebar components
-export * from './sidebar';
+export * from './sidebar'
 
 // Selector components
-export * from './selector';
+export * from './selector'
 
 // Clarification components
-export * from './clarification';
+export * from './clarification'
 
 // Share components
-export * from './share';
+export * from './share'
 
 // Workbench components
-export * from './workbench';
+export * from './workbench'
 
 // Params components
-export * from './params';
+export * from './params'
 
 // Hooks
-export * from './hooks';
+export * from './hooks'
 
 // Chat components
-export * from './chat';
+export * from './chat'
 
 // Group chat components
-export * from './group-chat';
+export * from './group-chat'

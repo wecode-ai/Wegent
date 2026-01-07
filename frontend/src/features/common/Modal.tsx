@@ -2,18 +2,18 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { Dialog } from '@headlessui/react';
-import { ReactNode } from 'react';
+import { Dialog } from '@headlessui/react'
+import { ReactNode } from 'react'
 
 type ModalProps = {
-  isOpen: boolean;
-  onClose: () => void;
-  title: string;
-  children: ReactNode;
-  maxWidth?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | '3xl' | 'full';
-};
+  isOpen: boolean
+  onClose: () => void
+  title: string
+  children: ReactNode
+  maxWidth?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | '3xl' | 'full'
+}
 
 export default function Modal({ isOpen, onClose, title, children, maxWidth = 'md' }: ModalProps) {
   // Map maxWidth to actual width class
@@ -25,7 +25,7 @@ export default function Modal({ isOpen, onClose, title, children, maxWidth = 'md
     '2xl': 'max-w-2xl',
     '3xl': 'max-w-3xl',
     full: 'max-w-full',
-  }[maxWidth];
+  }[maxWidth]
 
   return (
     <Dialog open={isOpen} onClose={onClose} className="relative z-50">
@@ -50,5 +50,5 @@ export default function Modal({ isOpen, onClose, title, children, maxWidth = 'md
         </Dialog.Panel>
       </div>
     </Dialog>
-  );
+  )
 }

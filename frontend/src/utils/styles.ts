@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react';
+import type { CSSProperties } from 'react'
 
 /**
  * Get shared tag style
@@ -11,7 +11,7 @@ export const getSharedTagStyle = (): CSSProperties => ({
   backgroundColor: 'hsl(var(--primary) / 0.1)',
   color: 'hsl(var(--primary))',
   borderColor: 'hsl(var(--primary) / 0.2)',
-});
+})
 
 /**
  * Get workflow tag style
@@ -21,7 +21,7 @@ export const getWorkflowTagStyle = (): CSSProperties => ({
   color: 'hsl(var(--muted-foreground))',
   border: '1px solid hsl(var(--border))',
   lineHeight: '16px',
-});
+})
 
 /**
  * Get subtle badge style
@@ -31,12 +31,12 @@ export const getSubtleBadgeStyle = (): CSSProperties => ({
   color: 'hsl(var(--muted-foreground))',
   border: '1px solid hsl(var(--border))',
   lineHeight: '16px',
-});
+})
 
 /**
  * Prompt badge variant type
  */
-export type PromptBadgeVariant = 'configured' | 'pending' | 'none';
+export type PromptBadgeVariant = 'configured' | 'pending' | 'none'
 
 /**
  * Get prompt badge style
@@ -45,7 +45,7 @@ export const getPromptBadgeStyle = (variant: PromptBadgeVariant): CSSProperties 
   const base: CSSProperties = {
     fontSize: 11,
     lineHeight: '16px',
-  };
+  }
 
   if (variant === 'configured') {
     return {
@@ -53,7 +53,7 @@ export const getPromptBadgeStyle = (variant: PromptBadgeVariant): CSSProperties 
       backgroundColor: 'hsl(var(--primary) / 0.1)',
       color: 'hsl(var(--primary))',
       border: '1px solid hsl(var(--primary) / 0.2)',
-    };
+    }
   }
 
   if (variant === 'pending') {
@@ -62,7 +62,7 @@ export const getPromptBadgeStyle = (variant: PromptBadgeVariant): CSSProperties 
       backgroundColor: 'hsl(var(--warning) / 0.1)',
       color: 'hsl(var(--warning))',
       border: '1px solid hsl(var(--warning) / 0.2)',
-    };
+    }
   }
 
   return {
@@ -70,5 +70,5 @@ export const getPromptBadgeStyle = (variant: PromptBadgeVariant): CSSProperties 
     backgroundColor: 'hsl(var(--muted))',
     color: 'hsl(var(--muted-foreground))',
     border: '1px solid hsl(var(--border))',
-  };
-};
+  }
+}

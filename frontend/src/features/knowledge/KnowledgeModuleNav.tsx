@@ -2,27 +2,27 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { usePathname } from 'next/navigation';
-import Link from 'next/link';
-import Image from 'next/image';
-import { useTranslation } from '@/hooks/useTranslation';
-import { CodeBracketIcon } from '@heroicons/react/24/outline';
-import { UserFloatingMenu } from '@/features/layout/components/UserFloatingMenu';
+import { usePathname } from 'next/navigation'
+import Link from 'next/link'
+import Image from 'next/image'
+import { useTranslation } from '@/hooks/useTranslation'
+import { CodeBracketIcon } from '@heroicons/react/24/outline'
+import { UserFloatingMenu } from '@/features/layout/components/UserFloatingMenu'
 
-export type KnowledgeModule = 'code' | 'wiki';
+export type KnowledgeModule = 'code' | 'wiki'
 
 interface KnowledgeModuleNavProps {
-  activeModule?: KnowledgeModule;
+  activeModule?: KnowledgeModule
 }
 
 interface ModuleItem {
-  id: KnowledgeModule;
-  labelKey: string;
-  icon: React.ComponentType<{ className?: string }>;
-  href: string;
-  description?: string;
+  id: KnowledgeModule
+  labelKey: string
+  icon: React.ComponentType<{ className?: string }>
+  href: string
+  description?: string
 }
 
 const modules: ModuleItem[] = [
@@ -41,7 +41,7 @@ const modules: ModuleItem[] = [
   //   href: '/knowledge/wiki',
   //   description: 'modules.wiki_desc',
   // },
-];
+]
 
 /**
  * Knowledge module navigation sidebar component
@@ -49,11 +49,11 @@ const modules: ModuleItem[] = [
  * Layout matches TaskSidebar with logo at top
  */
 export function KnowledgeModuleNav({ activeModule }: KnowledgeModuleNavProps) {
-  const { t } = useTranslation();
-  const pathname = usePathname();
+  const { t } = useTranslation()
+  const pathname = usePathname()
 
   // Determine active module from pathname if not provided
-  const currentModule = activeModule || (pathname?.includes('/knowledge/wiki') ? 'wiki' : 'code');
+  const currentModule = activeModule || (pathname?.includes('/knowledge/wiki') ? 'wiki' : 'code')
 
   return (
     <div className="hidden lg:flex lg:flex-col w-56 border-r border-border bg-surface h-full">
@@ -78,8 +78,8 @@ export function KnowledgeModuleNav({ activeModule }: KnowledgeModuleNavProps) {
         </h2>
         <nav className="space-y-1">
           {modules.map(module => {
-            const isActive = currentModule === module.id;
-            const Icon = module.icon;
+            const isActive = currentModule === module.id
+            const Icon = module.icon
 
             return (
               <Link
@@ -104,7 +104,7 @@ export function KnowledgeModuleNav({ activeModule }: KnowledgeModuleNavProps) {
                   )}
                 </div>
               </Link>
-            );
+            )
           })}
         </nav>
       </div>
@@ -114,5 +114,5 @@ export function KnowledgeModuleNav({ activeModule }: KnowledgeModuleNavProps) {
         <UserFloatingMenu />
       </div>
     </div>
-  );
+  )
 }

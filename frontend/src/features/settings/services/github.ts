@@ -2,14 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { userApis } from '@/apis/user';
-import { GitInfo, User } from '@/types/api';
+import { userApis } from '@/apis/user'
+import { GitInfo, User } from '@/types/api'
 
 /**
  * Get user's gitInfo
  */
 export async function fetchGitInfo(user: User): Promise<GitInfo[]> {
-  return Array.isArray(user.git_info) ? user.git_info : [];
+  return Array.isArray(user.git_info) ? user.git_info : []
 }
 
 /**
@@ -25,18 +25,18 @@ export async function saveGitToken(
   existingId?: string
 ): Promise<void> {
   // Auto-detect type if not provided
-  let detectedType: GitInfo['type'] = type || 'gitlab';
+  let detectedType: GitInfo['type'] = type || 'gitlab'
   if (!type) {
     if (git_domain.includes('github')) {
-      detectedType = 'github';
+      detectedType = 'github'
     } else if (git_domain.includes('gitlab')) {
-      detectedType = 'gitlab';
+      detectedType = 'gitlab'
     } else if (git_domain.includes('gitee')) {
-      detectedType = 'gitee';
+      detectedType = 'gitee'
     } else if (git_domain.includes('gitea')) {
-      detectedType = 'gitea';
+      detectedType = 'gitea'
     } else if (git_domain.includes('gerrit')) {
-      detectedType = 'gerrit';
+      detectedType = 'gerrit'
     }
   }
 
@@ -45,20 +45,20 @@ export async function saveGitToken(
     git_domain,
     git_token,
     type: detectedType,
-  };
+  }
 
   // Add id if editing existing record (for update instead of create)
   if (existingId) {
-    gitInfoToSave.id = existingId;
+    gitInfoToSave.id = existingId
   }
 
   // Add user_name if provided
   if (username !== undefined && username !== '') {
-    gitInfoToSave.user_name = username;
+    gitInfoToSave.user_name = username
   }
 
   // Send only the single git_info item being saved
-  await userApis.updateUser({ git_info: [gitInfoToSave] });
+  await userApis.updateUser({ git_info: [gitInfoToSave] })
 }
 
 /**
@@ -68,9 +68,9 @@ export async function saveGitToken(
  */
 export async function deleteGitToken(user: User, gitInfo: GitInfo): Promise<boolean> {
   try {
-    await userApis.deleteGitToken(gitInfo.git_domain, gitInfo.id);
-    return true;
+    await userApis.deleteGitToken(gitInfo.git_domain, gitInfo.id)
+    return true
   } catch {
-    return false;
+    return false
   }
 }

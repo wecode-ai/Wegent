@@ -1,35 +1,35 @@
-import { Page } from '@playwright/test';
+import { Page } from '@playwright/test'
 
 /**
  * Performance metrics interface
  */
 export interface PerformanceMetrics {
-  loadTime: number;
-  domContentLoaded: number;
-  firstContentfulPaint: number;
-  largestContentfulPaint: number;
-  timeToInteractive: number;
-  totalBlockingTime: number;
-  resourceCount: number;
-  totalTransferSize: number;
+  loadTime: number
+  domContentLoaded: number
+  firstContentfulPaint: number
+  largestContentfulPaint: number
+  timeToInteractive: number
+  totalBlockingTime: number
+  resourceCount: number
+  totalTransferSize: number
 }
 
 /**
  * API timing interface
  */
 export interface ApiTiming {
-  url: string;
-  method: string;
-  duration: number;
-  status: number;
+  url: string
+  method: string
+  duration: number
+  status: number
 }
 
 /**
  * Performance Monitor class for measuring page and API performance
  */
 export class PerformanceMonitor {
-  private apiTimings: ApiTiming[] = [];
-  private isListening: boolean = false;
+  private apiTimings: ApiTiming[] = []
+  private isListening: boolean = false
 
   constructor(private page: Page) {}
 
@@ -37,34 +37,34 @@ export class PerformanceMonitor {
    * Start listening to API requests
    */
   startListening(): void {
-    if (this.isListening) return;
-    this.isListening = true;
+    if (this.isListening) return
+    this.isListening = true
 
     this.page.on('request', request => {
       if (request.url().includes('/api/')) {
-        (request as unknown as { _startTime: number })._startTime = Date.now();
+        ;(request as unknown as { _startTime: number })._startTime = Date.now()
       }
-    });
+    })
 
     this.page.on('response', response => {
-      const request = response.request();
+      const request = response.request()
       if (request.url().includes('/api/')) {
-        const startTime = (request as unknown as { _startTime?: number })._startTime || Date.now();
+        const startTime = (request as unknown as { _startTime?: number })._startTime || Date.now()
         this.apiTimings.push({
           url: request.url(),
           method: request.method(),
           duration: Date.now() - startTime,
           status: response.status(),
-        });
+        })
       }
-    });
+    })
   }
 
   /**
    * Stop listening to API requests
    */
   stopListening(): void {
-    this.isListening = false;
+    this.isListening = false
     // Note: Playwright doesn't have a direct way to remove specific listeners
     // The listeners will be cleaned up when the page is closed
   }
@@ -74,15 +74,15 @@ export class PerformanceMonitor {
    */
   async measurePageLoad(): Promise<PerformanceMetrics> {
     const metrics = await this.page.evaluate(() => {
-      const timing = performance.timing;
-      const paint = performance.getEntriesByType('paint');
-      const resources = performance.getEntriesByType('resource') as PerformanceResourceTiming[];
+      const timing = performance.timing
+      const paint = performance.getEntriesByType('paint')
+      const resources = performance.getEntriesByType('resource') as PerformanceResourceTiming[]
 
       // Calculate FCP
-      const fcp = paint.find(p => p.name === 'first-contentful-paint')?.startTime || 0;
+      const fcp = paint.find(p => p.name === 'first-contentful-paint')?.startTime || 0
 
       // Calculate total transfer size
-      const totalTransferSize = resources.reduce((sum, r) => sum + (r.transferSize || 0), 0);
+      const totalTransferSize = resources.reduce((sum, r) => sum + (r.transferSize || 0), 0)
 
       return {
         loadTime: timing.loadEventEnd - timing.navigationStart,
@@ -93,76 +93,76 @@ export class PerformanceMonitor {
         totalBlockingTime: 0, // Requires calculation
         resourceCount: resources.length,
         totalTransferSize,
-      };
-    });
+      }
+    })
 
-    return metrics;
+    return metrics
   }
 
   /**
    * Measure a specific API call duration
    */
   async measureApiCall<T>(apiCall: () => Promise<T>): Promise<{ result: T; duration: number }> {
-    const start = Date.now();
-    const result = await apiCall();
-    const duration = Date.now() - start;
-    return { result, duration };
+    const start = Date.now()
+    const result = await apiCall()
+    const duration = Date.now() - start
+    return { result, duration }
   }
 
   /**
    * Get all recorded API timings
    */
   getApiTimings(): ApiTiming[] {
-    return [...this.apiTimings];
+    return [...this.apiTimings]
   }
 
   /**
    * Get average API response time
    */
   getAverageApiTime(): number {
-    if (this.apiTimings.length === 0) return 0;
-    const total = this.apiTimings.reduce((sum, timing) => sum + timing.duration, 0);
-    return total / this.apiTimings.length;
+    if (this.apiTimings.length === 0) return 0
+    const total = this.apiTimings.reduce((sum, timing) => sum + timing.duration, 0)
+    return total / this.apiTimings.length
   }
 
   /**
    * Get slowest API calls
    */
   getSlowestApiCalls(count: number = 5): ApiTiming[] {
-    return [...this.apiTimings].sort((a, b) => b.duration - a.duration).slice(0, count);
+    return [...this.apiTimings].sort((a, b) => b.duration - a.duration).slice(0, count)
   }
 
   /**
    * Clear API timings
    */
   clearApiTimings(): void {
-    this.apiTimings = [];
+    this.apiTimings = []
   }
 
   /**
    * Log performance metrics to console
    */
   async logMetrics(testName: string): Promise<void> {
-    const metrics = await this.measurePageLoad();
+    const metrics = await this.measurePageLoad()
 
-    console.log(`\n📊 Performance Metrics for ${testName}:`);
-    console.log(`  Load Time: ${metrics.loadTime}ms`);
-    console.log(`  DOM Content Loaded: ${metrics.domContentLoaded}ms`);
-    console.log(`  First Contentful Paint: ${metrics.firstContentfulPaint}ms`);
-    console.log(`  Resource Count: ${metrics.resourceCount}`);
-    console.log(`  Total Transfer Size: ${(metrics.totalTransferSize / 1024).toFixed(2)}KB`);
+    console.log(`\n📊 Performance Metrics for ${testName}:`)
+    console.log(`  Load Time: ${metrics.loadTime}ms`)
+    console.log(`  DOM Content Loaded: ${metrics.domContentLoaded}ms`)
+    console.log(`  First Contentful Paint: ${metrics.firstContentfulPaint}ms`)
+    console.log(`  Resource Count: ${metrics.resourceCount}`)
+    console.log(`  Total Transfer Size: ${(metrics.totalTransferSize / 1024).toFixed(2)}KB`)
 
     if (this.apiTimings.length > 0) {
-      console.log(`\n⚡ API Performance:`);
-      console.log(`  Total API Calls: ${this.apiTimings.length}`);
-      console.log(`  Average Response Time: ${this.getAverageApiTime().toFixed(2)}ms`);
+      console.log(`\n⚡ API Performance:`)
+      console.log(`  Total API Calls: ${this.apiTimings.length}`)
+      console.log(`  Average Response Time: ${this.getAverageApiTime().toFixed(2)}ms`)
 
-      const slowest = this.getSlowestApiCalls(3);
+      const slowest = this.getSlowestApiCalls(3)
       if (slowest.length > 0) {
-        console.log(`  Slowest Calls:`);
+        console.log(`  Slowest Calls:`)
         slowest.forEach((timing, i) => {
-          console.log(`    ${i + 1}. ${timing.method} ${timing.url} - ${timing.duration}ms`);
-        });
+          console.log(`    ${i + 1}. ${timing.method} ${timing.url} - ${timing.duration}ms`)
+        })
       }
     }
   }
@@ -172,7 +172,7 @@ export class PerformanceMonitor {
    */
   assertLoadTime(metrics: PerformanceMetrics, maxLoadTime: number = 3000): void {
     if (metrics.loadTime > maxLoadTime) {
-      throw new Error(`Page load time ${metrics.loadTime}ms exceeds maximum ${maxLoadTime}ms`);
+      throw new Error(`Page load time ${metrics.loadTime}ms exceeds maximum ${maxLoadTime}ms`)
     }
   }
 
@@ -183,7 +183,7 @@ export class PerformanceMonitor {
     if (metrics.domContentLoaded > maxTime) {
       throw new Error(
         `DOM content loaded time ${metrics.domContentLoaded}ms exceeds maximum ${maxTime}ms`
-      );
+      )
     }
   }
 
@@ -194,7 +194,7 @@ export class PerformanceMonitor {
     if (metrics.firstContentfulPaint > maxFcp) {
       throw new Error(
         `First Contentful Paint ${metrics.firstContentfulPaint}ms exceeds maximum ${maxFcp}ms`
-      );
+      )
     }
   }
 
@@ -202,10 +202,10 @@ export class PerformanceMonitor {
    * Assert that all API calls are within acceptable range
    */
   assertApiResponseTimes(maxTime: number = 1000): void {
-    const slow = this.apiTimings.filter(timing => timing.duration > maxTime);
+    const slow = this.apiTimings.filter(timing => timing.duration > maxTime)
     if (slow.length > 0) {
-      const details = slow.map(t => `${t.method} ${t.url}: ${t.duration}ms`).join('\n  ');
-      throw new Error(`${slow.length} API calls exceeded ${maxTime}ms:\n  ${details}`);
+      const details = slow.map(t => `${t.method} ${t.url}: ${t.duration}ms`).join('\n  ')
+      throw new Error(`${slow.length} API calls exceeded ${maxTime}ms:\n  ${details}`)
     }
   }
 
@@ -213,16 +213,16 @@ export class PerformanceMonitor {
    * Generate performance report object
    */
   async generateReport(testName: string): Promise<{
-    testName: string;
-    timestamp: string;
-    pageMetrics: PerformanceMetrics;
+    testName: string
+    timestamp: string
+    pageMetrics: PerformanceMetrics
     apiMetrics: {
-      totalCalls: number;
-      averageTime: number;
-      slowestCalls: ApiTiming[];
-    };
+      totalCalls: number
+      averageTime: number
+      slowestCalls: ApiTiming[]
+    }
   }> {
-    const pageMetrics = await this.measurePageLoad();
+    const pageMetrics = await this.measurePageLoad()
     return {
       testName,
       timestamp: new Date().toISOString(),
@@ -232,7 +232,7 @@ export class PerformanceMonitor {
         averageTime: this.getAverageApiTime(),
         slowestCalls: this.getSlowestApiCalls(5),
       },
-    };
+    }
   }
 }
 
@@ -240,15 +240,15 @@ export class PerformanceMonitor {
  * Create a performance monitor instance
  */
 export function createPerformanceMonitor(page: Page): PerformanceMonitor {
-  return new PerformanceMonitor(page);
+  return new PerformanceMonitor(page)
 }
 
 /**
  * Performance thresholds configuration
  */
 // CI environments are typically slower, so we use higher thresholds
-const isCI = process.env.CI === 'true';
-const ciMultiplier = isCI ? 2 : 1;
+const isCI = process.env.CI === 'true'
+const ciMultiplier = isCI ? 2 : 1
 
 export const PerformanceThresholds = {
   pageLoad: {
@@ -271,4 +271,4 @@ export const PerformanceThresholds = {
     acceptable: 1000 * ciMultiplier,
     slow: 3000 * ciMultiplier,
   },
-};
+}

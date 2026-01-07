@@ -9,12 +9,12 @@
 
 // Handle notification click events
 self.addEventListener('notificationclick', event => {
-  event.notification.close();
+  event.notification.close()
 
-  const targetUrl = event.notification.data?.targetUrl;
+  const targetUrl = event.notification.data?.targetUrl
 
   if (!targetUrl) {
-    return;
+    return
   }
 
   event.waitUntil(
@@ -23,29 +23,29 @@ self.addEventListener('notificationclick', event => {
       const clients = await self.clients.matchAll({
         type: 'window',
         includeUncontrolled: true,
-      });
+      })
 
       // Try to find an existing tab with exact URL match
       for (const client of clients) {
         if (client.url === targetUrl) {
           // Found matching tab, focus it
-          await client.focus();
-          return;
+          await client.focus()
+          return
         }
       }
 
       // No matching tab found, open new window
-      await self.clients.openWindow(targetUrl);
+      await self.clients.openWindow(targetUrl)
     })()
-  );
-});
+  )
+})
 
 // Minimal service worker - no caching, no other PWA features
 // Just handle notification clicks
 self.addEventListener('install', () => {
-  self.skipWaiting();
-});
+  self.skipWaiting()
+})
 
 self.addEventListener('activate', event => {
-  event.waitUntil(self.clients.claim());
-});
+  event.waitUntil(self.clients.claim())
+})

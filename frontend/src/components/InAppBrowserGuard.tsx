@@ -1,13 +1,13 @@
-'use client';
+'use client'
 
-import { useState } from 'react';
-import { useTranslation } from 'react-i18next';
-import { detectInAppBrowser, getOpenInBrowserInstruction } from '@/utils/browserDetection';
-import { Globe, ExternalLink, ChevronRight } from 'lucide-react';
+import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { detectInAppBrowser, getOpenInBrowserInstruction } from '@/utils/browserDetection'
+import { Globe, ExternalLink, ChevronRight } from 'lucide-react'
 
 interface InAppBrowserGuardProps {
-  onProceed?: () => void;
-  onCancel?: () => void;
+  onProceed?: () => void
+  onCancel?: () => void
 }
 
 /**
@@ -15,23 +15,23 @@ interface InAppBrowserGuardProps {
  * Shows a full-screen overlay with instructions when triggered
  */
 export function InAppBrowserGuard({ onProceed }: InAppBrowserGuardProps) {
-  const { t } = useTranslation();
-  const [isDismissed, setIsDismissed] = useState(false);
+  const { t } = useTranslation()
+  const [isDismissed, setIsDismissed] = useState(false)
 
   // Get browser info
-  const browserInfo = detectInAppBrowser();
+  const browserInfo = detectInAppBrowser()
 
   // If dismissed or not in-app browser, don't show anything
   if (isDismissed || !browserInfo.isInAppBrowser) {
-    return null;
+    return null
   }
 
   const handleContinueAnyway = () => {
-    setIsDismissed(true);
-    onProceed?.();
-  };
+    setIsDismissed(true)
+    onProceed?.()
+  }
 
-  const instructionKey = getOpenInBrowserInstruction(browserInfo.browserName);
+  const instructionKey = getOpenInBrowserInstruction(browserInfo.browserName)
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-gray-900 dark:to-gray-800 p-4">
@@ -99,11 +99,11 @@ export function InAppBrowserGuard({ onProceed }: InAppBrowserGuardProps) {
                 navigator.clipboard
                   .writeText(window.location.href)
                   .then(() => {
-                    alert(t('inAppBrowser.urlCopied'));
+                    alert(t('inAppBrowser.urlCopied'))
                   })
                   .catch(() => {
-                    alert(t('inAppBrowser.copyFailed'));
-                  });
+                    alert(t('inAppBrowser.copyFailed'))
+                  })
               }
             }}
             className="w-full rounded-lg bg-blue-600 px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-blue-700 active:bg-blue-800"
@@ -126,5 +126,5 @@ export function InAppBrowserGuard({ onProceed }: InAppBrowserGuardProps) {
         </p>
       </div>
     </div>
-  );
+  )
 }

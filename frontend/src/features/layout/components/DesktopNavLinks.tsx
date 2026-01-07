@@ -2,38 +2,38 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
-import { useRouter } from 'next/navigation';
-import { paths } from '@/config/paths';
-import { useTranslation } from '@/hooks/useTranslation';
-import { getRuntimeConfigSync } from '@/lib/runtime-config';
+import { useEffect, useMemo, useRef, useState, useTransition } from 'react'
+import { useRouter } from 'next/navigation'
+import { paths } from '@/config/paths'
+import { useTranslation } from '@/hooks/useTranslation'
+import { getRuntimeConfigSync } from '@/lib/runtime-config'
 
 interface DesktopNavLinksProps {
-  activePage: 'chat' | 'code' | 'wiki' | 'dashboard';
+  activePage: 'chat' | 'code' | 'wiki' | 'dashboard'
 }
 
 export function DesktopNavLinks({ activePage }: DesktopNavLinksProps) {
-  const { t } = useTranslation();
-  const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+  const { t } = useTranslation()
+  const router = useRouter()
+  const [isPending, startTransition] = useTransition()
 
   // Check if Wiki module is enabled via runtime config
-  const isWikiEnabled = getRuntimeConfigSync().enableWiki;
+  const isWikiEnabled = getRuntimeConfigSync().enableWiki
 
-  const indicatorContainerRef = useRef<HTMLDivElement | null>(null);
-  const itemRefs = useRef<Record<string, HTMLButtonElement | null>>({});
-  const [indicatorStyle, setIndicatorStyle] = useState({ width: 0, left: 0 });
+  const indicatorContainerRef = useRef<HTMLDivElement | null>(null)
+  const itemRefs = useRef<Record<string, HTMLButtonElement | null>>({})
+  const [indicatorStyle, setIndicatorStyle] = useState({ width: 0, left: 0 })
 
   // Prefetch all navigation pages on mount for smoother navigation
   useEffect(() => {
-    router.prefetch(paths.chat.getHref());
-    router.prefetch(paths.code.getHref());
+    router.prefetch(paths.chat.getHref())
+    router.prefetch(paths.code.getHref())
     if (isWikiEnabled) {
-      router.prefetch(paths.wiki.getHref());
+      router.prefetch(paths.wiki.getHref())
     }
-  }, [router, isWikiEnabled]);
+  }, [router, isWikiEnabled])
 
   const navItems = useMemo(
     () => [
@@ -42,8 +42,8 @@ export function DesktopNavLinks({ activePage }: DesktopNavLinksProps) {
         label: t('common:navigation.chat'),
         onClick: () => {
           startTransition(() => {
-            router.push(paths.chat.getHref());
-          });
+            router.push(paths.chat.getHref())
+          })
         },
       },
       {
@@ -51,8 +51,8 @@ export function DesktopNavLinks({ activePage }: DesktopNavLinksProps) {
         label: t('common:navigation.code'),
         onClick: () => {
           startTransition(() => {
-            router.push(paths.code.getHref());
-          });
+            router.push(paths.code.getHref())
+          })
         },
       },
       ...(isWikiEnabled
@@ -62,43 +62,43 @@ export function DesktopNavLinks({ activePage }: DesktopNavLinksProps) {
               label: t('common:navigation.wiki'),
               onClick: () => {
                 startTransition(() => {
-                  router.push(paths.wiki.getHref());
-                });
+                  router.push(paths.wiki.getHref())
+                })
               },
             },
           ]
         : []),
     ],
     [t, router, startTransition]
-  );
+  )
 
   useEffect(() => {
     const updateIndicator = () => {
-      const container = indicatorContainerRef.current;
-      const current = itemRefs.current[activePage];
+      const container = indicatorContainerRef.current
+      const current = itemRefs.current[activePage]
 
       if (!container || !current) {
         setIndicatorStyle(prev =>
           prev.width === 0 && prev.left === 0 ? prev : { width: 0, left: 0 }
-        );
-        return;
+        )
+        return
       }
 
-      const containerRect = container.getBoundingClientRect();
-      const currentRect = current.getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect()
+      const currentRect = current.getBoundingClientRect()
       setIndicatorStyle({
         width: currentRect.width,
         left: currentRect.left - containerRect.left,
-      });
-    };
+      })
+    }
 
-    updateIndicator();
-    window.addEventListener('resize', updateIndicator);
+    updateIndicator()
+    window.addEventListener('resize', updateIndicator)
 
     return () => {
-      window.removeEventListener('resize', updateIndicator);
-    };
-  }, [activePage, navItems]);
+      window.removeEventListener('resize', updateIndicator)
+    }
+  }, [activePage, navItems])
 
   return (
     <div
@@ -120,7 +120,7 @@ export function DesktopNavLinks({ activePage }: DesktopNavLinksProps) {
           key={item.key}
           type="button"
           ref={element => {
-            itemRefs.current[item.key] = element;
+            itemRefs.current[item.key] = element
           }}
           onClick={item.onClick}
           disabled={isPending}
@@ -135,5 +135,5 @@ export function DesktopNavLinks({ activePage }: DesktopNavLinksProps) {
         </button>
       ))}
     </div>
-  );
+  )
 }

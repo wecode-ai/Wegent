@@ -8,16 +8,16 @@
  *
  * Future types to be added: 'person' | 'bot' | 'team'
  */
-export type ContextType = 'knowledge_base';
+export type ContextType = 'knowledge_base'
 
 /**
  * Base interface for all context items
  * 所有上下文项的基础接口
  */
 export interface BaseContextItem {
-  id: number | string;
-  name: string;
-  type: ContextType;
+  id: number | string
+  name: string
+  type: ContextType
 }
 
 /**
@@ -25,11 +25,11 @@ export interface BaseContextItem {
  * 知识库上下文项
  */
 export interface KnowledgeBaseContext extends BaseContextItem {
-  type: 'knowledge_base';
-  description?: string;
-  retriever_name?: string;
-  retriever_namespace?: string;
-  document_count?: number;
+  type: 'knowledge_base'
+  description?: string
+  retriever_name?: string
+  retriever_namespace?: string
+  document_count?: number
 }
 
 /**
@@ -41,4 +41,4 @@ export interface KnowledgeBaseContext extends BaseContextItem {
  * 2. Create a new interface extending BaseContextItem
  * 3. Add the new interface to this union type
  */
-export type ContextItem = KnowledgeBaseContext;
+export type ContextItem = KnowledgeBaseContext

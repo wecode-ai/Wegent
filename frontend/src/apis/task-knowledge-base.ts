@@ -17,12 +17,8 @@ export const taskKnowledgeBaseApi = {
   /**
    * Get knowledge bases bound to a group chat task
    */
-  getBoundKnowledgeBases: async (
-    taskId: number
-  ): Promise<BoundKnowledgeBaseListResponse> => {
-    return client.get<BoundKnowledgeBaseListResponse>(
-      `/tasks/${taskId}/knowledge-bases`
-    )
+  getBoundKnowledgeBases: async (taskId: number): Promise<BoundKnowledgeBaseListResponse> => {
+    return client.get<BoundKnowledgeBaseListResponse>(`/tasks/${taskId}/knowledge-bases`)
   },
 
   /**
@@ -33,13 +29,10 @@ export const taskKnowledgeBaseApi = {
     kbName: string,
     kbNamespace: string = 'default'
   ): Promise<BoundKnowledgeBaseDetail> => {
-    return client.post<BoundKnowledgeBaseDetail>(
-      `/tasks/${taskId}/knowledge-bases`,
-      {
-        kb_name: kbName,
-        kb_namespace: kbNamespace,
-      }
-    )
+    return client.post<BoundKnowledgeBaseDetail>(`/tasks/${taskId}/knowledge-bases`, {
+      kb_name: kbName,
+      kb_namespace: kbNamespace,
+    })
   },
 
   /**

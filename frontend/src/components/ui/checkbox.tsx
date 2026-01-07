@@ -2,13 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import * as React from 'react';
-import * as CheckboxPrimitive from '@radix-ui/react-checkbox';
-import { CheckIcon } from '@heroicons/react/24/outline';
+import * as React from 'react'
+import * as CheckboxPrimitive from '@radix-ui/react-checkbox'
+import { CheckIcon } from '@heroicons/react/24/outline'
 
-import { cn } from '@/lib/utils';
+import { cn } from '@/lib/utils'
 
 const Checkbox = React.forwardRef<
   React.ElementRef<typeof CheckboxPrimitive.Root>,
@@ -26,7 +26,7 @@ const Checkbox = React.forwardRef<
       <CheckIcon className="h-3.5 w-3.5" strokeWidth={3} />
     </CheckboxPrimitive.Indicator>
   </CheckboxPrimitive.Root>
-));
-Checkbox.displayName = CheckboxPrimitive.Root.displayName;
+))
+Checkbox.displayName = CheckboxPrimitive.Root.displayName
 
-export { Checkbox };
+export { Checkbox }

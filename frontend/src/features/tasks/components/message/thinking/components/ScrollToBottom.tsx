@@ -2,20 +2,20 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { memo } from 'react';
-import { ChevronsDown } from 'lucide-react';
-import { useTranslation } from '@/hooks/useTranslation';
-import type { ScrollToBottomProps } from '../types';
+import { memo } from 'react'
+import { ChevronsDown } from 'lucide-react'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { ScrollToBottomProps } from '../types'
 
 /**
  * Floating button to scroll to bottom of content area
  */
 const ScrollToBottom = memo(function ScrollToBottom({ show, onClick }: ScrollToBottomProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
 
-  if (!show) return null;
+  if (!show) return null
 
   return (
     <button
@@ -26,7 +26,7 @@ const ScrollToBottom = memo(function ScrollToBottom({ show, onClick }: ScrollToB
       <ChevronsDown className="h-3 w-3" />
       <span>{t('chat:thinking.scroll_to_bottom') || 'Scroll to bottom'}</span>
     </button>
-  );
-});
+  )
+})
 
-export default ScrollToBottom;
+export default ScrollToBottom
