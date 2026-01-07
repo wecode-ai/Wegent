@@ -211,6 +211,7 @@ class ChatService(ChatInterface):
                             subtask_id=request.subtask_id,
                             user_id=request.user_id,
                             skill_configs=request.skill_configs,
+                            load_skill_tool=load_skill_tool,
                         )
                         extra_tools.extend(skill_tools)
 
@@ -370,7 +371,12 @@ class ChatService(ChatInterface):
         """Convert SSE emitter events to ChatEvents."""
         import json
 
-        for sse_data in emitter.get_all_events():
+        events = emitter.get_all_events()
+        if events:
+            logger.debug(
+                "[CHAT_SERVICE] _emit_pending_events: got %d events", len(events)
+            )
+        for sse_data in events:
             # Parse SSE data line
             if sse_data.startswith("data: "):
                 json_str = sse_data[6:].strip()
@@ -378,6 +384,8 @@ class ChatService(ChatInterface):
                     try:
                         data = json.loads(json_str)
                         event_type = data.pop("type", "chunk")
+                        # Log if this event has result.thinking
+                        result = data.get("result")
                         yield ChatEvent(
                             type=ChatEventType(event_type),
                             data=data,

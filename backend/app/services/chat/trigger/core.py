@@ -777,15 +777,16 @@ async def _stream_with_http_adapter(
                 )
 
                 # Emit chunk with thinking data
+                result_data = {
+                    "shell_type": "Chat",
+                    "thinking": thinking_steps.copy(),
+                }
                 await ws_emitter.emit_chat_chunk(
                     task_id=task_id,
                     subtask_id=subtask_id,
                     content="",
                     offset=offset,
-                    result={
-                        "shell_type": "Chat",
-                        "thinking": thinking_steps.copy(),
-                    },
+                    result=result_data,
                 )
 
             elif event.type == ChatEventType.TOOL_RESULT:
@@ -836,15 +837,16 @@ async def _stream_with_http_adapter(
                 )
 
                 # Emit chunk with thinking data
+                result_data = {
+                    "shell_type": "Chat",
+                    "thinking": thinking_steps.copy(),
+                }
                 await ws_emitter.emit_chat_chunk(
                     task_id=task_id,
                     subtask_id=subtask_id,
                     content="",
                     offset=offset,
-                    result={
-                        "shell_type": "Chat",
-                        "thinking": thinking_steps.copy(),
-                    },
+                    result=result_data,
                 )
 
             elif event.type == ChatEventType.DONE:

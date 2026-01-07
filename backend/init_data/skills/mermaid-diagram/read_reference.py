@@ -93,7 +93,7 @@ block
 | **Stadium**   | `id(["Label"])` | **Subroutine** | `id[["Label"]]` |
 | **Cylinder**  | `id[("Label")]` | **Circle**     | `id(("Label"))` |
 | **Diamond**   | `id{"Label"}`   | **Hexagon**    | `id{{"Label"}}` |
-| **Trapezoid** | `id[/"Label"\]` | **Inv. Trap.** | `id[\"Label"/]` |
+| **Trapezoid** | `id[/"Label"\\]` | **Inv. Trap.** | `id[\\"Label"/]` |
 
 ### Edges
 
@@ -508,8 +508,8 @@ flowchart TD
 - **Circle:** `id(("Label"))`
 - **Rhombus:** `id{"Label"}`
 - **Hexagon:** `id{{"Label"}}`
-- **Trapezoid:** `id[/"Label"\]`
-- **Inv. Trapezoid:** `id[\"Label"/]`
+- **Trapezoid:** `id[/"Label"\\]`
+- **Inv. Trapezoid:** `id[\\"Label"/]`
 
 ### Edges
 

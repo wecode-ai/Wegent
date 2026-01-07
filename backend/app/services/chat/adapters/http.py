@@ -32,7 +32,7 @@ class HTTPAdapter(ChatInterface):
         "content.delta": ChatEventType.CHUNK,
         "thinking.delta": ChatEventType.THINKING,
         "tool.start": ChatEventType.TOOL_START,
-        "tool.result": ChatEventType.TOOL_RESULT,
+        "tool.done": ChatEventType.TOOL_RESULT,
         "response.done": ChatEventType.DONE,
         "response.cancelled": ChatEventType.CANCELLED,
         "response.error": ChatEventType.ERROR,

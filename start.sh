@@ -250,15 +250,15 @@ start_services() {
 
     # 1. Start Backend
     start_service "backend" "backend" \
-        "source .venv/bin/activate 2>/dev/null || uv sync; uvicorn app.main:app --host 0.0.0.0 --port 8000"
+        "source .venv/bin/activate 2>/dev/null || uv sync; uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
 
     # 2. Start Chat Shell
     start_service "chat_shell" "chat_shell" \
-        "export CHAT_SHELL_MODE=http && export CHAT_SHELL_STORAGE_TYPE=remote && export CHAT_SHELL_REMOTE_STORAGE_URL=http://localhost:8000/api/internal && source .venv/bin/activate 2>/dev/null || uv sync; .venv/bin/python -m uvicorn chat_shell.main:app --host 0.0.0.0 --port 8100"
+        "export CHAT_SHELL_MODE=http && export CHAT_SHELL_STORAGE_TYPE=remote && export CHAT_SHELL_REMOTE_STORAGE_URL=http://localhost:8000/api/internal && source .venv/bin/activate 2>/dev/null || uv sync; .venv/bin/python -m uvicorn chat_shell.main:app --reload --host 0.0.0.0 --port 8100"
 
     # 3. Start Executor Manager
     start_service "executor_manager" "executor_manager" \
-        "export EXECUTOR_IMAGE=$EXECUTOR_IMAGE && export TASK_API_DOMAIN=http://localhost:8000 && export NETWORK=wegent-network && source .venv/bin/activate 2>/dev/null || uv sync; uvicorn main:app --host 0.0.0.0 --port 8001"
+        "export EXECUTOR_IMAGE=$EXECUTOR_IMAGE && export TASK_API_DOMAIN=http://localhost:8000 && export NETWORK=wegent-network && source .venv/bin/activate 2>/dev/null || uv sync; uvicorn main:app --reload --host 0.0.0.0 --port 8001"
 
     # 4. Start Frontend (run in background)
     echo -e "  Starting ${BLUE}frontend${NC}..."
