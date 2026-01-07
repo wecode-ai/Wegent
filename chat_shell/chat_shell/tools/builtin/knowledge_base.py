@@ -51,6 +51,10 @@ class KnowledgeBaseTool(BaseTool):
     # Knowledge base IDs to search (set when creating the tool)
     knowledge_base_ids: list[int] = Field(default_factory=list)
 
+    # Document IDs to filter (optional, for searching specific documents only)
+    # When set, only chunks from these documents will be returned
+    document_ids: list[int] = Field(default_factory=list)
+
     # User ID for access control
     user_id: int = 0
 
@@ -102,6 +106,11 @@ class KnowledgeBaseTool(BaseTool):
 
             logger.info(
                 f"[KnowledgeBaseTool] Searching {len(self.knowledge_base_ids)} knowledge bases with query: {query}"
+                + (
+                    f", filtering by {len(self.document_ids)} documents"
+                    if self.document_ids
+                    else ""
+                )
             )
 
             # Import RAG service - try backend first, then fallback
@@ -182,6 +191,9 @@ class KnowledgeBaseTool(BaseTool):
         Returns:
             Tuple of (results, source_references)
         """
+        # Build metadata_condition for document filtering
+        metadata_condition = self._build_document_filter()
+
         # Try to import from backend if available (when running inside backend process)
         try:
             from app.services.rag.retrieval_service import RetrievalService
@@ -198,6 +210,7 @@ class KnowledgeBaseTool(BaseTool):
                             query=query,
                             knowledge_base_id=kb_id,
                             db=self.db_session,
+                            metadata_condition=metadata_condition,
                         )
                     )
 
@@ -245,6 +258,31 @@ class KnowledgeBaseTool(BaseTool):
             # Backend RAG service not available, try HTTP fallback
             return await self._retrieve_via_http(query, max_results, seen_sources)
 
+    def _build_document_filter(self) -> Optional[dict[str, Any]]:
+        """Build metadata_condition for filtering by document IDs.
+
+        Returns:
+            Dify-style metadata_condition dict or None if no filtering needed
+        """
+        if not self.document_ids:
+            return None
+
+        # Convert document IDs to doc_ref format (document IDs are stored as strings)
+        doc_refs = [str(doc_id) for doc_id in self.document_ids]
+
+        # Build Dify-style metadata_condition
+        # Uses "in" operator to match any of the document IDs
+        return {
+            "operator": "and",
+            "conditions": [
+                {
+                    "key": "doc_ref",
+                    "operator": "in",
+                    "value": doc_refs,
+                }
+            ],
+        }
+
     async def _retrieve_via_http(
         self,
         query: str,
@@ -285,14 +323,20 @@ class KnowledgeBaseTool(BaseTool):
         async with httpx.AsyncClient(timeout=30.0) as client:
             for kb_id in self.knowledge_base_ids:
                 try:
+                    # Build request payload
+                    payload = {
+                        "query": query,
+                        "knowledge_base_id": kb_id,
+                        "max_results": max_results,
+                    }
+                    # Add document_ids filter if specified
+                    if self.document_ids:
+                        payload["document_ids"] = self.document_ids
+
                     # Call internal RAG API (simplified endpoint for chat_shell)
                     response = await client.post(
                         f"{backend_url}/api/internal/rag/retrieve",
-                        json={
-                            "query": query,
-                            "knowledge_base_id": kb_id,
-                            "max_results": max_results,
-                        },
+                        json=payload,
                     )
 
                     if response.status_code != 200:

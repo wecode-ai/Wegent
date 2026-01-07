@@ -405,6 +405,17 @@ def _prepare_kb_contexts_for_creation(
                 knowledge_id = kb_data.get("knowledge_id")
                 kb_name = kb_data.get("name", f"Knowledge Base {knowledge_id}")
                 document_count = kb_data.get("document_count")
+                # Get document_ids if user referenced specific documents
+                document_ids = kb_data.get("document_ids", [])
+
+                # Build type_data
+                type_data_dict = {
+                    "knowledge_id": int(knowledge_id) if knowledge_id else 0,
+                    "document_count": document_count,
+                }
+                # Only add document_ids if provided
+                if document_ids:
+                    type_data_dict["document_ids"] = document_ids
 
                 # Create SubtaskContext object (not yet committed)
                 kb_context = SubtaskContext(
@@ -413,10 +424,7 @@ def _prepare_kb_contexts_for_creation(
                     context_type=ContextType.KNOWLEDGE_BASE.value,
                     name=kb_name,
                     status=ContextStatus.READY.value,
-                    type_data={
-                        "knowledge_id": int(knowledge_id) if knowledge_id else 0,
-                        "document_count": document_count,
-                    },
+                    type_data=type_data_dict,
                 )
                 kb_contexts_to_create.append(kb_context)
             except Exception as e:
@@ -882,6 +890,34 @@ def get_knowledge_base_ids_from_subtask(
     """
     kb_contexts = context_service.get_knowledge_base_contexts_by_subtask(db, subtask_id)
     return [c.knowledge_id for c in kb_contexts if c.knowledge_id is not None]
+
+
+def get_document_ids_from_subtask(
+    db: Session,
+    subtask_id: int,
+) -> List[int]:
+    """
+    Get document IDs from a subtask's knowledge base contexts.
+
+    When a user references specific documents from a knowledge base,
+    the document_ids are stored in the context's type_data field.
+    This function extracts all document IDs from all KB contexts.
+
+    Args:
+        db: Database session
+        subtask_id: Subtask ID
+
+    Returns:
+        List of document_id values from knowledge_base type contexts
+    """
+    kb_contexts = context_service.get_knowledge_base_contexts_by_subtask(db, subtask_id)
+    document_ids = []
+    for c in kb_contexts:
+        if c.type_data and isinstance(c.type_data, dict):
+            doc_ids = c.type_data.get("document_ids", [])
+            if doc_ids:
+                document_ids.extend(doc_ids)
+    return document_ids
 
 
 def get_attachment_context_ids_from_subtask(

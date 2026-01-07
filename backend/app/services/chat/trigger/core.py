@@ -474,20 +474,24 @@ async def _stream_chat_response(
 
         if chat_shell_mode == "http":
             # HTTP mode: Call chat_shell service via HTTP/SSE
-            # Get knowledge_base_ids from user subtask's contexts
+            # Get knowledge_base_ids and document_ids from user subtask's contexts
             knowledge_base_ids = None
+            document_ids = None
             if user_subtask_id:
                 from app.services.chat.preprocessing.contexts import (
+                    get_document_ids_from_subtask,
                     get_knowledge_base_ids_from_subtask,
                 )
 
                 knowledge_base_ids = get_knowledge_base_ids_from_subtask(
                     db, user_subtask_id
                 )
+                document_ids = get_document_ids_from_subtask(db, user_subtask_id)
                 if knowledge_base_ids:
                     logger.info(
-                        "[ai_trigger] HTTP mode: knowledge_base_ids=%s",
+                        "[ai_trigger] HTTP mode: knowledge_base_ids=%s, document_ids=%s",
                         knowledge_base_ids,
+                        document_ids,
                     )
 
             await _stream_with_http_adapter(
@@ -500,6 +504,7 @@ async def _stream_chat_response(
                 skill_names=chat_config.skill_names,
                 skill_configs=chat_config.skill_configs,
                 knowledge_base_ids=knowledge_base_ids,
+                document_ids=document_ids,
             )
         elif streaming_mode == "bridge":
             # New architecture: StreamingCore publishes to Redis, WebSocketBridge forwards
@@ -563,6 +568,7 @@ async def _stream_with_http_adapter(
     skill_names: list = None,
     skill_configs: list = None,
     knowledge_base_ids: list = None,
+    document_ids: list = None,
 ) -> None:
     """Stream using HTTP adapter to call remote chat_shell service.
 
@@ -582,6 +588,7 @@ async def _stream_with_http_adapter(
         skill_names: List of available skill names for dynamic loading
         skill_configs: List of skill tool configurations
         knowledge_base_ids: List of knowledge base IDs to search
+        document_ids: List of document IDs to filter retrieval
     """
     from app.core.config import settings
     from app.services.chat.adapters.http import HTTPAdapter
@@ -673,17 +680,19 @@ async def _stream_with_http_adapter(
         skill_names=skill_names or [],
         skill_configs=skill_configs or [],
         knowledge_base_ids=knowledge_base_ids,
+        document_ids=document_ids,
         task_data=task_data,
         mcp_servers=mcp_servers,
     )
 
     logger.info(
         "[HTTP_ADAPTER] ChatRequest built: task_id=%d, skill_names=%s, "
-        "skill_configs_count=%d, knowledge_base_ids=%s",
+        "skill_configs_count=%d, knowledge_base_ids=%s, document_ids=%s",
         task_id,
         skill_names,
         len(skill_configs) if skill_configs else 0,
         knowledge_base_ids,
+        document_ids,
     )
 
     # Create HTTP adapter

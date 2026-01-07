@@ -56,10 +56,14 @@ async def _stream_response(
     import logging
 
     from chat_shell.core.config import settings
+    from chat_shell.core.shutdown import shutdown_manager
     from chat_shell.interface import ChatEventType, ChatRequest
     from chat_shell.services.chat_service import chat_service
 
     logger = logging.getLogger(__name__)
+
+    # Register stream with shutdown manager
+    await shutdown_manager.register_stream(request_id)
 
     response_id = f"resp-{uuid.uuid4().hex[:12]}"
     full_content = ""
@@ -179,6 +183,7 @@ async def _stream_response(
         skill_names = []
         skill_configs_from_meta = []
         knowledge_base_ids = None
+        document_ids = None
         task_data = None
 
         if request.metadata:
@@ -197,6 +202,7 @@ async def _stream_response(
                 getattr(request.metadata, "skill_configs", None) or []
             )
             knowledge_base_ids = getattr(request.metadata, "knowledge_base_ids", None)
+            document_ids = getattr(request.metadata, "document_ids", None)
             task_data = getattr(request.metadata, "task_data", None)
 
         # Merge skill configs from tools and metadata
@@ -232,6 +238,7 @@ async def _stream_response(
             skill_names=skill_names,
             skill_configs=all_skill_configs,
             knowledge_base_ids=knowledge_base_ids,
+            document_ids=document_ids,
             task_data=task_data,
             mcp_servers=mcp_servers,
         )
@@ -239,7 +246,7 @@ async def _stream_response(
         logger.info(
             "[RESPONSE] Processing request: task_id=%d, subtask_id=%d, "
             "enable_web_search=%s, mcp_servers=%d, skills=%d, "
-            "skill_names=%s, knowledge_base_ids=%s",
+            "skill_names=%s, knowledge_base_ids=%s, document_ids=%s",
             task_id,
             subtask_id,
             enable_web_search,
@@ -247,6 +254,7 @@ async def _stream_response(
             len(all_skill_configs),
             skill_names,
             knowledge_base_ids,
+            document_ids,
         )
 
         # Stream from ChatService
@@ -418,6 +426,12 @@ async def _stream_response(
                 details={"type": type(e).__name__},
             ).model_dump(),
         )
+
+    finally:
+        # Unregister stream from shutdown manager
+        await shutdown_manager.unregister_stream(request_id)
+        # Clean up from active streams dict
+        cleanup_stream(request_id)
 
 
 @router.post("/response")

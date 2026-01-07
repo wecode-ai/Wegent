@@ -73,6 +73,7 @@ class ChatRequest:
 
     # Knowledge base configuration
     knowledge_base_ids: Optional[list] = None  # Knowledge base IDs to search
+    document_ids: Optional[list] = None  # Document IDs to filter retrieval
 
     # Task data for MCP tools
     task_data: Optional[dict] = None
