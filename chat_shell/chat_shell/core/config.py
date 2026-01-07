@@ -47,8 +47,8 @@ class Settings(BaseSettings):
     SQLITE_DB_PATH: str = "~/.chat_shell/history.db"
 
     # Remote storage configuration (calls Backend API)
-    # Default: http://backend:8000/internal (Docker) or http://localhost:8000/internal (local)
-    REMOTE_STORAGE_URL: str = "http://localhost:8000/internal"
+    # Default: http://backend:8000/api/internal (Docker) or http://localhost:8000/api/internal (local)
+    REMOTE_STORAGE_URL: str = "http://localhost:8000/api/internal"
     REMOTE_STORAGE_TOKEN: str = ""
 
     # ========== HTTP Server Configuration ==========
