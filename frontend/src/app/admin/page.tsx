@@ -1,36 +1,36 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { Suspense, useState, useCallback, useEffect, useMemo } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
-import Link from 'next/link';
-import TopNavigation from '@/features/layout/TopNavigation';
-import { TaskSidebar, ResizableSidebar } from '@/features/tasks/components/sidebar';
-import { AdminTabNav, AdminTabId } from '@/features/admin/components/AdminTabNav';
-import { ShieldExclamationIcon } from '@heroicons/react/24/outline';
-import UserList from '@/features/admin/components/UserList';
-import PublicModelList from '@/features/admin/components/PublicModelList';
-import PublicRetrieverList from '@/features/admin/components/PublicRetrieverList';
-import PublicSkillList from '@/features/admin/components/PublicSkillList';
-import ApiKeyManagement from '@/features/admin/components/ApiKeyManagement';
-import SystemConfigPanel from '@/features/admin/components/SystemConfigPanel';
-import { UserProvider, useUser } from '@/features/common/UserContext';
-import { TaskContextProvider } from '@/features/tasks/contexts/taskContext';
-import { ChatStreamProvider } from '@/features/tasks/contexts/chatStreamContext';
-import { SocketProvider } from '@/contexts/SocketContext';
-import { useTranslation } from '@/hooks/useTranslation';
-import { GithubStarButton } from '@/features/layout/GithubStarButton';
-import { ThemeToggle } from '@/features/theme/ThemeToggle';
-import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
-import { Button } from '@/components/ui/button';
-import '@/app/tasks/tasks.css';
-import '@/features/common/scrollbar.css';
+import { Suspense, useState, useCallback, useEffect, useMemo } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import Link from 'next/link'
+import TopNavigation from '@/features/layout/TopNavigation'
+import { TaskSidebar, ResizableSidebar } from '@/features/tasks/components/sidebar'
+import { AdminTabNav, AdminTabId } from '@/features/admin/components/AdminTabNav'
+import { ShieldExclamationIcon } from '@heroicons/react/24/outline'
+import UserList from '@/features/admin/components/UserList'
+import PublicModelList from '@/features/admin/components/PublicModelList'
+import PublicRetrieverList from '@/features/admin/components/PublicRetrieverList'
+import PublicSkillList from '@/features/admin/components/PublicSkillList'
+import ApiKeyManagement from '@/features/admin/components/ApiKeyManagement'
+import SystemConfigPanel from '@/features/admin/components/SystemConfigPanel'
+import { UserProvider, useUser } from '@/features/common/UserContext'
+import { TaskContextProvider } from '@/features/tasks/contexts/taskContext'
+import { ChatStreamProvider } from '@/features/tasks/contexts/chatStreamContext'
+import { SocketProvider } from '@/contexts/SocketContext'
+import { useTranslation } from '@/hooks/useTranslation'
+import { GithubStarButton } from '@/features/layout/GithubStarButton'
+import { ThemeToggle } from '@/features/theme/ThemeToggle'
+import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
+import { Button } from '@/components/ui/button'
+import '@/app/tasks/tasks.css'
+import '@/features/common/scrollbar.css'
 
 function AccessDenied() {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
@@ -43,22 +43,22 @@ function AccessDenied() {
         <Button>{t('admin:access_denied.go_home')}</Button>
       </Link>
     </div>
-  );
+  )
 }
 
 function AdminContent() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const { t } = useTranslation();
-  const { user, isLoading } = useUser();
-  const isMobile = useIsMobile();
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const { t } = useTranslation()
+  const { user, isLoading } = useUser()
+  const isMobile = useIsMobile()
 
   // Check if user is admin
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = user?.role === 'admin'
 
   // Get initial tab from URL
   const getInitialTab = (): AdminTabId => {
-    const tab = searchParams.get('tab');
+    const tab = searchParams.get('tab')
     if (
       tab &&
       [
@@ -70,63 +70,63 @@ function AdminContent() {
         'system-config',
       ].includes(tab)
     ) {
-      return tab as AdminTabId;
+      return tab as AdminTabId
     }
-    return 'users';
-  };
+    return 'users'
+  }
 
-  const [activeTab, setActiveTab] = useState<AdminTabId>(getInitialTab);
+  const [activeTab, setActiveTab] = useState<AdminTabId>(getInitialTab)
 
   // Mobile sidebar state
-  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
 
   // Collapsed sidebar state
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(false)
 
   // Load collapsed state from localStorage
   useEffect(() => {
-    const savedCollapsed = localStorage.getItem('task-sidebar-collapsed');
+    const savedCollapsed = localStorage.getItem('task-sidebar-collapsed')
     if (savedCollapsed === 'true') {
-      setIsCollapsed(true);
+      setIsCollapsed(true)
     }
-  }, []);
+  }, [])
 
   const handleToggleCollapsed = () => {
     setIsCollapsed(prev => {
-      const newValue = !prev;
-      localStorage.setItem('task-sidebar-collapsed', String(newValue));
-      return newValue;
-    });
-  };
+      const newValue = !prev
+      localStorage.setItem('task-sidebar-collapsed', String(newValue))
+      return newValue
+    })
+  }
 
   // Handle tab change
   const handleTabChange = useCallback(
     (tab: AdminTabId) => {
-      setActiveTab(tab);
-      router.replace(`?tab=${tab}`);
+      setActiveTab(tab)
+      router.replace(`?tab=${tab}`)
     },
     [router]
-  );
+  )
 
   // Render content based on active tab
   const currentComponent = useMemo(() => {
     switch (activeTab) {
       case 'users':
-        return <UserList />;
+        return <UserList />
       case 'public-models':
-        return <PublicModelList />;
+        return <PublicModelList />
       case 'public-retrievers':
-        return <PublicRetrieverList />;
+        return <PublicRetrieverList />
       case 'public-skills':
-        return <PublicSkillList />;
+        return <PublicSkillList />
       case 'api-keys':
-        return <ApiKeyManagement />;
+        return <ApiKeyManagement />
       case 'system-config':
-        return <SystemConfigPanel />;
+        return <SystemConfigPanel />
       default:
-        return <UserList />;
+        return <UserList />
     }
-  }, [activeTab]);
+  }, [activeTab])
 
   // Show loading state
   if (isLoading) {
@@ -134,7 +134,7 @@ function AdminContent() {
       <div className="flex items-center justify-center min-h-screen">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
       </div>
-    );
+    )
   }
 
   // Show access denied if not admin
@@ -165,7 +165,7 @@ function AdminContent() {
           <AccessDenied />
         </div>
       </div>
-    );
+    )
   }
 
   return (
@@ -200,7 +200,7 @@ function AdminContent() {
         <div className="flex-1 overflow-y-auto px-4 py-4 md:px-8 md:py-6">{currentComponent}</div>
       </div>
     </div>
-  );
+  )
 }
 
 export default function AdminPage() {
@@ -216,5 +216,5 @@ export default function AdminPage() {
         </TaskContextProvider>
       </SocketProvider>
     </UserProvider>
-  );
+  )
 }

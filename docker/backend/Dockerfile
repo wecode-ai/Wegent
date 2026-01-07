@@ -14,12 +14,20 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
 
 ENV PATH="/root/.local/bin:${PATH}"
 
+# Copy local dependencies first (required for pyproject.toml)
+# Paths must match pyproject.toml [tool.uv.sources] relative paths from /app:
+# - wegent-chat-shell = { path = "../chat_shell" } -> /chat_shell
+# - wegent-shared = { path = "../shared" } -> /shared
+COPY chat_shell /chat_shell
+COPY shared /shared
+
 # Copy pyproject.toml and install dependencies
 COPY backend/pyproject.toml .
 RUN uv pip install --system --no-cache -r pyproject.toml
 
 # Copy application code
 COPY backend /app
+# Also copy shared to /app/shared for PYTHONPATH imports
 COPY shared /app/shared
 
 # Create .env file (if it doesn't exist)

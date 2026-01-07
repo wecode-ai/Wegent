@@ -1,21 +1,21 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState, useEffect } from 'react';
-import { useTranslation } from '@/hooks/useTranslation';
-import Modal from '@/features/common/Modal';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { useState, useEffect } from 'react'
+import { useTranslation } from '@/hooks/useTranslation'
+import Modal from '@/features/common/Modal'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
+} from '@/components/ui/select'
 import {
   listGroupMembers,
   addGroupMemberByUsername,
@@ -23,19 +23,19 @@ import {
   updateGroupMemberRole,
   inviteAllUsers,
   leaveGroup,
-} from '@/apis/groups';
-import { toast } from 'sonner';
-import type { Group, GroupMember, GroupRole } from '@/types/group';
-import type { SearchUser } from '@/types/api';
-import { UserPlusIcon, LogOutIcon } from 'lucide-react';
-import { UserSearchSelect } from '@/components/common/UserSearchSelect';
+} from '@/apis/groups'
+import { toast } from 'sonner'
+import type { Group, GroupMember, GroupRole } from '@/types/group'
+import type { SearchUser } from '@/types/api'
+import { UserPlusIcon, LogOutIcon } from 'lucide-react'
+import { UserSearchSelect } from '@/components/common/UserSearchSelect'
 
 interface GroupMembersDialogProps {
-  isOpen: boolean;
-  onClose: () => void;
-  onSuccess: () => void;
-  group: Group | null;
-  currentUserId?: number;
+  isOpen: boolean
+  onClose: () => void
+  onSuccess: () => void
+  group: Group | null
+  currentUserId?: number
 }
 
 export function GroupMembersDialog({
@@ -45,203 +45,203 @@ export function GroupMembersDialog({
   group,
   currentUserId,
 }: GroupMembersDialogProps) {
-  const { t } = useTranslation();
-  const [members, setMembers] = useState<GroupMember[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [showAddMember, setShowAddMember] = useState(false);
-  const [selectedRole, setSelectedRole] = useState<GroupRole>('Reporter');
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [selectedUsers, setSelectedUsers] = useState<SearchUser[]>([]);
+  const { t } = useTranslation()
+  const [members, setMembers] = useState<GroupMember[]>([])
+  const [loading, setLoading] = useState(false)
+  const [showAddMember, setShowAddMember] = useState(false)
+  const [selectedRole, setSelectedRole] = useState<GroupRole>('Reporter')
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [selectedUsers, setSelectedUsers] = useState<SearchUser[]>([])
 
-  const myRole = group?.my_role;
-  const isPrivateGroup = group?.visibility === 'private';
+  const myRole = group?.my_role
+  const isPrivateGroup = group?.visibility === 'private'
 
   // Permission checks
   // Private groups do not allow adding members
-  const canAddMember = (myRole === 'Owner' || myRole === 'Maintainer') && !isPrivateGroup;
-  const canRemoveMember = myRole === 'Owner' || myRole === 'Maintainer';
-  const canUpdateRole = myRole === 'Owner' || myRole === 'Maintainer';
-  const canInviteAll = (myRole === 'Owner' || myRole === 'Maintainer') && !isPrivateGroup;
-  const canLeave = myRole !== 'Owner';
+  const canAddMember = (myRole === 'Owner' || myRole === 'Maintainer') && !isPrivateGroup
+  const canRemoveMember = myRole === 'Owner' || myRole === 'Maintainer'
+  const canUpdateRole = myRole === 'Owner' || myRole === 'Maintainer'
+  const canInviteAll = (myRole === 'Owner' || myRole === 'Maintainer') && !isPrivateGroup
+  const canLeave = myRole !== 'Owner'
 
   useEffect(() => {
     if (isOpen && group) {
-      loadMembers();
+      loadMembers()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, group]);
+  }, [isOpen, group])
 
   const loadMembers = async () => {
-    if (!group) return;
+    if (!group) return
 
-    setLoading(true);
+    setLoading(true)
     try {
-      const response = await listGroupMembers(group.name);
+      const response = await listGroupMembers(group.name)
       // Backend returns array directly, not wrapped in {items: []}
-      const membersList = Array.isArray(response) ? response : response.items || [];
-      setMembers(membersList);
+      const membersList = Array.isArray(response) ? response : response.items || []
+      setMembers(membersList)
     } catch (error) {
-      console.error('Failed to load members:', error);
-      toast.error(t('groups:groupMembers.loadMembersFailed'));
+      console.error('Failed to load members:', error)
+      toast.error(t('groups:groupMembers.loadMembersFailed'))
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  };
+  }
 
   const handleAddMembers = async () => {
-    if (!group || selectedUsers.length === 0) return;
+    if (!group || selectedUsers.length === 0) return
 
-    setIsSubmitting(true);
-    let successCount = 0;
-    let alreadyMemberCount = 0;
-    const errors: string[] = [];
+    setIsSubmitting(true)
+    let successCount = 0
+    let alreadyMemberCount = 0
+    const errors: string[] = []
 
     try {
       for (const user of selectedUsers) {
         // Check if user already exists in members
-        const existingMember = members.find(m => m.user_name === user.user_name);
+        const existingMember = members.find(m => m.user_name === user.user_name)
         if (existingMember) {
-          alreadyMemberCount++;
-          continue;
+          alreadyMemberCount++
+          continue
         }
 
         try {
-          const result = await addGroupMemberByUsername(group.name, user.user_name, selectedRole);
+          const result = await addGroupMemberByUsername(group.name, user.user_name, selectedRole)
           if (result.success) {
-            successCount++;
+            successCount++
           } else {
             errors.push(
               `${user.user_name}: ${result.message || t('groups:groupMembers.addMemberFailed')}`
-            );
+            )
           }
         } catch (error: unknown) {
-          const err = error as { message?: string };
+          const err = error as { message?: string }
           errors.push(
             `${user.user_name}: ${err?.message || t('groups:groupMembers.addMemberFailed')}`
-          );
+          )
         }
       }
 
       // Show results
       if (successCount > 0) {
-        toast.success(t('groups:groupMembers.addMembersSuccess', { count: successCount }));
+        toast.success(t('groups:groupMembers.addMembersSuccess', { count: successCount }))
       }
       if (alreadyMemberCount > 0) {
-        toast.info(t('groups:groupMembers.alreadyMembers', { count: alreadyMemberCount }));
+        toast.info(t('groups:groupMembers.alreadyMembers', { count: alreadyMemberCount }))
       }
       if (errors.length > 0) {
-        errors.forEach(err => toast.error(err));
+        errors.forEach(err => toast.error(err))
       }
 
       // Reset form and reload members
-      setShowAddMember(false);
-      setSelectedRole('Reporter');
-      setSelectedUsers([]);
-      loadMembers();
-      onSuccess();
+      setShowAddMember(false)
+      setSelectedRole('Reporter')
+      setSelectedUsers([])
+      loadMembers()
+      onSuccess()
     } finally {
-      setIsSubmitting(false);
+      setIsSubmitting(false)
     }
-  };
+  }
 
   const handleRemoveMember = async (userId: number) => {
-    if (!group) return;
+    if (!group) return
 
     if (!confirm(t('groups:groupMembers.confirmRemove'))) {
-      return;
+      return
     }
 
     try {
-      await removeGroupMember(group.name, userId);
-      toast.success(t('groups:groups.messages.memberRemoved'));
-      loadMembers();
-      onSuccess();
+      await removeGroupMember(group.name, userId)
+      toast.success(t('groups:groups.messages.memberRemoved'))
+      loadMembers()
+      onSuccess()
     } catch (error: unknown) {
-      console.error('Failed to remove member:', error);
-      const err = error as { message?: string };
-      const errorMessage = err?.message || t('groups:groupMembers.removeMemberFailed');
-      toast.error(errorMessage);
+      console.error('Failed to remove member:', error)
+      const err = error as { message?: string }
+      const errorMessage = err?.message || t('groups:groupMembers.removeMemberFailed')
+      toast.error(errorMessage)
     }
-  };
+  }
 
   const handleUpdateRole = async (userId: number, newRole: GroupRole) => {
-    if (!group) return;
+    if (!group) return
 
     try {
-      await updateGroupMemberRole(group.name, userId, { role: newRole });
-      toast.success(t('groups:groups.messages.roleUpdated'));
-      loadMembers();
-      onSuccess();
+      await updateGroupMemberRole(group.name, userId, { role: newRole })
+      toast.success(t('groups:groups.messages.roleUpdated'))
+      loadMembers()
+      onSuccess()
     } catch (error: unknown) {
-      console.error('Failed to update role:', error);
-      const err = error as { message?: string };
-      const errorMessage = err?.message || t('groups:groupMembers.updateRoleFailed');
-      toast.error(errorMessage);
+      console.error('Failed to update role:', error)
+      const err = error as { message?: string }
+      const errorMessage = err?.message || t('groups:groupMembers.updateRoleFailed')
+      toast.error(errorMessage)
     }
-  };
+  }
 
   const handleInviteAll = async () => {
-    if (!group) return;
+    if (!group) return
 
     if (!confirm(t('groups:groupMembers.confirmInviteAll'))) {
-      return;
+      return
     }
 
-    setIsSubmitting(true);
+    setIsSubmitting(true)
     try {
-      await inviteAllUsers(group.name);
-      toast.success(t('groups:groupMembers.inviteAllSuccess'));
-      loadMembers();
-      onSuccess();
+      await inviteAllUsers(group.name)
+      toast.success(t('groups:groupMembers.inviteAllSuccess'))
+      loadMembers()
+      onSuccess()
     } catch (error: unknown) {
-      console.error('Failed to invite all users:', error);
-      const err = error as { message?: string };
-      const errorMessage = err?.message || t('groups:groupMembers.inviteAllFailed');
-      toast.error(errorMessage);
+      console.error('Failed to invite all users:', error)
+      const err = error as { message?: string }
+      const errorMessage = err?.message || t('groups:groupMembers.inviteAllFailed')
+      toast.error(errorMessage)
     } finally {
-      setIsSubmitting(false);
+      setIsSubmitting(false)
     }
-  };
+  }
 
   const handleLeaveGroup = async () => {
-    if (!group) return;
+    if (!group) return
 
     if (!confirm(t('groups:groupMembers.confirmLeave'))) {
-      return;
+      return
     }
 
     try {
-      await leaveGroup(group.name);
-      toast.success(t('groups:groupMembers.leaveSuccess'));
-      onSuccess();
-      onClose();
+      await leaveGroup(group.name)
+      toast.success(t('groups:groupMembers.leaveSuccess'))
+      onSuccess()
+      onClose()
     } catch (error: unknown) {
-      console.error('Failed to leave group:', error);
-      const err = error as { message?: string };
-      const errorMessage = err?.message || t('groups:groupMembers.leaveFailed');
-      toast.error(errorMessage);
+      console.error('Failed to leave group:', error)
+      const err = error as { message?: string }
+      const errorMessage = err?.message || t('groups:groupMembers.leaveFailed')
+      toast.error(errorMessage)
     }
-  };
+  }
 
   const getRoleBadgeVariant = (
     role: GroupRole
   ): 'default' | 'secondary' | 'success' | 'error' | 'warning' | 'info' => {
     switch (role) {
       case 'Owner':
-        return 'error';
+        return 'error'
       case 'Maintainer':
-        return 'default';
+        return 'default'
       case 'Developer':
-        return 'secondary';
+        return 'secondary'
       case 'Reporter':
-        return 'info';
+        return 'info'
       default:
-        return 'info';
+        return 'info'
     }
-  };
+  }
 
   if (!group) {
-    return null;
+    return null
   }
 
   return (
@@ -375,8 +375,8 @@ export function GroupMembersDialog({
                 variant="outline"
                 size="sm"
                 onClick={() => {
-                  setShowAddMember(false);
-                  setSelectedUsers([]);
+                  setShowAddMember(false)
+                  setSelectedUsers([])
                 }}
               >
                 {t('common:actions.cancel')}
@@ -423,8 +423,8 @@ export function GroupMembersDialog({
                 </thead>
                 <tbody className="divide-y divide-border">
                   {members.map(member => {
-                    const isMe = member.user_id === currentUserId;
-                    const isOwner = member.role === 'Owner';
+                    const isMe = member.user_id === currentUserId
+                    const isOwner = member.role === 'Owner'
 
                     return (
                       <tr key={member.id} className="hover:bg-surface">
@@ -491,7 +491,7 @@ export function GroupMembersDialog({
                           )}
                         </td>
                       </tr>
-                    );
+                    )
                   })}
                 </tbody>
               </table>
@@ -507,5 +507,5 @@ export function GroupMembersDialog({
         </div>
       </div>
     </Modal>
-  );
+  )
 }

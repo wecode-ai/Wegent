@@ -1,43 +1,43 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useEffect, useCallback, useMemo } from 'react';
-import { ShieldX } from 'lucide-react';
-import MessagesArea from '../message/MessagesArea';
-import { QuickAccessCards } from './QuickAccessCards';
-import { SloganDisplay } from './SloganDisplay';
-import { ChatInputCard } from '../input/ChatInputCard';
-import { useChatAreaState } from './useChatAreaState';
-import { useChatStreamHandlers } from './useChatStreamHandlers';
-import { allBotsHavePredefinedModel } from '../selector/ModelSelector';
-import type { Team } from '@/types/api';
-import { useTranslation } from '@/hooks/useTranslation';
-import { useRouter } from 'next/navigation';
-import { useTaskContext } from '../../contexts/taskContext';
-import { useChatStreamContext } from '../../contexts/chatStreamContext';
-import { Button } from '@/components/ui/button';
-import { useScrollManagement } from '../hooks/useScrollManagement';
-import { useFloatingInput } from '../hooks/useFloatingInput';
-import { useTeamPreferences } from '../hooks/useTeamPreferences';
-import { useAttachmentUpload } from '../hooks/useAttachmentUpload';
+import React, { useEffect, useCallback, useMemo } from 'react'
+import { ShieldX } from 'lucide-react'
+import MessagesArea from '../message/MessagesArea'
+import { QuickAccessCards } from './QuickAccessCards'
+import { SloganDisplay } from './SloganDisplay'
+import { ChatInputCard } from '../input/ChatInputCard'
+import { useChatAreaState } from './useChatAreaState'
+import { useChatStreamHandlers } from './useChatStreamHandlers'
+import { allBotsHavePredefinedModel } from '../selector/ModelSelector'
+import type { Team } from '@/types/api'
+import { useTranslation } from '@/hooks/useTranslation'
+import { useRouter } from 'next/navigation'
+import { useTaskContext } from '../../contexts/taskContext'
+import { useChatStreamContext } from '../../contexts/chatStreamContext'
+import { Button } from '@/components/ui/button'
+import { useScrollManagement } from '../hooks/useScrollManagement'
+import { useFloatingInput } from '../hooks/useFloatingInput'
+import { useTeamPreferences } from '../hooks/useTeamPreferences'
+import { useAttachmentUpload } from '../hooks/useAttachmentUpload'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
  * When the controls container width is less than this value, selectors will collapse.
  */
-const COLLAPSE_SELECTORS_THRESHOLD = 420;
+const COLLAPSE_SELECTORS_THRESHOLD = 420
 
 interface ChatAreaProps {
-  teams: Team[];
-  isTeamsLoading: boolean;
-  selectedTeamForNewTask?: Team | null;
-  showRepositorySelector?: boolean;
-  taskType?: 'chat' | 'code';
-  onShareButtonRender?: (button: React.ReactNode) => void;
-  onRefreshTeams?: () => Promise<Team[]>;
+  teams: Team[]
+  isTeamsLoading: boolean
+  selectedTeamForNewTask?: Team | null
+  showRepositorySelector?: boolean
+  taskType?: 'chat' | 'code'
+  onShareButtonRender?: (button: React.ReactNode) => void
+  onRefreshTeams?: () => Promise<Team[]>
 }
 
 export default function ChatArea({
@@ -49,41 +49,41 @@ export default function ChatArea({
   onShareButtonRender,
   onRefreshTeams,
 }: ChatAreaProps) {
-  const { t } = useTranslation();
-  const router = useRouter();
+  const { t } = useTranslation()
+  const router = useRouter()
 
   // Task context
-  const { selectedTaskDetail, setSelectedTask, accessDenied, clearAccessDenied } = useTaskContext();
+  const { selectedTaskDetail, setSelectedTask, accessDenied, clearAccessDenied } = useTaskContext()
 
   // Stream context for clearVersion and getStreamState
   // getStreamState is used to access messages (SINGLE SOURCE OF TRUTH per AGENTS.md)
-  const { clearVersion, getStreamState } = useChatStreamContext();
+  const { clearVersion, getStreamState } = useChatStreamContext()
 
   // Get stream state for current task to check messages
   const currentStreamState = selectedTaskDetail?.id
     ? getStreamState(selectedTaskDetail.id)
-    : undefined;
+    : undefined
 
   // Chat area state (team, repo, branch, model, input, toggles, etc.)
   const chatState = useChatAreaState({
     teams,
     taskType,
     selectedTeamForNewTask,
-  });
+  })
 
   // Compute subtask info for scroll management
-  const subtaskList = selectedTaskDetail?.subtasks ?? [];
-  const lastSubtask = subtaskList.length ? subtaskList[subtaskList.length - 1] : null;
-  const lastSubtaskId = lastSubtask?.id ?? null;
-  const lastSubtaskUpdatedAt = lastSubtask?.updated_at || lastSubtask?.completed_at || null;
+  const subtaskList = selectedTaskDetail?.subtasks ?? []
+  const lastSubtask = subtaskList.length ? subtaskList[subtaskList.length - 1] : null
+  const lastSubtaskId = lastSubtask?.id ?? null
+  const lastSubtaskUpdatedAt = lastSubtask?.updated_at || lastSubtask?.completed_at || null
   // Determine if there are messages to display (computed early for hooks)
   // Uses context messages as the single source of truth, not selectedTaskDetail.subtasks
   const hasMessagesForHooks = useMemo(() => {
-    const hasSelectedTask = selectedTaskDetail && selectedTaskDetail.id;
+    const hasSelectedTask = selectedTaskDetail && selectedTaskDetail.id
     // Check messages from context (single source of truth)
-    const hasContextMessages = currentStreamState?.messages && currentStreamState.messages.size > 0;
-    return Boolean(hasSelectedTask || hasContextMessages);
-  }, [selectedTaskDetail, currentStreamState?.messages]);
+    const hasContextMessages = currentStreamState?.messages && currentStreamState.messages.size > 0
+    return Boolean(hasSelectedTask || hasContextMessages)
+  }, [selectedTaskDetail, currentStreamState?.messages])
 
   // Use scroll management hook - consolidates 4 useEffect calls
   const {
@@ -97,7 +97,7 @@ export default function ChatArea({
     selectedTaskId: selectedTaskDetail?.id,
     lastSubtaskId,
     lastSubtaskUpdatedAt,
-  });
+  })
 
   // Use floating input hook - consolidates 3 useEffect calls
   const {
@@ -109,7 +109,7 @@ export default function ChatArea({
     controlsContainerWidth,
   } = useFloatingInput({
     hasMessages: hasMessagesForHooks,
-  });
+  })
 
   // Stream handlers (send message, retry, cancel, stop)
   const streamHandlers = useChatStreamHandlers({
@@ -133,21 +133,21 @@ export default function ChatArea({
     scrollToBottom,
     selectedContexts: chatState.selectedContexts,
     resetContexts: chatState.resetContexts,
-  });
+  })
 
   // Determine if there are messages to display (full computation)
   const hasMessages = useMemo(() => {
-    const hasSelectedTask = selectedTaskDetail && selectedTaskDetail.id;
+    const hasSelectedTask = selectedTaskDetail && selectedTaskDetail.id
     const hasNewTaskStream =
-      !selectedTaskDetail?.id && streamHandlers.pendingTaskId && streamHandlers.isStreaming;
-    const hasSubtasks = selectedTaskDetail?.subtasks && selectedTaskDetail.subtasks.length > 0;
-    const hasLocalPending = streamHandlers.localPendingMessage !== null;
+      !selectedTaskDetail?.id && streamHandlers.pendingTaskId && streamHandlers.isStreaming
+    const hasSubtasks = selectedTaskDetail?.subtasks && selectedTaskDetail.subtasks.length > 0
+    const hasLocalPending = streamHandlers.localPendingMessage !== null
     const hasUnifiedMessages =
       streamHandlers.currentStreamState?.messages &&
-      streamHandlers.currentStreamState.messages.size > 0;
+      streamHandlers.currentStreamState.messages.size > 0
 
     if (hasSelectedTask && hasSubtasks) {
-      return true;
+      return true
     }
 
     return Boolean(
@@ -157,7 +157,7 @@ export default function ChatArea({
       hasNewTaskStream ||
       hasLocalPending ||
       hasUnifiedMessages
-    );
+    )
   }, [
     selectedTaskDetail,
     streamHandlers.hasPendingUserMessage,
@@ -165,7 +165,7 @@ export default function ChatArea({
     streamHandlers.pendingTaskId,
     streamHandlers.localPendingMessage,
     streamHandlers.currentStreamState?.messages,
-  ]);
+  ])
 
   // Use team preferences hook - consolidates team preference logic
   // Note: Model selection is now handled by useModelSelection hook in ModelSelector
@@ -180,15 +180,15 @@ export default function ChatArea({
     isTeamCompatibleWithMode: chatState.isTeamCompatibleWithMode,
     initialTeamIdRef: chatState.initialTeamIdRef,
     clearVersion,
-  });
+  })
 
   // Check if model selection is required
   const isModelSelectionRequired = useMemo(() => {
-    if (!chatState.selectedTeam || chatState.selectedTeam.agent_type === 'dify') return false;
-    const hasDefaultOption = allBotsHavePredefinedModel(chatState.selectedTeam);
-    if (hasDefaultOption) return false;
-    return !chatState.selectedModel;
-  }, [chatState.selectedTeam, chatState.selectedModel]);
+    if (!chatState.selectedTeam || chatState.selectedTeam.agent_type === 'dify') return false
+    const hasDefaultOption = allBotsHavePredefinedModel(chatState.selectedTeam)
+    if (hasDefaultOption) return false
+    return !chatState.selectedModel
+  }, [chatState.selectedTeam, chatState.selectedModel])
 
   // Unified canSubmit flag
   const canSubmit = useMemo(() => {
@@ -197,38 +197,38 @@ export default function ChatArea({
       !streamHandlers.isStreaming &&
       !isModelSelectionRequired &&
       chatState.isAttachmentReadyToSend
-    );
+    )
   }, [
     chatState.isLoading,
     streamHandlers.isStreaming,
     isModelSelectionRequired,
     chatState.isAttachmentReadyToSend,
-  ]);
+  ])
 
   // Collapse selectors when space is limited
   const shouldCollapseSelectors =
-    controlsContainerWidth > 0 && controlsContainerWidth < COLLAPSE_SELECTORS_THRESHOLD;
+    controlsContainerWidth > 0 && controlsContainerWidth < COLLAPSE_SELECTORS_THRESHOLD
 
   // Load prompt from sessionStorage - single remaining useEffect
   useEffect(() => {
-    if (hasMessages) return;
+    if (hasMessages) return
 
-    const pendingPromptData = sessionStorage.getItem('pendingTaskPrompt');
+    const pendingPromptData = sessionStorage.getItem('pendingTaskPrompt')
     if (pendingPromptData) {
       try {
-        const data = JSON.parse(pendingPromptData);
-        const isRecent = Date.now() - data.timestamp < 5 * 60 * 1000;
+        const data = JSON.parse(pendingPromptData)
+        const isRecent = Date.now() - data.timestamp < 5 * 60 * 1000
 
         if (isRecent && data.prompt) {
-          chatState.setTaskInputMessage(data.prompt);
-          sessionStorage.removeItem('pendingTaskPrompt');
+          chatState.setTaskInputMessage(data.prompt)
+          sessionStorage.removeItem('pendingTaskPrompt')
         }
       } catch (error) {
-        console.error('Failed to parse pending prompt data:', error);
-        sessionStorage.removeItem('pendingTaskPrompt');
+        console.error('Failed to parse pending prompt data:', error)
+        sessionStorage.removeItem('pendingTaskPrompt')
       }
     }
-  }, [hasMessages, chatState]);
+  }, [hasMessages, chatState])
 
   // Use attachment upload hook - centralizes all attachment upload logic
   const { handleDragEnter, handleDragLeave, handleDragOver, handleDrop, handlePasteFile } =
@@ -239,33 +239,33 @@ export default function ChatArea({
       attachmentState: chatState.attachmentState,
       onFileSelect: chatState.handleFileSelect,
       setIsDragging: chatState.setIsDragging,
-    });
+    })
 
   // Callback for MessagesArea content changes - enhanced with streaming check
   const handleMessagesContentChange = useCallback(() => {
     if (streamHandlers.isStreaming || isUserNearBottomRef.current) {
-      scrollToBottom();
+      scrollToBottom()
     }
-  }, [streamHandlers.isStreaming, scrollToBottom, isUserNearBottomRef]);
+  }, [streamHandlers.isStreaming, scrollToBottom, isUserNearBottomRef])
 
   // Callback for child components to send messages
   const handleSendMessageFromChild = useCallback(
     async (content: string) => {
-      const existingInput = chatState.taskInputMessage.trim();
-      const combinedMessage = existingInput ? `${content}\n\n---\n\n${existingInput}` : content;
-      chatState.setTaskInputMessage('');
-      await streamHandlers.handleSendMessage(combinedMessage);
+      const existingInput = chatState.taskInputMessage.trim()
+      const combinedMessage = existingInput ? `${content}\n\n---\n\n${existingInput}` : content
+      chatState.setTaskInputMessage('')
+      await streamHandlers.handleSendMessage(combinedMessage)
     },
     [chatState, streamHandlers]
-  );
+  )
 
   // Handle access denied state
   if (accessDenied) {
     const handleGoHome = () => {
-      clearAccessDenied();
-      setSelectedTask(null);
-      router.push('/chat');
-    };
+      clearAccessDenied()
+      setSelectedTask(null)
+      router.push('/chat')
+    }
 
     return (
       <div
@@ -299,7 +299,7 @@ export default function ChatArea({
           </div>
         </div>
       </div>
-    );
+    )
   }
 
   // Common input card props
@@ -358,7 +358,7 @@ export default function ChatArea({
     isSubtaskStreaming: streamHandlers.isSubtaskStreaming,
     onStopStream: streamHandlers.stopStream,
     onSendMessage: () => streamHandlers.handleSendMessage(),
-  };
+  }
 
   return (
     <div
@@ -457,5 +457,5 @@ export default function ChatArea({
         )}
       </div>
     </div>
-  );
+  )
 }

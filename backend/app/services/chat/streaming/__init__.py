@@ -5,12 +5,11 @@
 """Streaming module for Chat Service.
 
 This module provides:
-- WebSocket streaming handler
+- WebSocket streaming handler (legacy direct emit)
+- WebSocket bridge (unified architecture via Redis Pub/Sub)
+- Backend SSE handler (for chat_shell HTTP mode)
 - Re-exports streaming infrastructure from app.services.streaming
 """
-
-# Export streaming handlers
-from app.chat_shell.streaming import SSEStreamingHandler
 
 # Re-export from the centralized streaming module
 from app.services.streaming import (
@@ -23,12 +22,18 @@ from app.services.streaming import (
     truncate_list_keep_ends,
 )
 
+from .sse_handler import BackendStreamHandler, SSEEvent, parse_sse_lines
+from .ws_bridge import WebSocketBridge
 from .ws_handler import WebSocketStreamingHandler
 
 __all__ = [
     # Streaming handlers
-    "SSEStreamingHandler",
     "WebSocketStreamingHandler",
+    "WebSocketBridge",
+    "BackendStreamHandler",
+    # SSE parsing utilities
+    "SSEEvent",
+    "parse_sse_lines",
     # Core streaming (re-exported from app.services.streaming)
     "StreamingCore",
     "StreamingConfig",

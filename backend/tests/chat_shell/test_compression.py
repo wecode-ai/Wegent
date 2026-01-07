@@ -5,19 +5,18 @@
 """Tests for message compression functionality."""
 
 import pytest
-
-from app.chat_shell.compression.compressor import MessageCompressor
-from app.chat_shell.compression.config import (
+from chat_shell.compression.compressor import MessageCompressor
+from chat_shell.compression.config import (
     CompressionConfig,
     ModelContextConfig,
     get_model_context_config,
 )
-from app.chat_shell.compression.strategies import (
+from chat_shell.compression.strategies import (
     AttachmentTruncationStrategy,
     CompressionResult,
     HistoryTruncationStrategy,
 )
-from app.chat_shell.compression.token_counter import TokenCounter
+from chat_shell.compression.token_counter import TokenCounter
 
 
 class TestTokenCounter:

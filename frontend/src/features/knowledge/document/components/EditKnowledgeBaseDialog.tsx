@@ -1,32 +1,32 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react'
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogFooter,
-} from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { ChevronDown, ChevronRight } from 'lucide-react';
-import { useTranslation } from '@/hooks/useTranslation';
-import type { KnowledgeBase, KnowledgeBaseUpdate, RetrievalConfigUpdate } from '@/types/knowledge';
-import { RetrievalSettingsSection, RetrievalConfig } from './RetrievalSettingsSection';
+} from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
+import { ChevronDown, ChevronRight } from 'lucide-react'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { KnowledgeBase, KnowledgeBaseUpdate, RetrievalConfigUpdate } from '@/types/knowledge'
+import { RetrievalSettingsSection, RetrievalConfig } from './RetrievalSettingsSection'
 
 interface EditKnowledgeBaseDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  knowledgeBase: KnowledgeBase | null;
-  onSubmit: (data: KnowledgeBaseUpdate) => Promise<void>;
-  loading?: boolean;
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  knowledgeBase: KnowledgeBase | null
+  onSubmit: (data: KnowledgeBaseUpdate) => Promise<void>
+  loading?: boolean
 }
 
 export function EditKnowledgeBaseDialog({
@@ -36,41 +36,41 @@ export function EditKnowledgeBaseDialog({
   onSubmit,
   loading,
 }: EditKnowledgeBaseDialogProps) {
-  const { t } = useTranslation();
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [error, setError] = useState('');
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [retrievalConfig, setRetrievalConfig] = useState<Partial<RetrievalConfig>>({});
+  const { t } = useTranslation()
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
+  const [error, setError] = useState('')
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [retrievalConfig, setRetrievalConfig] = useState<Partial<RetrievalConfig>>({})
 
   useEffect(() => {
     if (knowledgeBase) {
-      setName(knowledgeBase.name);
-      setDescription(knowledgeBase.description || '');
-      setShowAdvanced(false); // Reset expanded state
+      setName(knowledgeBase.name)
+      setDescription(knowledgeBase.description || '')
+      setShowAdvanced(false) // Reset expanded state
       // Initialize retrieval config from knowledge base
       if (knowledgeBase.retrieval_config) {
-        setRetrievalConfig(knowledgeBase.retrieval_config);
+        setRetrievalConfig(knowledgeBase.retrieval_config)
       }
     }
-  }, [knowledgeBase]);
+  }, [knowledgeBase])
 
   const handleRetrievalConfigChange = useCallback((config: Partial<RetrievalConfig>) => {
-    setRetrievalConfig(config);
-  }, []);
+    setRetrievalConfig(config)
+  }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
+    e.preventDefault()
+    setError('')
 
     if (!name.trim()) {
-      setError(t('knowledge:document.knowledgeBase.nameRequired'));
-      return;
+      setError(t('knowledge:document.knowledgeBase.nameRequired'))
+      return
     }
 
     if (name.length > 100) {
-      setError(t('knowledge:document.knowledgeBase.nameTooLong'));
-      return;
+      setError(t('knowledge:document.knowledgeBase.nameTooLong'))
+      return
     }
 
     try {
@@ -78,44 +78,44 @@ export function EditKnowledgeBaseDialog({
       const updateData: KnowledgeBaseUpdate = {
         name: name.trim(),
         description: description.trim() || undefined,
-      };
+      }
 
       // Add retrieval config update if advanced settings were modified
       if (knowledgeBase?.retrieval_config && retrievalConfig) {
-        const retrievalConfigUpdate: RetrievalConfigUpdate = {};
+        const retrievalConfigUpdate: RetrievalConfigUpdate = {}
 
         // Only include fields that can be updated (exclude retriever and embedding_config)
         if (retrievalConfig.retrieval_mode !== undefined) {
-          retrievalConfigUpdate.retrieval_mode = retrievalConfig.retrieval_mode;
+          retrievalConfigUpdate.retrieval_mode = retrievalConfig.retrieval_mode
         }
         if (retrievalConfig.top_k !== undefined) {
-          retrievalConfigUpdate.top_k = retrievalConfig.top_k;
+          retrievalConfigUpdate.top_k = retrievalConfig.top_k
         }
         if (retrievalConfig.score_threshold !== undefined) {
-          retrievalConfigUpdate.score_threshold = retrievalConfig.score_threshold;
+          retrievalConfigUpdate.score_threshold = retrievalConfig.score_threshold
         }
         if (retrievalConfig.hybrid_weights !== undefined) {
-          retrievalConfigUpdate.hybrid_weights = retrievalConfig.hybrid_weights;
+          retrievalConfigUpdate.hybrid_weights = retrievalConfig.hybrid_weights
         }
 
         // Only add retrieval_config if there are changes
         if (Object.keys(retrievalConfigUpdate).length > 0) {
-          updateData.retrieval_config = retrievalConfigUpdate;
+          updateData.retrieval_config = retrievalConfigUpdate
         }
       }
 
-      await onSubmit(updateData);
+      await onSubmit(updateData)
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('common:error'));
+      setError(err instanceof Error ? err.message : t('common:error'))
     }
-  };
+  }
 
   const handleOpenChange = (newOpen: boolean) => {
     if (!newOpen) {
-      setError('');
+      setError('')
     }
-    onOpenChange(newOpen);
-  };
+    onOpenChange(newOpen)
+  }
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -196,5 +196,5 @@ export function EditKnowledgeBaseDialog({
         </form>
       </DialogContent>
     </Dialog>
-  );
+  )
 }

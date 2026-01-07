@@ -1,43 +1,43 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useCallback, useState, useEffect, useRef } from 'react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import React, { useCallback, useState, useEffect, useRef } from 'react'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
+} from '@/components/ui/select'
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogFooter,
-} from '@/components/ui/dialog';
-import { Progress } from '@/components/ui/progress';
-import { Loader2 } from 'lucide-react';
-import { BeakerIcon, CheckCircleIcon, XCircleIcon } from '@heroicons/react/24/outline';
-import { useTranslation } from '@/hooks/useTranslation';
+} from '@/components/ui/dialog'
+import { Progress } from '@/components/ui/progress'
+import { Loader2 } from 'lucide-react'
+import { BeakerIcon, CheckCircleIcon, XCircleIcon } from '@heroicons/react/24/outline'
+import { useTranslation } from '@/hooks/useTranslation'
 import {
   shellApis,
   UnifiedShell,
   ImageCheckResult,
   ValidationStage,
   ValidationStatusResponse,
-} from '@/apis/shells';
-import SoftwareRequirements from './SoftwareRequirements';
+} from '@/apis/shells'
+import SoftwareRequirements from './SoftwareRequirements'
 
 // Polling configuration
-const POLLING_INTERVAL = 2000; // 2 seconds
-const MAX_POLLING_COUNT = 60; // 60 * 2s = 120 seconds timeout
+const POLLING_INTERVAL = 2000 // 2 seconds
+const MAX_POLLING_COUNT = 60 // 60 * 2s = 120 seconds timeout
 
 // Stage progress mapping
 const STAGE_PROGRESS: Record<ValidationStage, number> = {
@@ -46,15 +46,15 @@ const STAGE_PROGRESS: Record<ValidationStage, number> = {
   starting_container: 50,
   running_checks: 70,
   completed: 100,
-};
+}
 
 interface ShellEditDialogProps {
-  open: boolean;
-  shell: UnifiedShell | null;
-  onClose: () => void;
-  toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast'];
-  scope?: 'personal' | 'group' | 'all';
-  groupName?: string;
+  open: boolean
+  shell: UnifiedShell | null
+  onClose: () => void
+  toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast']
+  scope?: 'personal' | 'group' | 'all'
+  groupName?: string
 }
 
 const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
@@ -65,119 +65,119 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
   scope = 'personal',
   groupName,
 }) => {
-  const { t } = useTranslation();
-  const isEditing = !!shell;
+  const { t } = useTranslation()
+  const isEditing = !!shell
 
   // Form state
-  const [name, setName] = useState('');
-  const [displayName, setDisplayName] = useState('');
-  const [baseShellRef, setBaseShellRef] = useState('');
-  const [baseImage, setBaseImage] = useState('');
-  const [originalBaseImage, setOriginalBaseImage] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [validating, setValidating] = useState(false);
-  const [_validationId, setValidationId] = useState<string | null>(null);
-  const pollingRef = useRef<NodeJS.Timeout | null>(null);
+  const [name, setName] = useState('')
+  const [displayName, setDisplayName] = useState('')
+  const [baseShellRef, setBaseShellRef] = useState('')
+  const [baseImage, setBaseImage] = useState('')
+  const [originalBaseImage, setOriginalBaseImage] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [validating, setValidating] = useState(false)
+  const [_validationId, setValidationId] = useState<string | null>(null)
+  const pollingRef = useRef<NodeJS.Timeout | null>(null)
   const [validationStatus, setValidationStatus] = useState<{
-    status: ValidationStage | 'error' | 'success' | 'failed';
-    message: string;
-    progress: number;
-    valid?: boolean;
-    checks?: ImageCheckResult[];
-    errors?: string[];
-  } | null>(null);
+    status: ValidationStage | 'error' | 'success' | 'failed'
+    message: string
+    progress: number
+    valid?: boolean
+    checks?: ImageCheckResult[]
+    errors?: string[]
+  } | null>(null)
 
   // Available base shells (public local_engine shells)
-  const [baseShells, setBaseShells] = useState<UnifiedShell[]>([]);
-  const [loadingBaseShells, setLoadingBaseShells] = useState(true);
+  const [baseShells, setBaseShells] = useState<UnifiedShell[]>([])
+  const [loadingBaseShells, setLoadingBaseShells] = useState(true)
 
   // Cleanup polling on unmount
   useEffect(() => {
     return () => {
       if (pollingRef.current) {
-        clearInterval(pollingRef.current);
+        clearInterval(pollingRef.current)
       }
-    };
-  }, []);
+    }
+  }, [])
 
   // Reset form when dialog opens/closes or shell changes
   useEffect(() => {
     if (open) {
       if (shell) {
-        setName(shell.name || '');
-        setDisplayName(shell.displayName || '');
-        setBaseShellRef(shell.baseShellRef || '');
-        setBaseImage(shell.baseImage || '');
-        setOriginalBaseImage(shell.baseImage || '');
+        setName(shell.name || '')
+        setDisplayName(shell.displayName || '')
+        setBaseShellRef(shell.baseShellRef || '')
+        setBaseImage(shell.baseImage || '')
+        setOriginalBaseImage(shell.baseImage || '')
       } else {
         // Reset for new shell
-        setName('');
-        setDisplayName('');
-        setBaseShellRef('');
-        setBaseImage('');
-        setOriginalBaseImage('');
+        setName('')
+        setDisplayName('')
+        setBaseShellRef('')
+        setBaseImage('')
+        setOriginalBaseImage('')
       }
-      setValidationStatus(null);
-      setValidationId(null);
+      setValidationStatus(null)
+      setValidationId(null)
       if (pollingRef.current) {
-        clearInterval(pollingRef.current);
-        pollingRef.current = null;
+        clearInterval(pollingRef.current)
+        pollingRef.current = null
       }
     }
-  }, [open, shell]);
+  }, [open, shell])
 
   // Fetch base shells
   useEffect(() => {
     const fetchBaseShells = async () => {
       try {
-        const shells = await shellApis.getLocalEngineShells();
-        setBaseShells(shells);
+        const shells = await shellApis.getLocalEngineShells()
+        setBaseShells(shells)
       } catch (error) {
-        console.error('Failed to fetch base shells:', error);
+        console.error('Failed to fetch base shells:', error)
       } finally {
-        setLoadingBaseShells(false);
+        setLoadingBaseShells(false)
       }
-    };
-    if (open) {
-      fetchBaseShells();
     }
-  }, [open]);
+    if (open) {
+      fetchBaseShells()
+    }
+  }, [open])
 
   // Start polling for validation status
   const startPolling = useCallback(
     (validationIdToCheck: string) => {
       if (pollingRef.current) {
-        clearInterval(pollingRef.current);
+        clearInterval(pollingRef.current)
       }
 
-      let count = 0;
+      let count = 0
 
       pollingRef.current = setInterval(async () => {
-        count++;
+        count++
 
         if (count >= MAX_POLLING_COUNT) {
           // Timeout
-          clearInterval(pollingRef.current!);
-          pollingRef.current = null;
-          setValidating(false);
+          clearInterval(pollingRef.current!)
+          pollingRef.current = null
+          setValidating(false)
           setValidationStatus({
             status: 'error',
             message: t('common:shells.validation_timeout'),
             progress: 0,
             valid: false,
             errors: [t('common:shells.validation_timeout')],
-          });
+          })
           toast({
             variant: 'destructive',
             title: t('common:shells.validation_failed'),
             description: t('common:shells.validation_timeout'),
-          });
-          return;
+          })
+          return
         }
 
         try {
           const result: ValidationStatusResponse =
-            await shellApis.getValidationStatus(validationIdToCheck);
+            await shellApis.getValidationStatus(validationIdToCheck)
 
           // Update validation status display
           setValidationStatus({
@@ -187,13 +187,13 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
             valid: result.valid ?? undefined,
             checks: result.checks ?? undefined,
             errors: result.errors ?? undefined,
-          });
+          })
 
           // Check if validation is completed
           if (result.status === 'completed') {
-            clearInterval(pollingRef.current!);
-            pollingRef.current = null;
-            setValidating(false);
+            clearInterval(pollingRef.current!)
+            pollingRef.current = null
+            setValidating(false)
 
             if (result.valid === true) {
               setValidationStatus({
@@ -202,10 +202,10 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
                 progress: 100,
                 valid: true,
                 checks: result.checks ?? undefined,
-              });
+              })
               toast({
                 title: t('common:shells.validation_success'),
-              });
+              })
             } else {
               setValidationStatus({
                 status: 'failed',
@@ -214,60 +214,60 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
                 valid: false,
                 checks: result.checks ?? undefined,
                 errors: result.errors ?? undefined,
-              });
+              })
               toast({
                 variant: 'destructive',
                 title: t('common:shells.validation_failed'),
                 description: result.errorMessage || t('common:shells.validation_not_passed'),
-              });
+              })
             }
           }
         } catch (error) {
-          console.error('Failed to poll validation status:', error);
+          console.error('Failed to poll validation status:', error)
           // Don't stop polling on transient errors, just log it
         }
-      }, POLLING_INTERVAL);
+      }, POLLING_INTERVAL)
     },
     [t, toast]
-  );
+  )
 
   const handleValidateImage = async () => {
     if (!baseImage || !baseShellRef) {
       toast({
         variant: 'destructive',
         title: t('common:shells.errors.base_image_and_shell_required'),
-      });
-      return;
+      })
+      return
     }
 
     // Find the runtime for selected base shell
-    const selectedBaseShell = baseShells.find(s => s.name === baseShellRef);
+    const selectedBaseShell = baseShells.find(s => s.name === baseShellRef)
     if (!selectedBaseShell) {
       toast({
         variant: 'destructive',
         title: t('common:shells.errors.base_shell_not_found'),
-      });
-      return;
+      })
+      return
     }
 
-    setValidating(true);
+    setValidating(true)
     setValidationStatus({
       status: 'submitted',
       message: t('common:shells.validation_stage_submitted'),
       progress: STAGE_PROGRESS.submitted,
-    });
+    })
 
     try {
       const result = await shellApis.validateImage({
         image: baseImage,
         shellType: selectedBaseShell.shellType,
         shellName: name || undefined,
-      });
+      })
 
       // Handle different response statuses
       if (result.status === 'skipped') {
         // Dify type - validation not needed
-        setValidating(false);
+        setValidating(false)
         setValidationStatus({
           status: 'success',
           message: result.message,
@@ -275,73 +275,73 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
           valid: true,
           checks: [],
           errors: [],
-        });
+        })
         toast({
           title: t('common:shells.validation_skipped'),
           description: result.message,
-        });
+        })
       } else if (result.status === 'submitted' && result.validationId) {
         // Async validation task submitted - start polling
-        setValidationId(result.validationId);
-        startPolling(result.validationId);
+        setValidationId(result.validationId)
+        startPolling(result.validationId)
         toast({
           title: t('common:shells.validation_submitted'),
           description: t('common:shells.validation_async_hint'),
-        });
+        })
       } else if (result.status === 'error') {
         // Error submitting validation
-        setValidating(false);
+        setValidating(false)
         setValidationStatus({
           status: 'error',
           message: result.message,
           progress: 0,
           valid: false,
           errors: result.errors || [],
-        });
+        })
         toast({
           variant: 'destructive',
           title: t('common:shells.validation_failed'),
           description: result.message,
-        });
+        })
       }
     } catch (error) {
-      setValidating(false);
+      setValidating(false)
       setValidationStatus({
         status: 'error',
         message: (error as Error).message,
         progress: 0,
         valid: false,
         errors: [(error as Error).message],
-      });
+      })
       toast({
         variant: 'destructive',
         title: t('common:shells.validation_failed'),
         description: (error as Error).message,
-      });
+      })
     }
-  };
+  }
 
   // Check if save button should be disabled
   const isSaveDisabled = useCallback(() => {
     // If there's no baseImage, no validation needed
-    if (!baseImage) return false;
+    if (!baseImage) return false
 
     // In edit mode, if baseImage hasn't changed, no re-validation needed
-    if (isEditing && baseImage === originalBaseImage) return false;
+    if (isEditing && baseImage === originalBaseImage) return false
 
     // If there's a baseImage, validation must pass
-    if (!validationStatus) return true;
-    if (validationStatus.status !== 'success' || validationStatus.valid !== true) return true;
+    if (!validationStatus) return true
+    if (validationStatus.status !== 'success' || validationStatus.valid !== true) return true
 
-    return false;
-  }, [baseImage, isEditing, originalBaseImage, validationStatus]);
+    return false
+  }, [baseImage, isEditing, originalBaseImage, validationStatus])
 
   const getSaveButtonTooltip = useCallback(() => {
     if (isSaveDisabled()) {
-      return t('common:shells.validation_required');
+      return t('common:shells.validation_required')
     }
-    return undefined;
-  }, [isSaveDisabled, t]);
+    return undefined
+  }, [isSaveDisabled, t])
 
   const handleSave = async () => {
     // Validation
@@ -349,18 +349,18 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
       toast({
         variant: 'destructive',
         title: t('common:shells.errors.name_required'),
-      });
-      return;
+      })
+      return
     }
 
     // Validate name format (lowercase letters, numbers, and hyphens only)
-    const nameRegex = /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/;
+    const nameRegex = /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/
     if (!nameRegex.test(name)) {
       toast({
         variant: 'destructive',
         title: t('common:shells.errors.name_invalid'),
-      });
-      return;
+      })
+      return
     }
 
     if (!isEditing) {
@@ -368,16 +368,16 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
         toast({
           variant: 'destructive',
           title: t('common:shells.errors.base_shell_required'),
-        });
-        return;
+        })
+        return
       }
 
       if (!baseImage.trim()) {
         toast({
           variant: 'destructive',
           title: t('common:shells.errors.base_image_required'),
-        });
-        return;
+        })
+        return
       }
 
       // Validation for group scope: must have groupName
@@ -386,21 +386,21 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
           variant: 'destructive',
           title: t('common:shells.errors.group_required'),
           description: t('common:shells.errors.group_required_hint'),
-        });
-        return;
+        })
+        return
       }
     }
 
-    setSaving(true);
+    setSaving(true)
     try {
       if (isEditing && shell) {
         await shellApis.updateShell(shell.name, {
           displayName: displayName.trim() || undefined,
           baseImage: baseImage.trim() || undefined,
-        });
+        })
         toast({
           title: t('common:shells.update_success'),
-        });
+        })
       } else {
         await shellApis.createShell(
           {
@@ -410,13 +410,13 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
             baseImage: baseImage.trim(),
           },
           groupName
-        );
+        )
         toast({
           title: t('common:shells.create_success'),
-        });
+        })
       }
 
-      onClose();
+      onClose()
     } catch (error) {
       toast({
         variant: 'destructive',
@@ -424,42 +424,42 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
           ? t('common:shells.errors.update_failed')
           : t('common:shells.errors.create_failed'),
         description: (error as Error).message,
-      });
+      })
     } finally {
-      setSaving(false);
+      setSaving(false)
     }
-  };
+  }
 
   const handleClose = useCallback(() => {
     // Clean up polling when closing
     if (pollingRef.current) {
-      clearInterval(pollingRef.current);
-      pollingRef.current = null;
+      clearInterval(pollingRef.current)
+      pollingRef.current = null
     }
-    onClose();
-  }, [onClose]);
+    onClose()
+  }, [onClose])
 
   // Get stage display text
   const getStageDisplayText = (status: ValidationStage | 'error' | 'success' | 'failed') => {
     switch (status) {
       case 'submitted':
-        return t('common:shells.validation_stage_submitted');
+        return t('common:shells.validation_stage_submitted')
       case 'pulling_image':
-        return t('common:shells.validation_stage_pulling');
+        return t('common:shells.validation_stage_pulling')
       case 'starting_container':
-        return t('common:shells.validation_stage_starting');
+        return t('common:shells.validation_stage_starting')
       case 'running_checks':
-        return t('common:shells.validation_stage_checking');
+        return t('common:shells.validation_stage_checking')
       case 'completed':
       case 'success':
-        return t('common:shells.validation_passed');
+        return t('common:shells.validation_passed')
       case 'failed':
       case 'error':
-        return t('common:shells.validation_not_passed');
+        return t('common:shells.validation_not_passed')
       default:
-        return status;
+        return status
     }
-  };
+  }
 
   return (
     <Dialog open={open} onOpenChange={open => !open && handleClose()}>
@@ -534,10 +534,10 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
             {/* Software Requirements Display */}
             {baseShellRef &&
               (() => {
-                const selectedShell = baseShells.find(s => s.name === baseShellRef);
+                const selectedShell = baseShells.find(s => s.name === baseShellRef)
                 return selectedShell ? (
                   <SoftwareRequirements shellType={selectedShell.shellType} />
-                ) : null;
+                ) : null
               })()}
           </div>
 
@@ -550,13 +550,13 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
               id="baseImage"
               value={baseImage}
               onChange={e => {
-                setBaseImage(e.target.value);
+                setBaseImage(e.target.value)
                 // Reset validation status on change
-                setValidationStatus(null);
-                setValidationId(null);
+                setValidationStatus(null)
+                setValidationId(null)
                 if (pollingRef.current) {
-                  clearInterval(pollingRef.current);
-                  pollingRef.current = null;
+                  clearInterval(pollingRef.current)
+                  pollingRef.current = null
                 }
               }}
               placeholder="ghcr.io/your-org/your-image:latest"
@@ -686,7 +686,7 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-};
+  )
+}
 
-export default ShellEditDialog;
+export default ShellEditDialog

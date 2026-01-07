@@ -92,7 +92,17 @@ dependencies = [
     "llama-index-embeddings-openai>=0.3.0",
     "llama-index-readers-file>=0.4.0",
     "docx2txt>=0.8",  # Required by llama-index-readers-file for Word document parsing
+
+    # Chat Shell (local workspace dependency for Package mode)
+    "wegent-chat-shell",
+
+    # Shared utilities (monorepo workspace dependency)
+    "wegent-shared",
 ]
+
+[tool.uv.sources]
+wegent-chat-shell = { path = "../chat_shell", editable = true }
+wegent-shared = { path = "../shared", editable = true }
 
 [dependency-groups]
 dev = [

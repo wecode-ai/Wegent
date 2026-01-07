@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -7,12 +7,12 @@
  * Contains all constant values and configurations for PDF generation
  */
 
-import type { RGBColor, BubbleStyle, BubbleCommonStyle } from './types';
+import type { RGBColor, BubbleStyle, BubbleCommonStyle } from './types'
 
 /**
  * Primary color for Wegent brand
  */
-export const PRIMARY_COLOR: RGBColor = { r: 20, g: 184, b: 166 }; // #14B8A6
+export const PRIMARY_COLOR: RGBColor = { r: 20, g: 184, b: 166 } // #14B8A6
 
 /**
  * Colors for markdown rendering
@@ -27,15 +27,15 @@ export const COLORS = {
   codeBlockText: { r: 26, g: 26, b: 26 }, // #1a1a1a - deep black for readability
   blockquote: { r: 80, g: 80, b: 80 }, // Darker gray for better readability
   listMarker: { r: 80, g: 80, b: 80 }, // Darker gray for better readability
-} as const;
+} as const
 
 /**
  * Chat bubble styling configuration
  */
 export const BUBBLE_STYLES: {
-  user: BubbleStyle;
-  ai: BubbleStyle;
-  common: BubbleCommonStyle;
+  user: BubbleStyle
+  ai: BubbleStyle
+  common: BubbleCommonStyle
 } = {
   // User message bubble - light blue/green aligned right
   user: {
@@ -59,7 +59,7 @@ export const BUBBLE_STYLES: {
     iconSize: 5, // mm (diameter) - slightly smaller
     messagePadding: 8, // mm spacing between messages - reduced
   },
-};
+}
 
 /**
  * Font sizes for different heading levels
@@ -71,7 +71,7 @@ export const HEADING_SIZES: Record<string, number> = {
   heading4: 11,
   heading5: 10,
   heading6: 10,
-};
+}
 
 /**
  * Line heights for different elements
@@ -88,20 +88,20 @@ export const LINE_HEIGHTS: Record<string, number> = {
   code: 4.5,
   blockquote: 5,
   table: 6,
-};
+}
 
 /**
  * Unicode font configuration for extended character support (CJK, etc.)
  * Using Noto Sans SC which supports Latin, CJK and other Unicode characters
  * Font file is stored locally in public/fonts/
  */
-export const UNICODE_FONT_PATH = '/fonts/SourceHanSansSC-VF.ttf';
-export const UNICODE_FONT_NAME = 'NotoSansSC';
+export const UNICODE_FONT_PATH = '/fonts/SourceHanSansSC-VF.ttf'
+export const UNICODE_FONT_NAME = 'NotoSansSC'
 
 /**
  * Image file extensions
  */
-export const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'];
+export const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
 
 /**
  * PDF page configuration
@@ -113,7 +113,7 @@ export const PDF_CONFIG = {
   margin: 20,
   footerOffset: 10,
   footerPageOffset: 20,
-};
+}
 
 /**
  * File type labels for PDF display
@@ -152,4 +152,4 @@ export const FILE_TYPE_LABELS: Record<string, string> = {
   gif: '[IMG]',
   bmp: '[IMG]',
   webp: '[IMG]',
-};
+}

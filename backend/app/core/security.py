@@ -191,8 +191,13 @@ def get_username_from_request(request) -> str:
         request: FastAPI Request object
 
     Returns:
-        Username or 'anonymous'/'invalid_token' if not found/invalid
+        Username or 'anonymous'/'internal-service' if not found/invalid
     """
+    # Check for internal service requests first
+    service_name = request.headers.get("X-Service-Name")
+    if service_name:
+        return f"[{service_name}]"
+
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
         return "anonymous"
@@ -202,7 +207,7 @@ def get_username_from_request(request) -> str:
         token_data = verify_token(token)
         return token_data.get("username", "anonymous")
     except Exception:
-        return "invalid_token"
+        return "anonymous"
 
 
 def get_admin_user(current_user: User = Depends(get_current_user)) -> User:

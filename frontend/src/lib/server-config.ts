@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -27,5 +27,5 @@ export function getInternalApiUrl(): string {
     process.env.RUNTIME_INTERNAL_API_URL ||
     process.env.NEXT_PUBLIC_API_URL ||
     'http://localhost:8000'
-  );
+  )
 }

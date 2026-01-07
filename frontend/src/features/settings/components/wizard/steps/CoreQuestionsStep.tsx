@@ -1,24 +1,24 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState } from 'react';
-import { Lightbulb, ChevronDown, ChevronRight } from 'lucide-react';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { useTranslation } from '@/hooks/useTranslation';
-import type { WizardAnswers } from '@/apis/wizard';
+import { useState } from 'react'
+import { Lightbulb, ChevronDown, ChevronRight } from 'lucide-react'
+import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { WizardAnswers } from '@/apis/wizard'
 
 interface CoreQuestionsStepProps {
-  answers: WizardAnswers;
-  onChange: (answers: Partial<WizardAnswers>) => void;
+  answers: WizardAnswers
+  onChange: (answers: Partial<WizardAnswers>) => void
 }
 
 export default function CoreQuestionsStep({ answers, onChange }: CoreQuestionsStepProps) {
-  const { t } = useTranslation();
-  const [isIntroExpanded, setIsIntroExpanded] = useState(false);
+  const { t } = useTranslation()
+  const [isIntroExpanded, setIsIntroExpanded] = useState(false)
 
   return (
     <div className="space-y-6">
@@ -80,5 +80,5 @@ export default function CoreQuestionsStep({ answers, onChange }: CoreQuestionsSt
         />
       </div>
     </div>
-  );
+  )
 }

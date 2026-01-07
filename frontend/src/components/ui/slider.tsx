@@ -1,23 +1,23 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import * as React from 'react';
-import * as SliderPrimitive from '@radix-ui/react-slider';
+import * as React from 'react'
+import * as SliderPrimitive from '@radix-ui/react-slider'
 
-import { cn } from '@/lib/utils';
+import { cn } from '@/lib/utils'
 
 interface SliderProps extends React.ComponentPropsWithoutRef<typeof SliderPrimitive.Root> {
-  showValue?: boolean;
-  formatValue?: (value: number) => string;
+  showValue?: boolean
+  formatValue?: (value: number) => string
 }
 
 const Slider = React.forwardRef<React.ElementRef<typeof SliderPrimitive.Root>, SliderProps>(
   ({ className, showValue = false, formatValue, ...props }, ref) => {
-    const value = props.value || props.defaultValue || [0];
-    const displayValue = formatValue ? formatValue(value[0]) : value[0];
+    const value = props.value || props.defaultValue || [0]
+    const displayValue = formatValue ? formatValue(value[0]) : value[0]
 
     return (
       <div className="relative w-full">
@@ -37,25 +37,25 @@ const Slider = React.forwardRef<React.ElementRef<typeof SliderPrimitive.Root>, S
           </div>
         )}
       </div>
-    );
+    )
   }
-);
-Slider.displayName = SliderPrimitive.Root.displayName;
+)
+Slider.displayName = SliderPrimitive.Root.displayName
 
 // Dual-value slider for weight distribution (e.g., semantic vs keyword weight)
 interface DualWeightSliderProps {
-  value: number; // 0-1, represents the first weight (second weight = 1 - value)
-  onChange: (value: number) => void;
-  leftLabel: string;
-  rightLabel: string;
-  disabled?: boolean;
-  className?: string;
+  value: number // 0-1, represents the first weight (second weight = 1 - value)
+  onChange: (value: number) => void
+  leftLabel: string
+  rightLabel: string
+  disabled?: boolean
+  className?: string
 }
 
 const DualWeightSlider = React.forwardRef<HTMLDivElement, DualWeightSliderProps>(
   ({ value, onChange, leftLabel, rightLabel, disabled = false, className }, ref) => {
-    const leftWeight = value;
-    const rightWeight = Math.round((1 - value) * 100) / 100;
+    const leftWeight = value
+    const rightWeight = Math.round((1 - value) * 100) / 100
 
     return (
       <div ref={ref} className={cn('space-y-3', className)}>
@@ -82,9 +82,9 @@ const DualWeightSlider = React.forwardRef<HTMLDivElement, DualWeightSliderProps>
           <span className="text-text-muted">{rightWeight.toFixed(2)}</span>
         </div>
       </div>
-    );
+    )
   }
-);
-DualWeightSlider.displayName = 'DualWeightSlider';
+)
+DualWeightSlider.displayName = 'DualWeightSlider'
 
-export { Slider, DualWeightSlider };
+export { Slider, DualWeightSlider }

@@ -35,6 +35,7 @@ from app.api.endpoints.adapter import (
     tasks,
     teams,
 )
+from app.api.endpoints.internal import chat_storage_router, rag_router, skills_router
 from app.api.endpoints.kind import k_router
 from app.api.router import api_router
 
@@ -83,3 +84,10 @@ api_router.include_router(
 api_router.include_router(rag.router, prefix="/rag", tags=["rag"])
 api_router.include_router(utils.router, prefix="/utils", tags=["utils"])
 api_router.include_router(k_router)
+
+# Internal API endpoints (for service-to-service communication)
+api_router.include_router(
+    chat_storage_router, prefix="/internal", tags=["internal-chat"]
+)
+api_router.include_router(rag_router, prefix="/internal", tags=["internal-rag"])
+api_router.include_router(skills_router, prefix="/internal", tags=["internal-skills"])

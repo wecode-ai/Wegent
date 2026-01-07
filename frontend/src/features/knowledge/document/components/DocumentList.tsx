@@ -1,10 +1,10 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo } from 'react'
 import {
   ArrowLeft,
   Upload,
@@ -17,94 +17,94 @@ import {
   Target,
   FileUp,
   RefreshCw,
-} from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Spinner } from '@/components/ui/spinner';
-import { Checkbox } from '@/components/ui/checkbox';
-import { DocumentItem } from './DocumentItem';
-import { DocumentUpload } from './DocumentUpload';
-import { DeleteDocumentDialog } from './DeleteDocumentDialog';
-import { EditDocumentDialog } from './EditDocumentDialog';
-import { RetrievalTestDialog } from './RetrievalTestDialog';
-import { useDocuments } from '../hooks/useDocuments';
-import type { KnowledgeBase, KnowledgeDocument, SplitterConfig } from '@/types/knowledge';
-import { useTranslation } from '@/hooks/useTranslation';
+} from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
+import { Checkbox } from '@/components/ui/checkbox'
+import { DocumentItem } from './DocumentItem'
+import { DocumentUpload } from './DocumentUpload'
+import { DeleteDocumentDialog } from './DeleteDocumentDialog'
+import { EditDocumentDialog } from './EditDocumentDialog'
+import { RetrievalTestDialog } from './RetrievalTestDialog'
+import { useDocuments } from '../hooks/useDocuments'
+import type { KnowledgeBase, KnowledgeDocument, SplitterConfig } from '@/types/knowledge'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface DocumentListProps {
-  knowledgeBase: KnowledgeBase;
-  onBack?: () => void;
-  canManage?: boolean;
+  knowledgeBase: KnowledgeBase
+  onBack?: () => void
+  canManage?: boolean
 }
 
-type SortField = 'name' | 'size' | 'date';
-type SortOrder = 'asc' | 'desc';
+type SortField = 'name' | 'size' | 'date'
+type SortOrder = 'asc' | 'desc'
 
 export function DocumentList({ knowledgeBase, onBack, canManage = true }: DocumentListProps) {
-  const { t } = useTranslation('knowledge');
+  const { t } = useTranslation('knowledge')
   const { documents, loading, error, create, remove, refresh, batchDelete } = useDocuments({
     knowledgeBaseId: knowledgeBase.id,
-  });
+  })
 
   // Only show error on page for initial load failures (when documents list is empty)
   // Operation errors are shown via toast notifications
-  const showLoadError = error && documents.length === 0;
+  const showLoadError = error && documents.length === 0
 
-  const [showUpload, setShowUpload] = useState(false);
-  const [showRetrievalTest, setShowRetrievalTest] = useState(false);
-  const [editingDoc, setEditingDoc] = useState<KnowledgeDocument | null>(null);
-  const [deletingDoc, setDeletingDoc] = useState<KnowledgeDocument | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [sortField, setSortField] = useState<SortField>('date');
-  const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
-  const [batchLoading, setBatchLoading] = useState(false);
+  const [showUpload, setShowUpload] = useState(false)
+  const [showRetrievalTest, setShowRetrievalTest] = useState(false)
+  const [editingDoc, setEditingDoc] = useState<KnowledgeDocument | null>(null)
+  const [deletingDoc, setDeletingDoc] = useState<KnowledgeDocument | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [sortField, setSortField] = useState<SortField>('date')
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const [batchLoading, setBatchLoading] = useState(false)
 
   const filteredAndSortedDocuments = useMemo(() => {
-    let result = [...documents];
+    let result = [...documents]
 
     // Filter by search query (name-based frontend search)
     if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase();
-      result = result.filter(doc => doc.name.toLowerCase().includes(query));
+      const query = searchQuery.toLowerCase()
+      result = result.filter(doc => doc.name.toLowerCase().includes(query))
     }
 
     // Sort
     result.sort((a, b) => {
-      let comparison = 0;
+      let comparison = 0
       switch (sortField) {
         case 'name':
-          comparison = a.name.localeCompare(b.name);
-          break;
+          comparison = a.name.localeCompare(b.name)
+          break
         case 'size':
-          comparison = a.file_size - b.file_size;
-          break;
+          comparison = a.file_size - b.file_size
+          break
         case 'date':
-          comparison = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
-          break;
+          comparison = new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+          break
       }
-      return sortOrder === 'asc' ? comparison : -comparison;
-    });
+      return sortOrder === 'asc' ? comparison : -comparison
+    })
 
-    return result;
-  }, [documents, searchQuery, sortField, sortOrder]);
+    return result
+  }, [documents, searchQuery, sortField, sortOrder])
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
-      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')
     } else {
-      setSortField(field);
-      setSortOrder('desc');
+      setSortField(field)
+      setSortOrder('desc')
     }
-  };
+  }
 
   const SortIcon = ({ field }: { field: SortField }) => {
-    if (sortField !== field) return null;
+    if (sortField !== field) return null
     return sortOrder === 'asc' ? (
       <ChevronUp className="w-3 h-3 inline ml-1" />
     ) : (
       <ChevronDown className="w-3 h-3 inline ml-1" />
-    );
-  };
+    )
+  }
 
   const handleUploadComplete = async (
     attachments: { attachment: { id: number; filename: string }; file: File }[],
@@ -113,8 +113,8 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
     // Create documents sequentially to ensure all are created
     for (const { attachment, file } of attachments) {
       // Use attachment.filename (which may have been renamed) instead of file.name
-      const documentName = attachment.filename || file.name;
-      const extension = documentName.split('.').pop() || '';
+      const documentName = attachment.filename || file.name
+      const extension = documentName.split('.').pop() || ''
       try {
         await create({
           attachment_id: attachment.id,
@@ -122,63 +122,63 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
           file_extension: extension,
           file_size: file.size,
           splitter_config: splitterConfig,
-        });
+        })
       } catch {
         // Continue with next file even if one fails
       }
     }
-    setShowUpload(false);
-  };
+    setShowUpload(false)
+  }
 
   const handleDelete = async () => {
-    if (!deletingDoc) return;
+    if (!deletingDoc) return
     try {
-      await remove(deletingDoc.id);
-      setDeletingDoc(null);
+      await remove(deletingDoc.id)
+      setDeletingDoc(null)
     } catch {
       // Error handled by hook
     }
-  };
+  }
   // Batch selection handlers
   const handleSelectDoc = (doc: KnowledgeDocument, selected: boolean) => {
     setSelectedIds(prev => {
-      const newSet = new Set(prev);
+      const newSet = new Set(prev)
       if (selected) {
-        newSet.add(doc.id);
+        newSet.add(doc.id)
       } else {
-        newSet.delete(doc.id);
+        newSet.delete(doc.id)
       }
-      return newSet;
-    });
-  };
+      return newSet
+    })
+  }
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
-      setSelectedIds(new Set(filteredAndSortedDocuments.map(doc => doc.id)));
+      setSelectedIds(new Set(filteredAndSortedDocuments.map(doc => doc.id)))
     } else {
-      setSelectedIds(new Set());
+      setSelectedIds(new Set())
     }
-  };
+  }
 
   const isAllSelected =
     filteredAndSortedDocuments.length > 0 &&
-    filteredAndSortedDocuments.every(doc => selectedIds.has(doc.id));
+    filteredAndSortedDocuments.every(doc => selectedIds.has(doc.id))
 
-  const isPartialSelected = selectedIds.size > 0 && !isAllSelected;
+  const isPartialSelected = selectedIds.size > 0 && !isAllSelected
 
   // Batch operations using batch API
   const handleBatchDelete = async () => {
-    if (selectedIds.size === 0) return;
-    setBatchLoading(true);
+    if (selectedIds.size === 0) return
+    setBatchLoading(true)
     try {
-      await batchDelete(Array.from(selectedIds));
-      setSelectedIds(new Set());
+      await batchDelete(Array.from(selectedIds))
+      setSelectedIds(new Set())
     } catch {
       // Error handled by hook
     } finally {
-      setBatchLoading(false);
+      setBatchLoading(false)
     }
-  };
+  }
 
   return (
     <div className="space-y-4">
@@ -364,8 +364,8 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
         onOpenChange={open => !open && setEditingDoc(null)}
         document={editingDoc}
         onSuccess={() => {
-          setEditingDoc(null);
-          refresh();
+          setEditingDoc(null)
+          refresh()
         }}
       />
 
@@ -383,5 +383,5 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
         knowledgeBase={knowledgeBase}
       />
     </div>
-  );
+  )
 }

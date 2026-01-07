@@ -203,6 +203,26 @@ class Settings(BaseSettings):
     # MCP (Model Context Protocol) configuration for Chat Shell
     # Enable/disable MCP tools in Chat Shell mode
     CHAT_MCP_ENABLED: bool = False
+
+    # Chat Shell mode configuration
+    # "package" - use local app/chat_shell module directly (default, single process)
+    # "http" - call external Chat Shell service via HTTP/SSE
+    CHAT_SHELL_MODE: str = "package"
+    # Chat Shell service URL (only used when CHAT_SHELL_MODE="http")
+    CHAT_SHELL_URL: str = "http://localhost:8100"
+    # Chat Shell service authentication token (only used when CHAT_SHELL_MODE="http")
+    CHAT_SHELL_TOKEN: str = ""
+    # Internal service authentication token (for HTTP mode communication)
+    INTERNAL_SERVICE_TOKEN: str = ""
+    # Backend internal URL (for service-to-service communication)
+    # Used by chat_shell to download skill binaries
+    BACKEND_INTERNAL_URL: str = "http://localhost:8000"
+
+    # Streaming architecture mode configuration
+    # "legacy" - WebSocketStreamingHandler directly emits to WebSocket (current behavior)
+    # "bridge" - StreamingCore publishes to Redis channel, WebSocketBridge forwards to WebSocket
+    STREAMING_MODE: str = "legacy"
+
     # JSON configuration for MCP servers (similar to Claude Desktop format)
     # Example:
     # {

@@ -1,46 +1,46 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Button } from '@/components/ui/button';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogFooter,
-} from '@/components/ui/dialog';
-import { Loader2 } from 'lucide-react';
+} from '@/components/ui/dialog'
+import { Loader2 } from 'lucide-react'
 
-import { Bot, Team } from '@/types/api';
-import { TeamMode, getFilteredBotsForMode, AgentType } from './team-modes';
-import { createTeam, updateTeam } from '../services/teams';
-import TeamEditDrawer from './TeamEditDrawer';
-import { useTranslation } from '@/hooks/useTranslation';
-import { shellApis, UnifiedShell } from '@/apis/shells';
-import { BotEditRef } from './BotEdit';
+import { Bot, Team } from '@/types/api'
+import { TeamMode, getFilteredBotsForMode, AgentType } from './team-modes'
+import { createTeam, updateTeam } from '../services/teams'
+import TeamEditDrawer from './TeamEditDrawer'
+import { useTranslation } from '@/hooks/useTranslation'
+import { shellApis, UnifiedShell } from '@/apis/shells'
+import { BotEditRef } from './BotEdit'
 
 // Import sub-components
-import TeamBasicInfoForm from './team-edit/TeamBasicInfoForm';
-import TeamModeSelector from './team-edit/TeamModeSelector';
-import TeamModeEditor from './team-edit/TeamModeEditor';
-import TeamModeChangeDialog from './team-edit/TeamModeChangeDialog';
+import TeamBasicInfoForm from './team-edit/TeamBasicInfoForm'
+import TeamModeSelector from './team-edit/TeamModeSelector'
+import TeamModeEditor from './team-edit/TeamModeEditor'
+import TeamModeChangeDialog from './team-edit/TeamModeChangeDialog'
 
 interface TeamEditDialogProps {
-  open: boolean;
-  onClose: () => void;
-  teams: Team[];
-  setTeams: React.Dispatch<React.SetStateAction<Team[]>>;
-  editingTeamId: number | null;
-  initialTeam?: Team | null;
-  bots: Bot[];
-  setBots: React.Dispatch<React.SetStateAction<Bot[]>>;
-  toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast'];
-  scope?: 'personal' | 'group' | 'all';
-  groupName?: string;
+  open: boolean
+  onClose: () => void
+  teams: Team[]
+  setTeams: React.Dispatch<React.SetStateAction<Team[]>>
+  editingTeamId: number | null
+  initialTeam?: Team | null
+  bots: Bot[]
+  setBots: React.Dispatch<React.SetStateAction<Bot[]>>
+  toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast']
+  scope?: 'personal' | 'group' | 'all'
+  groupName?: string
 }
 
 export default function TeamEditDialog(props: TeamEditDialogProps) {
@@ -56,69 +56,69 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     toast,
     scope = 'personal',
     groupName,
-  } = props;
+  } = props
 
-  const { t } = useTranslation();
+  const { t } = useTranslation()
 
   // Current editing object (0 means create new)
   const editingTeam: Team | null =
-    editingTeamId === 0 ? null : teams.find(t => t.id === editingTeamId) || null;
+    editingTeamId === 0 ? null : teams.find(t => t.id === editingTeamId) || null
 
-  const formTeam = editingTeam ?? (editingTeamId === 0 ? initialTeam : null) ?? null;
+  const formTeam = editingTeam ?? (editingTeamId === 0 ? initialTeam : null) ?? null
 
   // Form state
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [mode, setMode] = useState<TeamMode>('solo');
-  const [bindMode, setBindMode] = useState<('chat' | 'code')[]>(['chat', 'code']);
-  const [icon, setIcon] = useState<string | null>(null);
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
+  const [mode, setMode] = useState<TeamMode>('solo')
+  const [bindMode, setBindMode] = useState<('chat' | 'code')[]>(['chat', 'code'])
+  const [icon, setIcon] = useState<string | null>(null)
 
   // Bot selection state
-  const [selectedBotKeys, setSelectedBotKeys] = useState<React.Key[]>([]);
-  const [leaderBotId, setLeaderBotId] = useState<number | null>(null);
+  const [selectedBotKeys, setSelectedBotKeys] = useState<React.Key[]>([])
+  const [leaderBotId, setLeaderBotId] = useState<number | null>(null)
 
-  const [saving, setSaving] = useState(false);
+  const [saving, setSaving] = useState(false)
 
   // Bot editing related state
-  const [editingBotDrawerVisible, setEditingBotDrawerVisible] = useState(false);
-  const [editingBotId, setEditingBotId] = useState<number | null>(null);
-  const [drawerMode, setDrawerMode] = useState<'edit' | 'prompt'>('edit');
-  const [cloningBot, setCloningBot] = useState<Bot | null>(null);
+  const [editingBotDrawerVisible, setEditingBotDrawerVisible] = useState(false)
+  const [editingBotId, setEditingBotId] = useState<number | null>(null)
+  const [drawerMode, setDrawerMode] = useState<'edit' | 'prompt'>('edit')
+  const [cloningBot, setCloningBot] = useState<Bot | null>(null)
 
   // Store unsaved team prompts
-  const [unsavedPrompts, setUnsavedPrompts] = useState<Record<string, string>>({});
+  const [unsavedPrompts, setUnsavedPrompts] = useState<Record<string, string>>({})
 
   // Mode change confirmation dialog state
-  const [modeChangeDialogVisible, setModeChangeDialogVisible] = useState(false);
-  const [pendingMode, setPendingMode] = useState<TeamMode | null>(null);
+  const [modeChangeDialogVisible, setModeChangeDialogVisible] = useState(false)
+  const [pendingMode, setPendingMode] = useState<TeamMode | null>(null)
 
   // State to trigger collapse of TeamModeSelector after confirmation
-  const [shouldCollapseSelector, setShouldCollapseSelector] = useState(false);
+  const [shouldCollapseSelector, setShouldCollapseSelector] = useState(false)
 
   // Shells data for resolving custom shell runtime types
-  const [shells, setShells] = useState<UnifiedShell[]>([]);
+  const [shells, setShells] = useState<UnifiedShell[]>([])
 
   // Ref for BotEdit in solo mode
-  const botEditRef = useRef<BotEditRef | null>(null);
+  const botEditRef = useRef<BotEditRef | null>(null)
 
   // Load shells data on mount
   useEffect(() => {
-    if (!open) return;
+    if (!open) return
     const fetchShells = async () => {
       try {
-        const response = await shellApis.getUnifiedShells(scope, groupName);
-        setShells(response.data || []);
+        const response = await shellApis.getUnifiedShells(scope, groupName)
+        setShells(response.data || [])
       } catch (error) {
-        console.error('Failed to fetch shells:', error);
+        console.error('Failed to fetch shells:', error)
       }
-    };
-    fetchShells();
-  }, [open, scope, groupName]);
+    }
+    fetchShells()
+  }, [open, scope, groupName])
 
   // Filter bots based on current mode
   const filteredBots = useMemo(() => {
-    return getFilteredBotsForMode(bots, mode, shells);
-  }, [bots, mode, shells]);
+    return getFilteredBotsForMode(bots, mode, shells)
+  }, [bots, mode, shells])
 
   // Get allowed agents for current mode
   const allowedAgentsForMode = useMemo((): AgentType[] | undefined => {
@@ -128,186 +128,186 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       route: ['Agno'],
       coordinate: ['Agno'],
       collaborate: ['Agno'],
-    };
-    const allowed = MODE_AGENT_FILTER[mode];
-    return allowed === null ? undefined : allowed;
-  }, [mode]);
+    }
+    const allowed = MODE_AGENT_FILTER[mode]
+    return allowed === null ? undefined : allowed
+  }, [mode])
 
   const teamPromptMap = useMemo(() => {
-    const map = new Map<number, boolean>();
+    const map = new Map<number, boolean>()
     if (editingTeam) {
       editingTeam.bots.forEach(bot => {
-        map.set(bot.bot_id, !!bot.bot_prompt?.trim());
-      });
+        map.set(bot.bot_id, !!bot.bot_prompt?.trim())
+      })
     }
     Object.entries(unsavedPrompts).forEach(([key, value]) => {
-      const id = Number(key.replace('prompt-', ''));
+      const id = Number(key.replace('prompt-', ''))
       if (!Number.isNaN(id)) {
-        map.set(id, !!value?.trim());
+        map.set(id, !!value?.trim())
       }
-    });
-    return map;
-  }, [editingTeam, unsavedPrompts]);
+    })
+    return map
+  }, [editingTeam, unsavedPrompts])
 
   // Reset form when dialog opens
   useEffect(() => {
-    if (!open) return;
+    if (!open) return
 
     if (formTeam) {
-      setName(formTeam.name);
-      setDescription(formTeam.description || '');
-      setIcon(formTeam.icon || null);
-      const m = (formTeam.workflow?.mode as TeamMode) || 'pipeline';
-      setMode(m);
+      setName(formTeam.name)
+      setDescription(formTeam.description || '')
+      setIcon(formTeam.icon || null)
+      const m = (formTeam.workflow?.mode as TeamMode) || 'pipeline'
+      setMode(m)
       if (formTeam.bind_mode && Array.isArray(formTeam.bind_mode)) {
-        setBindMode(formTeam.bind_mode);
+        setBindMode(formTeam.bind_mode)
       } else {
         const recMode =
           formTeam.recommended_mode ||
-          (formTeam.workflow?.recommended_mode as 'chat' | 'code' | 'both' | undefined);
+          (formTeam.workflow?.recommended_mode as 'chat' | 'code' | 'both' | undefined)
         if (recMode === 'chat') {
-          setBindMode(['chat']);
+          setBindMode(['chat'])
         } else if (recMode === 'code') {
-          setBindMode(['code']);
+          setBindMode(['code'])
         } else {
-          setBindMode([]); // Default to empty array instead of ['chat', 'code']
+          setBindMode([]) // Default to empty array instead of ['chat', 'code']
         }
       }
-      const ids = formTeam.bots.map(b => String(b.bot_id));
-      setSelectedBotKeys(ids);
-      const leaderBot = formTeam.bots.find(b => b.role === 'leader');
-      setLeaderBotId(leaderBot?.bot_id ?? null);
+      const ids = formTeam.bots.map(b => String(b.bot_id))
+      setSelectedBotKeys(ids)
+      const leaderBot = formTeam.bots.find(b => b.role === 'leader')
+      setLeaderBotId(leaderBot?.bot_id ?? null)
     } else {
-      setName('');
-      setDescription('');
-      setIcon(null);
-      setMode('solo');
-      setBindMode([]);
-      setSelectedBotKeys([]);
-      setLeaderBotId(null);
+      setName('')
+      setDescription('')
+      setIcon(null)
+      setMode('solo')
+      setBindMode([])
+      setSelectedBotKeys([])
+      setLeaderBotId(null)
     }
-    setUnsavedPrompts({});
-  }, [open, formTeam]);
+    setUnsavedPrompts({})
+  }, [open, formTeam])
 
   // Update bot selection when bots change
   useEffect(() => {
-    if (!open || !formTeam) return;
+    if (!open || !formTeam) return
 
     const ids = formTeam.bots
       .filter(b => filteredBots.some((bot: Bot) => bot.id === b.bot_id))
-      .map(b => String(b.bot_id));
-    setSelectedBotKeys(ids);
+      .map(b => String(b.bot_id))
+    setSelectedBotKeys(ids)
     const leaderBot = formTeam.bots.find(
       b => b.role === 'leader' && filteredBots.some((bot: Bot) => bot.id === b.bot_id)
-    );
-    setLeaderBotId(leaderBot?.bot_id ?? null);
-  }, [open, filteredBots, formTeam]);
+    )
+    setLeaderBotId(leaderBot?.bot_id ?? null)
+  }, [open, filteredBots, formTeam])
 
   // Check if mode change needs confirmation
   const needsModeChangeConfirmation = useCallback(() => {
-    const hasSelectedBots = selectedBotKeys.length > 0 || leaderBotId !== null;
+    const hasSelectedBots = selectedBotKeys.length > 0 || leaderBotId !== null
     const hasUnsavedPrompts = Object.values(unsavedPrompts).some(
       value => (value ?? '').trim().length > 0
-    );
+    )
     const hasExistingPrompts =
-      formTeam?.bots.some(bot => bot.bot_prompt && bot.bot_prompt.trim().length > 0) ?? false;
+      formTeam?.bots.some(bot => bot.bot_prompt && bot.bot_prompt.trim().length > 0) ?? false
 
-    return hasSelectedBots || hasUnsavedPrompts || hasExistingPrompts;
-  }, [selectedBotKeys, leaderBotId, unsavedPrompts, formTeam]);
+    return hasSelectedBots || hasUnsavedPrompts || hasExistingPrompts
+  }, [selectedBotKeys, leaderBotId, unsavedPrompts, formTeam])
 
   // Execute mode change with reset
   const executeModeChange = useCallback((newMode: TeamMode) => {
-    setMode(newMode);
-    setSelectedBotKeys([]);
-    setLeaderBotId(null);
-    setUnsavedPrompts({});
-  }, []);
+    setMode(newMode)
+    setSelectedBotKeys([])
+    setLeaderBotId(null)
+    setUnsavedPrompts({})
+  }, [])
 
   // Change Mode with confirmation
   const handleModeChange = (newMode: TeamMode) => {
-    if (newMode === mode) return;
+    if (newMode === mode) return
 
     if (needsModeChangeConfirmation()) {
-      setPendingMode(newMode);
-      setModeChangeDialogVisible(true);
+      setPendingMode(newMode)
+      setModeChangeDialogVisible(true)
     } else {
-      executeModeChange(newMode);
-      setShouldCollapseSelector(true);
+      executeModeChange(newMode)
+      setShouldCollapseSelector(true)
     }
-  };
+  }
 
   const handleConfirmModeChange = () => {
     if (pendingMode) {
-      executeModeChange(pendingMode);
+      executeModeChange(pendingMode)
     }
-    setModeChangeDialogVisible(false);
-    setPendingMode(null);
-    setShouldCollapseSelector(true);
-  };
+    setModeChangeDialogVisible(false)
+    setPendingMode(null)
+    setShouldCollapseSelector(true)
+  }
 
   const handleCollapseHandled = useCallback(() => {
-    setShouldCollapseSelector(false);
-  }, []);
+    setShouldCollapseSelector(false)
+  }, [])
 
   const handleCancelModeChange = () => {
-    setModeChangeDialogVisible(false);
-    setPendingMode(null);
-  };
+    setModeChangeDialogVisible(false)
+    setPendingMode(null)
+  }
 
   const isDifyLeader = useMemo(() => {
-    if (leaderBotId === null) return false;
-    const leader = filteredBots.find((b: Bot) => b.id === leaderBotId);
-    return leader?.shell_type === 'Dify';
-  }, [leaderBotId, filteredBots]);
+    if (leaderBotId === null) return false
+    const leader = filteredBots.find((b: Bot) => b.id === leaderBotId)
+    return leader?.shell_type === 'Dify'
+  }, [leaderBotId, filteredBots])
 
   // Leader change handler
   const onLeaderChange = (botId: number) => {
     if (selectedBotKeys.some(k => Number(k) === botId)) {
-      setSelectedBotKeys(prev => prev.filter(k => Number(k) !== botId));
+      setSelectedBotKeys(prev => prev.filter(k => Number(k) !== botId))
     }
 
-    const newLeader = filteredBots.find((b: Bot) => b.id === botId);
+    const newLeader = filteredBots.find((b: Bot) => b.id === botId)
     if (newLeader?.shell_type === 'Dify') {
-      setSelectedBotKeys([]);
+      setSelectedBotKeys([])
     }
 
-    setLeaderBotId(botId);
-  };
+    setLeaderBotId(botId)
+  }
 
   const handleEditBot = useCallback((botId: number) => {
-    setDrawerMode('edit');
-    setCloningBot(null);
-    setEditingBotId(botId);
-    setEditingBotDrawerVisible(true);
-  }, []);
+    setDrawerMode('edit')
+    setCloningBot(null)
+    setEditingBotId(botId)
+    setEditingBotDrawerVisible(true)
+  }, [])
 
   const handleCreateBot = useCallback(() => {
-    setDrawerMode('edit');
-    setCloningBot(null);
-    setEditingBotId(0);
-    setEditingBotDrawerVisible(true);
-  }, []);
+    setDrawerMode('edit')
+    setCloningBot(null)
+    setEditingBotId(0)
+    setEditingBotDrawerVisible(true)
+  }, [])
 
   const handleCloneBot = useCallback(
     (botId: number) => {
-      const botToClone = filteredBots.find((b: Bot) => b.id === botId);
-      if (!botToClone) return;
-      setDrawerMode('edit');
-      setCloningBot(botToClone);
-      setEditingBotId(0);
-      setEditingBotDrawerVisible(true);
+      const botToClone = filteredBots.find((b: Bot) => b.id === botId)
+      if (!botToClone) return
+      setDrawerMode('edit')
+      setCloningBot(botToClone)
+      setEditingBotId(0)
+      setEditingBotDrawerVisible(true)
     },
     [filteredBots]
-  );
+  )
 
   const handleOpenPromptDrawer = useCallback(() => {
-    setDrawerMode('prompt');
-    setEditingBotDrawerVisible(true);
-  }, []);
+    setDrawerMode('prompt')
+    setEditingBotDrawerVisible(true)
+  }, [])
 
   const handleTeamUpdate = (updatedTeam: Team) => {
-    setTeams(prev => prev.map(t => (t.id === updatedTeam.id ? updatedTeam : t)));
-  };
+    setTeams(prev => prev.map(t => (t.id === updatedTeam.id ? updatedTeam : t)))
+  }
 
   // Save handler
   const handleSave = async () => {
@@ -315,8 +315,8 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       toast({
         variant: 'destructive',
         title: t('common:team.name_required'),
-      });
-      return;
+      })
+      return
     }
 
     // Validate bind_mode is not empty
@@ -324,28 +324,28 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       toast({
         variant: 'destructive',
         title: t('team.bind_mode_required'),
-      });
-      return;
+      })
+      return
     }
 
     // For solo mode, save bot first via BotEdit ref
     if (mode === 'solo') {
       if (botEditRef.current) {
-        const validation = botEditRef.current.validateBot();
+        const validation = botEditRef.current.validateBot()
         if (!validation.isValid) {
           toast({
             variant: 'destructive',
             title: validation.error || t('common:bot.errors.required'),
-          });
-          return;
+          })
+          return
         }
 
-        setSaving(true);
+        setSaving(true)
         try {
-          const savedBotId = await botEditRef.current.saveBot();
+          const savedBotId = await botEditRef.current.saveBot()
           if (savedBotId === null) {
-            setSaving(false);
-            return;
+            setSaving(false)
+            return
           }
 
           const botsData = [
@@ -354,9 +354,9 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
               bot_prompt: unsavedPrompts[`prompt-${savedBotId}`] || '',
               role: 'leader',
             },
-          ];
+          ]
 
-          const workflow = { mode, leader_bot_id: savedBotId };
+          const workflow = { mode, leader_bot_id: savedBotId }
 
           if (editingTeam && editingTeamId && editingTeamId > 0) {
             const updated = await updateTeam(editingTeamId, {
@@ -367,8 +367,8 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
               bots: botsData,
               namespace: scope === 'group' && groupName ? groupName : undefined,
               icon: icon || undefined,
-            });
-            setTeams(prev => prev.map(team => (team.id === updated.id ? updated : team)));
+            })
+            setTeams(prev => prev.map(team => (team.id === updated.id ? updated : team)))
           } else {
             const created = await createTeam({
               name: name.trim(),
@@ -378,23 +378,23 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
               bots: botsData,
               namespace: scope === 'group' && groupName ? groupName : undefined,
               icon: icon || undefined,
-            });
-            setTeams(prev => [created, ...prev]);
+            })
+            setTeams(prev => [created, ...prev])
           }
 
-          setUnsavedPrompts({});
-          onClose();
+          setUnsavedPrompts({})
+          onClose()
         } catch (error) {
           toast({
             variant: 'destructive',
             title:
               (error as Error)?.message ||
               (editingTeam ? t('common:teams.edit_failed') : t('common:teams.create_failed')),
-          });
+          })
         } finally {
-          setSaving(false);
+          setSaving(false)
         }
-        return;
+        return
       }
     }
 
@@ -403,39 +403,39 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       toast({
         variant: 'destructive',
         title: mode === 'solo' ? t('common:team.bot_required') : t('common:team.leader_required'),
-      });
-      return;
+      })
+      return
     }
 
-    const selectedIds = mode === 'solo' ? [] : selectedBotKeys.map(k => Number(k));
-    const allBotIds: number[] = [];
+    const selectedIds = mode === 'solo' ? [] : selectedBotKeys.map(k => Number(k))
+    const allBotIds: number[] = []
 
     if (leaderBotId !== null) {
-      allBotIds.push(leaderBotId);
+      allBotIds.push(leaderBotId)
     }
 
     if (mode !== 'solo' && !isDifyLeader) {
       selectedIds.forEach(id => {
         if (id !== leaderBotId) {
-          allBotIds.push(id);
+          allBotIds.push(id)
         }
-      });
+      })
     }
 
     const botsData = allBotIds.map(id => {
-      const existingBot = formTeam?.bots.find(b => b.bot_id === id);
-      const unsavedPrompt = unsavedPrompts[`prompt-${id}`];
+      const existingBot = formTeam?.bots.find(b => b.bot_id === id)
+      const unsavedPrompt = unsavedPrompts[`prompt-${id}`]
 
       return {
         bot_id: id,
         bot_prompt: unsavedPrompt || existingBot?.bot_prompt || '',
         role: id === leaderBotId ? 'leader' : undefined,
-      };
-    });
+      }
+    })
 
-    const workflow = { mode, leader_bot_id: leaderBotId };
+    const workflow = { mode, leader_bot_id: leaderBotId }
 
-    setSaving(true);
+    setSaving(true)
     try {
       if (editingTeam && editingTeamId && editingTeamId > 0) {
         const updated = await updateTeam(editingTeamId, {
@@ -446,8 +446,8 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
           bots: botsData,
           namespace: scope === 'group' && groupName ? groupName : undefined,
           icon: icon || undefined,
-        });
-        setTeams(prev => prev.map(team => (team.id === updated.id ? updated : team)));
+        })
+        setTeams(prev => prev.map(team => (team.id === updated.id ? updated : team)))
       } else {
         const created = await createTeam({
           name: name.trim(),
@@ -457,26 +457,26 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
           bots: botsData,
           namespace: scope === 'group' && groupName ? groupName : undefined,
           icon: icon || undefined,
-        });
-        setTeams(prev => [created, ...prev]);
+        })
+        setTeams(prev => [created, ...prev])
       }
-      setUnsavedPrompts({});
-      onClose();
+      setUnsavedPrompts({})
+      onClose()
     } catch (error) {
       toast({
         variant: 'destructive',
         title:
           (error as Error)?.message ||
           (editingTeam ? t('common:teams.edit_failed') : t('common:teams.create_failed')),
-      });
+      })
     } finally {
-      setSaving(false);
+      setSaving(false)
     }
-  };
+  }
 
-  const leaderOptions = useMemo(() => filteredBots, [filteredBots]);
+  const leaderOptions = useMemo(() => filteredBots, [filteredBots])
 
-  const isEditing = editingTeamId !== null && editingTeamId > 0;
+  const isEditing = editingTeamId !== null && editingTeamId > 0
 
   return (
     <>
@@ -580,5 +580,5 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
         onCancel={handleCancelModeChange}
       />
     </>
-  );
+  )
 }

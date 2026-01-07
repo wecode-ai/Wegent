@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -165,7 +165,7 @@ export const EMOJI_TO_TEXT_MAP: Record<string, string> = {
   '☕': '[Coffee]',
   '🍺': '[Beer]',
   '🍷': '[Wine]',
-};
+}
 
 /**
  * Regex pattern to match emoji characters
@@ -178,7 +178,7 @@ export const EMOJI_TO_TEXT_MAP: Record<string, string> = {
  * - Emoji modifiers and sequences
  */
 export const EMOJI_REGEX =
-  /[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]|[\u{1F600}-\u{1F64F}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]|[\u{2300}-\u{23FF}]|[\u{2B50}-\u{2B55}]|[\u{200D}]|[\u{FE0F}]|[\u{20E3}]|[\u{E0020}-\u{E007F}]|[\u{1FA00}-\u{1FAFF}]|[\u{1F900}-\u{1F9FF}]/gu;
+  /[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]|[\u{1F600}-\u{1F64F}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]|[\u{2300}-\u{23FF}]|[\u{2B50}-\u{2B55}]|[\u{200D}]|[\u{FE0F}]|[\u{20E3}]|[\u{E0020}-\u{E007F}]|[\u{1FA00}-\u{1FAFF}]|[\u{1F900}-\u{1F9FF}]/gu
 
 /**
  * Remove or replace emoji characters in text for PDF compatibility
@@ -188,20 +188,20 @@ export const EMOJI_REGEX =
  * @returns Text with emojis replaced or removed
  */
 export function sanitizeEmojisForPdf(text: string): string {
-  if (!text) return text;
+  if (!text) return text
 
-  let result = text;
+  let result = text
 
   // First, replace known emojis with their text equivalents
   for (const [emoji, replacement] of Object.entries(EMOJI_TO_TEXT_MAP)) {
-    result = result.split(emoji).join(replacement);
+    result = result.split(emoji).join(replacement)
   }
 
   // Then remove any remaining emojis that weren't in our map
-  result = result.replace(EMOJI_REGEX, '');
+  result = result.replace(EMOJI_REGEX, '')
 
   // Clean up any double spaces that might have been created
-  result = result.replace(/  +/g, ' ');
+  result = result.replace(/  +/g, ' ')
 
-  return result;
+  return result
 }

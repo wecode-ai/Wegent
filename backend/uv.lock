@@ -5269,6 +5269,8 @@ dependencies = [
     { name = "structlog" },
     { name = "tenacity" },
     { name = "uvicorn", extra = ["standard"] },
+    { name = "wegent-chat-shell" },
+    { name = "wegent-shared" },
 ]
 
 [package.dev-dependencies]
@@ -5352,6 +5354,8 @@ requires-dist = [
     { name = "structlog", specifier = ">=23.1.0" },
     { name = "tenacity", specifier = ">=8.2.3" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.27.0" },
+    { name = "wegent-chat-shell", editable = "../chat_shell" },
+    { name = "wegent-shared", editable = "../shared" },
 ]
 
 [package.metadata.requires-dev]
@@ -5369,6 +5373,170 @@ dev = [
     { name = "pytest-mock", specifier = ">=3.15.1" },
     { name = "pytest-xdist", specifier = ">=3.5.0" },
     { name = "python-decouple", specifier = ">=3.8" },
+]
+
+[[package]]
+name = "wegent-chat-shell"
+version = "1.0.0"
+source = { editable = "../chat_shell" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "aiosqlite" },
+    { name = "asyncmy" },
+    { name = "beautifulsoup4" },
+    { name = "chardet" },
+    { name = "click" },
+    { name = "cryptography" },
+    { name = "fastapi" },
+    { name = "httpx", extra = ["socks"] },
+    { name = "langchain" },
+    { name = "langchain-anthropic" },
+    { name = "langchain-core" },
+    { name = "langchain-google-genai" },
+    { name = "langchain-mcp-adapters" },
+    { name = "langchain-openai" },
+    { name = "langgraph" },
+    { name = "llama-index-core" },
+    { name = "llama-index-embeddings-openai" },
+    { name = "llama-index-vector-stores-elasticsearch" },
+    { name = "llama-index-vector-stores-qdrant" },
+    { name = "markdown" },
+    { name = "mcp" },
+    { name = "openpyxl" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-exporter-otlp" },
+    { name = "opentelemetry-instrumentation-fastapi" },
+    { name = "opentelemetry-instrumentation-httpx" },
+    { name = "opentelemetry-sdk" },
+    { name = "orjson" },
+    { name = "pillow" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "pymysql" },
+    { name = "pypdf2" },
+    { name = "python-dateutil" },
+    { name = "python-docx" },
+    { name = "python-dotenv" },
+    { name = "python-multipart" },
+    { name = "pyyaml" },
+    { name = "sqlalchemy" },
+    { name = "sse-starlette" },
+    { name = "structlog" },
+    { name = "tenacity" },
+    { name = "uvicorn", extra = ["standard"] },
+    { name = "wegent-shared" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", specifier = ">=3.8.0" },
+    { name = "aiosqlite", specifier = ">=0.19.0" },
+    { name = "asyncmy", specifier = ">=0.2.9" },
+    { name = "beautifulsoup4", specifier = ">=4.12.0" },
+    { name = "chardet", specifier = ">=5.0.0" },
+    { name = "click", specifier = ">=8.1.0" },
+    { name = "cryptography", specifier = ">=42.0.4" },
+    { name = "fastapi", specifier = ">=0.109.1" },
+    { name = "httpx", extras = ["socks"], specifier = ">=0.26.0" },
+    { name = "langchain", specifier = ">=1.0.0,<2.0.0" },
+    { name = "langchain-anthropic", specifier = ">=1.0.0,<2.0.0" },
+    { name = "langchain-core", specifier = ">=0.3.0" },
+    { name = "langchain-google-genai", specifier = ">=2.0.0,<5.0.0" },
+    { name = "langchain-mcp-adapters", specifier = ">=0.2.1" },
+    { name = "langchain-openai", specifier = ">=1.0.0,<2.0.0" },
+    { name = "langgraph", specifier = ">=1.0.0,<2.0.0" },
+    { name = "llama-index-core", specifier = ">=0.12.0" },
+    { name = "llama-index-embeddings-openai", specifier = ">=0.3.0" },
+    { name = "llama-index-vector-stores-elasticsearch", specifier = ">=0.4.0" },
+    { name = "llama-index-vector-stores-qdrant", specifier = ">=0.9.0" },
+    { name = "markdown", specifier = ">=3.5.0" },
+    { name = "mcp", specifier = ">=1.0.0" },
+    { name = "openpyxl", specifier = ">=3.1.2" },
+    { name = "opentelemetry-api", specifier = ">=1.27.0" },
+    { name = "opentelemetry-exporter-otlp", specifier = ">=1.27.0" },
+    { name = "opentelemetry-instrumentation-fastapi", specifier = ">=0.48b0" },
+    { name = "opentelemetry-instrumentation-httpx", specifier = ">=0.48b0" },
+    { name = "opentelemetry-sdk", specifier = ">=1.27.0" },
+    { name = "orjson", specifier = ">=3.9.0" },
+    { name = "pillow", specifier = ">=12.0.0" },
+    { name = "pydantic", specifier = ">=2.5.3" },
+    { name = "pydantic-settings", specifier = ">=2.1.0" },
+    { name = "pymysql", specifier = ">=1.1.0" },
+    { name = "pypdf2", specifier = ">=3.0.0" },
+    { name = "python-dateutil", specifier = ">=2.8.2" },
+    { name = "python-docx", specifier = ">=1.1.0" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
+    { name = "python-multipart", specifier = ">=0.0.6" },
+    { name = "pyyaml", specifier = ">=6.0.1" },
+    { name = "rich", marker = "extra == 'rich'", specifier = ">=13.0.0" },
+    { name = "sqlalchemy", specifier = ">=2.0.25" },
+    { name = "sse-starlette", specifier = ">=1.6.5" },
+    { name = "structlog", specifier = ">=23.1.0" },
+    { name = "tenacity", specifier = ">=8.2.3" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.27.0" },
+    { name = "wegent-shared", editable = "../shared" },
+]
+provides-extras = ["rich"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "black", specifier = ">=23.7.0" },
+    { name = "flake8", specifier = ">=6.0.0" },
+    { name = "isort", specifier = ">=5.12.0" },
+    { name = "mypy", specifier = ">=1.5.0" },
+    { name = "pytest", specifier = ">=9.0.1" },
+    { name = "pytest-asyncio", specifier = ">=1.3.0" },
+    { name = "pytest-cov", specifier = ">=7.0.0" },
+    { name = "pytest-httpx", specifier = ">=0.36.0" },
+    { name = "pytest-mock", specifier = ">=3.15.1" },
+    { name = "pytest-xdist", specifier = ">=3.5.0" },
+]
+
+[[package]]
+name = "wegent-shared"
+version = "1.0.0"
+source = { editable = "../shared" }
+dependencies = [
+    { name = "asyncmy" },
+    { name = "cryptography" },
+    { name = "httpx" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-exporter-otlp" },
+    { name = "opentelemetry-instrumentation-fastapi" },
+    { name = "opentelemetry-instrumentation-httpx" },
+    { name = "opentelemetry-instrumentation-requests" },
+    { name = "opentelemetry-instrumentation-system-metrics" },
+    { name = "opentelemetry-sdk" },
+    { name = "pymysql" },
+    { name = "pyyaml" },
+    { name = "requests" },
+    { name = "sqlalchemy" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "asyncmy", specifier = ">=0.2.9" },
+    { name = "cryptography", specifier = ">=42.0.4" },
+    { name = "httpx", specifier = ">=0.26.0" },
+    { name = "opentelemetry-api", specifier = ">=1.27.0" },
+    { name = "opentelemetry-exporter-otlp", specifier = ">=1.27.0" },
+    { name = "opentelemetry-instrumentation-fastapi", specifier = ">=0.48b0" },
+    { name = "opentelemetry-instrumentation-httpx", specifier = ">=0.48b0" },
+    { name = "opentelemetry-instrumentation-requests", specifier = ">=0.48b0" },
+    { name = "opentelemetry-instrumentation-system-metrics", specifier = ">=0.48b0" },
+    { name = "opentelemetry-sdk", specifier = ">=1.27.0" },
+    { name = "pymysql", specifier = ">=1.1.0" },
+    { name = "pyyaml", specifier = ">=6.0.1" },
+    { name = "requests", specifier = ">=2.31.0" },
+    { name = "sqlalchemy", specifier = ">=2.0.25" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=9.0.1" },
+    { name = "pytest-asyncio", specifier = ">=1.3.0" },
+    { name = "pytest-cov", specifier = ">=7.0.0" },
+    { name = "pytest-mock", specifier = ">=3.15.1" },
 ]
 
 [[package]]

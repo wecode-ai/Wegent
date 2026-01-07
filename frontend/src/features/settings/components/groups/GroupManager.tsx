@@ -1,87 +1,87 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useEffect, useState } from 'react';
-import { useTranslation } from '@/hooks/useTranslation';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { listGroups } from '@/apis/groups';
-import type { Group } from '@/types/group';
-import { PlusIcon, PencilIcon, TrashIcon, UsersIcon } from 'lucide-react';
-import { toast } from 'sonner';
-import { CreateGroupDialog } from './CreateGroupDialog';
-import { EditGroupDialog } from './EditGroupDialog';
-import { DeleteGroupConfirmDialog } from './DeleteGroupConfirmDialog';
-import { GroupMembersDialog } from './GroupMembersDialog';
-import { useUser } from '@/features/common/UserContext';
+import { useEffect, useState } from 'react'
+import { useTranslation } from '@/hooks/useTranslation'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { listGroups } from '@/apis/groups'
+import type { Group } from '@/types/group'
+import { PlusIcon, PencilIcon, TrashIcon, UsersIcon } from 'lucide-react'
+import { toast } from 'sonner'
+import { CreateGroupDialog } from './CreateGroupDialog'
+import { EditGroupDialog } from './EditGroupDialog'
+import { DeleteGroupConfirmDialog } from './DeleteGroupConfirmDialog'
+import { GroupMembersDialog } from './GroupMembersDialog'
+import { useUser } from '@/features/common/UserContext'
 
 interface GroupManagerProps {
-  onGroupsChange?: () => void;
+  onGroupsChange?: () => void
 }
 
 export function GroupManager({ onGroupsChange }: GroupManagerProps) {
-  const { t } = useTranslation();
-  const { user } = useUser();
-  const [groups, setGroups] = useState<Group[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { t } = useTranslation()
+  const { user } = useUser()
+  const [groups, setGroups] = useState<Group[]>([])
+  const [loading, setLoading] = useState(true)
 
   // Dialog states
-  const [showCreateDialog, setShowCreateDialog] = useState(false);
-  const [showEditDialog, setShowEditDialog] = useState(false);
-  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
-  const [showMembersDialog, setShowMembersDialog] = useState(false);
-  const [selectedGroup, setSelectedGroup] = useState<Group | null>(null);
+  const [showCreateDialog, setShowCreateDialog] = useState(false)
+  const [showEditDialog, setShowEditDialog] = useState(false)
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [showMembersDialog, setShowMembersDialog] = useState(false)
+  const [selectedGroup, setSelectedGroup] = useState<Group | null>(null)
 
   useEffect(() => {
-    loadGroups();
-  }, []);
+    loadGroups()
+  }, [])
 
   const loadGroups = async () => {
     try {
-      setLoading(true);
-      const response = await listGroups({ page: 1, limit: 100 });
-      setGroups(response.items || []);
+      setLoading(true)
+      const response = await listGroups({ page: 1, limit: 100 })
+      setGroups(response.items || [])
     } catch (error) {
-      console.error('Failed to load groups:', error);
-      toast.error('Failed to load groups');
+      console.error('Failed to load groups:', error)
+      toast.error('Failed to load groups')
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  };
+  }
 
   const handleCreateClick = () => {
-    setShowCreateDialog(true);
-  };
+    setShowCreateDialog(true)
+  }
 
   const handleEditClick = (group: Group) => {
-    setSelectedGroup(group);
-    setShowEditDialog(true);
-  };
+    setSelectedGroup(group)
+    setShowEditDialog(true)
+  }
 
   const handleDeleteClick = (group: Group) => {
-    setSelectedGroup(group);
-    setShowDeleteDialog(true);
-  };
+    setSelectedGroup(group)
+    setShowDeleteDialog(true)
+  }
 
   const handleMembersClick = (group: Group) => {
-    setSelectedGroup(group);
-    setShowMembersDialog(true);
-  };
+    setSelectedGroup(group)
+    setShowMembersDialog(true)
+  }
 
   const handleSuccess = () => {
-    loadGroups();
-    onGroupsChange?.();
-  };
+    loadGroups()
+    onGroupsChange?.()
+  }
 
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-text-secondary">{t('common:actions.loading')}</div>
       </div>
-    );
+    )
   }
 
   return (
@@ -210,8 +210,8 @@ export function GroupManager({ onGroupsChange }: GroupManagerProps) {
       <EditGroupDialog
         isOpen={showEditDialog}
         onClose={() => {
-          setShowEditDialog(false);
-          setSelectedGroup(null);
+          setShowEditDialog(false)
+          setSelectedGroup(null)
         }}
         onSuccess={handleSuccess}
         group={selectedGroup}
@@ -220,8 +220,8 @@ export function GroupManager({ onGroupsChange }: GroupManagerProps) {
       <DeleteGroupConfirmDialog
         isOpen={showDeleteDialog}
         onClose={() => {
-          setShowDeleteDialog(false);
-          setSelectedGroup(null);
+          setShowDeleteDialog(false)
+          setSelectedGroup(null)
         }}
         onSuccess={handleSuccess}
         group={selectedGroup}
@@ -230,13 +230,13 @@ export function GroupManager({ onGroupsChange }: GroupManagerProps) {
       <GroupMembersDialog
         isOpen={showMembersDialog}
         onClose={() => {
-          setShowMembersDialog(false);
-          setSelectedGroup(null);
+          setShowMembersDialog(false)
+          setSelectedGroup(null)
         }}
         onSuccess={handleSuccess}
         group={selectedGroup}
         currentUserId={user?.id}
       />
     </div>
-  );
+  )
 }

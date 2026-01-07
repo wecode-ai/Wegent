@@ -94,6 +94,11 @@ services:
       INIT_DATA_ENABLED: "True"
       MAX_UPLOAD_FILE_SIZE_MB: 50
       MAX_EXTRACTED_TEXT_LENGTH: 1000000
+      # Chat Shell Configuration (uncomment to use HTTP mode)
+      CHAT_SHELL_MODE: http
+      CHAT_SHELL_URL: http://chat_shell:8100
+      # CHAT_SHELL_TOKEN: ${INTERNAL_SERVICE_TOKEN:-chat-shell-token}
+      # INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-chat-shell-token}
       # OpenTelemetry Configuration (uncomment to enable)
       # OTEL_ENABLED: "true"
       # OTEL_SERVICE_NAME: "wegent-backend"
@@ -139,6 +144,37 @@ services:
       - backend
     networks:
       - wegent-network
+
+  chat_shell:
+    build:
+      context: .
+      dockerfile: docker/chat_shell/Dockerfile
+    # image: ghcr.io/wecode-ai/wegent-chat-shell:1.0.0
+    container_name: wegent-chat-shell
+    restart: always
+    ports:
+      - "8100:8100"
+    environment:
+      - PORT=8100
+      - HOST=0.0.0.0
+      - CHAT_SHELL_MODE=http
+      - CHAT_SHELL_STORAGE_TYPE=remote
+      - CHAT_SHELL_REMOTE_STORAGE_URL=http://backend:8000/api/internal
+      # - CHAT_SHELL_REMOTE_STORAGE_TOKEN=${INTERNAL_SERVICE_TOKEN:-chat-shell-token}
+      # OpenTelemetry Configuration (uncomment to enable)
+      # - OTEL_ENABLED=true
+      # - OTEL_SERVICE_NAME=wegent-chat-shell
+      # - OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+    depends_on:
+      - backend
+    networks:
+      - wegent-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8100/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
   executor_manager:
     #build:

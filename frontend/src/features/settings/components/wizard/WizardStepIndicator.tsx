@@ -1,16 +1,16 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { Check } from 'lucide-react';
-import { cn } from '@/lib/utils';
-import { useTranslation } from '@/hooks/useTranslation';
+import { Check } from 'lucide-react'
+import { cn } from '@/lib/utils'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface WizardStepIndicatorProps {
-  currentStep: number;
-  totalSteps: number;
+  currentStep: number
+  totalSteps: number
 }
 
 const stepKeys = [
@@ -18,17 +18,17 @@ const stepKeys = [
   'wizard:step2_title',
   'wizard:step3_title',
   'wizard:step4_title',
-];
+]
 
 export default function WizardStepIndicator({ currentStep, totalSteps }: WizardStepIndicatorProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
 
   return (
     <div className="w-full mb-6">
       <div className="flex items-center justify-between">
         {Array.from({ length: totalSteps }, (_, i) => i + 1).map(step => {
-          const isCompleted = step < currentStep;
-          const isCurrent = step === currentStep;
+          const isCompleted = step < currentStep
+          const isCurrent = step === currentStep
 
           return (
             <div key={step} className="flex items-center flex-1 last:flex-none">
@@ -66,9 +66,9 @@ export default function WizardStepIndicator({ currentStep, totalSteps }: WizardS
                 />
               )}
             </div>
-          );
+          )
         })}
       </div>
     </div>
-  );
+  )
 }

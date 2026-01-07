@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -9,8 +9,8 @@
  * This is required because Next.js rewrites don't support streaming.
  */
 
-import { NextRequest } from 'next/server';
-import { createStreamProxy } from '@/lib/stream-proxy';
+import { NextRequest } from 'next/server'
+import { createStreamProxy } from '@/lib/stream-proxy'
 
 /**
  * POST /api/chat/stream
@@ -22,5 +22,5 @@ import { createStreamProxy } from '@/lib/stream-proxy';
  * @returns A streaming response with SSE data
  */
 export async function POST(request: NextRequest): Promise<Response> {
-  return createStreamProxy(request, '/api/chat/stream');
+  return createStreamProxy(request, '/api/chat/stream')
 }

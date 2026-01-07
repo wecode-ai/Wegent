@@ -1,10 +1,10 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react'
 
 // Storage type configuration for extensibility
 const STORAGE_TYPE_CONFIG = {
@@ -28,49 +28,49 @@ const STORAGE_TYPE_CONFIG = {
     // Fallback retrieval methods (used if API call fails)
     fallbackRetrievalMethods: ['vector'] as const,
   },
-} as const;
+} as const
 
 // Retrieval method labels for display
 const RETRIEVAL_METHOD_LABELS: Record<string, string> = {
   vector: 'retrievers.retrieval_method_vector',
   keyword: 'retrievers.retrieval_method_keyword',
   hybrid: 'retrievers.retrieval_method_hybrid',
-};
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Checkbox } from '@/components/ui/checkbox';
+}
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
+} from '@/components/ui/select'
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogFooter,
-} from '@/components/ui/dialog';
-import { Loader2 } from 'lucide-react';
-import { EyeIcon, EyeSlashIcon, BeakerIcon } from '@heroicons/react/24/outline';
-import { useTranslation } from '@/hooks/useTranslation';
+} from '@/components/ui/dialog'
+import { Loader2 } from 'lucide-react'
+import { EyeIcon, EyeSlashIcon, BeakerIcon } from '@heroicons/react/24/outline'
+import { useTranslation } from '@/hooks/useTranslation'
 import {
   retrieverApis,
   UnifiedRetriever,
   RetrieverCRD,
   RetrievalMethodType,
-} from '@/apis/retrievers';
+} from '@/apis/retrievers'
 
 interface RetrieverEditDialogProps {
-  open: boolean;
-  retriever: UnifiedRetriever | null;
-  onClose: () => void;
-  toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast'];
-  scope?: 'personal' | 'group' | 'all';
-  groupName?: string;
+  open: boolean
+  retriever: UnifiedRetriever | null
+  onClose: () => void
+  toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast']
+  scope?: 'personal' | 'group' | 'all'
+  groupName?: string
 }
 
 const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
@@ -81,56 +81,56 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
   scope,
   groupName,
 }) => {
-  const { t } = useTranslation(['common', 'wizard']);
-  const isEditing = !!retriever;
-  const isGroupScope = scope === 'group';
+  const { t } = useTranslation(['common', 'wizard'])
+  const isEditing = !!retriever
+  const isGroupScope = scope === 'group'
 
   // Form state
-  const [retrieverName, setRetrieverName] = useState('');
-  const [displayName, setDisplayName] = useState('');
-  const [storageType, setStorageType] = useState<'elasticsearch' | 'qdrant'>('elasticsearch');
-  const [url, setUrl] = useState('');
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [apiKey, setApiKey] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [showApiKey, setShowApiKey] = useState(false);
+  const [retrieverName, setRetrieverName] = useState('')
+  const [displayName, setDisplayName] = useState('')
+  const [storageType, setStorageType] = useState<'elasticsearch' | 'qdrant'>('elasticsearch')
+  const [url, setUrl] = useState('')
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [apiKey, setApiKey] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [showApiKey, setShowApiKey] = useState(false)
   const [indexMode, setIndexMode] = useState<'fixed' | 'rolling' | 'per_dataset' | 'per_user'>(
     'per_user'
-  );
-  const [fixedIndexName, setFixedIndexName] = useState('');
-  const [rollingStep, setRollingStep] = useState('5000');
-  const [indexPrefix, setIndexPrefix] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [testing, setTesting] = useState(false);
+  )
+  const [fixedIndexName, setFixedIndexName] = useState('')
+  const [rollingStep, setRollingStep] = useState('5000')
+  const [indexPrefix, setIndexPrefix] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [testing, setTesting] = useState(false)
 
   // Retrieval methods state
   const [availableRetrievalMethods, setAvailableRetrievalMethods] = useState<RetrievalMethodType[]>(
     [...STORAGE_TYPE_CONFIG.elasticsearch.fallbackRetrievalMethods]
-  );
+  )
   const [enabledRetrievalMethods, setEnabledRetrievalMethods] = useState<RetrievalMethodType[]>([
     'vector',
-  ]);
-  const [loadingRetrievalMethods, setLoadingRetrievalMethods] = useState(false);
+  ])
+  const [loadingRetrievalMethods, setLoadingRetrievalMethods] = useState(false)
 
   // Fetch retrieval methods for a storage type from API
   const fetchRetrievalMethods = useCallback(async (type: 'elasticsearch' | 'qdrant') => {
-    setLoadingRetrievalMethods(true);
+    setLoadingRetrievalMethods(true)
     try {
-      const response = await retrieverApis.getStorageTypeRetrievalMethods(type);
-      const methods = response.retrieval_methods as RetrievalMethodType[];
-      setAvailableRetrievalMethods(methods);
-      return methods;
+      const response = await retrieverApis.getStorageTypeRetrievalMethods(type)
+      const methods = response.retrieval_methods as RetrievalMethodType[]
+      setAvailableRetrievalMethods(methods)
+      return methods
     } catch (error) {
-      console.error('Failed to fetch retrieval methods:', error);
+      console.error('Failed to fetch retrieval methods:', error)
       // Use fallback from config
-      const fallback = [...STORAGE_TYPE_CONFIG[type].fallbackRetrievalMethods];
-      setAvailableRetrievalMethods(fallback);
-      return fallback;
+      const fallback = [...STORAGE_TYPE_CONFIG[type].fallbackRetrievalMethods]
+      setAvailableRetrievalMethods(fallback)
+      return fallback
     } finally {
-      setLoadingRetrievalMethods(false);
+      setLoadingRetrievalMethods(false)
     }
-  }, []);
+  }, [])
 
   // Handle retrieval method toggle
   const handleRetrievalMethodToggle = useCallback(
@@ -138,16 +138,16 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
       setEnabledRetrievalMethods(prev => {
         if (checked) {
           // Add method if not already present
-          return prev.includes(method) ? prev : [...prev, method];
+          return prev.includes(method) ? prev : [...prev, method]
         } else {
           // Remove method, but ensure at least one method is enabled
-          const newMethods = prev.filter(m => m !== method);
-          return newMethods.length > 0 ? newMethods : prev;
+          const newMethods = prev.filter(m => m !== method)
+          return newMethods.length > 0 ? newMethods : prev
         }
-      });
+      })
     },
     []
-  );
+  )
 
   // Reset form when dialog opens/closes or retriever changes
   useEffect(() => {
@@ -159,100 +159,100 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
             const fullRetriever = await retrieverApis.getRetriever(
               retriever.name,
               retriever.namespace
-            );
+            )
             const loadedStorageType = fullRetriever.spec.storageConfig.type as
               | 'elasticsearch'
-              | 'qdrant';
-            setRetrieverName(fullRetriever.metadata.name);
-            setDisplayName(fullRetriever.metadata.displayName || '');
-            setStorageType(loadedStorageType);
-            setUrl(fullRetriever.spec.storageConfig.url);
-            setUsername(fullRetriever.spec.storageConfig.username || '');
-            setPassword(fullRetriever.spec.storageConfig.password || '');
-            setApiKey(fullRetriever.spec.storageConfig.apiKey || '');
+              | 'qdrant'
+            setRetrieverName(fullRetriever.metadata.name)
+            setDisplayName(fullRetriever.metadata.displayName || '')
+            setStorageType(loadedStorageType)
+            setUrl(fullRetriever.spec.storageConfig.url)
+            setUsername(fullRetriever.spec.storageConfig.username || '')
+            setPassword(fullRetriever.spec.storageConfig.password || '')
+            setApiKey(fullRetriever.spec.storageConfig.apiKey || '')
             setIndexMode(
               fullRetriever.spec.storageConfig.indexStrategy.mode as
                 | 'fixed'
                 | 'rolling'
                 | 'per_dataset'
                 | 'per_user'
-            );
-            setFixedIndexName(fullRetriever.spec.storageConfig.indexStrategy.fixedName || '');
+            )
+            setFixedIndexName(fullRetriever.spec.storageConfig.indexStrategy.fixedName || '')
             setRollingStep(
               String(fullRetriever.spec.storageConfig.indexStrategy.rollingStep || 5000)
-            );
-            setIndexPrefix(fullRetriever.spec.storageConfig.indexStrategy.prefix || 'wegent');
+            )
+            setIndexPrefix(fullRetriever.spec.storageConfig.indexStrategy.prefix || 'wegent')
 
             // Load retrieval methods from spec or fetch available methods
-            const availableMethods = await fetchRetrievalMethods(loadedStorageType);
+            const availableMethods = await fetchRetrievalMethods(loadedStorageType)
             if (fullRetriever.spec.retrievalMethods) {
               // Load enabled methods from spec
-              const enabledMethods: RetrievalMethodType[] = [];
+              const enabledMethods: RetrievalMethodType[] = []
               if (fullRetriever.spec.retrievalMethods.vector?.enabled) {
-                enabledMethods.push('vector');
+                enabledMethods.push('vector')
               }
               if (fullRetriever.spec.retrievalMethods.keyword?.enabled) {
-                enabledMethods.push('keyword');
+                enabledMethods.push('keyword')
               }
               if (fullRetriever.spec.retrievalMethods.hybrid?.enabled) {
-                enabledMethods.push('hybrid');
+                enabledMethods.push('hybrid')
               }
               // Filter to only include available methods
-              const validMethods = enabledMethods.filter(m => availableMethods.includes(m));
-              setEnabledRetrievalMethods(validMethods.length > 0 ? validMethods : ['vector']);
+              const validMethods = enabledMethods.filter(m => availableMethods.includes(m))
+              setEnabledRetrievalMethods(validMethods.length > 0 ? validMethods : ['vector'])
             } else {
               // Default to vector only
-              setEnabledRetrievalMethods(['vector']);
+              setEnabledRetrievalMethods(['vector'])
             }
           } catch (error) {
-            console.error('Failed to load retriever:', error);
+            console.error('Failed to load retriever:', error)
             toast({
               variant: 'destructive',
               title: t('retrievers.errors.load_retrievers_failed'),
               description: (error as Error).message,
-            });
+            })
           }
-        };
-        loadRetrieverData();
+        }
+        loadRetrieverData()
       } else {
         // Reset for new retriever
-        setRetrieverName('');
-        setDisplayName('');
-        const defaultStorageType = 'elasticsearch';
-        setStorageType(defaultStorageType);
-        setUrl('');
-        setUsername('');
-        setPassword('');
-        setApiKey('');
+        setRetrieverName('')
+        setDisplayName('')
+        const defaultStorageType = 'elasticsearch'
+        setStorageType(defaultStorageType)
+        setUrl('')
+        setUsername('')
+        setPassword('')
+        setApiKey('')
         // Set recommended index mode based on storage type
-        setIndexMode(STORAGE_TYPE_CONFIG[defaultStorageType].recommendedIndexMode);
-        setFixedIndexName('');
-        setRollingStep('5000');
-        setIndexPrefix('wegent');
+        setIndexMode(STORAGE_TYPE_CONFIG[defaultStorageType].recommendedIndexMode)
+        setFixedIndexName('')
+        setRollingStep('5000')
+        setIndexPrefix('wegent')
         // Fetch retrieval methods for default storage type and enable all by default
         fetchRetrievalMethods(defaultStorageType).then(methods => {
           // Default to all available methods for new retrievers
-          setEnabledRetrievalMethods([...methods]);
-        });
+          setEnabledRetrievalMethods([...methods])
+        })
       }
-      setShowPassword(false);
-      setShowApiKey(false);
+      setShowPassword(false)
+      setShowApiKey(false)
     }
-  }, [open, retriever, toast, t, fetchRetrievalMethods]);
+  }, [open, retriever, toast, t, fetchRetrievalMethods])
 
   const handleStorageTypeChange = async (value: 'elasticsearch' | 'qdrant') => {
-    setStorageType(value);
-    const config = STORAGE_TYPE_CONFIG[value];
-    setUrl(config.defaultUrl);
+    setStorageType(value)
+    const config = STORAGE_TYPE_CONFIG[value]
+    setUrl(config.defaultUrl)
     // Set recommended index mode for new retrievers
     if (!isEditing) {
-      setIndexMode(config.recommendedIndexMode);
+      setIndexMode(config.recommendedIndexMode)
     }
     // Fetch retrieval methods for the new storage type and enable all by default
-    const availableMethods = await fetchRetrievalMethods(value);
+    const availableMethods = await fetchRetrievalMethods(value)
     // Enable all available methods for the new storage type
-    setEnabledRetrievalMethods([...availableMethods]);
-  };
+    setEnabledRetrievalMethods([...availableMethods])
+  }
 
   const handleTestConnection = async () => {
     if (!url) {
@@ -260,11 +260,11 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
         variant: 'destructive',
         title: t('retrievers.test_failed'),
         description: t('retrievers.url_required'),
-      });
-      return;
+      })
+      return
     }
 
-    setTesting(true);
+    setTesting(true)
     try {
       const result = await retrieverApis.testConnection({
         storage_type: storageType,
@@ -272,30 +272,30 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
         username: username || undefined,
         password: password || undefined,
         api_key: apiKey || undefined,
-      });
+      })
 
       if (result.success) {
         toast({
           title: t('retrievers.test_success'),
           description: result.message,
-        });
+        })
       } else {
         toast({
           variant: 'destructive',
           title: t('retrievers.test_failed'),
           description: result.message,
-        });
+        })
       }
     } catch (error) {
       toast({
         variant: 'destructive',
         title: t('retrievers.test_failed'),
         description: (error as Error).message,
-      });
+      })
     } finally {
-      setTesting(false);
+      setTesting(false)
     }
-  };
+  }
 
   const handleSave = async () => {
     if (isGroupScope && !isEditing && !groupName) {
@@ -303,34 +303,34 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
         variant: 'destructive',
         title: t('retrievers.group_required_title'),
         description: t('retrievers.group_required_message'),
-      });
-      return;
+      })
+      return
     }
 
     if (!retrieverName.trim()) {
       toast({
         variant: 'destructive',
         title: t('retrievers.name_required'),
-      });
-      return;
+      })
+      return
     }
 
-    const nameRegex = /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/;
+    const nameRegex = /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/
     if (!nameRegex.test(retrieverName)) {
       toast({
         variant: 'destructive',
         title: t('retrievers.name_invalid'),
         description: t('retrievers.name_invalid_hint'),
-      });
-      return;
+      })
+      return
     }
 
     if (!url.trim()) {
       toast({
         variant: 'destructive',
         title: t('retrievers.url_required'),
-      });
-      return;
+      })
+      return
     }
 
     // Validate index strategy fields
@@ -338,24 +338,24 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
       toast({
         variant: 'destructive',
         title: t('retrievers.fixed_index_name_empty'),
-      });
-      return;
+      })
+      return
     }
     if (indexMode === 'rolling') {
-      const step = parseInt(rollingStep);
+      const step = parseInt(rollingStep)
       if (isNaN(step) || step <= 0) {
         toast({
           variant: 'destructive',
           title: t('retrievers.rolling_step_invalid'),
-        });
-        return;
+        })
+        return
       }
       if (!indexPrefix.trim()) {
         toast({
           variant: 'destructive',
           title: t('retrievers.rolling_prefix_required'),
-        });
-        return;
+        })
+        return
       }
     }
 
@@ -363,11 +363,11 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
       toast({
         variant: 'destructive',
         title: t('retrievers.per_dataset_prefix_required'),
-      });
-      return;
+      })
+      return
     }
 
-    setSaving(true);
+    setSaving(true)
     try {
       // Build retrieval methods config
       const retrievalMethodsConfig: RetrieverCRD['spec']['retrievalMethods'] = {
@@ -382,7 +382,7 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
         hybrid: {
           enabled: enabledRetrievalMethods.includes('hybrid'),
         },
-      };
+      }
 
       const retrieverCRD: RetrieverCRD = {
         apiVersion: 'agent.wecode.io/v1',
@@ -408,21 +408,21 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
           },
           retrievalMethods: retrievalMethodsConfig,
         },
-      };
-
-      if (isEditing && retriever) {
-        await retrieverApis.updateRetriever(retriever.name, retrieverCRD);
-        toast({
-          title: t('retrievers.update_success'),
-        });
-      } else {
-        await retrieverApis.createRetriever(retrieverCRD);
-        toast({
-          title: t('retrievers.create_success'),
-        });
       }
 
-      onClose();
+      if (isEditing && retriever) {
+        await retrieverApis.updateRetriever(retriever.name, retrieverCRD)
+        toast({
+          title: t('retrievers.update_success'),
+        })
+      } else {
+        await retrieverApis.createRetriever(retrieverCRD)
+        toast({
+          title: t('retrievers.create_success'),
+        })
+      }
+
+      onClose()
     } catch (error) {
       toast({
         variant: 'destructive',
@@ -430,11 +430,11 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
           ? t('retrievers.errors.update_failed')
           : t('retrievers.errors.create_failed'),
         description: (error as Error).message,
-      });
+      })
     } finally {
-      setSaving(false);
+      setSaving(false)
     }
-  };
+  }
 
   return (
     <Dialog open={open} onOpenChange={open => !open && onClose()}>
@@ -746,7 +746,7 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-};
+  )
+}
 
-export default RetrieverEditDialog;
+export default RetrieverEditDialog

@@ -1,26 +1,26 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState } from 'react';
-import { Plus, FolderOpen } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Spinner } from '@/components/ui/spinner';
-import { KnowledgeBaseCard } from './KnowledgeBaseCard';
-import { CreateKnowledgeBaseDialog } from './CreateKnowledgeBaseDialog';
-import { EditKnowledgeBaseDialog } from './EditKnowledgeBaseDialog';
-import { DeleteKnowledgeBaseDialog } from './DeleteKnowledgeBaseDialog';
-import { DocumentList } from './DocumentList';
-import { useKnowledgeBases } from '../hooks/useKnowledgeBases';
-import type { KnowledgeBase, KnowledgeResourceScope } from '@/types/knowledge';
-import { useTranslation } from '@/hooks/useTranslation';
+import { useState } from 'react'
+import { Plus, FolderOpen } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
+import { KnowledgeBaseCard } from './KnowledgeBaseCard'
+import { CreateKnowledgeBaseDialog } from './CreateKnowledgeBaseDialog'
+import { EditKnowledgeBaseDialog } from './EditKnowledgeBaseDialog'
+import { DeleteKnowledgeBaseDialog } from './DeleteKnowledgeBaseDialog'
+import { DocumentList } from './DocumentList'
+import { useKnowledgeBases } from '../hooks/useKnowledgeBases'
+import type { KnowledgeBase, KnowledgeResourceScope } from '@/types/knowledge'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface KnowledgeBaseListProps {
-  scope?: KnowledgeResourceScope;
-  groupName?: string;
-  canManage?: boolean;
+  scope?: KnowledgeResourceScope
+  groupName?: string
+  canManage?: boolean
 }
 
 export function KnowledgeBaseList({
@@ -28,21 +28,21 @@ export function KnowledgeBaseList({
   groupName,
   canManage = true,
 }: KnowledgeBaseListProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
   const { knowledgeBases, loading, error, create, update, remove, refresh } = useKnowledgeBases({
     scope,
     groupName,
-  });
+  })
 
-  const [showCreateDialog, setShowCreateDialog] = useState(false);
-  const [editingKb, setEditingKb] = useState<KnowledgeBase | null>(null);
-  const [deletingKb, setDeletingKb] = useState<KnowledgeBase | null>(null);
-  const [selectedKb, setSelectedKb] = useState<KnowledgeBase | null>(null);
+  const [showCreateDialog, setShowCreateDialog] = useState(false)
+  const [editingKb, setEditingKb] = useState<KnowledgeBase | null>(null)
+  const [deletingKb, setDeletingKb] = useState<KnowledgeBase | null>(null)
+  const [selectedKb, setSelectedKb] = useState<KnowledgeBase | null>(null)
 
   const handleCreate = async (data: {
-    name: string;
-    description?: string;
-    retrieval_config?: Parameters<typeof create>[0]['retrieval_config'];
+    name: string
+    description?: string
+    retrieval_config?: Parameters<typeof create>[0]['retrieval_config']
   }) => {
     try {
       await create({
@@ -50,45 +50,45 @@ export function KnowledgeBaseList({
         description: data.description,
         namespace: scope === 'group' && groupName ? groupName : 'default',
         retrieval_config: data.retrieval_config,
-      });
-      setShowCreateDialog(false);
+      })
+      setShowCreateDialog(false)
     } catch {
       // Error handled by hook
     }
-  };
+  }
 
   const handleUpdate = async (data: Parameters<typeof update>[1]) => {
-    if (!editingKb) return;
+    if (!editingKb) return
     try {
-      await update(editingKb.id, data);
-      setEditingKb(null);
+      await update(editingKb.id, data)
+      setEditingKb(null)
     } catch {
       // Error handled by hook
     }
-  };
+  }
 
   const handleDelete = async () => {
-    if (!deletingKb) return;
+    if (!deletingKb) return
     try {
-      await remove(deletingKb.id);
-      setDeletingKb(null);
+      await remove(deletingKb.id)
+      setDeletingKb(null)
     } catch {
       // Error handled by hook
     }
-  };
+  }
 
   const handleSelectKb = (kb: KnowledgeBase) => {
-    setSelectedKb(kb);
-  };
+    setSelectedKb(kb)
+  }
 
   const handleBack = () => {
-    setSelectedKb(null);
-    refresh();
-  };
+    setSelectedKb(null)
+    refresh()
+  }
 
   // Show document list if a knowledge base is selected
   if (selectedKb) {
-    return <DocumentList knowledgeBase={selectedKb} onBack={handleBack} canManage={canManage} />;
+    return <DocumentList knowledgeBase={selectedKb} onBack={handleBack} canManage={canManage} />
   }
 
   if (loading && knowledgeBases.length === 0) {
@@ -96,7 +96,7 @@ export function KnowledgeBaseList({
       <div className="flex items-center justify-center py-12">
         <Spinner />
       </div>
-    );
+    )
   }
 
   if (error) {
@@ -107,7 +107,7 @@ export function KnowledgeBaseList({
           {t('common:actions.retry')}
         </Button>
       </div>
-    );
+    )
   }
 
   return (
@@ -178,5 +178,5 @@ export function KnowledgeBaseList({
         loading={loading}
       />
     </div>
-  );
+  )
 }

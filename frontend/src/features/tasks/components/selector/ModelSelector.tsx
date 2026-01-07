@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -16,18 +16,18 @@
  * This design allows gradual migration from the old API to the new API.
  */
 
-'use client';
+'use client'
 
-import React, { useState, useEffect } from 'react';
-import { Cog6ToothIcon } from '@heroicons/react/24/outline';
-import { Check, Brain, ChevronDown } from 'lucide-react';
-import { useRouter } from 'next/navigation';
-import { Checkbox } from '@/components/ui/checkbox';
-import { useTranslation } from '@/hooks/useTranslation';
-import { useMediaQuery } from '@/hooks/useMediaQuery';
-import { Tag } from '@/components/ui/tag';
-import { cn } from '@/lib/utils';
-import { paths } from '@/config/paths';
+import React, { useState, useEffect } from 'react'
+import { Cog6ToothIcon } from '@heroicons/react/24/outline'
+import { Check, Brain, ChevronDown } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { Checkbox } from '@/components/ui/checkbox'
+import { useTranslation } from '@/hooks/useTranslation'
+import { useMediaQuery } from '@/hooks/useMediaQuery'
+import { Tag } from '@/components/ui/tag'
+import { cn } from '@/lib/utils'
+import { paths } from '@/config/paths'
 import {
   Command,
   CommandEmpty,
@@ -35,21 +35,21 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
-} from '@/components/ui/command';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { useModelSelection } from '@/features/tasks/hooks/useModelSelection';
-import type { Team, BotSummary } from '@/types/api';
+} from '@/components/ui/command'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { useModelSelection } from '@/features/tasks/hooks/useModelSelection'
+import type { Team, BotSummary } from '@/types/api'
 
 // Re-export types and constants from useModelSelection for backward compatibility
 export {
   DEFAULT_MODEL_NAME,
   allBotsHavePredefinedModel,
-} from '@/features/tasks/hooks/useModelSelection';
-export type { Model, ModelRegion } from '@/features/tasks/hooks/useModelSelection';
+} from '@/features/tasks/hooks/useModelSelection'
+export type { Model, ModelRegion } from '@/features/tasks/hooks/useModelSelection'
 
-import type { Model } from '@/features/tasks/hooks/useModelSelection';
-import { DEFAULT_MODEL_NAME } from '@/features/tasks/hooks/useModelSelection';
+import type { Model } from '@/features/tasks/hooks/useModelSelection'
+import { DEFAULT_MODEL_NAME } from '@/features/tasks/hooks/useModelSelection'
 
 // ============================================================================
 // Types
@@ -58,30 +58,30 @@ import { DEFAULT_MODEL_NAME } from '@/features/tasks/hooks/useModelSelection';
 /** Extended Team type with bot details */
 export interface TeamWithBotDetails extends Team {
   bots: Array<{
-    bot_id: number;
-    bot_prompt: string;
-    role?: string;
-    bot?: BotSummary;
-  }>;
+    bot_id: number
+    bot_prompt: string
+    role?: string
+    bot?: BotSummary
+  }>
 }
 
 /** Legacy props interface (backward compatible) */
 export interface ModelSelectorProps {
-  selectedModel: Model | null;
-  setSelectedModel: (model: Model | null) => void;
-  forceOverride: boolean;
-  setForceOverride: (force: boolean) => void;
-  selectedTeam: TeamWithBotDetails | null;
-  disabled: boolean;
-  isLoading?: boolean;
+  selectedModel: Model | null
+  setSelectedModel: (model: Model | null) => void
+  forceOverride: boolean
+  setForceOverride: (force: boolean) => void
+  selectedTeam: TeamWithBotDetails | null
+  disabled: boolean
+  isLoading?: boolean
   /** When true, display only icon without text (for responsive collapse) */
-  compact?: boolean;
+  compact?: boolean
   /** Current team ID for model preference storage */
-  teamId?: number | null;
+  teamId?: number | null
   /** Current task ID for session-level model preference storage (null for new chat) */
-  taskId?: number | null;
+  taskId?: number | null
   /** Task's model_id from backend - used as fallback when no session preference exists */
-  taskModelId?: string | null;
+  taskModelId?: string | null
 }
 
 // ============================================================================
@@ -90,12 +90,12 @@ export interface ModelSelectorProps {
 
 /** Get display text for a model: displayName or name */
 function getModelDisplayText(model: Model): string {
-  return model.displayName || model.name;
+  return model.displayName || model.name
 }
 
 /** Get unique key for model (name + type) */
 function getModelKey(model: Model): string {
-  return `${model.name}:${model.type || ''}`;
+  return `${model.name}:${model.type || ''}`
 }
 
 // ============================================================================
@@ -115,9 +115,9 @@ export default function ModelSelector({
   taskId,
   taskModelId,
 }: ModelSelectorProps) {
-  const { t } = useTranslation();
-  const router = useRouter();
-  const isMobile = useMediaQuery('(max-width: 767px)');
+  const { t } = useTranslation()
+  const router = useRouter()
+  const isMobile = useMediaQuery('(max-width: 767px)')
 
   // Use the centralized model selection hook
   const modelSelection = useModelSelection({
@@ -126,55 +126,55 @@ export default function ModelSelector({
     taskModelId,
     selectedTeam,
     disabled,
-  });
+  })
 
   // Sync external state with internal hook state
   // This allows the component to work with both legacy and new APIs
   useEffect(() => {
     if (modelSelection.selectedModel !== externalSelectedModel) {
       if (modelSelection.selectedModel) {
-        externalSetSelectedModel(modelSelection.selectedModel);
+        externalSetSelectedModel(modelSelection.selectedModel)
       }
     }
-  }, [modelSelection.selectedModel, externalSelectedModel, externalSetSelectedModel]);
+  }, [modelSelection.selectedModel, externalSelectedModel, externalSetSelectedModel])
 
   useEffect(() => {
     if (modelSelection.forceOverride !== externalForceOverride) {
-      externalSetForceOverride(modelSelection.forceOverride);
+      externalSetForceOverride(modelSelection.forceOverride)
     }
-  }, [modelSelection.forceOverride, externalForceOverride, externalSetForceOverride]);
+  }, [modelSelection.forceOverride, externalForceOverride, externalSetForceOverride])
 
   // Local UI state
-  const [isOpen, setIsOpen] = useState(false);
-  const [searchValue, setSearchValue] = useState('');
+  const [isOpen, setIsOpen] = useState(false)
+  const [searchValue, setSearchValue] = useState('')
 
   // Reset search when popover closes
   useEffect(() => {
     if (!isOpen) {
-      setSearchValue('');
+      setSearchValue('')
     }
-  }, [isOpen]);
+  }, [isOpen])
 
   // Determine if selector should be disabled
   const isDisabled =
-    disabled || externalLoading || modelSelection.isLoading || modelSelection.isMixedTeam;
+    disabled || externalLoading || modelSelection.isLoading || modelSelection.isMixedTeam
 
   // Handle model selection
   const handleModelSelect = (value: string) => {
-    modelSelection.selectModelByKey(value);
-    setIsOpen(false);
-  };
+    modelSelection.selectModelByKey(value)
+    setIsOpen(false)
+  }
 
   // Handle force override checkbox
   const handleForceOverrideChange = (checked: boolean | 'indeterminate') => {
-    modelSelection.setForceOverride(checked === true);
-  };
+    modelSelection.setForceOverride(checked === true)
+  }
 
   // Tooltip content for model selector
   const tooltipContent =
     compact && modelSelection.selectedModel
       ? `${t('common:task_submit.model_tooltip', '选择用于对话的 AI 模型')}: ${modelSelection.getDisplayText()}`
-      : t('common:task_submit.model_tooltip', '选择用于对话的 AI 模型');
+      : t('common:task_submit.model_tooltip', '选择用于对话的 AI 模型')
 
   return (
     <div
@@ -360,8 +360,8 @@ export default function ModelSelector({
                 <div
                   className="flex items-center gap-2 px-3 py-2.5 cursor-pointer hover:bg-hover transition-colors duration-150"
                   onClick={e => {
-                    e.stopPropagation();
-                    handleForceOverrideChange(!modelSelection.forceOverride);
+                    e.stopPropagation()
+                    handleForceOverrideChange(!modelSelection.forceOverride)
                   }}
                 >
                   <Checkbox
@@ -384,8 +384,8 @@ export default function ModelSelector({
                 tabIndex={0}
                 onKeyDown={e => {
                   if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    router.push(paths.settings.models.getHref());
+                    e.preventDefault()
+                    router.push(paths.settings.models.getHref())
                   }
                 }}
               >
@@ -399,5 +399,5 @@ export default function ModelSelector({
         </PopoverContent>
       </Popover>
     </div>
-  );
+  )
 }
