@@ -52,6 +52,10 @@ const ERROR_CODE_MAPPING: Record<
     titleKey: 'attachment.errors.unsupported_type',
     hintKey: 'attachment.errors.unsupported_type_hint',
   },
+  unrecognized_type: {
+    titleKey: 'attachment.errors.unrecognized_type',
+    hintKey: 'attachment.errors.unrecognized_type_hint',
+  },
   file_too_large: {
     titleKey: 'attachment.errors.file_too_large',
     hintKey: 'attachment.errors.file_too_large_hint',
@@ -101,7 +105,8 @@ export function getErrorMessageFromCode(
 }
 
 /**
- * Supported file extensions
+ * Known supported file extensions (for display purposes)
+ * Note: The backend also supports any text-based files via MIME detection
  */
 export const SUPPORTED_EXTENSIONS = [
   '.pdf',
@@ -120,6 +125,60 @@ export const SUPPORTED_EXTENSIONS = [
   '.gif',
   '.bmp',
   '.webp',
+]
+
+/**
+ * Common code file extensions (for icon display)
+ */
+export const CODE_FILE_EXTENSIONS = [
+  '.py',
+  '.js',
+  '.ts',
+  '.jsx',
+  '.tsx',
+  '.java',
+  '.c',
+  '.cpp',
+  '.h',
+  '.hpp',
+  '.cs',
+  '.go',
+  '.rs',
+  '.rb',
+  '.php',
+  '.swift',
+  '.kt',
+  '.scala',
+  '.lua',
+  '.r',
+  '.sql',
+  '.sh',
+  '.bash',
+  '.zsh',
+  '.ps1',
+  '.vue',
+  '.svelte',
+]
+
+/**
+ * Common config file extensions (for icon display)
+ */
+export const CONFIG_FILE_EXTENSIONS = [
+  '.json',
+  '.yaml',
+  '.yml',
+  '.xml',
+  '.toml',
+  '.ini',
+  '.conf',
+  '.cfg',
+  '.env',
+  '.properties',
+  '.dockerfile',
+  '.gitignore',
+  '.editorconfig',
+  '.eslintrc',
+  '.prettierrc',
 ]
 
 /**
@@ -150,10 +209,12 @@ export const MAX_FILE_SIZE = 100 * 1024 * 1024
 
 /**
  * Check if a file extension is supported
+ * Note: Returns true for all extensions - backend will use MIME detection for unknown types
  */
-export function isSupportedExtension(filename: string): boolean {
-  const ext = filename.toLowerCase().substring(filename.lastIndexOf('.'))
-  return SUPPORTED_EXTENSIONS.includes(ext)
+export function isSupportedExtension(_filename: string): boolean {
+  // Allow all file types - the backend will validate using MIME detection
+  // for unknown extensions and return appropriate error messages
+  return true
 }
 
 /**
@@ -212,7 +273,16 @@ export function getFileIcon(extension: string): string {
     case '.webp':
       return '🖼️'
     default:
-      return '📎'
+      // Check for code files
+      if (CODE_FILE_EXTENSIONS.includes(ext)) {
+        return '💻'
+      }
+      // Check for config files
+      if (CONFIG_FILE_EXTENSIONS.includes(ext)) {
+        return '⚙️'
+      }
+      // Default icon for other text files
+      return '📄'
   }
 }
 
@@ -252,11 +322,7 @@ export async function uploadAttachment(
 ): Promise<AttachmentResponse> {
   const token = getToken()
 
-  // Validate file before upload
-  if (!isSupportedExtension(file.name)) {
-    throw new Error(`不支持的文件类型。支持的类型: ${SUPPORTED_EXTENSIONS.join(', ')}`)
-  }
-
+  // Validate file size before upload
   if (!isValidFileSize(file.size)) {
     throw new Error(`文件大小超过 ${MAX_FILE_SIZE / (1024 * 1024)} MB 限制`)
   }
