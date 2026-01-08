@@ -36,6 +36,7 @@ import {
   MAX_BATCH_FILES,
   type FileUploadStatus,
 } from '@/hooks/useBatchAttachment'
+import { MAX_FILE_SIZE } from '@/apis/attachments'
 import { SplitterSettingsSection, type SplitterConfig } from './SplitterSettingsSection'
 import type { Attachment } from '@/types/api'
 import { cn } from '@/lib/utils'
@@ -412,7 +413,11 @@ export function DocumentUpload({ open, onOpenChange, onUploadComplete }: Documen
           <p className="text-xs text-text-muted mt-4">
             {t('document.upload.dropzoneHint', { max: MAX_BATCH_FILES })}
           </p>
-          <p className="text-xs text-text-muted mt-1">{t('document.document.supportedTypes')}</p>
+          <p className="text-xs text-text-muted mt-1">
+            {t('document.document.supportedTypes', {
+              maxSize: Math.round(MAX_FILE_SIZE / (1024 * 1024)),
+            })}
+          </p>
           <input
             ref={fileInputRef}
             type="file"

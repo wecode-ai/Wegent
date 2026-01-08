@@ -90,7 +90,7 @@
       "namePlaceholder": "Enter document name",
       "updateFailed": "Failed to update document",
       "dropzone": "Drop files here or click to browse",
-      "supportedTypes": "PDF, Word, PPT, Excel, TXT, MD, Images (max 20MB)",
+      "supportedTypes": "PDF, Word, PPT, Excel, TXT, MD, Images (Max {{maxSize}}MB)",
       "uploading": "Uploading...",
       "uploadSuccess": "File uploaded successfully",
       "batch": {
@@ -201,7 +201,8 @@
     "goToSettings": "Go to Settings"
   },
   "add_repository": "Add Repository",
-  "add_repository_desc": "Click to add a new repository",
+  "add_repository_desc": "Under maintenance, temporarily unavailable",
+  "add_repository_desc_enabled": "Click to add a new repository",
   "no_projects": "No projects found",
   "source": "Source",
   "indexing": "Indexing...",

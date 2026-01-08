@@ -112,13 +112,15 @@ class ContextService:
         storage_backend = get_storage_backend(db)
 
         # Create context record with UPLOADING status
+        # binary_data is NOT stored here - it will be saved via storage_backend.save()
+        # which handles storage based on the configured backend type (MySQL, S3, MinIO, etc.)
         context = SubtaskContext(
             subtask_id=effective_subtask_id,
             user_id=user_id,
             context_type=ContextType.ATTACHMENT.value,
             name=filename,
             status=ContextStatus.UPLOADING.value,
-            binary_data=binary_data,  # Temporarily store here
+            binary_data=b"",  # Empty bytes - actual data stored via storage_backend.save()
             image_base64="",  # Empty string for NOT NULL constraint
             extracted_text="",  # Empty string for NOT NULL constraint
             text_length=0,

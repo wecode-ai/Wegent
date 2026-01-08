@@ -50,6 +50,7 @@ async def create_streaming_response(
     Create a streaming response for Chat Shell type teams.
 
     Supports MCP tools and web search when enabled.
+    Routes to HTTP adapter or package mode based on CHAT_SHELL_MODE config.
 
     Args:
         db: Database session
@@ -65,6 +66,219 @@ async def create_streaming_response(
     Returns:
         StreamingResponse with SSE events
     """
+    from app.core.config import settings
+    from app.services.openapi.streaming import streaming_service
+
+    # Check CHAT_SHELL_MODE to decide routing
+    chat_shell_mode = settings.CHAT_SHELL_MODE.lower()
+
+    if chat_shell_mode == "http":
+        # HTTP mode: use HTTP adapter to call remote chat_shell service
+        return await _create_streaming_response_http(
+            db=db,
+            user=user,
+            team=team,
+            model_info=model_info,
+            request_body=request_body,
+            input_text=input_text,
+            tool_settings=tool_settings,
+            task_id=task_id,
+            api_key_name=api_key_name,
+        )
+
+    # Package mode: direct library calls
+    return await _create_streaming_response_package(
+        db=db,
+        user=user,
+        team=team,
+        model_info=model_info,
+        request_body=request_body,
+        input_text=input_text,
+        tool_settings=tool_settings,
+        task_id=task_id,
+        api_key_name=api_key_name,
+    )
+
+
+async def _create_streaming_response_http(
+    db: Session,
+    user: User,
+    team: Kind,
+    model_info: Dict[str, Any],
+    request_body: ResponseCreateInput,
+    input_text: str,
+    tool_settings: Dict[str, Any],
+    task_id: Optional[int] = None,
+    api_key_name: Optional[str] = None,
+) -> StreamingResponse:
+    """Create streaming response using HTTP adapter to call remote chat_shell service."""
+    from app.core.config import settings
+    from app.services.chat.adapters.http import HTTPAdapter
+    from app.services.chat.adapters.interface import ChatEventType, ChatRequest
+    from app.services.chat.storage import db_handler, session_manager
+    from app.services.openapi.streaming import streaming_service
+
+    # Set up chat session (config, task, subtasks)
+    setup = setup_chat_session(
+        db,
+        user,
+        team,
+        model_info,
+        input_text,
+        tool_settings,
+        task_id,
+        api_key_name,
+    )
+
+    response_id = f"resp_{setup.task_id}"
+    created_at = int(datetime.now().timestamp())
+    assistant_subtask_id = setup.assistant_subtask.id
+    task_kind_id = setup.task_id
+    enable_chat_bot = tool_settings.get("enable_chat_bot", False)
+
+    async def raw_chat_stream() -> AsyncGenerator[str, None]:
+        """Generate raw text chunks from HTTP adapter."""
+        from app.api.dependencies import get_db as get_db_session
+
+        accumulated_content = ""
+        db_gen = next(get_db_session())
+
+        try:
+            cancel_event = await session_manager.register_stream(assistant_subtask_id)
+            await db_handler.update_subtask_status(assistant_subtask_id, "RUNNING")
+
+            # Build system prompt with optional deep thinking enhancement
+            from chat_shell.prompts import append_deep_thinking_prompt
+
+            final_system_prompt = append_deep_thinking_prompt(
+                setup.system_prompt, enable_chat_bot
+            )
+
+            # Build chat history
+            history = build_chat_history(setup.existing_subtasks)
+
+            # Create HTTP adapter
+            adapter = HTTPAdapter(
+                base_url=settings.CHAT_SHELL_URL,
+                token=settings.CHAT_SHELL_TOKEN,
+            )
+
+            # Build ChatRequest
+            chat_request = ChatRequest(
+                task_id=task_kind_id,
+                subtask_id=assistant_subtask_id,
+                message=input_text,
+                user_id=user.id,
+                user_name=user.user_name or "",
+                team_id=team.id,
+                team_name=team.name,
+                model_config=setup.model_config,
+                system_prompt=final_system_prompt,
+                history=history,
+                enable_deep_thinking=enable_chat_bot,
+                enable_web_search=enable_chat_bot and settings.WEB_SEARCH_ENABLED,
+                bot_name=setup.bot_name,
+                bot_namespace=setup.bot_namespace,
+            )
+
+            # Stream from HTTP adapter
+            async for event in adapter.chat(chat_request):
+                if cancel_event.is_set() or await session_manager.is_cancelled(
+                    assistant_subtask_id
+                ):
+                    logger.info(f"Stream cancelled for subtask {assistant_subtask_id}")
+                    break
+
+                if event.type == ChatEventType.CHUNK:
+                    content = event.data.get("content", "")
+                    if content:
+                        accumulated_content += content
+                        yield content
+                elif event.type == ChatEventType.ERROR:
+                    error_msg = event.data.get("error", "Unknown error")
+                    logger.error(f"[OPENAPI_HTTP] Error from chat_shell: {error_msg}")
+                    raise Exception(error_msg)
+                elif event.type == ChatEventType.DONE:
+                    logger.info(
+                        f"[OPENAPI_HTTP] Stream completed for subtask {assistant_subtask_id}"
+                    )
+
+            # Stream completed (not cancelled)
+            if not cancel_event.is_set() and not await session_manager.is_cancelled(
+                assistant_subtask_id
+            ):
+                result = {"value": accumulated_content}
+                await session_manager.save_streaming_content(
+                    assistant_subtask_id, accumulated_content
+                )
+                await session_manager.append_user_and_assistant_messages(
+                    task_kind_id, input_text, accumulated_content
+                )
+                await db_handler.update_subtask_status(
+                    assistant_subtask_id, "COMPLETED", result=result
+                )
+
+                # Update task status
+                task_kind = db_gen.query(Kind).filter(Kind.id == task_kind_id).first()
+                if task_kind:
+                    task_crd = Task.model_validate(task_kind.json)
+                    if task_crd.status:
+                        task_crd.status.status = "COMPLETED"
+                        task_crd.status.updatedAt = datetime.now()
+                        task_crd.status.completedAt = datetime.now()
+                        task_kind.json = task_crd.model_dump(mode="json")
+                        from sqlalchemy.orm.attributes import flag_modified
+
+                        flag_modified(task_kind, "json")
+                        db_gen.commit()
+
+        except Exception as e:
+            logger.exception(f"Error in HTTP streaming: {e}")
+            try:
+                await db_handler.update_subtask_status(
+                    assistant_subtask_id, "FAILED", error=str(e)
+                )
+            except Exception:
+                pass
+            raise
+        finally:
+            await session_manager.unregister_stream(assistant_subtask_id)
+            await session_manager.delete_streaming_content(assistant_subtask_id)
+            db_gen.close()
+
+    async def generate():
+        async for event in streaming_service.create_streaming_response(
+            response_id=response_id,
+            model_string=request_body.model,
+            chat_stream=raw_chat_stream(),
+            created_at=created_at,
+            previous_response_id=request_body.previous_response_id,
+        ):
+            yield event
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+async def _create_streaming_response_package(
+    db: Session,
+    user: User,
+    team: Kind,
+    model_info: Dict[str, Any],
+    request_body: ResponseCreateInput,
+    input_text: str,
+    tool_settings: Dict[str, Any],
+    task_id: Optional[int] = None,
+    api_key_name: Optional[str] = None,
+) -> StreamingResponse:
+    """Create streaming response using direct package imports (in-process)."""
     from app.services.openapi.streaming import streaming_service
 
     # Set up chat session (config, task, subtasks)
@@ -104,13 +318,14 @@ async def create_streaming_response(
 
         accumulated_content = ""
         db_gen = next(get_db_session())
+        mcp_clients = []  # Initialize before try block for cleanup in finally
 
         try:
             cancel_event = await session_manager.register_stream(assistant_subtask_id)
             await db_handler.update_subtask_status(assistant_subtask_id, "RUNNING")
 
             # Build system prompt with optional deep thinking enhancement
-            from app.chat_shell.prompts import append_deep_thinking_prompt
+            from chat_shell.prompts import append_deep_thinking_prompt
 
             final_system_prompt = append_deep_thinking_prompt(
                 setup.system_prompt, enable_chat_bot
@@ -128,7 +343,6 @@ async def create_streaming_response(
 
             # Prepare extra tools (MCP and web search)
             extra_tools = []
-            mcp_clients = []  # Track all MCP clients for cleanup
 
             # 1. Bot MCP (always available when bot has MCP configured)
             try:
@@ -388,6 +602,7 @@ async def create_sync_response(
     Create a synchronous (blocking) response for Chat Shell type teams.
 
     Supports MCP tools and web search when enabled.
+    Routes to HTTP adapter or package mode based on CHAT_SHELL_MODE config.
 
     Args:
         db: Database session
@@ -403,6 +618,210 @@ async def create_sync_response(
     Returns:
         ResponseObject with completed status and output
     """
+    from app.core.config import settings
+
+    # Check CHAT_SHELL_MODE to decide routing
+    chat_shell_mode = settings.CHAT_SHELL_MODE.lower()
+
+    if chat_shell_mode == "http":
+        # HTTP mode: use HTTP adapter to call remote chat_shell service
+        return await _create_sync_response_http(
+            db=db,
+            user=user,
+            team=team,
+            model_info=model_info,
+            request_body=request_body,
+            input_text=input_text,
+            tool_settings=tool_settings,
+            task_id=task_id,
+            api_key_name=api_key_name,
+        )
+
+    # Package mode: direct library calls
+    return await _create_sync_response_package(
+        db=db,
+        user=user,
+        team=team,
+        model_info=model_info,
+        request_body=request_body,
+        input_text=input_text,
+        tool_settings=tool_settings,
+        task_id=task_id,
+        api_key_name=api_key_name,
+    )
+
+
+async def _create_sync_response_http(
+    db: Session,
+    user: User,
+    team: Kind,
+    model_info: Dict[str, Any],
+    request_body: ResponseCreateInput,
+    input_text: str,
+    tool_settings: Dict[str, Any],
+    task_id: Optional[int] = None,
+    api_key_name: Optional[str] = None,
+) -> ResponseObject:
+    """Create sync response using HTTP adapter to call remote chat_shell service."""
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.core.config import settings
+    from app.services.chat.adapters.http import HTTPAdapter
+    from app.services.chat.adapters.interface import ChatEventType, ChatRequest
+    from app.services.chat.storage import db_handler, session_manager
+
+    # Set up chat session (config, task, subtasks)
+    setup = setup_chat_session(
+        db,
+        user,
+        team,
+        model_info,
+        input_text,
+        tool_settings,
+        task_id,
+        api_key_name,
+    )
+
+    response_id = f"resp_{setup.task_id}"
+    created_at = int(datetime.now().timestamp())
+    assistant_subtask_id = setup.assistant_subtask.id
+    enable_chat_bot = tool_settings.get("enable_chat_bot", False)
+
+    # Update subtask status to RUNNING
+    await db_handler.update_subtask_status(assistant_subtask_id, "RUNNING")
+
+    accumulated_content = ""
+
+    try:
+        # Build system prompt with optional deep thinking enhancement
+        from chat_shell.prompts import append_deep_thinking_prompt
+
+        final_system_prompt = append_deep_thinking_prompt(
+            setup.system_prompt, enable_chat_bot
+        )
+
+        # Build chat history
+        history = build_chat_history(setup.existing_subtasks)
+
+        # Create HTTP adapter
+        adapter = HTTPAdapter(
+            base_url=settings.CHAT_SHELL_URL,
+            token=settings.CHAT_SHELL_TOKEN,
+        )
+
+        # Build ChatRequest
+        chat_request = ChatRequest(
+            task_id=setup.task_id,
+            subtask_id=assistant_subtask_id,
+            message=input_text,
+            user_id=user.id,
+            user_name=user.user_name or "",
+            team_id=team.id,
+            team_name=team.name,
+            model_config=setup.model_config,
+            system_prompt=final_system_prompt,
+            history=history,
+            enable_deep_thinking=enable_chat_bot,
+            enable_web_search=enable_chat_bot and settings.WEB_SEARCH_ENABLED,
+            bot_name=setup.bot_name,
+            bot_namespace=setup.bot_namespace,
+        )
+
+        # Stream from HTTP adapter and accumulate
+        async for event in adapter.chat(chat_request):
+            if event.type == ChatEventType.CHUNK:
+                content = event.data.get("content", "")
+                if content:
+                    accumulated_content += content
+            elif event.type == ChatEventType.ERROR:
+                error_msg = event.data.get("error", "Unknown error")
+                logger.error(f"[OPENAPI_HTTP_SYNC] Error from chat_shell: {error_msg}")
+                raise Exception(error_msg)
+            elif event.type == ChatEventType.DONE:
+                logger.info(
+                    f"[OPENAPI_HTTP_SYNC] Stream completed for subtask {assistant_subtask_id}"
+                )
+
+        # Update subtask to completed
+        result = {"value": accumulated_content}
+        await db_handler.update_subtask_status(
+            assistant_subtask_id, "COMPLETED", result=result
+        )
+
+        # Save chat history
+        await session_manager.append_user_and_assistant_messages(
+            setup.task_id, input_text, accumulated_content
+        )
+
+        # Update task status
+        task_crd = Task.model_validate(setup.task.json)
+        if task_crd.status:
+            task_crd.status.status = "COMPLETED"
+            task_crd.status.updatedAt = datetime.now()
+            task_crd.status.completedAt = datetime.now()
+            task_crd.status.result = result
+            setup.task.json = task_crd.model_dump(mode="json")
+            setup.task.updated_at = datetime.now()
+            flag_modified(setup.task, "json")
+            db.commit()
+
+    except Exception as e:
+        logger.exception(f"Error in HTTP sync chat response: {e}")
+        error_message = str(e)
+        await db_handler.update_subtask_status(
+            assistant_subtask_id, "FAILED", error=error_message
+        )
+
+        # Update task status to FAILED
+        task_crd = Task.model_validate(setup.task.json)
+        if task_crd.status:
+            task_crd.status.status = "FAILED"
+            task_crd.status.errorMessage = error_message
+            task_crd.status.updatedAt = datetime.now()
+            setup.task.json = task_crd.model_dump(mode="json")
+            setup.task.updated_at = datetime.now()
+            from sqlalchemy.orm.attributes import flag_modified
+
+            flag_modified(setup.task, "json")
+            db.commit()
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"LLM request failed: {error_message}",
+        )
+
+    # Build response
+    message_id = f"msg_{assistant_subtask_id}"
+
+    return ResponseObject(
+        id=response_id,
+        created_at=created_at,
+        status="completed",
+        model=request_body.model,
+        output=[
+            OutputMessage(
+                id=message_id,
+                status="completed",
+                role="assistant",
+                content=[OutputTextContent(text=accumulated_content)],
+            )
+        ],
+        previous_response_id=request_body.previous_response_id,
+    )
+
+
+async def _create_sync_response_package(
+    db: Session,
+    user: User,
+    team: Kind,
+    model_info: Dict[str, Any],
+    request_body: ResponseCreateInput,
+    input_text: str,
+    tool_settings: Dict[str, Any],
+    task_id: Optional[int] = None,
+    api_key_name: Optional[str] = None,
+) -> ResponseObject:
+    """Create sync response using direct package imports (in-process)."""
     from chat_shell.messages import MessageConverter
     from chat_shell.models import LangChainModelFactory
     from langchain_core.messages import AIMessage, HumanMessage, SystemMessage

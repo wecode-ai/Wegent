@@ -100,7 +100,7 @@ async def load_bot_mcp_tools(
     import asyncio
 
     try:
-        from app.chat_shell.tools.mcp import MCPClient
+        from chat_shell.tools.mcp import MCPClient
 
         if not bot_name:
             logger.debug(

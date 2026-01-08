@@ -163,7 +163,13 @@ def check_team_supports_direct_chat(db: Session, team: Kind, user_id: int) -> bo
     Returns:
         True if team supports direct chat
     """
+    import logging
+
+    logger = logging.getLogger(__name__)
     team_crd = Team.model_validate(team.json)
+    logger.info(
+        f"[OPENAPI_HELPERS] check_team_supports_direct_chat: team={team.namespace}/{team.name}, user_id={user_id}, team.user_id={team.user_id}"
+    )
 
     for member in team_crd.spec.members:
         # Find bot
@@ -180,10 +186,16 @@ def check_team_supports_direct_chat(db: Session, team: Kind, user_id: int) -> bo
         )
 
         if not bot:
+            logger.warning(
+                f"[OPENAPI_HELPERS] Bot not found: {member.botRef.namespace}/{member.botRef.name} for team.user_id={team.user_id}"
+            )
             return False
 
         # Get shell type
         bot_crd = Bot.model_validate(bot.json)
+        logger.info(
+            f"[OPENAPI_HELPERS] Found bot: {bot.namespace}/{bot.name}, shellRef={bot_crd.spec.shellRef.namespace}/{bot_crd.spec.shellRef.name}"
+        )
 
         # Check user's custom shells first
         shell = (
@@ -213,10 +225,16 @@ def check_team_supports_direct_chat(db: Session, team: Kind, user_id: int) -> bo
             )
 
         if not shell or not shell.json:
+            logger.warning(
+                f"[OPENAPI_HELPERS] Shell not found: {bot_crd.spec.shellRef.namespace}/{bot_crd.spec.shellRef.name}"
+            )
             return False
 
         shell_crd = Shell.model_validate(shell.json)
         shell_type = shell_crd.spec.shellType
+        logger.info(
+            f"[OPENAPI_HELPERS] Found shell: {shell.namespace}/{shell.name}, shellType={shell_type}, is_direct_chat={is_direct_chat_shell(shell_type)}"
+        )
 
         if not is_direct_chat_shell(shell_type):
             return False
