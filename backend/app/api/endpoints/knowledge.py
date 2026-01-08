@@ -8,6 +8,7 @@ API endpoints for knowledge base and document management.
 
 import asyncio
 import logging
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
@@ -32,8 +33,10 @@ from app.schemas.knowledge import (
     KnowledgeDocumentUpdate,
     ResourceScope,
 )
+from app.schemas.knowledge_qa_history import QAHistoryResponse
 from app.schemas.rag import SplitterConfig
 from app.services.adapters.retriever_kinds import retriever_kinds_service
+from app.services.knowledge_base_qa_service import knowledge_base_qa_service
 from app.services.knowledge_service import KnowledgeService
 from app.services.rag.document_service import DocumentService
 from app.services.rag.storage.factory import create_storage_backend
@@ -686,3 +689,78 @@ def batch_disable_documents(
             detail="Only Owner or Maintainer can update documents in this knowledge base",
         )
     return result
+
+
+# ============== QA History Router ==============
+
+qa_history_router = APIRouter()
+
+
+@qa_history_router.get("", response_model=QAHistoryResponse)
+def get_qa_history(
+    start_time: datetime = Query(
+        ...,
+        description="Query start time (ISO 8601 format)",
+    ),
+    end_time: datetime = Query(
+        ...,
+        description="Query end time (ISO 8601 format)",
+    ),
+    user_id: Optional[int] = Query(
+        default=None,
+        description="Filter by user ID (admin only, ignored for non-admin users)",
+    ),
+    page: int = Query(
+        default=1,
+        ge=1,
+        description="Page number (default: 1)",
+    ),
+    page_size: int = Query(
+        default=20,
+        ge=1,
+        le=100,
+        description="Number of items per page (default: 20, max: 100)",
+    ),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Query knowledge base QA history based on time range.
+
+    Returns user questions, assistant answers, vector search results,
+    and knowledge base configuration information.
+
+    - **start_time**: Query start time (ISO 8601 format, required)
+    - **end_time**: Query end time (ISO 8601 format, required)
+    - **user_id**: Filter by user ID (admin only; non-admin users can only query their own history)
+    - **page**: Page number (default: 1)
+    - **page_size**: Items per page (default: 20, max: 100)
+
+    Note: Maximum query time range is 30 days.
+
+    Authorization:
+    - Admin users can query any user's history by specifying user_id,
+      or query all users' history when user_id is None.
+    - Non-admin users can only query their own history (user_id parameter is ignored).
+    """
+    # Enforce authorization: non-admin users can only query their own history
+    if current_user.role != "admin":
+        effective_user_id = current_user.id
+    else:
+        # Admin can query specific user or all users (when user_id is None)
+        effective_user_id = user_id
+
+    try:
+        return knowledge_base_qa_service.get_qa_history(
+            db=db,
+            start_time=start_time,
+            end_time=end_time,
+            user_id=effective_user_id,
+            page=page,
+            page_size=page_size,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e

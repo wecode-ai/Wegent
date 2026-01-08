@@ -117,7 +117,7 @@ export function DocumentItem({
       </div>
 
       {/* Index status (is_active) */}
-      <div className="w-16 flex-shrink-0 text-center">
+      <div className="w-24 flex-shrink-0 text-center">
         <Badge variant={document.is_active ? 'success' : 'warning'} size="sm">
           {document.is_active
             ? t('knowledge:document.document.indexStatus.available')

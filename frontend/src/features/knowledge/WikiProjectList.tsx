@@ -9,6 +9,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { WikiProject, WikiGeneration } from '@/types/wiki'
 import { getProjectDisplayName } from './wikiUtils'
 import { Card } from '@/components/ui/card'
+import { getRuntimeConfigSync } from '@/lib/runtime-config'
 
 interface WikiProjectListProps {
   projects: (WikiProject & { generations?: WikiGeneration[] })[]
@@ -52,6 +53,11 @@ export default function WikiProjectList({
   const { t } = useTranslation()
   const observerRef = useRef<IntersectionObserver | null>(null)
   const loadMoreTriggerRef = useRef<HTMLDivElement | null>(null)
+
+  // Check if add repository feature is enabled (default: true)
+  const config = getRuntimeConfigSync()
+  // Default to true if not explicitly set to false
+  const isAddRepoEnabled = config.enableCodeKnowledgeAddRepo !== false
 
   // Setup intersection observer for infinite scroll
   const setupObserver = useCallback(() => {
@@ -118,12 +124,20 @@ export default function WikiProjectList({
       <div className="max-w-4xl mx-auto flex flex-col items-center justify-center py-16">
         <Card
           padding="lg"
-          className="hover:bg-hover transition-colors cursor-pointer flex flex-col items-center justify-center w-64 h-48"
-          onClick={onAddRepo}
+          className={`flex flex-col items-center justify-center w-64 h-48 ${
+            isAddRepoEnabled
+              ? 'hover:bg-hover transition-colors cursor-pointer'
+              : 'cursor-not-allowed opacity-60'
+          }`}
+          onClick={isAddRepoEnabled ? onAddRepo : undefined}
         >
-          <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center mb-4">
+          <div
+            className={`w-14 h-14 rounded-full flex items-center justify-center mb-4 ${
+              isAddRepoEnabled ? 'bg-primary/10' : 'bg-muted'
+            }`}
+          >
             <svg
-              className="h-8 w-8 text-primary"
+              className={`h-8 w-8 ${isAddRepoEnabled ? 'text-primary' : 'text-text-muted'}`}
               xmlns="http://www.w3.org/2000/svg"
               fill="none"
               viewBox="0 0 24 24"
@@ -137,11 +151,15 @@ export default function WikiProjectList({
               />
             </svg>
           </div>
-          <h3 className="font-medium text-base mb-2 text-text-primary">
+          <h3
+            className={`font-medium text-base mb-2 ${isAddRepoEnabled ? 'text-text-primary' : 'text-text-muted'}`}
+          >
             {t('knowledge:add_repository')}
           </h3>
           <p className="text-sm text-text-muted text-center">
-            {t('knowledge:add_repository_desc')}
+            {isAddRepoEnabled
+              ? t('knowledge:add_repository_desc_enabled')
+              : t('knowledge:add_repository_desc')}
           </p>
         </Card>
       </div>
@@ -154,12 +172,20 @@ export default function WikiProjectList({
         {/* Add repository card */}
         <Card
           padding="sm"
-          className="hover:bg-hover transition-colors cursor-pointer flex flex-col items-center justify-center h-[140px]"
-          onClick={onAddRepo}
+          className={`flex flex-col items-center justify-center h-[140px] ${
+            isAddRepoEnabled
+              ? 'hover:bg-hover transition-colors cursor-pointer'
+              : 'cursor-not-allowed opacity-60'
+          }`}
+          onClick={isAddRepoEnabled ? onAddRepo : undefined}
         >
-          <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center mb-3">
+          <div
+            className={`w-10 h-10 rounded-full flex items-center justify-center mb-3 ${
+              isAddRepoEnabled ? 'bg-primary/10' : 'bg-muted'
+            }`}
+          >
             <svg
-              className="h-6 w-6 text-primary"
+              className={`h-6 w-6 ${isAddRepoEnabled ? 'text-primary' : 'text-text-muted'}`}
               xmlns="http://www.w3.org/2000/svg"
               fill="none"
               viewBox="0 0 24 24"
@@ -173,7 +199,12 @@ export default function WikiProjectList({
               />
             </svg>
           </div>
-          <h3 className="font-medium text-sm">{t('knowledge:add_repository')}</h3>
+          <h3 className={`font-medium text-sm ${isAddRepoEnabled ? '' : 'text-text-muted'}`}>
+            {t('knowledge:add_repository')}
+          </h3>
+          {!isAddRepoEnabled && (
+            <p className="text-xs text-text-muted mt-1">{t('knowledge:add_repository_desc')}</p>
+          )}
         </Card>
 
         {/* Project card list */}

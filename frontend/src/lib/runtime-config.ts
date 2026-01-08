@@ -29,6 +29,8 @@ export interface RuntimeConfig {
   enableDisplayQuotas: boolean
   /** Enable Wiki module */
   enableWiki: boolean
+  /** Enable Code Knowledge add repository feature */
+  enableCodeKnowledgeAddRepo: boolean
   /** VSCode link template for deep linking */
   vscodeLinkTemplate: string
   /** Feedback URL for issue reporting */
@@ -85,6 +87,8 @@ export const fetchRuntimeConfig = async (): Promise<RuntimeConfig> => {
         oidcLoginText: process.env.NEXT_PUBLIC_OIDC_LOGIN_TEXT || '',
         enableDisplayQuotas: process.env.NEXT_PUBLIC_FRONTEND_ENABLE_DISPLAY_QUOTAS === 'enable',
         enableWiki: process.env.NEXT_PUBLIC_ENABLE_WIKI !== 'false',
+        enableCodeKnowledgeAddRepo:
+          process.env.NEXT_PUBLIC_ENABLE_CODE_KNOWLEDGE_ADD_REPO !== 'false',
         vscodeLinkTemplate: process.env.NEXT_PUBLIC_VSCODE_LINK_TEMPLATE || '',
         feedbackUrl:
           process.env.NEXT_PUBLIC_FEEDBACK_URL || 'https://github.com/wecode-ai/wegent/issues/new',
@@ -121,6 +125,7 @@ export const getRuntimeConfigSync = (): RuntimeConfig => {
     oidcLoginText: process.env.NEXT_PUBLIC_OIDC_LOGIN_TEXT || '',
     enableDisplayQuotas: process.env.NEXT_PUBLIC_FRONTEND_ENABLE_DISPLAY_QUOTAS === 'enable',
     enableWiki: process.env.NEXT_PUBLIC_ENABLE_WIKI !== 'false',
+    enableCodeKnowledgeAddRepo: process.env.NEXT_PUBLIC_ENABLE_CODE_KNOWLEDGE_ADD_REPO !== 'false',
     vscodeLinkTemplate: process.env.NEXT_PUBLIC_VSCODE_LINK_TEMPLATE || '',
     feedbackUrl:
       process.env.NEXT_PUBLIC_FEEDBACK_URL || 'https://github.com/wecode-ai/wegent/issues/new',
