@@ -65,7 +65,7 @@ class KnowledgeDocument(Base):
     kind_id = Column(Integer, nullable=False, index=True)
     # References subtask_contexts.id (context_type='attachment') but without FK constraint
     # Referential integrity is managed at the application layer
-    attachment_id = Column(Integer, nullable=True)
+    attachment_id = Column(Integer, nullable=False, default=0)
     name = Column(String(255), nullable=False)
     file_extension = Column(String(50), nullable=False)
     file_size = Column(BigInteger, nullable=False, default=0)
@@ -79,14 +79,14 @@ class KnowledgeDocument(Base):
         Boolean, nullable=False, default=False
     )  # Default to False, set to True after indexing completes
     splitter_config = Column(
-        JSON, nullable=True
+        JSON, nullable=False, default={}
     )  # Splitter configuration for document chunking
     source_type = Column(
         String(50), nullable=False, default=DocumentSourceType.FILE.value
     )  # Document source type: file, text, table
     source_config = Column(
-        JSON, nullable=True
-    )  # Source configuration (e.g., {"url": "..."} for table), nullable for backward compatibility
+        JSON, nullable=False, default={}
+    )  # Source configuration (e.g., {"url": "..."} for table)
     created_at = Column(DateTime, nullable=False, default=func.now())
     updated_at = Column(
         DateTime, nullable=False, default=func.now(), onupdate=func.now()
