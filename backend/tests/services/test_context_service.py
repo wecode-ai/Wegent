@@ -18,20 +18,24 @@ class TestContextServiceUpload:
     """Test attachment upload functionality"""
 
     def test_upload_unsupported_file_type(self):
-        """Test upload fails for unsupported file types"""
-        from app.services.context import context_service
+        """Test upload fails for binary files with unknown extensions via MIME detection"""
+        from app.services.attachment.parser import DocumentParseError, DocumentParser
 
         # Arrange
-        mock_db = Mock()
-        user_id = 1
-        filename = "test.exe"
-        binary_data = b"fake exe content"
+        parser = DocumentParser()
+        filename = "test.bin"
+        # Use actual binary data (PNG header) that MIME detection will identify as binary
+        # The parser will reject this because .bin is not a known extension and
+        # the content is binary (not text-based)
+        png_header = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+        binary_data = png_header + bytes(100)
 
         # Act & Assert
-        with pytest.raises(ValueError, match="Unsupported file type"):
-            context_service.upload_attachment(
-                db=mock_db, user_id=user_id, filename=filename, binary_data=binary_data
-            )
+        # The parser now allows unknown extensions but uses MIME detection to validate
+        # Binary files without matching parsers will raise DocumentParseError
+        with pytest.raises(DocumentParseError) as exc_info:
+            parser.parse(binary_data, ".bin")
+        assert exc_info.value.error_code == DocumentParseError.UNRECOGNIZED_TYPE
 
     def test_upload_file_too_large(self):
         """Test upload fails when file exceeds size limit"""

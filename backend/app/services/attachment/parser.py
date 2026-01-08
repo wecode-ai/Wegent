@@ -6,7 +6,8 @@
 Document parser service for extracting text from various file formats.
 
 Supports: PDF, Word (.doc, .docx), PowerPoint (.ppt, .pptx),
-Excel (.xls, .xlsx, .csv), TXT, Markdown files, and Images (.jpg, .jpeg, .png, .gif, .bmp, .webp).
+Excel (.xls, .xlsx, .csv), TXT, Markdown files, Images (.jpg, .jpeg, .png, .gif, .bmp, .webp),
+and any text-based files detected via MIME type analysis.
 
 Features smart truncation that preserves document structure:
 - Excel/CSV: Header + sample rows + ellipsis + tail rows
@@ -14,6 +15,11 @@ Features smart truncation that preserves document structure:
 - Word: Opening paragraphs + middle summary + closing paragraphs
 - PowerPoint: First/last slides + middle summary
 - Text/Markdown: Head content + middle summary + tail content
+
+MIME-based text file detection:
+- Uses python-magic to detect actual file content type
+- Supports text/* MIME types and common application/* text formats
+- Allows uploading code files (.py, .js, .java, etc.) without explicit extension whitelist
 """
 
 import base64
@@ -21,9 +27,10 @@ import csv
 import io
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import chardet
+import magic
 
 from app.core.config import settings
 from app.services.attachment.smart_truncation import (
@@ -34,6 +41,105 @@ from app.services.attachment.smart_truncation import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# MIME types that are considered text-based files
+# These files can be parsed as plain text
+TEXT_MIME_TYPES: Set[str] = {
+    # text/* family
+    "text/plain",
+    "text/html",
+    "text/css",
+    "text/javascript",
+    "text/xml",
+    "text/csv",
+    "text/markdown",
+    "text/x-python",
+    "text/x-java",
+    "text/x-c",
+    "text/x-c++",
+    "text/x-ruby",
+    "text/x-perl",
+    "text/x-php",
+    "text/x-shellscript",
+    "text/x-script.python",
+    "text/x-go",
+    "text/x-rust",
+    "text/x-swift",
+    "text/x-kotlin",
+    "text/x-scala",
+    "text/x-typescript",
+    "text/x-coffeescript",
+    "text/x-lua",
+    "text/x-r",
+    "text/x-matlab",
+    "text/x-sql",
+    "text/x-yaml",
+    "text/x-toml",
+    "text/x-ini",
+    "text/x-properties",
+    "text/x-diff",
+    "text/x-patch",
+    "text/x-log",
+    "text/x-makefile",
+    "text/x-cmake",
+    "text/x-dockerfile",
+    "text/x-nginx-conf",
+    "text/x-apache-conf",
+    "text/x-systemd-unit",
+    "text/x-tex",
+    "text/x-latex",
+    "text/x-bibtex",
+    "text/x-rst",
+    "text/x-asciidoc",
+    "text/x-org",
+    "text/troff",
+    "text/rtf",
+    "text/calendar",
+    "text/vcard",
+    # application/* text-based types
+    "application/json",
+    "application/xml",
+    "application/javascript",
+    "application/x-javascript",
+    "application/ecmascript",
+    "application/x-sh",
+    "application/x-bash",
+    "application/x-csh",
+    "application/x-zsh",
+    "application/x-python",
+    "application/x-ruby",
+    "application/x-perl",
+    "application/x-php",
+    "application/sql",
+    "application/graphql",
+    "application/toml",
+    "application/x-yaml",
+    "application/yaml",
+    "application/x-httpd-php",
+    "application/x-typescript",
+    "application/typescript",
+    "application/x-tex",
+    "application/x-latex",
+    "application/x-troff",
+    "application/x-troff-man",
+    "application/x-ndjson",
+    "application/ld+json",
+    "application/manifest+json",
+    "application/schema+json",
+    "application/vnd.api+json",
+    "application/hal+json",
+    "application/problem+json",
+    "application/x-www-form-urlencoded",
+    "application/xhtml+xml",
+    "application/atom+xml",
+    "application/rss+xml",
+    "application/soap+xml",
+    "application/mathml+xml",
+    "application/xslt+xml",
+    "application/x-subrip",
+    "application/x-wine-extension-ini",
+}
 
 
 @dataclass
@@ -79,6 +185,7 @@ class DocumentParseError(Exception):
 
     # Error codes for i18n mapping
     UNSUPPORTED_TYPE = "unsupported_type"
+    UNRECOGNIZED_TYPE = "unrecognized_type"
     FILE_TOO_LARGE = "file_too_large"
     PARSE_FAILED = "parse_failed"
     ENCRYPTED_PDF = "encrypted_pdf"
@@ -103,12 +210,17 @@ class DocumentParser:
     - Plain text (.txt)
     - Markdown (.md)
     - Images (.jpg, .jpeg, .png, .gif, .bmp, .webp)
+    - Any text-based files detected via MIME type analysis
 
     Features smart truncation that preserves document structure instead of
     simple text cutting.
+
+    For files with unknown extensions, the parser uses MIME type detection
+    to identify text-based files (code files, config files, etc.) and
+    processes them as plain text.
     """
 
-    # Supported file extensions and their MIME types
+    # Supported file extensions and their MIME types (known formats)
     SUPPORTED_EXTENSIONS = {
         ".pdf": "application/pdf",
         ".doc": "application/msword",
@@ -127,6 +239,27 @@ class DocumentParser:
         ".bmp": "image/bmp",
         ".webp": "image/webp",
     }
+
+    # Special format extensions that have dedicated parsers
+    SPECIAL_FORMAT_EXTENSIONS = {
+        ".pdf",
+        ".doc",
+        ".docx",
+        ".ppt",
+        ".pptx",
+        ".xls",
+        ".xlsx",
+        ".csv",
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".gif",
+        ".bmp",
+        ".webp",
+    }
+
+    # Known text format extensions (no MIME detection needed)
+    KNOWN_TEXT_EXTENSIONS = {".txt", ".md"}
 
     def __init__(self, truncation_config: Optional[SmartTruncationConfig] = None):
         """
@@ -170,6 +303,75 @@ class DocumentParser:
         """Check if extracted text length is within limits."""
         return len(text) <= cls.get_max_text_length()
 
+    @staticmethod
+    def detect_mime_type(binary_data: bytes) -> str:
+        """
+        Detect the MIME type of file content using python-magic.
+
+        Args:
+            binary_data: File binary content
+
+        Returns:
+            Detected MIME type string (e.g., 'text/plain', 'application/json')
+        """
+        try:
+            mime = magic.Magic(mime=True)
+            mime_type = mime.from_buffer(binary_data)
+            return mime_type
+        except Exception as e:
+            logger.warning(f"Failed to detect MIME type: {e}")
+            return "application/octet-stream"
+
+    @staticmethod
+    def is_text_mime_type(mime_type: Optional[str]) -> bool:
+        """
+        Check if a MIME type represents a text-based file.
+
+        Args:
+            mime_type: MIME type string to check, or None
+
+        Returns:
+            True if the MIME type is text-based, False otherwise
+        """
+        if not mime_type:
+            return False
+
+        # Check if it starts with text/
+        if mime_type.startswith("text/"):
+            return True
+
+        # Check if it's in our whitelist of text-based application/* types
+        if mime_type in TEXT_MIME_TYPES:
+            return True
+
+        # Check for common text-based patterns
+        # Many text formats use +json, +xml suffixes
+        if mime_type.endswith("+json") or mime_type.endswith("+xml"):
+            return True
+
+        return False
+
+    @classmethod
+    def is_supported_extension(cls, extension: str) -> bool:
+        """
+        Check if the file extension is supported.
+
+        For known extensions, returns True if in SUPPORTED_EXTENSIONS.
+        For unknown extensions, returns True to allow MIME-based detection.
+        """
+        ext = extension.lower()
+        # Known extensions are always supported
+        if ext in cls.SUPPORTED_EXTENSIONS:
+            return True
+        # For unknown extensions, we allow them to proceed
+        # The parse() method will use MIME detection to validate
+        return True
+
+    @classmethod
+    def is_known_extension(cls, extension: str) -> bool:
+        """Check if the extension is in the known formats list."""
+        return extension.lower() in cls.SUPPORTED_EXTENSIONS
+
     def parse(
         self,
         binary_data: bytes,
@@ -194,93 +396,40 @@ class DocumentParser:
         """
         extension = extension.lower()
 
-        if not self.is_supported_extension(extension):
-            raise DocumentParseError(
-                f"Unsupported file type: {extension}",
-                DocumentParseError.UNSUPPORTED_TYPE,
-            )
-
         try:
             image_base64 = None
             truncation_info = None
             max_length = self.get_max_text_length()
 
-            # Parse with smart truncation for supported formats
-            if use_smart_truncation:
-                if extension == ".pdf":
-                    text, truncation_info = self._parse_pdf_smart(
-                        binary_data, max_length
-                    )
-                elif extension in [".doc", ".docx"]:
-                    text, truncation_info = self._parse_word_smart(
-                        binary_data, extension, max_length
-                    )
-                elif extension in [".ppt", ".pptx"]:
-                    text, truncation_info = self._parse_powerpoint_smart(
-                        binary_data, extension, max_length
-                    )
-                elif extension in [".xls", ".xlsx"]:
-                    text, truncation_info = self._parse_excel_smart(
-                        binary_data, extension, max_length
-                    )
-                elif extension == ".csv":
-                    text, truncation_info = self._parse_csv_smart(
-                        binary_data, max_length
-                    )
-                elif extension in [".txt", ".md"]:
-                    text, truncation_info = self._parse_text_smart(
-                        binary_data, max_length
-                    )
-                elif extension in [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]:
-                    # Images don't need truncation
-                    text, image_base64 = self._parse_image(binary_data, extension)
-                else:
-                    raise DocumentParseError(
-                        f"Unsupported file type: {extension}",
-                        DocumentParseError.UNSUPPORTED_TYPE,
-                    )
-            else:
-                # Fallback to simple parsing without smart truncation
-                if extension == ".pdf":
-                    text = self._parse_pdf(binary_data)
-                elif extension in [".doc", ".docx"]:
-                    text = self._parse_word(binary_data, extension)
-                elif extension in [".ppt", ".pptx"]:
-                    text = self._parse_powerpoint(binary_data, extension)
-                elif extension in [".xls", ".xlsx"]:
-                    text = self._parse_excel(binary_data, extension)
-                elif extension == ".csv":
-                    text = self._parse_csv(binary_data)
-                elif extension in [".txt", ".md"]:
-                    text = self._parse_text(binary_data)
-                elif extension in [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]:
-                    text, image_base64 = self._parse_image(binary_data, extension)
-                else:
-                    raise DocumentParseError(
-                        f"Unsupported file type: {extension}",
-                        DocumentParseError.UNSUPPORTED_TYPE,
-                    )
+            # Check if this is a known special format with dedicated parser
+            if extension in self.SPECIAL_FORMAT_EXTENSIONS:
+                return self._parse_special_format(
+                    binary_data, extension, use_smart_truncation, max_length
+                )
 
-                # Simple truncation for non-smart mode
-                if len(text) > max_length:
-                    original_length = len(text)
-                    text = text[:max_length]
-                    truncation_info = TruncationInfo(
-                        is_truncated=True,
-                        original_length=original_length,
-                        truncated_length=max_length,
-                        truncation_type="simple",
-                    )
-                    logger.info(
-                        f"Text truncated from {original_length} to {max_length} characters"
-                    )
+            # Check if this is a known text format
+            if extension in self.KNOWN_TEXT_EXTENSIONS:
+                return self._parse_text_format(
+                    binary_data, use_smart_truncation, max_length
+                )
 
-            return ParseResult(
-                text=text,
-                text_length=len(text),
-                image_base64=image_base64,
-                truncation_info=truncation_info,
+            # For unknown extensions, use MIME detection
+            mime_type = self.detect_mime_type(binary_data)
+            logger.info(
+                f"Detected MIME type '{mime_type}' for file with extension '{extension}'"
             )
+
+            if self.is_text_mime_type(mime_type):
+                # Parse as text file
+                return self._parse_text_format(
+                    binary_data, use_smart_truncation, max_length
+                )
+            else:
+                # MIME type is not recognized as text
+                raise DocumentParseError(
+                    f"Unrecognized file type: {extension} (detected MIME: {mime_type})",
+                    DocumentParseError.UNRECOGNIZED_TYPE,
+                )
 
         except DocumentParseError:
             raise
@@ -290,6 +439,121 @@ class DocumentParser:
                 f"Failed to parse document: {str(e)}",
                 DocumentParseError.PARSE_FAILED,
             ) from e
+
+    def _parse_special_format(
+        self,
+        binary_data: bytes,
+        extension: str,
+        use_smart_truncation: bool,
+        max_length: int,
+    ) -> ParseResult:
+        """
+        Parse files with special formats (PDF, Word, Excel, etc.).
+
+        These formats have dedicated parsers.
+        """
+        image_base64 = None
+        truncation_info = None
+
+        if use_smart_truncation:
+            if extension == ".pdf":
+                text, truncation_info = self._parse_pdf_smart(binary_data, max_length)
+            elif extension in [".doc", ".docx"]:
+                text, truncation_info = self._parse_word_smart(
+                    binary_data, extension, max_length
+                )
+            elif extension in [".ppt", ".pptx"]:
+                text, truncation_info = self._parse_powerpoint_smart(
+                    binary_data, extension, max_length
+                )
+            elif extension in [".xls", ".xlsx"]:
+                text, truncation_info = self._parse_excel_smart(
+                    binary_data, extension, max_length
+                )
+            elif extension == ".csv":
+                text, truncation_info = self._parse_csv_smart(binary_data, max_length)
+            elif extension in [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]:
+                text, image_base64 = self._parse_image(binary_data, extension)
+            else:
+                raise DocumentParseError(
+                    f"Unsupported file type: {extension}",
+                    DocumentParseError.UNSUPPORTED_TYPE,
+                )
+        else:
+            # Fallback to simple parsing without smart truncation
+            if extension == ".pdf":
+                text = self._parse_pdf(binary_data)
+            elif extension in [".doc", ".docx"]:
+                text = self._parse_word(binary_data, extension)
+            elif extension in [".ppt", ".pptx"]:
+                text = self._parse_powerpoint(binary_data, extension)
+            elif extension in [".xls", ".xlsx"]:
+                text = self._parse_excel(binary_data, extension)
+            elif extension == ".csv":
+                text = self._parse_csv(binary_data)
+            elif extension in [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]:
+                text, image_base64 = self._parse_image(binary_data, extension)
+            else:
+                raise DocumentParseError(
+                    f"Unsupported file type: {extension}",
+                    DocumentParseError.UNSUPPORTED_TYPE,
+                )
+
+            # Simple truncation for non-smart mode
+            if len(text) > max_length:
+                original_length = len(text)
+                text = text[:max_length]
+                truncation_info = TruncationInfo(
+                    is_truncated=True,
+                    original_length=original_length,
+                    truncated_length=max_length,
+                    truncation_type="simple",
+                )
+                logger.info(
+                    f"Text truncated from {original_length} to {max_length} characters"
+                )
+
+        return ParseResult(
+            text=text,
+            text_length=len(text),
+            image_base64=image_base64,
+            truncation_info=truncation_info,
+        )
+
+    def _parse_text_format(
+        self,
+        binary_data: bytes,
+        use_smart_truncation: bool,
+        max_length: int,
+    ) -> ParseResult:
+        """
+        Parse text-based files (txt, md, code files, config files, etc.).
+        """
+        truncation_info = None
+
+        if use_smart_truncation:
+            text, truncation_info = self._parse_text_smart(binary_data, max_length)
+        else:
+            text = self._parse_text(binary_data)
+            # Simple truncation for non-smart mode
+            if len(text) > max_length:
+                original_length = len(text)
+                text = text[:max_length]
+                truncation_info = TruncationInfo(
+                    is_truncated=True,
+                    original_length=original_length,
+                    truncated_length=max_length,
+                    truncation_type="simple",
+                )
+                logger.info(
+                    f"Text truncated from {original_length} to {max_length} characters"
+                )
+
+        return ParseResult(
+            text=text,
+            text_length=len(text),
+            truncation_info=truncation_info,
+        )
 
     def _parse_pdf(self, binary_data: bytes) -> str:
         """Parse PDF file and extract text."""
