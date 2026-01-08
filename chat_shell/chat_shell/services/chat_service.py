@@ -185,6 +185,12 @@ class ChatService(ChatInterface):
                     # Prepare knowledge base tools if knowledge_base_ids provided
                     system_prompt = request.system_prompt or ""
                     if request.knowledge_base_ids:
+                        # Get context_window from model_config (extracted from Model CRD)
+                        context_window = (
+                            request.model_config.get("context_window")
+                            if request.model_config
+                            else None
+                        )
                         kb_tools, system_prompt = await prepare_knowledge_base_tools(
                             knowledge_base_ids=request.knowledge_base_ids,
                             user_id=request.user_id,
@@ -193,6 +199,7 @@ class ChatService(ChatInterface):
                             task_id=request.task_id,
                             user_subtask_id=request.subtask_id,
                             document_ids=request.document_ids,
+                            context_window=context_window,
                         )
                         extra_tools.extend(kb_tools)
 

@@ -68,13 +68,16 @@ class TokenCounter:
         "default": 1000,
     }
 
-    def __init__(self, model_id: str = "gpt-4"):
+    def __init__(self, model_name: str | None = None, model_id: str | None = None):
         """Initialize token counter.
 
         Args:
-            model_id: Model identifier for provider detection
+            model_name: Model identifier for provider detection (preferred)
+            model_id: Deprecated alias for model_name (for backward compatibility)
         """
-        self.model_id = model_id.lower()
+        # Support both model_name and model_id for backward compatibility
+        # model_id takes precedence if explicitly provided (for backward compatibility)
+        self.model_id = (model_id or model_name or "gpt-4").lower()
         self.provider = self._detect_provider()
         self._encoding = None
 
@@ -83,7 +86,6 @@ class TokenCounter:
             self._encoding = _get_encoding("cl100k_base")
 
     def _detect_provider(self) -> str:
-        """Detect provider from model ID."""
         if self.model_id.startswith(("gpt-", "o1-", "o3-", "chatgpt-")):
             return "openai"
         elif self.model_id.startswith("claude-"):

@@ -24,6 +24,7 @@ async def prepare_knowledge_base_tools(
     user_subtask_id: Optional[int] = None,
     is_user_selected: bool = True,
     document_ids: Optional[list[int]] = None,
+    context_window: Optional[int] = None,
 ) -> tuple[list, str]:
     """
     Prepare knowledge base tools and enhanced system prompt.
@@ -43,6 +44,8 @@ async def prepare_knowledge_base_tools(
             False = relaxed mode (KB inherited from task, can use general knowledge)
         document_ids: Optional list of document IDs to filter retrieval.
             When set, only chunks from these specific documents will be returned.
+        context_window: Optional context window size from Model CRD.
+            Used by KnowledgeBaseTool for injection strategy decisions.
 
     Returns:
         Tuple of (extra_tools list, enhanced_system_prompt string)
@@ -60,11 +63,12 @@ async def prepare_knowledge_base_tools(
 
     logger.info(
         "[knowledge_factory] Creating KnowledgeBaseTool for %d knowledge bases: %s, "
-        "is_user_selected=%s, document_ids=%s",
+        "is_user_selected=%s, document_ids=%s, context_window=%s",
         len(knowledge_base_ids),
         knowledge_base_ids,
         is_user_selected,
         document_ids,
+        context_window,
     )
 
     # Import KnowledgeBaseTool
@@ -73,12 +77,14 @@ async def prepare_knowledge_base_tools(
     # Create KnowledgeBaseTool with the specified knowledge bases
     # Pass user_subtask_id for persisting RAG results to context database
     # Pass document_ids for filtering to specific documents
+    # Pass context_window from Model CRD for injection strategy decisions
     kb_tool = KnowledgeBaseTool(
         knowledge_base_ids=knowledge_base_ids,
         document_ids=document_ids or [],
         user_id=user_id,
         db_session=db,
         user_subtask_id=user_subtask_id,
+        context_window=context_window,
     )
     extra_tools.append(kb_tool)
 

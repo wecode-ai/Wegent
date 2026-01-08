@@ -315,3 +315,28 @@ class BaseStorageBackend(ABC):
             True if connection successful, False otherwise
         """
         pass
+
+    @abstractmethod
+    def get_all_chunks(
+        self, knowledge_id: str, max_chunks: int = 10000, **kwargs
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all chunks from a knowledge base.
+
+        This method retrieves all chunks stored for a specific knowledge base,
+        used for direct context injection when content fits within context window.
+
+        Args:
+            knowledge_id: Knowledge base ID
+            max_chunks: Maximum number of chunks to retrieve (safety limit)
+            **kwargs: Additional parameters (e.g., user_id for per_user strategy)
+
+        Returns:
+            List of chunk dicts with:
+                - content: str, chunk text content
+                - title: str, source document name
+                - chunk_id: int, chunk index within document
+                - doc_ref: str, document reference ID
+                - metadata: dict, additional metadata
+        """
+        pass
