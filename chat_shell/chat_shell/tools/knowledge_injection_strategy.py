@@ -43,7 +43,7 @@ class InjectionStrategy:
         injection_mode: str = InjectionMode.RAG_ONLY,
         aggressive_cleaning: bool = False,
         min_chunk_score: float = 0.5,
-        max_direct_chunks: int = 50,
+        max_direct_chunks: int = 500,
         context_buffer_ratio: float = 0.1,
     ):
         """Initialize injection strategy.
