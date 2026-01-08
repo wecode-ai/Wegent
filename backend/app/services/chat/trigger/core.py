@@ -603,6 +603,24 @@ async def _stream_with_http_adapter(
     # This creates a local asyncio.Event and clears any existing Redis cancel flag
     cancel_event = await session_manager.register_stream(subtask_id)
 
+    # Set task-level streaming status in Redis for fast lookup
+    # This is checked by get_active_streaming() when client reconnects/refreshes
+    # CRITICAL: Must be set BEFORE streaming starts so page refresh can detect active streaming
+    logger.info(
+        "[HTTP_ADAPTER] Setting task_streaming_status in Redis: task_id=%d, subtask_id=%d, "
+        "user_id=%d, user_name=%s",
+        task_id,
+        subtask_id,
+        stream_data.user_id,
+        stream_data.user_name,
+    )
+    await session_manager.set_task_streaming_status(
+        task_id=task_id,
+        subtask_id=subtask_id,
+        user_id=stream_data.user_id,
+        username=stream_data.user_name,
+    )
+
     logger.info(
         "[HTTP_ADAPTER] Starting HTTP streaming: task_id=%d, subtask_id=%d",
         task_id,
@@ -715,6 +733,9 @@ async def _stream_with_http_adapter(
     thinking_steps: list[dict] = []
     # Track if we were cancelled
     was_cancelled = False
+    # Track last Redis save time for periodic saves (every 1 second)
+    last_redis_save = asyncio.get_event_loop().time()
+    redis_save_interval = 1.0  # Save to Redis every 1 second
 
     try:
         # Stream events from chat_shell and forward to WebSocket
@@ -745,6 +766,15 @@ async def _stream_with_http_adapter(
                         offset=offset,
                     )
                     offset += len(chunk_text)
+
+                    # Periodic save to Redis for streaming recovery
+                    # This allows page refresh to recover streaming content
+                    current_time = asyncio.get_event_loop().time()
+                    if current_time - last_redis_save >= redis_save_interval:
+                        await session_manager.save_streaming_content(
+                            subtask_id, full_response
+                        )
+                        last_redis_save = current_time
 
             elif event.type == ChatEventType.THINKING:
                 # Thinking token - emit as chunk with special handling
@@ -1002,6 +1032,12 @@ async def _stream_with_http_adapter(
     finally:
         # Unregister stream to clean up local event and Redis cancel flag
         await session_manager.unregister_stream(subtask_id)
+        # Clear task-level streaming status from Redis
+        # This ensures get_active_streaming() returns None after streaming ends
+        await session_manager.clear_task_streaming_status(task_id)
+        # Clean up streaming content cache from Redis
+        # This prevents stale data from being returned for future streams
+        await session_manager.delete_streaming_content(subtask_id)
 
 
 async def _stream_with_bridge(

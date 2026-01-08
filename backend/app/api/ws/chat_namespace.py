@@ -249,14 +249,20 @@ class ChatNamespace(socketio.AsyncNamespace):
         """
         payload = data  # Already validated by decorator
 
+        logger.info(f"[WS] task:join received: sid={sid}, task_id={payload.task_id}")
+
         session = await self.get_session(sid)
         user_id = session.get("user_id")
 
         if not user_id:
+            logger.warning(f"[WS] task:join error: Not authenticated, sid={sid}")
             return {"error": "Not authenticated"}
 
         # Check permission
         if not await can_access_task(user_id, payload.task_id):
+            logger.warning(
+                f"[WS] task:join error: Access denied, user={user_id}, task={payload.task_id}"
+            )
             return {"error": "Access denied"}
 
         # Join task room
@@ -268,13 +274,23 @@ class ChatNamespace(socketio.AsyncNamespace):
         )
 
         # Check for active streaming
+        logger.info(
+            f"[WS] task:join checking for active streaming, task_id={payload.task_id}"
+        )
         streaming_info = await get_active_streaming(payload.task_id)
+        logger.info(f"[WS] task:join get_active_streaming returned: {streaming_info}")
+
         if streaming_info:
             subtask_id = streaming_info["subtask_id"]
 
             # Get cached content from Redis
             cached_content = await session_manager.get_streaming_content(subtask_id)
             offset = len(cached_content) if cached_content else 0
+
+            logger.info(
+                f"[WS] task:join found active streaming: subtask_id={subtask_id}, "
+                f"cached_content_len={len(cached_content) if cached_content else 0}, offset={offset}"
+            )
 
             return {
                 "streaming": {
@@ -284,6 +300,9 @@ class ChatNamespace(socketio.AsyncNamespace):
                 }
             }
 
+        logger.info(
+            f"[WS] task:join no active streaming found for task_id={payload.task_id}"
+        )
         return {"streaming": None}
 
     @auto_task_context(TaskLeavePayload)

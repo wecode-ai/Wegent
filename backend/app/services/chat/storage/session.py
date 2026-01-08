@@ -537,9 +537,19 @@ class SessionManager:
                 "username": username,
                 "started_at": datetime.now().isoformat(),
             }
-            return await self._cache.set(key, value, expire=TASK_STREAMING_TTL)
+            logger.info(
+                f"[SessionManager] set_task_streaming_status: key={key}, "
+                f"task_id={task_id}, subtask_id={subtask_id}, user_id={user_id}, "
+                f"expire={TASK_STREAMING_TTL}"
+            )
+            result = await self._cache.set(key, value, expire=TASK_STREAMING_TTL)
+            logger.info(f"[SessionManager] set_task_streaming_status result: {result}")
+            return result
         except Exception as e:
-            logger.error(f"Error setting task streaming status for task {task_id}: {e}")
+            logger.error(
+                f"Error setting task streaming status for task {task_id}: {e}",
+                exc_info=True,
+            )
             return False
 
     async def get_task_streaming_status(self, task_id: int) -> Optional[Dict[str, Any]]:
@@ -554,9 +564,17 @@ class SessionManager:
         """
         try:
             key = self._get_task_streaming_key(task_id)
-            return await self._cache.get(key)
+            logger.info(
+                f"[SessionManager] get_task_streaming_status: key={key}, task_id={task_id}"
+            )
+            result = await self._cache.get(key)
+            logger.info(f"[SessionManager] get_task_streaming_status result: {result}")
+            return result
         except Exception as e:
-            logger.error(f"Error getting task streaming status for task {task_id}: {e}")
+            logger.error(
+                f"Error getting task streaming status for task {task_id}: {e}",
+                exc_info=True,
+            )
             return None
 
     async def clear_task_streaming_status(self, task_id: int) -> bool:
@@ -571,10 +589,18 @@ class SessionManager:
         """
         try:
             key = self._get_task_streaming_key(task_id)
-            return await self._cache.delete(key)
+            logger.info(
+                f"[SessionManager] clear_task_streaming_status: key={key}, task_id={task_id}"
+            )
+            result = await self._cache.delete(key)
+            logger.info(
+                f"[SessionManager] clear_task_streaming_status result: {result}"
+            )
+            return result
         except Exception as e:
             logger.error(
-                f"Error clearing task streaming status for task {task_id}: {e}"
+                f"Error clearing task streaming status for task {task_id}: {e}",
+                exc_info=True,
             )
             return False
 

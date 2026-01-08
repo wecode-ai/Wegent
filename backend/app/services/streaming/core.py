@@ -343,6 +343,11 @@ class StreamingCore:
         Returns:
             True if resources acquired successfully, False otherwise
         """
+        logger.info(
+            f"[StreamingCore] acquire_resources called for task_id={self.state.task_id}, "
+            f"subtask_id={self.state.subtask_id}, user_id={self.state.user_id}"
+        )
+
         # Try to acquire semaphore with timeout
         try:
             self._acquired = await asyncio.wait_for(
@@ -364,22 +369,62 @@ class StreamingCore:
         # Register stream for cancellation
         self._cancel_event = await self._storage.register_stream(self.state.subtask_id)
 
+        # Set task-level streaming status in Redis for fast lookup
+        # This is checked by get_active_streaming() when client reconnects
+        from app.services.chat.storage import session_manager
+
+        logger.info(
+            f"[StreamingCore] Setting task_streaming_status in Redis: "
+            f"task_id={self.state.task_id}, subtask_id={self.state.subtask_id}, "
+            f"user_id={self.state.user_id}, user_name={self.state.user_name}"
+        )
+        set_result = await session_manager.set_task_streaming_status(
+            task_id=self.state.task_id,
+            subtask_id=self.state.subtask_id,
+            user_id=self.state.user_id,
+            username=self.state.user_name,
+        )
+        logger.info(f"[StreamingCore] set_task_streaming_status result: {set_result}")
+
+        # Verify the status was set correctly
+        verify_status = await session_manager.get_task_streaming_status(
+            self.state.task_id
+        )
+        logger.info(
+            f"[StreamingCore] Verified task_streaming_status after set: {verify_status}"
+        )
+
         # Update status to RUNNING
         await self._storage.update_subtask_status(
             self.state.subtask_id,
             "RUNNING",
         )
 
+        logger.info(
+            f"[StreamingCore] acquire_resources completed successfully for task_id={self.state.task_id}"
+        )
         return True
 
     async def release_resources(self) -> None:
         """Release all acquired resources."""
+        logger.info(
+            f"[StreamingCore] release_resources called for task_id={self.state.task_id}, "
+            f"subtask_id={self.state.subtask_id}"
+        )
         try:
             # Unregister stream
             await self._storage.unregister_stream(self.state.subtask_id)
 
             # Delete streaming content cache
             await self._storage.delete_streaming_content(self.state.subtask_id)
+
+            # Clear task-level streaming status from Redis
+            from app.services.chat.storage import session_manager
+
+            logger.info(
+                f"[StreamingCore] Clearing task_streaming_status for task_id={self.state.task_id}"
+            )
+            await session_manager.clear_task_streaming_status(self.state.task_id)
 
             # Disconnect MCP client if present
             if self._mcp_client:
@@ -390,6 +435,9 @@ class StreamingCore:
             if self._acquired:
                 self._semaphore.release()
                 self._acquired = False
+        logger.info(
+            f"[StreamingCore] release_resources completed for task_id={self.state.task_id}"
+        )
 
     def is_cancelled(self) -> bool:
         """Check if streaming has been cancelled."""

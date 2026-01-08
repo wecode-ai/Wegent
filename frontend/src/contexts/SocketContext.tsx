@@ -63,8 +63,11 @@ interface SocketContextType {
   connect: (token: string) => void
   /** Disconnect from server */
   disconnect: () => void
-  /** Join a task room */
-  joinTask: (taskId: number) => Promise<{
+  /** Join a task room. If forceRefresh is true, always emit task:join to get streaming status */
+  joinTask: (
+    taskId: number,
+    forceRefresh?: boolean
+  ) => Promise<{
     streaming?: {
       subtask_id: number
       offset: number
@@ -297,10 +300,13 @@ export function SocketProvider({ children }: { children: ReactNode }) {
    * Join a task room
    * Prevents duplicate joins by checking if already joined
    * If reconnected, always rejoin to ensure backend state is synced
+   * @param taskId - The task ID to join
+   * @param forceRefresh - If true, always emit task:join to get latest streaming status
    */
   const joinTask = useCallback(
     async (
-      taskId: number
+      taskId: number,
+      forceRefresh: boolean = false
     ): Promise<{
       streaming?: {
         subtask_id: number
@@ -314,8 +320,9 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       }
 
       // Check if already joined this task room to prevent duplicate joins
-      // Exception: If we just reconnected, always rejoin to sync backend state
-      if (joinedTasksRef.current.has(taskId) && !hasReconnectedRef.current) {
+      // Exception 1: If we just reconnected, always rejoin to sync backend state
+      // Exception 2: If forceRefresh is true, always request to get streaming status
+      if (joinedTasksRef.current.has(taskId) && !hasReconnectedRef.current && !forceRefresh) {
         return {}
       }
 

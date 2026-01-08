@@ -1568,7 +1568,10 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
 
       try {
         // Join task room and check for active streaming
-        const response = await joinTask(taskId)
+        // Use forceRefresh=true to always get the latest streaming status
+        // This is important because the task may have been joined before
+        // but we need fresh streaming info for resumption
+        const response = await joinTask(taskId, true)
 
         if (response.error) {
           console.error('[ChatStreamContext] Failed to join task:', response.error)
@@ -1578,6 +1581,12 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         // Check if there's an active streaming session
         if (response.streaming) {
           const { subtask_id, cached_content } = response.streaming
+
+          console.log('[ChatStreamContext] resumeStream: Found active streaming session', {
+            taskId,
+            subtask_id,
+            cached_content_len: cached_content?.length || 0,
+          })
 
           // Track subtask to task mapping
           subtaskToTaskRef.current.set(subtask_id, taskId)
@@ -1598,14 +1607,45 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
             const currentState = newMap.get(taskId) || { ...defaultStreamState }
 
             const newMessages = new Map(currentState.messages)
-            newMessages.set(aiMessageId, {
-              id: aiMessageId,
-              type: 'ai',
-              status: 'streaming',
-              content: initialContent,
-              timestamp: Date.now(),
-              subtaskId: subtask_id,
+
+            // KEY FIX: Check if we already have this message with more content
+            // This can happen if syncBackendMessages ran before resumeStream
+            const existingMessage = newMessages.get(aiMessageId)
+
+            console.log('[ChatStreamContext] resumeStream: Comparing content lengths', {
+              aiMessageId,
+              existingContent_len: existingMessage?.content?.length || 0,
+              initialContent_len: initialContent.length,
+              willKeepExisting:
+                existingMessage && existingMessage.content.length >= initialContent.length,
             })
+
+            if (existingMessage && existingMessage.content.length >= initialContent.length) {
+              // Existing message has more content, just update status to streaming
+              // This preserves content from syncBackendMessages if it has more data
+              console.log(
+                '[ChatStreamContext] resumeStream: Keeping existing message content (longer)'
+              )
+              newMessages.set(aiMessageId, {
+                ...existingMessage,
+                status: 'streaming',
+              })
+            } else {
+              // No existing message or Redis cache has more content
+              console.log('[ChatStreamContext] resumeStream: Using cached content from Redis')
+              newMessages.set(aiMessageId, {
+                id: aiMessageId,
+                type: 'ai',
+                status: 'streaming',
+                content: initialContent,
+                timestamp: existingMessage?.timestamp || Date.now(),
+                subtaskId: subtask_id,
+                // Preserve existing result metadata if available
+                result: existingMessage?.result,
+                messageId: existingMessage?.messageId,
+                botName: existingMessage?.botName,
+              })
+            }
 
             newMap.set(taskId, {
               ...currentState,
@@ -1620,6 +1660,9 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           return true
         }
 
+        console.log('[ChatStreamContext] resumeStream: No active streaming session found', {
+          taskId,
+        })
         return false
       } catch (error) {
         console.error('[ChatStreamContext] Error resuming stream:', error)
@@ -1705,24 +1748,90 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
             existingMessage && existingMessage.status === 'error' && existingMessage.error
 
           // For RUNNING/PENDING AI messages:
-          // - If we already have a streaming message for this subtask (from chat:start), skip
+          // - If we already have a streaming message for this subtask (from chat:start or resumeStream),
+          //   preserve it if it has more content (Redis cache is more up-to-date than DB)
           // - Otherwise, create a streaming placeholder so the message is visible
           // This handles the page refresh case where chat:start was missed
           if (!isUserMessage && (subtask.status === 'RUNNING' || subtask.status === 'PENDING')) {
-            // Check if we already have this AI message (created by chat:start)
+            // Check if we already have this AI message (created by chat:start or resumeStream)
             const existingAiMessage = messages.get(messageId)
+            const backendContent =
+              typeof subtask.result?.value === 'string' ? subtask.result.value : ''
+
+            console.log(
+              '[ChatStreamContext] syncBackendMessages: Processing RUNNING/PENDING AI message',
+              {
+                messageId,
+                subtaskId: subtask.id,
+                subtaskStatus: subtask.status,
+                existingAiMessage_len: existingAiMessage?.content?.length || 0,
+                backendContent_len: backendContent.length,
+                hasExistingMessage: !!existingAiMessage,
+              }
+            )
+
             if (existingAiMessage) {
-              // Already have this message, skip
-              continue
+              // KEY FIX: Compare content lengths and keep the longer one
+              // This prevents losing Redis cached content when syncBackendMessages is called
+              // after resumeStream, since Redis saves every 1s but DB saves every 5s
+              if (existingAiMessage.content.length >= backendContent.length) {
+                // Existing message has more or equal content, keep it but update metadata
+                // Only update non-content fields that might be missing from resumeStream
+                console.log(
+                  '[ChatStreamContext] syncBackendMessages: Keeping existing message (longer content)',
+                  {
+                    existingLen: existingAiMessage.content.length,
+                    backendLen: backendContent.length,
+                  }
+                )
+                const updatedMessage = {
+                  ...existingAiMessage,
+                  // Preserve longer content
+                  // Update metadata that might be missing from resumeStream
+                  messageId: existingAiMessage.messageId || subtask.message_id,
+                  attachments: existingAiMessage.attachments || subtask.attachments,
+                  contexts: existingAiMessage.contexts || subtask.contexts,
+                  botName: existingAiMessage.botName || subtask.bots?.[0]?.name || teamName,
+                  subtaskStatus: subtask.status,
+                  // Merge result to preserve shell_type and thinking data
+                  result: {
+                    ...(subtask.result as UnifiedMessage['result']),
+                    ...existingAiMessage.result,
+                    // Keep the longer value
+                    value:
+                      existingAiMessage.content.length >= backendContent.length
+                        ? existingAiMessage.content
+                        : backendContent,
+                  },
+                }
+                messages.set(messageId, updatedMessage)
+                continue
+              }
+              // Backend has more content (rare case, maybe message was recovered from DB)
+              // Fall through to update with backend content
+              console.log(
+                '[ChatStreamContext] syncBackendMessages: Using backend content (longer)',
+                {
+                  existingLen: existingAiMessage.content.length,
+                  backendLen: backendContent.length,
+                }
+              )
             }
+
             // Create a streaming placeholder for this RUNNING message
             // This ensures the message is visible after page refresh
-            const content = typeof subtask.result?.value === 'string' ? subtask.result.value : ''
+            console.log(
+              '[ChatStreamContext] syncBackendMessages: Creating streaming placeholder from backend',
+              {
+                messageId,
+                backendContent_len: backendContent.length,
+              }
+            )
             messages.set(messageId, {
               id: messageId,
               type: 'ai',
               status: hasFrontendError ? 'error' : 'streaming', // Preserve error state if exists
-              content,
+              content: backendContent,
               timestamp: new Date(subtask.created_at).getTime(),
               subtaskId: subtask.id,
               messageId: subtask.message_id,
