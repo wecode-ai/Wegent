@@ -1039,6 +1039,8 @@
     "errors": {
       "unsupported_type": "文件格式不支持",
       "unsupported_type_hint": "请上传以下格式的文件：{{types}}",
+      "unrecognized_type": "文件类型无法识别",
+      "unrecognized_type_hint": "请上传文档、图片或文本类文件",
       "file_too_large": "文件太大了",
       "file_too_large_hint": "文件大小不能超过 {{size}} MB，请压缩后重试",
       "parse_failed": "文件解析失败",
@@ -1060,7 +1062,8 @@
     "truncation": {
       "notice": "⚠️ 文件内容过长，已自动压缩（原始 {{original}} 字符 → 压缩至 {{truncated}} 字符）"
     },
-    "supported_types": "PDF、Word、Excel、TXT、Markdown、图片",
-    "characters": "字符"
+    "supported_types": "PDF、Word、Excel、TXT、Markdown、图片、代码文件",
+    "characters": "字符",
+    "upload_tooltip": "支持的文件类型: 文档(PDF, Word, PPT, Excel), 图片, 代码文件及各类文本文件\n最大文件大小: {{size}} MB"
   }
 }

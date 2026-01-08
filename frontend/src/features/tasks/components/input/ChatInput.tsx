@@ -352,52 +352,53 @@ export default function ChatInput({
       // The image is just a rendered preview of the text, not a real image the user wants to upload
       const hasHtml = clipboardData.getData('text/html').length > 0
 
-      // Collect all image files from clipboard (from both files and items)
-      const imageFiles: File[] = []
+      // Collect all files from clipboard (from both files and items)
+      // Support all file types, not just images (PDF, Word, etc.)
+      const pastedFiles: File[] = []
 
-      // Only collect images if there's no HTML data (to avoid uploading text preview images)
-      // OR if there's no text (pure image paste like screenshots)
+      // Only collect files if there's no HTML data (to avoid uploading text preview images)
+      // OR if there's no text (pure file paste like screenshots or copied files)
       if (!hasHtml || !hasText) {
         // Check clipboard files first (for direct file paste)
         if (clipboardData.files && clipboardData.files.length > 0) {
           for (let i = 0; i < clipboardData.files.length; i++) {
             const file = clipboardData.files[i]
-            if (file.type.startsWith('image/')) {
-              imageFiles.push(file)
-            }
+            // Accept all file types, not just images
+            pastedFiles.push(file)
           }
         }
 
-        // Check clipboard items for screenshots and image data
+        // Check clipboard items for screenshots and other file data
         const items = clipboardData.items
         if (items) {
           for (let i = 0; i < items.length; i++) {
             const item = items[i]
-            if (item.type.startsWith('image/')) {
+            // Accept all file types from clipboard items
+            if (item.kind === 'file') {
               const file = item.getAsFile()
               // Avoid duplicate files (same file might appear in both files and items)
-              if (file && !imageFiles.some(f => f.name === file.name && f.size === file.size)) {
-                imageFiles.push(file)
+              if (file && !pastedFiles.some(f => f.name === file.name && f.size === file.size)) {
+                pastedFiles.push(file)
               }
             }
           }
         }
       }
 
-      const hasImages = imageFiles.length > 0
+      const hasFiles = pastedFiles.length > 0
 
       // Handle different paste scenarios:
-      // 1. Images only (e.g., pure screenshot) -> upload images
+      // 1. Files only (e.g., pure screenshot or copied files) -> upload files
       // 2. Text only (e.g., plain text copy) -> insert text
       // 3. Rich text with HTML (e.g., from Word/PPT/web) -> insert text only (ignore preview images)
-      // 4. Real images with text (rare case) -> handled by the hasHtml check above
+      // 4. Real files with text (rare case) -> handled by the hasHtml check above
 
       // Prevent default behavior to handle paste manually
       e.preventDefault()
 
-      // Handle image upload if there are images (and not just preview images from rich text)
-      if (hasImages && onPasteFile) {
-        onPasteFile(imageFiles)
+      // Handle file upload if there are files (and not just preview images from rich text)
+      if (hasFiles && onPasteFile) {
+        onPasteFile(pastedFiles)
       }
 
       // Handle text insertion if there is text content

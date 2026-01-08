@@ -10,7 +10,6 @@ import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import {
-  SUPPORTED_EXTENSIONS,
   MAX_FILE_SIZE,
   formatFileSize,
   getFileIcon,
@@ -18,6 +17,7 @@ import {
   getAttachmentPreviewUrl,
 } from '@/apis/attachments'
 import { getToken } from '@/apis/user'
+import { useTranslation } from '@/hooks/useTranslation'
 import type { Attachment } from '@/types/api'
 
 interface FileUploadProps {
@@ -241,6 +241,7 @@ export default function FileUpload({
   onFileSelect,
   onRemove,
 }: FileUploadProps) {
+  const { t } = useTranslation('common')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const handleClick = useCallback(() => {
@@ -284,19 +285,15 @@ export default function FileUpload({
     [disabled, isUploading, attachment, onFileSelect]
   )
 
-  // Build accept string for file input
-  const acceptString = SUPPORTED_EXTENSIONS.join(',')
-
-  // Tooltip content
-  const tooltipContent = `支持的文件类型: PDF, Word, PPT, Excel, TXT, Markdown, 图片(JPG, PNG, GIF, BMP, WebP)\n最大文件大小: ${MAX_FILE_SIZE / (1024 * 1024)} MB`
+  // Tooltip content - now supports all text-based files via MIME detection
+  const tooltipContent = t('attachment.upload_tooltip', { size: MAX_FILE_SIZE / (1024 * 1024) })
 
   return (
     <div className="flex items-center gap-2" onDragOver={handleDragOver} onDrop={handleDrop}>
-      {/* Hidden file input */}
+      {/* Hidden file input - no accept restriction to allow all file types */}
       <input
         ref={fileInputRef}
         type="file"
-        accept={acceptString}
         multiple
         onChange={handleFileChange}
         className="hidden"

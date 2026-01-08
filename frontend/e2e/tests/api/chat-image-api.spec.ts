@@ -109,8 +109,14 @@ test.describe('Chat Image API Tests', () => {
     })
 
     test('should reject unsupported file types', async ({ request }) => {
-      // Create a fake executable file
-      const exeBuffer = Buffer.from('MZ fake executable content')
+      // Create actual binary data (truncated PNG header) with unknown extension
+      // This tests that binary files without supported extensions are rejected
+      const binaryBuffer = Buffer.from([
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, // PNG header
+        0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, // IHDR chunk start
+        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, // 1x1 dimension
+        0xff, 0xfe, 0xfd, 0xfc, 0xfb, 0xfa, 0xf9, 0xf8, // More binary data
+      ])
 
       const response = await request.post(
         `${process.env.E2E_API_URL || 'http://localhost:8000'}/api/attachments/upload`,
@@ -120,15 +126,15 @@ test.describe('Chat Image API Tests', () => {
           },
           multipart: {
             file: {
-              name: 'malicious.exe',
-              mimeType: 'application/x-msdownload',
-              buffer: exeBuffer,
+              name: 'unknown.bin',
+              mimeType: 'application/octet-stream',
+              buffer: binaryBuffer,
             },
           },
         }
       )
 
-      // Should be rejected
+      // Should be rejected - binary files with unknown extensions are not supported
       expect(response.status()).toBe(400)
     })
 

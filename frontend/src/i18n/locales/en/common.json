@@ -1044,6 +1044,8 @@
     "errors": {
       "unsupported_type": "Unsupported file format",
       "unsupported_type_hint": "Please upload files in these formats: {{types}}",
+      "unrecognized_type": "Unrecognized file type",
+      "unrecognized_type_hint": "Please upload documents, images, or text files",
       "file_too_large": "File is too large",
       "file_too_large_hint": "File size cannot exceed {{size}} MB. Please compress and try again",
       "parse_failed": "Failed to parse file",
@@ -1065,7 +1067,8 @@
     "truncation": {
       "notice": "⚠️ Content too long, auto-truncated ({{original}} chars → {{truncated}} chars)"
     },
-    "supported_types": "PDF, Word, Excel, TXT, Markdown, Images",
-    "characters": "chars"
+    "supported_types": "PDF, Word, Excel, TXT, Markdown, Images, Code files",
+    "characters": "chars",
+    "upload_tooltip": "Supported file types: Documents (PDF, Word, PPT, Excel), Images, Code files and text files\nMax file size: {{size}} MB"
   }
 }

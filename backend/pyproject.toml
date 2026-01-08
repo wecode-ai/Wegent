@@ -77,6 +77,7 @@ dependencies = [
     "openpyxl>=3.1.2",
     "chardet>=5.0.0",
     "pillow>=12.0.0",
+    "python-magic>=0.4.27",
     "markdown>=3.5.0",
     "beautifulsoup4>=4.12.0",
     "emoji>=2.9.0",
