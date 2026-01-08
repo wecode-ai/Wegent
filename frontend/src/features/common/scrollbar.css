@@ -4,38 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-/* Custom scrollbar styles (for ChatInput, main area, etc.) */
-.custom-scrollbar::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-.custom-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
-  border-radius: 3px;
-}
-
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background: transparent;
-  border-radius: 3px;
-  transition: background-color 0.3s ease;
-}
-
-.custom-scrollbar:hover::-webkit-scrollbar-thumb {
-  background: rgb(var(--color-scrollbar-thumb));
-}
-
-.custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgb(var(--color-border-strong));
-}
-
-/* Firefox support */
+/* Use default browser scrollbar styles */
 .custom-scrollbar {
-  scrollbar-width: thin;
-  scrollbar-color: transparent transparent;
-  transition: scrollbar-color 0.3s ease;
-}
-
-.custom-scrollbar:hover {
-  scrollbar-color: rgb(var(--color-scrollbar-thumb)) transparent;
+  /* No custom styling - use browser defaults */
 }

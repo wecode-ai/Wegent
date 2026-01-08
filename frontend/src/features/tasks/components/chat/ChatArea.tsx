@@ -469,9 +469,7 @@ function ChatAreaContent({
               width: floatingMetrics.width,
             }}
           >
-            {/* Gradient background - contained within the floating input bounds */}
-            <div className="absolute inset-0 bg-gradient-to-t from-base via-base/95 to-base/0 pointer-events-none" />
-            <div className="relative z-10 w-full max-w-4xl mx-auto px-4 sm:px-6 py-4">
+            <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 py-4">
               <ChatInputCard {...inputCardProps} />
             </div>
           </div>
