@@ -541,16 +541,16 @@ class KnowledgeService:
 
         document = KnowledgeDocument(
             kind_id=knowledge_base_id,
-            attachment_id=data.attachment_id,
+            attachment_id=data.attachment_id if data.attachment_id is not None else 0,
             name=data.name,
             file_extension=data.file_extension,
             file_size=data.file_size,
             user_id=user_id,
             splitter_config=(
-                data.splitter_config.model_dump() if data.splitter_config else None
-            ),  # Save splitter_config
+                data.splitter_config.model_dump() if data.splitter_config else {}
+            ),  # Save splitter_config with default {}
             source_type=data.source_type.value if data.source_type else "file",
-            source_config=data.source_config,
+            source_config=data.source_config if data.source_config else {},
         )
         db.add(document)
 
