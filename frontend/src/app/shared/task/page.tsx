@@ -16,7 +16,7 @@ import TopNavigation from '@/features/layout/TopNavigation'
 import { GithubStarButton } from '@/features/layout/GithubStarButton'
 import { MessageBubble, type Message } from '@/features/tasks/components/message'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { User } from '@/types/api'
+import type { User, SubtaskContextBrief } from '@/types/api'
 import { InAppBrowserGuard } from '@/components/InAppBrowserGuard'
 import { detectInAppBrowser } from '@/utils/browserDetection'
 import '@/features/common/scrollbar.css'
@@ -130,19 +130,19 @@ function SharedTaskContent() {
   const convertSubtaskToMessage = (subtask: PublicSharedTaskResponse['subtasks'][0]): Message => {
     const isUser = subtask.role === 'USER'
 
-    // Convert public attachments to Message attachment format
-    const attachments =
-      subtask.attachments?.map(att => ({
-        id: att.id,
-        filename: att.original_filename,
-        file_size: att.file_size,
-        mime_type: att.mime_type,
-        status: att.status as 'uploading' | 'parsing' | 'ready' | 'failed',
-        text_length: att.text_length,
-        error_message: null,
-        subtask_id: subtask.id,
-        file_extension: att.file_extension,
-        created_at: subtask.created_at,
+    // Convert public contexts to SubtaskContextBrief format for ContextBadgeList
+    const contexts: SubtaskContextBrief[] =
+      subtask.contexts?.map(ctx => ({
+        id: ctx.id,
+        context_type: ctx.context_type,
+        name: ctx.name,
+        status: ctx.status as 'pending' | 'uploading' | 'parsing' | 'ready' | 'failed',
+        // Attachment fields
+        file_extension: ctx.file_extension,
+        file_size: ctx.file_size,
+        mime_type: ctx.mime_type,
+        // Knowledge base fields
+        document_count: ctx.document_count,
       })) || []
 
     // For user messages, use prompt
@@ -153,7 +153,10 @@ function SharedTaskContent() {
         timestamp: new Date(subtask.created_at).getTime(),
         subtaskStatus: subtask.status,
         subtaskId: subtask.id,
-        attachments,
+        contexts,
+        // Group chat fields
+        senderUserName: subtask.sender_user_name,
+        senderUserId: subtask.sender_user_id,
       }
     }
 
@@ -189,7 +192,7 @@ function SharedTaskContent() {
       botName: 'AI Assistant',
       subtaskStatus: subtask.status,
       subtaskId: subtask.id,
-      attachments,
+      contexts,
     }
   }
 

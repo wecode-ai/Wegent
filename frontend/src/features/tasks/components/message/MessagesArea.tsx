@@ -23,6 +23,8 @@ import MessageBubble, { type Message } from './MessageBubble'
 import TaskShareModal from '../share/TaskShareModal'
 import ExportSelectModal, {
   type SelectableMessage,
+  type SelectableAttachment,
+  type SelectableKnowledgeBase,
   type ExportFormat,
 } from '../share/ExportSelectModal'
 import { taskApis } from '@/apis/tasks'
@@ -529,6 +531,42 @@ export default function MessagesArea({
             content = content.substring(6)
           }
 
+          // Extract attachments and knowledge bases from contexts (new unified context system)
+          // or fall back to legacy attachments field
+          let attachments: SelectableAttachment[] | undefined
+          let knowledgeBases: SelectableKnowledgeBase[] | undefined
+
+          if (msg.contexts && msg.contexts.length > 0) {
+            // Filter attachment type contexts and convert to SelectableAttachment format
+            const attachmentContexts = msg.contexts.filter(ctx => ctx.context_type === 'attachment')
+            if (attachmentContexts.length > 0) {
+              attachments = attachmentContexts.map(ctx => ({
+                id: ctx.id,
+                filename: ctx.name,
+                file_size: ctx.file_size || 0,
+                file_extension: ctx.file_extension || '',
+              }))
+            }
+
+            // Filter knowledge base type contexts and convert to SelectableKnowledgeBase format
+            const kbContexts = msg.contexts.filter(ctx => ctx.context_type === 'knowledge_base')
+            if (kbContexts.length > 0) {
+              knowledgeBases = kbContexts.map(ctx => ({
+                id: ctx.id,
+                name: ctx.name,
+                document_count: ctx.document_count ?? undefined,
+              }))
+            }
+          } else if (msg.attachments && msg.attachments.length > 0) {
+            // Legacy attachments field fallback
+            attachments = msg.attachments.map(att => ({
+              id: att.id,
+              filename: att.filename,
+              file_size: att.file_size,
+              file_extension: att.file_extension,
+            }))
+          }
+
           return {
             id: msg.subtaskId?.toString() || msg.id,
             type: msg.type,
@@ -537,12 +575,9 @@ export default function MessagesArea({
             botName: msg.botName || selectedTaskDetail?.team?.name || 'Bot',
             userName: msg.senderUserName || selectedTaskDetail?.user?.user_name,
             teamName: selectedTaskDetail?.team?.name,
-            attachments: msg.attachments?.map(att => ({
-              id: att.id,
-              filename: att.filename,
-              file_size: att.file_size,
-              file_extension: att.file_extension,
-            })),
+            attachments: attachments && attachments.length > 0 ? attachments : undefined,
+            knowledgeBases:
+              knowledgeBases && knowledgeBases.length > 0 ? knowledgeBases : undefined,
           }
         })
 

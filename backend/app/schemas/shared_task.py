@@ -78,23 +78,27 @@ class SharedTaskInDB(BaseModel):
     updated_at: datetime
 
 
-class PublicAttachmentData(BaseModel):
+class PublicContextData(BaseModel):
     """
-    Public attachment data for read-only viewing.
-
-    NOTE: This schema is used for shared task public viewing.
-    The data is sourced from SubtaskContext (not SubtaskAttachment).
-    Field names are kept for backward compatibility with frontend.
+    Public context data for read-only viewing (unified attachment and knowledge base).
+    This replaces the legacy PublicAttachmentData for shared tasks.
     """
 
     id: int
-    original_filename: str
-    file_extension: str
-    file_size: int
-    mime_type: str
-    extracted_text: str
-    text_length: int
+    context_type: str  # "attachment" or "knowledge_base"
+    name: str
     status: str
+
+    # Attachment-specific fields (optional)
+    file_extension: Optional[str] = None
+    file_size: Optional[int] = None
+    mime_type: Optional[str] = None
+
+    # Knowledge base-specific fields (optional)
+    document_count: Optional[int] = None
+
+    class Config:
+        from_attributes = True
 
 
 class PublicSubtaskData(BaseModel):
@@ -107,7 +111,10 @@ class PublicSubtaskData(BaseModel):
     status: str
     created_at: datetime
     updated_at: datetime
-    attachments: List[PublicAttachmentData] = []
+
+    # Unified contexts field (replaces attachments)
+    contexts: List[PublicContextData] = []
+
     # Group chat fields
     sender_type: Optional[str] = None
     sender_user_id: Optional[int] = None
