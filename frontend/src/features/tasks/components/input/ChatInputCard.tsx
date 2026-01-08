@@ -11,7 +11,6 @@ import InputBadgeDisplay from './InputBadgeDisplay'
 import ExternalApiParamsInput from '../params/ExternalApiParamsInput'
 import { SelectedTeamBadge } from '../selector/SelectedTeamBadge'
 import ChatInputControls, { ChatInputControlsProps } from './ChatInputControls'
-import { QuoteCard } from '../text-selection'
 import type { Team, ChatTipItem } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -72,6 +71,7 @@ export function ChatInputCard({
   taskInputMessage,
   setTaskInputMessage,
   selectedTeam,
+  onTeamChange,
   externalApiParams,
   onExternalApiParamsChange,
   onAppModeChange,
@@ -178,9 +178,6 @@ export function ChatInputCard({
           disabled={isLoading || isStreaming}
         />
 
-        {/* Quote Card - shows quoted text from text selection */}
-        <QuoteCard />
-
         {/* Chat Input with inline badge */}
         {!shouldHideChatInput && (
           <div className="px-4 pt-2">
@@ -212,6 +209,7 @@ export function ChatInputCard({
         <div ref={inputControlsRef}>
           <ChatInputControls
             selectedTeam={selectedTeam}
+            onTeamChange={onTeamChange}
             selectedModel={selectedModel}
             setSelectedModel={setSelectedModel}
             forceOverride={forceOverride}

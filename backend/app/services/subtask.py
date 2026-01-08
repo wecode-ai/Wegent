@@ -191,6 +191,7 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
         # First try to find subtask owned by user
         subtask = (
             db.query(Subtask)
+            .options(subqueryload(Subtask.contexts))
             .filter(Subtask.id == subtask_id, Subtask.user_id == user_id)
             .first()
         )
@@ -198,7 +199,12 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
         # If not found and user is a group chat member, allow access
         if not subtask:
             # Get the subtask to check its task_id
-            subtask_check = db.query(Subtask).filter(Subtask.id == subtask_id).first()
+            subtask_check = (
+                db.query(Subtask)
+                .options(subqueryload(Subtask.contexts))
+                .filter(Subtask.id == subtask_id)
+                .first()
+            )
 
             if subtask_check:
                 # Check if user is a member of this task's group chat
@@ -277,9 +283,12 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
                 status_code=403, detail="Not authorized to access this task"
             )
 
-        # Build query
+        # Build query with contexts
+        from sqlalchemy.orm import subqueryload
+
         query = (
             db.query(Subtask, User.user_name.label("sender_username"))
+            .options(subqueryload(Subtask.contexts))
             .outerjoin(User, Subtask.sender_user_id == User.id)
             .filter(Subtask.task_id == task_id)
         )
@@ -306,6 +315,20 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
         # Convert to dict format
         messages = []
         for subtask, sender_username in results:
+            # Serialize contexts using SubtaskContextBrief
+            from app.schemas.subtask_context import SubtaskContextBrief as ContextBrief
+
+            contexts = []
+            if hasattr(subtask, "contexts") and subtask.contexts:
+                for ctx in subtask.contexts:
+                    if hasattr(ctx, "model_dump"):
+                        # Already a Pydantic model
+                        contexts.append(ctx.model_dump(mode="json"))
+                    else:
+                        # ORM model, convert using from_model
+                        brief = ContextBrief.from_model(ctx)
+                        contexts.append(brief.model_dump(mode="json"))
+
             message_dict = {
                 "id": subtask.id,
                 "task_id": subtask.task_id,
@@ -336,7 +359,8 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
                 ),
                 "user_id": subtask.user_id,
                 "executor_deleted_at": subtask.executor_deleted_at,
-                "attachments": [],  # Attachments not loaded in this query for performance
+                "contexts": contexts,  # Add contexts field
+                "attachments": [],  # Deprecated: kept for backward compatibility
                 "sender_user_name": sender_username,
                 "reply_to_subtask_id": subtask.reply_to_subtask_id,
             }

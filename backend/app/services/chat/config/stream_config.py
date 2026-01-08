@@ -69,6 +69,9 @@ class WebSocketStreamConfig:
     shell_type: str = "Chat"  # Shell type for frontend display
     extra_tools: list[BaseTool] = field(default_factory=list)
 
+    # Context flags
+    has_table_context: bool = False  # Whether user selected table context
+
     def get_username_for_message(self) -> str | None:
         """Get username for message prefix in group chat mode."""
         return self.user_name if self.is_group_chat else None

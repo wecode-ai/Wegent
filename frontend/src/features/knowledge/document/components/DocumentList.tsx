@@ -22,7 +22,7 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { Checkbox } from '@/components/ui/checkbox'
 import { DocumentItem } from './DocumentItem'
-import { DocumentUpload } from './DocumentUpload'
+import { DocumentUpload, type TableDocument } from './DocumentUpload'
 import { DeleteDocumentDialog } from './DeleteDocumentDialog'
 import { EditDocumentDialog } from './EditDocumentDialog'
 import { RetrievalTestDialog } from './RetrievalTestDialog'
@@ -122,11 +122,23 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
           file_extension: extension,
           file_size: file.size,
           splitter_config: splitterConfig,
+          source_type: 'file',
         })
       } catch {
         // Continue with next file even if one fails
       }
     }
+    setShowUpload(false)
+  }
+
+  const handleTableAdd = async (data: TableDocument) => {
+    await create({
+      name: data.name,
+      file_extension: 'table',
+      file_size: 0,
+      source_type: 'table',
+      source_config: data.source_config,
+    })
     setShowUpload(false)
   }
 
@@ -357,6 +369,7 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
         open={showUpload}
         onOpenChange={setShowUpload}
         onUploadComplete={handleUploadComplete}
+        onTableAdd={handleTableAdd}
       />
 
       <EditDocumentDialog

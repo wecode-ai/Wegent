@@ -203,6 +203,27 @@ class ChatService(ChatInterface):
                         )
                         extra_tools.extend(kb_tools)
 
+                    # Prepare table tools if table_contexts provided
+                    logger.debug(
+                        "[CHAT_SERVICE] Checking table_contexts: has_table_contexts=%s, count=%d, content=%s",
+                        bool(request.table_contexts),
+                        len(request.table_contexts) if request.table_contexts else 0,
+                        request.table_contexts,
+                    )
+                    if request.table_contexts:
+                        from chat_shell.tools.builtin import DataTableTool
+
+                        data_table_tool = DataTableTool(
+                            table_contexts=request.table_contexts,
+                            user_id=request.user_id,
+                            db_session=db,
+                        )
+                        extra_tools.append(data_table_tool)
+                        logger.info(
+                            "[CHAT_SERVICE] Added DataTableTool with %d table context(s)",
+                            len(request.table_contexts),
+                        )
+
                     # Prepare load_skill_tool if skills are configured
                     load_skill_tool = None
                     if request.skill_names:

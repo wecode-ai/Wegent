@@ -17,6 +17,7 @@ import {
   ClipboardPaste,
   ArrowLeft,
   Pencil,
+  Link,
 } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -42,7 +43,13 @@ import type { Attachment } from '@/types/api'
 import { cn } from '@/lib/utils'
 
 // Upload mode type
-type UploadMode = 'file' | 'text'
+type UploadMode = 'file' | 'text' | 'table'
+
+// Table document data
+export interface TableDocument {
+  name: string
+  source_config: { url: string }
+}
 
 interface DocumentUploadProps {
   open: boolean
@@ -51,9 +58,15 @@ interface DocumentUploadProps {
     attachments: { attachment: Attachment; file: File }[],
     splitterConfig?: Partial<SplitterConfig>
   ) => Promise<void>
+  onTableAdd?: (data: TableDocument) => Promise<void>
 }
 
-export function DocumentUpload({ open, onOpenChange, onUploadComplete }: DocumentUploadProps) {
+export function DocumentUpload({
+  open,
+  onOpenChange,
+  onUploadComplete,
+  onTableAdd,
+}: DocumentUploadProps) {
   const { t } = useTranslation('knowledge')
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { state, addFiles, removeFile, clearFiles, startUpload, retryFile, renameFile, reset } =
@@ -75,6 +88,12 @@ export function DocumentUpload({ open, onOpenChange, onUploadComplete }: Documen
   const [textContent, setTextContent] = useState('')
   const [textFileName, setTextFileName] = useState('')
   const [textError, setTextError] = useState<string | null>(null)
+
+  // Table input state
+  const [tableUrl, setTableUrl] = useState('')
+  const [tableName, setTableName] = useState('')
+  const [tableError, setTableError] = useState<string | null>(null)
+  const [tableSubmitting, setTableSubmitting] = useState(false)
 
   // File rename editing state
   const [editingFileId, setEditingFileId] = useState<string | null>(null)
@@ -204,6 +223,9 @@ export function DocumentUpload({ open, onOpenChange, onUploadComplete }: Documen
     setTextContent('')
     setTextFileName('')
     setTextError(null)
+    setTableUrl('')
+    setTableName('')
+    setTableError(null)
     onOpenChange(false)
   }
 
@@ -239,6 +261,54 @@ export function DocumentUpload({ open, onOpenChange, onUploadComplete }: Documen
     setTextContent('')
     setTextFileName('')
     setTextError(null)
+  }
+
+  // Handle table submission
+  const handleTableSubmit = useCallback(async () => {
+    // Validate URL
+    if (!tableUrl.trim()) {
+      setTableError(t('document.upload.tableUrlRequired'))
+      return
+    }
+
+    // Validate name
+    if (!tableName.trim()) {
+      setTableError(t('document.upload.tableNameRequired'))
+      return
+    }
+
+    if (!onTableAdd) {
+      setTableError('Table add handler not configured')
+      return
+    }
+
+    setTableSubmitting(true)
+    setTableError(null)
+
+    try {
+      await onTableAdd({
+        name: tableName.trim(),
+        source_config: { url: tableUrl.trim() },
+      })
+
+      // Reset and close on success
+      setTableUrl('')
+      setTableName('')
+      setUploadMode('file')
+      handleClose()
+    } catch (err) {
+      setTableError(err instanceof Error ? err.message : t('document.upload.tableAddFailed'))
+    } finally {
+      setTableSubmitting(false)
+    }
+  }, [tableUrl, tableName, onTableAdd, t, handleClose])
+
+  // Handle back from table mode
+  const handleBackFromTableMode = () => {
+    setUploadMode('file')
+    setTableUrl('')
+    setTableName('')
+    setTableError(null)
   }
 
   const formatFileSize = (bytes: number) => {
@@ -408,6 +478,18 @@ export function DocumentUpload({ open, onOpenChange, onUploadComplete }: Documen
               <ClipboardPaste className="w-4 h-4 mr-2" />
               {t('document.upload.pasteText')}
             </Button>
+            {onTableAdd && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 px-4"
+                onClick={() => setUploadMode('table')}
+                disabled={state.isUploading}
+              >
+                <Link className="w-4 h-4 mr-2" />
+                {t('document.upload.addTable')}
+              </Button>
+            )}
           </div>
 
           <p className="text-xs text-text-muted mt-4">
@@ -631,11 +713,105 @@ export function DocumentUpload({ open, onOpenChange, onUploadComplete }: Documen
     </>
   )
 
+  // Render table mode
+  const renderTableMode = () => (
+    <>
+      <DialogHeader className="flex flex-row items-center gap-2 space-y-0">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 shrink-0"
+          onClick={handleBackFromTableMode}
+        >
+          <ArrowLeft className="w-4 h-4" />
+        </Button>
+        <DialogTitle>{t('document.upload.addTable')}</DialogTitle>
+      </DialogHeader>
+
+      <div className="py-4 space-y-4">
+        <p className="text-sm text-text-secondary">{t('document.upload.tableHint')}</p>
+
+        {/* Document name input */}
+        <div className="space-y-2">
+          <Label htmlFor="table-name" className="text-sm font-medium">
+            {t('document.upload.tableName')}
+          </Label>
+          <Input
+            id="table-name"
+            placeholder={t('document.upload.tableNamePlaceholder')}
+            value={tableName}
+            onChange={e => {
+              setTableName(e.target.value)
+              if (tableError) setTableError(null)
+            }}
+            className="h-9"
+          />
+        </div>
+
+        {/* URL input */}
+        <div className="space-y-2">
+          <Label htmlFor="table-url" className="text-sm font-medium">
+            {t('document.upload.tableUrl')}
+          </Label>
+          <Textarea
+            id="table-url"
+            placeholder={t('document.upload.tableUrlPlaceholder')}
+            value={tableUrl}
+            onChange={e => {
+              setTableUrl(e.target.value)
+              if (tableError) setTableError(null)
+            }}
+            className="min-h-[80px] resize-none"
+            rows={3}
+          />
+        </div>
+
+        {/* Error message */}
+        {tableError && (
+          <div className="flex items-center gap-2 p-3 bg-error/10 text-error rounded-lg text-sm">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+            <span>{tableError}</span>
+          </div>
+        )}
+      </div>
+
+      <div className="flex justify-end gap-2">
+        <Button variant="outline" onClick={handleBackFromTableMode}>
+          {t('common:actions.cancel')}
+        </Button>
+        <Button
+          variant="primary"
+          onClick={handleTableSubmit}
+          disabled={!tableUrl.trim() || !tableName.trim() || tableSubmitting}
+        >
+          {tableSubmitting ? (
+            <>
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              {t('document.upload.adding')}
+            </>
+          ) : (
+            t('document.upload.confirmAdd')
+          )}
+        </Button>
+      </div>
+    </>
+  )
+
+  // Render mode selector
+  const renderContent = () => {
+    switch (uploadMode) {
+      case 'text':
+        return renderTextMode()
+      case 'table':
+        return renderTableMode()
+      default:
+        return renderFileMode()
+    }
+  }
+
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-lg overflow-hidden">
-        {uploadMode === 'text' ? renderTextMode() : renderFileMode()}
-      </DialogContent>
+      <DialogContent className="sm:max-w-2xl overflow-hidden">{renderContent()}</DialogContent>
     </Dialog>
   )
 }

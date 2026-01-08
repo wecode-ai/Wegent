@@ -61,6 +61,7 @@ interface StreamingMessageBubbleProps {
   onSendMessage?: (content: string) => void
   index: number
   isGroupChat?: boolean
+  onContextReselect?: (context: import('@/types/api').SubtaskContextBrief) => void
 }
 
 function StreamingMessageBubble({
@@ -74,6 +75,7 @@ function StreamingMessageBubble({
   onSendMessage,
   index,
   isGroupChat,
+  onContextReselect,
 }: StreamingMessageBubbleProps) {
   // Use typewriter effect for streaming content
   const displayContent = useTypewriter(message.content || '')
@@ -119,6 +121,7 @@ function StreamingMessageBubble({
       isWaiting={Boolean(isStreaming && !hasContent && !hasThinking)}
       onSendMessage={onSendMessage}
       isGroupChat={isGroupChat}
+      onContextReselect={onContextReselect}
     />
   )
 }
@@ -144,6 +147,8 @@ interface MessagesAreaProps {
    * Can be either tempTaskId (negative) or taskId (positive) before selectedTaskDetail updates.
    */
   pendingTaskId?: number | null
+  /** Callback when user clicks on a context badge to re-select it */
+  onContextReselect?: (context: import('@/types/api').SubtaskContextBrief) => void
 }
 
 export default function MessagesArea({
@@ -160,6 +165,7 @@ export default function MessagesArea({
   enableCorrectionWebSearch = false,
   hasMessages: hasMessagesFromParent,
   pendingTaskId,
+  onContextReselect,
 }: MessagesAreaProps) {
   const { t } = useTranslation()
   const { toast } = useToast()
@@ -822,6 +828,7 @@ export default function MessagesArea({
                   onSendMessage={onSendMessage}
                   index={index}
                   isGroupChat={isGroupChat}
+                  onContextReselect={onContextReselect}
                 />
               )
             }
@@ -850,6 +857,7 @@ export default function MessagesArea({
                     onSendMessage={onSendMessage}
                     isCurrentUserMessage={isCurrentUserMessage}
                     isGroupChat={isGroupChat}
+                    onContextReselect={onContextReselect}
                   />
                   <div className="flex flex-col gap-2">
                     {/* Show progress indicator when correction is in progress */}
@@ -909,6 +917,7 @@ export default function MessagesArea({
                 isCurrentUserMessage={isCurrentUserMessage}
                 onRetry={onRetry}
                 isGroupChat={isGroupChat}
+                onContextReselect={onContextReselect}
               />
             )
           })}

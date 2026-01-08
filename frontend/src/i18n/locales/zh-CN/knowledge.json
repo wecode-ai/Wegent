@@ -54,7 +54,7 @@
     },
     "document": {
       "title": "文档",
-      "upload": "上传文件",
+      "upload": "添加来源",
       "edit": "编辑文档",
       "enable": "启用",
       "disable": "停用",
@@ -67,6 +67,7 @@
         "available": "可用",
         "unavailable": "不可用"
       },
+      "openLink": "打开链接",
       "columns": {
         "name": "名称",
         "type": "类型",
@@ -123,7 +124,18 @@
       "textPlaceholder": "在此处粘贴文本...",
       "textRequired": "请输入文本内容",
       "insert": "插入",
-      "clickToRename": "点击修改文件名"
+      "clickToRename": "点击修改文件名",
+      "addTable": "添加数据表",
+      "tableHint": "输入数据表的链接和名称，即可将其添加到知识库。",
+      "tableName": "文档名称",
+      "tableNamePlaceholder": "输入文档名称",
+      "tableUrl": "数据表链接",
+      "tableUrlPlaceholder": "粘贴数据表链接",
+      "tableUrlRequired": "请输入数据表链接",
+      "tableNameRequired": "请输入文档名称",
+      "tableAddFailed": "添加失败，请重试",
+      "adding": "添加中...",
+      "confirmAdd": "确认添加"
     },
     "permission": {
       "noAccess": "您没有操作权限"
@@ -236,5 +248,25 @@
   "no_bound_model_warning": "Wiki生成功能暂不可用。默认Wiki智能体未配置模型，请联系管理员。",
   "regenerate": "重新生成",
   "view_detail": "查看详情",
-  "coming_soon": "即将推出"
+  "coming_soon": "即将推出",
+  "dingtalkTable": {
+    "title": "钉钉表格",
+    "empty": "暂无钉钉表格",
+    "emptyHint": "在知识库中添加钉钉多维表后，可在此处查看",
+    "error": {
+      "noAssistant": "未找到AI助理智能体，请确保系统已配置名为'AI助理'的智能体",
+      "loadFailed": "加载钉钉表格失败"
+    },
+    "analyzing": "正在分析钉钉多维表格数据..."
+  },
+  "table": {
+    "title": "数据表",
+    "empty": "暂无数据表",
+    "emptyHint": "在知识库中添加数据表后，可在此处查看",
+    "error": {
+      "noAssistant": "未找到AI助理智能体，请确保系统已配置名为'AI助理'的智能体",
+      "loadFailed": "加载数据表失败"
+    },
+    "analyzing": "正在分析数据表..."
+  }
 }

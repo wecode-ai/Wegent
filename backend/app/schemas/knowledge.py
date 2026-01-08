@@ -10,7 +10,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # Import shared types from kind.py to avoid duplication
 from app.schemas.kind import (
@@ -29,6 +29,14 @@ class DocumentStatus(str, Enum):
 
     ENABLED = "enabled"
     DISABLED = "disabled"
+
+
+class DocumentSourceType(str, Enum):
+    """Document source type enumeration."""
+
+    FILE = "file"
+    TEXT = "text"
+    TABLE = "table"
 
 
 class ResourceScope(str, Enum):
@@ -139,11 +147,19 @@ class KnowledgeBaseListResponse(BaseModel):
 class KnowledgeDocumentCreate(BaseModel):
     """Schema for creating a knowledge document."""
 
-    attachment_id: int = Field(..., description="ID of the uploaded attachment")
+    attachment_id: Optional[int] = Field(
+        None,
+        description="ID of the uploaded attachment (required for file/text source)",
+    )
     name: str = Field(..., min_length=1, max_length=255)
     file_extension: str = Field(..., max_length=50)
-    file_size: int = Field(..., ge=0)
+    file_size: int = Field(default=0, ge=0)
     splitter_config: Optional[SplitterConfig] = None
+    source_type: DocumentSourceType = Field(default=DocumentSourceType.FILE)
+    source_config: dict = Field(
+        default_factory=dict,
+        description="Source configuration (e.g., {'url': '...'} for table)",
+    )
 
 
 class KnowledgeDocumentUpdate(BaseModel):
@@ -169,11 +185,21 @@ class KnowledgeDocumentResponse(BaseModel):
     user_id: int
     is_active: bool
     splitter_config: Optional[SplitterConfig] = None
+    source_type: DocumentSourceType = DocumentSourceType.FILE
+    source_config: Optional[dict] = None
     doc_ref: Optional[str] = Field(
         None, description="RAG storage document reference ID"
     )
     created_at: datetime
     updated_at: datetime
+
+    @field_validator("source_config", mode="before")
+    @classmethod
+    def ensure_source_config_dict(cls, v):
+        """Convert None to empty dict for backward compatibility."""
+        if v is None:
+            return {}
+        return v
 
     class Config:
         from_attributes = True
