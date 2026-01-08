@@ -1362,6 +1362,7 @@ const MessageBubble = memo(
           <div
             className={`${bubbleBaseClasses} ${bubbleTypeClasses}`}
             onMouseUp={handleTextSelection}
+            data-message-content="true"
           >
             {/* Show header for AI messages */}
             {!isUserTypeMessage && (

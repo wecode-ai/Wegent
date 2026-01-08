@@ -7,7 +7,13 @@
  * Handles rendering of chat messages with bubble styles
  */
 
-import type { ExportMessage, ExportAttachment, ParsedLine, TableAlignment } from '../types'
+import type {
+  ExportMessage,
+  ExportAttachment,
+  ExportKnowledgeBase,
+  ParsedLine,
+  TableAlignment,
+} from '../types'
 import { COLORS, LINE_HEIGHTS, HEADING_SIZES, BUBBLE_STYLES, PRIMARY_COLOR } from '../constants'
 import { setFontForText } from '../font'
 import { sanitizeEmojisForPdf } from '../emoji'
@@ -290,6 +296,68 @@ export function renderAttachmentsInBubble(
     } else {
       renderFileAttachmentInBubble(ctx, attachment, startX, maxWidth)
     }
+  }
+  ctx.yPosition += 2
+}
+
+/**
+ * Render a knowledge base info card within a bubble
+ */
+export function renderKnowledgeBaseInBubble(
+  ctx: RenderContext,
+  kb: ExportKnowledgeBase,
+  startX: number,
+  maxWidth: number
+): void {
+  const { pdf } = ctx
+  const kbHeight = 7
+
+  // Draw knowledge base box with gray border (consistent with attachments)
+  pdf.setFillColor(255, 255, 255)
+  pdf.setDrawColor(200, 200, 200)
+  pdf.roundedRect(startX, ctx.yPosition - 3, maxWidth - 10, kbHeight, 1, 1, 'FD')
+
+  // Knowledge base type label [KB] (gray color, consistent with attachment labels)
+  pdf.setFontSize(7)
+  pdf.setFont('helvetica', 'bold')
+  pdf.setTextColor(100, 100, 100)
+  pdf.text('[KB]', startX + 2, ctx.yPosition)
+
+  // Knowledge base name
+  pdf.setFontSize(8)
+  setFontForText(pdf, kb.name, 'normal')
+  pdf.setTextColor(COLORS.text.r, COLORS.text.g, COLORS.text.b)
+  let displayName = kb.name
+  const maxNameWidth = maxWidth - 50
+  if (pdf.getTextWidth(displayName) > maxNameWidth) {
+    while (pdf.getTextWidth(displayName + '...') > maxNameWidth && displayName.length > 0) {
+      displayName = displayName.slice(0, -1)
+    }
+    displayName += '...'
+  }
+  pdf.text(displayName, startX + 12, ctx.yPosition)
+
+  // Document count
+  pdf.setFontSize(7)
+  pdf.setTextColor(140, 140, 140)
+  pdf.setFont('helvetica', 'normal')
+  const countText = `${kb.document_count || 0} docs`
+  pdf.text(countText, startX + maxWidth - 15, ctx.yPosition, { align: 'right' })
+
+  ctx.yPosition += kbHeight + 2
+}
+
+/**
+ * Render knowledge bases within a chat bubble
+ */
+export function renderKnowledgeBasesInBubble(
+  ctx: RenderContext,
+  knowledgeBases: ExportKnowledgeBase[],
+  startX: number,
+  maxWidth: number
+): void {
+  for (const kb of knowledgeBases) {
+    renderKnowledgeBaseInBubble(ctx, kb, startX, maxWidth)
   }
   ctx.yPosition += 2
 }
@@ -582,6 +650,10 @@ export async function renderMessage(ctx: RenderContext, msg: ExportMessage): Pro
       renderAttachmentsInBubble(ctx, msg.attachments, contentStartX, contentMaxWidth)
     }
 
+    if (msg.knowledgeBases && msg.knowledgeBases.length > 0) {
+      renderKnowledgeBasesInBubble(ctx, msg.knowledgeBases, contentStartX, contentMaxWidth)
+    }
+
     await renderMessageContentInBubble(ctx, content, contentStartX, contentMaxWidth)
 
     const bubbleEndY = ctx.yPosition + padding
@@ -617,6 +689,10 @@ export async function renderMessage(ctx: RenderContext, msg: ExportMessage): Pro
 
     if (msg.attachments && msg.attachments.length > 0) {
       renderAttachmentsInBubble(ctx, msg.attachments, contentStartX, contentMaxWidth)
+    }
+
+    if (msg.knowledgeBases && msg.knowledgeBases.length > 0) {
+      renderKnowledgeBasesInBubble(ctx, msg.knowledgeBases, contentStartX, contentMaxWidth)
     }
 
     await renderMessageContentInBubble(ctx, content, contentStartX, contentMaxWidth)

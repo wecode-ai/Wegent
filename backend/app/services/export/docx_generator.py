@@ -204,11 +204,11 @@ def _add_message(doc: Document, subtask: Subtask, task: Kind, user: User, db: Se
     time_run.font.size = Pt(9)
     time_run.font.color.rgb = RGBColor(160, 160, 160)
 
-    # Attachments (for user messages)
+    # Contexts (attachments and knowledge bases) for user messages
     if is_user and subtask.contexts:
-        # Filter only attachment type contexts
         from app.models.subtask_context import ContextType
 
+        # Filter attachment type contexts
         attachment_contexts = [
             ctx
             for ctx in subtask.contexts
@@ -216,6 +216,15 @@ def _add_message(doc: Document, subtask: Subtask, task: Kind, user: User, db: Se
         ]
         if attachment_contexts:
             _add_attachments(doc, attachment_contexts, db)
+
+        # Filter knowledge base type contexts
+        knowledge_base_contexts = [
+            ctx
+            for ctx in subtask.contexts
+            if ctx.context_type == ContextType.KNOWLEDGE_BASE.value
+        ]
+        if knowledge_base_contexts:
+            _add_knowledge_bases(doc, knowledge_base_contexts)
 
     # Message content
     content = subtask.prompt if is_user else _extract_result_value(subtask.result)
@@ -367,6 +376,36 @@ def _add_file_attachment(doc: Document, attachment: SubtaskContext):
     p_fmt = p.paragraph_format
     p_fmt.left_indent = Inches(0.2)
     p_fmt.space_after = Pt(6)
+
+
+def _add_knowledge_bases(doc: Document, knowledge_bases: List[SubtaskContext]):
+    """Add knowledge base info cards"""
+    for kb in knowledge_bases:
+        p = doc.add_paragraph()
+
+        # Get knowledge base info from type_data
+        type_data = kb.type_data or {}
+        document_count = type_data.get("document_count", 0)
+
+        # Knowledge base type label (gray color, consistent with attachment labels)
+        type_run = p.add_run("[KB] ")
+        type_run.font.bold = True
+        type_run.font.size = Pt(9)
+        type_run.font.color.rgb = RGBColor(100, 100, 100)
+
+        # Knowledge base name
+        name_run = p.add_run(kb.name)
+        name_run.font.size = Pt(10)
+
+        # Document count
+        count_run = p.add_run(f" ({document_count} docs)")
+        count_run.font.size = Pt(9)
+        count_run.font.color.rgb = RGBColor(150, 150, 150)
+
+        # Add background shading
+        p_fmt = p.paragraph_format
+        p_fmt.left_indent = Inches(0.2)
+        p_fmt.space_after = Pt(6)
 
 
 def _get_file_type_label(extension: str) -> str:
