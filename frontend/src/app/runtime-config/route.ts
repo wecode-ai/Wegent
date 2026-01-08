@@ -70,6 +70,12 @@ export async function GET() {
       process.env.RUNTIME_ENABLE_WIKI !== 'false' &&
       process.env.NEXT_PUBLIC_ENABLE_WIKI !== 'false',
 
+    // Enable Code Knowledge add repository feature
+    // Priority: RUNTIME_ENABLE_CODE_KNOWLEDGE_ADD_REPO > NEXT_PUBLIC_ENABLE_CODE_KNOWLEDGE_ADD_REPO > true (enabled by default)
+    enableCodeKnowledgeAddRepo:
+      process.env.RUNTIME_ENABLE_CODE_KNOWLEDGE_ADD_REPO !== 'false' &&
+      process.env.NEXT_PUBLIC_ENABLE_CODE_KNOWLEDGE_ADD_REPO !== 'false',
+
     // VSCode link template for deep linking
     // Priority: RUNTIME_VSCODE_LINK_TEMPLATE > NEXT_PUBLIC_VSCODE_LINK_TEMPLATE > empty
     vscodeLinkTemplate:

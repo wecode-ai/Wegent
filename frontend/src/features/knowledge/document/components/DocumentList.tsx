@@ -311,7 +311,7 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
                 {t('document.document.columns.date')}
                 <SortIcon field="date" />
               </div>
-              <div className="w-16 flex-shrink-0 text-center">
+              <div className="w-24 flex-shrink-0 text-center">
                 {t('document.document.columns.indexStatus')}
               </div>
               {canManage && (

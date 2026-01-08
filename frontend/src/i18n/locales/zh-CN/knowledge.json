@@ -90,7 +90,7 @@
       "namePlaceholder": "输入文档名称",
       "updateFailed": "更新文档失败",
       "dropzone": "拖拽文件到此处或点击浏览",
-      "supportedTypes": "支持 PDF、Word、PPT、Excel、TXT、MD、图片（最大 20MB）",
+      "supportedTypes": "支持 PDF、Word、PPT、Excel、TXT、MD、图片（最大 {{maxSize}}MB）",
       "uploading": "上传中...",
       "uploadSuccess": "文件上传成功",
       "batch": {
@@ -201,7 +201,8 @@
     "goToSettings": "前往设置"
   },
   "add_repository": "添加仓库",
-  "add_repository_desc": "点击添加新仓库",
+  "add_repository_desc": "功能调整中，暂时不可用",
+  "add_repository_desc_enabled": "点击添加新仓库",
   "no_projects": "暂无项目",
   "source": "来源",
   "indexing": "索引中...",
