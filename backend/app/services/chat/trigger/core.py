@@ -370,24 +370,33 @@ async def _stream_chat_response(
             f"task_id={stream_data.task_id}"
         )
 
+        has_table_context = False
+        table_contexts = []
         if user_subtask_id:
             from app.services.chat.preprocessing import prepare_contexts_for_chat
 
-            final_message, enhanced_system_prompt, extra_tools = (
-                await prepare_contexts_for_chat(
-                    db=db,
-                    user_subtask_id=user_subtask_id,
-                    user_id=stream_data.user_id,
-                    message=message,
-                    base_system_prompt=chat_config.system_prompt,
-                    task_id=stream_data.task_id,
-                )
+            (
+                final_message,
+                enhanced_system_prompt,
+                extra_tools,
+                has_table_context,
+                table_contexts,
+            ) = await prepare_contexts_for_chat(
+                db=db,
+                user_subtask_id=user_subtask_id,
+                user_id=stream_data.user_id,
+                message=message,
+                base_system_prompt=chat_config.system_prompt,
+                task_id=stream_data.task_id,
             )
             logger.info(
                 f"[ai_trigger] Unified context processing completed: "
                 f"user_subtask_id={user_subtask_id}, "
                 f"extra_tools_count={len(extra_tools)}, "
-                f"extra_tools={[t.name for t in extra_tools]}"
+                f"extra_tools={[t.name for t in extra_tools]}, "
+                f"has_table_context={has_table_context}, "
+                f"table_contexts_count={len(table_contexts)}, "
+                f"table_contexts={table_contexts}"
             )
         else:
             logger.warning(
@@ -470,6 +479,7 @@ async def _stream_chat_response(
             enable_clarification=chat_config.enable_clarification,
             enable_deep_thinking=chat_config.enable_deep_thinking,
             skills=skill_metadata,  # Skill metadata for prompt injection
+            has_table_context=has_table_context,  # Pass table context flag
         )
 
         if chat_shell_mode == "http":
@@ -505,6 +515,7 @@ async def _stream_chat_response(
                 skill_configs=chat_config.skill_configs,
                 knowledge_base_ids=knowledge_base_ids,
                 document_ids=document_ids,
+                table_contexts=table_contexts,
             )
         elif streaming_mode == "bridge":
             # New architecture: StreamingCore publishes to Redis, WebSocketBridge forwards
@@ -569,6 +580,7 @@ async def _stream_with_http_adapter(
     skill_configs: list = None,
     knowledge_base_ids: list = None,
     document_ids: list = None,
+    table_contexts: list = None,
 ) -> None:
     """Stream using HTTP adapter to call remote chat_shell service.
 
@@ -589,6 +601,7 @@ async def _stream_with_http_adapter(
         skill_configs: List of skill tool configurations
         knowledge_base_ids: List of knowledge base IDs to search
         document_ids: List of document IDs to filter retrieval
+        table_contexts: List of table context dicts for DataTableTool
     """
     from app.core.config import settings
     from app.services.chat.adapters.http import HTTPAdapter
@@ -699,18 +712,22 @@ async def _stream_with_http_adapter(
         skill_configs=skill_configs or [],
         knowledge_base_ids=knowledge_base_ids,
         document_ids=document_ids,
+        table_contexts=table_contexts or [],
         task_data=task_data,
         mcp_servers=mcp_servers,
     )
 
     logger.info(
         "[HTTP_ADAPTER] ChatRequest built: task_id=%d, skill_names=%s, "
-        "skill_configs_count=%d, knowledge_base_ids=%s, document_ids=%s",
+        "skill_configs_count=%d, knowledge_base_ids=%s, document_ids=%s, "
+        "table_contexts_count=%d, table_contexts=%s",
         task_id,
         skill_names,
         len(skill_configs) if skill_configs else 0,
         knowledge_base_ids,
         document_ids,
+        len(table_contexts) if table_contexts else 0,
+        table_contexts,  # Log the actual content
     )
 
     # Create HTTP adapter
@@ -1071,7 +1088,7 @@ async def _stream_with_bridge(
         StreamingCore,
         StreamingState,
     )
-    from chat_shell.services.streaming.emitters import NullEmitter
+    from chat_shell.services.streaming.emitters import RedisPublishingEmitter
     from chat_shell.tools import WebSearchTool
     from chat_shell.tools.events import create_tool_event_handler
     from chat_shell.tools.mcp import load_mcp_tools
@@ -1088,9 +1105,11 @@ async def _stream_with_bridge(
     # Create WebSocket bridge for Redis -> WebSocket forwarding
     bridge = WebSocketBridge(namespace, task_room, task_id)
 
-    # Create a null emitter since we're publishing to Redis channel instead
-    # The WebSocketBridge will handle WebSocket emission
-    emitter = NullEmitter()
+    # Create Redis publishing emitter for bridge mode
+    # This publishes events to Redis Pub/Sub channel, which WebSocketBridge forwards to WebSocket
+    from app.services.chat.storage import session_manager
+
+    emitter = RedisPublishingEmitter(storage_handler=session_manager)
 
     # Create streaming state
     state = StreamingState(
@@ -1103,8 +1122,8 @@ async def _stream_with_bridge(
         shell_type=ws_config.shell_type,
     )
 
-    # Create streaming config with publish_to_channel enabled
-    config = StreamingConfig(publish_to_channel=True)
+    # Create streaming config
+    config = StreamingConfig()
 
     # Create streaming core
     core = StreamingCore(emitter, state, config)
@@ -1132,20 +1151,34 @@ async def _stream_with_bridge(
             list(ws_config.extra_tools) if ws_config.extra_tools else []
         )
 
+        logger.info(
+            "[BRIDGE] Tool configuration: enable_tools=%s, CHAT_MCP_ENABLED=%s",
+            ws_config.enable_tools,
+            settings.CHAT_MCP_ENABLED,
+        )
+
         if ws_config.enable_tools:
             # Load MCP tools if enabled
             if settings.CHAT_MCP_ENABLED:
+                logger.info("[BRIDGE] Loading MCP tools for task %d", task_id)
                 mcp_task_data = {
                     "user": {
                         "name": str(ws_config.user_name or ""),
                         "id": ws_config.user_id,
-                    }
+                    },
                 }
+                # Note: Table context is now handled via DataTableTool,
+                # no need to pass table_mcp_config here
                 mcp_client = await load_mcp_tools(
                     task_id,
                     ws_config.bot_name,
                     ws_config.bot_namespace,
                     task_data=mcp_task_data,
+                )
+                logger.info(
+                    "[BRIDGE] MCP client created: %s, tools count: %d",
+                    mcp_client is not None,
+                    len(mcp_client.get_tools()) if mcp_client else 0,
                 )
                 if mcp_client:
                     extra_tools.extend(mcp_client.get_tools())
@@ -1242,6 +1275,16 @@ async def _stream_with_bridge(
         # Finalize
         result = await core.finalize()
 
+        # Update subtask status to COMPLETED in database
+        # This is critical for persistence - without this, messages show as "running" after refresh
+        from app.services.chat.storage.db import db_handler
+
+        await db_handler.update_subtask_status(
+            subtask_id=subtask_id,
+            status="COMPLETED",
+            result=result,
+        )
+
         # Notify user room for multi-device sync
         ws_emitter = get_ws_emitter()
         if ws_emitter:
@@ -1256,6 +1299,15 @@ async def _stream_with_bridge(
     except Exception as e:
         logger.exception("[BRIDGE] subtask=%s error", subtask_id)
         await core.handle_error(e)
+
+        # Update subtask status to FAILED in database
+        from app.services.chat.storage.db import db_handler
+
+        await db_handler.update_subtask_status(
+            subtask_id=subtask_id,
+            status="FAILED",
+            error=str(e),
+        )
 
     finally:
         # Stop the bridge

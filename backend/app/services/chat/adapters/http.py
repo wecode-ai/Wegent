@@ -137,6 +137,7 @@ class HTTPAdapter(ChatInterface):
             "skill_configs": request.skill_configs,
             "knowledge_base_ids": request.knowledge_base_ids,
             "document_ids": request.document_ids,
+            "table_contexts": request.table_contexts,
             "task_data": request.task_data,
         }
 

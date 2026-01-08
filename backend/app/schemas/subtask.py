@@ -106,6 +106,8 @@ class SubtaskContextBrief(BaseModel):
     mime_type: Optional[str] = None
     # Knowledge base fields (from type_data)
     document_count: Optional[int] = None
+    # Table fields (from type_data) - nested structure to match frontend expectation
+    source_config: Optional[dict[str, Any]] = None
 
     class Config:
         from_attributes = True
@@ -145,6 +147,19 @@ class SubtaskContextBrief(BaseModel):
                     "document_count": type_data.get("document_count"),
                 }
             )
+        elif context.context_type == "table":
+            # Build source_config for table contexts
+            url = type_data.get("url")
+            if url:
+                base_data["source_config"] = {"url": url}
+                # DEBUG: Log table context creation
+                import logging
+
+                logger = logging.getLogger(__name__)
+                logger.info(
+                    f"[SubtaskContextBrief/subtask.py] Building table context: id={context.id}, "
+                    f"url={url}, source_config={base_data['source_config']}"
+                )
 
         return cls(**base_data)
 
@@ -184,6 +199,24 @@ class SubtaskInDB(SubtaskBase):
     sender_user_id: Optional[int] = None  # User ID when sender_type=USER
     sender_user_name: Optional[str] = None  # User name for display
     reply_to_subtask_id: Optional[int] = None  # Quoted message ID
+
+    @field_serializer("contexts")
+    def serialize_contexts(self, value: List) -> List[dict[str, Any]]:
+        """Convert ORM context models to properly constructed Pydantic models"""
+        if not value:
+            return []
+
+        result = []
+        for ctx in value:
+            # Check if it's already a Pydantic model (has model_dump method)
+            if hasattr(ctx, "model_dump"):
+                result.append(ctx.model_dump(mode="json"))
+            else:
+                # It's an ORM model, convert using from_model
+                brief = SubtaskContextBrief.from_model(ctx)
+                result.append(brief.model_dump(mode="json"))
+
+        return result
 
     @field_serializer("result")
     def mask_result(self, value: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:

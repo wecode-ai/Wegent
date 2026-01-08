@@ -38,6 +38,7 @@ class ContextType(str, PyEnum):
 
     ATTACHMENT = "attachment"
     KNOWLEDGE_BASE = "knowledge_base"
+    TABLE = "table"
 
 
 class ContextStatus(str, PyEnum):

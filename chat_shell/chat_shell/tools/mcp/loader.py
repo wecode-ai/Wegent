@@ -49,7 +49,7 @@ async def load_mcp_tools(
     try:
         from chat_shell.tools.mcp import MCPClient
 
-        # Step 1: Load backend MCP configuration
+        # Step 1: Load backend MCP configuration from CHAT_MCP_SERVERS
         backend_servers = {}
         mcp_servers_config = getattr(settings, "CHAT_MCP_SERVERS", "")
         if mcp_servers_config:
@@ -80,7 +80,8 @@ async def load_mcp_tools(
                     str(e),
                 )
 
-        # Step 3: Merge configurations (bot config takes precedence)
+        # Step 3: Merge configurations
+        # Priority: bot_servers > backend_servers
         merged_servers = {**backend_servers, **bot_servers}
 
         if not merged_servers:

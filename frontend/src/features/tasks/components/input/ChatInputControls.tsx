@@ -31,6 +31,7 @@ import { supportsAttachments } from '../../service/attachmentService'
 export interface ChatInputControlsProps {
   // Team and Model
   selectedTeam: Team | null
+  onTeamChange?: (team: Team) => void
   selectedModel: Model | null
   setSelectedModel: (model: Model | null) => void
   forceOverride: boolean
@@ -106,6 +107,7 @@ export interface ChatInputControlsProps {
  */
 export function ChatInputControls({
   selectedTeam,
+  onTeamChange: _onTeamChange,
   selectedModel,
   setSelectedModel,
   forceOverride,

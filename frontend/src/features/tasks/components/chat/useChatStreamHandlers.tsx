@@ -415,37 +415,40 @@ export function useChatStreamHandlers({
         // Each context item contains type and data fields
         const contextItems = selectedContexts.map(ctx => {
           if (ctx.type === 'knowledge_base') {
-            // Type assertion for knowledge base context with document_count
-            const kbContext = ctx as ContextItem & {
-              document_count?: number
-            }
             return {
-              type: 'knowledge_base',
+              type: 'knowledge_base' as const,
               data: {
                 knowledge_id: ctx.id,
                 name: ctx.name,
-                document_count: kbContext.document_count,
+                document_count: ctx.document_count,
               },
             }
           }
-          // Future: handle other context types here
+          // ctx.type === 'table'
           return {
-            type: ctx.type,
-            data: { id: ctx.id, name: ctx.name },
+            type: 'table' as const,
+            data: {
+              document_id: ctx.document_id,
+              name: ctx.name,
+              source_config: ctx.source_config,
+            },
           }
         })
 
         // Build pending contexts for immediate display (SubtaskContextBrief format)
-        // This includes both attachments and knowledge bases
+        // This includes attachments, knowledge bases, and tables
         const pendingContexts: Array<{
           id: number
-          context_type: 'attachment' | 'knowledge_base'
+          context_type: 'attachment' | 'knowledge_base' | 'table'
           name: string
           status: 'pending' | 'ready'
           file_extension?: string
           file_size?: number
           mime_type?: string
           document_count?: number
+          source_config?: {
+            url?: string
+          }
         }> = []
 
         // Add attachments as contexts
@@ -461,7 +464,7 @@ export function useChatStreamHandlers({
           })
         }
 
-        // Add knowledge bases as contexts
+        // Add knowledge bases and tables as contexts
         for (const ctx of selectedContexts) {
           if (ctx.type === 'knowledge_base') {
             const kbContext = ctx as typeof ctx & { document_count?: number }
@@ -471,6 +474,15 @@ export function useChatStreamHandlers({
               name: ctx.name,
               status: 'ready',
               document_count: kbContext.document_count,
+            })
+          } else if (ctx.type === 'table') {
+            const tableContext = ctx as typeof ctx & { source_config?: { url?: string } }
+            pendingContexts.push({
+              id: typeof ctx.id === 'number' ? ctx.id : parseInt(String(ctx.id), 10),
+              context_type: 'table',
+              name: ctx.name,
+              status: 'ready',
+              source_config: tableContext.source_config,
             })
           }
         }

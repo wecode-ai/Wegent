@@ -8,7 +8,7 @@
  *
  * Future types to be added: 'person' | 'bot' | 'team'
  */
-export type ContextType = 'knowledge_base'
+export type ContextType = 'knowledge_base' | 'table'
 
 /**
  * Base interface for all context items
@@ -33,6 +33,18 @@ export interface KnowledgeBaseContext extends BaseContextItem {
 }
 
 /**
+ * Table context item (supports DingTalk, Feishu, etc.)
+ * 多维表格上下文项（支持钉钉、飞书等）
+ */
+export interface TableContext extends BaseContextItem {
+  type: 'table'
+  document_id: number
+  source_config?: {
+    url?: string
+  }
+}
+
+/**
  * Union type for all context items
  * 所有上下文项的联合类型
  *
@@ -41,4 +53,4 @@ export interface KnowledgeBaseContext extends BaseContextItem {
  * 2. Create a new interface extending BaseContextItem
  * 3. Add the new interface to this union type
  */
-export type ContextItem = KnowledgeBaseContext
+export type ContextItem = KnowledgeBaseContext | TableContext

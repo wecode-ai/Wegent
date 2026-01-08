@@ -250,6 +250,12 @@ class Settings(BaseSettings):
     # Whether to reject new requests during shutdown (503 Service Unavailable)
     SHUTDOWN_REJECT_NEW_REQUESTS: bool = True
 
+    # Data Table Configuration
+    # JSON string containing table provider credentials (DingTalk, etc.)
+    # Format: {"dingtalk":{"appKey":"...","appSecret":"...","operatorId":"...","userMapping":{...}}}
+    # See backend/app/services/tables/DATA_TABLE_CONFIG_EXAMPLE.md for details
+    DATA_TABLE_CONFIG: str = ""
+
     # OpenTelemetry configuration is centralized in shared/telemetry/config.py
     # Use: from shared.telemetry.config import get_otel_config
     # All OTEL_* environment variables are read from there

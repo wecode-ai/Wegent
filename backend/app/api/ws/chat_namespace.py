@@ -764,19 +764,16 @@ class ChatNamespace(socketio.AsyncNamespace):
 
         # Build contexts list for the subtask
         contexts_briefs = context_service.get_briefs_by_subtask(db, user_subtask.id)
-        contexts_list = [
-            {
-                "id": ctx.id,
-                "context_type": ctx.context_type,
-                "name": ctx.name,
-                "status": ctx.status,
-                "file_extension": ctx.file_extension,
-                "file_size": ctx.file_size,
-                "mime_type": ctx.mime_type,
-                "document_count": ctx.document_count,
-            }
-            for ctx in contexts_briefs
-        ]
+        # Use Pydantic's model_dump to ensure all fields are serialized correctly
+        contexts_list = [ctx.model_dump(mode="json") for ctx in contexts_briefs]
+
+        # DEBUG: Log contexts being sent via WebSocket
+        for ctx_dict in contexts_list:
+            if ctx_dict.get("context_type") == "table":
+                logger.info(
+                    f"[WS] Sending table context via WebSocket: id={ctx_dict.get('id')}, "
+                    f"name={ctx_dict.get('name')}, source_config={ctx_dict.get('source_config')}"
+                )
 
         # Build legacy attachment info for backward compatibility
         # Note: attachments field is kept for backward compatibility but set to empty

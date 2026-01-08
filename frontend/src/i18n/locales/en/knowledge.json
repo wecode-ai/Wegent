@@ -54,7 +54,7 @@
     },
     "document": {
       "title": "Documents",
-      "upload": "Upload File",
+      "upload": "Add sources",
       "edit": "Edit Document",
       "enable": "Enable",
       "disable": "Disable",
@@ -67,6 +67,7 @@
         "available": "Indexed",
         "unavailable": "Not Indexed"
       },
+      "openLink": "Open Link",
       "columns": {
         "name": "Name",
         "type": "Type",
@@ -123,7 +124,18 @@
       "textPlaceholder": "Paste text here...",
       "textRequired": "Please enter text content",
       "insert": "Insert",
-      "clickToRename": "Click to rename"
+      "clickToRename": "Click to rename",
+      "addTable": "Add Data Table",
+      "tableHint": "Enter the table link and name to add it to your knowledge base.",
+      "tableName": "Document Name",
+      "tableNamePlaceholder": "Enter document name",
+      "tableUrl": "Table Link",
+      "tableUrlPlaceholder": "Paste table link",
+      "tableUrlRequired": "Please enter the table link",
+      "tableNameRequired": "Please enter document name",
+      "tableAddFailed": "Failed to add, please try again",
+      "adding": "Adding...",
+      "confirmAdd": "Confirm Add"
     },
     "permission": {
       "noAccess": "You do not have permission to perform this action"
@@ -236,5 +248,25 @@
   "no_bound_model_warning": "Wiki generation is not available. The default wiki team does not have a model configured. Please contact administrator.",
   "regenerate": "Regenerate",
   "view_detail": "View Details",
-  "coming_soon": "Coming Soon"
+  "coming_soon": "Coming Soon",
+  "dingtalkTable": {
+    "title": "DingTalk Tables",
+    "empty": "No DingTalk tables",
+    "emptyHint": "Add DingTalk tables in your knowledge base to see them here",
+    "error": {
+      "noAssistant": "AI Assistant agent not found. Please ensure a team named 'AI助理' is configured in the system",
+      "loadFailed": "Failed to load DingTalk tables"
+    },
+    "analyzing": "Analyzing DingTalk table data..."
+  },
+  "table": {
+    "title": "Data Tables",
+    "empty": "No data tables",
+    "emptyHint": "Add data tables in your knowledge base to see them here",
+    "error": {
+      "noAssistant": "AI Assistant agent not found. Please ensure a team named 'AI助理' is configured in the system",
+      "loadFailed": "Failed to load data tables"
+    },
+    "analyzing": "Analyzing data table..."
+  }
 }

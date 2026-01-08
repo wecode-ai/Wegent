@@ -1316,6 +1316,17 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             db=db, task_id=task_id, user_id=user_id, from_latest=True
         )
 
+        # DEBUG: Log table contexts in subtasks
+        for subtask in subtasks:
+            if hasattr(subtask, "contexts") and subtask.contexts:
+                for ctx in subtask.contexts:
+                    if ctx.context_type == "table":
+                        logger.info(
+                            f"[get_task_detail] Table context in subtask: subtask_id={subtask.id}, "
+                            f"ctx_id={ctx.id}, name={ctx.name}, has_source_config={hasattr(ctx, 'source_config')}, "
+                            f"source_config={getattr(ctx, 'source_config', None)}"
+                        )
+
         # Get all bot objects for the subtasks
         all_bot_ids = set()
         for subtask in subtasks:
@@ -1454,6 +1465,12 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                                 "document_count": ctx.document_count,
                             }
                         )
+                    elif ctx.context_type == "table":
+                        # Build source_config for table contexts
+                        type_data = ctx.type_data or {}
+                        url = type_data.get("url")
+                        if url:
+                            ctx_dict["source_config"] = {"url": url}
                     contexts_list.append(ctx_dict)
 
             # Legacy attachments list - kept for backward compatibility but empty

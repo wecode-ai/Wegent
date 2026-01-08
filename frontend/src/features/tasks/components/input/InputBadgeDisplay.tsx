@@ -271,7 +271,11 @@ export default function InputBadgeDisplay({
           {/* Knowledge base badges */}
           {contexts.map(context => (
             <div key={`context-${context.type}-${context.id}`} className="flex-shrink-0">
-              <ContextBadge context={context} onRemove={() => onRemoveContext(context.id)} />
+              <ContextBadge
+                context={context}
+                onRemove={() => onRemoveContext(context.id)}
+                disableUrlClick={true}
+              />
             </div>
           ))}
 

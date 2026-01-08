@@ -17,7 +17,7 @@ interface ChatContextInputProps {
 
 /**
  * Generic context input component for chat
- * Currently supports: knowledge_base
+ * Currently supports: knowledge_base, table
  * Future: person, bot, team
  *
  * Note: Badge rendering is now handled by InputBadgeDisplay component

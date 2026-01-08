@@ -5,7 +5,7 @@
 'use client'
 
 import React, { ReactNode } from 'react'
-import { Database } from 'lucide-react'
+import { Database, Table2 } from 'lucide-react'
 import AttachmentPreview from '../input/AttachmentPreview'
 import type { SubtaskContextBrief, Attachment } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -45,6 +45,8 @@ function ContextPreviewBase({ icon, title, subtitle, className = '' }: ContextPr
 interface ContextBadgeListProps {
   /** List of contexts to display */
   contexts?: SubtaskContextBrief[]
+  /** Optional callback when user wants to re-select a context */
+  onContextReselect?: (context: SubtaskContextBrief) => void
 }
 
 /**
@@ -54,8 +56,9 @@ interface ContextBadgeListProps {
  * It renders different badges based on context_type:
  * - attachment: Uses AttachmentPreview component (reuse existing logic)
  * - knowledge_base: Displays KB name with document count
+ * - table: Displays table name with clickable link to view/reselect
  */
-export function ContextBadgeList({ contexts }: ContextBadgeListProps) {
+export function ContextBadgeList({ contexts, onContextReselect }: ContextBadgeListProps) {
   if (!contexts || contexts.length === 0) {
     return null
   }
@@ -63,7 +66,11 @@ export function ContextBadgeList({ contexts }: ContextBadgeListProps) {
   return (
     <div className="flex flex-wrap gap-2 mb-3">
       {contexts.map(context => (
-        <ContextBadgeItem key={`${context.context_type}-${context.id}`} context={context} />
+        <ContextBadgeItem
+          key={`${context.context_type}-${context.id}`}
+          context={context}
+          onReselect={onContextReselect}
+        />
       ))}
     </div>
   )
@@ -72,12 +79,20 @@ export function ContextBadgeList({ contexts }: ContextBadgeListProps) {
 /**
  * Single context badge item - routes to appropriate renderer based on type
  */
-function ContextBadgeItem({ context }: { context: SubtaskContextBrief }) {
+function ContextBadgeItem({
+  context,
+  onReselect,
+}: {
+  context: SubtaskContextBrief
+  onReselect?: (context: SubtaskContextBrief) => void
+}) {
   switch (context.context_type) {
     case 'attachment':
       return <AttachmentContextBadge context={context} />
     case 'knowledge_base':
-      return <KnowledgeBaseBadge context={context} />
+      return <KnowledgeBaseBadge context={context} onReselect={onReselect} />
+    case 'table':
+      return <TableBadge context={context} _onReselect={onReselect} />
     default:
       return null
   }
@@ -127,8 +142,15 @@ function AttachmentContextBadge({ context }: { context: SubtaskContextBrief }) {
  * Knowledge base badge - displays KB name and document count
  *
  * Uses ContextPreviewBase for consistent styling with attachments
+ * Clickable to re-select the knowledge base for the next message
  */
-function KnowledgeBaseBadge({ context }: { context: SubtaskContextBrief }) {
+function KnowledgeBaseBadge({
+  context,
+  onReselect,
+}: {
+  context: SubtaskContextBrief
+  onReselect?: (context: SubtaskContextBrief) => void
+}) {
   const { t } = useTranslation('knowledge')
 
   const subtitle =
@@ -138,12 +160,87 @@ function KnowledgeBaseBadge({ context }: { context: SubtaskContextBrief }) {
       ? formatDocumentCount(context.document_count, t)
       : undefined
 
+  const handleClick = () => {
+    if (onReselect) {
+      onReselect(context)
+    }
+  }
+
+  const isClickable = !!onReselect
+
   return (
-    <ContextPreviewBase
-      icon={<Database className="text-primary" />}
-      title={context.name}
-      subtitle={subtitle}
-    />
+    <div
+      onClick={isClickable ? handleClick : undefined}
+      className={isClickable ? 'cursor-pointer' : undefined}
+      role={isClickable ? 'button' : undefined}
+      tabIndex={isClickable ? 0 : undefined}
+      title={isClickable ? t('knowledge:reselect') || 'Click to re-select' : undefined}
+    >
+      <ContextPreviewBase
+        icon={<Database className="text-primary" />}
+        title={context.name}
+        subtitle={subtitle}
+        className={isClickable ? 'hover:shadow-md hover:border-primary/50 transition-all' : ''}
+      />
+    </div>
+  )
+}
+
+/**
+ * Table badge - displays table name and source URL
+ *
+ * Uses ContextPreviewBase for consistent styling with other context types
+ * Click to open table URL in new window
+ */
+function TableBadge({
+  context,
+  _onReselect,
+}: {
+  context: SubtaskContextBrief
+  _onReselect?: (context: SubtaskContextBrief) => void
+}) {
+  const { t } = useTranslation('knowledge')
+  let subtitle: string | undefined
+
+  // Extract hostname from source_config URL if available
+  if (context.source_config?.url) {
+    try {
+      const url = new URL(context.source_config.url)
+      subtitle = url.hostname
+    } catch {
+      // If URL parsing fails, use the full URL
+      subtitle = context.source_config.url
+    }
+  }
+
+  // Handle click - open table URL in new window
+  const handleClick = (e: React.MouseEvent) => {
+    if (context.source_config?.url) {
+      e.preventDefault()
+      window.open(context.source_config.url, '_blank', 'noopener,noreferrer')
+    }
+  }
+
+  const isClickable = !!context.source_config?.url
+  const title = context.source_config?.url
+    ? t('knowledge:table.openLink') || 'Click to view table'
+    : undefined
+
+  return (
+    <div
+      onClick={isClickable ? handleClick : undefined}
+      className={isClickable ? 'cursor-pointer' : undefined}
+      role={isClickable ? 'button' : undefined}
+      tabIndex={isClickable ? 0 : undefined}
+      title={title}
+    >
+      <ContextPreviewBase
+        icon={<Table2 className="text-blue-500" />}
+        title={context.name}
+        subtitle={subtitle}
+        className={isClickable ? 'hover:shadow-md hover:border-blue-500/50 transition-all' : ''}
+      />
+    </div>
   )
 }
 

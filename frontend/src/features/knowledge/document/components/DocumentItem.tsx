@@ -4,7 +4,7 @@
 
 'use client'
 
-import { FileText, Trash2, Pencil } from 'lucide-react'
+import { FileText, Trash2, Pencil, Link, ExternalLink } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import type { KnowledgeDocument } from '@/types/knowledge'
@@ -63,6 +63,21 @@ export function DocumentItem({
     onDelete?.(document)
   }
 
+  const handleOpenLink = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    const url = document.source_config?.url
+    if (url && typeof url === 'string') {
+      window.open(url, '_blank', 'noopener,noreferrer')
+    }
+  }
+
+  // Check if this is a table document
+  const isTable = document.source_type === 'table'
+  const tableUrl =
+    isTable && document.source_config?.url && typeof document.source_config.url === 'string'
+      ? document.source_config.url
+      : null
+
   return (
     <div
       className={`flex items-center gap-4 px-4 py-3 bg-base hover:bg-surface transition-colors group ${showBorder ? 'border-b border-border' : ''}`}
@@ -80,12 +95,25 @@ export function DocumentItem({
 
       {/* File icon */}
       <div className="p-2 bg-primary/10 rounded-lg flex-shrink-0">
-        <FileText className="w-4 h-4 text-primary" />
+        {isTable ? (
+          <Link className="w-4 h-4 text-primary" />
+        ) : (
+          <FileText className="w-4 h-4 text-primary" />
+        )}
       </div>
 
       {/* File name */}
-      <div className="flex-1 min-w-[120px]">
+      <div className="flex-1 min-w-[120px] flex items-center gap-2">
         <span className="text-sm font-medium text-text-primary truncate">{document.name}</span>
+        {tableUrl && (
+          <button
+            className="p-1 rounded-md text-primary hover:bg-primary/10 transition-colors flex-shrink-0"
+            onClick={handleOpenLink}
+            title={t('knowledge:document.document.openLink')}
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+          </button>
+        )}
       </div>
 
       {/* Edit button - in the middle area */}
@@ -108,7 +136,9 @@ export function DocumentItem({
 
       {/* Size */}
       <div className="w-20 flex-shrink-0 text-center">
-        <span className="text-xs text-text-muted">{formatFileSize(document.file_size)}</span>
+        <span className="text-xs text-text-muted">
+          {isTable ? '-' : formatFileSize(document.file_size)}
+        </span>
       </div>
 
       {/* Upload date with time */}
@@ -118,7 +148,11 @@ export function DocumentItem({
 
       {/* Index status (is_active) */}
       <div className="w-24 flex-shrink-0 text-center">
-        <Badge variant={document.is_active ? 'success' : 'warning'} size="sm">
+        <Badge
+          variant={document.is_active ? 'success' : 'warning'}
+          size="sm"
+          className="whitespace-nowrap"
+        >
           {document.is_active
             ? t('knowledge:document.document.indexStatus.available')
             : t('knowledge:document.document.indexStatus.unavailable')}

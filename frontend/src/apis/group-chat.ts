@@ -8,6 +8,7 @@
 
 import client from './client'
 import { getToken } from './user'
+import type { SubtaskContextBrief } from '@/types/api'
 
 /**
  * Subtask with sender information
@@ -26,6 +27,7 @@ export interface SubtaskWithSender {
   sender_type?: 'USER' | 'TEAM'
   sender_user_id?: number
   sender_username?: string
+  contexts?: SubtaskContextBrief[]
   created_at: string
   updated_at: string
   completed_at?: string

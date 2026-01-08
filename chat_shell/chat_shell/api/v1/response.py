@@ -185,6 +185,7 @@ async def _stream_response(
         skill_configs_from_meta = []
         knowledge_base_ids = None
         document_ids = None
+        table_contexts = []
         task_data = None
 
         if request.metadata:
@@ -204,6 +205,7 @@ async def _stream_response(
             )
             knowledge_base_ids = getattr(request.metadata, "knowledge_base_ids", None)
             document_ids = getattr(request.metadata, "document_ids", None)
+            table_contexts = getattr(request.metadata, "table_contexts", None) or []
             task_data = getattr(request.metadata, "task_data", None)
 
         # Merge skill configs from tools and metadata
@@ -240,6 +242,7 @@ async def _stream_response(
             skill_configs=all_skill_configs,
             knowledge_base_ids=knowledge_base_ids,
             document_ids=document_ids,
+            table_contexts=table_contexts,
             task_data=task_data,
             mcp_servers=mcp_servers,
         )
@@ -247,7 +250,8 @@ async def _stream_response(
         logger.info(
             "[RESPONSE] Processing request: task_id=%d, subtask_id=%d, "
             "enable_web_search=%s, mcp_servers=%d, skills=%d, "
-            "skill_names=%s, knowledge_base_ids=%s, document_ids=%s",
+            "skill_names=%s, knowledge_base_ids=%s, document_ids=%s, "
+            "table_contexts_count=%d, table_contexts=%s",
             task_id,
             subtask_id,
             enable_web_search,
@@ -256,6 +260,8 @@ async def _stream_response(
             skill_names,
             knowledge_base_ids,
             document_ids,
+            len(table_contexts),
+            table_contexts,  # Log the actual content
         )
 
         # Stream from ChatService

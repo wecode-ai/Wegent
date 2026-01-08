@@ -86,6 +86,7 @@ api_router.include_router(
     prefix="/v1/knowledge-base/qa-history",
     tags=["knowledge-qa-history"],
 )
+api_router.include_router(knowledge.table_router, prefix="/tables", tags=["tables"])
 api_router.include_router(rag.router, prefix="/rag", tags=["rag"])
 api_router.include_router(utils.router, prefix="/utils", tags=["utils"])
 api_router.include_router(k_router)

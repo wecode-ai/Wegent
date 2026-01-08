@@ -500,7 +500,7 @@ export interface MultiAttachmentUploadState {
 }
 
 // Subtask Context Types (unified context system)
-export type ContextType = 'attachment' | 'knowledge_base'
+export type ContextType = 'attachment' | 'knowledge_base' | 'table'
 export type ContextStatus = 'pending' | 'uploading' | 'parsing' | 'ready' | 'failed'
 
 export interface SubtaskContextBrief {
@@ -514,6 +514,10 @@ export interface SubtaskContextBrief {
   mime_type?: string | null
   // Knowledge base fields (from type_data)
   document_count?: number | null
+  // Table fields (from type_data)
+  source_config?: {
+    url?: string
+  } | null
 }
 
 // Quick Access Types

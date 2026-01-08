@@ -14,7 +14,8 @@ import { useChatAreaState } from './useChatAreaState'
 import { useChatStreamHandlers } from './useChatStreamHandlers'
 import { allBotsHavePredefinedModel } from '../selector/ModelSelector'
 import { QuoteProvider, SelectionTooltip, useQuote } from '../text-selection'
-import type { Team } from '@/types/api'
+import type { Team, SubtaskContextBrief } from '@/types/api'
+import type { ContextItem } from '@/types/context'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useRouter } from 'next/navigation'
 import { useTaskContext } from '../../contexts/taskContext'
@@ -265,6 +266,44 @@ function ChatAreaContent({
     [chatState, streamHandlers]
   )
 
+  // Callback for re-selecting a context from a message badge
+  const handleContextReselect = useCallback(
+    (context: SubtaskContextBrief) => {
+      // Convert SubtaskContextBrief to ContextItem format
+      let contextItem: ContextItem | null = null
+
+      if (context.context_type === 'knowledge_base') {
+        contextItem = {
+          id: context.id,
+          name: context.name,
+          type: 'knowledge_base',
+          document_count: context.document_count ?? undefined,
+        }
+      } else if (context.context_type === 'table') {
+        contextItem = {
+          id: context.id,
+          name: context.name,
+          type: 'table',
+          document_id: 0, // Not available in SubtaskContextBrief, backend will resolve it
+          source_config: context.source_config ?? undefined,
+        }
+      }
+
+      if (!contextItem) return
+
+      // Check if context is already selected
+      const isAlreadySelected = chatState.selectedContexts.some(
+        c => c.type === contextItem!.type && c.id === contextItem!.id
+      )
+
+      // If not already selected, add it to selectedContexts
+      if (!isAlreadySelected) {
+        chatState.setSelectedContexts([...chatState.selectedContexts, contextItem!])
+      }
+    },
+    [chatState]
+  )
+
   // Handle access denied state
   if (accessDenied) {
     const handleGoHome = () => {
@@ -314,6 +353,7 @@ function ChatAreaContent({
     setTaskInputMessage: chatState.setTaskInputMessage,
     selectedTeam: chatState.selectedTeam,
     externalApiParams: chatState.externalApiParams,
+    onTeamChange: chatState.handleTeamChange,
     onExternalApiParamsChange: chatState.handleExternalApiParamsChange,
     onAppModeChange: chatState.handleAppModeChange,
     taskType,
@@ -424,6 +464,7 @@ function ChatAreaContent({
               enableCorrectionWebSearch={chatState.enableCorrectionWebSearch}
               hasMessages={hasMessages}
               pendingTaskId={streamHandlers.pendingTaskId}
+              onContextReselect={handleContextReselect}
             />
           </div>
         </div>

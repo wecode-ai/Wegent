@@ -201,6 +201,10 @@ class Metadata(BaseModel):
         None,
         description="Document IDs to filter retrieval (when user references specific documents)",
     )
+    # Table configuration
+    table_contexts: Optional[list[dict]] = Field(
+        None, description="Table contexts for DataTableTool"
+    )
     # Task data for MCP tools
     task_data: Optional[dict] = Field(None, description="Task data for MCP tools")
 

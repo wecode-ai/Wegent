@@ -39,6 +39,14 @@ class DocumentStatus(str, PyEnum):
     DISABLED = "disabled"
 
 
+class DocumentSourceType(str, PyEnum):
+    """Document source type for knowledge documents."""
+
+    FILE = "file"  # Uploaded file
+    TEXT = "text"  # Pasted text
+    TABLE = "table"  # External table (DingTalk, Feishu, etc.)
+
+
 class KnowledgeDocument(Base):
     """
     Knowledge document model for storing document metadata.
@@ -73,6 +81,12 @@ class KnowledgeDocument(Base):
     splitter_config = Column(
         JSON, nullable=True
     )  # Splitter configuration for document chunking
+    source_type = Column(
+        String(50), nullable=False, default=DocumentSourceType.FILE.value
+    )  # Document source type: file, text, table
+    source_config = Column(
+        JSON, nullable=True
+    )  # Source configuration (e.g., {"url": "..."} for table), nullable for backward compatibility
     created_at = Column(DateTime, nullable=False, default=func.now())
     updated_at = Column(
         DateTime, nullable=False, default=func.now(), onupdate=func.now()
