@@ -13,6 +13,7 @@ import { ChatInputCard } from '../input/ChatInputCard'
 import { useChatAreaState } from './useChatAreaState'
 import { useChatStreamHandlers } from './useChatStreamHandlers'
 import { allBotsHavePredefinedModel } from '../selector/ModelSelector'
+import { QuoteProvider, SelectionTooltip, useQuote } from '../text-selection'
 import type { Team } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useRouter } from 'next/navigation'
@@ -40,7 +41,11 @@ interface ChatAreaProps {
   onRefreshTeams?: () => Promise<Team[]>
 }
 
-export default function ChatArea({
+/**
+ * Inner component that uses the QuoteContext.
+ * Must be rendered inside QuoteProvider.
+ */
+function ChatAreaContent({
   teams,
   isTeamsLoading,
   selectedTeamForNewTask,
@@ -51,6 +56,7 @@ export default function ChatArea({
 }: ChatAreaProps) {
   const { t } = useTranslation()
   const router = useRouter()
+  const { quote, clearQuote, formatQuoteForMessage } = useQuote()
 
   // Task context
   const { selectedTaskDetail, setSelectedTask, accessDenied, clearAccessDenied } = useTaskContext()
@@ -319,7 +325,15 @@ export default function ChatArea({
     onDragOver: handleDragOver,
     onDrop: handleDrop,
     canSubmit,
-    handleSendMessage: streamHandlers.handleSendMessage,
+    handleSendMessage: async (overrideMessage?: string) => {
+      // Format message with quote if present, then clear quote
+      const baseMessage = overrideMessage?.trim() || chatState.taskInputMessage.trim()
+      const message = formatQuoteForMessage(baseMessage)
+      if (quote) {
+        clearQuote()
+      }
+      await streamHandlers.handleSendMessage(message)
+    },
     onPasteFile: handlePasteFile,
     // ChatInputControls props
     selectedModel: chatState.selectedModel,
@@ -357,7 +371,14 @@ export default function ChatArea({
     isAttachmentReadyToSend: chatState.isAttachmentReadyToSend,
     isSubtaskStreaming: streamHandlers.isSubtaskStreaming,
     onStopStream: streamHandlers.stopStream,
-    onSendMessage: () => streamHandlers.handleSendMessage(),
+    onSendMessage: () => {
+      // Format message with quote if present, then clear quote
+      const message = formatQuoteForMessage(chatState.taskInputMessage.trim())
+      if (quote) {
+        clearQuote()
+      }
+      streamHandlers.handleSendMessage(message)
+    },
   }
 
   return (
@@ -457,5 +478,20 @@ export default function ChatArea({
         )}
       </div>
     </div>
+  )
+}
+
+/**
+ * ChatArea Component
+ *
+ * Main chat interface component that wraps ChatAreaContent with QuoteProvider
+ * to enable text selection quoting functionality.
+ */
+export default function ChatArea(props: ChatAreaProps) {
+  return (
+    <QuoteProvider>
+      <SelectionTooltip />
+      <ChatAreaContent {...props} />
+    </QuoteProvider>
   )
 }

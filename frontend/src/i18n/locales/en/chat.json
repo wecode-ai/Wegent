@@ -12,6 +12,11 @@
     "stop": "Stop",
     "retry": "Retry"
   },
+  "quote": {
+    "ask_wegent": "Ask Wegent",
+    "quoted_text": "Quoted text",
+    "remove_quote": "Remove quote"
+  },
   "status": {
     "typing": "AI is typing...",
     "thinking": "AI is thinking...",

@@ -12,6 +12,11 @@
     "stop": "停止",
     "retry": "重试"
   },
+  "quote": {
+    "ask_wegent": "询问 Wegent",
+    "quoted_text": "引用内容",
+    "remove_quote": "移除引用"
+  },
   "status": {
     "typing": "AI 正在输入...",
     "thinking": "AI 正在思考...",

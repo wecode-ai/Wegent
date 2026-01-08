@@ -11,6 +11,7 @@ import InputBadgeDisplay from './InputBadgeDisplay'
 import ExternalApiParamsInput from '../params/ExternalApiParamsInput'
 import { SelectedTeamBadge } from '../selector/SelectedTeamBadge'
 import ChatInputControls, { ChatInputControlsProps } from './ChatInputControls'
+import { QuoteCard } from '../text-selection'
 import type { Team, ChatTipItem } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -176,6 +177,9 @@ export function ChatInputCard({
           onRemoveAttachment={onAttachmentRemove}
           disabled={isLoading || isStreaming}
         />
+
+        {/* Quote Card - shows quoted text from text selection */}
+        <QuoteCard />
 
         {/* Chat Input with inline badge */}
         {!shouldHideChatInput && (
