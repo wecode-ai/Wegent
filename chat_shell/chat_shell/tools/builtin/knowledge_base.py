@@ -84,7 +84,7 @@ class KnowledgeBaseTool(BaseTool):
     )  # Default: auto-decide based on token count
     aggressive_cleaning: bool = True
     min_chunk_score: float = 0.5
-    max_direct_chunks: int = 50
+    max_direct_chunks: int = 500
     context_buffer_ratio: float = 0.1
 
     # Current conversation messages for context calculation
@@ -676,6 +676,9 @@ class KnowledgeBaseTool(BaseTool):
                 "chunks_used": len(injection_result["chunks_used"]),
                 "decision_details": injection_result["decision_details"],
                 "strategy_stats": self.injection_strategy.get_injection_statistics(),
+                "message": "All knowledge base content has been fully injected above. "
+                "No further retrieval is needed - you have access to the complete knowledge base. "
+                "Please answer the user's question based on the injected content.",
             },
             ensure_ascii=False,
         )
