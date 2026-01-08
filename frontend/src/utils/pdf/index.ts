@@ -10,6 +10,7 @@
 // Types
 export type {
   ExportAttachment,
+  ExportKnowledgeBase,
   ExportMessage,
   PdfExportOptions,
   TextSegment,

@@ -120,15 +120,17 @@ export interface JoinSharedTaskResponse {
   task_id: number // The copied task ID
 }
 
-export interface PublicAttachmentData {
+export interface PublicContextData {
   id: number
-  original_filename: string
-  file_extension: string
-  file_size: number
-  mime_type: string
-  extracted_text: string
-  text_length: number
+  context_type: 'attachment' | 'knowledge_base'
+  name: string
   status: string
+  // Attachment fields
+  file_extension?: string
+  file_size?: number
+  mime_type?: string
+  // Knowledge base fields
+  document_count?: number
 }
 
 export interface PublicSubtaskData {
@@ -139,7 +141,13 @@ export interface PublicSubtaskData {
   status: string
   created_at: string
   updated_at: string
-  attachments: PublicAttachmentData[]
+  // Unified contexts field (replaces attachments)
+  contexts: PublicContextData[]
+  // Group chat fields
+  sender_type?: string
+  sender_user_id?: number
+  sender_user_name?: string
+  reply_to_subtask_id?: number
 }
 
 export interface PublicSharedTaskResponse {

@@ -5,12 +5,17 @@
 'use client'
 
 import React, { useState, useCallback, useMemo, useEffect } from 'react'
-import { X, ChevronDown, Paperclip, FileText, RefreshCw, Loader2 } from 'lucide-react'
+import { X, ChevronDown, Paperclip, FileText, RefreshCw, Loader2, Database } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useToast } from '@/hooks/use-toast'
-import { generateChatPdf, type ExportMessage, type ExportAttachment } from '@/utils/pdf'
+import {
+  generateChatPdf,
+  type ExportMessage,
+  type ExportAttachment,
+  type ExportKnowledgeBase,
+} from '@/utils/pdf'
 import { loadUnicodeFont } from '@/utils/pdf/font'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getAttachmentPreviewUrl, isImageExtension } from '@/apis/attachments'
@@ -26,6 +31,13 @@ export interface SelectableAttachment {
   file_extension: string
 }
 
+/** Knowledge base info for selectable messages */
+export interface SelectableKnowledgeBase {
+  id: number
+  name: string
+  document_count?: number
+}
+
 export interface SelectableMessage {
   id: string | number
   type: 'user' | 'ai'
@@ -35,6 +47,7 @@ export interface SelectableMessage {
   userName?: string
   teamName?: string
   attachments?: SelectableAttachment[]
+  knowledgeBases?: SelectableKnowledgeBase[]
 }
 
 export type ExportFormat = 'pdf' | 'docx'
@@ -213,6 +226,7 @@ export default function ExportSelectModal({
     const messagesWithImages: ExportMessage[] = await Promise.all(
       selectedMessages.map(async msg => {
         let attachments: ExportAttachment[] | undefined
+        let knowledgeBases: ExportKnowledgeBase[] | undefined
 
         if (msg.attachments && msg.attachments.length > 0) {
           attachments = await Promise.all(
@@ -233,6 +247,15 @@ export default function ExportSelectModal({
           )
         }
 
+        // Convert knowledge bases to export format
+        if (msg.knowledgeBases && msg.knowledgeBases.length > 0) {
+          knowledgeBases = msg.knowledgeBases.map(kb => ({
+            id: kb.id,
+            name: kb.name,
+            document_count: kb.document_count,
+          }))
+        }
+
         return {
           type: msg.type,
           content: msg.content,
@@ -241,6 +264,8 @@ export default function ExportSelectModal({
           userName: msg.userName,
           teamName: msg.teamName,
           attachments,
+          knowledgeBases,
+
         }
       })
     )
@@ -423,6 +448,16 @@ export default function ExportSelectModal({
                       <Paperclip className="w-3 h-3" />
                       <span>
                         {msg.attachments.length} {t('chat:export.attachments') || 'attachment(s)'}
+                      </span>
+                    </div>
+                  )}
+                  {/* Show knowledge base indicator */}
+                  {msg.knowledgeBases && msg.knowledgeBases.length > 0 && (
+                    <div className="flex items-center gap-1 mt-1 text-xs text-text-muted">
+                      <Database className="w-3 h-3" />
+                      <span>
+                        {msg.knowledgeBases.length}{' '}
+                        {t('chat:export.knowledge_bases') || 'knowledge base(s)'}
                       </span>
                     </div>
                   )}

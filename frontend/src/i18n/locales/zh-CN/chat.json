@@ -228,6 +228,7 @@
     "select_from_here": "从此处开始选择",
     "select_below": "选择以下所有",
     "attachments": "个附件",
+    "knowledge_bases": "个知识库",
     "preparing": "正在准备导出...",
     "font_load_failed": "字体加载失败，请重试",
     "retry": "重试"
