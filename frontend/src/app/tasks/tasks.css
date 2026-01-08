@@ -13,37 +13,12 @@
   transition: height 0.2s ease;
 }
 
-/* Custom scrollbar styles (for ChatInput, main area, etc.) */
-.auto-resize-textarea::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-.auto-resize-textarea::-webkit-scrollbar-track {
-  background: rgb(var(--color-scrollbar-track));
-  border-radius: 3px;
-}
-
-.auto-resize-textarea::-webkit-scrollbar-thumb {
-  background: rgb(var(--color-scrollbar-thumb));
-  border-radius: 3px;
-}
-
-.auto-resize-textarea::-webkit-scrollbar-thumb:hover {
-  background: rgb(var(--color-border-strong));
-}
-
 /* Bot selector styles */
 .bot-selector-container {
   position: relative;
   margin-bottom: 8px;
 }
 
-/* Message area scrollbar styles */
-.messages-container {
-  scrollbar-width: thin;
-  scrollbar-color: rgb(var(--color-scrollbar-thumb)) rgb(var(--color-scrollbar-track));
-}
 /* Fix markdown code/pre overflow issue */
 .markdown-body pre,
 .markdown-body code {

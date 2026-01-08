@@ -12,7 +12,9 @@ def setup_logging() -> None:
     """Configure logging format for Chat Shell Service."""
 
     # Create a custom formatter
-    log_format = "%(asctime)s %(levelname)-4s [chat-shell] : %(message)s"
+    log_format = (
+        "%(asctime)s %(levelname)-4s [chat-shell] %(filename)s:%(lineno)d : %(message)s"
+    )
 
     # Create handler
     handler = logging.StreamHandler(sys.stdout)
