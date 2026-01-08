@@ -445,6 +445,33 @@ class KnowledgeService:
         )
 
     @staticmethod
+    def get_total_file_size(
+        db: Session,
+        knowledge_base_id: int,
+    ) -> int:
+        """
+        Get the total file size for all active documents in a knowledge base.
+
+        Args:
+            db: Database session
+            knowledge_base_id: Knowledge base ID
+
+        Returns:
+            Total file size in bytes for all active documents
+        """
+        from sqlalchemy import func
+
+        return (
+            db.query(func.coalesce(func.sum(KnowledgeDocument.file_size), 0))
+            .filter(
+                KnowledgeDocument.kind_id == knowledge_base_id,
+                KnowledgeDocument.is_active == True,
+            )
+            .scalar()
+            or 0
+        )
+
+    @staticmethod
     def get_active_document_count(
         db: Session,
         knowledge_base_id: int,

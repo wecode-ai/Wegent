@@ -166,9 +166,31 @@ fi
 # Step 1: Check Python version
 echo -e "${BLUE}[1/5] Checking Python version...${NC}"
 
+REQUIRED_VERSION="3.10"
+
+# Function to check if Python version meets requirement
+# Args: python_exec, need_exit (true/false)
+# Sets PYTHON_VERSION if valid
+# If need_exit is true, exits with error when version is invalid
+# If need_exit is false, returns 1 when version is invalid
+check_python_version() {
+    local python_exec="$1"
+    local need_exit="${2:-false}"
+    PYTHON_VERSION=$($python_exec --version 2>&1 | cut -d' ' -f2 | cut -d'.' -f1,2)
+    
+    if [ "$(printf '%s\n' "$REQUIRED_VERSION" "$PYTHON_VERSION" | sort -V | head -n1)" != "$REQUIRED_VERSION" ]; then
+        if [ "$need_exit" = "true" ]; then
+            echo -e "${RED}Error: Python $REQUIRED_VERSION or higher is required (found $PYTHON_VERSION)${NC}"
+            exit 1
+        fi
+        return 1
+    fi
+    return 0
+}
+
 # Determine which Python to use
 if [ -n "$PYTHON_PATH" ]; then
-    # User specified a Python path
+    # User specified a Python path - use it directly without fallback
     if [ ! -f "$PYTHON_PATH" ]; then
         echo -e "${RED}Error: Python executable not found at $PYTHON_PATH${NC}"
         exit 1
@@ -179,24 +201,43 @@ if [ -n "$PYTHON_PATH" ]; then
     fi
     PYTHON_EXEC="$PYTHON_PATH"
     echo -e "${GREEN}✓ Using specified Python: $PYTHON_EXEC${NC}"
+    check_python_version "$PYTHON_EXEC" true
 else
-    # Auto-detect Python
-    if ! command -v python3 &> /dev/null; then
-        echo -e "${RED}Error: python3 is not installed${NC}"
+    # Auto-detect Python with fallback logic
+    PYTHON_EXEC=""
+
+    if ! command -v python3 &> /dev/null && ! command -v python &> /dev/null; then
+        echo -e "${RED}Error: python3 or python is not installed${NC}"
         echo "Please install Python 3.10 or higher, or specify Python path with --python"
         exit 1
     fi
-    PYTHON_EXEC=$(which python3)
-    echo -e "${GREEN}✓ Using system Python: $PYTHON_EXEC${NC}"
-fi
-
-# Check Python version
-PYTHON_VERSION=$($PYTHON_EXEC --version 2>&1 | cut -d' ' -f2 | cut -d'.' -f1,2)
-REQUIRED_VERSION="3.10"
-
-if [ "$(printf '%s\n' "$REQUIRED_VERSION" "$PYTHON_VERSION" | sort -V | head -n1)" != "$REQUIRED_VERSION" ]; then
-    echo -e "${RED}Error: Python $REQUIRED_VERSION or higher is required (found $PYTHON_VERSION)${NC}"
-    exit 1
+    
+    # First try 'python'
+    if command -v python &> /dev/null; then
+        PYTHON_CANDIDATE=$(which python)
+        if check_python_version "$PYTHON_CANDIDATE" false; then
+            PYTHON_EXEC="$PYTHON_CANDIDATE"
+            echo -e "${GREEN}✓ Using system Python: $PYTHON_EXEC${NC}"
+        fi
+    fi
+    
+    # If 'python' doesn't meet requirement, try 'python3'
+    if [ -z "$PYTHON_EXEC" ]; then
+        if command -v python3 &> /dev/null; then
+            PYTHON_CANDIDATE=$(which python3)
+            if check_python_version "$PYTHON_CANDIDATE" true; then
+                PYTHON_EXEC="$PYTHON_CANDIDATE"
+                echo -e "${GREEN}✓ Using system Python3: $PYTHON_EXEC${NC}"
+            fi
+        fi
+    fi
+    
+    # If neither works, exit with error
+    if [ -z "$PYTHON_EXEC" ]; then
+        echo -e "${RED}Error: No suitable Python found. Python $REQUIRED_VERSION or higher is required.${NC}"
+        echo "Please install Python 3.10 or higher, or specify Python path with --python"
+        exit 1
+    fi
 fi
 
 echo -e "${GREEN}✓ Python $PYTHON_VERSION detected${NC}"

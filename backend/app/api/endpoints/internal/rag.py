@@ -106,14 +106,22 @@ async def internal_retrieve(
         )
 
         records = result.get("records", [])
+        total_records_before_limit = len(records)
+
+        # Calculate total content size for logging
+        total_content_chars = sum(len(r.get("content", "")) for r in records)
+        total_content_kb = total_content_chars / 1024
 
         # Limit results
         records = records[: request.max_results]
 
         logger.info(
-            "[internal_rag] Retrieved %d records for KB %d, query: %s%s",
+            "[internal_rag] Retrieved %d records (limited to %d) for KB %d, "
+            "total_size=%.2fKB , query: %s%s",
+            total_records_before_limit,
             len(records),
             request.knowledge_base_id,
+            total_content_kb,
             request.query[:50],
             (
                 f", filtered by {len(request.document_ids)} docs"
@@ -140,4 +148,194 @@ async def internal_retrieve(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error("[internal_rag] Retrieval failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class KnowledgeBaseSizeRequest(BaseModel):
+    """Request for getting knowledge base size."""
+
+    knowledge_base_ids: list[int] = Field(..., description="List of knowledge base IDs")
+
+
+class KnowledgeBaseSizeInfo(BaseModel):
+    """Size information for a single knowledge base."""
+
+    id: int
+    total_file_size: int  # Total file size in bytes
+    document_count: int  # Number of active documents
+    estimated_tokens: int  # Estimated token count (file_size / 4)
+
+
+class KnowledgeBaseSizeResponse(BaseModel):
+    """Response for knowledge base size query."""
+
+    items: list[KnowledgeBaseSizeInfo]
+    total_file_size: int  # Sum of all KB sizes
+    total_estimated_tokens: int  # Sum of all estimated tokens
+
+
+@router.post("/kb-size", response_model=KnowledgeBaseSizeResponse)
+async def get_knowledge_base_size(
+    request: KnowledgeBaseSizeRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Get size information for knowledge bases.
+
+    This endpoint returns the total file size and estimated token count
+    for the specified knowledge bases. Used by chat_shell to decide
+    whether to use direct injection or RAG retrieval.
+
+    Args:
+        request: Request with knowledge base IDs
+        db: Database session
+
+    Returns:
+        Size information for each knowledge base
+    """
+    from app.services.knowledge_service import KnowledgeService
+
+    items = []
+    total_file_size = 0
+    total_estimated_tokens = 0
+
+    for kb_id in request.knowledge_base_ids:
+        try:
+            file_size = KnowledgeService.get_total_file_size(db, kb_id)
+            doc_count = KnowledgeService.get_active_document_count(db, kb_id)
+            # Estimate tokens: approximately 4 characters per token for most models
+            estimated_tokens = file_size // 4
+
+            items.append(
+                KnowledgeBaseSizeInfo(
+                    id=kb_id,
+                    total_file_size=file_size,
+                    document_count=doc_count,
+                    estimated_tokens=estimated_tokens,
+                )
+            )
+
+            total_file_size += file_size
+            total_estimated_tokens += estimated_tokens
+
+            logger.info(
+                "[internal_rag] KB %d size: %d bytes, %d docs, ~%d tokens",
+                kb_id,
+                file_size,
+                doc_count,
+                estimated_tokens,
+            )
+
+        except Exception as e:
+            logger.warning("[internal_rag] Failed to get size for KB %d: %s", kb_id, e)
+            # Add zero values for failed KBs
+            items.append(
+                KnowledgeBaseSizeInfo(
+                    id=kb_id,
+                    total_file_size=0,
+                    document_count=0,
+                    estimated_tokens=0,
+                )
+            )
+
+    logger.info(
+        "[internal_rag] Total KB size: %d bytes, ~%d tokens for %d KBs",
+        total_file_size,
+        total_estimated_tokens,
+        len(request.knowledge_base_ids),
+    )
+
+    return KnowledgeBaseSizeResponse(
+        items=items,
+        total_file_size=total_file_size,
+        total_estimated_tokens=total_estimated_tokens,
+    )
+
+
+class AllChunksRequest(BaseModel):
+    """Request for getting all chunks from a knowledge base."""
+
+    knowledge_base_id: int = Field(..., description="Knowledge base ID")
+    max_chunks: int = Field(
+        default=10000,
+        description="Maximum number of chunks to retrieve (safety limit)",
+    )
+
+
+class ChunkInfo(BaseModel):
+    """Information for a single chunk."""
+
+    content: str
+    title: str
+    chunk_id: Optional[int] = None
+    doc_ref: Optional[str] = None
+    metadata: Optional[dict] = None
+
+
+class AllChunksResponse(BaseModel):
+    """Response for all chunks query."""
+
+    chunks: list[ChunkInfo]
+    total: int
+
+
+@router.post("/all-chunks", response_model=AllChunksResponse)
+async def get_all_chunks(
+    request: AllChunksRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Get all chunks from a knowledge base for direct injection.
+
+    This endpoint retrieves all chunks stored in a knowledge base,
+    used when the total content fits within the model's context window.
+
+    Args:
+        request: Request with knowledge base ID and max chunks
+        db: Database session
+
+    Returns:
+        All chunks from the knowledge base
+    """
+    try:
+        from app.services.rag.retrieval_service import RetrievalService
+
+        retrieval_service = RetrievalService()
+
+        chunks = await retrieval_service.get_all_chunks_from_knowledge_base(
+            knowledge_base_id=request.knowledge_base_id,
+            db=db,
+            max_chunks=request.max_chunks,
+        )
+
+        # Calculate total content size for logging
+        total_content_chars = sum(len(c.get("content", "")) for c in chunks)
+        total_content_kb = total_content_chars / 1024
+
+        logger.info(
+            "[internal_rag] Retrieved all %d chunks from KB %d, total_size=%.2fKB",
+            len(chunks),
+            request.knowledge_base_id,
+            total_content_kb,
+        )
+
+        return AllChunksResponse(
+            chunks=[
+                ChunkInfo(
+                    content=c.get("content", ""),
+                    title=c.get("title", "Unknown"),
+                    chunk_id=c.get("chunk_id"),
+                    doc_ref=c.get("doc_ref"),
+                    metadata=c.get("metadata"),
+                )
+                for c in chunks
+            ],
+            total=len(chunks),
+        )
+
+    except ValueError as e:
+        logger.warning("[internal_rag] All chunks error: %s", e)
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("[internal_rag] All chunks failed: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

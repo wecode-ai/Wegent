@@ -50,9 +50,6 @@ class WebSearchTool(BaseTool):
     # Search engine configuration (passed from settings)
     engine_config: dict[str, Any] | None = None
 
-    class Config:
-        arbitrary_types_allowed = True
-
     def _run(
         self,
         query: str,

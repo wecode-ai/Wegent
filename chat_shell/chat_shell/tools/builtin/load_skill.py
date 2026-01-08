@@ -70,9 +70,6 @@ class LoadSkillTool(BaseTool):
     # Cache for skill display names (skill_name -> displayName)
     _skill_display_names: dict[str, str] = PrivateAttr(default_factory=dict)
 
-    class Config:
-        arbitrary_types_allowed = True
-
     def __init__(self, **data):
         """Initialize with a fresh expanded_skills cache."""
         super().__init__(**data)

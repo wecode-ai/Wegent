@@ -261,7 +261,7 @@ class RetrievalService:
             .filter(
                 Kind.id == knowledge_base_id,
                 Kind.kind == "KnowledgeBase",
-                Kind.is_active == True,
+                Kind.is_active,
             )
             .first()
         )
@@ -357,7 +357,8 @@ class RetrievalService:
         embedding_owner_user_id = kb.user_id
 
         # Extract retrieval parameters
-        top_k = retrieval_config.get("top_k", 5)
+        # Increased default top_k from 5 to 20 for better RAG coverage
+        top_k = retrieval_config.get("top_k", 20)
         score_threshold = retrieval_config.get("score_threshold", 0.7)
         retrieval_mode = retrieval_config.get("retrieval_mode", "vector")
 
@@ -418,4 +419,116 @@ class RetrievalService:
             user_id=kb.user_id,
         )
 
+        # Log detailed retrieval results for debugging
+        records = result.get("records", [])
+        total_content_chars = sum(len(r.get("content", "")) for r in records)
+        total_content_kb = total_content_chars / 1024
+        total_content_mb = total_content_kb / 1024
+
+        logger.info(
+            f"[RAG] Retrieved {len(records)} records from KB {kb.id} (name={kb.name}), "
+            f"total_size={total_content_chars} chars ({total_content_kb:.2f}KB / {total_content_mb:.4f}MB), "
+            f"query={query[:50]}..."
+        )
+
+        # Log individual record details for debugging
+        if records:
+            for i, r in enumerate(records[:5]):  # Log first 5 records
+                content_len = len(r.get("content", ""))
+                score = r.get("score", 0)
+                title = r.get("title", "Unknown")[:50]
+                logger.debug(
+                    f"[RAG] Record[{i}]: score={score:.4f}, size={content_len} chars, title={title}"
+                )
+
         return result
+
+    async def get_all_chunks_from_knowledge_base(
+        self,
+        knowledge_base_id: int,
+        db: Session,
+        max_chunks: int = 10000,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all chunks from a knowledge base without permission check.
+
+        This method is used for smart context injection where we need all
+        chunks from a knowledge base to determine if direct injection is possible.
+
+        Args:
+            knowledge_base_id: Knowledge base ID
+            db: Database session
+            max_chunks: Maximum number of chunks to retrieve (safety limit)
+
+        Returns:
+            List of chunk dicts with content, title, chunk_id, doc_ref, metadata
+
+        Raises:
+            ValueError: If knowledge base not found or configuration invalid
+        """
+        from app.models.kind import Kind
+
+        # Get knowledge base directly without permission check
+        kb = (
+            db.query(Kind)
+            .filter(
+                Kind.id == knowledge_base_id,
+                Kind.kind == "KnowledgeBase",
+                Kind.is_active,
+            )
+            .first()
+        )
+
+        if not kb:
+            raise ValueError(f"Knowledge base {knowledge_base_id} not found")
+
+        # Extract retrieval configuration from knowledge base spec
+        kb_json = kb.json or {}
+        spec = kb_json.get("spec", {})
+        retrieval_config = spec.get("retrievalConfig")
+
+        if not retrieval_config:
+            raise ValueError(f"Knowledge base {kb.id} has no retrieval configuration")
+
+        # Extract retriever reference
+        retriever_name = retrieval_config.get("retriever_name")
+        retriever_namespace = retrieval_config.get("retriever_namespace", "default")
+
+        if not retriever_name:
+            raise ValueError(
+                f"Knowledge base {kb.id} has incomplete retrieval config (missing retriever_name)"
+            )
+
+        # Get retriever CRD
+        retriever = retriever_kinds_service.get_retriever(
+            db=db,
+            user_id=kb.user_id,
+            name=retriever_name,
+            namespace=retriever_namespace,
+        )
+
+        if not retriever:
+            raise ValueError(
+                f"Retriever {retriever_name} (namespace: {retriever_namespace}) not found"
+            )
+
+        # Create storage backend from retriever
+        storage_backend = create_storage_backend(retriever)
+
+        # Use knowledge base ID as knowledge_id
+        knowledge_id = str(kb.id)
+
+        # Get all chunks from storage backend
+        # Run in thread pool to avoid event loop conflicts
+        chunks = await asyncio.to_thread(
+            storage_backend.get_all_chunks,
+            knowledge_id=knowledge_id,
+            max_chunks=max_chunks,
+            user_id=kb.user_id,
+        )
+
+        logger.info(
+            f"[RAG] Retrieved {len(chunks)} total chunks from KB {knowledge_base_id}"
+        )
+
+        return chunks
