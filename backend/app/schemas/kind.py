@@ -413,9 +413,17 @@ class WorkspaceTaskRef(BaseModel):
 
 
 class KnowledgeBaseTaskRef(BaseModel):
-    """Reference to a KnowledgeBase bound to a Task (group chat)"""
+    """Reference to a KnowledgeBase bound to a Task (group chat)
 
-    name: str
+    Note: The 'id' field stores Kind.id for stable references.
+    The 'name' field stores the display name (spec.name) for backward compatibility.
+    When looking up a knowledge base:
+    1. If 'id' exists, query by Kind.id directly (preferred)
+    2. If 'id' is None, fall back to name + namespace lookup (legacy data)
+    """
+
+    id: Optional[int] = None  # Knowledge base Kind.id (primary reference)
+    name: str  # Display name (spec.name), kept for backward compatibility
     namespace: str = "default"
     boundBy: Optional[str] = None  # Username of the person who bound this KB
     boundAt: Optional[str] = None  # Binding timestamp in ISO format

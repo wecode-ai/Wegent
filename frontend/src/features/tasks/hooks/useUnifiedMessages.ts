@@ -139,7 +139,7 @@ export function useUnifiedMessages({
   isGroupChat,
   pendingTaskId,
 }: UseUnifiedMessagesOptions): UseUnifiedMessagesResult {
-  const { getStreamState, syncBackendMessages } = useChatStreamContext()
+  const { getStreamState, syncBackendMessages, resumeStream } = useChatStreamContext()
   const { selectedTaskDetail } = useTaskContext()
   const { user } = useUser()
 
@@ -148,6 +148,8 @@ export function useUnifiedMessages({
 
   // Track the last synced task to avoid unnecessary syncs
   const lastSyncedTaskIdRef = useRef<number | undefined>(undefined)
+  // Track whether we've attempted to resume streaming for this task
+  const attemptedResumeRef = useRef<number | undefined>(undefined)
 
   // Determine effective task ID for querying streamState:
   // - Use taskId (from selectedTaskDetail) if available
@@ -181,17 +183,39 @@ export function useUnifiedMessages({
         currentUserName: user?.user_name,
       })
       lastSyncedTaskIdRef.current = taskId
+
+      // KEY FIX: If there's a RUNNING/PENDING AI subtask, call resumeStream to receive
+      // streaming data. This handles the task switch case where syncBackendMessages
+      // creates a streaming placeholder but the frontend isn't receiving chat:chunk events.
+      const hasRunningAISubtask = subtasks.some(
+        s =>
+          (s.role === 'ASSISTANT' || s.role?.toUpperCase() === 'ASSISTANT') &&
+          (s.status === 'RUNNING' || s.status === 'PENDING')
+      )
+
+      if (hasRunningAISubtask && attemptedResumeRef.current !== taskId) {
+        attemptedResumeRef.current = taskId
+        console.log('[useUnifiedMessages] Found RUNNING/PENDING AI subtask, calling resumeStream', {
+          taskId,
+        })
+        // Call resumeStream to join WebSocket room and receive streaming data
+        resumeStream(taskId).then(resumed => {
+          console.log('[useUnifiedMessages] resumeStream result:', { taskId, resumed })
+        })
+      }
     }
 
     // Reset tracking when task is cleared
     if (!taskId) {
       lastSyncedTaskIdRef.current = undefined
+      attemptedResumeRef.current = undefined
     }
   }, [
     taskId,
     subtasks,
     streamState,
     syncBackendMessages,
+    resumeStream,
     team?.name,
     isGroupChat,
     user?.id,
