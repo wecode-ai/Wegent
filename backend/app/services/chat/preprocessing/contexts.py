@@ -746,11 +746,13 @@ def _get_bound_knowledge_base_ids(db: Session, task_id: int) -> List[int]:
     """
     Get knowledge base IDs bound to a task.
 
-    This function retrieves the knowledge base IDs from knowledgeBaseRefs
-    in the task spec. It works for both group chat and non-group chat tasks.
+    This function delegates to task_knowledge_base_service.get_bound_knowledge_base_ids()
+    for the actual lookup and migration logic. It wraps the call with additional
+    error handling to ensure chat functionality is never blocked.
 
-    Note: The knowledgeBaseRefs stores display names (spec.name), not Kind.name.
-    We need to query by spec.name to find the correct knowledge base.
+    The underlying service uses ID-priority lookup with name fallback for
+    backward compatibility. Legacy refs (name-only) are automatically
+    migrated to include the ID field.
 
     Args:
         db: Database session
@@ -759,88 +761,16 @@ def _get_bound_knowledge_base_ids(db: Session, task_id: int) -> List[int]:
     Returns:
         List of knowledge base IDs bound to the task
     """
-    from app.models.task import TaskResource
+    from app.services.task_knowledge_base_service import task_knowledge_base_service
 
     logger.info(f"[_get_bound_knowledge_base_ids] START task_id={task_id}")
 
     try:
-        task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == task_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active.is_(True),
-            )
-            .first()
-        )
-
-        if not task:
-            logger.info(f"[_get_bound_knowledge_base_ids] Task not found: {task_id}")
-            return []
-
-        task_json = task.json if isinstance(task.json, dict) else {}
-        spec = task_json.get("spec", {})
-        kb_refs = spec.get("knowledgeBaseRefs", []) or []
-
-        logger.info(
-            f"[_get_bound_knowledge_base_ids] task_id={task_id}, "
-            f"kb_refs_count={len(kb_refs)}, kb_refs={kb_refs}"
-        )
-
-        if not kb_refs:
-            return []
-
-        from app.models.kind import Kind
-
-        kb_ids = []
-        for ref in kb_refs:
-            kb_name = ref.get("name")
-            kb_namespace = ref.get("namespace", "default")
-
-            if not kb_name:
-                continue
-
-            # Find the knowledge base by display name (spec.name) and namespace
-            # Note: knowledgeBaseRefs stores display names (spec.name), not Kind.name
-            # Kind.name has format 'kb-{user_id}-{namespace}-{display_name}'
-            # We need to query all KBs in the namespace and filter by spec.name
-            knowledge_bases = (
-                db.query(Kind)
-                .filter(
-                    Kind.kind == "KnowledgeBase",
-                    Kind.namespace == kb_namespace,
-                    Kind.is_active.is_(True),
-                )
-                .all()
-            )
-
-            # Find the one with matching display name in spec
-            kb = None
-            for candidate in knowledge_bases:
-                kb_spec = candidate.json.get("spec", {}) if candidate.json else {}
-                candidate_name = kb_spec.get("name")
-                if candidate_name == kb_name:
-                    kb = candidate
-                    break
-
-            if kb:
-                kb_ids.append(kb.id)
-                logger.info(
-                    f"[_get_bound_knowledge_base_ids] FOUND KB: "
-                    f"display_name={kb_name}, namespace={kb_namespace}, id={kb.id}"
-                )
-            else:
-                logger.warning(
-                    f"[_get_bound_knowledge_base_ids] NOT FOUND KB: "
-                    f"display_name={kb_name}, namespace={kb_namespace}, "
-                    f"candidates_count={len(knowledge_bases)}"
-                )
-
+        kb_ids = task_knowledge_base_service.get_bound_knowledge_base_ids(db, task_id)
         logger.info(
             f"[_get_bound_knowledge_base_ids] RESULT task_id={task_id}, kb_ids={kb_ids}"
         )
         return kb_ids
-
     except Exception as e:
         # Catch all exceptions to ensure robustness - this function should
         # never block chat functionality even if KB lookup fails
