@@ -15,15 +15,15 @@ interface CrossValidationPairCardProps {
   hardThreshold?: number
 }
 
-function getScoreColor(score: number | undefined): string {
-  if (score === undefined) return 'bg-gray-100 text-gray-500'
+function getScoreColor(score: number | undefined | null): string {
+  if (score == null) return 'bg-gray-100 text-gray-500'
   if (score >= 0.7) return 'bg-green-100 text-green-700'
   if (score >= 0.5) return 'bg-yellow-100 text-yellow-700'
   return 'bg-red-100 text-red-700'
 }
 
-function getProgressColor(score: number | undefined): string {
-  if (score === undefined) return 'bg-gray-300'
+function getProgressColor(score: number | undefined | null): string {
+  if (score == null) return 'bg-gray-300'
   if (score >= 0.7) return 'bg-green-500'
   if (score >= 0.5) return 'bg-yellow-500'
   return 'bg-red-500'
@@ -44,17 +44,17 @@ export function CrossValidationPairCard({
 
   // Calculate difference
   const difference =
-    ragasScore !== undefined && trulensScore !== undefined
+    ragasScore != null && trulensScore != null
       ? Math.abs(ragasScore - trulensScore)
       : undefined
 
-  const isAlert = difference !== undefined && difference > alertThreshold
+  const isAlert = difference != null && difference > alertThreshold
 
   // Check hard threshold
   const ragasBelowThreshold =
-    showThresholdWarning && ragasScore !== undefined && ragasScore < hardThreshold
+    showThresholdWarning && ragasScore != null && ragasScore < hardThreshold
   const trulensBelowThreshold =
-    showThresholdWarning && trulensScore !== undefined && trulensScore < hardThreshold
+    showThresholdWarning && trulensScore != null && trulensScore < hardThreshold
 
   return (
     <div className={`rounded-lg border bg-card p-4 ${isAlert ? 'border-orange-300' : ''}`}>
@@ -86,7 +86,7 @@ export function CrossValidationPairCard({
           </p>
           <div className="flex items-center gap-2">
             <span className="text-xl font-semibold">
-              {ragasScore !== undefined ? (ragasScore * 100).toFixed(1) + '%' : '-'}
+              {ragasScore != null ? (ragasScore * 100).toFixed(1) + '%' : '-'}
             </span>
             {ragasBelowThreshold && (
               <span className="text-xs text-red-600 font-medium">
@@ -121,7 +121,7 @@ export function CrossValidationPairCard({
           </p>
           <div className="flex items-center gap-2">
             <span className="text-xl font-semibold">
-              {trulensScore !== undefined ? (trulensScore * 100).toFixed(1) + '%' : '-'}
+              {trulensScore != null ? (trulensScore * 100).toFixed(1) + '%' : '-'}
             </span>
             {trulensBelowThreshold && (
               <span className="text-xs text-red-600 font-medium">
@@ -144,7 +144,7 @@ export function CrossValidationPairCard({
           {t('metrics.crossValidation', 'Cross Validation')}
         </span>
         <span className="text-muted-foreground">←→</span>
-        {difference !== undefined ? (
+        {difference != null ? (
           <div className="flex items-center gap-1">
             <span
               className={`text-sm font-medium ${isAlert ? 'text-orange-600' : 'text-green-600'}`}

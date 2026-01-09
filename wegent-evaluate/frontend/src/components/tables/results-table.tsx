@@ -129,7 +129,7 @@ export function ResultsTable({ items }: ResultsTableProps) {
                     <XCircle className="h-3 w-3" />
                     {t('metrics.failed', 'FAILED')}
                   </span>
-                ) : item.total_score !== undefined ? (
+                ) : item.total_score != null ? (
                   <span className="inline-flex items-center gap-1 rounded bg-green-100 px-2 py-1 text-xs font-medium text-green-700">
                     <CheckCircle className="h-3 w-3" />
                     {t('metrics.passed', 'PASSED')}
@@ -142,13 +142,13 @@ export function ResultsTable({ items }: ResultsTableProps) {
               <td className="px-4 py-3">
                 <span
                   className={
-                    item.faithfulness_score !== undefined && item.faithfulness_score < 0.6
+                    item.faithfulness_score != null && item.faithfulness_score < 0.6
                       ? 'text-red-600 font-medium'
                       : ''
                   }
                 >
                   {formatScore(item.faithfulness_score)}
-                  {item.faithfulness_score !== undefined && item.faithfulness_score < 0.6 && (
+                  {item.faithfulness_score != null && item.faithfulness_score < 0.6 && (
                     <span className="ml-1 text-red-500">⚠️</span>
                   )}
                 </span>

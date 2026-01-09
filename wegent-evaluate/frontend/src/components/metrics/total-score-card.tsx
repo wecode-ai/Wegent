@@ -12,15 +12,15 @@ interface TotalScoreCardProps {
   size?: 'sm' | 'md' | 'lg'
 }
 
-function getScoreColor(score: number | undefined): string {
-  if (score === undefined) return 'text-gray-500'
+function getScoreColor(score: number | undefined | null): string {
+  if (score == null) return 'text-gray-500'
   if (score >= 70) return 'text-green-600'
   if (score >= 50) return 'text-yellow-600'
   return 'text-red-600'
 }
 
-function getScoreBgColor(score: number | undefined): string {
-  if (score === undefined) return 'bg-gray-100'
+function getScoreBgColor(score: number | undefined | null): string {
+  if (score == null) return 'bg-gray-100'
   if (score >= 70) return 'bg-green-100'
   if (score >= 50) return 'bg-yellow-100'
   return 'bg-red-100'
@@ -66,7 +66,7 @@ export function TotalScoreCard({
             <AlertTriangle className="h-4 w-4" />
             {t('metrics.failed', 'FAILED')}
           </span>
-        ) : totalScore !== undefined ? (
+        ) : totalScore != null ? (
           <span className="inline-flex items-center gap-1 px-2 py-1 rounded bg-green-100 text-green-700 text-sm font-medium">
             <CheckCircle className="h-4 w-4" />
             {t('metrics.passed', 'PASSED')}
@@ -81,7 +81,7 @@ export function TotalScoreCard({
             isFailed ? 'text-gray-400 line-through' : getScoreColor(totalScore)
           }`}
         >
-          {totalScore !== undefined ? totalScore.toFixed(1) : '-'}
+          {totalScore != null ? totalScore.toFixed(1) : '-'}
         </span>
         <span className="text-muted-foreground text-sm">/ 100</span>
       </div>
@@ -106,7 +106,7 @@ export function TotalScoreCard({
           </div>
           <div className="flex items-baseline gap-1">
             <span className="text-lg font-semibold">
-              {retrievalScore !== undefined ? (retrievalScore * 100).toFixed(1) + '%' : '-'}
+              {retrievalScore != null ? (retrievalScore * 100).toFixed(1) + '%' : '-'}
             </span>
             <span className="text-xs text-muted-foreground">(45%)</span>
           </div>
@@ -122,7 +122,7 @@ export function TotalScoreCard({
           </div>
           <div className="flex items-baseline gap-1">
             <span className="text-lg font-semibold">
-              {generationScore !== undefined ? (generationScore * 100).toFixed(1) + '%' : '-'}
+              {generationScore != null ? (generationScore * 100).toFixed(1) + '%' : '-'}
             </span>
             <span className="text-xs text-muted-foreground">(55%)</span>
           </div>

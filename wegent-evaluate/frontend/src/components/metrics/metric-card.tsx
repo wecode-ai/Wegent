@@ -12,15 +12,15 @@ interface MetricCardProps {
   threshold?: number
 }
 
-function getScoreColor(score: number | undefined): string {
-  if (score === undefined) return 'bg-gray-100 text-gray-500'
+function getScoreColor(score: number | undefined | null): string {
+  if (score == null) return 'bg-gray-100 text-gray-500'
   if (score >= 0.7) return 'bg-green-100 text-green-700'
   if (score >= 0.5) return 'bg-yellow-100 text-yellow-700'
   return 'bg-red-100 text-red-700'
 }
 
-function getProgressColor(score: number | undefined): string {
-  if (score === undefined) return 'bg-gray-300'
+function getProgressColor(score: number | undefined | null): string {
+  if (score == null) return 'bg-gray-300'
   if (score >= 0.7) return 'bg-green-500'
   if (score >= 0.5) return 'bg-yellow-500'
   return 'bg-red-500'
@@ -56,7 +56,7 @@ export function MetricCard({
     lg: 'text-2xl',
   }
 
-  const isBelowThreshold = showThresholdWarning && score !== undefined && score < threshold
+  const isBelowThreshold = showThresholdWarning && score != null && score < threshold
 
   return (
     <div
@@ -88,7 +88,7 @@ export function MetricCard({
       {/* Score */}
       <div className="flex items-center gap-2">
         <span className={`font-semibold ${scoreSizeClasses[size]}`}>
-          {score !== undefined ? (score * 100).toFixed(1) + '%' : '-'}
+          {score != null ? (score * 100).toFixed(1) + '%' : '-'}
         </span>
         {isBelowThreshold && (
           <span className="text-xs text-red-600 font-medium">

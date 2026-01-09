@@ -16,7 +16,7 @@ export function DifferenceIndicator({
 }: DifferenceIndicatorProps) {
   const { t } = useTranslation()
 
-  if (difference === undefined) {
+  if (difference == null) {
     return <span className="text-sm text-muted-foreground">-</span>
   }
 

@@ -158,7 +158,7 @@ function DiagnosticCard({
                     <div className="flex-1">
                       <p className="text-sm font-medium">{issue.metric}</p>
                       <p className="text-sm text-muted-foreground">{issue.description}</p>
-                      {issue.score !== undefined && (
+                      {issue.score != null && (
                         <p className="text-xs text-muted-foreground mt-1">
                           {t('resultDetail.score')}: {(issue.score * 100).toFixed(1)}%
                         </p>
@@ -306,16 +306,16 @@ function CrossValidationCard({
                   <td className="p-3 text-center">
                     <span
                       className={`inline-block min-w-[60px] px-2 py-1 rounded font-medium ${
-                        pair.ragas_score !== undefined && pair.ragas_score >= 0.7
+                        pair.ragas_score != null && pair.ragas_score >= 0.7
                           ? 'bg-green-100 text-green-700'
-                          : pair.ragas_score !== undefined && pair.ragas_score >= 0.5
+                          : pair.ragas_score != null && pair.ragas_score >= 0.5
                             ? 'bg-yellow-100 text-yellow-700'
-                            : pair.ragas_score !== undefined
+                            : pair.ragas_score != null
                               ? 'bg-red-100 text-red-700'
                               : 'bg-gray-100 text-gray-500'
                       }`}
                     >
-                      {pair.ragas_score !== undefined
+                      {pair.ragas_score != null
                         ? (pair.ragas_score * 100).toFixed(1) + '%'
                         : '-'}
                     </span>
@@ -323,16 +323,16 @@ function CrossValidationCard({
                   <td className="p-3 text-center">
                     <span
                       className={`inline-block min-w-[60px] px-2 py-1 rounded font-medium ${
-                        pair.trulens_score !== undefined && pair.trulens_score >= 0.7
+                        pair.trulens_score != null && pair.trulens_score >= 0.7
                           ? 'bg-blue-100 text-blue-700'
-                          : pair.trulens_score !== undefined && pair.trulens_score >= 0.5
+                          : pair.trulens_score != null && pair.trulens_score >= 0.5
                             ? 'bg-yellow-100 text-yellow-700'
-                            : pair.trulens_score !== undefined
+                            : pair.trulens_score != null
                               ? 'bg-red-100 text-red-700'
                               : 'bg-gray-100 text-gray-500'
                       }`}
                     >
-                      {pair.trulens_score !== undefined
+                      {pair.trulens_score != null
                         ? (pair.trulens_score * 100).toFixed(1) + '%'
                         : '-'}
                     </span>
@@ -345,7 +345,7 @@ function CrossValidationCard({
                           : 'bg-gray-100 text-gray-600'
                       }`}
                     >
-                      {pair.difference !== undefined
+                      {pair.difference != null
                         ? (pair.difference * 100).toFixed(1) + '%'
                         : '-'}
                     </span>

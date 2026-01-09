@@ -1,13 +1,16 @@
 'use client'
 
-interface ScoreCardProps {
+export interface ScoreCardProps {
   title: string
   score?: number
-  description?: string
+  subtitle?: string
 }
 
-export function ScoreCard({ title, score, description }: ScoreCardProps) {
-  const percentage = score ? score * 100 : 0
+export function ScoreCard({ title, score, subtitle }: ScoreCardProps) {
+  // Check if score is a valid number (not null, undefined, or NaN)
+  const hasValidScore = score != null && !Number.isNaN(score)
+  const percentage = hasValidScore ? score * 100 : 0
+
   const getColor = (pct: number) => {
     if (pct >= 80) return 'bg-green-500'
     if (pct >= 60) return 'bg-yellow-500'
@@ -19,10 +22,10 @@ export function ScoreCard({ title, score, description }: ScoreCardProps) {
       <h3 className="text-sm font-medium text-muted-foreground">{title}</h3>
       <div className="mt-2 flex items-end gap-2">
         <span className="text-2xl font-semibold">
-          {score !== undefined ? `${percentage.toFixed(1)}%` : '-'}
+          {hasValidScore ? `${percentage.toFixed(1)}%` : '-'}
         </span>
       </div>
-      {score !== undefined && (
+      {hasValidScore && (
         <div className="mt-3 h-2 overflow-hidden rounded-full bg-secondary">
           <div
             className={`h-full ${getColor(percentage)} transition-all`}
@@ -30,8 +33,8 @@ export function ScoreCard({ title, score, description }: ScoreCardProps) {
           />
         </div>
       )}
-      {description && (
-        <p className="mt-2 text-xs text-muted-foreground">{description}</p>
+      {subtitle && (
+        <p className="mt-2 text-xs text-muted-foreground">{subtitle}</p>
       )}
     </div>
   )

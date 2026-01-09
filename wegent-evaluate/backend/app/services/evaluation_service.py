@@ -1,11 +1,13 @@
 """
 Service for evaluating conversation records using RAGAS and TruLens.
 """
+
 import asyncio
+import math
 import time
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import structlog
 from sqlalchemy import Integer, and_, case, func, select
@@ -33,6 +35,61 @@ logger = structlog.get_logger(__name__)
 
 # In-memory job tracking (for simplicity - could use Redis in production)
 evaluation_jobs: Dict[str, Dict[str, Any]] = {}
+
+
+def sanitize_float(value: Any) -> Optional[float]:
+    """
+    Sanitize a float value for MySQL storage.
+    Converts NaN and Inf values to None since MySQL doesn't support them.
+
+    Args:
+        value: The value to sanitize
+
+    Returns:
+        The sanitized float value or None if invalid
+    """
+    if value is None:
+        return None
+    try:
+        float_val = float(value)
+        if math.isnan(float_val) or math.isinf(float_val):
+            return None
+        return float_val
+    except (TypeError, ValueError):
+        return None
+
+
+def sanitize_dict(data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Recursively sanitize a dictionary, converting NaN/Inf float values to None.
+
+    Args:
+        data: The dictionary to sanitize
+
+    Returns:
+        The sanitized dictionary
+    """
+    if not isinstance(data, dict):
+        return data
+
+    result = {}
+    for key, value in data.items():
+        if isinstance(value, dict):
+            result[key] = sanitize_dict(value)
+        elif isinstance(value, list):
+            result[key] = [
+                (
+                    sanitize_dict(item)
+                    if isinstance(item, dict)
+                    else sanitize_float(item) if isinstance(item, float) else item
+                )
+                for item in value
+            ]
+        elif isinstance(value, float):
+            result[key] = sanitize_float(value)
+        else:
+            result[key] = value
+    return result
 
 
 class EvaluationService:
@@ -236,7 +293,9 @@ class EvaluationService:
                 }
 
             if isinstance(ragas_emb_result, Exception):
-                logger.error("RAGAS embedding metrics failed", error=str(ragas_emb_result))
+                logger.error(
+                    "RAGAS embedding metrics failed", error=str(ragas_emb_result)
+                )
                 ragas_emb_result = {
                     "query_context_relevance": None,
                     "context_precision_emb": None,
@@ -244,21 +303,27 @@ class EvaluationService:
                 }
 
             if isinstance(ragas_llm_ext_result, Exception):
-                logger.error("RAGAS LLM extended metrics failed", error=str(ragas_llm_ext_result))
+                logger.error(
+                    "RAGAS LLM extended metrics failed", error=str(ragas_llm_ext_result)
+                )
                 ragas_llm_ext_result = {
                     "context_utilization": None,
                     "coherence": None,
                 }
 
             if isinstance(trulens_emb_result, Exception):
-                logger.error("TruLens embedding metrics failed", error=str(trulens_emb_result))
+                logger.error(
+                    "TruLens embedding metrics failed", error=str(trulens_emb_result)
+                )
                 trulens_emb_result = {
                     "context_relevance": None,
                     "relevance_embedding": None,
                 }
 
             if isinstance(trulens_llm_result, Exception):
-                logger.error("TruLens LLM metrics failed", error=str(trulens_llm_result))
+                logger.error(
+                    "TruLens LLM metrics failed", error=str(trulens_llm_result)
+                )
                 trulens_llm_result = {
                     "groundedness": None,
                     "relevance_llm": None,
@@ -267,7 +332,9 @@ class EvaluationService:
                 }
 
             if isinstance(legacy_analysis_result, Exception):
-                logger.error("Legacy LLM analysis failed", error=str(legacy_analysis_result))
+                logger.error(
+                    "Legacy LLM analysis failed", error=str(legacy_analysis_result)
+                )
                 legacy_analysis_result = {
                     "analysis": None,
                     "suggestions_summary": None,
@@ -280,17 +347,27 @@ class EvaluationService:
                 "faithfulness_score": ragas_result.get("faithfulness_score"),
                 "answer_relevancy_score": ragas_result.get("answer_relevancy_score"),
                 "context_precision_score": ragas_result.get("context_precision_score"),
-                "ragas_query_context_relevance": ragas_emb_result.get("query_context_relevance"),
-                "ragas_context_precision_emb": ragas_emb_result.get("context_precision_emb"),
+                "ragas_query_context_relevance": ragas_emb_result.get(
+                    "query_context_relevance"
+                ),
+                "ragas_context_precision_emb": ragas_emb_result.get(
+                    "context_precision_emb"
+                ),
                 "ragas_context_diversity": ragas_emb_result.get("context_diversity"),
-                "ragas_context_utilization": ragas_llm_ext_result.get("context_utilization"),
+                "ragas_context_utilization": ragas_llm_ext_result.get(
+                    "context_utilization"
+                ),
                 "ragas_coherence": ragas_llm_ext_result.get("coherence"),
             }
 
             # Collect all TruLens metrics
             trulens_metrics = {
-                "trulens_context_relevance": trulens_emb_result.get("context_relevance"),
-                "trulens_relevance_embedding": trulens_emb_result.get("relevance_embedding"),
+                "trulens_context_relevance": trulens_emb_result.get(
+                    "context_relevance"
+                ),
+                "trulens_relevance_embedding": trulens_emb_result.get(
+                    "relevance_embedding"
+                ),
                 "trulens_groundedness": trulens_llm_result.get("groundedness"),
                 "trulens_relevance_llm": trulens_llm_result.get("relevance_llm"),
                 "trulens_coherence": trulens_llm_result.get("coherence"),
@@ -298,7 +375,9 @@ class EvaluationService:
             }
 
             # Cross-validation
-            cv_result = cross_validation_service.validate(ragas_metrics, trulens_metrics)
+            cv_result = cross_validation_service.validate(
+                ragas_metrics, trulens_metrics
+            )
 
             # Generate diagnostic analyses
             diagnostic_results = await diagnostic_analyzer.analyze_all(
@@ -308,15 +387,56 @@ class EvaluationService:
             )
 
             # Calculate overall score (average of available core scores)
+            # Sanitize scores first to handle NaN values
+            sanitized_faithfulness = sanitize_float(
+                ragas_result.get("faithfulness_score")
+            )
+            sanitized_answer_relevancy = sanitize_float(
+                ragas_result.get("answer_relevancy_score")
+            )
+            sanitized_context_precision = sanitize_float(
+                ragas_result.get("context_precision_score")
+            )
+
             core_scores = [
-                ragas_result.get("faithfulness_score"),
-                ragas_result.get("answer_relevancy_score"),
-                ragas_result.get("context_precision_score"),
+                sanitized_faithfulness,
+                sanitized_answer_relevancy,
+                sanitized_context_precision,
             ]
             valid_scores = [s for s in core_scores if s is not None]
-            overall_score = sum(valid_scores) / len(valid_scores) if valid_scores else None
+            overall_score = sanitize_float(
+                sum(valid_scores) / len(valid_scores) if valid_scores else None
+            )
 
             duration_ms = int((time.time() - start_time) * 1000)
+
+            # Sanitize JSON fields to handle NaN values in nested structures
+            sanitized_cv_result = sanitize_dict(cv_result) if cv_result else None
+            sanitized_ragas_raw = (
+                sanitize_dict(ragas_result.get("raw_result"))
+                if ragas_result.get("raw_result")
+                else None
+            )
+            sanitized_ragas_analysis = (
+                sanitize_dict(diagnostic_results.get("ragas_analysis"))
+                if diagnostic_results.get("ragas_analysis")
+                else None
+            )
+            sanitized_trulens_analysis = (
+                sanitize_dict(diagnostic_results.get("trulens_analysis"))
+                if diagnostic_results.get("trulens_analysis")
+                else None
+            )
+            sanitized_overall_analysis = (
+                sanitize_dict(diagnostic_results.get("overall_analysis"))
+                if diagnostic_results.get("overall_analysis")
+                else None
+            )
+            sanitized_llm_analysis = (
+                sanitize_dict(legacy_analysis_result.get("analysis"))
+                if legacy_analysis_result.get("analysis")
+                else None
+            )
 
             # Create or update evaluation result
             existing_result = await self.db.execute(
@@ -335,46 +455,76 @@ class EvaluationService:
                     ragas_llm_ext_result,
                     trulens_emb_result,
                     trulens_llm_result,
-                    cv_result,
-                    diagnostic_results,
+                    sanitized_cv_result,
+                    {
+                        "ragas_analysis": sanitized_ragas_analysis,
+                        "trulens_analysis": sanitized_trulens_analysis,
+                        "overall_analysis": sanitized_overall_analysis,
+                    },
                     legacy_analysis_result,
                     overall_score,
                     duration_ms,
                 )
             else:
-                # Create new evaluation
+                # Create new evaluation with sanitized float values
                 evaluation = EvaluationResult(
                     conversation_record_id=record_id,
-                    # Legacy RAGAS scores
-                    faithfulness_score=ragas_result.get("faithfulness_score"),
-                    answer_relevancy_score=ragas_result.get("answer_relevancy_score"),
-                    context_precision_score=ragas_result.get("context_precision_score"),
+                    # Legacy RAGAS scores (sanitized)
+                    faithfulness_score=sanitized_faithfulness,
+                    answer_relevancy_score=sanitized_answer_relevancy,
+                    context_precision_score=sanitized_context_precision,
                     overall_score=overall_score,
-                    ragas_raw_result=ragas_result.get("raw_result"),
-                    # RAGAS Embedding metrics
-                    ragas_query_context_relevance=ragas_emb_result.get("query_context_relevance"),
-                    ragas_context_precision_emb=ragas_emb_result.get("context_precision_emb"),
-                    ragas_context_diversity=ragas_emb_result.get("context_diversity"),
-                    # RAGAS LLM extended metrics
-                    ragas_context_utilization=ragas_llm_ext_result.get("context_utilization"),
-                    ragas_coherence=ragas_llm_ext_result.get("coherence"),
-                    # TruLens Embedding metrics
-                    trulens_context_relevance=trulens_emb_result.get("context_relevance"),
-                    trulens_relevance_embedding=trulens_emb_result.get("relevance_embedding"),
-                    # TruLens LLM metrics
-                    trulens_groundedness=trulens_llm_result.get("groundedness"),
-                    trulens_relevance_llm=trulens_llm_result.get("relevance_llm"),
-                    trulens_coherence=trulens_llm_result.get("coherence"),
-                    trulens_harmlessness=trulens_llm_result.get("harmlessness"),
-                    # Cross-validation
-                    cross_validation_results=cv_result,
-                    has_cross_validation_alert=cv_result.get("has_alert", False),
-                    # Diagnostic analyses
-                    ragas_analysis=diagnostic_results.get("ragas_analysis"),
-                    trulens_analysis=diagnostic_results.get("trulens_analysis"),
-                    overall_analysis=diagnostic_results.get("overall_analysis"),
+                    ragas_raw_result=sanitized_ragas_raw,
+                    # RAGAS Embedding metrics (sanitized)
+                    ragas_query_context_relevance=sanitize_float(
+                        ragas_emb_result.get("query_context_relevance")
+                    ),
+                    ragas_context_precision_emb=sanitize_float(
+                        ragas_emb_result.get("context_precision_emb")
+                    ),
+                    ragas_context_diversity=sanitize_float(
+                        ragas_emb_result.get("context_diversity")
+                    ),
+                    # RAGAS LLM extended metrics (sanitized)
+                    ragas_context_utilization=sanitize_float(
+                        ragas_llm_ext_result.get("context_utilization")
+                    ),
+                    ragas_coherence=sanitize_float(
+                        ragas_llm_ext_result.get("coherence")
+                    ),
+                    # TruLens Embedding metrics (sanitized)
+                    trulens_context_relevance=sanitize_float(
+                        trulens_emb_result.get("context_relevance")
+                    ),
+                    trulens_relevance_embedding=sanitize_float(
+                        trulens_emb_result.get("relevance_embedding")
+                    ),
+                    # TruLens LLM metrics (sanitized)
+                    trulens_groundedness=sanitize_float(
+                        trulens_llm_result.get("groundedness")
+                    ),
+                    trulens_relevance_llm=sanitize_float(
+                        trulens_llm_result.get("relevance_llm")
+                    ),
+                    trulens_coherence=sanitize_float(
+                        trulens_llm_result.get("coherence")
+                    ),
+                    trulens_harmlessness=sanitize_float(
+                        trulens_llm_result.get("harmlessness")
+                    ),
+                    # Cross-validation (sanitized)
+                    cross_validation_results=sanitized_cv_result,
+                    has_cross_validation_alert=(
+                        sanitized_cv_result.get("has_alert", False)
+                        if sanitized_cv_result
+                        else False
+                    ),
+                    # Diagnostic analyses (sanitized)
+                    ragas_analysis=sanitized_ragas_analysis,
+                    trulens_analysis=sanitized_trulens_analysis,
+                    overall_analysis=sanitized_overall_analysis,
                     # Legacy
-                    llm_analysis=legacy_analysis_result.get("analysis"),
+                    llm_analysis=sanitized_llm_analysis,
                     llm_suggestions=legacy_analysis_result.get("suggestions_summary"),
                     has_issue=legacy_analysis_result.get("has_issue", False),
                     issue_types=legacy_analysis_result.get("issue_types", []),
@@ -424,37 +574,74 @@ class EvaluationService:
         overall_score: Optional[float],
         duration_ms: int,
     ) -> None:
-        """Update an existing evaluation result with new data."""
-        # Legacy RAGAS scores
-        evaluation.faithfulness_score = ragas_result.get("faithfulness_score")
-        evaluation.answer_relevancy_score = ragas_result.get("answer_relevancy_score")
-        evaluation.context_precision_score = ragas_result.get("context_precision_score")
-        evaluation.overall_score = overall_score
-        evaluation.ragas_raw_result = ragas_result.get("raw_result")
-        # RAGAS Embedding metrics
-        evaluation.ragas_query_context_relevance = ragas_emb_result.get("query_context_relevance")
-        evaluation.ragas_context_precision_emb = ragas_emb_result.get("context_precision_emb")
-        evaluation.ragas_context_diversity = ragas_emb_result.get("context_diversity")
-        # RAGAS LLM extended metrics
-        evaluation.ragas_context_utilization = ragas_llm_ext_result.get("context_utilization")
-        evaluation.ragas_coherence = ragas_llm_ext_result.get("coherence")
-        # TruLens Embedding metrics
-        evaluation.trulens_context_relevance = trulens_emb_result.get("context_relevance")
-        evaluation.trulens_relevance_embedding = trulens_emb_result.get("relevance_embedding")
-        # TruLens LLM metrics
-        evaluation.trulens_groundedness = trulens_llm_result.get("groundedness")
-        evaluation.trulens_relevance_llm = trulens_llm_result.get("relevance_llm")
-        evaluation.trulens_coherence = trulens_llm_result.get("coherence")
-        evaluation.trulens_harmlessness = trulens_llm_result.get("harmlessness")
-        # Cross-validation
+        """Update an existing evaluation result with new data.
+
+        Note: cv_result and diagnostic_results should already be sanitized
+        by the caller to handle NaN values in JSON fields.
+        """
+        # Legacy RAGAS scores (sanitized)
+        evaluation.faithfulness_score = sanitize_float(
+            ragas_result.get("faithfulness_score")
+        )
+        evaluation.answer_relevancy_score = sanitize_float(
+            ragas_result.get("answer_relevancy_score")
+        )
+        evaluation.context_precision_score = sanitize_float(
+            ragas_result.get("context_precision_score")
+        )
+        evaluation.overall_score = sanitize_float(overall_score)
+        # Sanitize raw_result JSON
+        raw_result = ragas_result.get("raw_result")
+        evaluation.ragas_raw_result = sanitize_dict(raw_result) if raw_result else None
+        # RAGAS Embedding metrics (sanitized)
+        evaluation.ragas_query_context_relevance = sanitize_float(
+            ragas_emb_result.get("query_context_relevance")
+        )
+        evaluation.ragas_context_precision_emb = sanitize_float(
+            ragas_emb_result.get("context_precision_emb")
+        )
+        evaluation.ragas_context_diversity = sanitize_float(
+            ragas_emb_result.get("context_diversity")
+        )
+        # RAGAS LLM extended metrics (sanitized)
+        evaluation.ragas_context_utilization = sanitize_float(
+            ragas_llm_ext_result.get("context_utilization")
+        )
+        evaluation.ragas_coherence = sanitize_float(
+            ragas_llm_ext_result.get("coherence")
+        )
+        # TruLens Embedding metrics (sanitized)
+        evaluation.trulens_context_relevance = sanitize_float(
+            trulens_emb_result.get("context_relevance")
+        )
+        evaluation.trulens_relevance_embedding = sanitize_float(
+            trulens_emb_result.get("relevance_embedding")
+        )
+        # TruLens LLM metrics (sanitized)
+        evaluation.trulens_groundedness = sanitize_float(
+            trulens_llm_result.get("groundedness")
+        )
+        evaluation.trulens_relevance_llm = sanitize_float(
+            trulens_llm_result.get("relevance_llm")
+        )
+        evaluation.trulens_coherence = sanitize_float(
+            trulens_llm_result.get("coherence")
+        )
+        evaluation.trulens_harmlessness = sanitize_float(
+            trulens_llm_result.get("harmlessness")
+        )
+        # Cross-validation (already sanitized by caller)
         evaluation.cross_validation_results = cv_result
-        evaluation.has_cross_validation_alert = cv_result.get("has_alert", False)
-        # Diagnostic analyses
+        evaluation.has_cross_validation_alert = (
+            cv_result.get("has_alert", False) if cv_result else False
+        )
+        # Diagnostic analyses (already sanitized by caller)
         evaluation.ragas_analysis = diagnostic_results.get("ragas_analysis")
         evaluation.trulens_analysis = diagnostic_results.get("trulens_analysis")
         evaluation.overall_analysis = diagnostic_results.get("overall_analysis")
-        # Legacy
-        evaluation.llm_analysis = legacy_analysis_result.get("analysis")
+        # Legacy - sanitize llm_analysis JSON
+        llm_analysis = legacy_analysis_result.get("analysis")
+        evaluation.llm_analysis = sanitize_dict(llm_analysis) if llm_analysis else None
         evaluation.llm_suggestions = legacy_analysis_result.get("suggestions_summary")
         evaluation.has_issue = legacy_analysis_result.get("has_issue", False)
         evaluation.issue_types = legacy_analysis_result.get("issue_types", [])
@@ -476,10 +663,11 @@ class EvaluationService:
                     scoring_goal=pair.get("scoring_goal"),
                     ragas_metric=pair.get("ragas_metric"),
                     trulens_metric=pair.get("trulens_metric"),
-                    ragas_score=pair.get("ragas_score"),
-                    trulens_score=pair.get("trulens_score"),
-                    difference=pair.get("difference"),
-                    threshold=pair.get("threshold"),
+                    # Sanitize float values for alerts
+                    ragas_score=sanitize_float(pair.get("ragas_score")),
+                    trulens_score=sanitize_float(pair.get("trulens_score")),
+                    difference=sanitize_float(pair.get("difference")),
+                    threshold=sanitize_float(pair.get("threshold")),
                 )
                 self.db.add(alert)
 
@@ -529,10 +717,13 @@ class EvaluationService:
             conditions.append(ConversationRecord.knowledge_id == knowledge_id)
         if evaluation_status:
             conditions.append(
-                ConversationRecord.evaluation_status == EvaluationStatus(evaluation_status)
+                ConversationRecord.evaluation_status
+                == EvaluationStatus(evaluation_status)
             )
         if has_cv_alert is not None:
-            conditions.append(EvaluationResult.has_cross_validation_alert == has_cv_alert)
+            conditions.append(
+                EvaluationResult.has_cross_validation_alert == has_cv_alert
+            )
 
         if conditions:
             query = query.where(and_(*conditions))
@@ -573,18 +764,28 @@ class EvaluationService:
                     if record.extracted_text and len(record.extracted_text) > 200
                     else record.extracted_text
                 ),
-                "faithfulness_score": evaluation.faithfulness_score if evaluation else None,
-                "answer_relevancy_score": evaluation.answer_relevancy_score if evaluation else None,
-                "context_precision_score": evaluation.context_precision_score if evaluation else None,
+                "faithfulness_score": (
+                    evaluation.faithfulness_score if evaluation else None
+                ),
+                "answer_relevancy_score": (
+                    evaluation.answer_relevancy_score if evaluation else None
+                ),
+                "context_precision_score": (
+                    evaluation.context_precision_score if evaluation else None
+                ),
                 "overall_score": evaluation.overall_score if evaluation else None,
                 "has_issue": evaluation.has_issue if evaluation else False,
-                "has_cv_alert": evaluation.has_cross_validation_alert if evaluation else False,
+                "has_cv_alert": (
+                    evaluation.has_cross_validation_alert if evaluation else False
+                ),
                 "issue_types": evaluation.issue_types if evaluation else None,
                 "retriever_name": record.retriever_name,
                 "embedding_model": record.embedding_model,
                 "knowledge_name": record.knowledge_name,
                 "evaluation_status": record.evaluation_status.value,
-                "created_at": evaluation.created_at if evaluation else record.created_at,
+                "created_at": (
+                    evaluation.created_at if evaluation else record.created_at
+                ),
                 # New tiered metrics fields
                 "total_score": evaluation.total_score if evaluation else None,
                 "retrieval_score": evaluation.retrieval_score if evaluation else None,
@@ -701,27 +902,30 @@ class EvaluationService:
         total = count_result.scalar() or 0
 
         # Get averages
-        avg_query = (
-            select(
-                func.avg(EvaluationResult.faithfulness_score),
-                func.avg(EvaluationResult.answer_relevancy_score),
-                func.avg(EvaluationResult.context_precision_score),
-                func.avg(EvaluationResult.overall_score),
-                func.sum(case((EvaluationResult.has_issue == True, 1), else_=0)),  # noqa: E712
-                func.sum(case((EvaluationResult.has_cross_validation_alert == True, 1), else_=0)),  # noqa: E712
-                # New tiered metrics averages
-                func.avg(EvaluationResult.total_score),
-                func.sum(case((EvaluationResult.is_failed == True, 1), else_=0)),  # noqa: E712
-                func.avg(EvaluationResult.ragas_query_context_relevance),
-                func.avg(EvaluationResult.trulens_context_relevance),
-                func.avg(EvaluationResult.trulens_groundedness),
-                func.avg(EvaluationResult.trulens_relevance_llm),
-                func.avg(EvaluationResult.ragas_context_precision_emb),
-            )
-            .join(
-                ConversationRecord,
-                ConversationRecord.id == EvaluationResult.conversation_record_id,
-            )
+        avg_query = select(
+            func.avg(EvaluationResult.faithfulness_score),
+            func.avg(EvaluationResult.answer_relevancy_score),
+            func.avg(EvaluationResult.context_precision_score),
+            func.avg(EvaluationResult.overall_score),
+            func.sum(
+                case((EvaluationResult.has_issue == True, 1), else_=0)
+            ),  # noqa: E712
+            func.sum(
+                case((EvaluationResult.has_cross_validation_alert == True, 1), else_=0)
+            ),  # noqa: E712
+            # New tiered metrics averages
+            func.avg(EvaluationResult.total_score),
+            func.sum(
+                case((EvaluationResult.is_failed == True, 1), else_=0)
+            ),  # noqa: E712
+            func.avg(EvaluationResult.ragas_query_context_relevance),
+            func.avg(EvaluationResult.trulens_context_relevance),
+            func.avg(EvaluationResult.trulens_groundedness),
+            func.avg(EvaluationResult.trulens_relevance_llm),
+            func.avg(EvaluationResult.ragas_context_precision_emb),
+        ).join(
+            ConversationRecord,
+            ConversationRecord.id == EvaluationResult.conversation_record_id,
         )
         if conditions:
             avg_query = avg_query.where(and_(*conditions))
@@ -747,11 +951,15 @@ class EvaluationService:
             "avg_total_score": float(row[6]) if row and row[6] else None,
             "failed_count": failed_count,
             "failed_rate": failed_count / total if total > 0 else 0,
-            "avg_ragas_query_context_relevance": float(row[8]) if row and row[8] else None,
+            "avg_ragas_query_context_relevance": (
+                float(row[8]) if row and row[8] else None
+            ),
             "avg_trulens_context_relevance": float(row[9]) if row and row[9] else None,
             "avg_trulens_groundedness": float(row[10]) if row and row[10] else None,
             "avg_trulens_relevance_llm": float(row[11]) if row and row[11] else None,
-            "avg_ragas_context_precision_emb": float(row[12]) if row and row[12] else None,
+            "avg_ragas_context_precision_emb": (
+                float(row[12]) if row and row[12] else None
+            ),
         }
 
     async def get_alerts(
@@ -773,7 +981,11 @@ class EvaluationService:
 
         # Get paginated results
         offset = (page - 1) * page_size
-        query = query.order_by(EvaluationAlert.created_at.desc()).offset(offset).limit(page_size)
+        query = (
+            query.order_by(EvaluationAlert.created_at.desc())
+            .offset(offset)
+            .limit(page_size)
+        )
 
         result = await self.db.execute(query)
         alerts = result.scalars().all()
