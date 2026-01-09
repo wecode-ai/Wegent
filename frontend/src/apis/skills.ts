@@ -39,15 +39,21 @@ export async function fetchSkillsList(params?: {
 
 /**
  * Fetch a skill by name
+ * @param name - Skill name
+ * @param namespace - Namespace to search in (default: 'default')
+ * @param exactMatch - If true, only search in the specified namespace.
+ *                     If false, search with fallback: personal -> group -> public.
+ *                     Use true for upload duplicate check, false for skill usage.
  */
 export async function fetchSkillByName(
   name: string,
-  namespace: string = 'default'
+  namespace: string = 'default',
+  exactMatch: boolean = true
 ): Promise<Skill | null> {
   const token = getToken()
   if (!token) throw new Error('No authentication token')
 
-  const url = `${API_BASE_URL}/v1/kinds/skills?name=${encodeURIComponent(name)}&namespace=${encodeURIComponent(namespace)}`
+  const url = `${API_BASE_URL}/v1/kinds/skills?name=${encodeURIComponent(name)}&namespace=${encodeURIComponent(namespace)}&exact_match=${exactMatch}`
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
   })
@@ -291,7 +297,8 @@ export interface UnifiedSkill {
 export async function fetchUnifiedSkillsList(params?: {
   skip?: number
   limit?: number
-  namespace?: string
+  scope?: 'personal' | 'group' | 'all'
+  groupName?: string
 }): Promise<UnifiedSkill[]> {
   const token = getToken()
   if (!token) throw new Error('No authentication token')
@@ -299,7 +306,8 @@ export async function fetchUnifiedSkillsList(params?: {
   const queryParams = new URLSearchParams()
   if (params?.skip !== undefined) queryParams.append('skip', params.skip.toString())
   if (params?.limit !== undefined) queryParams.append('limit', params.limit.toString())
-  if (params?.namespace) queryParams.append('namespace', params.namespace)
+  if (params?.scope) queryParams.append('scope', params.scope)
+  if (params?.groupName) queryParams.append('group_name', params.groupName)
 
   const url = `${API_BASE_URL}/v1/kinds/skills/unified?${queryParams.toString()}`
   const response = await fetch(url, {

@@ -37,14 +37,20 @@ interface SkillUploadModalProps {
   open: boolean
   onClose: (saved: boolean) => void
   skill?: Skill | null
+  namespace?: string // Namespace for the skill (default: 'default', group name for group skills)
 }
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
 
-export default function SkillUploadModal({ open, onClose, skill }: SkillUploadModalProps) {
+export default function SkillUploadModal({
+  open,
+  onClose,
+  skill,
+  namespace: propNamespace,
+}: SkillUploadModalProps) {
   const { t } = useTranslation()
   const [skillName, setSkillName] = useState(skill?.metadata.name || '')
-  const [namespace] = useState('default')
+  const namespace = propNamespace || 'default'
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [uploading, setUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)

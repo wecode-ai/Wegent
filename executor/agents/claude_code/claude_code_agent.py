@@ -20,23 +20,23 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
-from executor.agents.agno.thinking_step_manager import ThinkingStepManager
-from executor.agents.base import Agent
-from executor.agents.claude_code.progress_state_manager import ProgressStateManager
-from executor.agents.claude_code.response_processor import process_response
-from executor.config import config
-from executor.tasks.resource_manager import ResourceManager
-from executor.tasks.task_state_manager import TaskState, TaskStateManager
-from executor.utils.mcp_utils import (
-    extract_mcp_servers_config,
-    replace_mcp_server_variables,
-)
 from shared.logger import setup_logger
 from shared.models.task import ExecutionResult, ThinkingStep
 from shared.status import TaskStatus
 from shared.telemetry.decorators import add_span_event, trace_async
 from shared.utils.crypto import decrypt_git_token, is_token_encrypted
 from shared.utils.sensitive_data_masker import mask_sensitive_data
+
+from executor.agents.agno.thinking_step_manager import ThinkingStepManager
+from executor.agents.base import Agent
+from executor.agents.claude_code.progress_state_manager import \
+    ProgressStateManager
+from executor.agents.claude_code.response_processor import process_response
+from executor.config import config
+from executor.tasks.resource_manager import ResourceManager
+from executor.tasks.task_state_manager import TaskState, TaskStateManager
+from executor.utils.mcp_utils import (extract_mcp_servers_config,
+                                      replace_mcp_server_variables)
 
 logger = setup_logger("claude_code_agent")
 
@@ -736,10 +736,8 @@ class ClaudeCodeAgent(Agent):
                 # Copy ContextVars before creating new event loop
                 # ContextVars don't automatically propagate to new event loops
                 try:
-                    from shared.telemetry.context import (
-                        copy_context_vars,
-                        restore_context_vars,
-                    )
+                    from shared.telemetry.context import (copy_context_vars,
+                                                          restore_context_vars)
 
                     saved_context = copy_context_vars()
                 except ImportError:
@@ -1126,9 +1124,7 @@ class ClaudeCodeAgent(Agent):
                     # Copy ContextVars before creating new event loop
                     try:
                         from shared.telemetry.context import (
-                            copy_context_vars,
-                            restore_context_vars,
-                        )
+                            copy_context_vars, restore_context_vars)
 
                         saved_context = copy_context_vars()
                     except ImportError:
@@ -1325,10 +1321,10 @@ class ClaudeCodeAgent(Agent):
             )
 
             # Import and use attachment downloader
-            from executor.services.attachment_downloader import AttachmentDownloader
-            from executor.services.attachment_prompt_processor import (
-                AttachmentPromptProcessor,
-            )
+            from executor.services.attachment_downloader import \
+                AttachmentDownloader
+            from executor.services.attachment_prompt_processor import \
+                AttachmentPromptProcessor
 
             downloader = AttachmentDownloader(
                 workspace=workspace,
@@ -1432,12 +1428,15 @@ class ClaudeCodeAgent(Agent):
             import requests
 
             success_count = 0
+            # Get team namespace for skill lookup
+            team_namespace = self.task_data.get("team_namespace", "default")
             for skill_name in skills:
                 try:
                     logger.info(f"Downloading skill: {skill_name}")
 
-                    # Get skill by name
-                    list_url = f"{api_base_url}/api/v1/kinds/skills?name={skill_name}"
+                    # Get skill by name with namespace parameter
+                    # Query order: user's default namespace -> team's namespace -> public
+                    list_url = f"{api_base_url}/api/v1/kinds/skills?name={skill_name}&namespace={team_namespace}"
                     headers = {"Authorization": f"Bearer {auth_token}"}
 
                     response = requests.get(list_url, headers=headers, timeout=30)
@@ -1454,20 +1453,21 @@ class ClaudeCodeAgent(Agent):
                         logger.error(f"Skill '{skill_name}' not found")
                         continue
 
-                    # Extract skill ID from labels
+                    # Extract skill ID and namespace from labels
                     skill_item = skill_items[0]
                     skill_id = (
                         skill_item.get("metadata", {}).get("labels", {}).get("id")
+                    )
+                    skill_namespace = skill_item.get("metadata", {}).get(
+                        "namespace", "default"
                     )
 
                     if not skill_id:
                         logger.error(f"Skill '{skill_name}' has no ID in metadata")
                         continue
 
-                    # Download skill ZIP
-                    download_url = (
-                        f"{api_base_url}/api/v1/kinds/skills/{skill_id}/download"
-                    )
+                    # Download skill ZIP with namespace parameter for group skill support
+                    download_url = f"{api_base_url}/api/v1/kinds/skills/{skill_id}/download?namespace={skill_namespace}"
                     response = requests.get(download_url, headers=headers, timeout=60)
 
                     if response.status_code != 200:

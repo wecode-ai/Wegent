@@ -464,14 +464,24 @@ class ChatConfigBuilder:
         return skills
 
     def _find_skill(self, skill_name: str) -> Kind | None:
-        """Find skill by name (user's first, then public)."""
-        # User's skill
+        """Find skill by name.
+
+        Search order:
+        1. User's skill in default namespace (personal)
+        2. ANY skill in team's namespace (group-level, from any user)
+        3. Public skill (user_id=0)
+        """
+        # Get team namespace for group-level skill lookup
+        team_namespace = self.team.namespace if self.team.namespace else "default"
+
+        # 1. User's personal skill (default namespace)
         skill = (
             self.db.query(Kind)
             .filter(
                 Kind.user_id == self.team.user_id,
                 Kind.kind == "Skill",
                 Kind.name == skill_name,
+                Kind.namespace == "default",
                 Kind.is_active == True,  # noqa: E712
             )
             .first()
@@ -480,7 +490,24 @@ class ChatConfigBuilder:
         if skill:
             return skill
 
-        # Public skill (user_id=0)
+        # 2. Group-level skill (team's namespace) - search ALL skills in namespace
+        # This allows any team member's skill to be used by other members
+        if team_namespace != "default":
+            skill = (
+                self.db.query(Kind)
+                .filter(
+                    Kind.kind == "Skill",
+                    Kind.name == skill_name,
+                    Kind.namespace == team_namespace,
+                    Kind.is_active == True,  # noqa: E712
+                )
+                .first()
+            )
+
+            if skill:
+                return skill
+
+        # 3. Public skill (user_id=0)
         return (
             self.db.query(Kind)
             .filter(
