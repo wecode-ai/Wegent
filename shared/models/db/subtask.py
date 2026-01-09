@@ -40,7 +40,7 @@ class Subtask(Base):
     error_message = Column(Text)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
-    completed_at = Column(DateTime)
+    completed_at = Column(DateTime, nullable=False, default="1970-01-01 00:00:00")
 
     # Group chat fields
     sender_type = Column(
