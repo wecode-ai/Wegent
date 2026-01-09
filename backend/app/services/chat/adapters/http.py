@@ -161,20 +161,10 @@ class HTTPAdapter(ChatInterface):
             if request.search_engine:
                 builtin["web_search"]["engine"] = request.search_engine
 
-        # Add MCP servers (convert dict format to list for chat_shell API)
-        # Input: {"server_name": {"url": ..., "type": ..., "headers": ...}}
-        # Output: [{"name": "server_name", "url": ..., "type": ..., "auth": ...}]
+        # Add MCP servers
+        # mcp_servers is now a list: [{"name": "...", "url": "...", "type": "...", "auth": ...}]
         if request.mcp_servers:
-            tools_config["mcp_servers"] = [
-                {
-                    "name": name,
-                    "url": config.get("url", ""),
-                    "type": config.get("type", "streamable-http"),
-                    "auth": config.get("headers"),
-                }
-                for name, config in request.mcp_servers.items()
-                if config.get("url")
-            ]
+            tools_config["mcp_servers"] = request.mcp_servers
 
         # Add skills if provided
         if request.skills:
