@@ -9,7 +9,7 @@ metadata:
   namespace: {{ namespace }}
   annotations:
     aigc.weibo.com/email: "weibo_ai_coding@staff.sina.com"
-    kubus.weibo.com/pod-resource: '{"cpu":"2","memory":"6Gi"}'
+    kubus.weibo.com/pod-resource: '{"cpu":"2","memory":"8Gi"}'
   labels:
     aigc.weibo.com/team-mode: "{{ mode }}"
     app: {{ executor_name }}
