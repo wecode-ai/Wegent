@@ -7,7 +7,7 @@ name = "wegent-executor"
 version = "1.0.0"
 description = "Wegent Task Executor Service"
 readme = "BUILD.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<=3.13"
 dependencies = [
     "ag-ui-protocol==0.1.8",
     "agno==2.1.5",

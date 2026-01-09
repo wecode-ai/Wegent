@@ -4,7 +4,7 @@
 
 'use client'
 
-import { FileText, Trash2, Pencil, Link, ExternalLink } from 'lucide-react'
+import { FileText, Trash2, Pencil, ExternalLink, Table2 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import type { KnowledgeDocument } from '@/types/knowledge'
@@ -96,7 +96,7 @@ export function DocumentItem({
       {/* File icon */}
       <div className="p-2 bg-primary/10 rounded-lg flex-shrink-0">
         {isTable ? (
-          <Link className="w-4 h-4 text-primary" />
+          <Table2 className="w-4 h-4 text-primary" />
         ) : (
           <FileText className="w-4 h-4 text-primary" />
         )}
@@ -131,7 +131,17 @@ export function DocumentItem({
 
       {/* Type */}
       <div className="w-20 flex-shrink-0 text-center">
-        <span className="text-xs text-text-muted uppercase">{document.file_extension}</span>
+        {isTable ? (
+          <Badge
+            variant="default"
+            size="sm"
+            className="bg-blue-500/10 text-blue-600 border-blue-500/20"
+          >
+            {t('knowledge:document.document.type.table')}
+          </Badge>
+        ) : (
+          <span className="text-xs text-text-muted uppercase">{document.file_extension}</span>
+        )}
       </div>
 
       {/* Size */}

@@ -8,5 +8,12 @@ from .bots import router as bots_router
 from .chat_storage import router as chat_storage_router
 from .rag import router as rag_router
 from .skills import router as skills_router
+from .tables import router as tables_router
 
-__all__ = ["bots_router", "chat_storage_router", "rag_router", "skills_router"]
+__all__ = [
+    "bots_router",
+    "chat_storage_router",
+    "rag_router",
+    "skills_router",
+    "tables_router",
+]
