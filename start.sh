@@ -98,6 +98,46 @@ show_uv_install_instructions() {
     exit 1
 }
 
+# Check if docker is installed
+check_docker_installed() {
+    if command -v docker &> /dev/null; then
+        return 0
+    fi
+    return 1
+}
+# Show docker installation instructions
+show_docker_install_instructions() {
+    echo -e "${RED}Error: Docker is not installed or not running.${NC}"
+    echo ""
+    echo -e "${YELLOW}Docker is required by Wegent to run backend/executor services in containers.${NC}"
+    echo -e "${YELLOW}Please install Docker using one of the following methods:${NC}"
+    echo ""
+
+    echo -e "  ${GREEN}Method 1: Docker Desktop (macOS / Windows)${NC}"
+    echo -e "    ${BLUE}https://www.docker.com/products/docker-desktop/${NC}"
+    echo ""
+
+    echo -e "  ${GREEN}Method 2: Linux package manager${NC}"
+    echo -e "    ${BLUE}Ubuntu / Debian:${NC}"
+    echo -e "      sudo apt update"
+    echo -e "      sudo apt install -y docker.io"
+    echo ""
+    echo -e "    ${BLUE}CentOS / RHEL / Alma / Rocky:${NC}"
+    echo -e "      sudo dnf install -y docker-ce docker-ce-cli containerd.io"
+    echo ""
+
+    echo -e "  ${GREEN}Method 3: Official Docker convenience script${NC}"
+    echo -e "    ${BLUE}curl -fsSL https://get.docker.com | sh${NC}"
+    echo ""
+
+    echo -e "${YELLOW}After installation, please ensure the Docker daemon is running, e.g.:${NC}"
+    echo -e "    ${BLUE}sudo systemctl enable --now docker${NC}"
+    echo ""
+    echo -e "${YELLOW}Then re-run this script.${NC}"
+    echo ""
+    exit 1
+}
+
 # Check if Node.js and npm are installed
 check_node_installed() {
     if ! command -v node &> /dev/null; then
@@ -115,6 +155,15 @@ check_node_installed() {
         echo -e "${YELLOW}Please install npm:${NC}"
         echo -e "  ${BLUE}macOS:${NC}    brew install npm"
         echo -e "  ${BLUE}Ubuntu:${NC}   sudo apt install npm"
+        exit 1
+    fi
+    # Check Node.js version (require >= 20)
+    NODE_MAJOR=$(node -v | sed 's/^v//' | cut -d. -f1)
+    if [ "$NODE_MAJOR" -lt 20 ]; then
+        echo -e "${RED}Error: Node.js v20 or higher is required (found $(node -v)).${NC}"
+        echo -e "${YELLOW}Please upgrade Node.js:${NC}"
+        echo -e "  ${BLUE}macOS:${NC}    brew install node@20"
+        echo -e "  ${BLUE}Ubuntu:${NC}   use NodeSource or nvm to install Node 20"
         exit 1
     fi
 }
@@ -200,6 +249,24 @@ sync_python_deps() {
     cd "$SCRIPT_DIR"
 }
 
+check_python_env() {
+    local dir=$1
+    local name=$2
+
+    cd "$SCRIPT_DIR/$dir"
+    if [ ! -f ".env" ]; then
+        if [ ! -f ".env.example" ]; then
+            echo -e "${RED} $name Error: .env.example not found${NC}"
+            exit 1
+        fi
+        cp .env.example .env
+        echo -e "${GREEN}✓ $name Created .env from .env.example${NC}"
+    else
+        echo -e "${GREEN}✓ $name .env file already exists${NC}"
+    fi
+    cd "$SCRIPT_DIR"
+}
+
 # Check frontend dependencies
 check_frontend_dependencies() {
     local frontend_dir="$SCRIPT_DIR/frontend"
@@ -244,6 +311,8 @@ DEFAULT_EXECUTOR_IMAGE="ghcr.io/wecode-ai/wegent-executor:1.0.29"
 
 FRONTEND_PORT=$DEFAULT_FRONTEND_PORT
 EXECUTOR_IMAGE=$DEFAULT_EXECUTOR_IMAGE
+DEFAULT_API_URL="http://localhost:8000"
+API_URL=$DEFAULT_API_URL
 
 # PID file directory
 PID_DIR="$SCRIPT_DIR/.pids"
@@ -257,7 +326,9 @@ Usage: $0 [options]
 Options:
   -p, --port PORT           Frontend port (default: $DEFAULT_FRONTEND_PORT)
   -e, --executor-image IMG  Executor image (default: $DEFAULT_EXECUTOR_IMAGE)
+  --api-url                 Backend api url (default: $DEFAULT_API_URL)
   --stop                    Stop all services
+  --restart                 Restart all services
   --status                  Check service status
   -h, --help                Show help information
 
@@ -283,8 +354,16 @@ while [[ $# -gt 0 ]]; do
             EXECUTOR_IMAGE="$2"
             shift 2
             ;;
+        --api-url)
+            API_URL="$2"
+            shift 2
+            ;;
         --stop)
             ACTION="stop"
+            shift
+            ;;
+        --restart)
+            ACTION="restart"
             shift
             ;;
         --status)
@@ -432,12 +511,12 @@ start_service() {
     # Run in background and save PID
     nohup bash -c "$cmd" > "$log_file" 2>&1 &
     local pid=$!
-    echo $pid > "$PID_DIR/${name}.pid"
 
     # Wait for service to start
     sleep 2
 
     if kill -0 "$pid" 2>/dev/null; then
+        echo $pid > "$PID_DIR/${name}.pid"
         echo -e "    ${GREEN}✓${NC} $name started (PID: $pid)"
     else
         echo -e "    ${RED}✗${NC} $name failed to start, check log: $log_file"
@@ -511,6 +590,12 @@ start_services() {
     local uv_version=$(uv --version 2>&1)
     echo -e "  ${GREEN}✓${NC} uv detected: $uv_version"
 
+    if ! check_docker_installed; then
+        show_docker_install_instructions
+    fi
+    local docker_version=$(docker --version | awk '{print $3}' | tr -d ',')
+    echo -e "  ${GREEN}✓${NC} docker detected: $docker_version"
+
     # Check libmagic
     check_libmagic_installed
     echo -e "  ${GREEN}✓${NC} libmagic detected"
@@ -542,6 +627,12 @@ start_services() {
     sync_python_deps "executor_manager" "Executor Manager"
     echo ""
 
+    # Check Python env
+    echo -e "${BLUE}Checking Python env...${NC}"
+    check_python_env "backend" "Backend"
+    check_python_env "chat_shell" "Chat Shell"
+    echo ""
+
     # Check frontend dependencies
     echo -e "${BLUE}Checking frontend dependencies...${NC}"
     check_frontend_dependencies
@@ -566,8 +657,8 @@ start_services() {
     cd "$SCRIPT_DIR/frontend"
 
     # Set environment variables
-    export RUNTIME_INTERNAL_API_URL="http://localhost:8000"
-    export RUNTIME_SOCKET_DIRECT_URL="http://localhost:8000"
+    export RUNTIME_INTERNAL_API_URL=$API_URL
+    export RUNTIME_SOCKET_DIRECT_URL=$API_URL
 
     # Start frontend in background
     nohup bash -c "PORT=$FRONTEND_PORT npm run dev" > "$PID_DIR/frontend.log" 2>&1 &
@@ -632,6 +723,10 @@ case $ACTION in
         ;;
     stop)
         stop_services
+        ;;
+    restart)
+        stop_services
+        start_services
         ;;
     status)
         show_status

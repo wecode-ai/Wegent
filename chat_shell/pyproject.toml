@@ -6,7 +6,7 @@
 name = "wegent-chat-shell"
 version = "1.0.0"
 description = "Wegent Chat Shell Service - Full-featured Chat Engine"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<=3.13"
 
 dependencies = [
     # FastAPI framework and related dependencies
