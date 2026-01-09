@@ -34,7 +34,7 @@ class TableQueryRequest(BaseModel):
 class TableQueryResponse(BaseModel):
     """Table query response."""
 
-    schema: Dict[str, str] = Field(description="Field name to type mapping")
+    field_schema: Dict[str, str] = Field(description="Field name to type mapping")
     records: List[Dict[str, Any]] = Field(description="List of records")
     total_count: int = Field(description="Total number of records")
 
