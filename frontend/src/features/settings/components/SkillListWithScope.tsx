@@ -39,7 +39,7 @@ interface SkillListWithScopeProps {
   onGroupChange?: (groupName: string | null) => void
 }
 
-export function SkillListWithScope({ scope }: SkillListWithScopeProps) {
+export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeProps) {
   const { t } = useTranslation('common')
   const [skills, setSkills] = useState<UnifiedSkill[]>([])
   const [loading, setLoading] = useState(true)
@@ -57,14 +57,17 @@ export function SkillListWithScope({ scope }: SkillListWithScopeProps) {
     try {
       setLoading(true)
       setError(null)
-      const data = await fetchUnifiedSkillsList()
+      const data = await fetchUnifiedSkillsList({
+        scope: scope,
+        groupName: selectedGroup || undefined,
+      })
       setSkills(data)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load skills')
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [scope, selectedGroup])
 
   useEffect(() => {
     loadSkills()
@@ -298,7 +301,11 @@ export function SkillListWithScope({ scope }: SkillListWithScopeProps) {
       </AlertDialog>
 
       {/* Upload Modal */}
-      <SkillUploadModal open={uploadModalOpen} onClose={handleUploadModalClose} />
+      <SkillUploadModal
+        open={uploadModalOpen}
+        onClose={handleUploadModalClose}
+        namespace={scope === 'group' && selectedGroup ? selectedGroup : 'default'}
+      />
 
       {/* Reference Conflict Dialog */}
       {skillToDelete && (

@@ -170,6 +170,39 @@ class SkillKindsService:
 
         return self._kind_to_skill(skill_kind)
 
+    def get_skill_by_id_in_namespace(
+        self, db: Session, *, skill_id: int, namespace: str
+    ) -> Optional[Skill]:
+        """
+        Get Skill by ID within a namespace (for group skills).
+
+        This method is used to access group-level skills where user_id doesn't matter,
+        as long as the skill is in the correct namespace.
+
+        Args:
+            db: Database session
+            skill_id: Skill ID
+            namespace: Namespace to search in
+
+        Returns:
+            Skill if found, None otherwise
+        """
+        skill_kind = (
+            db.query(Kind)
+            .filter(
+                Kind.id == skill_id,
+                Kind.namespace == namespace,
+                Kind.kind == "Skill",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
+        if not skill_kind:
+            return None
+
+        return self._kind_to_skill(skill_kind)
+
     def get_skill_by_name(
         self, db: Session, *, name: str, namespace: str, user_id: int
     ) -> Optional[Skill]:
@@ -178,6 +211,39 @@ class SkillKindsService:
             db.query(Kind)
             .filter(
                 Kind.user_id == user_id,
+                Kind.kind == "Skill",
+                Kind.name == name,
+                Kind.namespace == namespace,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
+        if not skill_kind:
+            return None
+
+        return self._kind_to_skill(skill_kind)
+
+    def get_skill_by_name_in_namespace(
+        self, db: Session, *, name: str, namespace: str
+    ) -> Optional[Skill]:
+        """
+        Get Skill by name within a namespace (for group skills).
+
+        This method is used to access group-level skills where user_id doesn't matter,
+        as long as the skill is in the correct namespace.
+
+        Args:
+            db: Database session
+            name: Skill name
+            namespace: Namespace to search in
+
+        Returns:
+            Skill if found, None otherwise
+        """
+        skill_kind = (
+            db.query(Kind)
+            .filter(
                 Kind.kind == "Skill",
                 Kind.name == name,
                 Kind.namespace == namespace,
@@ -205,6 +271,44 @@ class SkillKindsService:
             db.query(Kind)
             .filter(
                 Kind.user_id == user_id,
+                Kind.kind == "Skill",
+                Kind.namespace == namespace,
+                Kind.is_active == True,
+            )
+            .order_by(Kind.created_at.desc())
+        )
+
+        total = query.count()
+        skills = query.offset(skip).limit(limit).all()
+
+        return SkillList(items=[self._kind_to_skill(skill) for skill in skills])
+
+    def list_skills_in_namespace(
+        self,
+        db: Session,
+        *,
+        namespace: str,
+        skip: int = 0,
+        limit: int = 100,
+    ) -> SkillList:
+        """
+        List all Skills in a namespace (for group skills).
+
+        This method is used to list group-level skills where user_id doesn't matter,
+        returning all skills in the specified namespace.
+
+        Args:
+            db: Database session
+            namespace: Namespace to search in
+            skip: Number of items to skip
+            limit: Maximum number of items to return
+
+        Returns:
+            SkillList containing all skills in the namespace
+        """
+        query = (
+            db.query(Kind)
+            .filter(
                 Kind.kind == "Skill",
                 Kind.namespace == namespace,
                 Kind.is_active == True,
@@ -521,6 +625,48 @@ class SkillKindsService:
             .filter(
                 Kind.id == skill_id,
                 Kind.user_id == user_id,
+                Kind.kind == "Skill",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
+        if not skill_kind:
+            return None
+
+        # Get binary data
+        skill_binary = (
+            db.query(SkillBinary).filter(SkillBinary.kind_id == skill_id).first()
+        )
+
+        if not skill_binary:
+            return None
+
+        return skill_binary.binary_data
+
+    def get_skill_binary_in_namespace(
+        self, db: Session, *, skill_id: int, namespace: str
+    ) -> Optional[bytes]:
+        """
+        Get Skill ZIP binary data within a namespace (for group skills).
+
+        This method is used to access group-level skill binaries where user_id doesn't matter,
+        as long as the skill is in the correct namespace.
+
+        Args:
+            db: Database session
+            skill_id: Skill ID
+            namespace: Namespace to search in
+
+        Returns:
+            ZIP file binary content or None if not found
+        """
+        # Verify skill exists in namespace
+        skill_kind = (
+            db.query(Kind)
+            .filter(
+                Kind.id == skill_id,
+                Kind.namespace == namespace,
                 Kind.kind == "Skill",
                 Kind.is_active == True,
             )

@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useUser } from '@/features/common/UserContext'
@@ -32,7 +32,6 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
   const { user, logout } = useUser()
   const [isExpanded, setIsExpanded] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   const userDisplayName = user?.user_name || t('common:user.default_name')
   const isAdmin = user?.role === 'admin'
@@ -47,18 +46,9 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
     setIsExpanded(false)
   }
 
-  const handleMouseEnter = () => {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current)
-      timeoutRef.current = null
-    }
-    setIsExpanded(true)
-  }
-
-  const handleMouseLeave = () => {
-    timeoutRef.current = setTimeout(() => {
-      setIsExpanded(false)
-    }, 150)
+  // Toggle menu on click
+  const handleToggleMenu = () => {
+    setIsExpanded(prev => !prev)
   }
 
   const handleSettingsClick = () => {
@@ -71,25 +61,40 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
     setIsExpanded(false)
   }
 
-  // Cleanup timeout on unmount
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current)
-      }
+  // Close menu when clicking outside
+  const handleClickOutside = useCallback((event: MouseEvent) => {
+    if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+      setIsExpanded(false)
     }
   }, [])
 
+  // Close menu on Escape key
+  const handleKeyDown = useCallback((event: KeyboardEvent) => {
+    if (event.key === 'Escape') {
+      setIsExpanded(false)
+    }
+  }, [])
+
+  // Add/remove event listeners
+  useEffect(() => {
+    if (isExpanded) {
+      document.addEventListener('mousedown', handleClickOutside)
+      document.addEventListener('keydown', handleKeyDown)
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [isExpanded, handleClickOutside, handleKeyDown])
+
   return (
-    <div
-      ref={containerRef}
-      className={`relative ${className}`}
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
-    >
+    <div ref={containerRef} className={`relative ${className}`}>
       {/* User avatar button */}
       <button
         type="button"
+        onClick={handleToggleMenu}
+        aria-expanded={isExpanded}
+        aria-haspopup="true"
         className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-muted transition-all duration-200 group"
       >
         <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
@@ -115,6 +120,8 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
 
       {/* Expanded menu */}
       <div
+        role="menu"
+        aria-label={t('common:user.menu', 'User menu')}
         className={`absolute bottom-full left-0 mb-2 min-w-[200px] rounded-xl bg-surface border border-border overflow-hidden transition-all duration-200 ease-out ${
           isExpanded
             ? 'opacity-100 translate-y-0 pointer-events-auto'
@@ -127,6 +134,7 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
           {/* Settings */}
           <button
             type="button"
+            role="menuitem"
             onClick={handleSettingsClick}
             className="w-full flex items-center gap-3 px-3 py-2 text-sm text-text-primary hover:bg-muted transition-colors duration-150"
           >
@@ -154,6 +162,7 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
           {/* Language Switcher */}
           <button
             type="button"
+            role="menuitem"
             onClick={handleLanguageClick}
             className="w-full flex items-center gap-3 px-3 py-2 text-sm text-text-primary hover:bg-muted transition-colors duration-150"
           >
@@ -165,14 +174,14 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
           {isAdmin && (
             <>
               <div className="my-1 mx-2 h-px bg-border/60" />
-              <Link href="/admin">
-                <button
-                  type="button"
-                  className="w-full flex items-center gap-3 px-3 py-2 text-sm text-text-primary hover:bg-muted transition-colors duration-150"
-                >
-                  <ShieldCheckIcon className="w-4 h-4 text-primary" />
-                  {t('common:navigation.admin', 'Admin')}
-                </button>
+              <Link
+                href="/admin"
+                onClick={() => setIsExpanded(false)}
+                role="menuitem"
+                className="w-full flex items-center gap-3 px-3 py-2 text-sm text-text-primary hover:bg-muted transition-colors duration-150"
+              >
+                <ShieldCheckIcon className="w-4 h-4 text-primary" />
+                {t('common:navigation.admin', 'Admin')}
               </Link>
             </>
           )}
@@ -181,6 +190,7 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
           <div className="my-1 mx-2 h-px bg-border/60" />
           <button
             type="button"
+            role="menuitem"
             onClick={handleLogout}
             className="w-full flex items-center gap-3 px-3 py-2 text-sm text-text-primary hover:bg-muted transition-colors duration-150"
           >
