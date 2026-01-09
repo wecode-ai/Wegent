@@ -2194,7 +2194,16 @@ class ExecutorKindsService(
                 and task_crd.metadata.labels.get("taskType")
                 or "chat"
             )
-            task_url = f"{settings.FRONTEND_URL}/{task_type}?taskId={task_id}"
+            # Build task URL for notification using shared utility
+            from shared.utils.url_util import build_task_notification_url
+
+            task_url = build_task_notification_url(
+                task_type=task_type,
+                task_id=task_id,
+                frontend_url=settings.FRONTEND_URL,
+                notification_url=settings.TASK_NOTIFICATION_URL,
+                jump_path=settings.TASK_NOTIFICATION_JUMP_PATH,
+            )
 
             # Truncate description if too long
             description = user_message

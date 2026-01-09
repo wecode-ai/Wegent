@@ -31,6 +31,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
       paths.auth.password_login.getHref(),
       '/shared/task', // Allow public shared task page without authentication
       '/auth/dingtalk', // DingTalk authentication page
+      '/jump', // Jump page for notification redirects (no auth required)
     ]
     if (!allowedPaths.includes(pathname)) {
       const token = getToken()
