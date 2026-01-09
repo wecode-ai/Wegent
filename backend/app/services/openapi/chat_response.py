@@ -30,7 +30,11 @@ from app.services.openapi.chat_session import (
     build_chat_history,
     setup_chat_session,
 )
-from app.services.openapi.mcp import load_bot_mcp_tools, load_server_mcp_tools
+from app.services.openapi.mcp import (
+    load_bot_mcp_tools,
+    load_custom_mcp_tools,
+    load_server_mcp_tools,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -179,6 +183,7 @@ async def _create_streaming_response_http(
                 enable_web_search=enable_chat_bot and settings.WEB_SEARCH_ENABLED,
                 bot_name=setup.bot_name,
                 bot_namespace=setup.bot_namespace,
+                mcp_servers=tool_settings.get("mcp_servers", {}),
             )
 
             # Stream from HTTP adapter
@@ -371,7 +376,23 @@ async def _create_streaming_response_package(
                 except Exception as e:
                     logger.warning(f"[OPENAPI] Failed to load server MCP tools: {e}")
 
-            # 3. Web search tool (requires wegent_chat_bot and WEB_SEARCH_ENABLED)
+            # 3. Custom MCP (user-provided via API tools parameter)
+            custom_mcp_servers = tool_settings.get("mcp_servers", {})
+            if custom_mcp_servers:
+                try:
+                    custom_mcp_client = await load_custom_mcp_tools(
+                        task_kind_id, custom_mcp_servers
+                    )
+                    if custom_mcp_client:
+                        mcp_clients.append(custom_mcp_client)
+                        extra_tools.extend(custom_mcp_client.get_tools())
+                        logger.info(
+                            f"[OPENAPI] Loaded {len(custom_mcp_client.get_tools())} custom MCP tools for task {task_kind_id}"
+                        )
+                except Exception as e:
+                    logger.warning(f"[OPENAPI] Failed to load custom MCP tools: {e}")
+
+            # 4. Web search tool (requires wegent_chat_bot and WEB_SEARCH_ENABLED)
             if enable_chat_bot and settings.WEB_SEARCH_ENABLED:
                 try:
                     from chat_shell.tools import WebSearchTool
@@ -725,6 +746,7 @@ async def _create_sync_response_http(
             enable_web_search=enable_chat_bot and settings.WEB_SEARCH_ENABLED,
             bot_name=setup.bot_name,
             bot_namespace=setup.bot_namespace,
+            mcp_servers=tool_settings.get("mcp_servers", {}),
         )
 
         # Stream from HTTP adapter and accumulate
@@ -904,7 +926,23 @@ async def _create_sync_response_package(
             except Exception as e:
                 logger.warning(f"[OPENAPI_SYNC] Failed to load server MCP tools: {e}")
 
-        # 3. Web search tool (requires wegent_chat_bot and WEB_SEARCH_ENABLED)
+        # 3. Custom MCP (user-provided via API tools parameter)
+        custom_mcp_servers = tool_settings.get("mcp_servers", {})
+        if custom_mcp_servers:
+            try:
+                custom_mcp_client = await load_custom_mcp_tools(
+                    setup.task_id, custom_mcp_servers
+                )
+                if custom_mcp_client:
+                    mcp_clients.append(custom_mcp_client)
+                    extra_tools.extend(custom_mcp_client.get_tools())
+                    logger.info(
+                        f"[OPENAPI_SYNC] Loaded {len(custom_mcp_client.get_tools())} custom MCP tools for task {setup.task_id}"
+                    )
+            except Exception as e:
+                logger.warning(f"[OPENAPI_SYNC] Failed to load custom MCP tools: {e}")
+
+        # 4. Web search tool (requires wegent_chat_bot and WEB_SEARCH_ENABLED)
         if enable_chat_bot and settings.WEB_SEARCH_ENABLED:
             try:
                 from chat_shell.tools import WebSearchTool

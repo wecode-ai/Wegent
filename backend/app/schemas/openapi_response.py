@@ -7,7 +7,7 @@ OpenAPI Response schemas for v1/responses endpoint.
 Compatible with OpenAI Responses API format.
 """
 
-from typing import Any, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -18,15 +18,37 @@ class WegentTool(BaseModel):
     Supported tool types:
     - wegent_chat_bot: Enable all server-side capabilities (recommended)
       Includes: deep thinking with web search, server MCP tools, and message enhancement
+    - mcp: Custom MCP server configuration
+      Allows connecting to user-provided MCP servers for additional tools
 
     Note:
     - Bot/Ghost MCP tools are always available by default (no user tool needed)
     - Use wegent_chat_bot to enable full server-side capabilities
+    - Use mcp type with mcp_servers to add custom MCP servers
+
+    Examples:
+        # Enable all server-side capabilities
+        {"type": "wegent_chat_bot"}
+
+        # Add custom MCP servers (standard format)
+        {
+            "type": "mcp",
+            "mcp_servers": [
+                {
+                    "my-server": {"url": "http://...", "type": "http"},
+                    "another": {"url": "http://...", "type": "sse"}
+                }
+            ]
+        }
     """
 
     type: str = Field(
         ...,
-        description="Tool type: 'wegent_chat_bot' (enables all server-side capabilities)",
+        description="Tool type: 'wegent_chat_bot' (server capabilities) or 'mcp' (custom MCP servers)",
+    )
+    mcp_servers: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="List containing a dict of MCP server configs: [{name: {url, type, headers}, ...}]",
     )
 
 

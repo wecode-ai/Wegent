@@ -641,7 +641,7 @@ async def _stream_with_http_adapter(
     )
 
     # Parse MCP server configuration for HTTP mode
-    mcp_servers = []
+    mcp_servers = {}
     if settings.CHAT_MCP_ENABLED:
         import json
 
@@ -655,20 +655,43 @@ async def _stream_with_http_adapter(
                     url = server_config.get("url", "")
                     headers = server_config.get("headers", {})
                     if url:
-                        mcp_servers.append(
-                            {
-                                "name": name,
-                                "type": server_type,
-                                "url": url,
-                                "auth": headers if headers else None,
-                            }
-                        )
+                        mcp_servers[name] = {
+                            "type": server_type,
+                            "url": url,
+                            "headers": headers if headers else None,
+                        }
                 logger.info(
                     "[HTTP_ADAPTER] Parsed MCP servers: %d servers",
                     len(mcp_servers),
                 )
             except json.JSONDecodeError as e:
                 logger.warning("[HTTP_ADAPTER] Failed to parse CHAT_MCP_SERVERS: %s", e)
+
+    # Load Bot MCP servers from Ghost configuration
+    if ws_config.bot_name:
+        try:
+            bot_mcp_servers = _get_bot_mcp_servers_for_http(
+                ws_config.bot_name, ws_config.bot_namespace or "default"
+            )
+            for name, server_config in bot_mcp_servers.items():
+                server_type = server_config.get("type", "streamable-http")
+                url = server_config.get("url", "")
+                headers = server_config.get("headers", {})
+                if url:
+                    mcp_servers[name] = {
+                        "type": server_type,
+                        "url": url,
+                        "headers": headers if headers else None,
+                    }
+            if bot_mcp_servers:
+                logger.info(
+                    "[HTTP_ADAPTER] Added %d Bot MCP servers for bot %s/%s",
+                    len(bot_mcp_servers),
+                    ws_config.bot_namespace or "default",
+                    ws_config.bot_name,
+                )
+        except Exception as e:
+            logger.warning("[HTTP_ADAPTER] Failed to load Bot MCP servers: %s", e)
 
     # Build ChatRequest
     # Note: enable_web_search should follow settings.WEB_SEARCH_ENABLED for consistency with bridge mode
@@ -1320,3 +1343,75 @@ async def _stream_with_bridge(
             del namespace._active_streams[subtask_id]
         if subtask_id in getattr(namespace, "_stream_versions", {}):
             del namespace._stream_versions[subtask_id]
+
+
+def _get_bot_mcp_servers_for_http(bot_name: str, bot_namespace: str) -> Dict[str, Any]:
+    """Get Bot MCP servers configuration from Ghost CRD for HTTP mode.
+
+    Args:
+        bot_name: Bot name to query Ghost MCP configuration
+        bot_namespace: Bot namespace for Ghost query
+
+    Returns:
+        Dict of MCP server configurations: {server_name: {url, type, headers, ...}}
+    """
+    from app.db.session import SessionLocal
+    from app.models.kind import Kind
+    from app.schemas.kind import Bot, Ghost
+
+    db = SessionLocal()
+    try:
+        # Query bot Kind
+        bot_kind = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Bot",
+                Kind.name == bot_name,
+                Kind.namespace == bot_namespace,
+                Kind.is_active,
+            )
+            .first()
+        )
+
+        if not bot_kind or not bot_kind.json:
+            return {}
+
+        # Parse Bot CRD to get ghostRef
+        bot_crd = Bot.model_validate(bot_kind.json)
+        if not bot_crd.spec or not bot_crd.spec.ghostRef:
+            return {}
+
+        ghost_name = bot_crd.spec.ghostRef.name
+        ghost_namespace = bot_crd.spec.ghostRef.namespace
+
+        # Query Ghost Kind
+        ghost_kind = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Ghost",
+                Kind.name == ghost_name,
+                Kind.namespace == ghost_namespace,
+                Kind.is_active,
+            )
+            .first()
+        )
+
+        if not ghost_kind or not ghost_kind.json:
+            return {}
+
+        # Parse Ghost CRD to get mcpServers
+        ghost_crd = Ghost.model_validate(ghost_kind.json)
+        if not ghost_crd.spec or not ghost_crd.spec.mcpServers:
+            return {}
+
+        return ghost_crd.spec.mcpServers
+
+    except Exception:
+        logger.exception(
+            "[HTTP_ADAPTER] Failed to query bot MCP servers for %s/%s",
+            bot_namespace,
+            bot_name,
+        )
+        return {}
+    finally:
+        db.close()

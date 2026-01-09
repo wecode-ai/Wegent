@@ -8,10 +8,11 @@ MCP (Model Context Protocol) tools loading for OpenAPI v1/responses endpoint.
 This module provides separate functions for loading:
 - Server-side MCP tools (from CHAT_MCP_SERVERS config)
 - Bot MCP tools (from Bot/Ghost mcpServers config)
+- Custom MCP tools (from user-provided configurations via API)
 """
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
 
@@ -224,3 +225,85 @@ def _get_bot_mcp_servers_sync(bot_name: str, bot_namespace: str) -> Dict[str, An
         return {}
     finally:
         db.close()
+
+
+async def load_custom_mcp_tools(task_id: int, mcp_servers: Dict[str, Any]) -> Any:
+    """
+    Load custom MCP tools from user-provided configurations via API.
+
+    This function loads MCP tools from user-specified server configurations
+    passed through the API request's tools parameter.
+
+    Args:
+        task_id: Task ID for session management and logging
+        mcp_servers: Dict of MCP server configurations, format:
+            {
+                "server_name": {
+                    "url": "...",
+                    "type": "http|sse|streamable_http",
+                    "headers": {...}
+                }
+            }
+
+    Returns:
+        MCPClient instance or None if no custom MCP configured
+    """
+    import asyncio
+
+    if not mcp_servers:
+        logger.debug(f"[OPENAPI_MCP] No custom MCP servers provided for task {task_id}")
+        return None
+
+    try:
+        from chat_shell.tools.mcp import MCPClient
+
+        # Convert to MCPClient expected format: {"server_name": {"url": "...", "headers": {...}}}
+        servers_config = {}
+        for name, config in mcp_servers.items():
+            url = config.get("url", "")
+            if not url:
+                logger.warning(
+                    f"[OPENAPI_MCP] Skipping MCP server '{name}' without URL"
+                )
+                continue
+
+            servers_config[name] = {
+                "url": url,
+            }
+            # Pass through type if specified
+            if config.get("type"):
+                servers_config[name]["type"] = config["type"]
+            if config.get("headers"):
+                servers_config[name]["headers"] = config["headers"]
+
+        if not servers_config:
+            logger.debug(
+                f"[OPENAPI_MCP] No valid custom MCP servers for task {task_id}"
+            )
+            return None
+
+        # Create MCP client with custom configuration
+        client = MCPClient(servers_config)
+        try:
+            await asyncio.wait_for(client.connect(), timeout=30.0)
+            logger.info(
+                f"[OPENAPI_MCP] Loaded {len(client.get_tools())} custom MCP tools "
+                f"from {len(servers_config)} servers for task {task_id}"
+            )
+            return client
+        except asyncio.TimeoutError:
+            logger.error(
+                f"[OPENAPI_MCP] Timeout connecting to custom MCP servers for task {task_id}"
+            )
+            return None
+        except Exception as e:
+            logger.error(
+                f"[OPENAPI_MCP] Failed to connect to custom MCP servers for task {task_id}: {e}"
+            )
+            return None
+
+    except Exception:
+        logger.exception(
+            f"[OPENAPI_MCP] Unexpected error loading custom MCP tools for task {task_id}"
+        )
+        return None
