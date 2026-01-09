@@ -61,10 +61,15 @@ class ClaudeCodeAgent(Agent):
     """
 
     # Static dictionary for storing client connections to enable connection reuse
+    # Key: session_id (task_id:bot_id format), Value: ClaudeSDKClient
     _clients: Dict[str, ClaudeSDKClient] = {}
 
     # Static dictionary for storing hook functions
     _hooks: Dict[str, Any] = {}
+
+    # Static dictionary for mapping internal_session_key to actual Claude session_id
+    # Key: internal_session_key (task_id:bot_id), Value: actual Claude session_id
+    _session_id_map: Dict[str, str] = {}
 
     def get_name(self) -> str:
         return "ClaudeCode"
@@ -123,20 +128,43 @@ class ClaudeCodeAgent(Agent):
         """
         super().__init__(task_data)
         self.client = None
-        # Check if this subtask should start a new session (no conversation history)
-        # This is used in pipeline mode when user confirms a stage and proceeds to next bot
-        # The next bot should not inherit conversation history from previous bot
-        new_session = task_data.get("new_session", False)
-        if new_session:
-            # Use subtask_id as session_id to create a fresh session without history
-            self.session_id = task_data.get("subtask_id", self.task_id)
-            logger.info(
-                f"Pipeline mode: new_session=True, using subtask_id {self.session_id} as session_id "
-                f"to avoid inheriting conversation history from previous bot"
-            )
+        self.new_session = task_data.get("new_session", False)
+
+        # Extract bot_id from task_data for session key
+        # In pipeline mode, each bot has its own session
+        bot_id = None
+        bots = task_data.get("bot", [])
+        if bots and len(bots) > 0:
+            bot_id = bots[0].get("id")
+
+        # Internal key for caching - use task_id:bot_id so each bot has independent session
+        # This allows pipeline tasks to jump back to previous bots and restore their sessions
+        if bot_id:
+            self._internal_session_key = f"{self.task_id}:{bot_id}"
         else:
-            # Default behavior: use task_id as session_id to maintain conversation history
-            self.session_id = self.task_id
+            self._internal_session_key = str(self.task_id)
+
+        cached_session_id = self._session_id_map.get(self._internal_session_key)
+
+        # Case 1: No cache -> use internal_session_key as session_id
+        if not cached_session_id:
+            self.session_id = self._internal_session_key
+            logger.info(
+                f"No cache, using {self.session_id} as session_id (bot_id={bot_id})"
+            )
+        # Case 2: Has cache + new_session=True -> create new session in _async_execute
+        elif self.new_session:
+            # For new_session, we'll create a new client but keep the old one for potential jump-back
+            self.session_id = cached_session_id
+            logger.info(
+                f"Has cache + new_session=True, will create new session for {self.session_id}"
+            )
+        # Case 3: Has cache + new_session=False -> use cached session_id (follow-up in same bot)
+        else:
+            self.session_id = cached_session_id
+            logger.info(
+                f"Has cache, using cached session_id {self.session_id} (bot_id={bot_id})"
+            )
         self.prompt = task_data.get("prompt", "")
         self.project_path = None
 
@@ -862,37 +890,7 @@ class ClaudeCodeAgent(Agent):
 
             # Create new client if not reusing
             if self.client is None:
-                # Create new client connection
-                logger.info(
-                    f"Creating new Claude client for session_id: {self.session_id}"
-                )
-                logger.info(
-                    f"Initializing Claude client with options: {mask_sensitive_data(self.options)}"
-                )
-
-                if self.options.get("cwd") is None or self.options.get("cwd") == "":
-                    cwd = os.path.join(config.WORKSPACE_ROOT, str(self.task_id))
-                    os.makedirs(cwd, exist_ok=True)
-                    self.options["cwd"] = cwd
-
-                if self.options:
-                    code_options = ClaudeAgentOptions(**self.options)
-                    self.client = ClaudeSDKClient(options=code_options)
-                else:
-                    self.client = ClaudeSDKClient()
-
-                # Connect the client
-                await self.client.connect()
-
-                # Store client connection for reuse
-                self._clients[self.session_id] = self.client
-
-                # Register client as a resource for cleanup
-                self.resource_manager.register_resource(
-                    task_id=self.task_id,
-                    resource_id=f"claude_client_{self.session_id}",
-                    is_async=True,
-                )
+                await self._create_and_connect_client()
 
             # Check cancellation again before proceeding
             if self.task_state_manager.is_cancelled(self.task_id):
@@ -918,6 +916,26 @@ class ClaudeCodeAgent(Agent):
             if self.task_state_manager.is_cancelled(self.task_id):
                 logger.info(f"Task {self.task_id} cancelled before sending query")
                 return TaskStatus.COMPLETED
+
+            # If new_session is True, create a new client with subtask_id as session_id
+            # This is needed because different bots may have different skills, MCP servers, etc.
+            # We keep the old client in cache for potential jump-back to previous bot
+            if self.new_session:
+                new_session_id = str(self.subtask_id)
+                old_session_id = self.session_id
+                self.session_id = new_session_id
+                # Update the session_id_map cache for current bot
+                self._session_id_map[self._internal_session_key] = new_session_id
+                # Note: We do NOT close the old client here, because:
+                # 1. Different bots have different skills/MCP servers, so we need separate clients
+                # 2. Pipeline tasks may jump back to previous bots, which need their own clients
+                # 3. The old client's session_id key is different from new one (task_id:bot_id format)
+                # Create new client with current bot's configuration
+                logger.info(
+                    f"new_session=True, creating new client with subtask_id {new_session_id} as session_id "
+                    f"(old: {old_session_id}, internal_key: {self._internal_session_key})"
+                )
+                await self._create_and_connect_client()
 
             # Use session_id to send messages, ensuring messages are in the same session
             # Use the current updated prompt for each execution, even with the same session ID
@@ -947,6 +965,43 @@ class ClaudeCodeAgent(Agent):
 
         except Exception as e:
             return self._handle_execution_error(e, "async execution")
+
+    async def _create_and_connect_client(self) -> None:
+        """
+        Create and connect a new Claude SDK client.
+        Sets up the working directory if needed, creates the client with options,
+        connects it, and stores it in the cache.
+        """
+        logger.info(f"Creating new Claude client for session_id: {self.session_id}")
+        logger.info(
+            f"Initializing Claude client with options: {mask_sensitive_data(self.options)}"
+        )
+
+        # Ensure working directory exists
+        if self.options.get("cwd") is None or self.options.get("cwd") == "":
+            cwd = os.path.join(config.WORKSPACE_ROOT, str(self.task_id))
+            os.makedirs(cwd, exist_ok=True)
+            self.options["cwd"] = cwd
+
+        # Create client with options
+        if self.options:
+            code_options = ClaudeAgentOptions(**self.options)
+            self.client = ClaudeSDKClient(options=code_options)
+        else:
+            self.client = ClaudeSDKClient()
+
+        # Connect the client
+        await self.client.connect()
+
+        # Store client connection for reuse
+        self._clients[self.session_id] = self.client
+
+        # Register client as a resource for cleanup
+        self.resource_manager.register_resource(
+            task_id=self.task_id,
+            resource_id=f"claude_client_{self.session_id}",
+            is_async=True,
+        )
 
     def _handle_execution_result(
         self, result_content: str, execution_type: str = "execution"

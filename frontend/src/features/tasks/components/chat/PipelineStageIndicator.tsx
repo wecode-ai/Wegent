@@ -178,12 +178,6 @@ const PipelineStageIndicator = memo(function PipelineStageIndicator({
         <span className="text-xs font-medium text-text-secondary">
           {t('pipeline.progress_label')} ({stageInfo.current_stage + 1}/{stageInfo.total_stages})
         </span>
-        {stageInfo.is_pending_confirmation && (
-          <span className="text-xs font-medium text-amber-600 dark:text-amber-400 flex items-center gap-1">
-            <Clock className="h-3 w-3" />
-            {t('pipeline.awaiting_confirmation')}
-          </span>
-        )}
       </div>
 
       {/* Stage Progress Bar - includes Start node + all bot stages */}
@@ -193,6 +187,7 @@ const PipelineStageIndicator = memo(function PipelineStageIndicator({
           // displayIndex 0 is start node, displayIndex 1 is stage 0, etc.
           const isCurrentStage = !stage.isStartNode && stage.index === stageInfo.current_stage
           const isLastStage = displayIndex === displayStages.length - 1
+          const isPendingConfirmation = stage.status === 'pending_confirmation'
 
           return (
             <div
@@ -210,6 +205,13 @@ const PipelineStageIndicator = memo(function PipelineStageIndicator({
                   isCurrentStage && 'scale-105'
                 )}
               >
+                {/* Awaiting Confirmation Label - shown above the node */}
+                {isPendingConfirmation && (
+                  <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400 whitespace-nowrap mb-1">
+                    {t('pipeline.awaiting_confirmation')}
+                  </span>
+                )}
+
                 {/* Icon */}
                 {getStageIcon(stage, isCurrentStage)}
 
@@ -241,7 +243,8 @@ const PipelineStageIndicator = memo(function PipelineStageIndicator({
               {!isLastStage && (
                 <div
                   className={cn(
-                    'flex-1 h-0.5 mx-1 min-w-[20px] self-start mt-2',
+                    'flex-1 h-0.5 mx-1 min-w-[20px]',
+                    isPendingConfirmation ? 'self-center' : 'self-start mt-2',
                     isConnectorCompleted(displayIndex) ? 'bg-green-500' : 'bg-border'
                   )}
                 />

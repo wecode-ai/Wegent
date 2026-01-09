@@ -7,10 +7,9 @@
 import logging
 from typing import Any, Dict, Optional
 
-from backend.app.services.tables.url_parser import TableURLParser
-
 from ...base import BaseTableProvider, TableProviderRegistry
 from ...models import TableContext, TableQueryResponse
+from ...url_parser import TableURLParser
 from .client import DingtalkNotableClient, DingtalkTokenManager
 from .config import get_dingtalk_config
 from .user_mapping import DingtalkUserMapping
@@ -173,7 +172,7 @@ class DingTalkProvider(BaseTableProvider):
                 schema[field_name] = self._infer_type(field_value)
 
         return TableQueryResponse(
-            schema=schema,
+            field_schema=schema,
             records=all_records,
             total_count=len(all_records),
         )

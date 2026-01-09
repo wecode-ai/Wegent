@@ -18,6 +18,7 @@ from app.schemas.openapi_response import (
     InputItem,
     WegentTool,
 )
+from app.services.readers.kinds import KindType, kindReader
 
 
 def wegent_status_to_openai_status(wegent_status: str) -> str:
@@ -190,17 +191,13 @@ def check_team_supports_direct_chat(db: Session, team: Kind, user_id: int) -> bo
     )
 
     for member in team_crd.spec.members:
-        # Find bot
-        bot = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == team.user_id,
-                Kind.kind == "Bot",
-                Kind.name == member.botRef.name,
-                Kind.namespace == member.botRef.namespace,
-                Kind.is_active == True,
-            )
-            .first()
+        # Find bot using kindReader
+        bot = kindReader.get_by_name_and_namespace(
+            db,
+            team.user_id,
+            KindType.BOT,
+            member.botRef.namespace,
+            member.botRef.name,
         )
 
         if not bot:
@@ -215,32 +212,14 @@ def check_team_supports_direct_chat(db: Session, team: Kind, user_id: int) -> bo
             f"[OPENAPI_HELPERS] Found bot: {bot.namespace}/{bot.name}, shellRef={bot_crd.spec.shellRef.namespace}/{bot_crd.spec.shellRef.name}"
         )
 
-        # Check user's custom shells first
-        shell = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == team.user_id,
-                Kind.kind == "Shell",
-                Kind.name == bot_crd.spec.shellRef.name,
-                Kind.namespace == bot_crd.spec.shellRef.namespace,
-                Kind.is_active == True,
-            )
-            .first()
+        # Query shell using kindReader (will fallback to public if not found personally)
+        shell = kindReader.get_by_name_and_namespace(
+            db,
+            team.user_id,
+            KindType.SHELL,
+            bot_crd.spec.shellRef.namespace,
+            bot_crd.spec.shellRef.name,
         )
-
-        # If not found, check public shells
-        if not shell:
-            shell = (
-                db.query(Kind)
-                .filter(
-                    Kind.user_id == 0,
-                    Kind.kind == "Shell",
-                    Kind.name == bot_crd.spec.shellRef.name,
-                    Kind.namespace == bot_crd.spec.shellRef.namespace,
-                    Kind.is_active == True,
-                )
-                .first()
-            )
 
         if not shell or not shell.json:
             logger.warning(

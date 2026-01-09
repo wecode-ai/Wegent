@@ -39,18 +39,19 @@ class PipelineStageService:
     """
 
     def get_current_stage_index(
-        self, existing_subtasks: List[Subtask], team_crd: Team
+        self, existing_subtasks: List[Subtask], team_crd: Team, db: Session = None
     ) -> Optional[int]:
         """
         Get the current pipeline stage index based on existing subtasks.
 
-        In pipeline mode, we need to determine which bot is currently active.
-        This is used to decide whether to stay at the current bot (if it has
-        requireConfirmation) or proceed to create subtasks for all bots.
+        In pipeline mode, the current stage is determined by the most recent
+        assistant subtask's bot. This method finds the last assistant subtask
+        and maps its bot_id to the corresponding stage index in team members.
 
         Args:
             existing_subtasks: List of existing subtasks, ordered by message_id desc
             team_crd: Team CRD object containing member configuration
+            db: Optional database session for bot lookup (required for accurate stage detection)
 
         Returns:
             The index of the current stage (0-based), or None if no existing subtasks
@@ -62,104 +63,92 @@ class PipelineStageService:
         if total_stages == 0:
             return None
 
-        # Get the most recent assistant subtasks (the last batch)
-        # existing_subtasks is ordered by message_id desc, so we need to find
-        # the most recent group of assistant subtasks
-        recent_assistants = []
+        # Find the most recent assistant subtask (existing_subtasks is ordered by message_id desc)
+        last_assistant = None
         for s in existing_subtasks:
-            if s.role == SubtaskRole.USER:
-                break
             if s.role == SubtaskRole.ASSISTANT:
-                recent_assistants.append(s)
+                last_assistant = s
+                break
 
-        if not recent_assistants:
+        if not last_assistant:
             return None
 
-        # Reverse to get chronological order (oldest first)
-        recent_assistants.reverse()
-
-        # Debug log: show recent assistant subtasks status for analysis
         logger.info(
-            f"Pipeline get_current_stage_index: recent_assistants=[{', '.join([f'{s.id}:{s.status.value}' for s in recent_assistants])}], "
-            f"total_stages={total_stages}"
+            f"Pipeline get_current_stage_index: last_assistant={last_assistant.id}, "
+            f"status={last_assistant.status.value}, bot_ids={last_assistant.bot_ids}"
         )
 
-        # Find the current stage based on subtask status
-        # For requireConfirmation check, we need to find the last COMPLETED stage
-        # because user's follow-up message should stay at that stage
-        current_stage_index = 0
-        last_completed_index = None
+        # Determine stage index from bot_id
+        if last_assistant.bot_ids and db:
+            bot_id = last_assistant.bot_ids[0]
+            # Find the bot and match it to team members
+            bot = (
+                db.query(Kind)
+                .filter(
+                    Kind.id == bot_id,
+                    Kind.kind == "Bot",
+                    Kind.is_active.is_(True),
+                )
+                .first()
+            )
+            if bot:
+                for i, member in enumerate(team_crd.spec.members):
+                    if (
+                        member.botRef.name == bot.name
+                        and member.botRef.namespace == bot.namespace
+                    ):
+                        logger.info(
+                            f"Pipeline get_current_stage_index: determined stage_index={i} "
+                            f"from bot {bot.name}"
+                        )
+                        return i
 
-        for i, subtask in enumerate(recent_assistants):
-            if i >= total_stages:
-                break
-
-            if subtask.status == SubtaskStatus.COMPLETED:
-                # This stage is completed, record it
-                current_stage_index = i
-                last_completed_index = i
-            elif subtask.status in [
-                SubtaskStatus.RUNNING,
-                SubtaskStatus.PENDING_CONFIRMATION,
-            ]:
-                # This stage is still active (running or waiting for confirmation)
-                current_stage_index = i
-                break
-            elif subtask.status == SubtaskStatus.PENDING:
-                # This stage hasn't started yet
-                # Stay at the last completed stage for requireConfirmation check
-                if last_completed_index is not None:
-                    current_stage_index = last_completed_index
-                break
-            elif subtask.status == SubtaskStatus.FAILED:
-                # This stage failed, stay at this stage
-                current_stage_index = i
-                break
-
-        return current_stage_index
+        # Fallback: return 0 if we can't determine the stage
+        logger.warning(
+            f"Pipeline get_current_stage_index: could not determine stage from bot_id, "
+            f"falling back to 0"
+        )
+        return 0
 
     def should_stay_at_current_stage(
         self,
         existing_subtasks: List[Subtask],
         team_crd: Team,
+        db: Session = None,
     ) -> tuple[bool, Optional[int]]:
         """
         Determine if we should stay at the current stage when creating new subtasks.
 
-        In pipeline mode, if the current bot has requireConfirmation and hasn't
-        been confirmed yet, we should only create a subtask for the current bot
-        instead of creating subtasks for all bots.
+        In pipeline mode, if the current bot has requireConfirmation, we should
+        only create a subtask for the current bot instead of all bots.
 
         Args:
             existing_subtasks: List of existing subtasks, ordered by message_id desc
             team_crd: Team CRD object containing member configuration
+            db: Optional database session for bot lookup
 
         Returns:
             Tuple of (should_stay: bool, current_stage_index: Optional[int])
         """
-        current_stage_index = self.get_current_stage_index(existing_subtasks, team_crd)
+        current_stage_index = self.get_current_stage_index(
+            existing_subtasks, team_crd, db
+        )
 
-        if current_stage_index is None:
-            return False, None
-
-        if current_stage_index >= len(team_crd.spec.members):
+        if current_stage_index is None or current_stage_index >= len(
+            team_crd.spec.members
+        ):
             return False, current_stage_index
 
         current_member = team_crd.spec.members[current_stage_index]
-        # Debug log: check current stage and requireConfirmation status
-        logger.info(
-            f"Pipeline should_stay_at_current_stage: current_stage_index={current_stage_index}, "
-            f"bot={current_member.botRef.name}, requireConfirmation={current_member.requireConfirmation}, "
-            f"existing_subtasks_count={len(existing_subtasks)}"
-        )
-        if current_member.requireConfirmation:
-            logger.info(
-                f"Pipeline mode: current stage {current_stage_index} has requireConfirmation, "
-                f"staying at current bot"
-            )
-            return True, current_stage_index
+        should_stay = bool(current_member.requireConfirmation)
 
-        return False, current_stage_index
+        if should_stay:
+            logger.info(
+                f"Pipeline: stage {current_stage_index} ({current_member.botRef.name}) "
+                f"has requireConfirmation, staying at current bot"
+            )
+
+        return should_stay, current_stage_index
 
     def get_stage_info(
         self, db: Session, task_id: int, team_crd: Team
@@ -232,10 +221,17 @@ class PipelineStageService:
 
         # Get bot names for each subtask in the recent round
         # We need to query the Bot kind to get the bot name from bot_id
+        # For follow-up scenarios, we need to look at ALL subtasks (not just recent round)
+        # to get the correct stage status. A stage that was COMPLETED should stay COMPLETED
+        # even if a new PENDING subtask is created for follow-up.
         stage_subtask_map: Dict[int, Subtask] = {}  # stage_index -> subtask
-        for subtask in recent_round_assistants:
+
+        # First, build map from all assistant subtasks (to get historical completed states)
+        all_assistant_subtasks = [
+            s for s in all_subtasks if s.role == SubtaskRole.ASSISTANT
+        ]
+        for subtask in all_assistant_subtasks:
             if subtask.bot_ids:
-                # Get the bot for this subtask
                 bot = (
                     db.query(Kind)
                     .filter(
@@ -247,7 +243,21 @@ class PipelineStageService:
                 )
                 if bot and bot.name in bot_name_to_stage:
                     stage_idx = bot_name_to_stage[bot.name]
-                    stage_subtask_map[stage_idx] = subtask
+                    # Only update if:
+                    # 1. No existing entry for this stage, OR
+                    # 2. Existing entry is PENDING/RUNNING and new one is COMPLETED
+                    #    (prefer completed state over pending for display)
+                    existing = stage_subtask_map.get(stage_idx)
+                    if existing is None:
+                        stage_subtask_map[stage_idx] = subtask
+                    elif existing.status in [
+                        SubtaskStatus.PENDING,
+                        SubtaskStatus.RUNNING,
+                    ]:
+                        # If existing is pending/running but we found a completed one, use completed
+                        if subtask.status == SubtaskStatus.COMPLETED:
+                            stage_subtask_map[stage_idx] = subtask
+                    # If existing is COMPLETED, keep it (don't overwrite with PENDING from follow-up)
 
         # Now determine current stage and status based on the stage_subtask_map
         for i in range(total_stages):
@@ -302,6 +312,11 @@ class PipelineStageService:
                     stage_status = "failed"
                 elif subtask_status == SubtaskStatus.PENDING:
                     stage_status = "pending"
+
+            # If this is the current stage and is_pending_confirmation is true,
+            # override the status to "pending_confirmation" for UI display
+            if i == current_stage and is_pending_confirmation:
+                stage_status = "pending_confirmation"
 
             stages.append(
                 {
