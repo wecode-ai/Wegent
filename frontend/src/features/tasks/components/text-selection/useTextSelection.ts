@@ -189,7 +189,7 @@ export function useTextSelection(options: UseTextSelectionOptions = {}) {
       if (currentText && currentText !== lastSelectionTextRef.current) {
         // Check if still in valid container
         if (sel && isSelectionInContainer(sel)) {
-          setSelection((prev) =>
+          setSelection(prev =>
             prev
               ? {
                   ...prev,

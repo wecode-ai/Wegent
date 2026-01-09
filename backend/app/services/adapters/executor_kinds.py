@@ -1087,6 +1087,7 @@ class ExecutorKindsService(
                     },
                     "bot": bots,
                     "team_id": team.id,
+                    "team_namespace": team.namespace,  # Team namespace for skill lookup
                     "mode": collaboration_model,
                     "git_domain": git_domain,
                     "git_repo": git_repo,

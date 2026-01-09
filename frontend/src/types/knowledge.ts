@@ -8,6 +8,8 @@
 
 export type DocumentStatus = 'enabled' | 'disabled'
 
+export type DocumentSourceType = 'file' | 'text' | 'table'
+
 export type KnowledgeResourceScope = 'personal' | 'group' | 'all'
 
 // Retrieval Config types
@@ -107,16 +109,20 @@ export interface KnowledgeDocument {
   user_id: number
   is_active: boolean
   splitter_config?: SplitterConfig
+  source_type: DocumentSourceType
+  source_config: Record<string, unknown>
   created_at: string
   updated_at: string
 }
 
 export interface KnowledgeDocumentCreate {
-  attachment_id: number
+  attachment_id?: number
   name: string
   file_extension: string
   file_size: number
   splitter_config?: Partial<SplitterConfig>
+  source_type?: DocumentSourceType
+  source_config?: Record<string, unknown>
 }
 
 export interface KnowledgeDocumentUpdate {

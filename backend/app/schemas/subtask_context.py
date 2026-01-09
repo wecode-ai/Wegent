@@ -21,6 +21,7 @@ class ContextType(str, Enum):
 
     ATTACHMENT = "attachment"
     KNOWLEDGE_BASE = "knowledge_base"
+    TABLE = "table"
 
 
 class ContextStatus(str, Enum):
@@ -89,6 +90,8 @@ class SubtaskContextBrief(BaseModel):
     mime_type: Optional[str] = None
     # Knowledge base fields (from type_data)
     document_count: Optional[int] = None
+    # Table fields (from type_data) - nested structure to match frontend expectation
+    source_config: Optional[Dict[str, Any]] = None
 
     class Config:
         from_attributes = True
@@ -97,6 +100,22 @@ class SubtaskContextBrief(BaseModel):
     def from_model(cls, context) -> "SubtaskContextBrief":
         """Create brief from SubtaskContext model."""
         type_data = context.type_data or {}
+
+        # Build source_config for table contexts
+        source_config = None
+        if context.context_type == ContextType.TABLE:
+            url = type_data.get("url")
+            if url:
+                source_config = {"url": url}
+                # DEBUG: Log table context creation
+                import logging
+
+                logger = logging.getLogger(__name__)
+                logger.info(
+                    f"[SubtaskContextBrief] Building table context: id={context.id}, "
+                    f"url={url}, source_config={source_config}"
+                )
+
         return cls(
             id=context.id,
             context_type=context.context_type,
@@ -106,6 +125,7 @@ class SubtaskContextBrief(BaseModel):
             file_size=type_data.get("file_size"),
             mime_type=type_data.get("mime_type"),
             document_count=type_data.get("document_count"),
+            source_config=source_config,
         )
 
 
@@ -212,3 +232,11 @@ class KnowledgeBaseContextCreate(BaseModel):
     knowledge_id: int
     name: str
     document_count: Optional[int] = None
+
+
+class TableContextCreate(BaseModel):
+    """Data for creating table context."""
+
+    document_id: int
+    name: str
+    url: Optional[str] = None

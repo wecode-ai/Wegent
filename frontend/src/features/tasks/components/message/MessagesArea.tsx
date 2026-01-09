@@ -7,7 +7,15 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import { useTaskContext } from '../../contexts/taskContext'
 import type { TaskDetail, Team, GitRepoInfo, GitBranch } from '@/types/api'
-import { Share2, FileText, ChevronDown, Download, MessageSquare, Users } from 'lucide-react'
+import {
+  Share2,
+  FileText,
+  ChevronDown,
+  Download,
+  MessageSquare,
+  Users,
+  MoreHorizontal,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -34,6 +42,7 @@ import { useUnifiedMessages, type DisplayMessage } from '../../hooks/useUnifiedM
 import { useStreamingVisibilityRecovery } from '../../hooks/useStreamingVisibilityRecovery'
 import { useTraceAction } from '@/hooks/useTraceAction'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
+import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import {
   correctionApis,
   CorrectionResponse,
@@ -61,6 +70,7 @@ interface StreamingMessageBubbleProps {
   onSendMessage?: (content: string) => void
   index: number
   isGroupChat?: boolean
+  onContextReselect?: (context: import('@/types/api').SubtaskContextBrief) => void
 }
 
 function StreamingMessageBubble({
@@ -74,6 +84,7 @@ function StreamingMessageBubble({
   onSendMessage,
   index,
   isGroupChat,
+  onContextReselect,
 }: StreamingMessageBubbleProps) {
   // Use typewriter effect for streaming content
   const displayContent = useTypewriter(message.content || '')
@@ -119,6 +130,7 @@ function StreamingMessageBubble({
       isWaiting={Boolean(isStreaming && !hasContent && !hasThinking)}
       onSendMessage={onSendMessage}
       isGroupChat={isGroupChat}
+      onContextReselect={onContextReselect}
     />
   )
 }
@@ -144,6 +156,8 @@ interface MessagesAreaProps {
    * Can be either tempTaskId (negative) or taskId (positive) before selectedTaskDetail updates.
    */
   pendingTaskId?: number | null
+  /** Callback when user clicks on a context badge to re-select it */
+  onContextReselect?: (context: import('@/types/api').SubtaskContextBrief) => void
 }
 
 export default function MessagesArea({
@@ -160,6 +174,7 @@ export default function MessagesArea({
   enableCorrectionWebSearch = false,
   hasMessages: hasMessagesFromParent,
   pendingTaskId,
+  onContextReselect,
 }: MessagesAreaProps) {
   const { t } = useTranslation()
   const { toast } = useToast()
@@ -169,6 +184,7 @@ export default function MessagesArea({
   const { user } = useUser()
   const { traceAction } = useTraceAction()
   const { registerCorrectionHandlers } = useSocket()
+  const isMobile = useIsMobile()
 
   // Use unified messages hook - SINGLE SOURCE OF TRUTH
   // Pass pendingTaskId to query messages when selectedTaskDetail.id is not yet available
@@ -641,6 +657,69 @@ export default function MessagesArea({
     const isChatAgentType = selectedTaskDetail?.team?.agent_type === 'chat'
     const showMembersButton = isGroupChatTask || isChatAgentType
 
+    // Mobile: Use a single "More" dropdown menu (like Gemini)
+    if (isMobile) {
+      return (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              className="flex items-center justify-center h-8 w-8 p-0 rounded-[7px]"
+            >
+              <MoreHorizontal className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-44">
+            {showMembersButton && (
+              <DropdownMenuItem
+                onClick={() => setShowMembersPanel(true)}
+                className="flex items-center gap-2 cursor-pointer"
+              >
+                <Users className="h-4 w-4" />
+                <span>{t('common:groupChat.members.title') || 'Members'}</span>
+              </DropdownMenuItem>
+            )}
+            {!isGroupChatTask && (
+              <DropdownMenuItem
+                onClick={handleShareTask}
+                disabled={isSharing}
+                className="flex items-center gap-2 cursor-pointer"
+              >
+                <Share2 className="h-4 w-4" />
+                <span>{isSharing ? t('shared-task:sharing') : t('shared-task:share_link')}</span>
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem
+              onClick={handleExportPdf}
+              className="flex items-center gap-2 cursor-pointer"
+            >
+              <FileText className="h-4 w-4" />
+              <span>{t('chat:export.export_pdf')}</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={handleExportDocx}
+              className="flex items-center gap-2 cursor-pointer"
+            >
+              <FileText className="h-4 w-4" />
+              <span>{t('chat:export.export_docx') || 'Export DOCX'}</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => {
+                const feedbackUrl = getRuntimeConfigSync().feedbackUrl
+                window.open(feedbackUrl, '_blank')
+              }}
+              className="flex items-center gap-2 cursor-pointer"
+            >
+              <MessageSquare className="h-4 w-4" />
+              <span>{t('common:navigation.feedback')}</span>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )
+    }
+
+    // Desktop: Show all buttons inline
     return (
       <div className="flex items-center gap-2">
         {showMembersButton && (
@@ -697,20 +776,20 @@ export default function MessagesArea({
               <span>{t('chat:export.export_docx') || 'Export DOCX'}</span>
             </DropdownMenuItem>
           </DropdownMenuContent>
-
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              const feedbackUrl = getRuntimeConfigSync().feedbackUrl
-              window.open(feedbackUrl, '_blank')
-            }}
-            className="flex items-center gap-1 h-8 pl-2 pr-3 rounded-[7px] text-sm"
-          >
-            <MessageSquare className="h-3.5 w-3.5" />
-            {t('common:navigation.feedback')}
-          </Button>
         </DropdownMenu>
+
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            const feedbackUrl = getRuntimeConfigSync().feedbackUrl
+            window.open(feedbackUrl, '_blank')
+          }}
+          className="flex items-center gap-1 h-8 pl-2 pr-3 rounded-[7px] text-sm"
+        >
+          <MessageSquare className="h-3.5 w-3.5" />
+          {t('common:navigation.feedback')}
+        </Button>
       </div>
     )
   }, [
@@ -719,6 +798,7 @@ export default function MessagesArea({
     selectedTaskDetail?.team?.agent_type,
     messages.length,
     isSharing,
+    isMobile,
     handleShareTask,
     handleExportPdf,
     handleExportDocx,
@@ -822,6 +902,7 @@ export default function MessagesArea({
                   onSendMessage={onSendMessage}
                   index={index}
                   isGroupChat={isGroupChat}
+                  onContextReselect={onContextReselect}
                 />
               )
             }
@@ -850,6 +931,7 @@ export default function MessagesArea({
                     onSendMessage={onSendMessage}
                     isCurrentUserMessage={isCurrentUserMessage}
                     isGroupChat={isGroupChat}
+                    onContextReselect={onContextReselect}
                   />
                   <div className="flex flex-col gap-2">
                     {/* Show progress indicator when correction is in progress */}
@@ -909,6 +991,7 @@ export default function MessagesArea({
                 isCurrentUserMessage={isCurrentUserMessage}
                 onRetry={onRetry}
                 isGroupChat={isGroupChat}
+                onContextReselect={onContextReselect}
               />
             )
           })}

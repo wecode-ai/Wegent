@@ -75,6 +75,11 @@ class ChatRequest:
     knowledge_base_ids: Optional[list] = None  # Knowledge base IDs to search
     document_ids: Optional[list] = None  # Document IDs to filter retrieval
 
+    # Table configuration
+    table_contexts: list = field(
+        default_factory=list
+    )  # Table contexts for DataTableTool
+
     # Task data for MCP tools
     task_data: Optional[dict] = None
 

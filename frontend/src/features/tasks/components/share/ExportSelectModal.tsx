@@ -265,7 +265,6 @@ export default function ExportSelectModal({
           teamName: msg.teamName,
           attachments,
           knowledgeBases,
-
         }
       })
     )

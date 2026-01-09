@@ -384,7 +384,10 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     const fetchSkills = async () => {
       setLoadingSkills(true)
       try {
-        const skillsData = await fetchUnifiedSkillsList()
+        const skillsData = await fetchUnifiedSkillsList({
+          scope: scope,
+          groupName: groupName,
+        })
         setAllSkills(skillsData)
         // Filter skills based on current shell type
         setAvailableSkills(filterSkillsByShellType(skillsData))
@@ -398,7 +401,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       }
     }
     fetchSkills()
-  }, [supportsSkills, toast, t, filterSkillsByShellType])
+  }, [supportsSkills, toast, t, filterSkillsByShellType, scope, groupName])
 
   // Re-filter available skills when shell type changes
   useEffect(() => {
@@ -1468,7 +1471,10 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           // Reload skills list when skills are changed
           const fetchSkills = async () => {
             try {
-              const skillsData = await fetchUnifiedSkillsList()
+              const skillsData = await fetchUnifiedSkillsList({
+                scope: scope,
+                groupName: groupName,
+              })
               setAllSkills(skillsData)
               // Filter skills based on current shell type
               setAvailableSkills(filterSkillsByShellType(skillsData))

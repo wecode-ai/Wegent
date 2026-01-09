@@ -141,6 +141,8 @@ export interface MessageBubbleProps {
   feedbackMessageType?: 'original' | 'correction'
   /** Whether this is a group chat (for enabling message collapsing) */
   isGroupChat?: boolean
+  /** Callback when user clicks on a context badge to re-select it */
+  onContextReselect?: (context: SubtaskContextBrief) => void
 }
 
 // Component for rendering a paragraph with hover action button
@@ -253,6 +255,7 @@ const MessageBubble = memo(
     onRetry,
     feedbackMessageType,
     isGroupChat,
+    onContextReselect,
   }: MessageBubbleProps) {
     // Use trace hook for telemetry (auto-includes user and task context)
     const { trace } = useTraceAction()
@@ -1385,7 +1388,12 @@ const MessageBubble = memo(
                 {timestampLabel && <span>{timestampLabel}</span>}
               </div>
             )}
-            {isUserTypeMessage && <ContextBadgeList contexts={msg.contexts || undefined} />}
+            {isUserTypeMessage && (
+              <ContextBadgeList
+                contexts={msg.contexts || undefined}
+                onContextReselect={onContextReselect}
+              />
+            )}
             {/* Show waiting indicator when streaming but no content yet */}
             {isWaiting || msg.isWaiting ? (
               <StreamingWaitIndicator isWaiting={true} />

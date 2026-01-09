@@ -6,6 +6,7 @@
 
 from typing import Tuple, Type
 
+from pydantic import Field
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -117,6 +118,12 @@ class Settings(BaseSettings):
     # Graceful shutdown
     GRACEFUL_SHUTDOWN_TIMEOUT: int = 600
 
+    # Data Table Configuration
+    # JSON string containing table provider credentials (DingTalk, etc.)
+    # Format: {"dingtalk":{"appKey":"...","appSecret":"...","operatorId":"...","userMapping":{...}}}
+    # This is shared configuration between backend and chat_shell, uses validation_alias to read from DATA_TABLE_CONFIG (no prefix)
+    DATA_TABLE_CONFIG: str = Field(default="", validation_alias="DATA_TABLE_CONFIG")
+
     @classmethod
     def settings_customise_sources(
         cls,
@@ -139,6 +146,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         env_prefix="CHAT_SHELL_",
         extra="ignore",
+        populate_by_name=True,  # Allow reading from field name without prefix
     )
 
 
