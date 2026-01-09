@@ -1872,26 +1872,16 @@ class ExecutorKindsService(
                 and task_crd.metadata.labels.get("taskType")
                 or "chat"
             )
-            # Build task URL for notification
-            # If TASK_NOTIFICATION_URL is configured, use jump page for User-Agent detection
-            # The jump page will redirect to appropriate URL based on browser type:
-            # - DingTalk browser (mobile) -> TASK_NOTIFICATION_URL (external access)
-            # - PC browser -> FRONTEND_URL (internal access)
-            if settings.TASK_NOTIFICATION_URL:
-                from urllib.parse import quote
+            # Build task URL for notification using shared utility
+            from shared.utils.url_util import build_task_notification_url
 
-                outer_url = settings.TASK_NOTIFICATION_URL
-                inner_url = settings.FRONTEND_URL
-                jump_path = settings.TASK_NOTIFICATION_JUMP_PATH
-                # Build jump URL with both outer and inner targets
-                # Format: {outer_url}{jump_path}?target={task_type}&taskId={task_id}&inner={inner_url}&outer={outer_url}
-                task_url = (
-                    f"{outer_url}{jump_path}?target={task_type}&taskId={task_id}"
-                    f"&inner={quote(inner_url, safe='')}&outer={quote(outer_url, safe='')}"
-                )
-            else:
-                # No external URL configured, use direct link
-                task_url = f"{settings.FRONTEND_URL}/{task_type}?taskId={task_id}"
+            task_url = build_task_notification_url(
+                task_type=task_type,
+                task_id=task_id,
+                frontend_url=settings.FRONTEND_URL,
+                notification_url=settings.TASK_NOTIFICATION_URL,
+                jump_path=settings.TASK_NOTIFICATION_JUMP_PATH,
+            )
 
             # Truncate description if too long
             description = user_message
