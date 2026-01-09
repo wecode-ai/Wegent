@@ -2487,126 +2487,83 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         collaboration_model = team_crd.spec.collaborationModel
 
         if collaboration_model == "pipeline":
-            # Pipeline mode: check if we should only create subtask for current bot
-            # (when current bot has requireConfirmation and hasn't been confirmed yet)
-            # Use pipeline_stage_service to determine if we should stay at current stage
-            should_stay_at_current_stage, current_stage_index = (
+            # Pipeline mode: determine which bot to create subtask for
+            # Use pipeline_stage_service to get current stage information
+            # Pass db session for accurate bot_id to stage index mapping
+            should_stay, current_stage_index = (
                 pipeline_stage_service.should_stay_at_current_stage(
-                    existing_subtasks, team_crd
+                    existing_subtasks, team_crd, db
                 )
             )
 
-            if should_stay_at_current_stage and current_stage_index is not None:
-                # Only create subtask for the current bot (the one with requireConfirmation)
-                # Debug log: confirm we are staying at current stage
+            # Determine which stage to create subtask for:
+            # 1. If should_stay is True (current stage has requireConfirmation), stay at current stage
+            # 2. If this is a follow-up (existing_subtasks not empty), use current stage
+            # 3. If this is a new conversation (no existing subtasks), start from stage 0
+            if should_stay and current_stage_index is not None:
+                target_stage_index = current_stage_index
                 logger.info(
-                    f"Pipeline _create_subtasks: staying at current stage {current_stage_index}, "
-                    f"only creating subtask for current bot, existing_subtasks_count={len(existing_subtasks)}"
+                    f"Pipeline _create_subtasks: staying at stage {target_stage_index} (requireConfirmation)"
                 )
-                current_member = team_crd.spec.members[current_stage_index]
-                bot = (
-                    db.query(Kind)
-                    .filter(
-                        Kind.user_id == team.user_id,
-                        Kind.kind == "Bot",
-                        Kind.name == current_member.botRef.name,
-                        Kind.namespace == current_member.botRef.namespace,
-                        Kind.is_active.is_(True),
-                    )
-                    .first()
+            elif existing_subtasks and current_stage_index is not None:
+                target_stage_index = current_stage_index
+                logger.info(
+                    f"Pipeline _create_subtasks: follow-up at stage {target_stage_index}"
                 )
-
-                if bot is None:
-                    raise Exception(
-                        f"Bot {current_member.botRef.name} not found in kinds table"
-                    )
-
-                executor_infos = self._get_pipeline_executor_info(existing_subtasks)
-                subtask = Subtask(
-                    user_id=user_id,
-                    task_id=task.id,
-                    team_id=team.id,
-                    title=f"{task_crd.spec.title} - {bot.name}",
-                    bot_ids=[bot.id],
-                    role=SubtaskRole.ASSISTANT,
-                    prompt="",
-                    status=SubtaskStatus.PENDING,
-                    progress=0,
-                    message_id=next_message_id,
-                    parent_id=parent_id,
-                    executor_name=(
-                        executor_infos[current_stage_index].get("executor_name")
-                        if len(executor_infos) > current_stage_index
-                        else ""
-                    ),
-                    executor_namespace=(
-                        executor_infos[current_stage_index].get("executor_namespace")
-                        if len(executor_infos) > current_stage_index
-                        else ""
-                    ),
-                    error_message="",
-                    completed_at=datetime.now(),
-                    result=None,
-                )
-                db.add(subtask)
             else:
-                # Pipeline mode: only create subtask for the FIRST bot (stage 0)
-                # Subsequent bot subtasks will be created when the previous stage completes
-                # This ensures proper sequential execution and requireConfirmation handling
-                executor_infos = self._get_pipeline_executor_info(existing_subtasks)
-
-                # Only create subtask for the first bot (index 0)
-                first_member = team_crd.spec.members[0]
-                bot = (
-                    db.query(Kind)
-                    .filter(
-                        Kind.user_id == team.user_id,
-                        Kind.kind == "Bot",
-                        Kind.name == first_member.botRef.name,
-                        Kind.namespace == first_member.botRef.namespace,
-                        Kind.is_active.is_(True),
-                    )
-                    .first()
-                )
-
-                if bot is None:
-                    raise Exception(
-                        f"Bot {first_member.botRef.name} not found in kinds table"
-                    )
-
+                target_stage_index = 0
                 logger.info(
-                    f"Pipeline _create_subtasks: creating subtask only for first bot (stage 0), "
-                    f"bot={bot.name}, total_stages={len(team_crd.spec.members)}"
+                    f"Pipeline _create_subtasks: new conversation, starting from stage 0"
                 )
 
-                subtask = Subtask(
-                    user_id=user_id,
-                    task_id=task.id,
-                    team_id=team.id,
-                    title=f"{task_crd.spec.title} - {bot.name}",
-                    bot_ids=[bot.id],
-                    role=SubtaskRole.ASSISTANT,
-                    prompt="",
-                    status=SubtaskStatus.PENDING,
-                    progress=0,
-                    message_id=next_message_id,
-                    parent_id=parent_id,
-                    executor_name=(
-                        executor_infos[0].get("executor_name")
-                        if len(executor_infos) > 0
-                        else ""
-                    ),
-                    executor_namespace=(
-                        executor_infos[0].get("executor_namespace")
-                        if len(executor_infos) > 0
-                        else ""
-                    ),
-                    error_message="",
-                    completed_at=datetime.now(),
-                    result=None,
+            # Get the target bot for the determined stage
+            target_member = team_crd.spec.members[target_stage_index]
+            bot = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == team.user_id,
+                    Kind.kind == "Bot",
+                    Kind.name == target_member.botRef.name,
+                    Kind.namespace == target_member.botRef.namespace,
+                    Kind.is_active.is_(True),
+                )
+                .first()
+            )
+
+            if bot is None:
+                raise Exception(
+                    f"Bot {target_member.botRef.name} not found in kinds table"
                 )
 
-                db.add(subtask)
+            # Pipeline mode: all bots run in the same executor
+            # Get executor info from any existing assistant subtask
+            executor_name = ""
+            executor_namespace = ""
+            for s in existing_subtasks:
+                if s.role == SubtaskRole.ASSISTANT and s.executor_name:
+                    executor_name = s.executor_name
+                    executor_namespace = s.executor_namespace
+                    break
+
+            subtask = Subtask(
+                user_id=user_id,
+                task_id=task.id,
+                team_id=team.id,
+                title=f"{task_crd.spec.title} - {bot.name}",
+                bot_ids=[bot.id],
+                role=SubtaskRole.ASSISTANT,
+                prompt="",
+                status=SubtaskStatus.PENDING,
+                progress=0,
+                message_id=next_message_id,
+                parent_id=parent_id,
+                executor_name=executor_name,
+                executor_namespace=executor_namespace,
+                error_message="",
+                completed_at=datetime.now(),
+                result=None,
+            )
+            db.add(subtask)
         else:
             # For other collaboration models, create a single assistant subtask
             executor_name = ""
@@ -2635,27 +2592,6 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 result=None,
             )
             db.add(assistant_subtask)
-
-    def _get_pipeline_executor_info(
-        self, existing_subtasks: List[Subtask]
-    ) -> List[Dict[str, str]]:
-        """
-        Get executor info from existing subtasks for pipeline mode
-        """
-        first_group_assistants = []
-        for s in existing_subtasks:
-            if s.role == SubtaskRole.USER:
-                break
-            if s.role == SubtaskRole.ASSISTANT:
-                first_group_assistants.append(
-                    {
-                        "executor_namespace": s.executor_namespace,
-                        "executor_name": s.executor_name,
-                    }
-                )
-
-        first_group_assistants.reverse()
-        return first_group_assistants
 
     def _get_tasks_related_data_batch(
         self, db: Session, tasks: List[Kind], user_id: int
