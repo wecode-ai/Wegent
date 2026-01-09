@@ -18,6 +18,7 @@ import {
   ArrowLeft,
   Pencil,
   Link,
+  Check,
 } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -41,6 +42,7 @@ import { MAX_FILE_SIZE } from '@/apis/attachments'
 import { SplitterSettingsSection, type SplitterConfig } from './SplitterSettingsSection'
 import type { Attachment } from '@/types/api'
 import { cn } from '@/lib/utils'
+import { validateTableUrl } from '@/apis/knowledge'
 
 // Upload mode type
 type UploadMode = 'file' | 'text' | 'table'
@@ -94,6 +96,11 @@ export function DocumentUpload({
   const [tableName, setTableName] = useState('')
   const [tableError, setTableError] = useState<string | null>(null)
   const [tableSubmitting, setTableSubmitting] = useState(false)
+
+  // Table URL validation state
+  const [tableUrlValidating, setTableUrlValidating] = useState(false)
+  const [tableUrlValid, setTableUrlValid] = useState<boolean | null>(null)
+  const [tableUrlProvider, setTableUrlProvider] = useState<string | null>(null)
 
   // File rename editing state
   const [editingFileId, setEditingFileId] = useState<string | null>(null)
@@ -226,6 +233,9 @@ export function DocumentUpload({
     setTableUrl('')
     setTableName('')
     setTableError(null)
+    setTableUrlValid(null)
+    setTableUrlProvider(null)
+    setTableUrlValidating(false)
     onOpenChange(false)
   }
 
@@ -263,6 +273,71 @@ export function DocumentUpload({
     setTextError(null)
   }
 
+  // Validate table URL
+  const handleValidateTableUrl = useCallback(
+    async (url: string) => {
+      if (!url.trim()) {
+        setTableUrlValid(null)
+        setTableUrlProvider(null)
+        setTableError(null)
+        return
+      }
+
+      setTableUrlValidating(true)
+      setTableError(null)
+      setTableUrlValid(null)
+      setTableUrlProvider(null)
+
+      try {
+        const result = await validateTableUrl(url)
+        if (result.valid) {
+          setTableUrlValid(true)
+          setTableUrlProvider(result.provider || null)
+          setTableError(null)
+        } else {
+          setTableUrlValid(false)
+          setTableUrlProvider(null)
+          // Map error codes to i18n messages
+          switch (result.error_code) {
+            case 'INVALID_URL_FORMAT':
+              setTableError(t('document.upload.validation.invalidUrlFormat'))
+              break
+            case 'UNSUPPORTED_PROVIDER':
+              setTableError(t('document.upload.validation.unsupportedProvider'))
+              break
+            case 'PARSE_FAILED':
+              setTableError(t('document.upload.validation.parseFailed'))
+              break
+            case 'MISSING_DINGTALK_ID':
+              setTableError(t('document.upload.validation.missingDingtalkId'))
+              break
+            case 'TABLE_ACCESS_FAILED_LINKED_TABLE':
+              setTableError(t('document.upload.validation.tableAccessFailedLinkedTable'))
+              break
+            case 'TABLE_ACCESS_FAILED':
+              setTableError(t('document.upload.validation.tableAccessFailed'))
+              break
+            default:
+              setTableError(result.error_message || t('document.upload.validation.unknownError'))
+          }
+        }
+      } catch {
+        setTableUrlValid(false)
+        setTableError(t('document.upload.validation.networkError'))
+      } finally {
+        setTableUrlValidating(false)
+      }
+    },
+    [t]
+  )
+
+  // Debounced URL validation on blur
+  const handleTableUrlBlur = useCallback(() => {
+    if (tableUrl.trim()) {
+      handleValidateTableUrl(tableUrl.trim())
+    }
+  }, [tableUrl, handleValidateTableUrl])
+
   // Handle table submission
   const handleTableSubmit = useCallback(async () => {
     // Validate URL
@@ -282,6 +357,45 @@ export function DocumentUpload({
       return
     }
 
+    // If URL hasn't been validated yet, validate first
+    if (tableUrlValid === null) {
+      setTableSubmitting(true)
+      try {
+        const result = await validateTableUrl(tableUrl.trim())
+        if (!result.valid) {
+          switch (result.error_code) {
+            case 'INVALID_URL_FORMAT':
+              setTableError(t('document.upload.validation.invalidUrlFormat'))
+              break
+            case 'UNSUPPORTED_PROVIDER':
+              setTableError(t('document.upload.validation.unsupportedProvider'))
+              break
+            case 'PARSE_FAILED':
+              setTableError(t('document.upload.validation.parseFailed'))
+              break
+            default:
+              setTableError(result.error_message || t('document.upload.validation.unknownError'))
+          }
+          setTableUrlValid(false)
+          setTableSubmitting(false)
+          return
+        }
+        setTableUrlValid(true)
+        setTableUrlProvider(result.provider || null)
+      } catch {
+        setTableError(t('document.upload.validation.networkError'))
+        setTableUrlValid(false)
+        setTableSubmitting(false)
+        return
+      }
+    }
+
+    // Block submission if URL is invalid
+    if (tableUrlValid === false) {
+      setTableError(t('document.upload.validation.pleaseFixUrl'))
+      return
+    }
+
     setTableSubmitting(true)
     setTableError(null)
 
@@ -294,6 +408,8 @@ export function DocumentUpload({
       // Reset and close on success
       setTableUrl('')
       setTableName('')
+      setTableUrlValid(null)
+      setTableUrlProvider(null)
       setUploadMode('file')
       handleClose()
     } catch (err) {
@@ -301,7 +417,7 @@ export function DocumentUpload({
     } finally {
       setTableSubmitting(false)
     }
-  }, [tableUrl, tableName, onTableAdd, t, handleClose])
+  }, [tableUrl, tableName, onTableAdd, t, handleClose, tableUrlValid])
 
   // Handle back from table mode
   const handleBackFromTableMode = () => {
@@ -309,6 +425,9 @@ export function DocumentUpload({
     setTableUrl('')
     setTableName('')
     setTableError(null)
+    setTableUrlValid(null)
+    setTableUrlProvider(null)
+    setTableUrlValidating(false)
   }
 
   const formatFileSize = (bytes: number) => {
@@ -729,7 +848,8 @@ export function DocumentUpload({
       </DialogHeader>
 
       <div className="py-4 space-y-4">
-        <p className="text-sm text-text-secondary">{t('document.upload.tableHint')}</p>
+        {/* Hint text with validation requirements */}
+        <p className="text-sm text-text-secondary">{t('document.upload.tableUrlHint')}</p>
 
         {/* Document name input */}
         <div className="space-y-2">
@@ -748,23 +868,66 @@ export function DocumentUpload({
           />
         </div>
 
-        {/* URL input */}
+        {/* URL input with validation status */}
         <div className="space-y-2">
           <Label htmlFor="table-url" className="text-sm font-medium">
             {t('document.upload.tableUrl')}
           </Label>
-          <Textarea
-            id="table-url"
-            placeholder={t('document.upload.tableUrlPlaceholder')}
-            value={tableUrl}
-            onChange={e => {
-              setTableUrl(e.target.value)
-              if (tableError) setTableError(null)
-            }}
-            className="min-h-[80px] resize-none"
-            rows={3}
-          />
+          <div className="relative">
+            <Textarea
+              id="table-url"
+              placeholder={t('document.upload.tableUrlPlaceholder')}
+              value={tableUrl}
+              onChange={e => {
+                setTableUrl(e.target.value)
+                if (tableError) setTableError(null)
+                // Reset validation state when URL changes
+                setTableUrlValid(null)
+                setTableUrlProvider(null)
+              }}
+              onBlur={handleTableUrlBlur}
+              className={cn(
+                'min-h-[80px] resize-none pr-10',
+                tableUrlValid === true && 'border-success focus-visible:ring-success',
+                tableUrlValid === false && 'border-error focus-visible:ring-error'
+              )}
+              rows={3}
+            />
+            {/* Validation status icon */}
+            <div className="absolute right-3 top-3">
+              {tableUrlValidating && <Loader2 className="w-4 h-4 text-primary animate-spin" />}
+              {!tableUrlValidating && tableUrlValid === true && (
+                <Check className="w-4 h-4 text-success" />
+              )}
+              {!tableUrlValidating && tableUrlValid === false && (
+                <AlertCircle className="w-4 h-4 text-error" />
+              )}
+            </div>
+          </div>
         </div>
+
+        {/* Validation status message */}
+        {tableUrlValidating && (
+          <div className="flex items-center gap-2 p-3 bg-primary/10 text-primary rounded-lg text-sm">
+            <Loader2 className="w-4 h-4 flex-shrink-0 animate-spin" />
+            <span>{t('document.upload.validation.validating')}</span>
+          </div>
+        )}
+
+        {/* Success message with provider info */}
+        {!tableUrlValidating && tableUrlValid === true && (
+          <div className="flex items-center gap-2 p-3 bg-success/10 text-success rounded-lg text-sm">
+            <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+            <span>
+              {t('document.upload.validation.success')}
+              {tableUrlProvider && (
+                <span className="ml-1 text-text-secondary">
+                  ({t(`document.upload.validation.provider.${tableUrlProvider}`, tableUrlProvider)})
+                </span>
+              )}
+            </span>
+          </div>
+        )}
 
         {/* Error message */}
         {tableError && (
@@ -782,7 +945,13 @@ export function DocumentUpload({
         <Button
           variant="primary"
           onClick={handleTableSubmit}
-          disabled={!tableUrl.trim() || !tableName.trim() || tableSubmitting}
+          disabled={
+            !tableUrl.trim() ||
+            !tableName.trim() ||
+            tableSubmitting ||
+            tableUrlValidating ||
+            tableUrlValid === false
+          }
         >
           {tableSubmitting ? (
             <>

@@ -168,31 +168,26 @@ class DingtalkNotableClient:
     Provides methods to interact with DingTalk tables including:
     - Listing records with pagination
     - Getting all sheets in a base
-    - Updating records (optional)
     """
 
     def __init__(
         self,
-        app_key: str,
-        app_secret: str,
-        base_id: str,
+        token_manager: DingtalkTokenManager,
         operator_id: str,
     ):
         """Initialize Notable client.
 
         Args:
-            app_key: DingTalk app key
-            app_secret: DingTalk app secret
-            base_id: Notable base ID
+            token_manager: Token manager instance for getting access tokens
             operator_id: Operator user ID
         """
-        self.base_id = base_id
+        self.token_manager = token_manager
         self.operator_id = operator_id
         self.base_url = "https://api.dingtalk.com"
-        self.token_manager = DingtalkTokenManager(app_key, app_secret)
 
     async def list_records(
         self,
+        base_id: str,
         sheet_id_or_name: str,
         page_size: Optional[int] = None,
         next_token: Optional[str] = None,
@@ -201,6 +196,7 @@ class DingtalkNotableClient:
         """List records from a sheet.
 
         Args:
+            base_id: Notable base ID
             sheet_id_or_name: Sheet ID or name
             page_size: Maximum number of records to return (default 20, max 100)
             next_token: Pagination token for next page
@@ -230,7 +226,7 @@ class DingtalkNotableClient:
             access_token = await self.token_manager.get_token()
 
             url = (
-                f"{self.base_url}/v1.0/notable/bases/{self.base_id}"
+                f"{self.base_url}/v1.0/notable/bases/{base_id}"
                 f"/sheets/{sheet_id_or_name}/records"
             )
 
@@ -245,7 +241,7 @@ class DingtalkNotableClient:
 
             logger.info(
                 f"[DingtalkNotableClient] Listing records: "
-                f"base={self.base_id}, sheet={sheet_id_or_name}"
+                f"base={base_id}, sheet={sheet_id_or_name}"
             )
             logger.debug(f"[DingtalkNotableClient] Params: {params}")
 
@@ -280,16 +276,18 @@ class DingtalkNotableClient:
 
             error_code = error_data.get("code", "HTTP_ERROR")
             error_msg = error_data.get("message", str(e))
+            http_status = e.response.status_code
 
             logger.error(
                 f"[DingtalkNotableClient] HTTP error listing records: "
-                f"{error_code} - {error_msg}"
+                f"{error_code} - {error_msg} (HTTP {http_status})"
             )
 
             return {
                 "success": False,
                 "errorCode": error_code,
                 "errorMsg": error_msg,
+                "httpStatus": http_status,
             }
 
         except Exception as e:
@@ -300,8 +298,11 @@ class DingtalkNotableClient:
                 "errorMsg": str(e),
             }
 
-    async def get_all_sheets(self) -> Dict[str, Any]:
+    async def get_all_sheets(self, base_id: str) -> Dict[str, Any]:
         """Get all sheets in the base.
+
+        Args:
+            base_id: Notable base ID
 
         Returns:
             Response dict with structure:
@@ -319,15 +320,13 @@ class DingtalkNotableClient:
         try:
             access_token = await self.token_manager.get_token()
 
-            url = f"{self.base_url}/v1.0/notable/bases/{self.base_id}/sheets"
+            url = f"{self.base_url}/v1.0/notable/bases/{base_id}/sheets"
 
             params = {
                 "operatorId": self.operator_id,
             }
 
-            logger.info(
-                f"[DingtalkNotableClient] Getting all sheets: base={self.base_id}"
-            )
+            logger.info(f"[DingtalkNotableClient] Getting all sheets: base={base_id}")
 
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(

@@ -44,6 +44,10 @@ export function EditDocumentDialog({
   const [error, setError] = useState('')
   const [showAdvanced, setShowAdvanced] = useState(false)
 
+  // Check if this is a table document
+  const isTableDocument = document?.source_type === 'table'
+  const tableUrl = isTableDocument ? (document.source_config?.url as string) : ''
+
   // Reset form when document changes
   useEffect(() => {
     if (document) {
@@ -109,7 +113,7 @@ export function EditDocumentDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{t('knowledge:document.document.edit')}</DialogTitle>
         </DialogHeader>
@@ -130,34 +134,51 @@ export function EditDocumentDialog({
               />
             </div>
 
-            {/* Advanced Settings - Splitter Configuration (Collapsible, Read-only) */}
-            <div className="border-t border-border pt-4">
-              <button
-                type="button"
-                onClick={() => setShowAdvanced(!showAdvanced)}
-                className="flex items-center gap-2 text-sm font-medium text-text-primary hover:text-primary transition-colors w-full"
-              >
-                {showAdvanced ? (
-                  <ChevronDown className="w-4 h-4" />
-                ) : (
-                  <ChevronRight className="w-4 h-4" />
-                )}
-                {t('knowledge:document.splitter.title')}
-                <span className="text-xs text-text-muted font-normal ml-auto">
-                  {t('knowledge:document.advancedSettings.readOnly')}
-                </span>
-              </button>
-
-              {showAdvanced && (
-                <div className="mt-4">
-                  <SplitterSettingsSection
-                    config={splitterConfig}
-                    onChange={() => {}} // No-op since it's read-only
-                    readOnly={true}
-                  />
+            {/* Table URL Display (Read-only for table documents) */}
+            {isTableDocument && tableUrl && (
+              <div>
+                <label className="block text-sm font-medium text-text-primary mb-1.5">
+                  {t('knowledge:document.upload.tableUrl')}
+                </label>
+                <div className="w-full px-3 py-2 text-sm bg-surface-secondary border border-border rounded-md text-text-muted break-all">
+                  {tableUrl}
                 </div>
-              )}
-            </div>
+                <p className="text-xs text-text-muted mt-1">
+                  {t('knowledge:document.advancedSettings.readOnly')}
+                </p>
+              </div>
+            )}
+
+            {/* Advanced Settings - Splitter Configuration (Collapsible, Read-only) */}
+            {!isTableDocument && (
+              <div className="border-t border-border pt-4">
+                <button
+                  type="button"
+                  onClick={() => setShowAdvanced(!showAdvanced)}
+                  className="flex items-center gap-2 text-sm font-medium text-text-primary hover:text-primary transition-colors w-full"
+                >
+                  {showAdvanced ? (
+                    <ChevronDown className="w-4 h-4" />
+                  ) : (
+                    <ChevronRight className="w-4 h-4" />
+                  )}
+                  {t('knowledge:document.splitter.title')}
+                  <span className="text-xs text-text-muted font-normal ml-auto">
+                    {t('knowledge:document.advancedSettings.readOnly')}
+                  </span>
+                </button>
+
+                {showAdvanced && (
+                  <div className="mt-4">
+                    <SplitterSettingsSection
+                      config={splitterConfig}
+                      onChange={() => {}} // No-op since it's read-only
+                      readOnly={true}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
 
             {error && <p className="text-xs text-error">{error}</p>}
           </div>

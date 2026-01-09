@@ -15,6 +15,7 @@ from app.api.endpoints import (
     rag,
     repository,
     subtasks,
+    tables,
     users,
     utils,
     wiki,
@@ -40,6 +41,7 @@ from app.api.endpoints.internal import (
     chat_storage_router,
     rag_router,
     skills_router,
+    tables_router,
 )
 from app.api.endpoints.kind import k_router
 from app.api.router import api_router
@@ -91,7 +93,7 @@ api_router.include_router(
     prefix="/v1/knowledge-base/qa-history",
     tags=["knowledge-qa-history"],
 )
-api_router.include_router(knowledge.table_router, prefix="/tables", tags=["tables"])
+api_router.include_router(tables.router, prefix="/tables", tags=["tables"])
 api_router.include_router(rag.router, prefix="/rag", tags=["rag"])
 api_router.include_router(utils.router, prefix="/utils", tags=["utils"])
 api_router.include_router(k_router)
@@ -102,6 +104,7 @@ api_router.include_router(
 )
 api_router.include_router(rag_router, prefix="/internal", tags=["internal-rag"])
 api_router.include_router(skills_router, prefix="/internal", tags=["internal-skills"])
+api_router.include_router(tables_router, prefix="/internal", tags=["internal-tables"])
 api_router.include_router(
     internal_bots_router, prefix="/internal", tags=["internal-bots"]
 )

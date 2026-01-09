@@ -209,6 +209,7 @@ class ChatService(ChatInterface):
                         data_table_tool = DataTableTool(
                             table_contexts=request.table_contexts,
                             user_id=request.user_id,
+                            user_name=request.user_name,
                             db_session=db,
                         )
                         extra_tools.append(data_table_tool)

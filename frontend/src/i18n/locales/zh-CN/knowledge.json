@@ -77,6 +77,9 @@
         "indexStatus": "索引",
         "actions": "操作"
       },
+      "type": {
+        "table": "表格"
+      },
       "search": "搜索文档",
       "empty": "暂无文档",
       "emptyHint": "上传您的第一个文档开始使用",
@@ -127,6 +130,7 @@
       "clickToRename": "点击修改文件名",
       "addTable": "添加数据表",
       "tableHint": "输入数据表的链接和名称，即可将其添加到知识库。",
+      "tableUrlHint": "请输入有效的多维表URL，确保链接可访问且有读取权限。目前支持钉钉多维表。",
       "tableName": "文档名称",
       "tableNamePlaceholder": "输入文档名称",
       "tableUrl": "数据表链接",
@@ -135,7 +139,23 @@
       "tableNameRequired": "请输入文档名称",
       "tableAddFailed": "添加失败，请重试",
       "adding": "添加中...",
-      "confirmAdd": "确认添加"
+      "confirmAdd": "确认添加",
+      "validation": {
+        "validating": "正在验证URL...",
+        "success": "URL验证通过",
+        "invalidUrlFormat": "请输入有效的URL格式",
+        "unsupportedProvider": "不支持该链接来源,目前仅支持钉钉多维表",
+        "parseFailed": "无法解析该链接，请检查URL格式是否正确",
+        "missingDingtalkId": "您尚未配置钉钉ID，请使用钉钉登录以访问多维表格",
+        "tableAccessFailed": "无法访问该表格，请检查您是否有权限访问",
+        "tableAccessFailedLinkedTable": "表格可能是链接表格，请使用原始表格链接",
+        "unknownError": "验证失败，请检查URL是否正确",
+        "networkError": "网络错误，请稍后重试",
+        "pleaseFixUrl": "请先修正URL后再提交",
+        "provider": {
+          "dingtalk": "钉钉多维表"
+        }
+      }
     },
     "permission": {
       "noAccess": "您没有操作权限"

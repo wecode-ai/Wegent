@@ -18,6 +18,7 @@ import type {
   KnowledgeDocumentListResponse,
   KnowledgeDocumentUpdate,
   KnowledgeResourceScope,
+  TableUrlValidationResponse,
 } from '@/types/knowledge'
 
 // ============== Knowledge Base APIs ==============
@@ -136,4 +137,15 @@ export async function batchDeleteDocuments(documentIds: number[]): Promise<Batch
  */
 export async function getAccessibleKnowledge(): Promise<AccessibleKnowledgeResponse> {
   return apiClient.get<AccessibleKnowledgeResponse>('/knowledge-bases/accessible')
+}
+
+// ============== Table URL Validation APIs ==============
+
+/**
+ * Validate a table URL and extract metadata
+ * @param url The table URL to validate
+ * @returns Validation result with provider and extracted metadata
+ */
+export async function validateTableUrl(url: string): Promise<TableUrlValidationResponse> {
+  return apiClient.post<TableUrlValidationResponse>('/tables/validate-url', { url })
 }
