@@ -27,6 +27,8 @@ import type {
 import type { ContextItem } from '@/types/context'
 import { isChatShell } from '../../service/messageService'
 import { supportsAttachments } from '../../service/attachmentService'
+import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
+import { MobileChatInputControls } from './MobileChatInputControls'
 
 export interface ChatInputControlsProps {
   // Team and Model
@@ -147,6 +149,7 @@ export function ChatInputControls({
 }: ChatInputControlsProps) {
   // Always use compact mode (icon only) to save space
   const shouldUseCompactQuota = true
+  const isMobile = useIsMobile()
 
   // Determine the send button state
   const renderSendButton = () => {
@@ -215,6 +218,48 @@ export function ChatInputControls({
     return <SendButton onClick={onSendMessage} disabled={isDisabled} isLoading={isLoading} />
   }
 
+  // Mobile: delegate to MobileChatInputControls
+  if (isMobile) {
+    return (
+      <MobileChatInputControls
+        selectedTeam={selectedTeam}
+        selectedModel={selectedModel}
+        setSelectedModel={setSelectedModel}
+        forceOverride={forceOverride}
+        setForceOverride={setForceOverride}
+        teamId={teamId}
+        taskId={taskId}
+        taskModelId={taskModelId}
+        showRepositorySelector={showRepositorySelector}
+        selectedRepo={selectedRepo}
+        setSelectedRepo={setSelectedRepo}
+        selectedBranch={selectedBranch}
+        setSelectedBranch={setSelectedBranch}
+        selectedTaskDetail={selectedTaskDetail}
+        enableClarification={enableClarification}
+        setEnableClarification={setEnableClarification}
+        enableCorrectionMode={enableCorrectionMode}
+        correctionModelName={correctionModelName}
+        onCorrectionModeToggle={onCorrectionModeToggle}
+        selectedContexts={selectedContexts}
+        setSelectedContexts={setSelectedContexts}
+        onFileSelect={onFileSelect}
+        isLoading={isLoading}
+        isStreaming={isStreaming}
+        isStopping={isStopping}
+        hasMessages={hasMessages}
+        shouldHideChatInput={shouldHideChatInput}
+        isModelSelectionRequired={isModelSelectionRequired}
+        isAttachmentReadyToSend={isAttachmentReadyToSend}
+        taskInputMessage={taskInputMessage}
+        isSubtaskStreaming={isSubtaskStreaming}
+        onStopStream={onStopStream}
+        onSendMessage={onSendMessage}
+      />
+    )
+  }
+
+  // Desktop layout: original full layout
   return (
     <div
       className={`flex items-center justify-between px-3 gap-2 ${shouldHideChatInput ? 'py-3' : 'pb-2 pt-1'}`}

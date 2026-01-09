@@ -155,6 +155,37 @@ export default function ModelSelector({
     }
   }, [isOpen])
 
+  // Scroll to selected model when popover opens
+  useEffect(() => {
+    if (isOpen && modelSelection.selectedModel) {
+      // Delay to ensure the popover content is rendered
+      const timer = setTimeout(() => {
+        const selectedKey =
+          modelSelection.selectedModel?.name === DEFAULT_MODEL_NAME
+            ? DEFAULT_MODEL_NAME
+            : getModelKey(modelSelection.selectedModel!)
+
+        // Find the element by data attribute
+        const selectedElement = document.querySelector(
+          `[data-model-key="${selectedKey}"]`
+        ) as HTMLElement
+
+        if (selectedElement) {
+          // Find the scroll container (CommandList)
+          const scrollContainer = selectedElement.closest('[cmdk-list]') as HTMLElement
+          if (scrollContainer) {
+            // Calculate position to center the selected item
+            const containerHeight = scrollContainer.clientHeight
+            const itemTop = selectedElement.offsetTop
+            const itemHeight = selectedElement.offsetHeight
+            scrollContainer.scrollTop = itemTop - containerHeight / 2 + itemHeight / 2
+          }
+        }
+      }, 50)
+      return () => clearTimeout(timer)
+    }
+  }, [isOpen, modelSelection.selectedModel])
+
   // Determine if selector should be disabled
   const isDisabled =
     disabled || externalLoading || modelSelection.isLoading || modelSelection.isMixedTeam
@@ -232,7 +263,16 @@ export default function ModelSelector({
           avoidCollisions={true}
           sticky="partial"
         >
-          <Command className="border-0 flex flex-col flex-1 min-h-0 overflow-hidden">
+          <Command
+            className="border-0 flex flex-col flex-1 min-h-0 overflow-hidden"
+            value={
+              modelSelection.selectedModel
+                ? modelSelection.selectedModel.name === DEFAULT_MODEL_NAME
+                  ? `${DEFAULT_MODEL_NAME} ${t('common:task_submit.default_model', '默认')} ${t('common:task_submit.use_bot_model', '使用 Bot 预设模型')}`
+                  : `${modelSelection.selectedModel.name} ${modelSelection.selectedModel.displayName || ''} ${modelSelection.selectedModel.provider} ${modelSelection.selectedModel.modelId} ${modelSelection.selectedModel.type}`
+                : undefined
+            }
+          >
             <CommandInput
               placeholder={t('common:task_submit.search_model', '搜索模型...')}
               value={searchValue}
@@ -263,6 +303,7 @@ export default function ModelSelector({
                         key={DEFAULT_MODEL_NAME}
                         value={`${DEFAULT_MODEL_NAME} ${t('common:task_submit.default_model', '默认')} ${t('common:task_submit.use_bot_model', '使用 Bot 预设模型')}`}
                         onSelect={() => handleModelSelect(DEFAULT_MODEL_NAME)}
+                        data-model-key={DEFAULT_MODEL_NAME}
                         className={cn(
                           'group cursor-pointer select-none',
                           'px-3 py-2 text-sm text-text-primary',
@@ -303,6 +344,7 @@ export default function ModelSelector({
                         key={getModelKey(model)}
                         value={`${model.name} ${model.displayName || ''} ${model.provider} ${model.modelId} ${model.type}`}
                         onSelect={() => handleModelSelect(getModelKey(model))}
+                        data-model-key={getModelKey(model)}
                         className={cn(
                           'group cursor-pointer select-none',
                           'px-3 py-2 text-sm text-text-primary',

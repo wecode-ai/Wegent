@@ -18,6 +18,8 @@ interface SendButtonProps {
   disabled?: boolean
   isLoading?: boolean
   className?: string
+  /** Hide dropdown toggle for mobile */
+  compact?: boolean
 }
 
 type SendKeyOption = 'enter' | 'cmd_enter'
@@ -27,6 +29,7 @@ export default function SendButton({
   disabled = false,
   isLoading = false,
   className = '',
+  compact = false,
 }: SendButtonProps) {
   const { t } = useTranslation()
   const { toast } = useToast()
@@ -152,8 +155,9 @@ export default function SendButton({
           data-tour="send-button"
           data-testid="send-button"
           className={`
-            flex items-center justify-center px-2.5 h-full
+            flex items-center justify-center h-full
             transition-colors duration-150
+            ${compact ? 'px-3' : 'px-2.5'}
             ${
               disabled || isLoading
                 ? 'text-text-muted cursor-not-allowed'
@@ -164,35 +168,37 @@ export default function SendButton({
           {isLoading ? <LoadingDots /> : <Send className="h-4 w-4" />}
         </button>
 
-        {/* Divider */}
-        <div className="w-px h-4 bg-border" />
-
-        {/* Dropdown toggle - smaller */}
-        <button
-          type="button"
-          onClick={handleDropdownToggle}
-          disabled={isSaving}
-          className={`
-            flex items-center justify-center px-1.5 h-full
-            transition-colors duration-150
-            ${
-              isSaving
-                ? 'text-text-muted cursor-not-allowed'
-                : 'text-text-muted hover:text-text-primary hover:bg-hover'
-            }
-          `}
-          aria-label={t('chat:send_button.change_shortcut')}
-          aria-expanded={isDropdownOpen}
-          aria-haspopup="true"
-        >
-          <ChevronDown
-            className={`h-3 w-3 transition-transform duration-200 ${isDropdownOpen ? 'rotate-180' : ''}`}
-          />
-        </button>
+        {/* Divider and Dropdown toggle - hidden in compact mode */}
+        {!compact && (
+          <>
+            <div className="w-px h-4 bg-border" />
+            <button
+              type="button"
+              onClick={handleDropdownToggle}
+              disabled={isSaving}
+              className={`
+                flex items-center justify-center px-1.5 h-full
+                transition-colors duration-150
+                ${
+                  isSaving
+                    ? 'text-text-muted cursor-not-allowed'
+                    : 'text-text-muted hover:text-text-primary hover:bg-hover'
+                }
+              `}
+              aria-label={t('chat:send_button.change_shortcut')}
+              aria-expanded={isDropdownOpen}
+              aria-haspopup="true"
+            >
+              <ChevronDown
+                className={`h-3 w-3 transition-transform duration-200 ${isDropdownOpen ? 'rotate-180' : ''}`}
+              />
+            </button>
+          </>
+        )}
       </div>
 
       {/* Dropdown menu */}
-      {isDropdownOpen && (
+      {isDropdownOpen && !compact && (
         <div
           ref={dropdownRef}
           className="absolute bottom-full right-0 mb-2 w-56 rounded-lg border border-border bg-surface shadow-lg z-50 animate-in fade-in slide-in-from-bottom-2 duration-200"
