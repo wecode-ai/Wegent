@@ -163,7 +163,7 @@ wegent-backend:
 trigger_update_backend_web:
     stage: production
     variables:
-        APP: wegent-backend-web;simulation-wegent-backend-web;beta-wegent-backend-web
+        APP: wegent-backend-web;simulation-wegent-backend-web;beta-wegent-backend-web;outer-wegent-backend-web
         SERVICE: wegent-backend-web
         IMAGE_NAME: wegent-backend-web
         UPSTREAM_CI_PROJECT_ID: $CI_PROJECT_ID
