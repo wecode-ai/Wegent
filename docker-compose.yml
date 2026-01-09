@@ -146,10 +146,7 @@ services:
       - wegent-network
 
   chat_shell:
-    build:
-      context: .
-      dockerfile: docker/chat_shell/Dockerfile
-    # image: ghcr.io/wecode-ai/wegent-chat-shell:1.0.0
+    image: ghcr.io/wecode-ai/wegent-chat-shell:0.0.1
     container_name: wegent-chat-shell
     restart: always
     ports:

@@ -18,6 +18,226 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
+# Detect Python command and version
+detect_python() {
+    local python_cmd=""
+    local python_version=""
+
+    # Check python3 first
+    if command -v python3 &> /dev/null; then
+        python_cmd="python3"
+        python_version=$(python3 --version 2>&1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
+    elif command -v python &> /dev/null; then
+        # Check if it's Python 2 or 3
+        local ver=$(python --version 2>&1 | grep -oE '[0-9]+' | head -1)
+        if [ "$ver" = "3" ]; then
+            python_cmd="python"
+            python_version=$(python --version 2>&1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
+        elif [ "$ver" = "2" ]; then
+            echo -e "${RED}Error: Only Python 2.x is detected, but Python 3.x is required.${NC}"
+            echo ""
+            echo -e "${YELLOW}Please install Python 3:${NC}"
+            echo -e "  ${BLUE}macOS:${NC}    brew install python3"
+            echo -e "  ${BLUE}Ubuntu:${NC}   sudo apt install python3"
+            echo -e "  ${BLUE}CentOS:${NC}   sudo yum install python3"
+            exit 1
+        fi
+    else
+        echo -e "${RED}Error: Python is not installed.${NC}"
+        echo ""
+        echo -e "${YELLOW}Please install Python 3:${NC}"
+        echo -e "  ${BLUE}macOS:${NC}    brew install python3"
+        echo -e "  ${BLUE}Ubuntu:${NC}   sudo apt install python3"
+        echo -e "  ${BLUE}CentOS:${NC}   sudo yum install python3"
+        exit 1
+    fi
+
+    echo "$python_cmd"
+}
+
+# Check if uv is installed
+check_uv_installed() {
+    if command -v uv &> /dev/null; then
+        return 0
+    fi
+    return 1
+}
+
+# Show uv installation instructions
+show_uv_install_instructions() {
+    echo -e "${RED}Error: uv is not installed.${NC}"
+    echo ""
+    echo -e "${YELLOW}uv is a fast Python package manager required by Wegent.${NC}"
+    echo -e "${YELLOW}Please install uv using one of the following methods:${NC}"
+    echo ""
+    echo -e "  ${GREEN}Method 1: Official install script (Recommended)${NC}"
+    echo -e "    ${BLUE}curl -LsSf https://astral.sh/uv/install.sh | sh${NC}"
+    echo ""
+    echo -e "  ${GREEN}Method 2: Using Homebrew (macOS/Linux)${NC}"
+    echo -e "    ${BLUE}brew install uv${NC}"
+    echo ""
+    echo -e "  ${GREEN}Method 3: Using pip${NC}"
+    # Check which pip command to recommend
+    if command -v pip3 &> /dev/null; then
+        echo -e "    ${BLUE}pip3 install uv${NC}"
+    elif command -v pip &> /dev/null; then
+        # Check if pip is Python 3
+        local pip_python_ver=$(pip --version 2>&1 | grep -oE 'python [0-9]+' | grep -oE '[0-9]+')
+        if [ "$pip_python_ver" = "3" ]; then
+            echo -e "    ${BLUE}pip install uv${NC}"
+        else
+            echo -e "    ${BLUE}pip3 install uv${NC}  ${YELLOW}(requires pip for Python 3)${NC}"
+        fi
+    else
+        echo -e "    ${BLUE}pip3 install uv${NC}  ${YELLOW}(requires pip for Python 3)${NC}"
+    fi
+    echo ""
+    echo -e "${YELLOW}After installation, please restart your terminal or run:${NC}"
+    echo -e "    ${BLUE}source ~/.bashrc${NC}  or  ${BLUE}source ~/.zshrc${NC}"
+    echo ""
+    exit 1
+}
+
+# Check if Node.js and npm are installed
+check_node_installed() {
+    if ! command -v node &> /dev/null; then
+        echo -e "${RED}Error: Node.js is not installed.${NC}"
+        echo ""
+        echo -e "${YELLOW}Please install Node.js:${NC}"
+        echo -e "  ${BLUE}macOS:${NC}    brew install node"
+        echo -e "  ${BLUE}Ubuntu:${NC}   sudo apt install nodejs npm"
+        echo -e "  ${BLUE}Or:${NC}       https://nodejs.org/"
+        exit 1
+    fi
+    if ! command -v npm &> /dev/null; then
+        echo -e "${RED}Error: npm is not installed.${NC}"
+        echo ""
+        echo -e "${YELLOW}Please install npm:${NC}"
+        echo -e "  ${BLUE}macOS:${NC}    brew install npm"
+        echo -e "  ${BLUE}Ubuntu:${NC}   sudo apt install npm"
+        exit 1
+    fi
+}
+
+# Check if libmagic is installed
+check_libmagic_installed() {
+    # Try to find libmagic library
+    local found=false
+
+    # Check common library paths
+    if [ -f "/usr/local/lib/libmagic.dylib" ] || \
+       [ -f "/opt/homebrew/lib/libmagic.dylib" ] || \
+       [ -f "/usr/lib/libmagic.so.1" ] || \
+       [ -f "/usr/lib/x86_64-linux-gnu/libmagic.so.1" ] || \
+       [ -f "/usr/lib64/libmagic.so.1" ]; then
+        found=true
+    fi
+
+    # Also check if file command exists (usually comes with libmagic)
+    if command -v file &> /dev/null; then
+        # Verify file command works (indicates libmagic is functional)
+        if file --version &> /dev/null; then
+            found=true
+        fi
+    fi
+
+    if [ "$found" = false ]; then
+        echo -e "${RED}Error: libmagic is not installed.${NC}"
+        echo ""
+        echo -e "${YELLOW}libmagic is required for file type detection.${NC}"
+        echo -e "${YELLOW}Please install it using one of the following methods:${NC}"
+        echo ""
+        echo -e "  ${GREEN}macOS:${NC}"
+        echo -e "    ${BLUE}brew install libmagic${NC}"
+        echo ""
+        echo -e "  ${GREEN}Debian/Ubuntu:${NC}"
+        echo -e "    ${BLUE}sudo apt-get install libmagic1${NC}"
+        echo ""
+        echo -e "  ${GREEN}RHEL/CentOS/Fedora:${NC}"
+        echo -e "    ${BLUE}sudo yum install file-libs${NC}"
+        echo ""
+        exit 1
+    fi
+}
+
+# Sync Python dependencies for a directory
+sync_python_deps() {
+    local dir=$1
+    local name=$2
+
+    cd "$SCRIPT_DIR/$dir"
+
+    # Check if .venv exists and has the shared module installed
+    local need_sync=false
+
+    if [ ! -d ".venv" ]; then
+        need_sync=true
+    elif [ ! -f ".venv/pyvenv.cfg" ]; then
+        need_sync=true
+    else
+        # Check if shared module is installed
+        if ! .venv/bin/python -c "import shared" 2>/dev/null; then
+            need_sync=true
+        fi
+        # Check if pyproject.toml is newer than .venv
+        if [ "pyproject.toml" -nt ".venv" ]; then
+            need_sync=true
+        fi
+        # Check if uv.lock exists and is newer than .venv
+        if [ -f "uv.lock" ] && [ "uv.lock" -nt ".venv" ]; then
+            need_sync=true
+        fi
+    fi
+
+    if [ "$need_sync" = true ]; then
+        echo -e "  ${YELLOW}Syncing dependencies for $name...${NC}"
+        uv sync
+        echo -e "  ${GREEN}✓${NC} $name dependencies synced"
+    else
+        echo -e "  ${GREEN}✓${NC} $name dependencies are up to date"
+    fi
+
+    cd "$SCRIPT_DIR"
+}
+
+# Check frontend dependencies
+check_frontend_dependencies() {
+    local frontend_dir="$SCRIPT_DIR/frontend"
+
+    if [ ! -d "$frontend_dir/node_modules" ]; then
+        echo -e "${YELLOW}Frontend dependencies not installed. Installing...${NC}"
+        cd "$frontend_dir"
+        npm install
+        cd "$SCRIPT_DIR"
+        echo -e "${GREEN}✓ Frontend dependencies installed${NC}"
+        return
+    fi
+
+    # Check if package.json is newer than node_modules
+    if [ "$frontend_dir/package.json" -nt "$frontend_dir/node_modules" ]; then
+        echo -e "${YELLOW}Frontend dependencies may be outdated. Updating...${NC}"
+        cd "$frontend_dir"
+        npm install
+        cd "$SCRIPT_DIR"
+        echo -e "${GREEN}✓ Frontend dependencies updated${NC}"
+        return
+    fi
+
+    # Check package-lock.json if exists
+    if [ -f "$frontend_dir/package-lock.json" ]; then
+        if [ "$frontend_dir/package-lock.json" -nt "$frontend_dir/node_modules" ]; then
+            echo -e "${YELLOW}Frontend dependencies may be outdated (package-lock.json changed). Updating...${NC}"
+            cd "$frontend_dir"
+            npm install
+            cd "$SCRIPT_DIR"
+            echo -e "${GREEN}✓ Frontend dependencies updated${NC}"
+            return
+        fi
+    fi
+
+    echo -e "${GREEN}✓ Frontend dependencies are up to date${NC}"
+}
+
 # Default configuration
 DEFAULT_FRONTEND_PORT=3000
 DEFAULT_EXECUTOR_IMAGE="ghcr.io/wecode-ai/wegent-executor:1.0.29"
@@ -227,11 +447,80 @@ start_service() {
     cd "$SCRIPT_DIR"
 }
 
+# Health check for a service
+check_service_health() {
+    local name=$1
+    local port=$2
+    local health_path=$3
+    local max_retries=15
+    local retry_interval=2
+
+    echo -n "  Checking $name..."
+
+    for ((i=1; i<=max_retries; i++)); do
+        # Try health endpoint first if provided
+        if [ -n "$health_path" ]; then
+            if curl -s --connect-timeout 2 "http://localhost:$port$health_path" >/dev/null 2>&1; then
+                echo -e " ${GREEN}✓${NC} healthy (port $port)"
+                return 0
+            fi
+        fi
+
+        # Fallback: try root endpoint or just check if port is responding
+        if curl -s --connect-timeout 2 "http://localhost:$port/" >/dev/null 2>&1; then
+            echo -e " ${GREEN}✓${NC} healthy (port $port)"
+            return 0
+        fi
+
+        # Also try connecting to port directly (for services that may not respond to HTTP immediately)
+        if nc -z localhost $port 2>/dev/null; then
+            # Port is open, give it a bit more time for HTTP
+            if [ $i -ge 5 ]; then
+                echo -e " ${GREEN}✓${NC} responding (port $port)"
+                return 0
+            fi
+        fi
+
+        sleep $retry_interval
+    done
+
+    echo -e " ${RED}✗${NC} failed (port $port not responding)"
+    echo -e "    ${YELLOW}Check log: $PID_DIR/${name}.log${NC}"
+    return 1
+}
+
 # Start all services
 start_services() {
     echo -e "${BLUE}╔════════════════════════════════════════════════════════╗${NC}"
     echo -e "${BLUE}║      Wegent One-Click Startup Script (Local Dev)      ║${NC}"
     echo -e "${BLUE}╚════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+
+    # Check prerequisites
+    echo -e "${BLUE}Checking prerequisites...${NC}"
+
+    # Check Python
+    PYTHON_CMD=$(detect_python)
+    local python_version=$($PYTHON_CMD --version 2>&1)
+    echo -e "  ${GREEN}✓${NC} Python detected: $python_version"
+
+    # Check uv
+    if ! check_uv_installed; then
+        show_uv_install_instructions
+    fi
+    local uv_version=$(uv --version 2>&1)
+    echo -e "  ${GREEN}✓${NC} uv detected: $uv_version"
+
+    # Check libmagic
+    check_libmagic_installed
+    echo -e "  ${GREEN}✓${NC} libmagic detected"
+
+    # Check Node.js
+    check_node_installed
+    local node_version=$(node --version 2>&1)
+    local npm_version=$(npm --version 2>&1)
+    echo -e "  ${GREEN}✓${NC} Node.js detected: $node_version (npm $npm_version)"
+
     echo ""
     echo -e "${GREEN}Configuration:${NC}"
     echo -e "  Frontend Port:    $FRONTEND_PORT"
@@ -246,19 +535,31 @@ start_services() {
     echo -e "${GREEN}✓ All ports available${NC}"
     echo ""
 
+    # Sync Python dependencies
+    echo -e "${BLUE}Checking Python dependencies...${NC}"
+    sync_python_deps "backend" "Backend"
+    sync_python_deps "chat_shell" "Chat Shell"
+    sync_python_deps "executor_manager" "Executor Manager"
+    echo ""
+
+    # Check frontend dependencies
+    echo -e "${BLUE}Checking frontend dependencies...${NC}"
+    check_frontend_dependencies
+    echo ""
+
     echo -e "${BLUE}Starting services...${NC}"
 
     # 1. Start Backend
     start_service "backend" "backend" \
-        "source .venv/bin/activate 2>/dev/null || uv sync; uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
+        "source .venv/bin/activate && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
 
     # 2. Start Chat Shell
     start_service "chat_shell" "chat_shell" \
-        "export CHAT_SHELL_MODE=http && export CHAT_SHELL_STORAGE_TYPE=remote && export CHAT_SHELL_REMOTE_STORAGE_URL=http://localhost:8000/api/internal && source .venv/bin/activate 2>/dev/null || uv sync; .venv/bin/python -m uvicorn chat_shell.main:app --reload --host 0.0.0.0 --port 8100"
+        "export CHAT_SHELL_MODE=http && export CHAT_SHELL_STORAGE_TYPE=remote && export CHAT_SHELL_REMOTE_STORAGE_URL=http://localhost:8000/api/internal && source .venv/bin/activate && .venv/bin/python -m uvicorn chat_shell.main:app --reload --host 0.0.0.0 --port 8100"
 
     # 3. Start Executor Manager
     start_service "executor_manager" "executor_manager" \
-        "export EXECUTOR_IMAGE=$EXECUTOR_IMAGE && export TASK_API_DOMAIN=http://localhost:8000 && export NETWORK=wegent-network && source .venv/bin/activate 2>/dev/null || uv sync; uvicorn main:app --reload --host 0.0.0.0 --port 8001"
+        "export EXECUTOR_IMAGE=$EXECUTOR_IMAGE && export TASK_API_DOMAIN=http://localhost:8000 && export NETWORK=wegent-network && source .venv/bin/activate && uvicorn main:app --reload --host 0.0.0.0 --port 8001"
 
     # 4. Start Frontend (run in background)
     echo -e "  Starting ${BLUE}frontend${NC}..."
@@ -284,8 +585,31 @@ start_services() {
     cd "$SCRIPT_DIR"
 
     echo ""
+    echo -e "${BLUE}Performing health checks...${NC}"
+
+    # Health check for all services
+    local failed=0
+    check_service_health "backend" 8000 "/health" || failed=1
+    check_service_health "chat_shell" 8100 "/health" || failed=1
+    check_service_health "executor_manager" 8001 "/health" || failed=1
+    check_service_health "frontend" $FRONTEND_PORT "" || failed=1
+
+    echo ""
+    if [ $failed -eq 1 ]; then
+        echo -e "${YELLOW}════════════════════════════════════════════════════════${NC}"
+        echo -e "${YELLOW}⚠️  Some services failed to start properly${NC}"
+        echo ""
+        echo -e "${YELLOW}Please check the log files for details:${NC}"
+        echo -e "  Backend:          $PID_DIR/backend.log"
+        echo -e "  Frontend:         $PID_DIR/frontend.log"
+        echo -e "  Chat Shell:       $PID_DIR/chat_shell.log"
+        echo -e "  Executor Manager: $PID_DIR/executor_manager.log"
+        echo -e "${YELLOW}════════════════════════════════════════════════════════${NC}"
+        exit 1
+    fi
+
     echo -e "${GREEN}════════════════════════════════════════════════════════${NC}"
-    echo -e "${GREEN}All services started!${NC}"
+    echo -e "${GREEN}All services started successfully!${NC}"
     echo ""
     echo -e "  Frontend URL: ${BLUE}http://localhost:$FRONTEND_PORT${NC}"
     echo ""
