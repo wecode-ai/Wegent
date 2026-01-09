@@ -293,6 +293,7 @@ class ChatAgent:
         username: str | None = None,
         config: AgentConfig | None = None,
         model_id: str | None = None,
+        inject_datetime: bool | None = None,
     ) -> list[dict[str, Any]]:
         """Build messages for agent execution.
 
@@ -303,6 +304,9 @@ class ChatAgent:
             username: Optional username for group chat
             config: Optional AgentConfig for prompt enhancements
             model_id: Optional model ID for compression configuration
+            inject_datetime: Whether to inject current datetime into user message.
+                            If None, uses config.enable_deep_thinking value.
+                            If config is also None, defaults to True for backward compatibility.
 
         Returns:
             List of message dictionaries ready for agent
@@ -319,8 +323,22 @@ class ChatAgent:
                 skills=config.skills,
             )
 
+        # Determine inject_datetime value:
+        # - If explicitly provided, use it
+        # - If config is provided, follow enable_deep_thinking (web behavior controlled by this flag)
+        # - Otherwise default to True for backward compatibility
+        if inject_datetime is None:
+            if config is not None:
+                inject_datetime = config.enable_deep_thinking
+            else:
+                inject_datetime = True
+
         messages = MessageConverter.build_messages(
-            history, current_message, final_prompt, username=username
+            history,
+            current_message,
+            final_prompt,
+            username=username,
+            inject_datetime=inject_datetime,
         )
 
         # Apply message compression if enabled and model_id is provided

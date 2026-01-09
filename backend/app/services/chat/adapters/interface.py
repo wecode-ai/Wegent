@@ -85,8 +85,8 @@ class ChatRequest:
     extra_tools: list = field(default_factory=list)
 
     # MCP server configuration for HTTP mode
-    # Format: [{"name": "server_name", "url": "http://...", "auth": {"Authorization": "..."}}]
-    mcp_servers: list = field(default_factory=list)
+    # Format: {"server_name": {"url": "http://...", "type": "http", "headers": {...}}}
+    mcp_servers: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
