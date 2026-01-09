@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: wegent-evaluate-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: wegent_evaluate
+      MYSQL_USER: evaluate
+      MYSQL_PASSWORD: evaluate123
+    ports:
+      - "13306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - wegent-evaluate-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: ../docker/Dockerfile.backend
+    container_name: wegent-evaluate-backend
+    ports:
+      - "18000:8000"
+    environment:
+      - DATABASE_URL=mysql+asyncmy://evaluate:evaluate123@mysql:3306/wegent_evaluate
+      - ENVIRONMENT=production
+    env_file:
+      - .env
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - wegent-evaluate-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: ../docker/Dockerfile.frontend
+    container_name: wegent-evaluate-frontend
+    ports:
+      - "13000:3000"
+    environment:
+      - NEXT_PUBLIC_API_BASE_URL=http://localhost:18000
+    depends_on:
+      - backend
+    networks:
+      - wegent-evaluate-network
+
+volumes:
+  mysql_data:
+
+networks:
+  wegent-evaluate-network:
+    driver: bridge

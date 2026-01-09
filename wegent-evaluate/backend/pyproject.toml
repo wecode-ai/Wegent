@@ -1,0 +1,77 @@
+[project]
+name = "wegent-evaluate"
+version = "1.0.0"
+description = "RAG Evaluation Service for Wegent"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    # FastAPI framework
+    "fastapi>=0.109.1",
+    "uvicorn[standard]>=0.27.0",
+    "pydantic>=2.5.3",
+    "pydantic-settings>=2.1.0",
+    "python-multipart>=0.0.6",
+    # Database
+    "sqlalchemy>=2.0.25",
+    "pymysql>=1.1.0",
+    "asyncmy>=0.2.9",
+    "cryptography>=42.0.4",
+    "alembic>=1.13.1",
+    # HTTP clients
+    "httpx>=0.26.0",
+    "aiohttp>=3.8.0",
+    # Scheduling
+    "apscheduler>=3.10.0",
+    # RAGAS evaluation
+    "ragas>=0.2.0",
+    "langchain>=0.3.0",
+    "langchain-openai>=0.2.0",
+    "langchain-core>=0.3.0",
+    # Utilities
+    "python-dotenv>=1.0.0",
+    "tenacity>=8.2.3",
+    "pyyaml>=6.0.1",
+    "orjson>=3.9.0",
+    "structlog>=23.1.0",
+    "python-dateutil>=2.8.2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "pytest-mock>=3.12.0",
+    "black>=23.7.0",
+    "isort>=5.12.0",
+]
+
+[tool.black]
+line-length = 88
+target-version = ['py310']
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.eggs
+  | \.git
+  | \.venv
+  | alembic
+)/
+'''
+
+[[tool.uv.index]]
+url = "https://pypi.org/simple"
+default = true
+
+[tool.isort]
+profile = "black"
+line_length = 88
+skip = ["alembic", ".venv"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+asyncio_mode = "auto"
