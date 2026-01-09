@@ -260,7 +260,11 @@ async def prepare_skill_tools(
             # Preload skill prompt into LoadSkillTool if provided
             # This ensures the skill prompt is injected into system message
             # via prompt_modifier when skill tools are directly available
-            if load_skill_tool is not None:
+            #
+            # IMPORTANT: Skip preload for auto-expanded skills to avoid duplication
+            # Auto-expanded skills are already injected via build_system_prompt()
+            is_auto_expand = skill_config.get("autoExpand", False)
+            if load_skill_tool is not None and not is_auto_expand:
                 skill_prompt = skill_config.get("prompt", "")
                 if skill_prompt:
                     load_skill_tool.preload_skill_prompt(skill_name, skill_config)

@@ -308,6 +308,19 @@ class ChatService(ChatInterface):
                             "[CHAT_SERVICE] No MCP servers in request, skipping MCP loading"
                         )
 
+                    # Extract auto-expand skill names from skill_configs
+                    auto_expand_skill_names = []
+                    if request.skill_configs:
+                        for config in request.skill_configs:
+                            if config.get("autoExpand", False):
+                                auto_expand_skill_names.append(config.get("name"))
+                        if auto_expand_skill_names:
+                            logger.info(
+                                "[CHAT_SERVICE] Found %d auto-expand skills: %s",
+                                len(auto_expand_skill_names),
+                                auto_expand_skill_names,
+                            )
+
                     # Build agent configuration
                     logger.debug(
                         "[CHAT_SERVICE] Building agent config: extra_tools=%d, enable_web_search=%s",
@@ -328,7 +341,10 @@ class ChatService(ChatInterface):
                         streaming=True,
                         enable_clarification=request.enable_clarification,
                         enable_deep_thinking=request.enable_deep_thinking,
-                        skills=request.skills,
+                        skills=request.skill_configs,
+                        auto_expand_skill_names=(
+                            auto_expand_skill_names if auto_expand_skill_names else None
+                        ),
                     )
 
                     # Build messages for the agent

@@ -112,6 +112,24 @@ class LoadSkillTool(BaseTool):
         if display_name:
             self._skill_display_names[skill_name] = display_name
 
+        # Log the skill loading details
+        logger.info(
+            "[LoadSkillTool._run] ========== SKILL LOADED ==========\n"
+            "Skill name: %s\n"
+            "Display name: %s\n"
+            "Prompt length: %d chars\n"
+            "Total loaded skills: %d\n"
+            "Loaded skill names: %s\n"
+            "Prompt preview (first 300 chars):\n%s\n"
+            "==========================================",
+            skill_name,
+            display_name or skill_name,
+            len(prompt),
+            len(self._loaded_skill_prompts),
+            list(self._loaded_skill_prompts.keys()),
+            prompt[:300] + "..." if len(prompt) > 300 else prompt,
+        )
+
         # Return a confirmation message (the actual prompt will be injected into system prompt)
         return f"Skill '{skill_name}' has been loaded. The instructions have been added to the system prompt. Please follow them strictly."
 
@@ -204,13 +222,29 @@ class LoadSkillTool(BaseTool):
             Combined string of all loaded skill prompts, or empty string if none loaded
         """
         if not self._loaded_skill_prompts:
+            logger.debug("[LoadSkillTool.get_combined_skill_prompt] No loaded skills")
             return ""
 
         parts = []
         for skill_name, prompt in self._loaded_skill_prompts.items():
             parts.append(f"\n\n## Skill: {skill_name}\n\n{prompt}")
 
-        return (
+        combined = (
             "\n\n# Loaded Skill Instructions\n\nThe following skills have been loaded. "
             + "".join(parts)
         )
+
+        logger.info(
+            "[LoadSkillTool.get_combined_skill_prompt] ========== COMBINED SKILL PROMPTS ==========\n"
+            "Number of loaded skills: %d\n"
+            "Skill names: %s\n"
+            "Combined prompt length: %d chars\n"
+            "Combined prompt preview (first 500 chars):\n%s\n"
+            "======================================================",
+            len(self._loaded_skill_prompts),
+            list(self._loaded_skill_prompts.keys()),
+            len(combined),
+            combined[:500] + "..." if len(combined) > 500 else combined,
+        )
+
+        return combined

@@ -51,7 +51,12 @@ class AgentConfig:
     # Prompt enhancement options (handled internally by ChatAgent)
     enable_clarification: bool = False
     enable_deep_thinking: bool = True
-    skills: list[dict[str, Any]] | None = None  # Skill metadata for prompt injection
+    skills: list[dict[str, Any]] | None = (
+        None  # All skill configs (both on-demand and auto-expand)
+    )
+    auto_expand_skill_names: list[str] | None = (
+        None  # Names of skills that should be auto-expanded into system prompt
+    )
 
 
 class ChatAgent:
@@ -321,6 +326,7 @@ class ChatAgent:
                 enable_clarification=config.enable_clarification,
                 enable_deep_thinking=config.enable_deep_thinking,
                 skills=config.skills,
+                auto_expand_skill_names=config.auto_expand_skill_names,
             )
 
         # Determine inject_datetime value:

@@ -355,6 +355,17 @@ def build_system_prompt(
 
     # Inject skill metadata if skills are configured
     if skills:
-        system_prompt = append_skill_metadata_prompt(system_prompt, skills)
+        on_demand_skills = skills
+        if auto_expand_skill_names:
+            # Filter out auto-expanded skills from metadata
+            on_demand_skills = [
+                skill
+                for skill in skills
+                if skill.get("name") not in auto_expand_skill_names
+            ]
+        if on_demand_skills:
+            system_prompt = append_skill_metadata_prompt(
+                system_prompt, on_demand_skills
+            )
 
     return system_prompt
