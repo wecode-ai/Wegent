@@ -90,7 +90,7 @@ function ContextBadgeItem({
     case 'attachment':
       return <AttachmentContextBadge context={context} />
     case 'knowledge_base':
-      return <KnowledgeBaseBadge context={context} onReselect={onReselect} />
+      return <KnowledgeBaseBadge context={context} />
     case 'table':
       return <TableBadge context={context} _onReselect={onReselect} />
     default:
@@ -142,14 +142,12 @@ function AttachmentContextBadge({ context }: { context: SubtaskContextBrief }) {
  * Knowledge base badge - displays KB name and document count
  *
  * Uses ContextPreviewBase for consistent styling with attachments
- * Clickable to re-select the knowledge base for the next message
+ * Display-only component, no click interaction
  */
 function KnowledgeBaseBadge({
   context,
-  onReselect,
 }: {
   context: SubtaskContextBrief
-  onReselect?: (context: SubtaskContextBrief) => void
 }) {
   const { t } = useTranslation('knowledge')
 
@@ -160,27 +158,12 @@ function KnowledgeBaseBadge({
       ? formatDocumentCount(context.document_count, t)
       : undefined
 
-  const handleClick = () => {
-    if (onReselect) {
-      onReselect(context)
-    }
-  }
-
-  const isClickable = !!onReselect
-
   return (
-    <div
-      onClick={isClickable ? handleClick : undefined}
-      className={isClickable ? 'cursor-pointer' : undefined}
-      role={isClickable ? 'button' : undefined}
-      tabIndex={isClickable ? 0 : undefined}
-      title={isClickable ? t('knowledge:reselect') || 'Click to re-select' : undefined}
-    >
+    <div>
       <ContextPreviewBase
         icon={<Database className="text-primary" />}
         title={context.name}
         subtitle={subtitle}
-        className={isClickable ? 'hover:shadow-md hover:border-primary/50 transition-all' : ''}
       />
     </div>
   )
