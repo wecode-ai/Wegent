@@ -24,6 +24,7 @@ from app.models.api_key import KEY_TYPE_PERSONAL, KEY_TYPE_SERVICE, APIKey
 from app.models.user import User
 from app.schemas.user import TokenData
 from app.services.k_batch import apply_default_resources_sync
+from app.services.readers.users import userReader
 from app.services.user import user_service
 
 logger = logging.getLogger(__name__)
@@ -355,7 +356,7 @@ def get_auth_context(
 
     # Personal key: return the key owner directly
     if api_key_record.key_type == KEY_TYPE_PERSONAL:
-        user = db.query(User).filter(User.id == api_key_record.user_id).first()
+        user = userReader.get_by_id(db, api_key_record.user_id)
         if user and user.is_active:
             return AuthContext(user=user, api_key_name=api_key_record.name)
         raise HTTPException(
@@ -379,7 +380,7 @@ def get_auth_context(
             )
 
         # Try to find existing user
-        user = db.query(User).filter(User.user_name == wegent_username).first()
+        user = userReader.get_by_name(db, wegent_username)
 
         if user:
             if not user.is_active:

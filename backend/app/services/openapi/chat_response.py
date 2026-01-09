@@ -352,6 +352,7 @@ async def _create_streaming_response_package(
     created_at = int(datetime.now().timestamp())
     assistant_subtask_id = setup.assistant_subtask.id
     task_kind_id = setup.task_id
+    team_user_id = team.user_id  # Use team owner's user_id for resource lookup
 
     # Capture tool settings for use in generator
     # wegent_chat_bot enables all server-side capabilities
@@ -402,7 +403,7 @@ async def _create_streaming_response_package(
             # 1. Bot MCP (always available when bot has MCP configured)
             try:
                 bot_mcp_client = await load_bot_mcp_tools(
-                    task_kind_id, bot_name, bot_namespace
+                    task_kind_id, team_user_id, bot_name, bot_namespace
                 )
                 if bot_mcp_client:
                     mcp_clients.append(bot_mcp_client)
@@ -1004,7 +1005,7 @@ async def _create_sync_response_package(
         # 1. Bot MCP (always available when bot has MCP configured)
         try:
             bot_mcp_client = await load_bot_mcp_tools(
-                setup.task_id, setup.bot_name, setup.bot_namespace
+                setup.task_id, team.user_id, setup.bot_name, setup.bot_namespace
             )
             if bot_mcp_client:
                 mcp_clients.append(bot_mcp_client)

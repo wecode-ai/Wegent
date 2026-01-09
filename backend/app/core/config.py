@@ -129,6 +129,9 @@ class Settings(BaseSettings):
     # Redis configuration
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
 
+    # Service extension module (empty = disabled)
+    SERVICE_EXTENSION: str = ""
+
     # Team sharing configuration
     TEAM_SHARE_BASE_URL: str = "http://localhost:3000/chat"
     TASK_SHARE_BASE_URL: str = "http://localhost:3000"
