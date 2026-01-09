@@ -24,6 +24,9 @@ from app.schemas.shared_task import (
     TaskShareResponse,
 )
 from app.schemas.task import (
+    ConfirmStageRequest,
+    ConfirmStageResponse,
+    PipelineStageInfo,
     TaskCreate,
     TaskDetail,
     TaskInDB,
@@ -232,6 +235,64 @@ async def cancel_task(
         task_id=task_id,
         user_id=current_user.id,
         background_task_runner=background_tasks.add_task,
+    )
+
+
+@router.post("/{task_id}/confirm-stage", response_model=ConfirmStageResponse)
+def confirm_pipeline_stage(
+    request: ConfirmStageRequest,
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Confirm a pipeline stage and proceed to the next stage.
+
+    For pipeline mode teams with requireConfirmation=true on a member,
+    the task will pause after that stage completes and wait for user confirmation.
+
+    Args:
+        request: Contains confirmed_prompt and action (continue/retry)
+        task_id: Task ID
+        current_user: Current authenticated user
+        db: Database session
+
+    Returns:
+        ConfirmStageResponse with stage info
+    """
+    return task_kinds_service.confirm_pipeline_stage(
+        db=db,
+        task_id=task_id,
+        user_id=current_user.id,
+        confirmed_prompt=request.confirmed_prompt,
+        action=request.action,
+    )
+
+
+@router.get("/{task_id}/pipeline-stage-info", response_model=PipelineStageInfo)
+def get_pipeline_stage_info(
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get pipeline stage information for a task.
+
+    Returns current stage, total stages, and stage details for pipeline mode teams.
+    For non-pipeline teams, returns default values.
+
+    Args:
+        task_id: Task ID
+        current_user: Current authenticated user
+        db: Database session
+
+    Returns:
+        PipelineStageInfo with stage details
+    """
+    return task_kinds_service.get_pipeline_stage_info(
+        db=db,
+        task_id=task_id,
+        user_id=current_user.id,
     )
 
 

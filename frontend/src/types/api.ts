@@ -154,6 +154,7 @@ export interface TeamBot {
   bot_id: number
   bot_prompt: string
   role?: string
+  requireConfirmation?: boolean // Pipeline mode: pause after this stage for user confirmation
   bot?: BotSummary
 }
 
@@ -167,6 +168,7 @@ export type TaskStatus =
   | 'CANCELLED'
   | 'CANCELLING'
   | 'DELETE'
+  | 'PENDING_CONFIRMATION' // Pipeline stage completed, waiting for user confirmation
 export type TaskType = 'chat' | 'code'
 
 // Git commit statistics

@@ -17,6 +17,9 @@ export interface PipelineModeEditorProps {
   unsavedPrompts: Record<string, string>
   teamPromptMap: Map<number, boolean>
   isDifyLeader: boolean
+  /** Pipeline mode: requireConfirmation settings for each bot */
+  requireConfirmationMap?: Record<number, boolean>
+  setRequireConfirmationMap?: React.Dispatch<React.SetStateAction<Record<number, boolean>>>
   toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast']
   onEditBot: (botId: number) => void
   onCreateBot: () => void
@@ -33,6 +36,8 @@ export default function PipelineModeEditor({
   unsavedPrompts,
   teamPromptMap,
   isDifyLeader,
+  requireConfirmationMap,
+  setRequireConfirmationMap,
   onEditBot,
   onCreateBot,
   onCloneBot,
@@ -51,6 +56,8 @@ export default function PipelineModeEditor({
         isDifyLeader={isDifyLeader}
         autoSetLeader={true}
         sortable={true}
+        requireConfirmationMap={requireConfirmationMap}
+        setRequireConfirmationMap={setRequireConfirmationMap}
         onEditBot={onEditBot}
         onCreateBot={onCreateBot}
         onCloneBot={onCloneBot}

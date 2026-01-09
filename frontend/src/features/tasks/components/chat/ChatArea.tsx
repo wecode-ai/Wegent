@@ -4,12 +4,14 @@
 
 'use client'
 
-import React, { useEffect, useCallback, useMemo } from 'react'
+import React, { useEffect, useCallback, useMemo, useState } from 'react'
 import { ShieldX } from 'lucide-react'
 import MessagesArea from '../message/MessagesArea'
 import { QuickAccessCards } from './QuickAccessCards'
 import { SloganDisplay } from './SloganDisplay'
 import { ChatInputCard } from '../input/ChatInputCard'
+import PipelineStageIndicator from './PipelineStageIndicator'
+import type { PipelineStageInfo } from '@/apis/tasks'
 import { useChatAreaState } from './useChatAreaState'
 import { useChatStreamHandlers } from './useChatStreamHandlers'
 import { allBotsHavePredefinedModel } from '../selector/ModelSelector'
@@ -57,6 +59,9 @@ function ChatAreaContent({
 }: ChatAreaProps) {
   const { t } = useTranslation()
   const router = useRouter()
+
+  // Pipeline stage info state - shared between PipelineStageIndicator and MessagesArea
+  const [pipelineStageInfo, setPipelineStageInfo] = useState<PipelineStageInfo | null>(null)
   const { quote, clearQuote, formatQuoteForMessage } = useQuote()
 
   // Task context
@@ -427,6 +432,18 @@ function ChatAreaContent({
       className="flex-1 flex flex-col min-h-0 w-full relative"
       style={{ height: '100%', boxSizing: 'border-box' }}
     >
+      {/* Pipeline Stage Indicator - shows current stage progress for pipeline mode */}
+      {hasMessages && selectedTaskDetail?.id && (
+        <PipelineStageIndicator
+          taskId={selectedTaskDetail.id}
+          taskStatus={selectedTaskDetail.status || null}
+          collaborationModel={
+            selectedTaskDetail.team?.workflow?.mode || chatState.selectedTeam?.workflow?.mode
+          }
+          onStageInfoChange={setPipelineStageInfo}
+        />
+      )}
+
       {/* Messages Area: always mounted to keep scroll container stable */}
       <div className={hasMessages ? 'relative flex-1 min-h-0' : 'relative'}>
         {/* Top gradient fade effect */}
@@ -464,6 +481,7 @@ function ChatAreaContent({
               enableCorrectionWebSearch={chatState.enableCorrectionWebSearch}
               hasMessages={hasMessages}
               pendingTaskId={streamHandlers.pendingTaskId}
+              isPendingConfirmation={pipelineStageInfo?.is_pending_confirmation}
               onContextReselect={handleContextReselect}
             />
           </div>

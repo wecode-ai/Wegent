@@ -144,11 +144,7 @@ function AttachmentContextBadge({ context }: { context: SubtaskContextBrief }) {
  * Uses ContextPreviewBase for consistent styling with attachments
  * Display-only component, no click interaction
  */
-function KnowledgeBaseBadge({
-  context,
-}: {
-  context: SubtaskContextBrief
-}) {
+function KnowledgeBaseBadge({ context }: { context: SubtaskContextBrief }) {
   const { t } = useTranslation('knowledge')
 
   const subtitle =

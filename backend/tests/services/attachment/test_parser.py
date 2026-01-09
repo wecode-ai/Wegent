@@ -269,13 +269,13 @@ class TestMimeTypeDetection:
 
     def test_detect_mime_type_python(self):
         """Test MIME detection for Python code."""
-        content = b'''#!/usr/bin/env python3
+        content = b"""#!/usr/bin/env python3
 def hello():
     print("Hello, World!")
 
 if __name__ == "__main__":
     hello()
-'''
+"""
         mime_type = self.parser.detect_mime_type(content)
         # Python files are detected as text/x-python or text/x-script.python or text/plain
         assert mime_type.startswith("text/")
@@ -353,12 +353,12 @@ print(f"Result: {result}")
 
     def test_parse_yaml_file(self):
         """Test parsing YAML content."""
-        yaml_content = b'''name: test
+        yaml_content = b"""name: test
 version: 1.0.0
 dependencies:
   - package1
   - package2
-'''
+"""
         result = self.parser.parse(yaml_content, ".yaml")
         assert isinstance(result, ParseResult)
         assert "name:" in result.text
@@ -366,12 +366,12 @@ dependencies:
 
     def test_parse_shell_script(self):
         """Test parsing shell script content."""
-        shell_content = b'''#!/bin/bash
+        shell_content = b"""#!/bin/bash
 echo "Hello, World!"
 for i in 1 2 3; do
     echo "Number: $i"
 done
-'''
+"""
         result = self.parser.parse(shell_content, ".sh")
         assert isinstance(result, ParseResult)
         assert "#!/bin/bash" in result.text

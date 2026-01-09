@@ -70,6 +70,7 @@ interface StreamingMessageBubbleProps {
   onSendMessage?: (content: string) => void
   index: number
   isGroupChat?: boolean
+  isPendingConfirmation?: boolean
   onContextReselect?: (context: import('@/types/api').SubtaskContextBrief) => void
 }
 
@@ -84,6 +85,7 @@ function StreamingMessageBubble({
   onSendMessage,
   index,
   isGroupChat,
+  isPendingConfirmation,
   onContextReselect,
 }: StreamingMessageBubbleProps) {
   // Use typewriter effect for streaming content
@@ -130,6 +132,7 @@ function StreamingMessageBubble({
       isWaiting={Boolean(isStreaming && !hasContent && !hasThinking)}
       onSendMessage={onSendMessage}
       isGroupChat={isGroupChat}
+      isPendingConfirmation={isPendingConfirmation}
       onContextReselect={onContextReselect}
     />
   )
@@ -156,6 +159,11 @@ interface MessagesAreaProps {
    * Can be either tempTaskId (negative) or taskId (positive) before selectedTaskDetail updates.
    */
   pendingTaskId?: number | null
+  /**
+   * Whether the current pipeline stage is pending confirmation.
+   * This is the single source of truth from pipeline_stage_info.is_pending_confirmation.
+   */
+  isPendingConfirmation?: boolean
   /** Callback when user clicks on a context badge to re-select it */
   onContextReselect?: (context: import('@/types/api').SubtaskContextBrief) => void
 }
@@ -174,6 +182,7 @@ export default function MessagesArea({
   enableCorrectionWebSearch = false,
   hasMessages: hasMessagesFromParent,
   pendingTaskId,
+  isPendingConfirmation,
   onContextReselect,
 }: MessagesAreaProps) {
   const { t } = useTranslation()
@@ -902,6 +911,7 @@ export default function MessagesArea({
                   onSendMessage={onSendMessage}
                   index={index}
                   isGroupChat={isGroupChat}
+                  isPendingConfirmation={isPendingConfirmation}
                   onContextReselect={onContextReselect}
                 />
               )
@@ -931,6 +941,7 @@ export default function MessagesArea({
                     onSendMessage={onSendMessage}
                     isCurrentUserMessage={isCurrentUserMessage}
                     isGroupChat={isGroupChat}
+                    isPendingConfirmation={isPendingConfirmation}
                     onContextReselect={onContextReselect}
                   />
                   <div className="flex flex-col gap-2">
@@ -991,6 +1002,7 @@ export default function MessagesArea({
                 isCurrentUserMessage={isCurrentUserMessage}
                 onRetry={onRetry}
                 isGroupChat={isGroupChat}
+                isPendingConfirmation={isPendingConfirmation}
                 onContextReselect={onContextReselect}
               />
             )

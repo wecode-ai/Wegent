@@ -1747,12 +1747,14 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           const hasFrontendError =
             existingMessage && existingMessage.status === 'error' && existingMessage.error
 
-          // For RUNNING/PENDING AI messages:
+          // For RUNNING AI messages:
           // - If we already have a streaming message for this subtask (from chat:start or resumeStream),
           //   preserve it if it has more content (Redis cache is more up-to-date than DB)
           // - Otherwise, create a streaming placeholder so the message is visible
           // This handles the page refresh case where chat:start was missed
-          if (!isUserMessage && (subtask.status === 'RUNNING' || subtask.status === 'PENDING')) {
+          // NOTE: PENDING messages are NOT displayed - they are waiting to be executed
+          // This is important for Pipeline mode where multiple subtasks are created upfront
+          if (!isUserMessage && subtask.status === 'RUNNING') {
             // Check if we already have this AI message (created by chat:start or resumeStream)
             const existingAiMessage = messages.get(messageId)
             const backendContent =
@@ -1842,6 +1844,13 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
               result: subtask.result as UnifiedMessage['result'],
               error: hasFrontendError ? existingMessage.error : undefined, // Preserve error if exists
             })
+            continue
+          }
+
+          // Skip PENDING AI messages - they are waiting to be executed
+          // In Pipeline mode, multiple subtasks are created upfront with PENDING status
+          // We only display them when they start running (status changes to RUNNING)
+          if (!isUserMessage && subtask.status === 'PENDING') {
             continue
           }
 

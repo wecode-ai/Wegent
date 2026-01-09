@@ -158,6 +158,60 @@ export interface PublicSharedTaskResponse {
   created_at: string
 }
 
+// Pipeline stage confirmation types
+export interface ConfirmStageRequest {
+  confirmed_prompt: string // The edited/confirmed prompt to pass to next stage
+  action: 'continue' | 'retry' // "continue" to proceed to next stage, "retry" to stay at current stage
+}
+
+export interface ConfirmStageResponse {
+  message: string
+  task_id: number
+  current_stage: number // 0-indexed current pipeline stage
+  total_stages: number // Total number of pipeline stages
+  next_stage_name: string | null // Name of the next stage (bot name)
+}
+
+export interface PipelineStageInfo {
+  current_stage: number // 0-indexed current pipeline stage
+  total_stages: number // Total number of pipeline stages
+  current_stage_name: string // Name of current stage (bot name)
+  is_pending_confirmation: boolean // Whether waiting for user confirmation
+  stages: Array<{
+    index: number
+    name: string
+    require_confirmation: boolean
+    status: 'pending' | 'running' | 'completed' | 'failed' | 'pending_confirmation'
+  }>
+}
+
+// Pipeline stage confirmation types
+export interface ConfirmStageRequest {
+  confirmed_prompt: string // The edited/confirmed prompt to pass to next stage
+  action: 'continue' | 'retry' // "continue" to proceed to next stage, "retry" to stay at current stage
+}
+
+export interface ConfirmStageResponse {
+  message: string
+  task_id: number
+  current_stage: number // 0-indexed current pipeline stage
+  total_stages: number // Total number of pipeline stages
+  next_stage_name: string | null // Name of the next stage (bot name)
+}
+
+export interface PipelineStageInfo {
+  current_stage: number // 0-indexed current pipeline stage
+  total_stages: number // Total number of pipeline stages
+  current_stage_name: string // Name of current stage (bot name)
+  is_pending_confirmation: boolean // Whether waiting for user confirmation
+  stages: Array<{
+    index: number
+    name: string
+    require_confirmation: boolean
+    status: 'pending' | 'running' | 'completed' | 'failed' | 'pending_confirmation'
+  }>
+}
+
 // Task Services
 
 export const taskApis = {
@@ -355,5 +409,25 @@ export const taskApis = {
     }
 
     return response.blob()
+  },
+
+  /**
+   * Confirm a pipeline stage and proceed to the next stage
+   * @param taskId - Task ID
+   * @param request - Confirmation request with confirmed prompt and action
+   */
+  confirmPipelineStage: async (
+    taskId: number,
+    request: ConfirmStageRequest
+  ): Promise<ConfirmStageResponse> => {
+    return apiClient.post(`/tasks/${taskId}/confirm-stage`, request)
+  },
+
+  /**
+   * Get pipeline stage information for a task
+   * @param taskId - Task ID
+   */
+  getPipelineStageInfo: async (taskId: number): Promise<PipelineStageInfo> => {
+    return apiClient.get(`/tasks/${taskId}/pipeline-stage-info`)
   },
 }

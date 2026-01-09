@@ -66,7 +66,7 @@ class ExecutorKindsService(
                     .filter(
                         TaskResource.id == task_id,
                         TaskResource.kind == "Task",
-                        TaskResource.is_active == True,
+                        TaskResource.is_active,
                     )
                     .params(type=type)
                     .first()
@@ -140,7 +140,7 @@ class ExecutorKindsService(
                 db.query(TaskResource)
                 .filter(
                     TaskResource.kind == "Task",
-                    TaskResource.is_active == True,
+                    TaskResource.is_active.is_(True),
                     text(
                         "JSON_EXTRACT(json, '$.metadata.labels.type') = 'offline' "
                         "and JSON_EXTRACT(json, '$.status.status') = :status "
@@ -157,7 +157,7 @@ class ExecutorKindsService(
                 db.query(TaskResource)
                 .filter(
                     TaskResource.kind == "Task",
-                    TaskResource.is_active == True,
+                    TaskResource.is_active.is_(True),
                     text(
                         "(JSON_EXTRACT(json, '$.metadata.labels.type') IS NULL OR JSON_EXTRACT(json, '$.metadata.labels.type') = 'online') "
                         "and JSON_EXTRACT(json, '$.status.status') = :status "
@@ -258,7 +258,9 @@ class ExecutorKindsService(
             # Get first bot
             bot_id = subtask.bot_ids[0]
             bot = (
-                db.query(Kind).filter(Kind.id == bot_id, Kind.is_active == True).first()
+                db.query(Kind)
+                .filter(Kind.id == bot_id, Kind.is_active.is_(True))
+                .first()
             )
 
             if not bot:
@@ -299,7 +301,7 @@ class ExecutorKindsService(
             .filter(
                 TaskResource.id == task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active == True,
+                TaskResource.is_active.is_(True),
             )
             .first()
         )
@@ -389,7 +391,7 @@ class ExecutorKindsService(
                     Kind.kind == "Ghost",
                     Kind.name == ghost_ref_name,
                     Kind.namespace == ghost_ref_namespace,
-                    Kind.is_active == True,
+                    Kind.is_active.is_(True),
                 )
                 .first()
             )
@@ -402,7 +404,7 @@ class ExecutorKindsService(
                     Kind.kind == "Ghost",
                     Kind.name == ghost_ref_name,
                     Kind.namespace == ghost_ref_namespace,
-                    Kind.is_active == True,
+                    Kind.is_active.is_(True),
                 )
                 .first()
             )
@@ -414,7 +416,7 @@ class ExecutorKindsService(
                         Kind.kind == "Ghost",
                         Kind.name == ghost_ref_name,
                         Kind.namespace == ghost_ref_namespace,
-                        Kind.is_active == True,
+                        Kind.is_active.is_(True),
                     )
                     .first()
                 )
@@ -450,7 +452,7 @@ class ExecutorKindsService(
                     Kind.kind == "Shell",
                     Kind.name == shell_ref_name,
                     Kind.namespace == shell_ref_namespace,
-                    Kind.is_active == True,
+                    Kind.is_active.is_(True),
                 )
                 .first()
             )
@@ -464,7 +466,7 @@ class ExecutorKindsService(
                     Kind.kind == "Shell",
                     Kind.name == shell_ref_name,
                     Kind.namespace == shell_ref_namespace,
-                    Kind.is_active == True,
+                    Kind.is_active.is_(True),
                 )
                 .first()
             )
@@ -479,7 +481,7 @@ class ExecutorKindsService(
                     Kind.user_id == 0,
                     Kind.kind == "Shell",
                     Kind.name == shell_ref_name,
-                    Kind.is_active == True,
+                    Kind.is_active.is_(True),
                 )
                 .first()
             )
@@ -527,7 +529,7 @@ class ExecutorKindsService(
                     Kind.kind == "Model",
                     Kind.name == model_ref_name,
                     Kind.namespace == model_ref_namespace,
-                    Kind.is_active == True,
+                    Kind.is_active.is_(True),
                 )
                 .first()
             )
@@ -540,7 +542,7 @@ class ExecutorKindsService(
                     Kind.kind == "Model",
                     Kind.name == model_ref_name,
                     Kind.namespace == model_ref_namespace,
-                    Kind.is_active == True,
+                    Kind.is_active.is_(True),
                 )
                 .first()
             )
@@ -556,7 +558,7 @@ class ExecutorKindsService(
                     Kind.kind == "Model",
                     Kind.name == model_ref_name,
                     Kind.namespace == model_ref_namespace,
-                    Kind.is_active == True,
+                    Kind.is_active.is_(True),
                 )
                 .first()
             )
@@ -596,7 +598,7 @@ class ExecutorKindsService(
                     Kind.kind == "Model",
                     Kind.name == model_name,
                     Kind.namespace == "default",
-                    Kind.is_active == True,
+                    Kind.is_active.is_(True),
                 )
                 .first()
             )
@@ -608,7 +610,7 @@ class ExecutorKindsService(
                     Kind.kind == "Model",
                     Kind.name == model_name,
                     Kind.namespace == bind_model_namespace,
-                    Kind.is_active == True,
+                    Kind.is_active.is_(True),
                 )
                 .first()
             )
@@ -621,7 +623,7 @@ class ExecutorKindsService(
                     Kind.kind == "Model",
                     Kind.name == model_name,
                     Kind.namespace == bind_model_namespace,
-                    Kind.is_active == True,
+                    Kind.is_active.is_(True),
                 )
                 .first()
             )
@@ -635,7 +637,7 @@ class ExecutorKindsService(
                     Kind.kind == "Model",
                     Kind.name == model_name,
                     Kind.namespace == "default",
-                    Kind.is_active == True,
+                    Kind.is_active.is_(True),
                 )
                 .first()
             )
@@ -648,7 +650,7 @@ class ExecutorKindsService(
                         Kind.kind == "Model",
                         Kind.name == model_name,
                         Kind.namespace == "default",
-                        Kind.is_active == True,
+                        Kind.is_active.is_(True),
                     )
                     .first()
                 )
@@ -795,21 +797,40 @@ class ExecutorKindsService(
 
             # Build aggregated prompt
             aggregated_prompt = ""
-            # User input prompt
-            if user_prompt:
-                aggregated_prompt = user_prompt
-            # Previous subtask result
-            if previous_subtask_results != "":
-                aggregated_prompt += (
-                    f"\nPrevious execution result: {previous_subtask_results}"
-                )
+            # Check if this subtask has a confirmed_prompt from stage confirmation
+            confirmed_prompt_from_stage = None
+            # Flag to indicate this subtask should start a new session (no conversation history)
+            # This is used in pipeline mode when user confirms a stage and proceeds to next bot
+            new_session = False
+            if subtask.result and isinstance(subtask.result, dict):
+                if subtask.result.get("from_stage_confirmation"):
+                    confirmed_prompt_from_stage = subtask.result.get("confirmed_prompt")
+                    # Mark that this subtask should use a new session
+                    # The next bot should not inherit conversation history from previous bot
+                    new_session = True
+                    # Clear the temporary result so it doesn't interfere with execution
+                    subtask.result = None
+                    subtask.updated_at = datetime.now()
+
+            if confirmed_prompt_from_stage:
+                # Use the confirmed prompt from stage confirmation instead of building from previous results
+                aggregated_prompt = confirmed_prompt_from_stage
+            else:
+                # User input prompt
+                if user_prompt:
+                    aggregated_prompt = user_prompt
+                # Previous subtask result
+                if previous_subtask_results != "":
+                    aggregated_prompt += (
+                        f"\nPrevious execution result: {previous_subtask_results}"
+                    )
             # Get task information from tasks table
             task = (
                 db.query(TaskResource)
                 .filter(
                     TaskResource.id == subtask.task_id,
                     TaskResource.kind == "Task",
-                    TaskResource.is_active == True,
+                    TaskResource.is_active.is_(True),
                 )
                 .first()
             )
@@ -827,7 +848,7 @@ class ExecutorKindsService(
                     TaskResource.kind == "Workspace",
                     TaskResource.name == task_crd.spec.workspaceRef.name,
                     TaskResource.namespace == task_crd.spec.workspaceRef.namespace,
-                    TaskResource.is_active == True,
+                    TaskResource.is_active.is_(True),
                 )
                 .first()
             )
@@ -868,7 +889,7 @@ class ExecutorKindsService(
             # Get team information from kinds table
             team = (
                 db.query(Kind)
-                .filter(Kind.id == subtask.team_id, Kind.is_active == True)
+                .filter(Kind.id == subtask.team_id, Kind.is_active.is_(True))
                 .first()
             )
 
@@ -895,7 +916,7 @@ class ExecutorKindsService(
                 # Get bot from kinds table
                 bot = (
                     db.query(Kind)
-                    .filter(Kind.id == bot_id, Kind.is_active == True)
+                    .filter(Kind.id == bot_id, Kind.is_active.is_(True))
                     .first()
                 )
 
@@ -1101,6 +1122,9 @@ class ExecutorKindsService(
                     "progress": subtask.progress,
                     "created_at": subtask.created_at,
                     "updated_at": subtask.updated_at,
+                    # Flag to indicate this subtask should start a new session (no conversation history)
+                    # Used in pipeline mode when user confirms a stage and proceeds to next bot
+                    "new_session": new_session,
                 }
             )
 
@@ -1167,7 +1191,7 @@ class ExecutorKindsService(
                 .filter(
                     TaskResource.id == subtask.task_id,
                     TaskResource.kind == "Task",
-                    TaskResource.is_active == True,
+                    TaskResource.is_active.is_(True),
                 )
                 .first()
             )
@@ -1262,7 +1286,7 @@ class ExecutorKindsService(
             .filter(
                 TaskResource.id == task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active == True,
+                TaskResource.is_active.is_(True),
             )
             .first()
         )
@@ -1353,22 +1377,54 @@ class ExecutorKindsService(
                     )
                 if last_non_pending_subtask.result:
                     task_crd.status.result = last_non_pending_subtask.result
-        # Priority 4: Check if the last subtask is completed
-        elif subtasks and subtasks[-1].status == SubtaskStatus.COMPLETED:
-            # Get last completed subtask
-            last_subtask = subtasks[-1] if subtasks else None
-            if last_subtask and task_crd.status:
-                task_crd.status.status = last_subtask.status.value
-                task_crd.status.result = last_subtask.result
-                task_crd.status.errorMessage = last_subtask.error_message
-                task_crd.status.progress = 100
-                task_crd.status.completedAt = datetime.now()
+        # Priority 4: Check if the last non-pending subtask is completed
+        # For pipeline mode, we need to check if the just-completed stage requires confirmation
+        elif (
+            last_non_pending_subtask
+            and last_non_pending_subtask.status == SubtaskStatus.COMPLETED
+        ):
+            # Check if this is a pipeline task that needs stage confirmation
+            should_wait_confirmation = self._check_pipeline_stage_confirmation(
+                db, task, subtasks
+            )
+
+            if should_wait_confirmation:
+                # Set task to PENDING_CONFIRMATION status
+                if task_crd.status:
+                    task_crd.status.status = "PENDING_CONFIRMATION"
+                    task_crd.status.result = last_non_pending_subtask.result
+                    task_crd.status.errorMessage = None
+                    logger.info(
+                        f"Task {task_id} status set to PENDING_CONFIRMATION for pipeline stage confirmation"
+                    )
+            elif subtasks[-1].status == SubtaskStatus.COMPLETED:
+                # Check if this is pipeline mode and we need to create next stage subtask
+                next_stage_created = self._create_next_pipeline_stage_subtask(
+                    db, task, task_crd, subtasks
+                )
+
+                if next_stage_created:
+                    # Next stage subtask created, task stays in RUNNING status
+                    logger.info(
+                        f"Task {task_id} pipeline: next stage subtask created, staying in RUNNING"
+                    )
+                else:
+                    # All subtasks completed - mark task as completed
+                    last_subtask = subtasks[-1]
+                    if task_crd.status:
+                        task_crd.status.status = last_subtask.status.value
+                        task_crd.status.result = last_subtask.result
+                        task_crd.status.errorMessage = last_subtask.error_message
+                        task_crd.status.progress = 100
+                        task_crd.status.completedAt = datetime.now()
+            # else: task stays in RUNNING status (pipeline in progress)
         else:
             # Update to running status (only if not in a final state)
             if task_crd.status and current_task_status not in [
                 "CANCELLED",
                 "COMPLETED",
                 "FAILED",
+                "PENDING_CONFIRMATION",
             ]:
                 task_crd.status.status = "RUNNING"
                 # If there is only one subtask, use the subtask's progress
@@ -1423,6 +1479,272 @@ class ExecutorKindsService(
             )
 
         db.add(task)
+
+    def _check_pipeline_stage_confirmation(
+        self,
+        db: Session,
+        task: TaskResource,
+        subtasks: List[Subtask],
+    ) -> bool:
+        """
+        Check if the current pipeline stage requires user confirmation.
+
+        In the new pipeline architecture, subtasks are created one at a time.
+        When a stage completes, we check if it has requireConfirmation set.
+        If so, we return True to pause and wait for user confirmation.
+
+        Args:
+            db: Database session
+            task: Task resource
+            subtasks: List of assistant subtasks ordered by message_id
+
+        Returns:
+            True if confirmation is required, False otherwise
+        """
+        # Get team_id from subtasks (TaskResource doesn't have team_id attribute)
+        if not subtasks:
+            return False
+
+        team_id = subtasks[0].team_id
+
+        # Get team to check collaboration model
+        team = (
+            db.query(Kind)
+            .filter(
+                Kind.id == team_id,
+                Kind.kind == "Team",
+                Kind.is_active.is_(True),
+            )
+            .first()
+        )
+
+        if not team:
+            return False
+
+        team_crd = Team.model_validate(team.json)
+
+        # Only applies to pipeline mode
+        if team_crd.spec.collaborationModel != "pipeline":
+            return False
+
+        members = team_crd.spec.members
+        total_stages = len(members)
+
+        if total_stages == 0:
+            return False
+
+        # Get all subtasks (including USER) to find the current round
+        # The subtasks parameter only contains ASSISTANT subtasks, so we need to query again
+        all_subtasks = (
+            db.query(Subtask)
+            .filter(Subtask.task_id == task.id)
+            .order_by(Subtask.message_id.desc())
+            .all()
+        )
+
+        # Count completed stages in the current round (after the last USER message)
+        recent_assistant_subtasks = []
+        for s in all_subtasks:
+            if s.role == SubtaskRole.USER:
+                break
+            if s.role == SubtaskRole.ASSISTANT:
+                recent_assistant_subtasks.insert(0, s)
+
+        completed_stages = len(
+            [
+                s
+                for s in recent_assistant_subtasks
+                if s.status == SubtaskStatus.COMPLETED
+            ]
+        )
+
+        # The current stage index is the number of completed stages minus 1
+        # (since we just completed a stage)
+        current_stage_index = completed_stages - 1
+
+        if current_stage_index < 0 or current_stage_index >= len(members):
+            return False
+
+        # Check if this member has requireConfirmation set
+        current_member = members[current_stage_index]
+        require_confirmation = current_member.requireConfirmation or False
+
+        if not require_confirmation:
+            return False
+
+        # Also check if there are more stages to go
+        # If this is the last stage, no need for confirmation
+        has_more_stages = (current_stage_index + 1) < total_stages
+
+        logger.info(
+            f"Pipeline _check_pipeline_stage_confirmation: task_id={task.id}, "
+            f"current_stage_index={current_stage_index}, require_confirmation={require_confirmation}, "
+            f"has_more_stages={has_more_stages}, completed_stages={completed_stages}, total_stages={total_stages}"
+        )
+
+        return require_confirmation and has_more_stages
+
+    def _create_next_pipeline_stage_subtask(
+        self,
+        db: Session,
+        task: TaskResource,
+        task_crd: Task,
+        subtasks: List[Subtask],
+    ) -> bool:
+        """
+        Create the next pipeline stage subtask when the current stage completes.
+
+        In pipeline mode, subtasks are created one at a time. When a stage completes,
+        this method creates the subtask for the next stage.
+
+        Args:
+            db: Database session
+            task: Task resource
+            task_crd: Task CRD object
+            subtasks: List of assistant subtasks ordered by message_id
+
+        Returns:
+            True if a new subtask was created, False otherwise
+        """
+        if not subtasks:
+            return False
+
+        team_id = subtasks[0].team_id
+
+        # Get team to check collaboration model
+        team = (
+            db.query(Kind)
+            .filter(
+                Kind.id == team_id,
+                Kind.kind == "Team",
+                Kind.is_active.is_(True),
+            )
+            .first()
+        )
+
+        if not team:
+            return False
+
+        team_crd = Team.model_validate(team.json)
+
+        # Only applies to pipeline mode
+        if team_crd.spec.collaborationModel != "pipeline":
+            return False
+
+        members = team_crd.spec.members
+        total_stages = len(members)
+
+        if total_stages == 0:
+            return False
+
+        # Get all subtasks (including USER) to find the current round
+        # The subtasks parameter only contains ASSISTANT subtasks, so we need to query again
+        all_subtasks = (
+            db.query(Subtask)
+            .filter(Subtask.task_id == task.id)
+            .order_by(Subtask.message_id.desc())
+            .all()
+        )
+
+        # Count completed stages in the current round
+        # Get the most recent batch of subtasks (after the last USER message)
+        recent_assistant_subtasks = []
+        for s in all_subtasks:
+            if s.role == SubtaskRole.USER:
+                break
+            if s.role == SubtaskRole.ASSISTANT:
+                recent_assistant_subtasks.insert(0, s)
+
+        completed_stages = len(
+            [
+                s
+                for s in recent_assistant_subtasks
+                if s.status == SubtaskStatus.COMPLETED
+            ]
+        )
+
+        # Debug log
+        logger.info(
+            f"Pipeline _create_next_pipeline_stage_subtask: task_id={task.id}, "
+            f"completed_stages={completed_stages}, total_stages={total_stages}, "
+            f"recent_assistant_count={len(recent_assistant_subtasks)}"
+        )
+
+        # If all stages are completed, no need to create more
+        if completed_stages >= total_stages:
+            logger.info(
+                f"Pipeline task {task.id}: all {total_stages} stages completed, no more subtasks to create"
+            )
+            return False
+
+        # Get the next stage index
+        next_stage_index = completed_stages
+
+        if next_stage_index >= len(members):
+            return False
+
+        next_member = members[next_stage_index]
+
+        # Find the bot for the next stage
+        bot = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == team.user_id,
+                Kind.kind == "Bot",
+                Kind.name == next_member.botRef.name,
+                Kind.namespace == next_member.botRef.namespace,
+                Kind.is_active.is_(True),
+            )
+            .first()
+        )
+
+        if not bot:
+            logger.error(
+                f"Pipeline task {task.id}: bot {next_member.botRef.name} not found for stage {next_stage_index}"
+            )
+            return False
+
+        # Get the last subtask to determine message_id and parent_id
+        last_subtask = subtasks[-1]
+        next_message_id = last_subtask.message_id + 1
+        parent_id = last_subtask.message_id
+
+        # Get executor info from the first subtask (reuse executor)
+        executor_name = ""
+        executor_namespace = ""
+        if recent_assistant_subtasks:
+            executor_name = recent_assistant_subtasks[0].executor_name or ""
+            executor_namespace = recent_assistant_subtasks[0].executor_namespace or ""
+
+        # Create the new subtask for the next stage
+        new_subtask = Subtask(
+            user_id=last_subtask.user_id,
+            task_id=task.id,
+            team_id=team_id,
+            title=f"{task_crd.spec.title} - {bot.name}",
+            bot_ids=[bot.id],
+            role=SubtaskRole.ASSISTANT,
+            prompt="",
+            status=SubtaskStatus.PENDING,
+            progress=0,
+            message_id=next_message_id,
+            parent_id=parent_id,
+            executor_name=executor_name,
+            executor_namespace=executor_namespace,
+            error_message="",
+            completed_at=None,
+            result=None,
+        )
+
+        db.add(new_subtask)
+        db.flush()  # Get the new subtask ID
+
+        logger.info(
+            f"Pipeline task {task.id}: created subtask {new_subtask.id} for stage {next_stage_index} "
+            f"(bot={bot.name}, message_id={next_message_id})"
+        )
+
+        return True
 
     def _emit_task_status_ws_event(
         self,

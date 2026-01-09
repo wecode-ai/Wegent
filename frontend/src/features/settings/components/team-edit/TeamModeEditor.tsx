@@ -35,6 +35,9 @@ interface TeamModeEditorProps {
   botEditRef: React.RefObject<BotEditRef | null>
   scope?: 'personal' | 'group' | 'all'
   groupName?: string
+  /** Pipeline mode: requireConfirmation settings for each bot */
+  requireConfirmationMap?: Record<number, boolean>
+  setRequireConfirmationMap?: React.Dispatch<React.SetStateAction<Record<number, boolean>>>
   onEditBot: (botId: number) => void
   onCreateBot: () => void
   onCloneBot: (botId: number) => void
@@ -61,6 +64,8 @@ export default function TeamModeEditor({
   botEditRef,
   scope,
   groupName,
+  requireConfirmationMap,
+  setRequireConfirmationMap,
   onEditBot,
   onCreateBot,
   onCloneBot,
@@ -104,6 +109,8 @@ export default function TeamModeEditor({
             unsavedPrompts={unsavedPrompts}
             teamPromptMap={teamPromptMap}
             isDifyLeader={isDifyLeader}
+            requireConfirmationMap={requireConfirmationMap}
+            setRequireConfirmationMap={setRequireConfirmationMap}
             toast={toast}
             onEditBot={onEditBot}
             onCreateBot={onCreateBot}

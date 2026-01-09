@@ -320,7 +320,8 @@
     "bind_mode": "Bind Mode",
     "bind_mode_chat": "Chat",
     "bind_mode_code": "Code",
-    "bind_mode_required": "Please select at least one bind mode (Chat or Code)"
+    "bind_mode_required": "Please select at least one bind mode (Chat or Code)",
+    "require_confirmation_tooltip": "When enabled, the task will pause after this stage completes, waiting for user confirmation before proceeding to the next stage"
   },
   "team_model": {
     "solo": "Solo",

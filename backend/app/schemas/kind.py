@@ -320,6 +320,9 @@ class TeamMember(BaseModel):
     botRef: BotTeamRef
     prompt: Optional[str] = None
     role: Optional[str] = None
+    requireConfirmation: Optional[bool] = (
+        False  # Whether this stage requires user confirmation before proceeding to next stage (Pipeline mode only)
+    )
 
 
 class TeamSpec(BaseModel):

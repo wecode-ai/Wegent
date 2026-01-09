@@ -128,6 +128,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             role = (
                 bot_info.role if hasattr(bot_info, "role") else bot_info.get("role", "")
             )
+            require_confirmation = (
+                bot_info.requireConfirmation
+                if hasattr(bot_info, "requireConfirmation")
+                else bot_info.get("requireConfirmation", False)
+            )
 
             # Get bot from kinds table
             bot = (
@@ -149,6 +154,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 "botRef": {"name": bot.name, "namespace": bot.namespace},
                 "prompt": bot_prompt or "",
                 "role": role or "",
+                "requireConfirmation": require_confirmation or False,
             }
             members.append(member)
 
@@ -852,6 +858,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             from app.schemas.kind import BotTeamRef, TeamMember
 
             members = []
+            members = []
             for bot_info in update_data["bots"]:
                 bot_id = (
                     bot_info.bot_id
@@ -867,6 +874,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     bot_info.role
                     if hasattr(bot_info, "role")
                     else bot_info.get("role", "")
+                )
+                require_confirmation = (
+                    bot_info.requireConfirmation
+                    if hasattr(bot_info, "requireConfirmation")
+                    else bot_info.get("requireConfirmation", False)
                 )
 
                 # Get bot from kinds table
@@ -889,9 +901,9 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     botRef=BotTeamRef(name=bot.name, namespace=bot.namespace),
                     prompt=bot_prompt or "",
                     role=role or "",
+                    requireConfirmation=require_confirmation or False,
                 )
                 members.append(member)
-
             team_crd.spec.members = members
 
         if "workflow" in update_data:
@@ -1510,6 +1522,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     "bot_id": bot.id,
                     "bot_prompt": member.prompt or "",
                     "role": member.role or "",
+                    "requireConfirmation": member.requireConfirmation or False,
                     "bot": bot_summary,
                 }
                 bots.append(bot_info)
@@ -1696,6 +1709,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     "bot_id": bot.id,
                     "bot_prompt": member.prompt or "",
                     "role": member.role or "",
+                    "requireConfirmation": member.requireConfirmation or False,
                     "bot": bot_summary,
                 }
                 bots.append(bot_info)

@@ -4,11 +4,12 @@
 
 'use client'
 
-import React, { useMemo } from 'react'
+import React, { useCallback, useMemo } from 'react'
 import { Transfer } from '@/components/ui/transfer'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Tag } from '@/components/ui/tag'
+import { Switch } from '@/components/ui/switch'
 import { RiMagicLine } from 'react-icons/ri'
 import { Edit, Plus, Copy } from 'lucide-react'
 import { Bot } from '@/types/api'
@@ -31,6 +32,9 @@ export interface BotTransferProps {
   autoSetLeader?: boolean
   /** Whether to enable drag-and-drop sorting in the right list */
   sortable?: boolean
+  /** Pipeline mode: requireConfirmation settings for each bot */
+  requireConfirmationMap?: Record<number, boolean>
+  setRequireConfirmationMap?: React.Dispatch<React.SetStateAction<Record<number, boolean>>>
   onEditBot: (botId: number) => void
   onCreateBot: () => void
   onCloneBot: (botId: number) => void
@@ -50,6 +54,8 @@ export default function BotTransfer({
   excludeLeader = false,
   autoSetLeader = false,
   sortable = false,
+  requireConfirmationMap,
+  setRequireConfirmationMap,
   onEditBot,
   onCreateBot,
   onCloneBot,
@@ -158,6 +164,23 @@ export default function BotTransfer({
     }
   }
 
+  // Handle requireConfirmation toggle for pipeline mode
+  const handleRequireConfirmationChange = useCallback(
+    (botId: number, checked: boolean) => {
+      if (setRequireConfirmationMap) {
+        setRequireConfirmationMap(prev => ({
+          ...prev,
+          [botId]: checked,
+        }))
+      }
+    },
+    [setRequireConfirmationMap]
+  )
+
+  // Check if pipeline mode features should be shown (when requireConfirmationMap is provided)
+  const showPipelineFeatures =
+    requireConfirmationMap !== undefined && setRequireConfirmationMap !== undefined
+
   return (
     <div className="flex flex-col min-h-0 mt-1 flex-1">
       <div className="flex items-center justify-between mb-1">
@@ -237,6 +260,26 @@ export default function BotTransfer({
                     </TooltipTrigger>
                     <TooltipContent>
                       <p>{t('common:team.prompts_badge_tooltip')}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+
+                {/* Pipeline mode: requireConfirmation switch (only show for selected bots) */}
+                {showPipelineFeatures && selectedBotKeys.includes(item.key) && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div className="flex items-center mr-2" onClick={e => e.stopPropagation()}>
+                        <Switch
+                          checked={requireConfirmationMap?.[Number(item.key)] ?? false}
+                          onCheckedChange={checked =>
+                            handleRequireConfirmationChange(Number(item.key), checked)
+                          }
+                          className="h-4 w-7 data-[state=checked]:bg-primary"
+                        />
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>{t('common:team.require_confirmation_tooltip')}</p>
                     </TooltipContent>
                   </Tooltip>
                 )}
