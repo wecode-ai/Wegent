@@ -23,6 +23,7 @@ from app.schemas.knowledge import (
     AccessibleKnowledgeResponse,
     BatchDocumentIds,
     BatchOperationResult,
+    DocumentSourceType,
     KnowledgeBaseCreate,
     KnowledgeBaseListResponse,
     KnowledgeBaseResponse,
@@ -315,7 +316,8 @@ async def create_document(
         )
 
         # If knowledge base has retrieval_config, trigger RAG indexing
-        if knowledge_base:
+        # Skip RAG indexing for TABLE source type as table data should be queried in real-time
+        if knowledge_base and data.source_type != DocumentSourceType.TABLE:
             spec = knowledge_base.json.get("spec", {})
             retrieval_config = spec.get("retrievalConfig")
 
@@ -689,55 +691,6 @@ def batch_disable_documents(
             detail="Only Owner or Maintainer can update documents in this knowledge base",
         )
     return result
-
-
-# ============== Table Endpoints ==============
-
-
-table_router = APIRouter()
-
-
-@table_router.get("", response_model=KnowledgeDocumentListResponse)
-def list_table_documents(
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
-):
-    """
-    List all table documents accessible to the current user.
-
-    Returns documents with source_type='table' from all accessible knowledge bases.
-    Supports multiple providers: DingTalk, Feishu, etc.
-    """
-    documents = KnowledgeService.list_table_documents(
-        db=db,
-        user_id=current_user.id,
-    )
-    return KnowledgeDocumentListResponse(
-        total=len(documents),
-        items=[KnowledgeDocumentResponse.model_validate(doc) for doc in documents],
-    )
-
-
-@table_router.get("/{document_id}", response_model=KnowledgeDocumentResponse)
-def get_table_document(
-    document_id: int,
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
-):
-    """
-    Get a table document by ID.
-    """
-    document = KnowledgeService.get_table_document_by_id(
-        db=db,
-        document_id=document_id,
-        user_id=current_user.id,
-    )
-    if not document:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Table document not found or access denied",
-        )
-    return KnowledgeDocumentResponse.model_validate(document)
 
 
 # ============== QA History Endpoints ==============

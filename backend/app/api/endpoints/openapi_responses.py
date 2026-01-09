@@ -16,7 +16,6 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
-from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
@@ -44,6 +43,7 @@ from app.services.openapi.helpers import (
     subtask_status_to_message_status,
     wegent_status_to_openai_status,
 )
+from app.services.readers.kinds import KindType, kindReader
 
 logger = logging.getLogger(__name__)
 
@@ -210,57 +210,15 @@ async def create_response(
         model_name = model_info["model_id"]
         model_namespace = model_info["namespace"]
 
-        model_exists = False
+        model = kindReader.get_by_name_and_namespace(
+            db,
+            current_user.id,
+            KindType.MODEL,
+            model_namespace,
+            model_name,
+        )
 
-        if model_namespace == "default":
-            # First, query personal model (user's own model)
-            personal_model = (
-                db.query(Kind)
-                .filter(
-                    Kind.user_id == current_user.id,
-                    Kind.kind == "Model",
-                    Kind.name == model_name,
-                    Kind.namespace == model_namespace,
-                    Kind.is_active == True,
-                )
-                .first()
-            )
-
-            if personal_model:
-                model_exists = True
-            else:
-                # If personal model not found, query public model (user_id = 0)
-                public_model = (
-                    db.query(Kind)
-                    .filter(
-                        Kind.user_id == 0,
-                        Kind.kind == "Model",
-                        Kind.name == model_name,
-                        Kind.namespace == model_namespace,
-                        Kind.is_active == True,
-                    )
-                    .first()
-                )
-
-                if public_model:
-                    model_exists = True
-        else:
-            # If namespace is not default, query group model
-            group_model = (
-                db.query(Kind)
-                .filter(
-                    Kind.kind == "Model",
-                    Kind.name == model_name,
-                    Kind.namespace == model_namespace,
-                    Kind.is_active == True,
-                )
-                .first()
-            )
-
-            if group_model:
-                model_exists = True
-
-        if not model_exists:
+        if not model:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Model '{model_namespace}/{model_name}' not found",
@@ -288,17 +246,13 @@ async def create_response(
                     detail=f"Team '{model_info['namespace']}#{model_info['team_name']}' has invalid bot reference",
                 )
 
-            # Query the bot from Kind table
-            bot_kind = (
-                db.query(Kind)
-                .filter(
-                    Kind.name == bot_name,
-                    Kind.namespace == bot_namespace,
-                    Kind.kind == "Bot",
-                    Kind.user_id == team.user_id,
-                    Kind.is_active == True,
-                )
-                .first()
+            # Query the bot using kindReader
+            bot_kind = kindReader.get_by_name_and_namespace(
+                db,
+                team.user_id,
+                KindType.BOT,
+                bot_namespace,
+                bot_name,
             )
 
             if not bot_kind:

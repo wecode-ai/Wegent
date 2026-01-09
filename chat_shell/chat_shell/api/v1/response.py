@@ -135,16 +135,15 @@ async def _stream_response(
             message = request.input.text
 
         # Determine enable_web_search from tools.builtin or features
+        # Requires both: server-side WEB_SEARCH_ENABLED=True AND explicit request
         enable_web_search = False
-        if request.tools and request.tools.builtin:
-            web_search_config = request.tools.builtin.get("web_search")
-            if web_search_config and web_search_config.enabled:
-                enable_web_search = True
-        if request.features and request.features.web_search:
-            enable_web_search = True
-        # Also check server-side setting
         if getattr(settings, "WEB_SEARCH_ENABLED", False):
-            enable_web_search = True
+            if request.tools and request.tools.builtin:
+                web_search_config = request.tools.builtin.get("web_search")
+                if web_search_config and web_search_config.enabled:
+                    enable_web_search = True
+            if request.features and request.features.web_search:
+                enable_web_search = True
 
         # Extract MCP server configs
         mcp_servers = []

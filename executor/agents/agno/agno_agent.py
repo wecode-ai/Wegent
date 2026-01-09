@@ -17,15 +17,15 @@ from agno.agent import RunEvent
 from agno.db.sqlite import SqliteDb
 from agno.team import Team
 from agno.team.team import TeamRunEvent
+from shared.logger import setup_logger
+from shared.models.task import ExecutionResult, ThinkingStep
+from shared.status import TaskStatus
+from shared.telemetry.decorators import add_span_event, trace_async
 
 from executor.agents.base import Agent
 from executor.config.config import DEBUG_RUN, EXECUTOR_ENV
 from executor.tasks.resource_manager import ResourceManager
 from executor.tasks.task_state_manager import TaskState, TaskStateManager
-from shared.logger import setup_logger
-from shared.models.task import ExecutionResult, ThinkingStep
-from shared.status import TaskStatus
-from shared.telemetry.decorators import add_span_event, trace_async
 
 from .config_utils import ConfigManager
 from .mcp_manager import MCPManager
@@ -69,7 +69,20 @@ class AgnoAgent(Agent):
         """
         super().__init__(task_data)
         self.client = None
-        self.session_id = self.task_id
+        # Check if this subtask should start a new session (no conversation history)
+        # This is used in pipeline mode when user confirms a stage and proceeds to next bot
+        # The next bot should not inherit conversation history from previous bot
+        new_session = task_data.get("new_session", False)
+        if new_session:
+            # Use subtask_id as session_id to create a fresh session without history
+            self.session_id = task_data.get("subtask_id", self.task_id)
+            logger.info(
+                f"Pipeline mode: new_session=True, using subtask_id {self.session_id} as session_id "
+                f"to avoid inheriting conversation history from previous bot"
+            )
+        else:
+            # Default behavior: use task_id as session_id to maintain conversation history
+            self.session_id = self.task_id
         self.prompt = task_data.get("prompt", "")
         self.project_path = None
 

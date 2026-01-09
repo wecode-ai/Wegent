@@ -5,16 +5,19 @@
 """Data table tool for querying table data.
 
 This tool allows AI to query data from external table sources
-(DingTalk Notable, Feishu Bitable, etc.).
+(DingTalk Notable, Feishu Bitable, etc.) by calling the backend API.
 """
 
 import json
 import logging
 from typing import Any, Optional
 
+import httpx
 from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
+
+from chat_shell.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -38,9 +41,8 @@ class DataTableInput(BaseModel):
 class DataTableTool(BaseTool):
     """Data table query tool for retrieving table data.
 
-    This tool allows AI to query data from external table sources.
-    It's designed for scenarios where users select a table context
-    and want AI to analyze or process the table data.
+    This tool allows AI to query data from external table sources by calling
+    the backend API. The backend handles all table provider implementations.
     """
 
     name: str = "data_table_query"
@@ -59,6 +61,9 @@ class DataTableTool(BaseTool):
 
     # User ID for access control
     user_id: int = 0
+
+    # User name for access control
+    user_name: str = ""
 
     # Database session (optional, for future use)
     db_session: Optional[Any] = None
@@ -109,7 +114,7 @@ class DataTableTool(BaseTool):
                 f"sheet_id_or_name={sheet_id_or_name}, max_records={max_records}"
             )
 
-            result = await self._query_table(
+            result = await self._query_table_via_backend(
                 provider=provider,
                 base_id=base_id,
                 sheet_id_or_name=sheet_id_or_name,
@@ -124,14 +129,14 @@ class DataTableTool(BaseTool):
                 ensure_ascii=False,
             )
 
-    async def _query_table(
+    async def _query_table_via_backend(
         self,
         provider: str,
         base_id: str,
         sheet_id_or_name: str,
         max_records: int,
     ) -> dict[str, Any]:
-        """Query table data using DataTableService.
+        """Query table data by calling backend internal API.
 
         Args:
             provider: The table provider type
@@ -142,14 +147,64 @@ class DataTableTool(BaseTool):
         Returns:
             Dictionary with schema and records
         """
-        # Use local tables service in chat_shell
-        from chat_shell.tables import DataTableService
+        # Get backend API URL from settings
+        remote_url = getattr(settings, "REMOTE_STORAGE_URL", "")
+        if remote_url:
+            backend_url = remote_url.replace("/api/internal", "")
+        else:
+            backend_url = getattr(settings, "BACKEND_API_URL", "http://localhost:8000")
 
-        service = DataTableService()
-        return await service.list_records(
-            provider=provider,
-            base_id=base_id,
-            sheet_id_or_name=sheet_id_or_name,
-            max_records=max_records,
-            user_id=self.user_id,
-        )
+        # Construct API request
+        request_data = {
+            "provider": provider,
+            "base_id": base_id,
+            "sheet_id_or_name": sheet_id_or_name,
+            "user_name": self.user_name,
+            "max_records": max_records,
+        }
+
+        # Call backend internal API (no authentication required for internal endpoints)
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            try:
+                # Use internal API endpoint for service-to-service communication
+                url = f"{backend_url}/api/internal/tables/query"
+                logger.info(f"[DataTableTool] Calling backend internal API: {url}")
+                logger.debug(f"[DataTableTool] Request data: {request_data}")
+
+                response = await client.post(url, json=request_data)
+                response.raise_for_status()
+
+                result = response.json()
+                logger.info(
+                    f"[DataTableTool] Backend API returned {result.get('total_count', 0)} records"
+                )
+
+                return result
+
+            except httpx.HTTPStatusError as e:
+                error_detail = "Unknown error"
+                try:
+                    error_data = e.response.json()
+                    error_detail = error_data.get("detail", str(e))
+                except Exception:
+                    error_detail = e.response.text or str(e)
+
+                logger.error(
+                    f"[DataTableTool] Backend API error: {e.response.status_code} - {error_detail}"
+                )
+                return {
+                    "error": f"Backend API error: {error_detail}",
+                    "httpStatus": e.response.status_code,
+                }
+
+            except httpx.RequestError as e:
+                logger.error(f"[DataTableTool] Request error: {e}")
+                return {
+                    "error": f"Failed to connect to backend: {str(e)}",
+                }
+
+            except Exception as e:
+                logger.error(f"[DataTableTool] Unexpected error: {e}", exc_info=True)
+                return {
+                    "error": f"Unexpected error: {str(e)}",
+                }

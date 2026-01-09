@@ -141,6 +141,13 @@ export interface MessageBubbleProps {
   feedbackMessageType?: 'original' | 'correction'
   /** Whether this is a group chat (for enabling message collapsing) */
   isGroupChat?: boolean
+  /**
+   * Whether the current pipeline stage is pending confirmation.
+   * This is the single source of truth from pipeline_stage_info.is_pending_confirmation.
+   */
+  isPendingConfirmation?: boolean
+  /** Callback when pipeline stage is confirmed (for FinalPromptMessage) */
+  onPipelineStageConfirmed?: () => void
   /** Callback when user clicks on a context badge to re-select it */
   onContextReselect?: (context: SubtaskContextBrief) => void
 }
@@ -255,6 +262,8 @@ const MessageBubble = memo(
     onRetry,
     feedbackMessageType,
     isGroupChat,
+    isPendingConfirmation,
+    onPipelineStageConfirmed,
     onContextReselect,
   }: MessageBubbleProps) {
     // Use trace hook for telemetry (auto-includes user and task context)
@@ -1091,6 +1100,9 @@ const MessageBubble = memo(
               selectedTeam={selectedTeam}
               selectedRepo={selectedRepo}
               selectedBranch={selectedBranch}
+              taskId={selectedTaskDetail?.id}
+              isPendingConfirmation={isPendingConfirmation}
+              onStageConfirmed={onPipelineStageConfirmed}
             />
           )
         }
@@ -1259,6 +1271,9 @@ const MessageBubble = memo(
             selectedTeam={selectedTeam}
             selectedRepo={selectedRepo}
             selectedBranch={selectedBranch}
+            taskId={selectedTaskDetail?.id}
+            isPendingConfirmation={isPendingConfirmation}
+            onStageConfirmed={onPipelineStageConfirmed}
           />
         )
       }
@@ -1500,7 +1515,8 @@ const MessageBubble = memo(
       prevThinkingLen === nextThinkingLen &&
       prevSourcesLen === nextSourcesLen &&
       prevReasoningLen === nextReasoningLen &&
-      prevProps.msg.status === nextProps.msg.status
+      prevProps.msg.status === nextProps.msg.status &&
+      prevProps.isPendingConfirmation === nextProps.isPendingConfirmation
 
     return shouldSkipRender
   }

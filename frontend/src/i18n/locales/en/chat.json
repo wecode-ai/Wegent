@@ -431,5 +431,33 @@
       "summary": "Summary",
       "improved_answer": "Improved Answer"
     }
+  },
+  "pipeline": {
+    "progress_label": "Pipeline Progress",
+    "current_stage": "Current Stage",
+    "awaiting_confirmation": "Awaiting Confirmation",
+    "start_node": "Start",
+    "stage_started": "Started",
+    "stage_completed": "Completed",
+    "stage_running": "Running",
+    "stage_pending": "Pending",
+    "stage_failed": "Failed",
+    "stage_awaiting_confirmation": "Awaiting Confirmation",
+    "requires_confirmation": "Requires confirmation",
+    "continue_to_next_stage": "Continue to Next Stage",
+    "confirm_stage": "Confirm",
+    "stage_confirming": "Processing...",
+    "continue_clarifying": "Continue Clarifying",
+    "edit_prompt": "Edit Prompt",
+    "edit_prompt_placeholder": "Edit the prompt before proceeding to the next stage...",
+    "save_changes": "Save",
+    "confirmation_hint": "Review and edit the prompt if needed, then click 'Continue to Next Stage' to proceed.",
+    "stage_confirmed": "Stage Confirmed",
+    "stage_retry": "Returning to clarification",
+    "confirm_failed": "Failed to confirm stage",
+    "retry_failed": "Failed to retry stage",
+    "proceeding_to_stage": "Proceeding to stage: {{stage}}",
+    "pipeline_completed": "Pipeline completed",
+    "no_task_id": "No task ID available"
   }
 }

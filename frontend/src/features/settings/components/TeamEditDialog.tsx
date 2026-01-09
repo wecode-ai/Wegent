@@ -88,6 +88,9 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   // Store unsaved team prompts
   const [unsavedPrompts, setUnsavedPrompts] = useState<Record<string, string>>({})
 
+  // Store requireConfirmation settings for pipeline mode (botId -> boolean)
+  const [requireConfirmationMap, setRequireConfirmationMap] = useState<Record<number, boolean>>({})
+
   // Mode change confirmation dialog state
   const [modeChangeDialogVisible, setModeChangeDialogVisible] = useState(false)
   const [pendingMode, setPendingMode] = useState<TeamMode | null>(null)
@@ -177,6 +180,14 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setSelectedBotKeys(ids)
       const leaderBot = formTeam.bots.find(b => b.role === 'leader')
       setLeaderBotId(leaderBot?.bot_id ?? null)
+      // Initialize requireConfirmationMap from existing team data
+      const confirmMap: Record<number, boolean> = {}
+      formTeam.bots.forEach(b => {
+        if (b.requireConfirmation) {
+          confirmMap[b.bot_id] = true
+        }
+      })
+      setRequireConfirmationMap(confirmMap)
     } else {
       setName('')
       setDescription('')
@@ -185,6 +196,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setBindMode([])
       setSelectedBotKeys([])
       setLeaderBotId(null)
+      setRequireConfirmationMap({})
     }
     setUnsavedPrompts({})
   }, [open, formTeam])
@@ -221,6 +233,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     setSelectedBotKeys([])
     setLeaderBotId(null)
     setUnsavedPrompts({})
+    setRequireConfirmationMap({})
   }, [])
 
   // Change Mode with confirmation
@@ -430,6 +443,8 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
         bot_id: id,
         bot_prompt: unsavedPrompt || existingBot?.bot_prompt || '',
         role: id === leaderBotId ? 'leader' : undefined,
+        // Include requireConfirmation for pipeline mode
+        requireConfirmation: mode === 'pipeline' ? requireConfirmationMap[id] || false : undefined,
       }
     })
 
@@ -529,6 +544,8 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
               botEditRef={botEditRef}
               scope={scope}
               groupName={groupName}
+              requireConfirmationMap={requireConfirmationMap}
+              setRequireConfirmationMap={setRequireConfirmationMap}
               onEditBot={handleEditBot}
               onCreateBot={handleCreateBot}
               onCloneBot={handleCloneBot}

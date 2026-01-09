@@ -175,7 +175,7 @@ class LangChainModelFactory:
         if cfg.get("api_format") == "responses":
             api_format_log = ", api_format=responses"
 
-        logger.info(
+        logger.debug(
             "Creating LangChain model: %s, type=%s, key=%s%s",
             cfg["model_id"],
             model_type,

@@ -30,7 +30,11 @@ from app.services.openapi.chat_session import (
     build_chat_history,
     setup_chat_session,
 )
-from app.services.openapi.mcp import load_bot_mcp_tools, load_server_mcp_tools
+from app.services.openapi.mcp import (
+    load_bot_mcp_tools,
+    load_custom_mcp_tools,
+    load_server_mcp_tools,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +140,56 @@ async def _create_streaming_response_http(
     task_kind_id = setup.task_id
     enable_chat_bot = tool_settings.get("enable_chat_bot", False)
 
+    # Prepare MCP servers for HTTP mode
+    # Only load MCP servers when tools are explicitly enabled via enable_chat_bot
+    # This ensures /api/v1/responses without tools parameter doesn't auto-load tools
+    mcp_servers_to_pass = []
+
+    if enable_chat_bot:
+        # 1. Load bot MCP servers from Ghost CRD
+        if setup.bot_name:
+            try:
+                from app.services.openapi.mcp import _get_bot_mcp_servers_sync
+
+                bot_mcp_servers = _get_bot_mcp_servers_sync(
+                    setup.bot_name, setup.bot_namespace
+                )
+                if bot_mcp_servers:
+                    # Convert to chat_shell expected format
+                    for name, config in bot_mcp_servers.items():
+                        if isinstance(config, dict):
+                            server_entry = {
+                                "name": name,
+                                "url": config.get("url", ""),
+                                "type": config.get("type", "streamable-http"),
+                            }
+                            if config.get("headers"):
+                                server_entry["auth"] = config["headers"]
+                            mcp_servers_to_pass.append(server_entry)
+                    logger.info(
+                        f"[OPENAPI_HTTP] Loaded {len(bot_mcp_servers)} bot MCP servers for HTTP mode: "
+                        f"bot={setup.bot_namespace}/{setup.bot_name}"
+                    )
+            except Exception as e:
+                logger.warning(f"[OPENAPI_HTTP] Failed to load bot MCP servers: {e}")
+
+        # 2. Add custom MCP servers from API request
+        custom_mcp_servers = tool_settings.get("mcp_servers", {})
+        if custom_mcp_servers:
+            for name, config in custom_mcp_servers.items():
+                if isinstance(config, dict) and config.get("url"):
+                    server_entry = {
+                        "name": name,
+                        "url": config.get("url", ""),
+                        "type": config.get("type", "streamable-http"),
+                    }
+                    if config.get("headers"):
+                        server_entry["auth"] = config["headers"]
+                    mcp_servers_to_pass.append(server_entry)
+            logger.info(
+                f"[OPENAPI_HTTP] Added {len(custom_mcp_servers)} custom MCP servers from request"
+            )
+
     async def raw_chat_stream() -> AsyncGenerator[str, None]:
         """Generate raw text chunks from HTTP adapter."""
         from app.api.dependencies import get_db as get_db_session
@@ -179,6 +233,7 @@ async def _create_streaming_response_http(
                 enable_web_search=enable_chat_bot and settings.WEB_SEARCH_ENABLED,
                 bot_name=setup.bot_name,
                 bot_namespace=setup.bot_namespace,
+                mcp_servers=mcp_servers_to_pass,
             )
 
             # Stream from HTTP adapter
@@ -297,6 +352,7 @@ async def _create_streaming_response_package(
     created_at = int(datetime.now().timestamp())
     assistant_subtask_id = setup.assistant_subtask.id
     task_kind_id = setup.task_id
+    team_user_id = team.user_id  # Use team owner's user_id for resource lookup
 
     # Capture tool settings for use in generator
     # wegent_chat_bot enables all server-side capabilities
@@ -347,7 +403,7 @@ async def _create_streaming_response_package(
             # 1. Bot MCP (always available when bot has MCP configured)
             try:
                 bot_mcp_client = await load_bot_mcp_tools(
-                    task_kind_id, bot_name, bot_namespace
+                    task_kind_id, team_user_id, bot_name, bot_namespace
                 )
                 if bot_mcp_client:
                     mcp_clients.append(bot_mcp_client)
@@ -371,7 +427,23 @@ async def _create_streaming_response_package(
                 except Exception as e:
                     logger.warning(f"[OPENAPI] Failed to load server MCP tools: {e}")
 
-            # 3. Web search tool (requires wegent_chat_bot and WEB_SEARCH_ENABLED)
+            # 3. Custom MCP (user-provided via API tools parameter)
+            custom_mcp_servers = tool_settings.get("mcp_servers", {})
+            if custom_mcp_servers:
+                try:
+                    custom_mcp_client = await load_custom_mcp_tools(
+                        task_kind_id, custom_mcp_servers
+                    )
+                    if custom_mcp_client:
+                        mcp_clients.append(custom_mcp_client)
+                        extra_tools.extend(custom_mcp_client.get_tools())
+                        logger.info(
+                            f"[OPENAPI] Loaded {len(custom_mcp_client.get_tools())} custom MCP tools for task {task_kind_id}"
+                        )
+                except Exception as e:
+                    logger.warning(f"[OPENAPI] Failed to load custom MCP tools: {e}")
+
+            # 4. Web search tool (requires wegent_chat_bot and WEB_SEARCH_ENABLED)
             if enable_chat_bot and settings.WEB_SEARCH_ENABLED:
                 try:
                     from chat_shell.tools import WebSearchTool
@@ -687,6 +759,58 @@ async def _create_sync_response_http(
     assistant_subtask_id = setup.assistant_subtask.id
     enable_chat_bot = tool_settings.get("enable_chat_bot", False)
 
+    # Prepare MCP servers for HTTP mode
+    # Only load MCP servers when tools are explicitly enabled via enable_chat_bot
+    # This ensures /api/v1/responses without tools parameter doesn't auto-load tools
+    mcp_servers_to_pass = []
+
+    if enable_chat_bot:
+        # 1. Load bot MCP servers from Ghost CRD
+        if setup.bot_name:
+            try:
+                from app.services.openapi.mcp import _get_bot_mcp_servers_sync
+
+                bot_mcp_servers = _get_bot_mcp_servers_sync(
+                    setup.bot_name, setup.bot_namespace
+                )
+                if bot_mcp_servers:
+                    # Convert to chat_shell expected format
+                    for name, config in bot_mcp_servers.items():
+                        if isinstance(config, dict):
+                            server_entry = {
+                                "name": name,
+                                "url": config.get("url", ""),
+                                "type": config.get("type", "streamable-http"),
+                            }
+                            if config.get("headers"):
+                                server_entry["auth"] = config["headers"]
+                            mcp_servers_to_pass.append(server_entry)
+                    logger.info(
+                        f"[OPENAPI_HTTP_SYNC] Loaded {len(bot_mcp_servers)} bot MCP servers for HTTP mode: "
+                        f"bot={setup.bot_namespace}/{setup.bot_name}"
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"[OPENAPI_HTTP_SYNC] Failed to load bot MCP servers: {e}"
+                )
+
+        # 2. Add custom MCP servers from API request
+        custom_mcp_servers = tool_settings.get("mcp_servers", {})
+        if custom_mcp_servers:
+            for name, config in custom_mcp_servers.items():
+                if isinstance(config, dict) and config.get("url"):
+                    server_entry = {
+                        "name": name,
+                        "url": config.get("url", ""),
+                        "type": config.get("type", "streamable-http"),
+                    }
+                    if config.get("headers"):
+                        server_entry["auth"] = config["headers"]
+                    mcp_servers_to_pass.append(server_entry)
+            logger.info(
+                f"[OPENAPI_HTTP_SYNC] Added {len(custom_mcp_servers)} custom MCP servers from request"
+            )
+
     # Update subtask status to RUNNING
     await db_handler.update_subtask_status(assistant_subtask_id, "RUNNING")
 
@@ -725,6 +849,7 @@ async def _create_sync_response_http(
             enable_web_search=enable_chat_bot and settings.WEB_SEARCH_ENABLED,
             bot_name=setup.bot_name,
             bot_namespace=setup.bot_namespace,
+            mcp_servers=mcp_servers_to_pass,
         )
 
         # Stream from HTTP adapter and accumulate
@@ -880,7 +1005,7 @@ async def _create_sync_response_package(
         # 1. Bot MCP (always available when bot has MCP configured)
         try:
             bot_mcp_client = await load_bot_mcp_tools(
-                setup.task_id, setup.bot_name, setup.bot_namespace
+                setup.task_id, team.user_id, setup.bot_name, setup.bot_namespace
             )
             if bot_mcp_client:
                 mcp_clients.append(bot_mcp_client)
@@ -904,7 +1029,23 @@ async def _create_sync_response_package(
             except Exception as e:
                 logger.warning(f"[OPENAPI_SYNC] Failed to load server MCP tools: {e}")
 
-        # 3. Web search tool (requires wegent_chat_bot and WEB_SEARCH_ENABLED)
+        # 3. Custom MCP (user-provided via API tools parameter)
+        custom_mcp_servers = tool_settings.get("mcp_servers", {})
+        if custom_mcp_servers:
+            try:
+                custom_mcp_client = await load_custom_mcp_tools(
+                    setup.task_id, custom_mcp_servers
+                )
+                if custom_mcp_client:
+                    mcp_clients.append(custom_mcp_client)
+                    extra_tools.extend(custom_mcp_client.get_tools())
+                    logger.info(
+                        f"[OPENAPI_SYNC] Loaded {len(custom_mcp_client.get_tools())} custom MCP tools for task {setup.task_id}"
+                    )
+            except Exception as e:
+                logger.warning(f"[OPENAPI_SYNC] Failed to load custom MCP tools: {e}")
+
+        # 4. Web search tool (requires wegent_chat_bot and WEB_SEARCH_ENABLED)
         if enable_chat_bot and settings.WEB_SEARCH_ENABLED:
             try:
                 from chat_shell.tools import WebSearchTool

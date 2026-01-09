@@ -34,12 +34,6 @@ def create_tool_event_handler(
         """Handle tool events and add thinking steps."""
         tool_name = event_data.get("name", "unknown")
         run_id = event_data.get("run_id", "")
-        logger.info(
-            "[TOOL_EVENT] Received event: kind=%s, tool_name=%s, run_id=%s",
-            kind,
-            tool_name,
-            run_id,
-        )
 
         if kind == "tool_start":
             _handle_tool_start(
@@ -62,11 +56,6 @@ def _handle_tool_start(
     event_data: dict,
 ) -> None:
     """Handle tool start event."""
-    logger.info(
-        "[TOOL_EVENT] _handle_tool_start: tool_name=%s, run_id=%s",
-        tool_name,
-        run_id,
-    )
     # Extract tool input for better display
     tool_input = event_data.get("data", {}).get("input", {})
 
@@ -90,11 +79,6 @@ def _handle_tool_start(
             },
         }
     )
-    logger.info(
-        "[TOOL_EVENT] Added thinking step for tool_start: title=%s, thinking_count=%d",
-        title,
-        len(state.thinking),
-    )
 
     # Emit chunk with thinking data synchronously using emit_json
     # Note: emit_json is sync method, emit_chunk is async but we're in sync callback
@@ -107,9 +91,6 @@ def _handle_tool_start(
         "result": current_result,
     }
     emitter.emit_json(chunk_data)
-    logger.info(
-        "[TOOL_EVENT] Emitted chunk for tool_start: subtask_id=%d", state.subtask_id
-    )
 
 
 def _handle_tool_end(
@@ -121,11 +102,6 @@ def _handle_tool_end(
     event_data: dict,
 ) -> None:
     """Handle tool end event."""
-    logger.info(
-        "[TOOL_EVENT] _handle_tool_end: tool_name=%s, run_id=%s",
-        tool_name,
-        run_id,
-    )
     # Extract and serialize tool output
     tool_output = event_data.get("data", {}).get("output", "")
     serializable_output = _make_output_serializable(tool_output)
@@ -179,12 +155,6 @@ def _handle_tool_end(
         "result": current_result,
     }
     emitter.emit_json(chunk_data)
-    logger.info(
-        "[TOOL_EVENT] Emitted chunk for tool_end: subtask_id=%d, thinking_count=%d, result_keys=%s",
-        state.subtask_id,
-        len(current_result.get("thinking", [])) if current_result else 0,
-        list(current_result.keys()) if current_result else [],
-    )
 
 
 def _process_tool_output(

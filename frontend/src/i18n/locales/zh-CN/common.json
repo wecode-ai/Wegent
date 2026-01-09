@@ -320,7 +320,8 @@
     "bind_mode": "绑定模式",
     "bind_mode_chat": "聊天",
     "bind_mode_code": "编码",
-    "bind_mode_required": "请至少选择一个绑定模式（聊天或编码）"
+    "bind_mode_required": "请至少选择一个绑定模式（聊天或编码）",
+    "require_confirmation_tooltip": "启用后，该阶段完成时任务将暂停，等待用户确认后再继续执行下一阶段"
   },
   "team_model": {
     "solo": "独立",

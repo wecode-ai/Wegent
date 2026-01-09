@@ -162,15 +162,9 @@ class HTTPAdapter(ChatInterface):
                 builtin["web_search"]["engine"] = request.search_engine
 
         # Add MCP servers
+        # mcp_servers is now a list: [{"name": "...", "url": "...", "type": "...", "auth": ...}]
         if request.mcp_servers:
-            tools_config["mcp_servers"] = [
-                {
-                    "name": server.get("name", ""),
-                    "url": server.get("url", ""),
-                    "auth": server.get("auth"),
-                }
-                for server in request.mcp_servers
-            ]
+            tools_config["mcp_servers"] = request.mcp_servers
 
         # Add skills if provided
         if request.skills:

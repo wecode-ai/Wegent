@@ -29,6 +29,7 @@ class SubtaskStatus(str, Enum):
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"
     DELETE = "DELETE"
+    PENDING_CONFIRMATION = "PENDING_CONFIRMATION"  # Pipeline stage completed, waiting for user confirmation
 
 
 class SubtaskRole(str, Enum):

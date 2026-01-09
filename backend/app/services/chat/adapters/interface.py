@@ -85,7 +85,7 @@ class ChatRequest:
     extra_tools: list = field(default_factory=list)
 
     # MCP server configuration for HTTP mode
-    # Format: [{"name": "server_name", "url": "http://...", "auth": {"Authorization": "..."}}]
+    # Format: [{"name": "...", "url": "http://...", "type": "streamable-http", "auth": {...}}]
     mcp_servers: list = field(default_factory=list)
 
     def to_dict(self) -> dict:

@@ -119,6 +119,16 @@ class Settings(BaseSettings):
     # Frontend URL configuration
     FRONTEND_URL: str = "http://localhost:3000"
 
+    # Task notification URL configuration (for DingTalk mobile notifications)
+    # External URL for task completion notifications
+    # If not set, falls back to FRONTEND_URL (no jump redirect)
+    TASK_NOTIFICATION_URL: str = ""
+    # Jump page path for User-Agent detection and redirect
+    # The jump page detects browser type and redirects accordingly:
+    # - DingTalk browser (mobile) -> TASK_NOTIFICATION_URL (external access)
+    # - PC browser -> FRONTEND_URL (internal access)
+    TASK_NOTIFICATION_JUMP_PATH: str = "/jump"
+
     # OIDC configuration
     OIDC_CLIENT_ID: str = "wegent"
     OIDC_CLIENT_SECRET: str = "test"
@@ -128,6 +138,9 @@ class Settings(BaseSettings):
 
     # Redis configuration
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
+
+    # Service extension module (empty = disabled)
+    SERVICE_EXTENSION: str = ""
 
     # Team sharing configuration
     TEAM_SHARE_BASE_URL: str = "http://localhost:3000/chat"

@@ -21,6 +21,7 @@ class TaskStatus(str, Enum):
     CANCELLED = "CANCELLED"
     CANCELLING = "CANCELLING"
     DELETE = "DELETE"
+    PENDING_CONFIRMATION = "PENDING_CONFIRMATION"  # Pipeline stage completed, waiting for user confirmation
 
 
 class TaskBase(BaseModel):
@@ -170,3 +171,32 @@ class TaskLiteListResponse(BaseModel):
 
     total: int
     items: list[TaskLite]
+
+
+class ConfirmStageRequest(BaseModel):
+    """Request body for confirming a pipeline stage"""
+
+    confirmed_prompt: str  # The edited/confirmed prompt to pass to next stage
+    action: str = (
+        "continue"  # "continue" to proceed to next stage, "retry" to stay at current stage
+    )
+
+
+class ConfirmStageResponse(BaseModel):
+    """Response for confirm stage operation"""
+
+    message: str
+    task_id: int
+    current_stage: int  # 0-indexed current pipeline stage
+    total_stages: int  # Total number of pipeline stages
+    next_stage_name: Optional[str] = None  # Name of the next stage (bot name)
+
+
+class PipelineStageInfo(BaseModel):
+    """Information about pipeline stages for a task"""
+
+    current_stage: int  # 0-indexed current pipeline stage
+    total_stages: int  # Total number of pipeline stages
+    current_stage_name: str  # Name of current stage (bot name)
+    is_pending_confirmation: bool  # Whether waiting for user confirmation
+    stages: list[dict]  # List of {index, name, require_confirmation, status}

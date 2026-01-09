@@ -19,6 +19,7 @@ from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Team
 from app.services.adapters.task_kinds import task_kinds_service
+from app.services.readers.kinds import KindType, kindReader
 
 
 class ChatSessionSetup(NamedTuple):
@@ -97,16 +98,12 @@ def setup_chat_session(
     first_bot_name = ""
     first_bot_namespace = "default"
     for member in team_crd.spec.members:
-        member_bot = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == team.user_id,
-                Kind.kind == "Bot",
-                Kind.name == member.botRef.name,
-                Kind.namespace == member.botRef.namespace,
-                Kind.is_active == True,
-            )
-            .first()
+        member_bot = kindReader.get_by_name_and_namespace(
+            db,
+            team.user_id,
+            KindType.BOT,
+            member.botRef.namespace,
+            member.botRef.name,
         )
         if member_bot:
             bot_ids.append(member_bot.id)
