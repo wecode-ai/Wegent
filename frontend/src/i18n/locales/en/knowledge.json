@@ -77,6 +77,9 @@
         "indexStatus": "Index",
         "actions": "Actions"
       },
+      "type": {
+        "table": "Table"
+      },
       "search": "Search documents",
       "empty": "No documents yet",
       "emptyHint": "Upload your first document to get started",
@@ -127,6 +130,7 @@
       "clickToRename": "Click to rename",
       "addTable": "Add Data Table",
       "tableHint": "Enter the table link and name to add it to your knowledge base.",
+      "tableUrlHint": "Please enter a valid table URL. Ensure the link is accessible and you have read permission. Currently supports DingTalk tables.",
       "tableName": "Document Name",
       "tableNamePlaceholder": "Enter document name",
       "tableUrl": "Table Link",
@@ -135,7 +139,23 @@
       "tableNameRequired": "Please enter document name",
       "tableAddFailed": "Failed to add, please try again",
       "adding": "Adding...",
-      "confirmAdd": "Confirm Add"
+      "confirmAdd": "Confirm Add",
+      "validation": {
+        "validating": "Validating URL...",
+        "success": "URL validation passed",
+        "invalidUrlFormat": "Please enter a valid URL format",
+        "unsupportedProvider": "Unsupported link source. Currently only DingTalk tables are supported",
+        "parseFailed": "Unable to parse the link. Please check if the URL format is correct",
+        "missingDingtalkId": "You do not have a DingTalk ID configured. Please log in using DingTalk to access table documents",
+        "tableAccessFailed": "Unable to access the table. Please check if you have access permissions",
+        "tableAccessFailedLinkedTable": "The table might be a linked table. Please use the original table link",
+        "unknownError": "Validation failed. Please check if the URL is correct",
+        "networkError": "Network error. Please try again later",
+        "pleaseFixUrl": "Please fix the URL before submitting",
+        "provider": {
+          "dingtalk": "DingTalk Table"
+        }
+      }
     },
     "permission": {
       "noAccess": "You do not have permission to perform this action"

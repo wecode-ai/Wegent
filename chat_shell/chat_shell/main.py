@@ -215,6 +215,26 @@ def create_app(
     else:
         logger.debug("OpenTelemetry is disabled")
 
+    # Add exception handler for validation errors (422)
+    from fastapi.exceptions import RequestValidationError
+    from fastapi.responses import JSONResponse
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(
+        request: Request, exc: RequestValidationError
+    ):
+        """Log detailed validation errors for debugging."""
+        logger.error(
+            "[VALIDATION_ERROR] 422 Unprocessable Entity: %s %s\nErrors: %s",
+            request.method,
+            request.url.path,
+            exc.errors(),
+        )
+        return JSONResponse(
+            status_code=422,
+            content={"detail": exc.errors()},
+        )
+
     # HTTP middleware for request context and tracing
     @app.middleware("http")
     async def trace_requests_middleware(request: Request, call_next):

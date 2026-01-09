@@ -431,5 +431,33 @@
       "summary": "总结评价",
       "improved_answer": "改进后的回答"
     }
+  },
+  "pipeline": {
+    "progress_label": "流水线进度",
+    "current_stage": "当前阶段",
+    "awaiting_confirmation": "等待确认",
+    "start_node": "开始",
+    "stage_started": "已开始",
+    "stage_completed": "已完成",
+    "stage_running": "执行中",
+    "stage_pending": "等待中",
+    "stage_failed": "已失败",
+    "stage_awaiting_confirmation": "等待确认",
+    "requires_confirmation": "需要确认",
+    "continue_to_next_stage": "继续到下一阶段",
+    "confirm_stage": "确认",
+    "stage_confirming": "处理中...",
+    "continue_clarifying": "继续澄清",
+    "edit_prompt": "编辑提示词",
+    "edit_prompt_placeholder": "在继续到下一阶段之前编辑提示词...",
+    "save_changes": "保存",
+    "confirmation_hint": "如需修改请编辑提示词，然后点击「继续到下一阶段」继续执行。",
+    "stage_confirmed": "阶段已确认",
+    "stage_retry": "返回继续澄清",
+    "confirm_failed": "确认阶段失败",
+    "retry_failed": "重试阶段失败",
+    "proceeding_to_stage": "正在进入阶段: {{stage}}",
+    "pipeline_completed": "流水线已完成",
+    "no_task_id": "没有可用的任务 ID"
   }
 }

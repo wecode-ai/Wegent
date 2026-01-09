@@ -32,9 +32,9 @@ from app.db.session import SessionLocal, engine
 from app.models import *  # noqa: F401,F403
 from app.services.jobs import start_background_jobs, stop_background_jobs
 
-# Redis lock keys for startup operations (migrations + YAML init)
+# Redis lock key for startup operations (migrations + YAML init)
+# Only used to prevent concurrent initialization, not to skip initialization
 STARTUP_LOCK_KEY = "wegent:startup_lock"
-STARTUP_DONE_KEY = "wegent:startup_done"
 STARTUP_LOCK_TIMEOUT = 120  # 120 seconds timeout for migrations + YAML init
 
 
@@ -60,161 +60,125 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Failed to connect to Redis for startup lock: {e}")
 
-    # Check if startup initialization already done by another worker
-    # If INIT_DATA_FORCE is True, skip this check and force re-initialization
-    force_init = settings.INIT_DATA_FORCE
-    if redis_client and redis_client.exists(STARTUP_DONE_KEY) and not force_init:
-        logger.info(
-            "Startup initialization already completed by another worker, skipping migrations and YAML init"
+    # Try to acquire lock for startup initialization (migrations + YAML)
+    # The lock only prevents concurrent initialization, not repeated initialization
+    # YAML initialization is idempotent (checks if resources exist before creating)
+    acquired_lock = False
+    if redis_client:
+        acquired_lock = redis_client.set(
+            STARTUP_LOCK_KEY, "locked", nx=True, ex=STARTUP_LOCK_TIMEOUT
         )
-    else:
-        if force_init:
-            logger.info(
-                "INIT_DATA_FORCE is enabled, forcing re-initialization of YAML data"
-            )
-            # Clear the done flag to allow re-initialization
-            if redis_client:
-                redis_client.delete(STARTUP_DONE_KEY)
-        # Try to acquire lock for startup initialization (migrations + YAML)
-        acquired_lock = False
-        if redis_client:
-            acquired_lock = redis_client.set(
-                STARTUP_LOCK_KEY, "locked", nx=True, ex=STARTUP_LOCK_TIMEOUT
-            )
-            if not acquired_lock:
-                # Another worker is running startup initialization, wait for completion
+        if acquired_lock:
+            logger.info("Acquired startup initialization lock")
+        else:
+            # Another worker is running startup initialization, skip and continue
+            logger.info("Another worker is running startup initialization, skipping...")
+
+    # Run startup initialization only if we acquired the distributed lock
+    # Redis is required for distributed locking - fail fast if unavailable
+    if not redis_client:
+        logger.error(
+            "Redis client is not available. Distributed locking is required for startup initialization. "
+            "Please ensure Redis is running and accessible."
+        )
+        raise RuntimeError(
+            "Redis is required for distributed locking during startup initialization"
+        )
+
+    if acquired_lock:
+        try:
+            # Step 1: Run database migrations
+            if settings.ENVIRONMENT == "development" and settings.DB_AUTO_MIGRATE:
                 logger.info(
-                    "Another worker is running startup initialization, waiting..."
+                    "Running database migrations automatically (development mode)..."
                 )
-                max_wait = STARTUP_LOCK_TIMEOUT
-                waited = 0
-                while waited < max_wait:
-                    time.sleep(1)
-                    waited += 1
-                    if redis_client.exists(STARTUP_DONE_KEY):
-                        logger.info(
-                            "Startup initialization completed by another worker"
-                        )
-                        break
-                    if not redis_client.exists(STARTUP_LOCK_KEY):
-                        logger.warning("Lock released but startup not marked as done")
-                        break
-            else:
-                logger.info("Acquired startup initialization lock")
-
-        # Only run startup initialization if we acquired the lock or Redis is not available
-        if acquired_lock or not redis_client:
-            startup_success = False
-            try:
-                # Step 1: Run database migrations
-                if settings.ENVIRONMENT == "development" and settings.DB_AUTO_MIGRATE:
-                    logger.info(
-                        "Running database migrations automatically (development mode)..."
-                    )
-                    try:
-                        import os
-                        import subprocess
-
-                        # Get the alembic.ini path
-                        backend_dir = os.path.dirname(
-                            os.path.dirname(os.path.abspath(__file__))
-                        )
-
-                        logger.info("Executing Alembic upgrade to head...")
-
-                        # Run Alembic as subprocess to avoid output buffering issues
-                        result = subprocess.run(
-                            ["alembic", "upgrade", "head"],
-                            cwd=backend_dir,
-                            capture_output=False,  # Let output go directly to stdout/stderr
-                            text=True,
-                            check=True,
-                        )
-
-                        logger.info("✓ Alembic migrations completed successfully")
-                    except subprocess.CalledProcessError as e:
-                        logger.error(f"✗ Error running Alembic migrations: {e}")
-                        raise
-                    except Exception as e:
-                        logger.error(
-                            f"✗ Unexpected error running Alembic migrations: {e}"
-                        )
-                        raise
-                elif settings.ENVIRONMENT == "production":
-                    logger.warning(
-                        "Running in production mode. Database migrations must be run manually. "
-                        "Please execute 'alembic upgrade head' to apply pending migrations."
-                    )
-                    # Check migration status
-                    try:
-                        import os
-
-                        from alembic import command
-                        from alembic.config import Config as AlembicConfig
-                        from alembic.runtime.migration import MigrationContext
-                        from alembic.script import ScriptDirectory
-
-                        backend_dir = os.path.dirname(
-                            os.path.dirname(os.path.abspath(__file__))
-                        )
-                        alembic_ini_path = os.path.join(backend_dir, "alembic.ini")
-
-                        alembic_cfg = AlembicConfig(alembic_ini_path)
-                        script = ScriptDirectory.from_config(alembic_cfg)
-
-                        # Get current revision from database
-                        with engine.connect() as connection:
-                            context = MigrationContext.configure(connection)
-                            current_rev = context.get_current_revision()
-                            head_rev = script.get_current_head()
-
-                            if current_rev != head_rev:
-                                logger.warning(
-                                    f"Database migration pending: current={current_rev}, latest={head_rev}. "
-                                    "Run 'alembic upgrade head' manually in production."
-                                )
-                            else:
-                                logger.info("Database schema is up to date")
-                    except Exception as e:
-                        logger.warning(f"Could not check migration status: {e}")
-                else:
-                    logger.info("Alembic auto-upgrade is disabled")
-
-                # Step 2: Initialize database with YAML configuration
-                logger.info("Starting YAML data initialization...")
-                db = SessionLocal()
                 try:
-                    run_yaml_initialization(
-                        db, skip_lock=True
-                    )  # Skip internal lock since we already have one
-                    logger.info("✓ YAML data initialization completed")
-                except Exception as e:
-                    logger.error(f"✗ Failed to initialize database from YAML: {e}")
-                finally:
-                    db.close()
+                    import os
+                    import subprocess
 
-                # Mark startup as successful
-                startup_success = True
-            except Exception as e:
-                # Startup failed - do NOT mark as done so next restart will retry
-                logger.error(f"✗ Startup initialization failed: {e}")
-                startup_success = False
-            finally:
-                # Only mark startup as done if it was successful
-                if redis_client and startup_success:
-                    redis_client.set(STARTUP_DONE_KEY, "done", ex=86400)
-                    logger.info("Marked startup initialization as done")
-                elif redis_client and not startup_success:
-                    # Ensure STARTUP_DONE_KEY is deleted if startup failed
-                    # This allows the next restart to retry
-                    redis_client.delete(STARTUP_DONE_KEY)
-                    logger.warning(
-                        "Startup failed - cleared done flag to allow retry on next restart"
+                    # Get the alembic.ini path
+                    backend_dir = os.path.dirname(
+                        os.path.dirname(os.path.abspath(__file__))
                     )
-                # Release lock
-                if redis_client and acquired_lock:
-                    redis_client.delete(STARTUP_LOCK_KEY)
-                    logger.info("Released startup initialization lock")
+
+                    logger.info("Executing Alembic upgrade to head...")
+
+                    # Run Alembic as subprocess to avoid output buffering issues
+                    result = subprocess.run(
+                        ["alembic", "upgrade", "head"],
+                        cwd=backend_dir,
+                        capture_output=False,  # Let output go directly to stdout/stderr
+                        text=True,
+                        check=True,
+                    )
+
+                    logger.info("✓ Alembic migrations completed successfully")
+                except subprocess.CalledProcessError as e:
+                    logger.error(f"✗ Error running Alembic migrations: {e}")
+                    raise
+                except Exception as e:
+                    logger.error(f"✗ Unexpected error running Alembic migrations: {e}")
+                    raise
+            elif settings.ENVIRONMENT == "production":
+                logger.warning(
+                    "Running in production mode. Database migrations must be run manually. "
+                    "Please execute 'alembic upgrade head' to apply pending migrations."
+                )
+                # Check migration status
+                try:
+                    import os
+
+                    from alembic import command
+                    from alembic.config import Config as AlembicConfig
+                    from alembic.runtime.migration import MigrationContext
+                    from alembic.script import ScriptDirectory
+
+                    backend_dir = os.path.dirname(
+                        os.path.dirname(os.path.abspath(__file__))
+                    )
+                    alembic_ini_path = os.path.join(backend_dir, "alembic.ini")
+
+                    alembic_cfg = AlembicConfig(alembic_ini_path)
+                    script = ScriptDirectory.from_config(alembic_cfg)
+
+                    # Get current revision from database
+                    with engine.connect() as connection:
+                        context = MigrationContext.configure(connection)
+                        current_rev = context.get_current_revision()
+                        head_rev = script.get_current_head()
+
+                        if current_rev != head_rev:
+                            logger.warning(
+                                f"Database migration pending: current={current_rev}, latest={head_rev}. "
+                                "Run 'alembic upgrade head' manually in production."
+                            )
+                        else:
+                            logger.info("Database schema is up to date")
+                except Exception as e:
+                    logger.warning(f"Could not check migration status: {e}")
+            else:
+                logger.info("Alembic auto-upgrade is disabled")
+
+            # Step 2: Initialize database with YAML configuration
+            # This is idempotent - existing resources are skipped
+            logger.info("Starting YAML data initialization...")
+            db = SessionLocal()
+            try:
+                run_yaml_initialization(
+                    db, skip_lock=True
+                )  # Skip internal lock since we already have one
+                logger.info("✓ YAML data initialization completed")
+            except Exception as e:
+                logger.error(f"✗ Failed to initialize database from YAML: {e}")
+            finally:
+                db.close()
+
+        except Exception as e:
+            logger.error(f"✗ Startup initialization failed: {e}")
+        finally:
+            # Release lock
+            redis_client.delete(STARTUP_LOCK_KEY)
+            logger.info("Released startup initialization lock")
 
     # Start background jobs
     logger.info("Starting background jobs...")

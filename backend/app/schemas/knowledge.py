@@ -262,3 +262,29 @@ class AccessibleKnowledgeResponse(BaseModel):
 
     personal: list[AccessibleKnowledgeBase]
     team: list[TeamKnowledgeGroup]
+
+
+# ============== Table URL Validation Schemas ==============
+
+
+class TableUrlValidationRequest(BaseModel):
+    """Schema for table URL validation request."""
+
+    url: str = Field(..., min_length=1, description="The table URL to validate")
+
+
+class TableUrlValidationResponse(BaseModel):
+    """Schema for table URL validation response."""
+
+    valid: bool = Field(..., description="Whether the URL is valid")
+    provider: Optional[str] = Field(
+        None, description="Detected table provider (e.g., 'dingtalk')"
+    )
+    base_id: Optional[str] = Field(None, description="Extracted base ID from URL")
+    sheet_id: Optional[str] = Field(None, description="Extracted sheet ID from URL")
+    error_code: Optional[str] = Field(
+        None, description="Error code if validation failed"
+    )
+    error_message: Optional[str] = Field(
+        None, description="Error message if validation failed"
+    )

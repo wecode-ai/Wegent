@@ -2,21 +2,34 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Lightweight table services for backend.
+"""DataTable Service for backend.
 
-This module provides URL parsing functionality for table contexts.
-The full table service implementation is in chat_shell.
-
-For table data querying, use chat_shell service via HTTP API.
+This module provides the full table service implementation including:
+- Abstract base classes for table providers
+- Provider registry for managing different table providers (dingtalk, feishu, etc.)
+- Unified service interface for querying table data
+- Data models for requests and responses
 """
 
-from .url_parser import TableContext, TableURLParser
-
-# Backward compatibility aliases
-TableProviderRegistry = TableURLParser
+from .base import BaseTableProvider, TableProviderRegistry
+from .models import (
+    TableContext,
+    TableQueryRequest,
+    TableQueryResponse,
+    TableValidateRequest,
+    TableValidateResponse,
+)
+from .service import DataTableService
+from .url_parser import TableURLParser
 
 __all__ = [
+    "BaseTableProvider",
+    "TableProviderRegistry",
     "TableContext",
+    "TableQueryRequest",
+    "TableQueryResponse",
+    "TableValidateRequest",
+    "TableValidateResponse",
+    "DataTableService",
     "TableURLParser",
-    "TableProviderRegistry",  # Backward compatibility
 ]

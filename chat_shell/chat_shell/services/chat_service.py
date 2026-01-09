@@ -52,13 +52,6 @@ class ChatService(ChatInterface):
         Yields:
             ChatEvent: Events during chat processing
         """
-        logger.info(
-            "[CHAT_SERVICE] chat() called: task_id=%d, subtask_id=%d, user_id=%d",
-            request.task_id,
-            request.subtask_id,
-            request.user_id,
-        )
-
         emitter = SSEEmitter()
         state = StreamingState(
             task_id=request.task_id,
@@ -124,7 +117,7 @@ class ChatService(ChatInterface):
         )
 
         try:
-            logger.info(
+            logger.debug(
                 "[CHAT_SERVICE] Processing chat: task_id=%d, subtask_id=%d",
                 request.task_id,
                 request.subtask_id,
@@ -216,6 +209,7 @@ class ChatService(ChatInterface):
                         data_table_tool = DataTableTool(
                             table_contexts=request.table_contexts,
                             user_id=request.user_id,
+                            user_name=request.user_name,
                             db_session=db,
                         )
                         extra_tools.append(data_table_tool)
@@ -246,19 +240,26 @@ class ChatService(ChatInterface):
 
                     # Load MCP tools - prefer request-provided servers, fallback to settings
                     mcp_client = None
+                    mcp_summary = []  # Collect MCP connection summaries
                     if request.mcp_servers:
                         # Use MCP servers from request (HTTP mode)
                         from chat_shell.tools.mcp import MCPClient
 
+                        logger.debug(
+                            "[CHAT_SERVICE] Loading %d MCP servers from request for task %d",
+                            len(request.mcp_servers),
+                            request.task_id,
+                        )
                         for server in request.mcp_servers:
                             try:
                                 server_name = server.get("name", "server")
                                 # Support transport type from server config, default to streamable-http
                                 transport_type = server.get("type", "streamable-http")
+                                server_url = server.get("url", "")
                                 server_config = {
                                     server_name: {
                                         "type": transport_type,
-                                        "url": server.get("url", ""),
+                                        "url": server_url,
                                     }
                                 }
                                 auth = server.get("auth")
@@ -268,12 +269,13 @@ class ChatService(ChatInterface):
                                 client = MCPClient(server_config)
                                 await client.connect()
                                 if client.is_connected:
-                                    extra_tools.extend(client.get_tools())
-                                    logger.debug(
-                                        "[CHAT_SERVICE] Loaded MCP server %s (type=%s) with %d tools",
+                                    tools = client.get_tools()
+                                    extra_tools.extend(tools)
+                                    mcp_summary.append(f"{server_name}({len(tools)})")
+                                else:
+                                    logger.warning(
+                                        "[CHAT_SERVICE] MCP server %s connected but not ready",
                                         server_name,
-                                        transport_type,
-                                        len(client.get_tools()),
                                     )
                             except Exception as e:
                                 error_msg = str(e)
@@ -291,17 +293,20 @@ class ChatService(ChatInterface):
                                     server.get("name"),
                                     error_msg,
                                 )
-                    elif settings.CHAT_MCP_ENABLED:
-                        # Fallback to loading from settings
-                        mcp_client = await load_mcp_tools(
-                            task_id=request.task_id,
-                            bot_name=request.bot_name,
-                            bot_namespace=request.bot_namespace,
-                            task_data=request.task_data,
-                            db=db,
+
+                        # Log MCP summary
+                        if mcp_summary:
+                            logger.info(
+                                "[CHAT_SERVICE] Connected %d MCP servers: %s",
+                                len(mcp_summary),
+                                ", ".join(mcp_summary),
+                            )
+                    else:
+                        # No MCP servers in request - chat_shell does NOT auto-load tools
+                        # All tools must be explicitly passed by the caller
+                        logger.debug(
+                            "[CHAT_SERVICE] No MCP servers in request, skipping MCP loading"
                         )
-                        if mcp_client:
-                            extra_tools.extend(mcp_client.get_tools())
 
                     # Build agent configuration
                     logger.debug(
@@ -346,10 +351,9 @@ class ChatService(ChatInterface):
                     on_tool_event = create_tool_event_handler(
                         state, emitter, agent_builder
                     )
-                    logger.info(
-                        "[CHAT_SERVICE] Created tool event handler, agent_builder=%s, tool_registry=%s",
+                    logger.debug(
+                        "[CHAT_SERVICE] Created tool event handler, agent_builder=%s",
                         type(agent_builder).__name__,
-                        agent_builder.tool_registry is not None,
                     )
 
                     # Stream tokens from agent

@@ -76,14 +76,32 @@ def parse_wegent_tools(tools: Optional[List[WegentTool]]) -> Dict[str, Any]:
     Returns:
         Dict with parsed tool settings:
         - enable_chat_bot: bool (enables all server-side capabilities)
+        - mcp_servers: dict (custom MCP server configurations, format: {name: config})
     """
-    result = {
+    result: Dict[str, Any] = {
         "enable_chat_bot": False,
+        "mcp_servers": {},
     }
     if tools:
         for tool in tools:
             if tool.type == "wegent_chat_bot":
                 result["enable_chat_bot"] = True
+            elif tool.type == "mcp" and tool.mcp_servers:
+                # mcp_servers is List[Dict[str, Any]]
+                # Each dict maps server_name -> config
+                for servers_dict in tool.mcp_servers:
+                    for name, config in servers_dict.items():
+                        # Skip disabled servers
+                        if isinstance(config, dict) and config.get("disabled"):
+                            continue
+                        if isinstance(config, dict):
+                            result["mcp_servers"][name] = {
+                                "url": config.get("url"),
+                                "type": config.get("type"),
+                                "headers": config.get("headers"),
+                                "command": config.get("command"),
+                                "args": config.get("args"),
+                            }
     return result
 
 

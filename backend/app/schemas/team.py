@@ -25,6 +25,9 @@ class BotInfo(BaseModel):
     bot_id: int
     bot_prompt: Optional[str] = None
     role: Optional[str] = None
+    requireConfirmation: Optional[bool] = (
+        False  # Pipeline mode: pause after this stage for user confirmation
+    )
     bot: Optional[BotSummary] = None
 
 

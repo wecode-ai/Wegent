@@ -23,6 +23,7 @@ from app.models.user import User
 from app.schemas.kind import Bot, Ghost, Model, Shell, Task, Team, Workspace
 from app.schemas.task import TaskCreate, TaskDetail, TaskInDB, TaskStatus, TaskUpdate
 from app.services.adapters.executor_kinds import executor_kinds_service
+from app.services.adapters.pipeline_stage import pipeline_stage_service
 from app.services.adapters.team_kinds import team_kinds_service
 from app.services.base import BaseService
 
@@ -68,7 +69,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             .filter(
                 TaskResource.id == task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active == True,
+                TaskResource.is_active.is_(True),
             )
             .first()
         )
@@ -87,7 +88,12 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     status_code=400,
                     detail=f"Task has {task_status.lower()}, please create a new task",
                 )
-            elif task_status not in ["COMPLETED", "FAILED", "CANCELLED"]:
+            elif task_status not in [
+                "COMPLETED",
+                "FAILED",
+                "CANCELLED",
+                "PENDING_CONFIRMATION",
+            ]:
                 raise HTTPException(
                     status_code=400,
                     detail="Task is in progress, please wait for it to complete",
@@ -1232,7 +1238,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             .filter(
                 TaskResource.id == task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active == True,
+                TaskResource.is_active.is_(True),
                 text("JSON_EXTRACT(json, '$.status.status') != 'DELETE'"),
             )
             .first()
@@ -1244,7 +1250,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             .filter(
                 TaskResource.id == task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active == True,
+                TaskResource.is_active.is_(True),
                 text("JSON_EXTRACT(json, '$.status.status') != 'DELETE'"),
             )
             .first()
@@ -1341,7 +1347,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 .filter(
                     Kind.id.in_(list(all_bot_ids)),
                     Kind.kind == "Bot",
-                    Kind.is_active == True,
+                    Kind.is_active.is_(True),
                 )
                 .all()
             )
@@ -1365,7 +1371,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                         Kind.kind == "Ghost",
                         Kind.name == bot_crd.spec.ghostRef.name,
                         Kind.namespace == bot_crd.spec.ghostRef.namespace,
-                        Kind.is_active == True,
+                        Kind.is_active.is_(True),
                     )
                     .first()
                 )
@@ -1383,7 +1389,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                             Kind.kind == "Model",
                             Kind.name == bot_crd.spec.modelRef.name,
                             Kind.namespace == bot_crd.spec.modelRef.namespace,
-                            Kind.is_active == True,
+                            Kind.is_active.is_(True),
                         )
                         .first()
                     )
@@ -1399,7 +1405,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                         Kind.kind == "Shell",
                         Kind.name == bot_crd.spec.shellRef.name,
                         Kind.namespace == bot_crd.spec.shellRef.namespace,
-                        Kind.is_active == True,
+                        Kind.is_active.is_(True),
                     )
                     .first()
                 )
@@ -1411,7 +1417,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                             Kind.user_id == 0,
                             Kind.kind == "Shell",
                             Kind.name == bot_crd.spec.shellRef.name,
-                            Kind.is_active == True,
+                            Kind.is_active.is_(True),
                         )
                         .first()
                     )
@@ -1555,7 +1561,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             .filter(
                 TaskResource.id == task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active == True,
+                TaskResource.is_active.is_(True),
             )
             .first()
         )
@@ -1642,7 +1648,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     TaskResource.kind == "Workspace",
                     TaskResource.name == task_crd.spec.workspaceRef.name,
                     TaskResource.namespace == task_crd.spec.workspaceRef.namespace,
-                    TaskResource.is_active == True,
+                    TaskResource.is_active.is_(True),
                 )
                 .first()
             )
@@ -1700,7 +1706,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             .filter(
                 TaskResource.id == task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active == True,
+                TaskResource.is_active.is_(True),
             )
             .first()
         )
@@ -1715,7 +1721,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 .filter(
                     TaskResource.id == task_id,
                     TaskResource.kind == "Task",
-                    TaskResource.is_active == True,
+                    TaskResource.is_active.is_(True),
                 )
                 .first()
             )
@@ -1846,7 +1852,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             .filter(
                 TaskResource.id == task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active == True,
+                TaskResource.is_active.is_(True),
             )
             .first()
         )
@@ -1980,6 +1986,140 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 f"Error cancelling Chat Shell stream for subtask {subtask_id}: {str(e)}"
             )
 
+    def confirm_pipeline_stage(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        user_id: int,
+        confirmed_prompt: str,
+        action: str = "continue",
+    ) -> Dict[str, Any]:
+        """
+        Confirm a pipeline stage and proceed to the next stage.
+
+        Args:
+            db: Database session
+            task_id: Task ID
+            user_id: User ID who owns the task
+            confirmed_prompt: The confirmed/edited prompt to pass to next stage
+            action: "continue" to proceed to next stage, "retry" to stay at current stage
+
+        Returns:
+            Dict with confirmation result info
+        """
+        # Get task and verify ownership
+        task = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.id == task_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active.is_(True),
+            )
+            .first()
+        )
+
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        # Check user access (owner or group member)
+        from app.services.task_member_service import task_member_service
+
+        if not task_member_service.is_member(db, task_id, user_id):
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        task_crd = Task.model_validate(task.json)
+
+        # Verify task is in PENDING_CONFIRMATION status
+        current_status = task_crd.status.status if task_crd.status else "PENDING"
+        if current_status != "PENDING_CONFIRMATION":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Task is not awaiting confirmation. Current status: {current_status}",
+            )
+
+        # Get team using pipeline_stage_service
+        team = pipeline_stage_service.get_team_for_task(db, task, task_crd)
+        if not team:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        team_crd = Team.model_validate(team.json)
+
+        if team_crd.spec.collaborationModel != "pipeline":
+            raise HTTPException(
+                status_code=400,
+                detail="Stage confirmation is only available for pipeline teams",
+            )
+
+        # Delegate to pipeline_stage_service
+        return pipeline_stage_service.confirm_stage(
+            db=db,
+            task=task,
+            task_crd=task_crd,
+            team_crd=team_crd,
+            confirmed_prompt=confirmed_prompt,
+            action=action,
+        )
+
+    def get_pipeline_stage_info(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        user_id: int,
+    ) -> Dict[str, Any]:
+        """
+        Get pipeline stage information for a task.
+
+        Args:
+            db: Database session
+            task_id: Task ID
+            user_id: User ID for permission check
+
+        Returns:
+            Dict with pipeline stage info
+        """
+        # Get task and verify ownership
+        task = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.id == task_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active.is_(True),
+            )
+            .first()
+        )
+
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        # Check user access
+        from app.services.task_member_service import task_member_service
+
+        if not task_member_service.is_member(db, task_id, user_id):
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        task_crd = Task.model_validate(task.json)
+
+        # Get team using pipeline_stage_service
+        team = pipeline_stage_service.get_team_for_task(db, task, task_crd)
+        if not team:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        team_crd = Team.model_validate(team.json)
+
+        if team_crd.spec.collaborationModel != "pipeline":
+            return {
+                "current_stage": 0,
+                "total_stages": 1,
+                "current_stage_name": "default",
+                "is_pending_confirmation": False,
+                "stages": [],
+            }
+
+        # Delegate to pipeline_stage_service
+        return pipeline_stage_service.get_stage_info(db, task_id, team_crd)
+
     def create_task_id(self, db: Session, user_id: int) -> int:
         """
         Create new task id using tasks table auto increment (pre-allocation mechanism)
@@ -2083,7 +2223,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 TaskResource.kind == "Workspace",
                 TaskResource.name == task_crd.spec.workspaceRef.name,
                 TaskResource.namespace == task_crd.spec.workspaceRef.namespace,
-                TaskResource.is_active == True,
+                TaskResource.is_active.is_(True),
             )
             .first()
         )
@@ -2114,7 +2254,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 Kind.kind == "Team",
                 Kind.name == task_crd.spec.teamRef.name,
                 Kind.namespace == task_crd.spec.teamRef.namespace,
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )
@@ -2123,7 +2263,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         if not team:
             shared_teams = (
                 db.query(SharedTeam)
-                .filter(SharedTeam.user_id == user_id, SharedTeam.is_active == True)
+                .filter(SharedTeam.user_id == user_id, SharedTeam.is_active.is_(True))
                 .all()
             )
 
@@ -2136,7 +2276,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                         Kind.kind == "Team",
                         Kind.name == task_crd.spec.teamRef.name,
                         Kind.namespace == task_crd.spec.teamRef.namespace,
-                        Kind.is_active == True,
+                        Kind.is_active.is_(True),
                     )
                     .first()
                 )
@@ -2229,7 +2369,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     Kind.kind == "Bot",
                     Kind.name == member.botRef.name,
                     Kind.namespace == member.botRef.namespace,
-                    Kind.is_active == True,
+                    Kind.is_active.is_(True),
                 )
                 .first()
             )
@@ -2288,7 +2428,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     Kind.kind == "Bot",
                     Kind.name == member.botRef.name,
                     Kind.namespace == member.botRef.namespace,
-                    Kind.is_active == True,
+                    Kind.is_active.is_(True),
                 )
                 .first()
             )
@@ -2347,26 +2487,97 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         collaboration_model = team_crd.spec.collaborationModel
 
         if collaboration_model == "pipeline":
-            # Create individual subtasks for each bot in pipeline mode
-            executor_infos = self._get_pipeline_executor_info(existing_subtasks)
-            for i, member in enumerate(team_crd.spec.members):
-                # Find bot in kinds table
+            # Pipeline mode: check if we should only create subtask for current bot
+            # (when current bot has requireConfirmation and hasn't been confirmed yet)
+            # Use pipeline_stage_service to determine if we should stay at current stage
+            should_stay_at_current_stage, current_stage_index = (
+                pipeline_stage_service.should_stay_at_current_stage(
+                    existing_subtasks, team_crd
+                )
+            )
+
+            if should_stay_at_current_stage and current_stage_index is not None:
+                # Only create subtask for the current bot (the one with requireConfirmation)
+                # Debug log: confirm we are staying at current stage
+                logger.info(
+                    f"Pipeline _create_subtasks: staying at current stage {current_stage_index}, "
+                    f"only creating subtask for current bot, existing_subtasks_count={len(existing_subtasks)}"
+                )
+                current_member = team_crd.spec.members[current_stage_index]
                 bot = (
                     db.query(Kind)
                     .filter(
                         Kind.user_id == team.user_id,
                         Kind.kind == "Bot",
-                        Kind.name == member.botRef.name,
-                        Kind.namespace == member.botRef.namespace,
-                        Kind.is_active == True,
+                        Kind.name == current_member.botRef.name,
+                        Kind.namespace == current_member.botRef.namespace,
+                        Kind.is_active.is_(True),
                     )
                     .first()
                 )
 
                 if bot is None:
                     raise Exception(
-                        f"Bot {member.botRef.name} not found in kinds table"
+                        f"Bot {current_member.botRef.name} not found in kinds table"
                     )
+
+                executor_infos = self._get_pipeline_executor_info(existing_subtasks)
+                subtask = Subtask(
+                    user_id=user_id,
+                    task_id=task.id,
+                    team_id=team.id,
+                    title=f"{task_crd.spec.title} - {bot.name}",
+                    bot_ids=[bot.id],
+                    role=SubtaskRole.ASSISTANT,
+                    prompt="",
+                    status=SubtaskStatus.PENDING,
+                    progress=0,
+                    message_id=next_message_id,
+                    parent_id=parent_id,
+                    executor_name=(
+                        executor_infos[current_stage_index].get("executor_name")
+                        if len(executor_infos) > current_stage_index
+                        else ""
+                    ),
+                    executor_namespace=(
+                        executor_infos[current_stage_index].get("executor_namespace")
+                        if len(executor_infos) > current_stage_index
+                        else ""
+                    ),
+                    error_message="",
+                    completed_at=datetime.now(),
+                    result=None,
+                )
+                db.add(subtask)
+            else:
+                # Pipeline mode: only create subtask for the FIRST bot (stage 0)
+                # Subsequent bot subtasks will be created when the previous stage completes
+                # This ensures proper sequential execution and requireConfirmation handling
+                executor_infos = self._get_pipeline_executor_info(existing_subtasks)
+
+                # Only create subtask for the first bot (index 0)
+                first_member = team_crd.spec.members[0]
+                bot = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.user_id == team.user_id,
+                        Kind.kind == "Bot",
+                        Kind.name == first_member.botRef.name,
+                        Kind.namespace == first_member.botRef.namespace,
+                        Kind.is_active.is_(True),
+                    )
+                    .first()
+                )
+
+                if bot is None:
+                    raise Exception(
+                        f"Bot {first_member.botRef.name} not found in kinds table"
+                    )
+
+                logger.info(
+                    f"Pipeline _create_subtasks: creating subtask only for first bot (stage 0), "
+                    f"bot={bot.name}, total_stages={len(team_crd.spec.members)}"
+                )
 
                 subtask = Subtask(
                     user_id=user_id,
@@ -2380,25 +2591,20 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     progress=0,
                     message_id=next_message_id,
                     parent_id=parent_id,
-                    # If executor_infos is not empty, take the i-th one, otherwise use empty string
                     executor_name=(
-                        executor_infos[i].get("executor_name")
-                        if len(executor_infos) > i
+                        executor_infos[0].get("executor_name")
+                        if len(executor_infos) > 0
                         else ""
                     ),
                     executor_namespace=(
-                        executor_infos[i].get("executor_namespace")
-                        if len(executor_infos) > i
+                        executor_infos[0].get("executor_namespace")
+                        if len(executor_infos) > 0
                         else ""
                     ),
                     error_message="",
                     completed_at=datetime.now(),
                     result=None,
                 )
-
-                # Update id of next message and parent
-                next_message_id = next_message_id + 1
-                parent_id = parent_id + 1
 
                 db.add(subtask)
         else:
@@ -2493,7 +2699,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     TaskResource.kind == "Workspace",
                     TaskResource.name.in_(workspace_names),
                     TaskResource.namespace.in_(workspace_namespaces),
-                    TaskResource.is_active == True,
+                    TaskResource.is_active.is_(True),
                 )
                 .all()
             )
@@ -2530,7 +2736,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     Kind.kind == "Team",
                     Kind.name.in_(team_names),
                     Kind.namespace.in_(team_namespaces),
-                    Kind.is_active == True,
+                    Kind.is_active.is_(True),
                 )
                 .all()
             )
@@ -2547,7 +2753,9 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 # Get all shared teams for this user
                 shared_teams = (
                     db.query(SharedTeam)
-                    .filter(SharedTeam.user_id == user_id, SharedTeam.is_active == True)
+                    .filter(
+                        SharedTeam.user_id == user_id, SharedTeam.is_active.is_(True)
+                    )
                     .all()
                 )
 
@@ -2566,7 +2774,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                             Kind.kind == "Team",
                             Kind.name.in_(missing_team_names),
                             Kind.namespace.in_(missing_team_namespaces),
-                            Kind.is_active == True,
+                            Kind.is_active.is_(True),
                         )
                         .all()
                     )
