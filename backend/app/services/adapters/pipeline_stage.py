@@ -596,6 +596,11 @@ class PipelineStageService:
         """
         Get the team associated with a task.
 
+        Supports:
+        1. Teams owned by task owner
+        2. Teams shared via SharedTeam table
+        3. Group teams (namespace != 'default') - can be created by any group member
+
         Args:
             db: Database session
             task: Task resource object
@@ -642,6 +647,20 @@ class PipelineStageService:
                     )
                     .first()
                 )
+
+        # If still not found and namespace is not 'default', this might be a group team
+        # Group teams can be created by any group member, so we query without user_id filter
+        if not team and team_namespace and team_namespace != "default":
+            team = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "Team",
+                    Kind.name == team_name,
+                    Kind.namespace == team_namespace,
+                    Kind.is_active.is_(True),
+                )
+                .first()
+            )
 
         return team
 
