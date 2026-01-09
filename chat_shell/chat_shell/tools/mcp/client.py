@@ -278,7 +278,7 @@ class MCPClient:
                 type(tool).__name__,
             )
 
-        logger.info(
+        logger.debug(
             "Connected to MCP servers: %s, loaded %d protected tools",
             ", ".join(self.list_servers()),
             len(self._tools),
@@ -289,7 +289,7 @@ class MCPClient:
         if self._client:
             self._client = None
             self._tools = []
-            logger.info("Disconnected from MCP servers")
+            logger.debug("Disconnected from MCP servers")
 
     def get_tools(self, server_names: list[str] | None = None) -> list[BaseTool]:
         """Get LangChain-compatible tools from connected servers.

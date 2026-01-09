@@ -88,29 +88,13 @@ class LangGraphAgentBuilder:
             """
             messages = state.get("messages", [])
             if not messages:
-                logger.info("[prompt_modifier] Called with empty messages")
                 return messages
-
-            # Log all messages being sent to model (FULL content, no truncation)
-            logger.info("[prompt_modifier] ========== MODEL INPUT START ==========")
-            logger.info("[prompt_modifier] Total messages: %d", len(messages))
-            for i, msg in enumerate(messages):
-                msg_type = type(msg).__name__
-                content = msg.content if hasattr(msg, "content") else str(msg)
-                content_str = content if isinstance(content, str) else str(content)
-                # Print FULL content without truncation
-                # logger.info("[prompt_modifier] " + content_str)
-
-            logger.info("[prompt_modifier] ========== MODEL INPUT END ==========")
 
             # Get combined skill prompt from the tool
             skill_prompt = load_skill_tool.get_combined_skill_prompt()
 
             if not skill_prompt:
                 # No skills loaded, return messages unchanged
-                logger.info(
-                    "[prompt_modifier] No skill prompt to inject, returning original messages"
-                )
                 return messages
 
             # Find and update the system message
@@ -135,10 +119,9 @@ class LangGraphAgentBuilder:
             # If no system message found, prepend one with skill prompt
             if not system_updated:
                 new_messages.insert(0, SystemMessage(content=skill_prompt))
-                logger.info(
-                    "[prompt_modifier] Created new system message with skill prompts, len=%d, content:\n%s",
+                logger.debug(
+                    "[prompt_modifier] Created new system message with skill prompts, len=%d",
                     len(skill_prompt),
-                    skill_prompt,
                 )
 
             return new_messages
@@ -401,17 +384,9 @@ class LangGraphAgentBuilder:
                     tool_name = event.get("name", "unknown")
                     # Get run_id to track tool execution pairs
                     run_id = event.get("run_id", "")
-                    logger.info(
-                        "[stream_tokens] Tool started: %s (run_id=%s)",
-                        tool_name,
-                        run_id,
-                    )
+                    logger.info("[TOOL] %s started", tool_name)
                     # Notify callback if provided
                     if on_tool_event:
-                        logger.info(
-                            "[stream_tokens] Calling on_tool_event callback for tool_start: %s",
-                            tool_name,
-                        )
                         on_tool_event(
                             "tool_start",
                             {
@@ -430,31 +405,9 @@ class LangGraphAgentBuilder:
                     run_id = event.get("run_id", "")
                     # Get tool output for logging
                     tool_data = event.get("data", {})
-                    tool_output = tool_data.get("output", "")
-                    # Log tool output, especially for load_skill
-                    if tool_name == "load_skill":
-                        logger.info(
-                            "[stream_tokens] load_skill completed (run_id=%s), output length=%d, output preview:\n---\n%s\n---",
-                            run_id,
-                            len(str(tool_output)),
-                            (
-                                str(tool_output)[:500] + "..."
-                                if len(str(tool_output)) > 500
-                                else str(tool_output)
-                            ),
-                        )
-                    else:
-                        logger.info(
-                            "[stream_tokens] Tool completed: %s (run_id=%s)",
-                            tool_name,
-                            run_id,
-                        )
+                    logger.info("[TOOL] %s completed", tool_name)
                     # Notify callback if provided
                     if on_tool_event:
-                        logger.info(
-                            "[stream_tokens] Calling on_tool_event callback for tool_end: %s",
-                            tool_name,
-                        )
                         on_tool_event(
                             "tool_end",
                             {
@@ -470,7 +423,7 @@ class LangGraphAgentBuilder:
             # If no content was streamed but we have final content, yield it
             # This handles non-streaming models
             if not streamed_content and final_content:
-                logger.info(
+                logger.debug(
                     "[stream_tokens] No streaming content, yielding final content: len=%d",
                     len(final_content),
                 )
@@ -623,11 +576,7 @@ class LangGraphAgentBuilder:
                 if kind == "on_tool_start":
                     tool_name = event.get("name", "unknown")
                     run_id = event.get("run_id", "")
-                    logger.info(
-                        "[stream_events_with_state] Tool started: %s (run_id=%s)",
-                        tool_name,
-                        run_id,
-                    )
+                    logger.info("[TOOL] %s started", tool_name)
                     if on_tool_event:
                         on_tool_event(
                             "tool_start",
@@ -641,11 +590,7 @@ class LangGraphAgentBuilder:
                 elif kind == "on_tool_end":
                     tool_name = event.get("name", "unknown")
                     run_id = event.get("run_id", "")
-                    logger.info(
-                        "[stream_events_with_state] Tool completed: %s (run_id=%s)",
-                        tool_name,
-                        run_id,
-                    )
+                    logger.info("[TOOL] %s completed", tool_name)
                     if on_tool_event:
                         on_tool_event(
                             "tool_end",
@@ -663,7 +608,7 @@ class LangGraphAgentBuilder:
                     if output:
                         final_state = output
 
-            logger.info(
+            logger.debug(
                 "[stream_events_with_state] Completed: total_events=%d",
                 len(all_events),
             )
@@ -704,7 +649,7 @@ class LangGraphAgentBuilder:
                     "messages": list(lc_messages) + [AIMessage(content=final_content)]
                 }
 
-                logger.info(
+                logger.debug(
                     "[stream_events_with_state] Final response generated after tool limit reached"
                 )
                 return final_state, all_events

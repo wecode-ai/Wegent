@@ -141,52 +141,54 @@ async def _create_streaming_response_http(
     enable_chat_bot = tool_settings.get("enable_chat_bot", False)
 
     # Prepare MCP servers for HTTP mode
-    # In HTTP mode, we need to load bot MCP servers and pass them to chat_shell
+    # Only load MCP servers when tools are explicitly enabled via enable_chat_bot
+    # This ensures /api/v1/responses without tools parameter doesn't auto-load tools
     mcp_servers_to_pass = []
 
-    # 1. Load bot MCP servers from Ghost CRD
-    if setup.bot_name:
-        try:
-            from app.services.openapi.mcp import _get_bot_mcp_servers_sync
+    if enable_chat_bot:
+        # 1. Load bot MCP servers from Ghost CRD
+        if setup.bot_name:
+            try:
+                from app.services.openapi.mcp import _get_bot_mcp_servers_sync
 
-            bot_mcp_servers = _get_bot_mcp_servers_sync(
-                setup.bot_name, setup.bot_namespace
-            )
-            if bot_mcp_servers:
-                # Convert to chat_shell expected format
-                for name, config in bot_mcp_servers.items():
-                    if isinstance(config, dict):
-                        server_entry = {
-                            "name": name,
-                            "url": config.get("url", ""),
-                            "type": config.get("type", "streamable-http"),
-                        }
-                        if config.get("headers"):
-                            server_entry["auth"] = config["headers"]
-                        mcp_servers_to_pass.append(server_entry)
-                logger.info(
-                    f"[OPENAPI_HTTP] Loaded {len(bot_mcp_servers)} bot MCP servers for HTTP mode: "
-                    f"bot={setup.bot_namespace}/{setup.bot_name}"
+                bot_mcp_servers = _get_bot_mcp_servers_sync(
+                    setup.bot_name, setup.bot_namespace
                 )
-        except Exception as e:
-            logger.warning(f"[OPENAPI_HTTP] Failed to load bot MCP servers: {e}")
+                if bot_mcp_servers:
+                    # Convert to chat_shell expected format
+                    for name, config in bot_mcp_servers.items():
+                        if isinstance(config, dict):
+                            server_entry = {
+                                "name": name,
+                                "url": config.get("url", ""),
+                                "type": config.get("type", "streamable-http"),
+                            }
+                            if config.get("headers"):
+                                server_entry["auth"] = config["headers"]
+                            mcp_servers_to_pass.append(server_entry)
+                    logger.info(
+                        f"[OPENAPI_HTTP] Loaded {len(bot_mcp_servers)} bot MCP servers for HTTP mode: "
+                        f"bot={setup.bot_namespace}/{setup.bot_name}"
+                    )
+            except Exception as e:
+                logger.warning(f"[OPENAPI_HTTP] Failed to load bot MCP servers: {e}")
 
-    # 2. Add custom MCP servers from API request
-    custom_mcp_servers = tool_settings.get("mcp_servers", {})
-    if custom_mcp_servers:
-        for name, config in custom_mcp_servers.items():
-            if isinstance(config, dict) and config.get("url"):
-                server_entry = {
-                    "name": name,
-                    "url": config.get("url", ""),
-                    "type": config.get("type", "streamable-http"),
-                }
-                if config.get("headers"):
-                    server_entry["auth"] = config["headers"]
-                mcp_servers_to_pass.append(server_entry)
-        logger.info(
-            f"[OPENAPI_HTTP] Added {len(custom_mcp_servers)} custom MCP servers from request"
-        )
+        # 2. Add custom MCP servers from API request
+        custom_mcp_servers = tool_settings.get("mcp_servers", {})
+        if custom_mcp_servers:
+            for name, config in custom_mcp_servers.items():
+                if isinstance(config, dict) and config.get("url"):
+                    server_entry = {
+                        "name": name,
+                        "url": config.get("url", ""),
+                        "type": config.get("type", "streamable-http"),
+                    }
+                    if config.get("headers"):
+                        server_entry["auth"] = config["headers"]
+                    mcp_servers_to_pass.append(server_entry)
+            logger.info(
+                f"[OPENAPI_HTTP] Added {len(custom_mcp_servers)} custom MCP servers from request"
+            )
 
     async def raw_chat_stream() -> AsyncGenerator[str, None]:
         """Generate raw text chunks from HTTP adapter."""
@@ -757,52 +759,56 @@ async def _create_sync_response_http(
     enable_chat_bot = tool_settings.get("enable_chat_bot", False)
 
     # Prepare MCP servers for HTTP mode
-    # In HTTP mode, we need to load bot MCP servers and pass them to chat_shell
+    # Only load MCP servers when tools are explicitly enabled via enable_chat_bot
+    # This ensures /api/v1/responses without tools parameter doesn't auto-load tools
     mcp_servers_to_pass = []
 
-    # 1. Load bot MCP servers from Ghost CRD
-    if setup.bot_name:
-        try:
-            from app.services.openapi.mcp import _get_bot_mcp_servers_sync
+    if enable_chat_bot:
+        # 1. Load bot MCP servers from Ghost CRD
+        if setup.bot_name:
+            try:
+                from app.services.openapi.mcp import _get_bot_mcp_servers_sync
 
-            bot_mcp_servers = _get_bot_mcp_servers_sync(
-                setup.bot_name, setup.bot_namespace
-            )
-            if bot_mcp_servers:
-                # Convert to chat_shell expected format
-                for name, config in bot_mcp_servers.items():
-                    if isinstance(config, dict):
-                        server_entry = {
-                            "name": name,
-                            "url": config.get("url", ""),
-                            "type": config.get("type", "streamable-http"),
-                        }
-                        if config.get("headers"):
-                            server_entry["auth"] = config["headers"]
-                        mcp_servers_to_pass.append(server_entry)
-                logger.info(
-                    f"[OPENAPI_HTTP_SYNC] Loaded {len(bot_mcp_servers)} bot MCP servers for HTTP mode: "
-                    f"bot={setup.bot_namespace}/{setup.bot_name}"
+                bot_mcp_servers = _get_bot_mcp_servers_sync(
+                    setup.bot_name, setup.bot_namespace
                 )
-        except Exception as e:
-            logger.warning(f"[OPENAPI_HTTP_SYNC] Failed to load bot MCP servers: {e}")
+                if bot_mcp_servers:
+                    # Convert to chat_shell expected format
+                    for name, config in bot_mcp_servers.items():
+                        if isinstance(config, dict):
+                            server_entry = {
+                                "name": name,
+                                "url": config.get("url", ""),
+                                "type": config.get("type", "streamable-http"),
+                            }
+                            if config.get("headers"):
+                                server_entry["auth"] = config["headers"]
+                            mcp_servers_to_pass.append(server_entry)
+                    logger.info(
+                        f"[OPENAPI_HTTP_SYNC] Loaded {len(bot_mcp_servers)} bot MCP servers for HTTP mode: "
+                        f"bot={setup.bot_namespace}/{setup.bot_name}"
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"[OPENAPI_HTTP_SYNC] Failed to load bot MCP servers: {e}"
+                )
 
-    # 2. Add custom MCP servers from API request
-    custom_mcp_servers = tool_settings.get("mcp_servers", {})
-    if custom_mcp_servers:
-        for name, config in custom_mcp_servers.items():
-            if isinstance(config, dict) and config.get("url"):
-                server_entry = {
-                    "name": name,
-                    "url": config.get("url", ""),
-                    "type": config.get("type", "streamable-http"),
-                }
-                if config.get("headers"):
-                    server_entry["auth"] = config["headers"]
-                mcp_servers_to_pass.append(server_entry)
-        logger.info(
-            f"[OPENAPI_HTTP_SYNC] Added {len(custom_mcp_servers)} custom MCP servers from request"
-        )
+        # 2. Add custom MCP servers from API request
+        custom_mcp_servers = tool_settings.get("mcp_servers", {})
+        if custom_mcp_servers:
+            for name, config in custom_mcp_servers.items():
+                if isinstance(config, dict) and config.get("url"):
+                    server_entry = {
+                        "name": name,
+                        "url": config.get("url", ""),
+                        "type": config.get("type", "streamable-http"),
+                    }
+                    if config.get("headers"):
+                        server_entry["auth"] = config["headers"]
+                    mcp_servers_to_pass.append(server_entry)
+            logger.info(
+                f"[OPENAPI_HTTP_SYNC] Added {len(custom_mcp_servers)} custom MCP servers from request"
+            )
 
     # Update subtask status to RUNNING
     await db_handler.update_subtask_status(assistant_subtask_id, "RUNNING")

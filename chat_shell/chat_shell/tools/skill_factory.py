@@ -43,12 +43,6 @@ def prepare_load_skill_tool(
     if not skill_names:
         return None
 
-    logger.info(
-        "[skill_factory] Creating LoadSkillTool for %d skills: %s",
-        len(skill_names),
-        skill_names,
-    )
-
     # Import LoadSkillTool
     from chat_shell.tools.builtin import LoadSkillTool
 
@@ -71,7 +65,7 @@ def prepare_load_skill_tool(
         skill_metadata=skill_metadata,
     )
 
-    logger.info(
+    logger.debug(
         "[skill_factory] Created LoadSkillTool with skills: %s",
         skill_names,
     )
@@ -104,7 +98,7 @@ async def _download_skill_binary(download_url: str, skill_name: str) -> Optional
             response = await client.get(download_url, headers=headers)
             response.raise_for_status()
 
-            logger.info(
+            logger.debug(
                 "[skill_factory] Downloaded skill binary for '%s': %d bytes",
                 skill_name,
                 len(response.content),
@@ -192,7 +186,7 @@ async def prepare_skill_tools(
             # No tools declared for this skill, skip
             continue
 
-        logger.info(
+        logger.debug(
             "[skill_factory] Processing skill '%s' with %d tool declarations",
             skill_name,
             len(tool_declarations),
@@ -230,12 +224,7 @@ async def prepare_skill_tools(
                             zip_content=binary_data,
                             is_public=is_public,
                         )
-                        if loaded:
-                            logger.info(
-                                "[skill_factory] Loaded provider for skill '%s'",
-                                skill_name,
-                            )
-                        else:
+                        if not loaded:
                             logger.warning(
                                 "[skill_factory] Failed to load provider for skill '%s'",
                                 skill_name,
@@ -268,13 +257,6 @@ async def prepare_skill_tools(
         tools.extend(skill_tools)
 
         if skill_tools:
-            logger.info(
-                "[skill_factory] Created %d tools for skill '%s': %s",
-                len(skill_tools),
-                skill_name,
-                [t.name for t in skill_tools],
-            )
-
             # Preload skill prompt into LoadSkillTool if provided
             # This ensures the skill prompt is injected into system message
             # via prompt_modifier when skill tools are directly available
@@ -282,14 +264,14 @@ async def prepare_skill_tools(
                 skill_prompt = skill_config.get("prompt", "")
                 if skill_prompt:
                     load_skill_tool.preload_skill_prompt(skill_name, skill_config)
-                    logger.info(
-                        "[skill_factory] Preloaded skill prompt for '%s' into LoadSkillTool",
-                        skill_name,
-                    )
 
-    logger.info(
-        "[skill_factory] Total skill tools created: %d",
-        len(tools),
-    )
+    # Log summary of all skills loaded
+    if tools:
+        tool_names = [t.name for t in tools]
+        logger.info(
+            "[skill_factory] Loaded %d skill tools: %s",
+            len(tools),
+            tool_names,
+        )
 
     return tools
