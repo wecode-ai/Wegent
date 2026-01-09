@@ -150,17 +150,14 @@ const PipelineStageIndicator = memo(function PipelineStageIndicator({
    * @returns Object with className and whether to animate
    */
   const getConnectorStyle = (displayIndex: number): { className: string; animate: boolean } => {
-    const nextStage = displayStages[displayIndex + 1]
-    if (!nextStage) {
+    const targetStage = displayStages[displayIndex + 1]
+    if (!targetStage) {
       return { className: 'bg-border', animate: false }
     }
 
-    // For start node's connector, check the first actual stage
-    if (nextStage.isStartNode) {
-      return { className: 'bg-green-500', animate: false }
-    }
-
-    switch (nextStage.status) {
+    switch (targetStage.status) {
+      case 'start':
+        return { className: 'bg-green-500', animate: false }
       case 'completed':
         return { className: 'bg-green-500', animate: false }
       case 'running':
@@ -211,6 +208,7 @@ const PipelineStageIndicator = memo(function PipelineStageIndicator({
           const isCurrentStage = !stage.isStartNode && stage.index === stageInfo.current_stage
           const isLastStage = displayIndex === displayStages.length - 1
           const isPendingConfirmation = stage.status === 'pending_confirmation'
+          const connectorStyle = !isLastStage ? getConnectorStyle(displayIndex) : null
 
           return (
             <div
@@ -263,20 +261,16 @@ const PipelineStageIndicator = memo(function PipelineStageIndicator({
               </div>
 
               {/* Connector Line (not after last stage) */}
-              {!isLastStage &&
-                (() => {
-                  const connectorStyle = getConnectorStyle(displayIndex)
-                  return (
-                    <div
-                      className={cn(
-                        'flex-1 h-0.5 mx-1 min-w-[20px] transition-colors duration-300',
-                        isPendingConfirmation ? 'self-center' : 'self-start mt-2',
-                        connectorStyle.className,
-                        connectorStyle.animate && 'animate-pulse'
-                      )}
-                    />
-                  )
-                })()}
+              {connectorStyle && (
+                <div
+                  className={cn(
+                    'flex-1 h-0.5 mx-1 min-w-[20px] transition-colors duration-300',
+                    isPendingConfirmation ? 'self-center' : 'self-start mt-2',
+                    connectorStyle.className,
+                    connectorStyle.animate && 'animate-pulse'
+                  )}
+                />
+              )}
             </div>
           )
         })}
