@@ -16,3 +16,7 @@ export type {
   UseModelSelectionOptions,
   UseModelSelectionReturn,
 } from './useModelSelection'
+
+export { useTeamSelection, default as useTeamSelectionDefault } from './useTeamSelection'
+
+export type { UseTeamSelectionOptions, UseTeamSelectionReturn } from './useTeamSelection'

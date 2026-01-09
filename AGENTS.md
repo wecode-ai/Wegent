@@ -151,6 +151,54 @@ frontend/src/features/
 └── [other]/         # Feature-specific components
 ```
 
+### Responsive Architecture
+
+⚠️ **Wegent uses a mobile-first, component-separation architecture for responsive design**
+
+**Breakpoint System:**
+- Mobile: ≤767px - Touch-optimized UI with drawer sidebar
+- Tablet: 768px-1023px - Uses desktop layout
+- Desktop: ≥1024px - Full-featured UI with all controls
+
+**When to Separate Components:**
+- Layout differences >30%: Create separate Mobile/Desktop components
+- Different interaction patterns: Separate for better UX
+- Performance optimization: Use code splitting via dynamic imports
+
+**When to Use Tailwind Responsive Classes:**
+- Simple styling adjustments (spacing, font size)
+- Show/hide scenarios
+- Minor layout changes
+
+**Page-Level Separation Pattern:**
+```
+app/(tasks)/chat/
+├── page.tsx                 # Router component (dynamic imports)
+├── ChatPageDesktop.tsx      # Desktop implementation
+└── ChatPageMobile.tsx       # Mobile implementation
+```
+
+**Component-Level Separation Pattern:**
+```typescript
+// ChatInputControls.tsx (contains routing logic)
+export function ChatInputControls(props: Props) {
+  const isMobile = useIsMobile()
+
+  if (isMobile) {
+    return <MobileChatInputControls {...props} />
+  }
+
+  return <DesktopChatInputControls {...props} />
+}
+```
+
+**Touch-Friendly Requirements (Mobile):**
+- All interactive elements must be at least 44px × 44px
+- Use `h-11 min-w-[44px]` for buttons
+- Example: `<Button className="h-11 min-w-[44px] px-4">...</Button>`
+
+**📖 Detailed Documentation:** See [`docs/en/guides/responsive-development.md`](docs/en/guides/responsive-development.md) or [`docs/zh/guides/responsive-development.md`](docs/zh/guides/responsive-development.md)
+
 ---
 
 ## 🎨 Frontend Design System

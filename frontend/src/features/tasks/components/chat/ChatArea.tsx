@@ -25,7 +25,6 @@ import { useChatStreamContext } from '../../contexts/chatStreamContext'
 import { Button } from '@/components/ui/button'
 import { useScrollManagement } from '../hooks/useScrollManagement'
 import { useFloatingInput } from '../hooks/useFloatingInput'
-import { useTeamPreferences } from '../hooks/useTeamPreferences'
 import { useAttachmentUpload } from '../hooks/useAttachmentUpload'
 
 /**
@@ -67,9 +66,9 @@ function ChatAreaContent({
   // Task context
   const { selectedTaskDetail, setSelectedTask, accessDenied, clearAccessDenied } = useTaskContext()
 
-  // Stream context for clearVersion and getStreamState
+  // Stream context for getStreamState
   // getStreamState is used to access messages (SINGLE SOURCE OF TRUTH per AGENTS.md)
-  const { clearVersion, getStreamState } = useChatStreamContext()
+  const { clearVersion: _clearVersion, getStreamState } = useChatStreamContext()
 
   // Get stream state for current task to check messages
   const currentStreamState = selectedTaskDetail?.id
@@ -179,20 +178,8 @@ function ChatAreaContent({
     streamHandlers.currentStreamState?.messages,
   ])
 
-  // Use team preferences hook - consolidates team preference logic
-  // Note: Model selection is now handled by useModelSelection hook in ModelSelector
-  useTeamPreferences({
-    teams,
-    hasMessages,
-    selectedTaskDetail,
-    selectedTeam: chatState.selectedTeam,
-    setSelectedTeam: chatState.setSelectedTeam,
-    hasRestoredPreferences: chatState.hasRestoredPreferences,
-    setHasRestoredPreferences: chatState.setHasRestoredPreferences,
-    isTeamCompatibleWithMode: chatState.isTeamCompatibleWithMode,
-    initialTeamIdRef: chatState.initialTeamIdRef,
-    clearVersion,
-  })
+  // Note: Team selection is now handled by useTeamSelection hook in TeamSelector component
+  // Model selection is handled by useModelSelection hook in ModelSelector component
 
   // Check if model selection is required
   const isModelSelectionRequired = useMemo(() => {
