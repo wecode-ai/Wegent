@@ -641,7 +641,8 @@ async def _stream_with_http_adapter(
     )
 
     # Parse MCP server configuration for HTTP mode
-    mcp_servers = {}
+    # Format: list of {"name": "...", "url": "...", "type": "...", "auth": ...}
+    mcp_servers = []
     if settings.CHAT_MCP_ENABLED:
         import json
 
@@ -655,11 +656,14 @@ async def _stream_with_http_adapter(
                     url = server_config.get("url", "")
                     headers = server_config.get("headers", {})
                     if url:
-                        mcp_servers[name] = {
+                        server_entry = {
+                            "name": name,
                             "type": server_type,
                             "url": url,
-                            "headers": headers if headers else None,
                         }
+                        if headers:
+                            server_entry["auth"] = headers
+                        mcp_servers.append(server_entry)
                 logger.info(
                     "[HTTP_ADAPTER] Parsed MCP servers: %d servers",
                     len(mcp_servers),
@@ -678,11 +682,14 @@ async def _stream_with_http_adapter(
                 url = server_config.get("url", "")
                 headers = server_config.get("headers", {})
                 if url:
-                    mcp_servers[name] = {
+                    server_entry = {
+                        "name": name,
                         "type": server_type,
                         "url": url,
-                        "headers": headers if headers else None,
                     }
+                    if headers:
+                        server_entry["auth"] = headers
+                    mcp_servers.append(server_entry)
             if bot_mcp_servers:
                 logger.info(
                     "[HTTP_ADAPTER] Added %d Bot MCP servers for bot %s/%s",

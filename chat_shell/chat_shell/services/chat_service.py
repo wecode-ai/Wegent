@@ -52,14 +52,6 @@ class ChatService(ChatInterface):
         Yields:
             ChatEvent: Events during chat processing
         """
-        logger.info(
-            "[CHAT_SERVICE] chat() called: task_id=%d, subtask_id=%d, user_id=%d, mcp_servers=%d",
-            request.task_id,
-            request.subtask_id,
-            request.user_id,
-            len(request.mcp_servers) if request.mcp_servers else 0,
-        )
-
         emitter = SSEEmitter()
         state = StreamingState(
             task_id=request.task_id,
@@ -125,7 +117,7 @@ class ChatService(ChatInterface):
         )
 
         try:
-            logger.info(
+            logger.debug(
                 "[CHAT_SERVICE] Processing chat: task_id=%d, subtask_id=%d",
                 request.task_id,
                 request.subtask_id,
@@ -247,11 +239,12 @@ class ChatService(ChatInterface):
 
                     # Load MCP tools - prefer request-provided servers, fallback to settings
                     mcp_client = None
+                    mcp_summary = []  # Collect MCP connection summaries
                     if request.mcp_servers:
                         # Use MCP servers from request (HTTP mode)
                         from chat_shell.tools.mcp import MCPClient
 
-                        logger.info(
+                        logger.debug(
                             "[CHAT_SERVICE] Loading %d MCP servers from request for task %d",
                             len(request.mcp_servers),
                             request.task_id,
@@ -272,25 +265,12 @@ class ChatService(ChatInterface):
                                 if auth:
                                     server_config[server_name]["headers"] = auth
 
-                                logger.info(
-                                    "[CHAT_SERVICE] Connecting to MCP server: name=%s, type=%s, url=%s",
-                                    server_name,
-                                    transport_type,
-                                    server_url,
-                                )
-
                                 client = MCPClient(server_config)
                                 await client.connect()
                                 if client.is_connected:
                                     tools = client.get_tools()
                                     extra_tools.extend(tools)
-                                    logger.info(
-                                        "[CHAT_SERVICE] Loaded MCP server %s (type=%s) with %d tools: %s",
-                                        server_name,
-                                        transport_type,
-                                        len(tools),
-                                        [t.name for t in tools] if tools else [],
-                                    )
+                                    mcp_summary.append(f"{server_name}({len(tools)})")
                                 else:
                                     logger.warning(
                                         "[CHAT_SERVICE] MCP server %s connected but not ready",
@@ -312,37 +292,19 @@ class ChatService(ChatInterface):
                                     server.get("name"),
                                     error_msg,
                                 )
-                    elif settings.CHAT_MCP_ENABLED:
-                        # Fallback to loading from settings (non-HTTP mode)
-                        logger.info(
-                            "[CHAT_SERVICE] Loading MCP tools from settings for task %d, bot=%s/%s",
-                            request.task_id,
-                            request.bot_namespace,
-                            request.bot_name or "(none)",
-                        )
-                        mcp_client = await load_mcp_tools(
-                            task_id=request.task_id,
-                            bot_name=request.bot_name,
-                            bot_namespace=request.bot_namespace,
-                            task_data=request.task_data,
-                        )
-                        if mcp_client:
-                            tools = mcp_client.get_tools()
-                            extra_tools.extend(tools)
+
+                        # Log MCP summary
+                        if mcp_summary:
                             logger.info(
-                                "[CHAT_SERVICE] Loaded %d MCP tools from settings: %s",
-                                len(tools),
-                                [t.name for t in tools] if tools else [],
-                            )
-                        else:
-                            logger.info(
-                                "[CHAT_SERVICE] No MCP tools loaded from settings"
+                                "[CHAT_SERVICE] Connected %d MCP servers: %s",
+                                len(mcp_summary),
+                                ", ".join(mcp_summary),
                             )
                     else:
+                        # No MCP servers in request - chat_shell does NOT auto-load tools
+                        # All tools must be explicitly passed by the caller
                         logger.debug(
-                            "[CHAT_SERVICE] MCP disabled: request.mcp_servers=%s, CHAT_MCP_ENABLED=%s",
-                            bool(request.mcp_servers),
-                            settings.CHAT_MCP_ENABLED,
+                            "[CHAT_SERVICE] No MCP servers in request, skipping MCP loading"
                         )
 
                     # Build agent configuration
@@ -388,10 +350,9 @@ class ChatService(ChatInterface):
                     on_tool_event = create_tool_event_handler(
                         state, emitter, agent_builder
                     )
-                    logger.info(
-                        "[CHAT_SERVICE] Created tool event handler, agent_builder=%s, tool_registry=%s",
+                    logger.debug(
+                        "[CHAT_SERVICE] Created tool event handler, agent_builder=%s",
                         type(agent_builder).__name__,
-                        agent_builder.tool_registry is not None,
                     )
 
                     # Stream tokens from agent

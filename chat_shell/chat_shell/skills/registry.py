@@ -99,7 +99,7 @@ class SkillToolRegistry:
                 raise ValueError(f"Provider '{name}' is already registered")
             self._providers[name] = provider
 
-        logger.info(
+        logger.debug(
             f"[SkillToolRegistry] Registered provider '{name}' "
             f"with tools: {provider.supported_tools}"
         )
@@ -187,7 +187,7 @@ class SkillToolRegistry:
             try:
                 tool = provider.create_tool(tool_name, context, tool_config)
                 tools.append(tool)
-                logger.info(
+                logger.debug(
                     f"[SkillToolRegistry] Created tool '{tool_name}' "
                     f"from provider '{provider_name}'"
                 )
@@ -351,7 +351,7 @@ class SkillToolRegistry:
                     return None
 
                 provider = provider_class()
-                logger.info(
+                logger.debug(
                     f"[SkillToolRegistry] Loaded provider '{provider.provider_name}' "
                     f"from skill '{skill_name}'"
                 )
@@ -419,7 +419,7 @@ class SkillToolRegistry:
                 return True
             self._providers[provider.provider_name] = provider
 
-        logger.info(
+        logger.debug(
             f"[SkillToolRegistry] Registered provider '{provider.provider_name}' "
             f"with tools: {provider.supported_tools}"
         )

@@ -191,7 +191,7 @@ class LoadSkillTool(BaseTool):
         if display_name:
             self._skill_display_names[skill_name] = display_name
 
-        logger.info(
+        logger.debug(
             "[LoadSkillTool] Preloaded skill prompt for '%s' (len=%d)",
             skill_name,
             len(prompt),
