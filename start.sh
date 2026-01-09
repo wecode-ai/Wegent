@@ -138,6 +138,71 @@ show_docker_install_instructions() {
     exit 1
 }
 
+# Check if MySQL and Redis are running
+check_mysql_redis() {
+    local mysql_running=false
+    local redis_running=false
+
+    # Check if MySQL container is running
+    if docker ps --format '{{.Names}}' | grep -q "^wegent-mysql$"; then
+        mysql_running=true
+    fi
+
+    # Check if Redis container is running
+    if docker ps --format '{{.Names}}' | grep -q "^wegent-redis$"; then
+        redis_running=true
+    fi
+
+    if [ "$mysql_running" = true ] && [ "$redis_running" = true ]; then
+        echo -e "${GREEN}✓ MySQL and Redis are already running${NC}"
+        return 0
+    fi
+
+    # Start MySQL and Redis if not running
+    echo -e "${YELLOW}MySQL or Redis is not running. Starting them with docker-compose...${NC}"
+    
+    if ! docker compose up -d mysql redis; then
+        echo -e "${RED}Error: Failed to start MySQL and Redis${NC}"
+        echo -e "${YELLOW}Please check docker-compose.yml and ensure Docker is running${NC}"
+        exit 1
+    fi
+
+    # Wait for services to be healthy
+    echo -e "${YELLOW}Waiting for MySQL and Redis to be ready...${NC}"
+    local max_wait=60
+    local waited=0
+    
+    while [ $waited -lt $max_wait ]; do
+        local mysql_healthy=false
+        local redis_healthy=false
+        
+        # Check MySQL health
+        if docker inspect wegent-mysql --format='{{.State.Health.Status}}' 2>/dev/null | grep -q "healthy"; then
+            mysql_healthy=true
+        fi
+        
+        # Check Redis health
+        if docker inspect wegent-redis --format='{{.State.Health.Status}}' 2>/dev/null | grep -q "healthy"; then
+            redis_healthy=true
+        fi
+        
+        if [ "$mysql_healthy" = true ] && [ "$redis_healthy" = true ]; then
+            echo -e "${GREEN}✓ MySQL and Redis are ready${NC}"
+            return 0
+        fi
+        
+        sleep 2
+        waited=$((waited + 2))
+        echo -e "  Waiting... (${waited}s/${max_wait}s)"
+    done
+    
+    echo -e "${RED}Error: MySQL or Redis failed to become healthy within ${max_wait}s${NC}"
+    echo -e "${YELLOW}You can check the logs with:${NC}"
+    echo -e "  ${BLUE}docker logs wegent-mysql${NC}"
+    echo -e "  ${BLUE}docker logs wegent-redis${NC}"
+    exit 1
+}
+
 # Check if Node.js and npm are installed
 check_node_installed() {
     if ! command -v node &> /dev/null; then
@@ -240,7 +305,8 @@ sync_python_deps() {
 
     if [ "$need_sync" = true ]; then
         echo -e "  ${YELLOW}Syncing dependencies for $name...${NC}"
-        uv sync
+        # Use --frozen to avoid modifying uv.lock file
+        uv sync --frozen
         echo -e "  ${GREEN}✓${NC} $name dependencies synced"
     else
         echo -e "  ${GREEN}✓${NC} $name dependencies are up to date"
@@ -274,32 +340,40 @@ check_frontend_dependencies() {
     if [ ! -d "$frontend_dir/node_modules" ]; then
         echo -e "${YELLOW}Frontend dependencies not installed. Installing...${NC}"
         cd "$frontend_dir"
-        npm install
+        npm install --ignore-scripts
         cd "$SCRIPT_DIR"
         echo -e "${GREEN}✓ Frontend dependencies installed${NC}"
         return
     fi
 
-    # Check if package.json is newer than node_modules
-    if [ "$frontend_dir/package.json" -nt "$frontend_dir/node_modules" ]; then
-        echo -e "${YELLOW}Frontend dependencies may be outdated. Updating...${NC}"
+    # Create a marker file to track last successful install
+    local marker_file="$frontend_dir/node_modules/.install-marker"
+    
+    # Check if package.json is newer than the marker file
+    if [ "$frontend_dir/package.json" -nt "$marker_file" ]; then
+        echo -e "${YELLOW}Frontend dependencies may be outdated (package.json changed). Updating...${NC}"
         cd "$frontend_dir"
-        npm install
+        npm install --ignore-scripts && touch "$marker_file"
         cd "$SCRIPT_DIR"
         echo -e "${GREEN}✓ Frontend dependencies updated${NC}"
         return
     fi
 
-    # Check package-lock.json if exists
+    # Check package-lock.json if exists and is newer than marker
     if [ -f "$frontend_dir/package-lock.json" ]; then
-        if [ "$frontend_dir/package-lock.json" -nt "$frontend_dir/node_modules" ]; then
+        if [ "$frontend_dir/package-lock.json" -nt "$marker_file" ]; then
             echo -e "${YELLOW}Frontend dependencies may be outdated (package-lock.json changed). Updating...${NC}"
             cd "$frontend_dir"
-            npm install
+            npm install --ignore-scripts && touch "$marker_file"
             cd "$SCRIPT_DIR"
             echo -e "${GREEN}✓ Frontend dependencies updated${NC}"
             return
         fi
+    fi
+
+    # If marker doesn't exist, create it (first time check after node_modules exists)
+    if [ ! -f "$marker_file" ]; then
+        touch "$marker_file"
     fi
 
     echo -e "${GREEN}✓ Frontend dependencies are up to date${NC}"
@@ -314,6 +388,42 @@ EXECUTOR_IMAGE=$DEFAULT_EXECUTOR_IMAGE
 DEFAULT_API_URL="http://localhost:8000"
 API_URL=$DEFAULT_API_URL
 
+# Get local IP address
+get_local_ip() {
+    # Try to get the local IP address, fallback to localhost if not available
+    local ip=""
+    
+    # Method 1: Try Linux ip command (most reliable, works on Linux)
+    if command -v ip &> /dev/null; then
+        ip=$(ip route get 1 2>/dev/null | awk '{print $7; exit}')
+    fi
+    
+    # Method 2: Try hostname -I (works on some Linux, gets first non-loopback IP)
+    if [ -z "$ip" ] && command -v hostname &> /dev/null; then
+        ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    fi
+    
+    # Method 3: Try macOS/BSD ifconfig (works on macOS)
+    # Filter out docker/bridge interfaces (br-, docker, veth)
+    if [ -z "$ip" ] && command -v ifconfig &> /dev/null; then
+        ip=$(ifconfig | grep -A 1 "^en\|^eth" | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -1)
+        # If no en/eth interface, try any non-docker interface
+        if [ -z "$ip" ]; then
+            ip=$(ifconfig | grep -v "^br-\|^docker\|^veth" | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -1)
+        fi
+    fi
+    
+    # Fallback to localhost if no IP found
+    if [ -z "$ip" ]; then
+        ip="localhost"
+    fi
+    
+    echo "$ip"
+}
+
+DEFAULT_SOCKET_URL="http://$(get_local_ip):8000"
+SOCKET_URL=$DEFAULT_SOCKET_URL
+
 # PID file directory
 PID_DIR="$SCRIPT_DIR/.pids"
 
@@ -327,6 +437,7 @@ Options:
   -p, --port PORT           Frontend port (default: $DEFAULT_FRONTEND_PORT)
   -e, --executor-image IMG  Executor image (default: $DEFAULT_EXECUTOR_IMAGE)
   --api-url                 Backend api url (default: $DEFAULT_API_URL)
+  --socket-url              Socket direct url (default: $DEFAULT_SOCKET_URL)
   --stop                    Stop all services
   --restart                 Restart all services
   --status                  Check service status
@@ -336,6 +447,7 @@ Examples:
   $0                                    # Start with default configuration
   $0 -p 8080                            # Specify frontend port as 8080
   $0 -e my-executor:latest              # Specify custom executor image
+  $0 --socket-url http://192.168.1.100:8000  # Specify socket URL with your IP
   $0 --stop                             # Stop all services
 
 EOF
@@ -345,41 +457,45 @@ EOF
 ACTION="start"
 
 while [[ $# -gt 0 ]]; do
-    case $1 in
-        -p|--port)
-            FRONTEND_PORT="$2"
-            shift 2
-            ;;
-        -e|--executor-image)
-            EXECUTOR_IMAGE="$2"
-            shift 2
-            ;;
-        --api-url)
-            API_URL="$2"
-            shift 2
-            ;;
-        --stop)
-            ACTION="stop"
-            shift
-            ;;
-        --restart)
-            ACTION="restart"
-            shift
-            ;;
-        --status)
-            ACTION="status"
-            shift
-            ;;
-        -h|--help)
-            show_help
-            exit 0
-            ;;
-        *)
-            echo -e "${RED}Unknown parameter: $1${NC}"
-            show_help
-            exit 1
-            ;;
-    esac
+case $1 in
+    -p|--port)
+        FRONTEND_PORT="$2"
+        shift 2
+        ;;
+    -e|--executor-image)
+        EXECUTOR_IMAGE="$2"
+        shift 2
+        ;;
+    --api-url)
+        API_URL="$2"
+        shift 2
+        ;;
+    --socket-url)
+        SOCKET_URL="$2"
+        shift 2
+        ;;
+    --stop)
+        ACTION="stop"
+        shift
+        ;;
+    --restart)
+        ACTION="restart"
+        shift
+        ;;
+    --status)
+        ACTION="status"
+        shift
+        ;;
+    -h|--help)
+        show_help
+        exit 0
+        ;;
+    *)
+        echo -e "${RED}Unknown parameter: $1${NC}"
+        show_help
+        exit 1
+        ;;
+esac
 done
 
 # Create PID directory
@@ -596,6 +712,9 @@ start_services() {
     local docker_version=$(docker --version | awk '{print $3}' | tr -d ',')
     echo -e "  ${GREEN}✓${NC} docker detected: $docker_version"
 
+    # Check and start MySQL and Redis if needed
+    check_mysql_redis
+
     # Check libmagic
     check_libmagic_installed
     echo -e "  ${GREEN}✓${NC} libmagic detected"
@@ -610,6 +729,8 @@ start_services() {
     echo -e "${GREEN}Configuration:${NC}"
     echo -e "  Frontend Port:    $FRONTEND_PORT"
     echo -e "  Executor Image:   $EXECUTOR_IMAGE"
+    echo -e "  API URL:          $API_URL"
+    echo -e "  Socket URL:       $SOCKET_URL"
     echo ""
 
     # Check port conflicts
@@ -658,7 +779,7 @@ start_services() {
 
     # Set environment variables
     export RUNTIME_INTERNAL_API_URL=$API_URL
-    export RUNTIME_SOCKET_DIRECT_URL=$API_URL
+    export RUNTIME_SOCKET_DIRECT_URL=$SOCKET_URL
 
     # Start frontend in background
     nohup bash -c "PORT=$FRONTEND_PORT npm run dev" > "$PID_DIR/frontend.log" 2>&1 &
@@ -702,11 +823,19 @@ start_services() {
     echo -e "${GREEN}════════════════════════════════════════════════════════${NC}"
     echo -e "${GREEN}All services started successfully!${NC}"
     echo ""
-    echo -e "  Frontend URL: ${BLUE}http://localhost:$FRONTEND_PORT${NC}"
+    echo -e "${GREEN}🌐 Access URLs:${NC}"
+    echo -e "  Local Frontend:  ${BLUE}http://localhost:$FRONTEND_PORT${NC}"
+    echo -e "  Remote Frontend: ${BLUE}http://$(get_local_ip):$FRONTEND_PORT${NC}"
+    echo -e "  Socket URL:      ${BLUE}$SOCKET_URL${NC}"
+    echo ""
+    echo -e "${YELLOW}📋 Share with others for remote access:${NC}"
+    echo -e "  Frontend URL: ${BLUE}http://$(get_local_ip):$FRONTEND_PORT${NC}"
+    echo -e "  Socket URL:   ${BLUE}$SOCKET_URL${NC}"
     echo ""
     echo -e "${YELLOW}Common Commands:${NC}"
     echo -e "  $0 --status    Check service status"
     echo -e "  $0 --stop      Stop all services"
+    echo -e "  $0 --socket-url http://YOUR_IP:8000  # Set custom socket URL"
     echo ""
     echo -e "${YELLOW}Log Files:${NC}"
     echo -e "  Backend:          $PID_DIR/backend.log"
