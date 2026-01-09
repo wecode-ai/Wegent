@@ -488,38 +488,41 @@ class PipelineStageService:
         """
         if next_stage_index >= len(team_crd.spec.members):
             return None
-
         next_member = team_crd.spec.members[next_stage_index]
 
-        # Get the team to find the bot
-        team = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == task.user_id,
-                Kind.kind == "Team",
-                Kind.name == team_crd.metadata.name,
-                Kind.namespace == team_crd.metadata.namespace,
-                Kind.is_active.is_(True),
-            )
-            .first()
-        )
+        # Get the team to find the bot (supports owned, shared, and group teams)
+        team = self.get_team_for_task(db, task, task_crd)
 
         if not team:
             logger.error(f"Team not found for task {task.id}")
             return None
 
         # Find the bot for the next stage
-        bot = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == team.user_id,
-                Kind.kind == "Bot",
-                Kind.name == next_member.botRef.name,
-                Kind.namespace == next_member.botRef.namespace,
-                Kind.is_active.is_(True),
+        # For group teams (namespace != 'default'), bot may be created by any group member
+        # so we query without user_id filter
+        if next_member.botRef.namespace and next_member.botRef.namespace != "default":
+            bot = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "Bot",
+                    Kind.name == next_member.botRef.name,
+                    Kind.namespace == next_member.botRef.namespace,
+                    Kind.is_active.is_(True),
+                )
+                .first()
             )
-            .first()
-        )
+        else:
+            bot = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == team.user_id,
+                    Kind.kind == "Bot",
+                    Kind.name == next_member.botRef.name,
+                    Kind.namespace == next_member.botRef.namespace,
+                    Kind.is_active.is_(True),
+                )
+                .first()
+            )
 
         if not bot:
             logger.error(
