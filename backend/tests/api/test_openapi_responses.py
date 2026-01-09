@@ -648,6 +648,7 @@ class TestOpenAPIResponsesCancel:
             message_id=1,
             parent_id=0,
             error_message="",
+            completed_at=datetime(1970, 1, 1, 0, 0, 0),
             result=None,
             sender_type=SenderType.TEAM,
             sender_user_id=0,
