@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.kind import Kind
+from app.models.marketplace import InstalledTeam, TeamMarketplace
 from app.models.shared_team import SharedTeam
 from app.models.user import User
 from app.schemas.kind import Bot, Ghost, Model, Shell, Task, Team
@@ -303,6 +304,42 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                         )
                     )
                     queries.append(shared_teams_query)
+
+                    # Query for installed marketplace teams (reference mode only)
+                    # share_status=3 indicates marketplace installed teams
+                    marketplace_teams_query = (
+                        db.query(
+                            Kind.id.label("team_id"),
+                            Kind.user_id.label("team_user_id"),
+                            Kind.name.label("team_name"),
+                            Kind.namespace.label("team_namespace"),
+                            Kind.json.label("team_json"),
+                            Kind.created_at.label("team_created_at"),
+                            Kind.updated_at.label("team_updated_at"),
+                            literal_column("3").label(
+                                "share_status"
+                            ),  # 3 for marketplace installed teams
+                            literal_column("0").label("context_user_id"),
+                        )
+                        .join(
+                            TeamMarketplace,
+                            TeamMarketplace.team_id == Kind.id,
+                        )
+                        .join(
+                            InstalledTeam,
+                            InstalledTeam.marketplace_team_id == TeamMarketplace.id,
+                        )
+                        .filter(
+                            InstalledTeam.user_id == user_id,
+                            InstalledTeam.is_active == True,
+                            InstalledTeam.install_mode == "reference",
+                            TeamMarketplace.is_active == True,
+                            Kind.is_active == True,
+                            Kind.kind == "Team",
+                            Kind.user_id == 0,  # Marketplace teams have user_id=0
+                        )
+                    )
+                    queries.append(marketplace_teams_query)
             else:
                 # Query for group teams
                 group_teams_query = db.query(

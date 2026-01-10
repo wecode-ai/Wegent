@@ -1,0 +1,39 @@
+{
+  "title": "智能体市场",
+  "description": "浏览并安装市场中的 AI 智能体",
+  "search_placeholder": "搜索智能体...",
+  "categories": {
+    "all": "全部",
+    "development": "开发",
+    "office": "办公",
+    "creative": "创意",
+    "data_analysis": "数据分析",
+    "education": "教育",
+    "other": "其他"
+  },
+  "install": "安装",
+  "uninstall": "卸载",
+  "installed": "已安装",
+  "installing": "安装中...",
+  "install_count": "{{count}} 次安装",
+  "install_success": "智能体安装成功",
+  "install_failed": "安装智能体失败",
+  "uninstall_success": "智能体卸载成功",
+  "uninstall_failed": "卸载智能体失败",
+  "install_mode": {
+    "title": "选择安装模式",
+    "description": "您希望如何安装「{{name}}」？",
+    "reference": "引用模式",
+    "reference_desc": "直接使用，自动同步更新，不可修改",
+    "copy": "复制模式",
+    "copy_desc": "复制为私有副本，可自由修改"
+  },
+  "no_teams": "未找到智能体",
+  "no_teams_hint": "请尝试调整搜索条件或分类筛选",
+  "no_description": "暂无描述",
+  "loading": "正在加载智能体...",
+  "loading_more": "加载中...",
+  "load_more": "加载更多",
+  "error_loading": "加载市场智能体失败",
+  "marketplace_tag": "市场"
+}

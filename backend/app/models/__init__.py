@@ -11,6 +11,7 @@ Models with relationships should be imported after their related models.
 from app.models.api_key import APIKey
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
+from app.models.marketplace import InstalledTeam, TeamMarketplace
 from app.models.namespace import Namespace
 from app.models.namespace_member import NamespaceMember
 from app.models.shared_task import SharedTask
@@ -42,4 +43,6 @@ __all__ = [
     "APIKey",
     "TaskMember",
     "KnowledgeDocument",
+    "TeamMarketplace",
+    "InstalledTeam",
 ]

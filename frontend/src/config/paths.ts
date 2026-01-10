@@ -32,6 +32,9 @@ export const paths = {
   wiki: {
     getHref: () => '/knowledge',
   },
+  marketplace: {
+    getHref: () => '/marketplace',
+  },
   settings: {
     root: {
       getHref: () => '/settings',
