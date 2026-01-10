@@ -1,0 +1,513 @@
+'use client'
+
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+/**
+ * Flow creation/edit form component.
+ */
+import { useCallback, useEffect, useState } from 'react'
+import { useTranslation } from '@/hooks/useTranslation'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
+import { Switch } from '@/components/ui/switch'
+import { flowApis } from '@/apis/flow'
+import { teamApis } from '@/apis/team'
+import type { Team } from '@/types/api'
+import type {
+  Flow,
+  FlowCreateRequest,
+  FlowTaskType,
+  FlowTriggerType,
+  FlowUpdateRequest,
+} from '@/types/flow'
+import { toast } from 'sonner'
+
+interface FlowFormProps {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  flow?: Flow | null
+  onSuccess: () => void
+}
+
+const defaultTriggerConfig: Record<FlowTriggerType, Record<string, unknown>> = {
+  cron: { expression: '0 9 * * *', timezone: 'UTC' },
+  interval: { value: 1, unit: 'hours' },
+  one_time: { execute_at: new Date().toISOString() },
+  event: { event_type: 'webhook' },
+}
+
+export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps) {
+  const { t } = useTranslation('flow')
+  const isEditing = !!flow
+
+  // Form state
+  const [name, setName] = useState('')
+  const [displayName, setDisplayName] = useState('')
+  const [description, setDescription] = useState('')
+  const [taskType, setTaskType] = useState<FlowTaskType>('collection')
+  const [triggerType, setTriggerType] = useState<FlowTriggerType>('cron')
+  const [triggerConfig, setTriggerConfig] = useState<Record<string, unknown>>(
+    defaultTriggerConfig.cron
+  )
+  const [teamId, setTeamId] = useState<number | null>(null)
+  const [promptTemplate, setPromptTemplate] = useState('')
+  const [retryCount, setRetryCount] = useState(0)
+  const [enabled, setEnabled] = useState(true)
+
+  // Teams for selection
+  const [teams, setTeams] = useState<Team[]>([])
+  const [teamsLoading, setTeamsLoading] = useState(false)
+
+  // Submit state
+  const [submitting, setSubmitting] = useState(false)
+
+  // Load teams
+  useEffect(() => {
+    const loadTeams = async () => {
+      setTeamsLoading(true)
+      try {
+        const response = await teamApis.getTeams({ page: 1, limit: 100 })
+        setTeams(response.items)
+      } catch (error) {
+        console.error('Failed to load teams:', error)
+      } finally {
+        setTeamsLoading(false)
+      }
+    }
+    if (open) {
+      loadTeams()
+    }
+  }, [open])
+
+  // Reset form when flow changes
+  useEffect(() => {
+    if (flow) {
+      setName(flow.name)
+      setDisplayName(flow.display_name)
+      setDescription(flow.description || '')
+      setTaskType(flow.task_type)
+      setTriggerType(flow.trigger_type)
+      setTriggerConfig(flow.trigger_config)
+      setTeamId(flow.team_id)
+      setPromptTemplate(flow.prompt_template)
+      setRetryCount(flow.retry_count)
+      setEnabled(flow.enabled)
+    } else {
+      setName('')
+      setDisplayName('')
+      setDescription('')
+      setTaskType('collection')
+      setTriggerType('cron')
+      setTriggerConfig(defaultTriggerConfig.cron)
+      setTeamId(null)
+      setPromptTemplate('')
+      setRetryCount(0)
+      setEnabled(true)
+    }
+  }, [flow, open])
+
+  // Handle trigger type change
+  const handleTriggerTypeChange = useCallback((value: FlowTriggerType) => {
+    setTriggerType(value)
+    setTriggerConfig(defaultTriggerConfig[value])
+  }, [])
+
+  // Handle submit
+  const handleSubmit = useCallback(async () => {
+    // Validation
+    if (!displayName.trim()) {
+      toast.error(t('validation_display_name_required'))
+      return
+    }
+    if (!teamId) {
+      toast.error(t('validation_team_required'))
+      return
+    }
+    if (!promptTemplate.trim()) {
+      toast.error(t('validation_prompt_required'))
+      return
+    }
+
+    setSubmitting(true)
+    try {
+      if (isEditing && flow) {
+        const updateData: FlowUpdateRequest = {
+          display_name: displayName,
+          description: description || undefined,
+          task_type: taskType,
+          trigger_type: triggerType,
+          trigger_config: triggerConfig,
+          team_id: teamId,
+          prompt_template: promptTemplate,
+          retry_count: retryCount,
+          enabled,
+        }
+        await flowApis.updateFlow(flow.id, updateData)
+        toast.success(t('update_success'))
+      } else {
+        // Generate name from display name
+        const generatedName = displayName
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-|-$/g, '')
+          .slice(0, 50) || `flow-${Date.now()}`
+
+        const createData: FlowCreateRequest = {
+          name: generatedName,
+          display_name: displayName,
+          description: description || undefined,
+          task_type: taskType,
+          trigger_type: triggerType,
+          trigger_config: triggerConfig,
+          team_id: teamId,
+          prompt_template: promptTemplate,
+          retry_count: retryCount,
+          enabled,
+        }
+        await flowApis.createFlow(createData)
+        toast.success(t('create_success'))
+      }
+      onSuccess()
+      onOpenChange(false)
+    } catch (error: any) {
+      console.error('Failed to save flow:', error)
+      toast.error(error?.message || t('save_failed'))
+    } finally {
+      setSubmitting(false)
+    }
+  }, [
+    displayName,
+    description,
+    taskType,
+    triggerType,
+    triggerConfig,
+    teamId,
+    promptTemplate,
+    retryCount,
+    enabled,
+    isEditing,
+    flow,
+    onSuccess,
+    onOpenChange,
+    t,
+  ])
+
+  const renderTriggerConfig = () => {
+    switch (triggerType) {
+      case 'cron':
+        return (
+          <div className="space-y-3">
+            <div>
+              <Label>{t('cron_expression')}</Label>
+              <Input
+                value={(triggerConfig.expression as string) || ''}
+                onChange={e =>
+                  setTriggerConfig({ ...triggerConfig, expression: e.target.value })
+                }
+                placeholder="0 9 * * *"
+              />
+              <p className="mt-1 text-xs text-text-muted">
+                {t('cron_hint')}
+              </p>
+            </div>
+          </div>
+        )
+      case 'interval':
+        return (
+          <div className="flex gap-3">
+            <div className="flex-1">
+              <Label>{t('interval_value')}</Label>
+              <Input
+                type="number"
+                min={1}
+                value={(triggerConfig.value as number) || 1}
+                onChange={e =>
+                  setTriggerConfig({
+                    ...triggerConfig,
+                    value: parseInt(e.target.value) || 1,
+                  })
+                }
+              />
+            </div>
+            <div className="flex-1">
+              <Label>{t('interval_unit')}</Label>
+              <Select
+                value={(triggerConfig.unit as string) || 'hours'}
+                onValueChange={value =>
+                  setTriggerConfig({ ...triggerConfig, unit: value })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="minutes">{t('unit_minutes')}</SelectItem>
+                  <SelectItem value="hours">{t('unit_hours')}</SelectItem>
+                  <SelectItem value="days">{t('unit_days')}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        )
+      case 'one_time':
+        return (
+          <div>
+            <Label>{t('execute_at')}</Label>
+            <Input
+              type="datetime-local"
+              value={
+                triggerConfig.execute_at
+                  ? new Date(triggerConfig.execute_at as string)
+                      .toISOString()
+                      .slice(0, 16)
+                  : ''
+              }
+              onChange={e =>
+                setTriggerConfig({
+                  ...triggerConfig,
+                  execute_at: new Date(e.target.value).toISOString(),
+                })
+              }
+            />
+          </div>
+        )
+      case 'event':
+        return (
+          <div>
+            <Label>{t('event_type')}</Label>
+            <Select
+              value={(triggerConfig.event_type as string) || 'webhook'}
+              onValueChange={value =>
+                setTriggerConfig({ ...triggerConfig, event_type: value })
+              }
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="webhook">Webhook</SelectItem>
+                <SelectItem value="git_push">Git Push</SelectItem>
+              </SelectContent>
+            </Select>
+            {triggerConfig.event_type === 'git_push' && (
+              <div className="mt-3 space-y-3">
+                <div>
+                  <Label>{t('git_repository')}</Label>
+                  <Input
+                    value={(triggerConfig.git_push as any)?.repository || ''}
+                    onChange={e =>
+                      setTriggerConfig({
+                        ...triggerConfig,
+                        git_push: {
+                          ...(triggerConfig.git_push as any),
+                          repository: e.target.value,
+                        },
+                      })
+                    }
+                    placeholder="owner/repo"
+                  />
+                </div>
+                <div>
+                  <Label>{t('git_branch')}</Label>
+                  <Input
+                    value={(triggerConfig.git_push as any)?.branch || ''}
+                    onChange={e =>
+                      setTriggerConfig({
+                        ...triggerConfig,
+                        git_push: {
+                          ...(triggerConfig.git_push as any),
+                          branch: e.target.value,
+                        },
+                      })
+                    }
+                    placeholder="main"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        )
+      default:
+        return null
+    }
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent className="w-[500px] overflow-y-auto sm:max-w-[500px]">
+        <SheetHeader>
+          <SheetTitle>
+            {isEditing ? t('edit_flow') : t('create_flow')}
+          </SheetTitle>
+          <SheetDescription>
+            {isEditing ? t('edit_flow_desc') : t('create_flow_desc')}
+          </SheetDescription>
+        </SheetHeader>
+
+        <div className="mt-6 space-y-6">
+          {/* Display Name */}
+          <div>
+            <Label>{t('display_name')} *</Label>
+            <Input
+              value={displayName}
+              onChange={e => setDisplayName(e.target.value)}
+              placeholder={t('display_name_placeholder')}
+            />
+          </div>
+
+          {/* Description */}
+          <div>
+            <Label>{t('description')}</Label>
+            <Input
+              value={description}
+              onChange={e => setDescription(e.target.value)}
+              placeholder={t('description_placeholder')}
+            />
+          </div>
+
+          {/* Task Type */}
+          <div>
+            <Label>{t('task_type')} *</Label>
+            <Select
+              value={taskType}
+              onValueChange={value => setTaskType(value as FlowTaskType)}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="collection">
+                  {t('task_type_collection')} - {t('task_type_collection_desc')}
+                </SelectItem>
+                <SelectItem value="execution">
+                  {t('task_type_execution')} - {t('task_type_execution_desc')}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Trigger Type */}
+          <div>
+            <Label>{t('trigger_type')} *</Label>
+            <Select
+              value={triggerType}
+              onValueChange={handleTriggerTypeChange}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="cron">{t('trigger_cron')}</SelectItem>
+                <SelectItem value="interval">{t('trigger_interval')}</SelectItem>
+                <SelectItem value="one_time">{t('trigger_one_time')}</SelectItem>
+                <SelectItem value="event">{t('trigger_event')}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Trigger Config */}
+          <div className="rounded-lg border border-border p-4">
+            <div className="mb-3 text-sm font-medium">{t('trigger_config')}</div>
+            {renderTriggerConfig()}
+          </div>
+
+          {/* Team Selection */}
+          <div>
+            <Label>{t('select_team')} *</Label>
+            <Select
+              value={teamId?.toString() || ''}
+              onValueChange={value => setTeamId(parseInt(value))}
+              disabled={teamsLoading}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder={t('select_team_placeholder')} />
+              </SelectTrigger>
+              <SelectContent>
+                {teams.map(team => (
+                  <SelectItem key={team.id} value={team.id.toString()}>
+                    {team.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Prompt Template */}
+          <div>
+            <Label>{t('prompt_template')} *</Label>
+            <Textarea
+              value={promptTemplate}
+              onChange={e => setPromptTemplate(e.target.value)}
+              placeholder={t('prompt_template_placeholder')}
+              rows={4}
+            />
+            <p className="mt-1 text-xs text-text-muted">
+              {t('prompt_variables_hint')}
+            </p>
+          </div>
+
+          {/* Retry Count */}
+          <div>
+            <Label>{t('retry_count')}</Label>
+            <Select
+              value={retryCount.toString()}
+              onValueChange={value => setRetryCount(parseInt(value))}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="0">0 ({t('no_retry')})</SelectItem>
+                <SelectItem value="1">1</SelectItem>
+                <SelectItem value="2">2</SelectItem>
+                <SelectItem value="3">3</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Enabled */}
+          <div className="flex items-center justify-between">
+            <Label>{t('enable_flow')}</Label>
+            <Switch checked={enabled} onCheckedChange={setEnabled} />
+          </div>
+        </div>
+
+        <SheetFooter className="mt-6">
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={submitting}
+          >
+            {t('common:actions.cancel')}
+          </Button>
+          <Button onClick={handleSubmit} disabled={submitting}>
+            {submitting
+              ? t('common:actions.saving')
+              : isEditing
+                ? t('common:actions.save')
+                : t('common:actions.create')}
+          </Button>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
+  )
+}
