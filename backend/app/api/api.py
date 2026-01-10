@@ -28,6 +28,7 @@ from app.api.endpoints.adapter import (
     chat,
     dify,
     executors,
+    forms,
     models,
     retrievers,
     shells,
@@ -96,6 +97,7 @@ api_router.include_router(
 api_router.include_router(tables.router, prefix="/tables", tags=["tables"])
 api_router.include_router(rag.router, prefix="/rag", tags=["rag"])
 api_router.include_router(utils.router, prefix="/utils", tags=["utils"])
+api_router.include_router(forms.router, prefix="/forms", tags=["forms"])
 api_router.include_router(k_router)
 
 # Internal API endpoints (for service-to-service communication)

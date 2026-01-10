@@ -74,6 +74,12 @@ class ServerEvents:
     # Generic Skill Events
     SKILL_REQUEST = "skill:request"  # Server -> Client: skill request
 
+    # Form submission events (to task room or user room)
+    FORM_SUBMITTED = "form:submitted"
+    FORM_PROCESSING = "form:processing"
+    FORM_COMPLETED = "form:completed"
+    FORM_ERROR = "form:error"
+
 
 # ============================================================
 # Client -> Server Payloads
@@ -484,3 +490,45 @@ class GenericAck(BaseModel):
 
     success: bool = True
     error: Optional[str] = None
+
+
+# ============================================================
+# Form Submission Event Payloads
+# ============================================================
+
+
+class FormSubmittedPayload(BaseModel):
+    """Payload for form:submitted event."""
+
+    submission_id: str = Field(..., description="Unique submission ID")
+    action_type: str = Field(..., description="Form action type")
+    task_id: Optional[int] = Field(None, description="Associated task ID")
+    timestamp: str = Field(..., description="Submission timestamp (ISO format)")
+
+
+class FormProcessingPayload(BaseModel):
+    """Payload for form:processing event."""
+
+    submission_id: str = Field(..., description="Unique submission ID")
+    action_type: str = Field(..., description="Form action type")
+    timestamp: str = Field(..., description="Processing start timestamp")
+
+
+class FormCompletedPayload(BaseModel):
+    """Payload for form:completed event."""
+
+    submission_id: str = Field(..., description="Unique submission ID")
+    action_type: str = Field(..., description="Form action type")
+    status: str = Field("completed", description="Final status")
+    result: Dict[str, Any] = Field(default_factory=dict, description="Processing result")
+    timestamp: str = Field(..., description="Completion timestamp")
+
+
+class FormErrorPayload(BaseModel):
+    """Payload for form:error event."""
+
+    submission_id: str = Field(..., description="Unique submission ID")
+    action_type: str = Field(..., description="Form action type")
+    error: str = Field(..., description="Error message")
+    error_code: Optional[str] = Field(None, description="Error code for categorization")
+    timestamp: str = Field(..., description="Error timestamp")

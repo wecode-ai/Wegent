@@ -9,6 +9,7 @@ Note: Import order matters for SQLAlchemy relationship resolution.
 Models with relationships should be imported after their related models.
 """
 from app.models.api_key import APIKey
+from app.models.form_submission import FormSubmission, FormSubmissionStatus
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
 from app.models.namespace import Namespace
@@ -42,4 +43,6 @@ __all__ = [
     "APIKey",
     "TaskMember",
     "KnowledgeDocument",
+    "FormSubmission",
+    "FormSubmissionStatus",
 ]
