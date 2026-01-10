@@ -142,14 +142,34 @@ const PipelineStageIndicator = memo(function PipelineStageIndicator({
     }
   }
 
-  // Check if the connector line should be green (completed)
-  const isConnectorCompleted = (displayIndex: number) => {
-    const stage = displayStages[displayIndex]
-    if (stage.isStartNode) {
-      // Start node connector is green if any stage has started (not all pending)
-      return stageInfo.stages.some(s => s.status !== 'pending')
+  /**
+   * Get connector line style based on the next (target) stage's status.
+   * The connector color follows the status of the stage it's pointing to.
+   *
+   * @param displayIndex - The index of the current stage (connector is on its right side)
+   * @returns Object with className and whether to animate
+   */
+  const getConnectorStyle = (displayIndex: number): { className: string; animate: boolean } => {
+    const targetStage = displayStages[displayIndex + 1]
+    if (!targetStage) {
+      return { className: 'bg-border', animate: false }
     }
-    return stage.status === 'completed'
+
+    switch (targetStage.status) {
+      case 'start':
+        return { className: 'bg-green-500', animate: false }
+      case 'completed':
+        return { className: 'bg-green-500', animate: false }
+      case 'running':
+        return { className: 'bg-primary', animate: true }
+      case 'pending_confirmation':
+        return { className: 'bg-amber-500', animate: false }
+      case 'failed':
+        return { className: 'bg-red-500', animate: false }
+      case 'pending':
+      default:
+        return { className: 'bg-border', animate: false }
+    }
   }
 
   // Get text color based on stage status
@@ -188,6 +208,7 @@ const PipelineStageIndicator = memo(function PipelineStageIndicator({
           const isCurrentStage = !stage.isStartNode && stage.index === stageInfo.current_stage
           const isLastStage = displayIndex === displayStages.length - 1
           const isPendingConfirmation = stage.status === 'pending_confirmation'
+          const connectorStyle = !isLastStage ? getConnectorStyle(displayIndex) : null
 
           return (
             <div
@@ -240,12 +261,13 @@ const PipelineStageIndicator = memo(function PipelineStageIndicator({
               </div>
 
               {/* Connector Line (not after last stage) */}
-              {!isLastStage && (
+              {connectorStyle && (
                 <div
                   className={cn(
-                    'flex-1 h-0.5 mx-1 min-w-[20px]',
+                    'flex-1 h-0.5 mx-1 min-w-[20px] transition-colors duration-300',
                     isPendingConfirmation ? 'self-center' : 'self-start mt-2',
-                    isConnectorCompleted(displayIndex) ? 'bg-green-500' : 'bg-border'
+                    connectorStyle.className,
+                    connectorStyle.animate && 'animate-pulse'
                   )}
                 />
               )}
