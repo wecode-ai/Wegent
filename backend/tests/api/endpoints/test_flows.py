@@ -11,9 +11,11 @@ from unittest.mock import patch
 
 import pytest
 from fastapi import status
+from fastapi.testclient import TestClient
 
 from app.models.flow import FlowExecution, FlowResource
 from app.models.kind import Kind
+from app.models.user import User
 from app.schemas.flow import FlowExecutionStatus, FlowTaskType, FlowTriggerType
 
 
@@ -21,7 +23,7 @@ class TestFlowEndpoints:
     """Test Flow API endpoints."""
 
     @pytest.fixture
-    def test_team(self, db_session, test_user):
+    def test_team(self, test_db, test_user):
         """Create a test team."""
         team = Kind(
             user_id=test_user.id,
@@ -36,13 +38,13 @@ class TestFlowEndpoints:
             },
             is_active=True,
         )
-        db_session.add(team)
-        db_session.commit()
-        db_session.refresh(team)
+        test_db.add(team)
+        test_db.commit()
+        test_db.refresh(team)
         return team
 
     @pytest.fixture
-    def test_flow(self, db_session, test_user, test_team):
+    def test_flow(self, test_db, test_user, test_team):
         """Create a test flow."""
         flow_json = {
             "apiVersion": "agent.wecode.io/v1",
@@ -73,14 +75,16 @@ class TestFlowEndpoints:
             trigger_type="cron",
             team_id=test_team.id,
         )
-        db_session.add(flow)
-        db_session.commit()
-        db_session.refresh(flow)
+        test_db.add(flow)
+        test_db.commit()
+        test_db.refresh(flow)
         return flow
 
-    def test_create_flow(self, client, test_user, test_team, auth_headers):
+    def test_create_flow(
+        self, test_client: TestClient, test_user: User, test_team, test_token: str
+    ):
         """Test creating a new flow."""
-        response = client.post(
+        response = test_client.post(
             "/api/flows",
             json={
                 "name": "new-flow",
@@ -93,7 +97,7 @@ class TestFlowEndpoints:
                 "retry_count": 1,
                 "enabled": True,
             },
-            headers=auth_headers,
+            headers={"Authorization": f"Bearer {test_token}"},
         )
         assert response.status_code == status.HTTP_201_CREATED
         data = response.json()
@@ -101,63 +105,89 @@ class TestFlowEndpoints:
         assert data["display_name"] == "New Flow"
         assert data["enabled"] == True
 
-    def test_list_flows(self, client, test_flow, auth_headers):
+    def test_list_flows(
+        self, test_client: TestClient, test_flow, test_token: str
+    ):
         """Test listing flows."""
-        response = client.get("/api/flows", headers=auth_headers)
+        response = test_client.get(
+            "/api/flows", headers={"Authorization": f"Bearer {test_token}"}
+        )
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert data["total"] >= 1
         assert len(data["items"]) >= 1
 
-    def test_get_flow(self, client, test_flow, auth_headers):
+    def test_get_flow(
+        self, test_client: TestClient, test_flow, test_token: str
+    ):
         """Test getting a specific flow."""
-        response = client.get(f"/api/flows/{test_flow.id}", headers=auth_headers)
+        response = test_client.get(
+            f"/api/flows/{test_flow.id}",
+            headers={"Authorization": f"Bearer {test_token}"},
+        )
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert data["id"] == test_flow.id
         assert data["name"] == "test-flow"
 
-    def test_update_flow(self, client, test_flow, auth_headers):
+    def test_update_flow(
+        self, test_client: TestClient, test_flow, test_token: str
+    ):
         """Test updating a flow."""
-        response = client.put(
+        response = test_client.put(
             f"/api/flows/{test_flow.id}",
             json={"display_name": "Updated Flow Name", "enabled": False},
-            headers=auth_headers,
+            headers={"Authorization": f"Bearer {test_token}"},
         )
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert data["display_name"] == "Updated Flow Name"
         assert data["enabled"] == False
 
-    def test_delete_flow(self, client, test_flow, auth_headers):
+    def test_delete_flow(
+        self, test_client: TestClient, test_flow, test_token: str
+    ):
         """Test deleting a flow."""
-        response = client.delete(f"/api/flows/{test_flow.id}", headers=auth_headers)
+        response = test_client.delete(
+            f"/api/flows/{test_flow.id}",
+            headers={"Authorization": f"Bearer {test_token}"},
+        )
         assert response.status_code == status.HTTP_204_NO_CONTENT
 
         # Verify soft delete
-        response = client.get(f"/api/flows/{test_flow.id}", headers=auth_headers)
+        response = test_client.get(
+            f"/api/flows/{test_flow.id}",
+            headers={"Authorization": f"Bearer {test_token}"},
+        )
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
-    def test_toggle_flow(self, client, test_flow, auth_headers):
+    def test_toggle_flow(
+        self, test_client: TestClient, test_flow, test_token: str
+    ):
         """Test toggling flow enabled/disabled."""
         # Disable
-        response = client.post(
-            f"/api/flows/{test_flow.id}/toggle?enabled=false", headers=auth_headers
+        response = test_client.post(
+            f"/api/flows/{test_flow.id}/toggle?enabled=false",
+            headers={"Authorization": f"Bearer {test_token}"},
         )
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["enabled"] == False
 
         # Enable
-        response = client.post(
-            f"/api/flows/{test_flow.id}/toggle?enabled=true", headers=auth_headers
+        response = test_client.post(
+            f"/api/flows/{test_flow.id}/toggle?enabled=true",
+            headers={"Authorization": f"Bearer {test_token}"},
         )
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["enabled"] == True
 
-    def test_trigger_flow(self, client, test_flow, auth_headers):
+    def test_trigger_flow(
+        self, test_client: TestClient, test_flow, test_token: str
+    ):
         """Test manually triggering a flow."""
-        response = client.post(
-            f"/api/flows/{test_flow.id}/trigger", headers=auth_headers
+        response = test_client.post(
+            f"/api/flows/{test_flow.id}/trigger",
+            headers={"Authorization": f"Bearer {test_token}"},
         )
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
@@ -165,9 +195,11 @@ class TestFlowEndpoints:
         assert data["trigger_type"] == "manual"
         assert data["status"] == "PENDING"
 
-    def test_create_flow_without_team(self, client, auth_headers):
+    def test_create_flow_without_team(
+        self, test_client: TestClient, test_token: str
+    ):
         """Test creating flow without valid team fails."""
-        response = client.post(
+        response = test_client.post(
             "/api/flows",
             json={
                 "name": "invalid-flow",
@@ -178,7 +210,7 @@ class TestFlowEndpoints:
                 "team_id": 99999,  # Non-existent team
                 "prompt_template": "Test",
             },
-            headers=auth_headers,
+            headers={"Authorization": f"Bearer {test_token}"},
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -187,28 +219,28 @@ class TestFlowExecutionEndpoints:
     """Test Flow Execution API endpoints."""
 
     @pytest.fixture
-    def test_team(self, db_session, test_user):
+    def test_team(self, test_db, test_user):
         """Create a test team."""
         team = Kind(
             user_id=test_user.id,
             kind="Team",
-            name="test-team",
+            name="test-team-exec",
             namespace="default",
             json={"apiVersion": "agent.wecode.io/v1", "kind": "Team"},
             is_active=True,
         )
-        db_session.add(team)
-        db_session.commit()
-        db_session.refresh(team)
+        test_db.add(team)
+        test_db.commit()
+        test_db.refresh(team)
         return team
 
     @pytest.fixture
-    def test_flow(self, db_session, test_user, test_team):
+    def test_flow(self, test_db, test_user, test_team):
         """Create a test flow."""
         flow = FlowResource(
             user_id=test_user.id,
             kind="Flow",
-            name="test-flow",
+            name="test-flow-exec",
             namespace="default",
             json={
                 "apiVersion": "agent.wecode.io/v1",
@@ -217,7 +249,7 @@ class TestFlowExecutionEndpoints:
                     "displayName": "Test Flow",
                     "taskType": "collection",
                     "trigger": {"type": "cron", "cron": {"expression": "0 9 * * *"}},
-                    "teamRef": {"name": "test-team"},
+                    "teamRef": {"name": "test-team-exec"},
                     "promptTemplate": "Test",
                 },
             },
@@ -226,13 +258,13 @@ class TestFlowExecutionEndpoints:
             trigger_type="cron",
             team_id=test_team.id,
         )
-        db_session.add(flow)
-        db_session.commit()
-        db_session.refresh(flow)
+        test_db.add(flow)
+        test_db.commit()
+        test_db.refresh(flow)
         return flow
 
     @pytest.fixture
-    def test_execution(self, db_session, test_user, test_flow):
+    def test_execution(self, test_db, test_user, test_flow):
         """Create a test execution."""
         execution = FlowExecution(
             user_id=test_user.id,
@@ -245,23 +277,31 @@ class TestFlowExecutionEndpoints:
             started_at=datetime.utcnow() - timedelta(minutes=5),
             completed_at=datetime.utcnow(),
         )
-        db_session.add(execution)
-        db_session.commit()
-        db_session.refresh(execution)
+        test_db.add(execution)
+        test_db.commit()
+        test_db.refresh(execution)
         return execution
 
-    def test_list_executions(self, client, test_execution, auth_headers):
+    def test_list_executions(
+        self, test_client: TestClient, test_execution, test_token: str
+    ):
         """Test listing executions."""
-        response = client.get("/api/flows/executions", headers=auth_headers)
+        response = test_client.get(
+            "/api/flows/executions",
+            headers={"Authorization": f"Bearer {test_token}"},
+        )
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert data["total"] >= 1
         assert len(data["items"]) >= 1
 
-    def test_get_execution(self, client, test_execution, auth_headers):
+    def test_get_execution(
+        self, test_client: TestClient, test_execution, test_token: str
+    ):
         """Test getting a specific execution."""
-        response = client.get(
-            f"/api/flows/executions/{test_execution.id}", headers=auth_headers
+        response = test_client.get(
+            f"/api/flows/executions/{test_execution.id}",
+            headers={"Authorization": f"Bearer {test_token}"},
         )
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
@@ -269,19 +309,21 @@ class TestFlowExecutionEndpoints:
         assert data["status"] == "COMPLETED"
 
     def test_list_executions_with_filters(
-        self, client, test_flow, test_execution, auth_headers
+        self, test_client: TestClient, test_flow, test_execution, test_token: str
     ):
         """Test listing executions with filters."""
         # Filter by flow_id
-        response = client.get(
-            f"/api/flows/executions?flow_id={test_flow.id}", headers=auth_headers
+        response = test_client.get(
+            f"/api/flows/executions?flow_id={test_flow.id}",
+            headers={"Authorization": f"Bearer {test_token}"},
         )
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert all(item["flow_id"] == test_flow.id for item in data["items"])
 
         # Filter by status
-        response = client.get(
-            "/api/flows/executions?status=COMPLETED", headers=auth_headers
+        response = test_client.get(
+            "/api/flows/executions?status=COMPLETED",
+            headers={"Authorization": f"Bearer {test_token}"},
         )
         assert response.status_code == status.HTTP_200_OK
