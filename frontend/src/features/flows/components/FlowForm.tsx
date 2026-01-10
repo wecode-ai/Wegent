@@ -21,13 +21,13 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet'
+  Drawer,
+  DrawerContent,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
+} from '@/components/ui/drawer'
 import { Switch } from '@/components/ui/switch'
 import { flowApis } from '@/apis/flow'
 import { teamApis } from '@/apis/team'
@@ -352,16 +352,16 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
   }
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-[500px] overflow-y-auto sm:max-w-[500px]">
-        <SheetHeader>
-          <SheetTitle>
+    <Drawer open={open} onOpenChange={onOpenChange}>
+      <DrawerContent className="w-[500px] overflow-y-auto sm:max-w-[500px]">
+        <DrawerHeader>
+          <DrawerTitle>
             {isEditing ? t('edit_flow') : t('create_flow')}
-          </SheetTitle>
-          <SheetDescription>
+          </DrawerTitle>
+          <DrawerDescription>
             {isEditing ? t('edit_flow_desc') : t('create_flow_desc')}
-          </SheetDescription>
-        </SheetHeader>
+          </DrawerDescription>
+        </DrawerHeader>
 
         <div className="mt-6 space-y-6">
           {/* Display Name */}
@@ -491,7 +491,7 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
           </div>
         </div>
 
-        <SheetFooter className="mt-6">
+        <DrawerFooter className="mt-6">
           <Button
             variant="outline"
             onClick={() => onOpenChange(false)}
@@ -506,8 +506,8 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
                 ? t('common:actions.save')
                 : t('common:actions.create')}
           </Button>
-        </SheetFooter>
-      </SheetContent>
-    </Sheet>
+        </DrawerFooter>
+      </DrawerContent>
+    </Drawer>
   )
 }
