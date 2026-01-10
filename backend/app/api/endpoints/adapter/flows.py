@@ -32,6 +32,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+# ========== Flow Configuration Endpoints ==========
+
+
 @router.get("", response_model=FlowListResponse)
 def list_flows(
     page: int = Query(1, ge=1, description="Page number"),
@@ -80,6 +83,92 @@ def create_flow(
         flow_in=flow_in,
         user_id=current_user.id,
     )
+
+
+# ========== Execution History Endpoints (Timeline) ==========
+# NOTE: These static routes MUST be defined before /{flow_id} dynamic routes
+
+
+@router.get("/executions", response_model=FlowExecutionListResponse)
+def list_executions(
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(50, ge=1, le=100, description="Items per page"),
+    flow_id: Optional[int] = Query(None, description="Filter by flow ID"),
+    status: Optional[List[FlowExecutionStatus]] = Query(
+        None, description="Filter by execution status"
+    ),
+    start_date: Optional[datetime] = Query(None, description="Filter by start date"),
+    end_date: Optional[datetime] = Query(None, description="Filter by end date"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    List Flow execution history (timeline view).
+
+    Returns paginated list of execution records sorted by creation time (newest first).
+    Supports filtering by flow, status, and date range.
+    """
+    skip = (page - 1) * limit
+
+    items, total = flow_service.list_executions(
+        db=db,
+        user_id=current_user.id,
+        skip=skip,
+        limit=limit,
+        flow_id=flow_id,
+        status=status,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+    return FlowExecutionListResponse(total=total, items=items)
+
+
+@router.get("/executions/{execution_id}", response_model=FlowExecutionInDB)
+def get_execution(
+    execution_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get a specific Flow execution by ID.
+
+    Returns detailed information about the execution including the resolved prompt
+    and any result/error messages.
+    """
+    return flow_service.get_execution(
+        db=db,
+        execution_id=execution_id,
+        user_id=current_user.id,
+    )
+
+
+# ========== Webhook Trigger Endpoint ==========
+
+
+@router.post("/webhook/{webhook_token}", response_model=FlowExecutionInDB)
+def trigger_flow_webhook(
+    webhook_token: str,
+    payload: Dict[str, Any] = {},
+    db: Session = Depends(get_db),
+):
+    """
+    Trigger a Flow via webhook.
+
+    This endpoint is called by external systems to trigger event-based flows.
+    The payload will be available as {{webhook_data}} in the prompt template.
+
+    No authentication required - the webhook_token acts as the secret.
+    """
+    return flow_service.trigger_flow_by_webhook(
+        db=db,
+        webhook_token=webhook_token,
+        payload=payload,
+    )
+
+
+# ========== Flow CRUD with Dynamic ID ==========
+# NOTE: Dynamic routes MUST come after static routes like /executions
 
 
 @router.get("/{flow_id}", response_model=FlowInDB)
@@ -172,86 +261,5 @@ def trigger_flow(
     return flow_service.trigger_flow_manually(
         db=db,
         flow_id=flow_id,
-        user_id=current_user.id,
-    )
-
-
-# ========== Webhook Trigger Endpoint ==========
-
-
-@router.post("/webhook/{webhook_token}", response_model=FlowExecutionInDB)
-def trigger_flow_webhook(
-    webhook_token: str,
-    payload: Dict[str, Any] = {},
-    db: Session = Depends(get_db),
-):
-    """
-    Trigger a Flow via webhook.
-
-    This endpoint is called by external systems to trigger event-based flows.
-    The payload will be available as {{webhook_data}} in the prompt template.
-
-    No authentication required - the webhook_token acts as the secret.
-    """
-    return flow_service.trigger_flow_by_webhook(
-        db=db,
-        webhook_token=webhook_token,
-        payload=payload,
-    )
-
-
-# ========== Execution History Endpoints (Timeline) ==========
-
-
-@router.get("/executions", response_model=FlowExecutionListResponse)
-def list_executions(
-    page: int = Query(1, ge=1, description="Page number"),
-    limit: int = Query(50, ge=1, le=100, description="Items per page"),
-    flow_id: Optional[int] = Query(None, description="Filter by flow ID"),
-    status: Optional[List[FlowExecutionStatus]] = Query(
-        None, description="Filter by execution status"
-    ),
-    start_date: Optional[datetime] = Query(None, description="Filter by start date"),
-    end_date: Optional[datetime] = Query(None, description="Filter by end date"),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
-):
-    """
-    List Flow execution history (timeline view).
-
-    Returns paginated list of execution records sorted by creation time (newest first).
-    Supports filtering by flow, status, and date range.
-    """
-    skip = (page - 1) * limit
-
-    items, total = flow_service.list_executions(
-        db=db,
-        user_id=current_user.id,
-        skip=skip,
-        limit=limit,
-        flow_id=flow_id,
-        status=status,
-        start_date=start_date,
-        end_date=end_date,
-    )
-
-    return FlowExecutionListResponse(total=total, items=items)
-
-
-@router.get("/executions/{execution_id}", response_model=FlowExecutionInDB)
-def get_execution(
-    execution_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
-):
-    """
-    Get a specific Flow execution by ID.
-
-    Returns detailed information about the execution including the resolved prompt
-    and any result/error messages.
-    """
-    return flow_service.get_execution(
-        db=db,
-        execution_id=execution_id,
         user_id=current_user.id,
     )
