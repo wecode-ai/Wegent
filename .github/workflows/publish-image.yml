@@ -91,6 +91,7 @@ jobs:
     needs: prepare-release
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
+      chat_shell: ${{ steps.filter.outputs.chat_shell }}
       executor: ${{ steps.filter.outputs.executor }}
       executor_manager: ${{ steps.filter.outputs.executor_manager }}
       frontend: ${{ steps.filter.outputs.frontend }}
@@ -139,6 +140,10 @@ jobs:
             backend:
               - 'backend/**'
               - 'docker/backend/**'
+
+            chat_shell:
+              - 'chat_shell/**'
+              - 'docker/chat_shell/**'
 
             executor:
               - 'executor/**'
@@ -312,11 +317,52 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  build-chat-shell:
+    needs: [prepare-release, determine-changes]
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    if: needs.determine-changes.outputs.chat_shell == 'true'
+
+    steps:
+      - name: Checkout code (full history for reproducible builds)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.GIT_REF }}
+          fetch-depth: 0
+
+      - name: Set up QEMU (for multi-arch)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push chat shell image (multi-arch)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/chat_shell/Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ${{ env.IMAGE_PREFIX }}/wegent-chat-shell:${{ needs.prepare-release.outputs.new_version }}
+            ${{ env.IMAGE_PREFIX }}/wegent-chat-shell:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   create-release-tag:
     needs:
       - prepare-release
       - determine-changes
       - build-backend
+      - build-chat-shell
       - build-executor
       - build-executor-manager
       - build-frontend
@@ -328,6 +374,7 @@ jobs:
       needs.prepare-release.result == 'success' &&
       (
         (needs.determine-changes.outputs.backend == 'true' && needs.build-backend.result == 'success') ||
+        (needs.determine-changes.outputs.chat_shell == 'true' && needs.build-chat-shell.result == 'success') ||
         (needs.determine-changes.outputs.executor == 'true' && needs.build-executor.result == 'success') ||
         (needs.determine-changes.outputs.executor_manager == 'true' && needs.build-executor-manager.result == 'success') ||
         (needs.determine-changes.outputs.frontend == 'true' && needs.build-frontend.result == 'success')
@@ -399,6 +446,7 @@ jobs:
       - prepare-release
       - determine-changes
       - build-backend
+      - build-chat-shell
       - build-executor
       - build-executor-manager
       - build-frontend
@@ -411,6 +459,7 @@ jobs:
       needs.prepare-release.result == 'success' &&
       (
         (needs.determine-changes.outputs.backend == 'true' && needs.build-backend.result == 'success') ||
+        (needs.determine-changes.outputs.chat_shell == 'true' && needs.build-chat-shell.result == 'success') ||
         (needs.determine-changes.outputs.executor == 'true' && needs.build-executor.result == 'success') ||
         (needs.determine-changes.outputs.executor_manager == 'true' && needs.build-executor-manager.result == 'success') ||
         (needs.determine-changes.outputs.frontend == 'true' && needs.build-frontend.result == 'success')
@@ -429,6 +478,7 @@ jobs:
         env:
           VERSION: ${{ needs.prepare-release.outputs.new_version }}
           CHANGED_BACKEND: ${{ needs.determine-changes.outputs.backend }}
+          CHANGED_CHAT_SHELL: ${{ needs.determine-changes.outputs.chat_shell }}
           CHANGED_EXECUTOR: ${{ needs.determine-changes.outputs.executor }}
           CHANGED_EXECUTOR_MANAGER: ${{ needs.determine-changes.outputs.executor_manager }}
           CHANGED_FRONTEND: ${{ needs.determine-changes.outputs.frontend }}
@@ -445,6 +495,13 @@ jobs:
             sed -i -E "s|(ghcr.io/wecode-ai/wegent-backend:)[0-9]+\.[0-9]+\.[0-9]+|\1${VERSION}|g" docker-compose.yml
           else
             echo "Backend unchanged, skip updating backend image tag"
+          fi
+
+          if [ "${CHANGED_CHAT_SHELL}" = "true" ]; then
+            echo "Updating chat shell image version to ${VERSION}"
+            sed -i -E "s|(ghcr.io/wecode-ai/wegent-chat-shell:)[0-9]+\.[0-9]+\.[0-9]+|\1${VERSION}|g" docker-compose.yml
+          else
+            echo "Chat shell unchanged, skip updating chat shell image tag"
           fi
 
           if [ "${CHANGED_EXECUTOR}" = "true" ]; then
@@ -483,6 +540,7 @@ jobs:
             The following images have been built and pushed to GHCR with version ${{ needs.prepare-release.outputs.new_version }} (only modules with changes were updated):
 
             - Backend image: `ghcr.io/wecode-ai/wegent-backend:${{ needs.prepare-release.outputs.new_version }}` (changed: ${{ needs.determine-changes.outputs.backend }})
+            - Chat Shell image: `ghcr.io/wecode-ai/wegent-chat-shell:${{ needs.prepare-release.outputs.new_version }}` (changed: ${{ needs.determine-changes.outputs.chat_shell }})
             - Executor image: `ghcr.io/wecode-ai/wegent-executor:${{ needs.prepare-release.outputs.new_version }}` (changed: ${{ needs.determine-changes.outputs.executor }})
             - Executor Manager image: `ghcr.io/wecode-ai/wegent-executor-manager:${{ needs.prepare-release.outputs.new_version }}` (changed: ${{ needs.determine-changes.outputs.executor_manager }})
             - Frontend image: `ghcr.io/wecode-ai/wegent-web:${{ needs.prepare-release.outputs.new_version }}` (changed: ${{ needs.determine-changes.outputs.frontend }})
