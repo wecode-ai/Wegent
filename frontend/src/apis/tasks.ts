@@ -430,4 +430,14 @@ export const taskApis = {
   getPipelineStageInfo: async (taskId: number): Promise<PipelineStageInfo> => {
     return apiClient.get(`/tasks/${taskId}/pipeline-stage-info`)
   },
+
+  /**
+   * Skip stage confirmation and proceed to next stage using historical context
+   * Uses the last completed stage's result as context for the next stage.
+   * If the result exceeds the threshold, an AI summary will be generated.
+   * @param taskId - Task ID
+   */
+  skipPipelineStageConfirmation: async (taskId: number): Promise<ConfirmStageResponse> => {
+    return apiClient.post(`/tasks/${taskId}/skip-stage-confirmation`)
+  },
 }

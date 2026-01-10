@@ -4,11 +4,13 @@
 
 'use client'
 
-import { memo, useEffect, useState, useMemo } from 'react'
-import { CheckCircle2, Circle, Loader2, Clock, XCircle, PlayCircle } from 'lucide-react'
+import { memo, useEffect, useState, useMemo, useCallback } from 'react'
+import { CheckCircle2, Circle, Loader2, Clock, XCircle, PlayCircle, ArrowRight } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { taskApis, PipelineStageInfo } from '@/apis/tasks'
 import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
+import { toast } from 'sonner'
 
 interface PipelineStageIndicatorProps {
   taskId: number | null
@@ -45,6 +47,7 @@ const PipelineStageIndicator = memo(function PipelineStageIndicator({
   const { t } = useTranslation('chat')
   const [stageInfo, setStageInfo] = useState<PipelineStageInfo | null>(null)
   const [_loading, setLoading] = useState(false)
+  const [isSkipping, setIsSkipping] = useState(false)
 
   // Fetch pipeline stage info when task changes or status updates
   useEffect(() => {
@@ -71,6 +74,37 @@ const PipelineStageIndicator = memo(function PipelineStageIndicator({
 
     fetchStageInfo()
   }, [taskId, taskStatus, collaborationModel, onStageInfoChange])
+
+  // Handle skip confirmation and proceed to next stage
+  const handleNextStage = useCallback(async () => {
+    if (!taskId) {
+      toast.error(t('pipeline.no_task_id'))
+      return
+    }
+
+    setIsSkipping(true)
+    try {
+      const response = await taskApis.skipPipelineStageConfirmation(taskId)
+      toast.success(t('pipeline.next_stage_success'))
+
+      // Trigger stage info refresh
+      if (response.next_stage_name) {
+        toast.info(t('pipeline.proceeding_to_stage', { stage: response.next_stage_name }))
+      } else {
+        toast.info(t('pipeline.pipeline_completed'))
+      }
+
+      // Refresh stage info
+      const info = await taskApis.getPipelineStageInfo(taskId)
+      setStageInfo(info)
+      onStageInfoChange?.(info)
+    } catch (error) {
+      console.error('Failed to skip stage confirmation:', error)
+      toast.error(t('pipeline.next_stage_failed'))
+    } finally {
+      setIsSkipping(false)
+    }
+  }, [taskId, t, onStageInfoChange])
 
   // Build display stages with "Start" node prepended
   const displayStages = useMemo((): DisplayStage[] => {
@@ -200,80 +234,101 @@ const PipelineStageIndicator = memo(function PipelineStageIndicator({
         </span>
       </div>
 
-      {/* Stage Progress Bar - includes Start node + all bot stages */}
-      <div className="flex items-center w-full">
-        {displayStages.map((stage, displayIndex) => {
-          // For current stage check, we need to account for the start node offset
-          // displayIndex 0 is start node, displayIndex 1 is stage 0, etc.
-          const isCurrentStage = !stage.isStartNode && stage.index === stageInfo.current_stage
-          const isLastStage = displayIndex === displayStages.length - 1
-          const isPendingConfirmation = stage.status === 'pending_confirmation'
-          const connectorStyle = !isLastStage ? getConnectorStyle(displayIndex) : null
+      {/* Stage Progress Bar with Next Stage Button */}
+      <div className="flex items-center gap-4">
+        {/* Stage Progress Bar - includes Start node + all bot stages */}
+        <div className="flex items-center flex-1">
+          {displayStages.map((stage, displayIndex) => {
+            // For current stage check, we need to account for the start node offset
+            // displayIndex 0 is start node, displayIndex 1 is stage 0, etc.
+            const isCurrentStage = !stage.isStartNode && stage.index === stageInfo.current_stage
+            const isLastStage = displayIndex === displayStages.length - 1
+            const isPendingConfirmation = stage.status === 'pending_confirmation'
+            const connectorStyle = !isLastStage ? getConnectorStyle(displayIndex) : null
 
-          return (
-            <div
-              key={stage.isStartNode ? 'start' : stage.index}
-              className={cn(
-                'flex items-center',
-                // Last stage doesn't need flex-1, just the icon
-                isLastStage ? 'flex-shrink-0' : 'flex-1'
-              )}
-            >
-              {/* Stage Node with Icon and Label */}
+            return (
               <div
+                key={stage.isStartNode ? 'start' : stage.index}
                 className={cn(
-                  'flex flex-col items-center relative group flex-shrink-0',
-                  isCurrentStage && 'scale-105'
+                  'flex items-center',
+                  // Last stage doesn't need flex-1, just the icon
+                  isLastStage ? 'flex-shrink-0' : 'flex-1'
                 )}
               >
-                {/* Awaiting Confirmation Label - shown above the node */}
-                {isPendingConfirmation && (
-                  <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400 whitespace-nowrap mb-1">
-                    {t('pipeline.awaiting_confirmation')}
-                  </span>
-                )}
-
-                {/* Icon */}
-                {getStageIcon(stage, isCurrentStage)}
-
-                {/* Stage Name Label */}
-                <span
-                  className={cn(
-                    'text-[10px] mt-1 whitespace-nowrap',
-                    getStageTextColor(stage, isCurrentStage)
-                  )}
-                >
-                  {stage.name}
-                </span>
-
-                {/* Tooltip for additional info */}
-                <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none z-10">
-                  <div className="bg-fill-tert text-text-primary text-xs px-2 py-1 rounded whitespace-nowrap shadow-lg">
-                    <div className="font-medium">{stage.name}</div>
-                    <div className="text-text-muted">{getStatusLabel(stage)}</div>
-                    {stage.require_confirmation && !stage.isStartNode && (
-                      <div className="text-amber-500 text-[10px] mt-0.5">
-                        {t('pipeline.requires_confirmation')}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Connector Line (not after last stage) */}
-              {connectorStyle && (
+                {/* Stage Node with Icon and Label */}
                 <div
                   className={cn(
-                    'flex-1 h-0.5 mx-1 min-w-[20px] transition-colors duration-300',
-                    isPendingConfirmation ? 'self-center' : 'self-start mt-2',
-                    connectorStyle.className,
-                    connectorStyle.animate && 'animate-pulse'
+                    'flex flex-col items-center relative group flex-shrink-0',
+                    isCurrentStage && 'scale-105'
                   )}
-                />
-              )}
-            </div>
-          )
-        })}
+                >
+                  {/* Awaiting Confirmation Label - shown above the node */}
+                  {isPendingConfirmation && (
+                    <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400 whitespace-nowrap mb-1">
+                      {t('pipeline.awaiting_confirmation')}
+                    </span>
+                  )}
+
+                  {/* Icon */}
+                  {getStageIcon(stage, isCurrentStage)}
+
+                  {/* Stage Name Label */}
+                  <span
+                    className={cn(
+                      'text-[10px] mt-1 whitespace-nowrap',
+                      getStageTextColor(stage, isCurrentStage)
+                    )}
+                  >
+                    {stage.name}
+                  </span>
+
+                  {/* Tooltip for additional info */}
+                  <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none z-10">
+                    <div className="bg-fill-tert text-text-primary text-xs px-2 py-1 rounded whitespace-nowrap shadow-lg">
+                      <div className="font-medium">{stage.name}</div>
+                      <div className="text-text-muted">{getStatusLabel(stage)}</div>
+                      {stage.require_confirmation && !stage.isStartNode && (
+                        <div className="text-amber-500 text-[10px] mt-0.5">
+                          {t('pipeline.requires_confirmation')}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Connector Line (not after last stage) */}
+                {connectorStyle && (
+                  <div
+                    className={cn(
+                      'flex-1 h-0.5 mx-1 min-w-[20px] transition-colors duration-300',
+                      isPendingConfirmation ? 'self-center' : 'self-start mt-2',
+                      connectorStyle.className,
+                      connectorStyle.animate && 'animate-pulse'
+                    )}
+                  />
+                )}
+              </div>
+            )
+          })}
+        </div>
+
+        {/* Next Stage Button - only shown when pending confirmation */}
+        {stageInfo.is_pending_confirmation && (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={isSkipping}
+            onClick={handleNextStage}
+            className="ml-2 text-primary border-primary hover:bg-primary/10 flex-shrink-0"
+          >
+            {isSkipping ? (
+              <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+            ) : (
+              <ArrowRight className="h-4 w-4 mr-1" />
+            )}
+            {isSkipping ? t('pipeline.next_stage_loading') : t('pipeline.next_stage')}
+          </Button>
+        )}
       </div>
     </div>
   )
