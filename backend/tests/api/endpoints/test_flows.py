@@ -245,11 +245,12 @@ class TestFlowExecutionEndpoints:
             json={
                 "apiVersion": "agent.wecode.io/v1",
                 "kind": "Flow",
+                "metadata": {"name": "test-flow-exec", "namespace": "default"},
                 "spec": {
                     "displayName": "Test Flow",
                     "taskType": "collection",
                     "trigger": {"type": "cron", "cron": {"expression": "0 9 * * *"}},
-                    "teamRef": {"name": "test-team-exec"},
+                    "teamRef": {"name": "test-team-exec", "namespace": "default"},
                     "promptTemplate": "Test",
                 },
             },
