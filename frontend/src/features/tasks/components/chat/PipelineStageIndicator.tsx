@@ -185,28 +185,28 @@ const PipelineStageIndicator = memo(function PipelineStageIndicator({
    * The connector color follows the status of the stage it's pointing to.
    *
    * @param displayIndex - The index of the current stage (connector is on its right side)
-   * @returns Object with className and whether to animate
+   * @returns Object with className
    */
-  const getConnectorStyle = (displayIndex: number): { className: string; animate: boolean } => {
+  const getConnectorStyle = (displayIndex: number): { className: string } => {
     const targetStage = displayStages[displayIndex + 1]
     if (!targetStage) {
-      return { className: 'bg-border', animate: false }
+      return { className: 'bg-border' }
     }
 
     switch (targetStage.status) {
       case 'start':
-        return { className: 'bg-green-500', animate: false }
+        return { className: 'bg-green-500' }
       case 'completed':
-        return { className: 'bg-green-500', animate: false }
+        return { className: 'bg-green-500' }
       case 'running':
-        return { className: 'bg-primary', animate: true }
+        return { className: 'bg-primary' }
       case 'pending_confirmation':
-        return { className: 'bg-amber-500', animate: false }
+        return { className: 'bg-amber-500' }
       case 'failed':
-        return { className: 'bg-red-500', animate: false }
+        return { className: 'bg-red-500' }
       case 'pending':
       default:
-        return { className: 'bg-border', animate: false }
+        return { className: 'bg-border' }
     }
   }
 
@@ -306,8 +306,7 @@ const PipelineStageIndicator = memo(function PipelineStageIndicator({
                     className={cn(
                       'flex-1 h-0.5 mx-1 min-w-[20px] transition-colors duration-300',
                       isPendingConfirmation ? 'self-center' : 'self-start mt-2',
-                      connectorStyle.className,
-                      connectorStyle.animate && 'animate-pulse'
+                      connectorStyle.className
                     )}
                   />
                 )}
