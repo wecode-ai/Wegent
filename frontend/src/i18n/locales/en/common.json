@@ -396,6 +396,7 @@
     "cancel_task": "Cancel Task",
     "delete_task": "Delete Task",
     "searching": "Searching...",
+    "refreshing": "Syncing...",
     "press_enter_to_search": "Press Enter to search",
     "search_hint": "Enter keywords to search conversations",
     "clear_search": "Clear",
