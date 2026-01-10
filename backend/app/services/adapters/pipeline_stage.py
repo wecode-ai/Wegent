@@ -473,6 +473,7 @@ class PipelineStageService:
         team_crd: Team,
         next_stage_index: int,
         confirmed_prompt: str,
+        from_skip_confirmation: bool = False,
     ) -> Optional[Subtask]:
         """
         Create a subtask for the next pipeline stage.
@@ -483,7 +484,8 @@ class PipelineStageService:
             task_crd: Task CRD object
             team_crd: Team CRD object
             next_stage_index: Index of the next stage (0-based)
-            confirmed_prompt: The confirmed prompt to pass to the next stage
+            confirmed_prompt: The confirmed prompt/context to pass to the next stage
+            from_skip_confirmation: If True, marks this as skip confirmation (context mode)
 
         Returns:
             The created Subtask object, or None if creation failed
@@ -562,6 +564,18 @@ class PipelineStageService:
             executor_name = existing_assistant.executor_name or ""
             executor_namespace = existing_assistant.executor_namespace or ""
 
+        # Build result based on confirmation type
+        if from_skip_confirmation:
+            result_data = {
+                "context": confirmed_prompt,
+                "from_skip_confirmation": True,
+            }
+        else:
+            result_data = {
+                "confirmed_prompt": confirmed_prompt,
+                "from_stage_confirmation": True,
+            }
+
         # Create the new subtask for the next stage
         new_subtask = Subtask(
             user_id=last_subtask.user_id,
@@ -579,17 +593,15 @@ class PipelineStageService:
             executor_namespace=executor_namespace,
             error_message="",
             completed_at=None,
-            result={
-                "confirmed_prompt": confirmed_prompt,
-                "from_stage_confirmation": True,
-            },
+            result=result_data,
         )
 
         db.add(new_subtask)
         db.flush()  # Get the new subtask ID
 
         logger.info(
-            f"Pipeline confirm_stage: created subtask {new_subtask.id} for stage {next_stage_index} "
+            f"Pipeline {'skip' if from_skip_confirmation else 'confirm'}_stage: "
+            f"created subtask {new_subtask.id} for stage {next_stage_index} "
             f"(bot={bot.name}, message_id={next_message_id})"
         )
 
@@ -726,9 +738,15 @@ class PipelineStageService:
                 "next_stage_name": None,
             }
 
-        # Create subtask for next stage with context from skip confirmation
-        next_subtask = self._create_next_stage_subtask_with_context(
-            db, task, task_crd, team_crd, next_stage, context
+        # Reuse _create_next_stage_subtask with from_skip_confirmation=True
+        next_subtask = self._create_next_stage_subtask(
+            db,
+            task,
+            task_crd,
+            team_crd,
+            next_stage,
+            context,
+            from_skip_confirmation=True,
         )
 
         if not next_subtask:
@@ -900,135 +918,6 @@ class PipelineStageService:
                 if len(content) > target_length
                 else content
             )
-
-    def _create_next_stage_subtask_with_context(
-        self,
-        db: Session,
-        task: TaskResource,
-        task_crd: Task,
-        team_crd: Team,
-        next_stage_index: int,
-        context: str,
-    ) -> Optional[Subtask]:
-        """
-        Create a subtask for the next pipeline stage with context from skip confirmation.
-
-        Args:
-            db: Database session
-            task: Task resource object
-            task_crd: Task CRD object
-            team_crd: Team CRD object
-            next_stage_index: Index of the next stage (0-based)
-            context: The context to pass to the next stage
-
-        Returns:
-            The created Subtask object, or None if creation failed
-        """
-        if next_stage_index >= len(team_crd.spec.members):
-            return None
-        next_member = team_crd.spec.members[next_stage_index]
-
-        # Get the team to find the bot (supports owned, shared, and group teams)
-        team = self.get_team_for_task(db, task, task_crd)
-
-        if not team:
-            logger.error(f"Team not found for task {task.id}")
-            return None
-
-        # Find the bot for the next stage
-        if next_member.botRef.namespace and next_member.botRef.namespace != "default":
-            bot = (
-                db.query(Kind)
-                .filter(
-                    Kind.kind == "Bot",
-                    Kind.name == next_member.botRef.name,
-                    Kind.namespace == next_member.botRef.namespace,
-                    Kind.is_active.is_(True),
-                )
-                .first()
-            )
-        else:
-            bot = (
-                db.query(Kind)
-                .filter(
-                    Kind.user_id == team.user_id,
-                    Kind.kind == "Bot",
-                    Kind.name == next_member.botRef.name,
-                    Kind.namespace == next_member.botRef.namespace,
-                    Kind.is_active.is_(True),
-                )
-                .first()
-            )
-
-        if not bot:
-            logger.error(
-                f"Bot {next_member.botRef.name} not found for pipeline stage {next_stage_index}"
-            )
-            return None
-
-        # Get the last subtask to determine message_id and parent_id
-        last_subtask = (
-            db.query(Subtask)
-            .filter(Subtask.task_id == task.id)
-            .order_by(Subtask.message_id.desc())
-            .first()
-        )
-
-        if not last_subtask:
-            logger.error(f"No existing subtasks found for task {task.id}")
-            return None
-
-        next_message_id = last_subtask.message_id + 1
-        parent_id = last_subtask.message_id
-
-        # Get executor info from existing assistant subtasks (reuse executor)
-        executor_name = ""
-        executor_namespace = ""
-        existing_assistant = (
-            db.query(Subtask)
-            .filter(
-                Subtask.task_id == task.id,
-                Subtask.role == SubtaskRole.ASSISTANT,
-            )
-            .first()
-        )
-        if existing_assistant:
-            executor_name = existing_assistant.executor_name or ""
-            executor_namespace = existing_assistant.executor_namespace or ""
-
-        # Create the new subtask for the next stage
-        # Store context with from_skip_confirmation flag for executor to handle
-        new_subtask = Subtask(
-            user_id=last_subtask.user_id,
-            task_id=task.id,
-            team_id=team.id,
-            title=f"{task_crd.spec.title} - {bot.name}",
-            bot_ids=[bot.id],
-            role=SubtaskRole.ASSISTANT,
-            prompt="",
-            status=SubtaskStatus.PENDING,
-            progress=0,
-            message_id=next_message_id,
-            parent_id=parent_id,
-            executor_name=executor_name,
-            executor_namespace=executor_namespace,
-            error_message="",
-            completed_at=None,
-            result={
-                "context": context,
-                "from_skip_confirmation": True,
-            },
-        )
-
-        db.add(new_subtask)
-        db.flush()  # Get the new subtask ID
-
-        logger.info(
-            f"Pipeline skip_stage_confirmation: created subtask {new_subtask.id} for stage {next_stage_index} "
-            f"(bot={bot.name}, message_id={next_message_id}, context_length={len(context)})"
-        )
-
-        return new_subtask
 
 
 # Singleton instance
