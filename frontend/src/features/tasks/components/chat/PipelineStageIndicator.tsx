@@ -85,19 +85,23 @@ const PipelineStageIndicator = memo(function PipelineStageIndicator({
     setIsSkipping(true)
     try {
       const response = await taskApis.skipPipelineStageConfirmation(taskId)
-      toast.success(t('pipeline.next_stage_success'))
 
-      // Trigger stage info refresh
+      // Show consolidated success message
       if (response.next_stage_name) {
-        toast.info(t('pipeline.proceeding_to_stage', { stage: response.next_stage_name }))
+        toast.success(t('pipeline.proceeding_to_stage', { stage: response.next_stage_name }))
       } else {
-        toast.info(t('pipeline.pipeline_completed'))
+        toast.success(t('pipeline.pipeline_completed'))
       }
 
       // Refresh stage info
-      const info = await taskApis.getPipelineStageInfo(taskId)
-      setStageInfo(info)
-      onStageInfoChange?.(info)
+      try {
+        const info = await taskApis.getPipelineStageInfo(taskId)
+        setStageInfo(info)
+        onStageInfoChange?.(info)
+      } catch (refreshError) {
+        console.error('Failed to refresh stage info after skip:', refreshError)
+        // State may be stale - parent should eventually re-fetch
+      }
     } catch (error) {
       console.error('Failed to skip stage confirmation:', error)
       toast.error(t('pipeline.next_stage_failed'))

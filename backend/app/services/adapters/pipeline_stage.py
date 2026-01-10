@@ -781,7 +781,7 @@ class PipelineStageService:
         self,
         db: Session,
         task_id: int,
-        max_length: int = None,
+        max_length: Optional[int] = None,
     ) -> str:
         """
         Get the last completed stage's result as context for next stage.
@@ -848,7 +848,9 @@ class PipelineStageService:
 
         return content
 
-    def _summarize_context_sync(self, content: str, target_length: int = None) -> str:
+    def _summarize_context_sync(
+        self, content: str, target_length: Optional[int] = None
+    ) -> str:
         """
         Use AI to summarize long context content (synchronous version).
 
