@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useCallback, useEffect, useContext } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import type {
   FormSubmissionRequest,
   FormSubmissionResponse,
@@ -13,7 +13,7 @@ import type {
   FormErrorPayload,
 } from '@/types/form'
 import { formApis } from '@/apis/forms'
-import { SocketContext } from '@/contexts/SocketContext'
+import { useSocket } from '@/contexts/SocketContext'
 
 interface UseFormSubmissionOptions {
   onCompleted?: (payload: FormCompletedPayload) => void
@@ -43,8 +43,7 @@ export function useFormSubmission(
   const [error, setError] = useState<string | null>(null)
 
   // Get socket from context
-  const socketContext = useContext(SocketContext)
-  const socket = socketContext?.socket
+  const { socket } = useSocket()
 
   // Listen to WebSocket events for form updates
   useEffect(() => {
