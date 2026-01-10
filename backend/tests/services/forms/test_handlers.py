@@ -18,9 +18,9 @@ class TestClarificationHandler:
     """Tests for ClarificationHandler."""
 
     @pytest.fixture
-    def handler(self, db_session, test_user):
+    def handler(self, test_db, test_user):
         """Create handler instance for tests."""
-        return ClarificationHandler(db_session, test_user.id)
+        return ClarificationHandler(test_db, test_user.id)
 
     @pytest.fixture
     def valid_form_data(self):
@@ -127,9 +127,9 @@ class TestFinalPromptHandler:
     """Tests for FinalPromptHandler."""
 
     @pytest.fixture
-    def handler(self, db_session, test_user):
+    def handler(self, test_db, test_user):
         """Create handler instance for tests."""
-        return FinalPromptHandler(db_session, test_user.id)
+        return FinalPromptHandler(test_db, test_user.id)
 
     @pytest.mark.asyncio
     async def test_validate_success(self, handler):
@@ -176,9 +176,9 @@ class TestPipelineConfirmationHandler:
     """Tests for PipelineConfirmationHandler."""
 
     @pytest.fixture
-    def handler(self, db_session, test_user):
+    def handler(self, test_db, test_user):
         """Create handler instance for tests."""
-        return PipelineConfirmationHandler(db_session, test_user.id)
+        return PipelineConfirmationHandler(test_db, test_user.id)
 
     @pytest.mark.asyncio
     async def test_validate_success(self, handler):
