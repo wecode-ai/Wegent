@@ -19,7 +19,7 @@ from sqlalchemy import (
     Text,
 )
 
-from app.db.base_class import Base
+from app.db.base import Base
 
 
 class FlowResource(Base):
