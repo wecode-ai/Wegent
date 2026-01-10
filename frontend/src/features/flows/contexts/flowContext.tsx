@@ -20,7 +20,6 @@ import type {
   Flow,
   FlowExecution,
   FlowExecutionStatus,
-  FlowTriggerType,
 } from '@/types/flow'
 
 interface FlowContextType {

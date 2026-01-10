@@ -7,7 +7,7 @@
 /**
  * Flow execution timeline component.
  */
-import { useCallback, useMemo } from 'react'
+import { useMemo } from 'react'
 import {
   AlertCircle,
   CheckCircle2,

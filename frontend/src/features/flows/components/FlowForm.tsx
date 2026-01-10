@@ -60,7 +60,7 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
   const isEditing = !!flow
 
   // Form state
-  const [name, setName] = useState('')
+  const [_name, setName] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [description, setDescription] = useState('')
   const [taskType, setTaskType] = useState<FlowTaskType>('collection')
@@ -188,9 +188,10 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
       }
       onSuccess()
       onOpenChange(false)
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : t('save_failed')
       console.error('Failed to save flow:', error)
-      toast.error(error?.message || t('save_failed'))
+      toast.error(errorMessage)
     } finally {
       setSubmitting(false)
     }
@@ -313,12 +314,12 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
                 <div>
                   <Label>{t('git_repository')}</Label>
                   <Input
-                    value={(triggerConfig.git_push as any)?.repository || ''}
+                    value={(triggerConfig.git_push as { repository?: string; branch?: string } | undefined)?.repository || ''}
                     onChange={e =>
                       setTriggerConfig({
                         ...triggerConfig,
                         git_push: {
-                          ...(triggerConfig.git_push as any),
+                          ...(triggerConfig.git_push as { repository?: string; branch?: string } | undefined),
                           repository: e.target.value,
                         },
                       })
@@ -329,12 +330,12 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
                 <div>
                   <Label>{t('git_branch')}</Label>
                   <Input
-                    value={(triggerConfig.git_push as any)?.branch || ''}
+                    value={(triggerConfig.git_push as { repository?: string; branch?: string } | undefined)?.branch || ''}
                     onChange={e =>
                       setTriggerConfig({
                         ...triggerConfig,
                         git_push: {
-                          ...(triggerConfig.git_push as any),
+                          ...(triggerConfig.git_push as { repository?: string; branch?: string } | undefined),
                           branch: e.target.value,
                         },
                       })
