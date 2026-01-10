@@ -259,6 +259,12 @@ class Settings(BaseSettings):
     # See backend/app/services/tables/DATA_TABLE_CONFIG_EXAMPLE.md for details
     DATA_TABLE_CONFIG: str = ""
 
+    # Pipeline context settings for skip confirmation feature
+    # Maximum character length before AI summarization is applied
+    PIPELINE_CONTEXT_MAX_LENGTH: int = 4000
+    # Target length for AI-generated summary
+    PIPELINE_SUMMARY_MAX_LENGTH: int = 2000
+
     # OpenTelemetry configuration is centralized in shared/telemetry/config.py
     # Use: from shared.telemetry.config import get_otel_config
     # All OTEL_* environment variables are read from there

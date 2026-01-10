@@ -2120,6 +2120,82 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         # Delegate to pipeline_stage_service
         return pipeline_stage_service.get_stage_info(db, task_id, team_crd)
 
+    def skip_pipeline_stage_confirmation(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        user_id: int,
+    ) -> Dict[str, Any]:
+        """
+        Skip stage confirmation and proceed to next stage using last stage's result.
+
+        Logic:
+        1. Get current task and validate it's in PENDING_CONFIRMATION status
+        2. Get the last completed stage's result
+        3. If result exceeds threshold, call AI to summarize
+        4. Create next stage subtask with the context
+        5. Update task status to PENDING
+
+        Args:
+            db: Database session
+            task_id: Task ID
+            user_id: User ID for permission check
+
+        Returns:
+            Dict with skip result info
+        """
+        # Get task and verify ownership
+        task = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.id == task_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active.is_(True),
+            )
+            .first()
+        )
+
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        # Check user access
+        from app.services.task_member_service import task_member_service
+
+        if not task_member_service.is_member(db, task_id, user_id):
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        task_crd = Task.model_validate(task.json)
+
+        # Verify task is in PENDING_CONFIRMATION status
+        current_status = task_crd.status.status if task_crd.status else "PENDING"
+        if current_status != "PENDING_CONFIRMATION":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Task is not awaiting confirmation. Current status: {current_status}",
+            )
+
+        # Get team using pipeline_stage_service
+        team = pipeline_stage_service.get_team_for_task(db, task, task_crd)
+        if not team:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        team_crd = Team.model_validate(team.json)
+
+        if team_crd.spec.collaborationModel != "pipeline":
+            raise HTTPException(
+                status_code=400,
+                detail="Skip stage confirmation is only available for pipeline teams",
+            )
+
+        # Delegate to pipeline_stage_service
+        return pipeline_stage_service.skip_stage_confirmation(
+            db=db,
+            task=task,
+            task_crd=task_crd,
+            team_crd=team_crd,
+        )
+
     def create_task_id(self, db: Session, user_id: int) -> int:
         """
         Create new task id using tasks table auto increment (pre-allocation mechanism)

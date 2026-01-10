@@ -458,6 +458,10 @@
     "retry_failed": "Failed to retry stage",
     "proceeding_to_stage": "Proceeding to stage: {{stage}}",
     "pipeline_completed": "Pipeline completed",
-    "no_task_id": "No task ID available"
+    "no_task_id": "No task ID available",
+    "next_stage": "Next",
+    "next_stage_loading": "Processing...",
+    "next_stage_success": "Proceeding to next stage",
+    "next_stage_failed": "Failed to proceed to next stage"
   }
 }

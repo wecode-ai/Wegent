@@ -458,6 +458,10 @@
     "retry_failed": "重试阶段失败",
     "proceeding_to_stage": "正在进入阶段: {{stage}}",
     "pipeline_completed": "流水线已完成",
-    "no_task_id": "没有可用的任务 ID"
+    "no_task_id": "没有可用的任务 ID",
+    "next_stage": "下一步",
+    "next_stage_loading": "处理中...",
+    "next_stage_success": "已进入下一阶段",
+    "next_stage_failed": "进入下一阶段失败"
   }
 }

@@ -296,6 +296,33 @@ def get_pipeline_stage_info(
     )
 
 
+@router.post("/{task_id}/skip-stage-confirmation", response_model=ConfirmStageResponse)
+def skip_pipeline_stage_confirmation(
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Skip stage confirmation and proceed to next stage using historical context.
+
+    Uses the last completed stage's result as context for the next stage.
+    If the result exceeds the threshold, an AI summary will be generated.
+
+    Args:
+        task_id: Task ID
+        current_user: Current authenticated user
+        db: Database session
+
+    Returns:
+        ConfirmStageResponse with stage info
+    """
+    return task_kinds_service.skip_pipeline_stage_confirmation(
+        db=db,
+        task_id=task_id,
+        user_id=current_user.id,
+    )
+
+
 @router.post("/{task_id}/share", response_model=TaskShareResponse)
 def share_task(
     task_id: int,

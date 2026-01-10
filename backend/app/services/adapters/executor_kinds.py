@@ -799,6 +799,8 @@ class ExecutorKindsService(
             aggregated_prompt = ""
             # Check if this subtask has a confirmed_prompt from stage confirmation
             confirmed_prompt_from_stage = None
+            # Check if this subtask has context from skip confirmation
+            context_from_skip = None
             # Flag to indicate this subtask should start a new session (no conversation history)
             # This is used in pipeline mode when user confirms a stage and proceeds to next bot
             new_session = False
@@ -811,8 +813,20 @@ class ExecutorKindsService(
                     # Clear the temporary result so it doesn't interfere with execution
                     subtask.result = None
                     subtask.updated_at = datetime.now()
+                elif subtask.result.get("from_skip_confirmation"):
+                    # Handle skip confirmation - use context from previous stage
+                    context_from_skip = subtask.result.get("context")
+                    # Mark that this subtask should use a new session
+                    new_session = True
+                    # Clear the temporary result so it doesn't interfere with execution
+                    subtask.result = None
+                    subtask.updated_at = datetime.now()
 
-            if confirmed_prompt_from_stage:
+            if context_from_skip is not None:
+                # Use the context from skip confirmation
+                # Format it as previous stage output for the next bot
+                aggregated_prompt = f"Previous stage output:\n{context_from_skip}"
+            elif confirmed_prompt_from_stage:
                 # Use the confirmed prompt from stage confirmation instead of building from previous results
                 aggregated_prompt = confirmed_prompt_from_stage
             else:
