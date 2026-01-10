@@ -260,7 +260,7 @@ class FlowExecutionBase(BaseModel):
 
     flow_id: int
     trigger_type: str = Field(..., description="What triggered this execution")
-    trigger_reason: str = Field(..., description="Human-readable trigger reason")
+    trigger_reason: Optional[str] = Field(None, description="Human-readable trigger reason")
     prompt: str = Field(..., description="Resolved prompt (with variables substituted)")
 
 

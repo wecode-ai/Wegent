@@ -5,6 +5,7 @@
 """
 AI Flow service layer for managing Flow configurations and executions.
 """
+import json
 import logging
 import re
 import secrets
@@ -713,8 +714,6 @@ class FlowService:
                 pattern = "{{" + var_name + "}}"
                 if pattern in result:
                     if isinstance(var_value, (dict, list)):
-                        import json
-
                         result = result.replace(pattern, json.dumps(var_value, ensure_ascii=False))
                     else:
                         result = result.replace(pattern, str(var_value))

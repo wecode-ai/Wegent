@@ -149,7 +149,7 @@ def get_execution(
 @router.post("/webhook/{webhook_token}", response_model=FlowExecutionInDB)
 def trigger_flow_webhook(
     webhook_token: str,
-    payload: Dict[str, Any] = {},
+    payload: Optional[Dict[str, Any]] = None,
     db: Session = Depends(get_db),
 ):
     """
@@ -163,7 +163,7 @@ def trigger_flow_webhook(
     return flow_service.trigger_flow_by_webhook(
         db=db,
         webhook_token=webhook_token,
-        payload=payload,
+        payload=payload or {},
     )
 
 

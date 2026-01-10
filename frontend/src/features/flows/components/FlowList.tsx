@@ -58,7 +58,7 @@ const triggerTypeIcons: Record<FlowTriggerType, React.ReactNode> = {
 
 export function FlowList({ onCreateFlow, onEditFlow }: FlowListProps) {
   const { t } = useTranslation('flow')
-  const { flows, flowsLoading, flowsTotal, refreshFlows, loadMoreFlows } =
+  const { flows, flowsLoading, flowsTotal, refreshFlows, loadMoreFlows, refreshExecutions } =
     useFlowContext()
 
   const [deleteConfirmFlow, setDeleteConfirmFlow] = useState<Flow | null>(null)
@@ -89,6 +89,8 @@ export function FlowList({ onCreateFlow, onEditFlow }: FlowListProps) {
       try {
         await flowApis.triggerFlow(flow.id)
         toast.success(t('trigger_success'))
+        // Refresh executions to show the new execution in timeline
+        refreshExecutions()
       } catch (error) {
         console.error('Failed to trigger flow:', error)
         toast.error(t('trigger_failed'))
@@ -96,7 +98,7 @@ export function FlowList({ onCreateFlow, onEditFlow }: FlowListProps) {
         setActionLoading(null)
       }
     },
-    [t]
+    [t, refreshExecutions]
   )
 
   const handleDelete = useCallback(async () => {

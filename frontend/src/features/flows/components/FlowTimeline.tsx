@@ -147,8 +147,12 @@ export function FlowTimeline({ onViewExecution }: FlowTimelineProps) {
               </Badge>
             </div>
             <div className="flex items-center gap-2 text-xs text-text-muted">
-              {exec.team_name && <span>{exec.team_name}</span>}
-              <span>·</span>
+              {exec.team_name && (
+                <>
+                  <span>{exec.team_name}</span>
+                  <span>·</span>
+                </>
+              )}
               <span>{exec.trigger_reason || exec.trigger_type}</span>
               {exec.completed_at && (
                 <>

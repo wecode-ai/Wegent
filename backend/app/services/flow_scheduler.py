@@ -26,7 +26,8 @@ logger = logging.getLogger(__name__)
 # Configuration
 FLOW_SCHEDULER_INTERVAL_SECONDS = getattr(settings, "FLOW_SCHEDULER_INTERVAL_SECONDS", 60)
 FLOW_SCHEDULER_LOCK_KEY = "flow_scheduler_lock"
-FLOW_SCHEDULER_LOCK_EXPIRY = max(FLOW_SCHEDULER_INTERVAL_SECONDS - 10, 10)
+# Set lock expiry to 2x the interval to account for processing time
+FLOW_SCHEDULER_LOCK_EXPIRY = FLOW_SCHEDULER_INTERVAL_SECONDS * 2
 
 
 async def acquire_flow_scheduler_lock() -> bool:
