@@ -122,20 +122,21 @@ export function FlowList({ onCreateFlow, onEditFlow }: FlowListProps) {
     return date.toLocaleString()
   }
 
-  const getTriggerLabel = (flow: Flow) => {
+  const getTriggerLabel = (flow: Flow): string => {
+    const config = flow.trigger_config || {}
     switch (flow.trigger_type) {
       case 'cron':
-        return flow.trigger_config?.expression || 'Cron'
+        return String(config.expression || 'Cron')
       case 'interval':
-        return `${flow.trigger_config?.value || ''} ${flow.trigger_config?.unit || ''}`
+        return `${config.value || ''} ${config.unit || ''}`.trim() || 'Interval'
       case 'one_time':
         return t('trigger_one_time')
       case 'event':
-        return flow.trigger_config?.event_type === 'webhook'
+        return config.event_type === 'webhook'
           ? 'Webhook'
           : 'Git Push'
       default:
-        return flow.trigger_type
+        return flow.trigger_type || 'Unknown'
     }
   }
 
