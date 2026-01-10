@@ -81,7 +81,9 @@ class TeamInDB(TeamBase):
     created_at: datetime
     updated_at: datetime
     user: Optional[dict[str, Any]] = None
-    share_status: int = 0  # 0-private, 1-sharing, 2-shared from others
+    share_status: int = (
+        0  # 0-private, 1-sharing, 2-shared from others, 3-marketplace installed
+    )
     agent_type: Optional[str] = None  # agno, claude, dify, etc.
     bind_mode: Optional[List[str]] = None  # ['chat', 'code'] or empty list for none
 
@@ -101,7 +103,9 @@ class TeamDetail(BaseModel):
     created_at: datetime
     updated_at: datetime
     user: Optional[UserInDB] = None
-    share_status: int = 0  # 0-private, 1-sharing, 2-shared from others
+    share_status: int = (
+        0  # 0-private, 1-sharing, 2-shared from others, 3-marketplace installed
+    )
 
     class Config:
         from_attributes = True

@@ -9,6 +9,7 @@ from app.api.endpoints import (
     groups,
     health,
     knowledge,
+    marketplace,
     oidc,
     openapi_responses,
     quota,
@@ -96,6 +97,9 @@ api_router.include_router(
 api_router.include_router(tables.router, prefix="/tables", tags=["tables"])
 api_router.include_router(rag.router, prefix="/rag", tags=["rag"])
 api_router.include_router(utils.router, prefix="/utils", tags=["utils"])
+api_router.include_router(
+    marketplace.router, prefix="/marketplace", tags=["marketplace"]
+)
 api_router.include_router(k_router)
 
 # Internal API endpoints (for service-to-service communication)
