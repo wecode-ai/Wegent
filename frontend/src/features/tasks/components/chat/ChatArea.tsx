@@ -15,6 +15,7 @@ import type { PipelineStageInfo } from '@/apis/tasks'
 import { useChatAreaState } from './useChatAreaState'
 import { useChatStreamHandlers } from './useChatStreamHandlers'
 import { allBotsHavePredefinedModel } from '../selector/ModelSelector'
+import { useTeamSelection } from '@/features/tasks/hooks/useTeamSelection'
 import { QuoteProvider, SelectionTooltip, useQuote } from '../text-selection'
 import type { Team, SubtaskContextBrief } from '@/types/api'
 import type { ContextItem } from '@/types/context'
@@ -68,7 +69,7 @@ function ChatAreaContent({
 
   // Stream context for getStreamState
   // getStreamState is used to access messages (SINGLE SOURCE OF TRUTH per AGENTS.md)
-  const { clearVersion: _clearVersion, getStreamState } = useChatStreamContext()
+  const { clearVersion, getStreamState } = useChatStreamContext()
 
   // Get stream state for current task to check messages
   const currentStreamState = selectedTaskDetail?.id
@@ -95,6 +96,31 @@ function ChatAreaContent({
     const hasContextMessages = currentStreamState?.messages && currentStreamState.messages.size > 0
     return Boolean(hasSelectedTask || hasContextMessages)
   }, [selectedTaskDetail, currentStreamState?.messages])
+
+  // Use team selection hook for automatic team selection/restoration
+  const teamSelection = useTeamSelection({
+    teams,
+    currentMode: taskType,
+    selectedTaskDetail: selectedTaskDetail ?? null,
+    hasMessages: hasMessagesForHooks,
+    disabled: false,
+    clearVersion,
+  })
+
+  // Sync team selection between hook and chatState (bidirectional)
+  // This allows QuickAccessCards and other components to work properly
+  useEffect(() => {
+    // Case 1: Hook has a team, chatState doesn't have one or has different team
+    // -> Sync from hook to chatState (auto-selection/restoration)
+    if (teamSelection.selectedTeam && (!chatState.selectedTeam || teamSelection.selectedTeam.id !== chatState.selectedTeam.id)) {
+      chatState.handleTeamChange(teamSelection.selectedTeam)
+    }
+    // Case 2: chatState has a team that differs from hook
+    // -> Sync from chatState to hook (user manual selection from QuickAccessCards)
+    else if (chatState.selectedTeam && (!teamSelection.selectedTeam || chatState.selectedTeam.id !== teamSelection.selectedTeam.id)) {
+      teamSelection.selectTeam(chatState.selectedTeam, true)
+    }
+  }, [teamSelection.selectedTeam, teamSelection.selectTeam, chatState.selectedTeam, chatState.handleTeamChange])
 
   // Use scroll management hook - consolidates 4 useEffect calls
   const {
