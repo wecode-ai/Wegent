@@ -24,9 +24,13 @@ from app.schemas.knowledge import (
     BatchDocumentIds,
     BatchOperationResult,
     DocumentSourceType,
+    DocumentSummaryRefreshRequest,
+    DocumentSummaryResponse,
     KnowledgeBaseCreate,
     KnowledgeBaseListResponse,
     KnowledgeBaseResponse,
+    KnowledgeBaseSummaryRefreshRequest,
+    KnowledgeBaseSummaryResponse,
     KnowledgeBaseUpdate,
     KnowledgeDocumentCreate,
     KnowledgeDocumentListResponse,
@@ -37,8 +41,9 @@ from app.schemas.knowledge import (
 from app.schemas.knowledge_qa_history import QAHistoryResponse
 from app.schemas.rag import SplitterConfig
 from app.services.adapters.retriever_kinds import retriever_kinds_service
-from app.services.knowledge_base_qa_service import knowledge_base_qa_service
-from app.services.knowledge_service import KnowledgeService
+from app.services.knowledge.knowledge_base_qa_service import knowledge_base_qa_service
+from app.services.knowledge.knowledge_service import KnowledgeService
+from app.services.knowledge.summary_service import SummaryService
 from app.services.rag.document_service import DocumentService
 from app.services.rag.storage.factory import create_storage_backend
 
@@ -767,3 +772,124 @@ def get_qa_history(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         ) from e
+
+
+# ============== Summary Endpoints ==============
+
+
+@router.get("/{kb_id}/summary", response_model=KnowledgeBaseSummaryResponse)
+def get_kb_summary(
+    kb_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get the summary for a knowledge base.
+
+    Returns the knowledge base summary including:
+    - short_summary: Brief summary (30-50 characters)
+    - long_summary: Detailed summary (up to 500 characters)
+    - topics: Key topics across all documents
+    - status: Summary generation status (pending, generating, completed, failed)
+    """
+    summary = SummaryService.get_kb_summary(
+        db=db,
+        kb_id=kb_id,
+        user_id=current_user.id,
+    )
+
+    return KnowledgeBaseSummaryResponse(
+        knowledge_base_id=kb_id,
+        summary=summary,
+    )
+
+
+@router.post("/{kb_id}/summary/refresh", response_model=dict)
+def refresh_kb_summary(
+    kb_id: int,
+    data: KnowledgeBaseSummaryRefreshRequest = KnowledgeBaseSummaryRefreshRequest(),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Trigger knowledge base summary generation/refresh.
+
+    By default, summary will only be regenerated if the document change ratio
+    exceeds 30% (configurable via SUMMARY_KB_CHANGE_THRESHOLD).
+    Use force=true to regenerate regardless of the threshold.
+
+    The summary generation runs asynchronously. Check the status via
+    GET /knowledge-bases/{kb_id}/summary endpoint.
+    """
+    try:
+        result = SummaryService.trigger_kb_summary(
+            db=db,
+            kb_id=kb_id,
+            user_id=current_user.id,
+            force=data.force,
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        )
+
+
+@document_router.get("/{document_id}/summary", response_model=DocumentSummaryResponse)
+def get_document_summary(
+    document_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get the summary for a document.
+
+    Returns the document summary including:
+    - short_summary: Brief summary (30-50 characters)
+    - long_summary: Detailed summary (up to 500 characters)
+    - topics: Key topics extracted from the document
+    - meta_info: Metadata (author, source, type)
+    - status: Summary generation status (pending, generating, completed, failed)
+    """
+    summary = SummaryService.get_document_summary(
+        db=db,
+        document_id=document_id,
+        user_id=current_user.id,
+    )
+
+    return DocumentSummaryResponse(
+        document_id=document_id,
+        summary=summary,
+    )
+
+
+@document_router.post("/{document_id}/summary/refresh", response_model=dict)
+def refresh_document_summary(
+    document_id: int,
+    data: DocumentSummaryRefreshRequest = DocumentSummaryRefreshRequest(),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Trigger document summary generation/refresh.
+
+    The document must be indexed (is_active=True) before summary can be generated.
+    Use force=true to regenerate even if summary already exists.
+
+    The summary generation runs asynchronously. Check the status via
+    GET /knowledge-documents/{document_id}/summary endpoint.
+    """
+    try:
+        result = SummaryService.trigger_document_summary(
+            db=db,
+            document_id=document_id,
+            user_id=current_user.id,
+            force=data.force,
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )

@@ -16,7 +16,9 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
-from app.services.task_knowledge_base_service import task_knowledge_base_service
+from app.services.knowledge.task_knowledge_base_service import (
+    task_knowledge_base_service,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)

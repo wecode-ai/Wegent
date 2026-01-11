@@ -8,7 +8,7 @@ Pydantic schemas for knowledge base and document management.
 
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -288,3 +288,152 @@ class TableUrlValidationResponse(BaseModel):
     error_message: Optional[str] = Field(
         None, description="Error message if validation failed"
     )
+
+
+# ============== Document Summary Schemas ==============
+
+
+class DocumentSummaryMetaInfo(BaseModel):
+    """Metadata extracted from document during summarization."""
+
+    author: Optional[str] = Field(None, description="Document author if available")
+    source: Optional[str] = Field(None, description="Document source if available")
+    type: Optional[str] = Field(None, description="Document type classification")
+
+    class Config:
+        extra = "allow"
+
+
+class DocumentSummary(BaseModel):
+    """Summary information for a knowledge document."""
+
+    short_summary: Optional[str] = Field(
+        None, max_length=200, description="Short summary (30-50 characters)"
+    )
+    long_summary: Optional[str] = Field(
+        None, max_length=2000, description="Long summary (up to 500 characters)"
+    )
+    topics: Optional[List[str]] = Field(
+        None, max_length=10, description="Key topics/tags extracted from document"
+    )
+    meta_info: Optional[DocumentSummaryMetaInfo] = Field(
+        None, description="Metadata extracted from document"
+    )
+    status: Literal["pending", "generating", "completed", "failed"] = Field(
+        "pending", description="Summary generation status"
+    )
+    error: Optional[str] = Field(
+        None, description="Error message if summary generation failed"
+    )
+    updated_at: Optional[datetime] = Field(
+        None, description="Last summary update timestamp"
+    )
+
+    class Config:
+        extra = "allow"
+
+
+class DocumentSummaryResponse(BaseModel):
+    """Response schema for document summary endpoint."""
+
+    document_id: int
+    summary: Optional[DocumentSummary] = None
+
+
+class DocumentSummaryRefreshRequest(BaseModel):
+    """Request schema for refreshing document summary."""
+
+    force: bool = Field(
+        False, description="Force refresh even if summary already exists"
+    )
+
+
+# ============== Knowledge Base Summary Schemas ==============
+
+
+class KnowledgeBaseSummaryMetaInfo(BaseModel):
+    """Metadata for knowledge base summary."""
+
+    document_count: Optional[int] = Field(
+        None, description="Number of documents when summary was generated"
+    )
+    last_updated: Optional[datetime] = Field(None, description="Last update timestamp")
+
+    class Config:
+        extra = "allow"
+
+
+class KnowledgeBaseSummary(BaseModel):
+    """Summary information for a knowledge base."""
+
+    short_summary: Optional[str] = Field(
+        None, max_length=200, description="Short summary (30-50 characters)"
+    )
+    long_summary: Optional[str] = Field(
+        None, max_length=2000, description="Long summary (up to 500 characters)"
+    )
+    topics: Optional[List[str]] = Field(
+        None, max_length=20, description="Key topics across all documents"
+    )
+    meta_info: Optional[KnowledgeBaseSummaryMetaInfo] = Field(
+        None, description="Summary metadata"
+    )
+    status: Literal["pending", "generating", "completed", "failed"] = Field(
+        "pending", description="Summary generation status"
+    )
+    error: Optional[str] = Field(
+        None, description="Error message if summary generation failed"
+    )
+    updated_at: Optional[datetime] = Field(
+        None, description="Last summary update timestamp"
+    )
+    last_summary_doc_count: Optional[int] = Field(
+        None, description="Document count when summary was last generated"
+    )
+
+    class Config:
+        extra = "allow"
+
+
+class KnowledgeBaseSummaryResponse(BaseModel):
+    """Response schema for knowledge base summary endpoint."""
+
+    knowledge_base_id: int
+    summary: Optional[KnowledgeBaseSummary] = None
+
+
+class KnowledgeBaseSummaryRefreshRequest(BaseModel):
+    """Request schema for refreshing knowledge base summary."""
+
+    force: bool = Field(
+        False,
+        description="Force refresh even if change threshold not reached",
+    )
+
+
+# ============== Summary Callback Schemas ==============
+
+
+class DocumentSummaryCallbackRequest(BaseModel):
+    """Request schema for document summary callback from executor."""
+
+    short_summary: Optional[str] = Field(None, description="Short summary")
+    long_summary: Optional[str] = Field(None, description="Long summary")
+    topics: Optional[List[str]] = Field(None, description="Topics/tags")
+    meta_info: Optional[DocumentSummaryMetaInfo] = Field(None, description="Metadata")
+    status: Literal["completed", "failed"] = Field(
+        ..., description="Summary generation result status"
+    )
+    error: Optional[str] = Field(None, description="Error message if failed")
+
+
+class KnowledgeBaseSummaryCallbackRequest(BaseModel):
+    """Request schema for knowledge base summary callback from executor."""
+
+    short_summary: Optional[str] = Field(None, description="Short summary")
+    long_summary: Optional[str] = Field(None, description="Long summary")
+    topics: Optional[List[str]] = Field(None, description="Topics/tags")
+    status: Literal["completed", "failed"] = Field(
+        ..., description="Summary generation result status"
+    )
+    error: Optional[str] = Field(None, description="Error message if failed")

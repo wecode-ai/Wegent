@@ -408,7 +408,9 @@ def _sync_kb_contexts_to_task(
         user_id: User ID who selected the KBs
         user_name: Pre-queried user name for boundBy field
     """
-    from app.services.task_knowledge_base_service import task_knowledge_base_service
+    from app.services.knowledge.task_knowledge_base_service import (
+        task_knowledge_base_service,
+    )
 
     for kb_context in kb_contexts:
         knowledge_id = (
@@ -918,7 +920,9 @@ def _get_bound_knowledge_base_ids(db: Session, task_id: int) -> List[int]:
     Returns:
         List of knowledge base IDs bound to the task
     """
-    from app.services.task_knowledge_base_service import task_knowledge_base_service
+    from app.services.knowledge.task_knowledge_base_service import (
+        task_knowledge_base_service,
+    )
 
     logger.info(f"[_get_bound_knowledge_base_ids] START task_id={task_id}")
 

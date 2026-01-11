@@ -259,6 +259,19 @@ class Settings(BaseSettings):
     # See backend/app/services/tables/DATA_TABLE_CONFIG_EXAMPLE.md for details
     DATA_TABLE_CONFIG: str = ""
 
+    # Knowledge Summary Configuration
+    # Enable/disable automatic document and knowledge base summarization
+    SUMMARY_ENABLED: bool = True
+    # Model configuration for summary generation (JSON string)
+    # Format: {"model": "claude-3-5-sonnet-20241022", "max_tokens": 4096}
+    SUMMARY_MODEL_CONFIG: str = (
+        '{"model": "claude-3-5-sonnet-20241022", "max_tokens": 4096}'
+    )
+    # Threshold for triggering knowledge base summary update (0.3 = 30%)
+    SUMMARY_KB_CHANGE_THRESHOLD: float = 0.3
+    # Service API Key name for summary callback authentication
+    SUMMARY_SERVICE_API_KEY_NAME: str = "summary-service"
+
     # OpenTelemetry configuration is centralized in shared/telemetry/config.py
     # Use: from shared.telemetry.config import get_otel_config
     # All OTEL_* environment variables are read from there

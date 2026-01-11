@@ -636,6 +636,11 @@ class KnowledgeBaseSpec(BaseModel):
     retrievalConfig: Optional[RetrievalConfig] = Field(
         None, description="Retrieval configuration"
     )
+    # Summary is stored as Dict to avoid circular imports with knowledge.py
+    # The actual schema is KnowledgeBaseSummary from knowledge.py
+    summary: Optional[Dict[str, Any]] = Field(
+        None, description="Knowledge base summary information"
+    )
 
 
 class KnowledgeBaseStatus(Status):

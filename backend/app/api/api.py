@@ -41,6 +41,7 @@ from app.api.endpoints.internal import (
     chat_storage_router,
     rag_router,
     skills_router,
+    summary_router,
     tables_router,
 )
 from app.api.endpoints.kind import k_router
@@ -108,3 +109,4 @@ api_router.include_router(tables_router, prefix="/internal", tags=["internal-tab
 api_router.include_router(
     internal_bots_router, prefix="/internal", tags=["internal-bots"]
 )
+api_router.include_router(summary_router, prefix="/internal", tags=["internal-summary"])
