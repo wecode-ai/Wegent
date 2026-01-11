@@ -104,7 +104,13 @@ class AttachmentPromptProcessor:
         if not success_attachments:
             return ""
 
-        context_lines = ["\n\n📎 Available attachments:"]
+        # Build header with clear instructions for the model
+        context_lines = [
+            "\n\n📎 User-uploaded attachments:",
+            "The following files have been uploaded by the user and downloaded to the local filesystem.",
+            "You can read these files using the Read tool or appropriate file reading commands.",
+        ]
+
         for att in success_attachments:
             filename = att.get("original_filename", "unknown")
             local_path = att.get("local_path", "")
@@ -120,7 +126,7 @@ class AttachmentPromptProcessor:
                 size_str = f"{file_size} bytes"
 
             context_lines.append(
-                f"- {filename} ({mime_type}, {size_str}): {local_path}"
+                f"- {filename} ({mime_type}, {size_str})\n  Path: {local_path}"
             )
 
         return "\n".join(context_lines)
