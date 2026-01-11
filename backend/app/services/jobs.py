@@ -17,6 +17,7 @@ from app.core.cache import cache_manager
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.services.adapters.executor_job import job_service
+from app.services.flow_scheduler import start_flow_scheduler, stop_flow_scheduler
 from app.services.repository_job import repository_job_service
 
 logger = logging.getLogger(__name__)
@@ -181,6 +182,9 @@ def start_background_jobs(app):
     app.state.repo_update_thread.start()
     logger.info("[job] repository update worker started")
 
+    # Start flow scheduler thread
+    start_flow_scheduler(app)
+
 
 def stop_background_jobs(app):
     """
@@ -206,3 +210,6 @@ def stop_background_jobs(app):
     if repo_thread:
         repo_thread.join(timeout=5.0)
     logger.info("[job] repository update worker stopped")
+
+    # Stop flow scheduler thread gracefully
+    stop_flow_scheduler(app)

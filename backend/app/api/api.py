@@ -28,6 +28,7 @@ from app.api.endpoints.adapter import (
     chat,
     dify,
     executors,
+    flows,
     models,
     retrievers,
     shells,
@@ -59,6 +60,7 @@ api_router.include_router(models.router, prefix="/models", tags=["public-models"
 api_router.include_router(shells.router, prefix="/shells", tags=["shells"])
 api_router.include_router(agents.router, prefix="/agents", tags=["public-shell"])
 api_router.include_router(teams.router, prefix="/teams", tags=["teams"])
+api_router.include_router(flows.router, prefix="/flows", tags=["flows"])
 api_router.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
 api_router.include_router(subtasks.router, prefix="/subtasks", tags=["subtasks"])
 api_router.include_router(task_members.router, prefix="/tasks", tags=["task-members"])
