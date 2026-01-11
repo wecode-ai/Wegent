@@ -137,6 +137,27 @@ export interface TestConnectionResponse {
   message: string
 }
 
+// Fetch Available Models Types
+export interface FetchAvailableModelsRequest {
+  provider_type: 'openai' | 'anthropic' | 'gemini' | 'custom'
+  api_key: string
+  base_url?: string
+  custom_headers?: Record<string, string>
+}
+
+export interface AvailableModel {
+  id: string
+  name?: string
+  created?: number
+  owned_by?: string
+}
+
+export interface FetchAvailableModelsResponse {
+  success: boolean
+  models: AvailableModel[]
+  message?: string
+}
+
 // Compatible Models Types
 export interface CompatibleModel {
   name: string
@@ -291,6 +312,15 @@ export const modelApis = {
    */
   async testConnection(config: TestConnectionRequest): Promise<TestConnectionResponse> {
     return apiClient.post('/models/test-connection', config)
+  },
+
+  /**
+   * Fetch available models from API provider
+   */
+  async fetchAvailableModels(
+    config: FetchAvailableModelsRequest
+  ): Promise<FetchAvailableModelsResponse> {
+    return apiClient.post('/models/fetch-available-models', config)
   },
 
   /**

@@ -25,6 +25,7 @@ import { taskApis } from '@/apis/tasks'
 import { useRouter } from 'next/navigation'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
+import { useIsMobile } from './hooks/useMediaQuery'
 
 type TaskTitleDropdownProps = {
   title?: string
@@ -44,6 +45,7 @@ export default function TaskTitleDropdown({
   const { t } = useTranslation()
   const router = useRouter()
   const { user } = useUser()
+  const isMobile = useIsMobile()
   const displayTitle = title
   const isGroupChat = taskDetail?.is_group_chat || false
 
@@ -110,13 +112,15 @@ export default function TaskTitleDropdown({
             className={cn(
               'flex items-center gap-2 h-9 px-3 rounded-md',
               'text-text-primary font-medium text-base',
-              'hover:bg-muted transition-colors',
+              'hover:bg-muted active:bg-muted transition-colors',
               'focus:outline-none focus:ring-2 focus:ring-primary/40',
-              'max-w-[300px]',
+              // Responsive max width - smaller on mobile to prevent overflow
+              isMobile ? 'max-w-[120px]' : 'max-w-[300px]',
+              'min-w-0', // Allow shrinking
               className
             )}
           >
-            <span className="truncate">{displayTitle}</span>
+            <span className="truncate min-w-0">{displayTitle}</span>
             <ChevronDownIcon className="h-4 w-4 flex-shrink-0 text-text-muted" />
           </button>
         </DropdownMenuTrigger>
@@ -132,7 +136,7 @@ export default function TaskTitleDropdown({
   // Group chat dropdown with additional options
   return (
     <>
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-1 min-w-0">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
@@ -140,14 +144,16 @@ export default function TaskTitleDropdown({
               className={cn(
                 'flex items-center gap-2 h-9 px-3 rounded-md',
                 'text-text-primary font-medium text-base',
-                'hover:bg-muted transition-colors',
+                'hover:bg-muted active:bg-muted transition-colors',
                 'focus:outline-none focus:ring-2 focus:ring-primary/40',
-                'max-w-[300px]',
+                // Responsive max width - smaller on mobile to prevent overflow
+                isMobile ? 'max-w-[100px]' : 'max-w-[300px]',
+                'min-w-0', // Allow shrinking
                 className
               )}
             >
               <Users className="h-4 w-4 flex-shrink-0 text-text-muted" />
-              <span className="truncate">{displayTitle}</span>
+              <span className="truncate min-w-0">{displayTitle}</span>
               <ChevronDownIcon className="h-4 w-4 flex-shrink-0 text-text-muted" />
             </button>
           </DropdownMenuTrigger>

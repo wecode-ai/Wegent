@@ -1,4 +1,5 @@
 export { default as TeamSelector } from './TeamSelector'
+export { default as MobileTeamSelector } from './MobileTeamSelector'
 export {
   default as ModelSelector,
   DEFAULT_MODEL_NAME,

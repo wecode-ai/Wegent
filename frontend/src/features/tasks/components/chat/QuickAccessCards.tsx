@@ -24,6 +24,8 @@ import { paths } from '@/config/paths'
 import { getSharedTagStyle as getSharedBadgeStyle } from '@/utils/styles'
 import { TeamIconDisplay } from '@/features/settings/components/teams/TeamIconDisplay'
 import TeamCreationWizard from '@/features/settings/components/wizard/TeamCreationWizard'
+import { useMediaQuery } from '@/hooks/useMediaQuery'
+import { MobileTeamSelector } from '@/features/tasks/components/selector'
 
 // Maximum number of quick access cards to display
 const MAX_QUICK_ACCESS_CARDS = 4
@@ -61,6 +63,7 @@ export function QuickAccessCards({
   const [showMoreTeams, setShowMoreTeams] = useState(false)
   const [showWizard, setShowWizard] = useState(false)
   const moreButtonRef = useRef<HTMLDivElement>(null)
+  const isMobile = useMediaQuery('(max-width: 767px)')
 
   // Define the extended team type for display
   type DisplayTeam = Team & { is_system: boolean; recommended_mode?: 'chat' | 'code' | 'both' }
@@ -395,11 +398,41 @@ export function QuickAccessCards({
         )}
         {displayTeams.map(team => renderTeamCard(team))}
 
-        {/* More button - always show for team selection */}
-        <div ref={moreButtonRef} className="relative">
-          <button
-            onClick={() => setShowMoreTeams(!showMoreTeams)}
-            className={`
+        {/* More button - use MobileTeamSelector on mobile, dropdown on desktop */}
+        {isMobile ? (
+          // Mobile: Use iOS-style drawer selector with "更多" text
+          filteredTeams.length > 0 && selectedTeam ? (
+            <MobileTeamSelector
+              selectedTeam={selectedTeam}
+              teams={filteredTeams}
+              onTeamSelect={onTeamSelect}
+              disabled={isLoading || isTeamsLoading || false}
+              isLoading={isTeamsLoading}
+              triggerText={t('teams.more')}
+            />
+          ) : (
+            // Fallback: Show a button with "更多" text if no team selected but teams exist
+            filteredTeams.length > 0 && (
+              <button
+                onClick={() => {
+                  // Select first team if none selected
+                  if (!selectedTeam && filteredTeams.length > 0) {
+                    onTeamSelect(filteredTeams[0])
+                  }
+                }}
+                className="flex items-center gap-1 h-[42px] px-4 rounded-full border border-border bg-base hover:bg-hover transition-colors"
+              >
+                <span className="text-xs font-normal text-text-primary">{t('teams.more')}</span>
+                <ChevronDownIcon className="w-2.5 h-2.5 text-text-muted" />
+              </button>
+            )
+          )
+        ) : (
+          // Desktop: Original dropdown
+          <div ref={moreButtonRef} className="relative">
+            <button
+              onClick={() => setShowMoreTeams(!showMoreTeams)}
+              className={`
                 flex items-center gap-1 h-[42px] px-4
                 rounded-full border cursor-pointer transition-all duration-200
                 ${
@@ -408,17 +441,17 @@ export function QuickAccessCards({
                     : 'border-border bg-base hover:bg-hover hover:border-border-strong'
                 }
               `}
-            title={t('teams.more_teams')}
-          >
-            <span className="text-xs font-normal text-text-primary">{t('teams.more')}</span>
-            <ChevronDownIcon
-              className={`w-2.5 h-2.5 text-text-muted transition-transform duration-200 ${showMoreTeams ? 'rotate-180' : ''}`}
-            />
-          </button>
+              title={t('teams.more_teams')}
+            >
+              <span className="text-xs font-normal text-text-primary">{t('teams.more')}</span>
+              <ChevronDownIcon
+                className={`w-2.5 h-2.5 text-text-muted transition-transform duration-200 ${showMoreTeams ? 'rotate-180' : ''}`}
+              />
+            </button>
 
-          {/* Dropdown with team list */}
-          {showMoreTeams && (
-            <div className="absolute top-full left-0 mt-2 z-50 min-w-[300px] max-w-[400px] bg-surface border border-border rounded-xl shadow-xl overflow-hidden">
+            {/* Dropdown with team list */}
+            {showMoreTeams && (
+              <div className="absolute top-full left-0 mt-2 z-50 min-w-[300px] max-w-[400px] bg-surface border border-border rounded-xl shadow-xl overflow-hidden">
               {/* Search input */}
               <div className="p-2 border-b border-border">
                 <div className="relative">
@@ -510,7 +543,8 @@ export function QuickAccessCards({
               </div>
             </div>
           )}
-        </div>
+          </div>
+        )}
 
         {/* Divider */}
         <div className="h-7 w-px bg-border mx-1" />
