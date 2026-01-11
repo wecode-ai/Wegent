@@ -18,10 +18,3 @@ export type {
   UseModelSelectionOptions,
   UseModelSelectionReturn,
 } from '@/features/tasks/hooks/useModelSelection'
-
-// Re-export useTeamSelection hook for convenience
-export { useTeamSelection } from '@/features/tasks/hooks/useTeamSelection'
-export type {
-  UseTeamSelectionOptions,
-  UseTeamSelectionReturn,
-} from '@/features/tasks/hooks/useTeamSelection'

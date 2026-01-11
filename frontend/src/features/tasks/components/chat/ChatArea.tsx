@@ -4,8 +4,9 @@
 
 'use client'
 
-import React, { useEffect, useCallback, useMemo, useState } from 'react'
+import React, { useEffect, useCallback, useMemo, useState, useRef } from 'react'
 import { ShieldX } from 'lucide-react'
+import { useSearchParams } from 'next/navigation'
 import MessagesArea from '../message/MessagesArea'
 import { QuickAccessCards } from './QuickAccessCards'
 import { SloganDisplay } from './SloganDisplay'
@@ -15,7 +16,6 @@ import type { PipelineStageInfo } from '@/apis/tasks'
 import { useChatAreaState } from './useChatAreaState'
 import { useChatStreamHandlers } from './useChatStreamHandlers'
 import { allBotsHavePredefinedModel } from '../selector/ModelSelector'
-import { useTeamSelection } from '@/features/tasks/hooks/useTeamSelection'
 import { QuoteProvider, SelectionTooltip, useQuote } from '../text-selection'
 import type { Team, SubtaskContextBrief } from '@/types/api'
 import type { ContextItem } from '@/types/context'
@@ -27,6 +27,7 @@ import { Button } from '@/components/ui/button'
 import { useScrollManagement } from '../hooks/useScrollManagement'
 import { useFloatingInput } from '../hooks/useFloatingInput'
 import { useAttachmentUpload } from '../hooks/useAttachmentUpload'
+import { getLastTeamIdByMode, saveLastTeamByMode } from '@/utils/userPreferences'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
@@ -69,7 +70,7 @@ function ChatAreaContent({
 
   // Stream context for getStreamState
   // getStreamState is used to access messages (SINGLE SOURCE OF TRUTH per AGENTS.md)
-  const { clearVersion, getStreamState } = useChatStreamContext()
+  const { getStreamState } = useChatStreamContext()
 
   // Get stream state for current task to check messages
   const currentStreamState = selectedTaskDetail?.id
@@ -97,38 +98,133 @@ function ChatAreaContent({
     return Boolean(hasSelectedTask || hasContextMessages)
   }, [selectedTaskDetail, currentStreamState?.messages])
 
-  // Use team selection hook for automatic team selection/restoration
-  const teamSelection = useTeamSelection({
-    teams,
-    currentMode: taskType,
-    selectedTaskDetail: selectedTaskDetail ?? null,
-    hasMessages: hasMessagesForHooks,
-    disabled: false,
-    clearVersion,
-  })
+  // Get taskId from URL for team sync logic
+  const searchParams = useSearchParams()
+  const taskIdFromUrl =
+    searchParams.get('taskId') || searchParams.get('task_id') || searchParams.get('taskid')
 
-  // Sync team selection between hook and chatState (bidirectional)
-  // This allows QuickAccessCards and other components to work properly
-  // Extract values to stable references to avoid lint warnings
-  const hookTeam = teamSelection.selectedTeam
-  const hookSelectTeam = teamSelection.selectTeam
-  const stateTeam = chatState.selectedTeam
-  const stateHandleTeamChange = chatState.handleTeamChange
+  // Track initialization and last synced task for team selection
+  const hasInitializedTeamRef = useRef(false)
+  const lastSyncedTaskIdRef = useRef<number | null>(null)
 
+  // Filter teams by bind_mode based on current mode
+  const filteredTeams = useMemo(() => {
+    const teamsWithValidBindMode = teams.filter(team => {
+      if (Array.isArray(team.bind_mode) && team.bind_mode.length === 0) return false
+      return true
+    })
+    return teamsWithValidBindMode.filter(team => {
+      if (!team.bind_mode) return true
+      return team.bind_mode.includes(taskType)
+    })
+  }, [teams, taskType])
+
+  // Extract values for dependency array
+  const selectedTeam = chatState.selectedTeam
+  const handleTeamChange = chatState.handleTeamChange
+
+  // Team selection logic - simplified and direct
   useEffect(() => {
-    // Case 1: Hook has a team, chatState doesn't have one or has different team
-    // -> Sync from hook to chatState (auto-selection/restoration)
-    // Only sync when hook has restored preferences and chatState has no team
-    // This prevents overwriting user's manual selection from QuickAccessCards
-    if (hookTeam && !stateTeam) {
-      stateHandleTeamChange(hookTeam)
+    if (filteredTeams.length === 0) return
+
+    // Extract team ID from task detail
+    const detailTeamId = selectedTaskDetail?.team
+      ? typeof selectedTaskDetail.team === 'number'
+        ? selectedTaskDetail.team
+        : (selectedTaskDetail.team as Team).id
+      : null
+
+    // Case 1: Sync from task detail (HIGHEST PRIORITY)
+    // Only sync when URL taskId matches taskDetail.id to prevent race conditions
+    if (taskIdFromUrl && selectedTaskDetail?.id && detailTeamId) {
+      if (selectedTaskDetail.id.toString() === taskIdFromUrl) {
+        // Only update if we haven't synced this task yet or team is different
+        if (
+          lastSyncedTaskIdRef.current !== selectedTaskDetail.id ||
+          selectedTeam?.id !== detailTeamId
+        ) {
+          const teamFromDetail = filteredTeams.find(t => t.id === detailTeamId)
+          if (teamFromDetail) {
+            console.log('[ChatArea] Syncing team from task detail:', teamFromDetail.name)
+            handleTeamChange(teamFromDetail)
+            lastSyncedTaskIdRef.current = selectedTaskDetail.id
+            hasInitializedTeamRef.current = true
+            return
+          } else {
+            // Team not in filtered list, try to use the team object from detail
+            const teamObject =
+              typeof selectedTaskDetail.team === 'object' ? (selectedTaskDetail.team as Team) : null
+            if (teamObject) {
+              console.log('[ChatArea] Using team object from detail:', teamObject.name)
+              handleTeamChange(teamObject)
+              lastSyncedTaskIdRef.current = selectedTaskDetail.id
+              hasInitializedTeamRef.current = true
+              return
+            }
+          }
+        } else {
+          // Already synced this task, skip
+          return
+        }
+      } else {
+        // URL and taskDetail don't match - wait for correct taskDetail to load
+        console.log('[ChatArea] Waiting for taskDetail to match URL')
+        return
+      }
     }
-    // Case 2: chatState has a team that differs from hook
-    // -> Sync from chatState to hook (user manual selection from QuickAccessCards)
-    else if (stateTeam && (!hookTeam || stateTeam.id !== hookTeam.id)) {
-      hookSelectTeam(stateTeam, true)
+
+    // Case 2: New chat (no taskId in URL) - restore from localStorage
+    if (!taskIdFromUrl && !hasInitializedTeamRef.current) {
+      const lastTeamId = getLastTeamIdByMode(taskType)
+      if (lastTeamId) {
+        const lastTeam = filteredTeams.find(t => t.id === lastTeamId)
+        if (lastTeam) {
+          console.log('[ChatArea] Restoring team from localStorage:', lastTeam.name)
+          handleTeamChange(lastTeam)
+          hasInitializedTeamRef.current = true
+          lastSyncedTaskIdRef.current = null
+          return
+        }
+      }
+      // No saved preference or team not found, select first team
+      if (!selectedTeam) {
+        console.log('[ChatArea] Selecting first team:', filteredTeams[0].name)
+        handleTeamChange(filteredTeams[0])
+      }
+      hasInitializedTeamRef.current = true
+      lastSyncedTaskIdRef.current = null
+      return
     }
-  }, [hookTeam, hookSelectTeam, stateTeam, stateHandleTeamChange])
+
+    // Case 3: Validate current selection exists in filtered list
+    if (selectedTeam) {
+      const exists = filteredTeams.some(t => t.id === selectedTeam.id)
+      if (!exists) {
+        console.log('[ChatArea] Current team not in filtered list, selecting first')
+        handleTeamChange(filteredTeams[0])
+      }
+    } else if (!taskIdFromUrl) {
+      // No selection and no task - select first team
+      console.log('[ChatArea] No selection, selecting first team')
+      handleTeamChange(filteredTeams[0])
+    }
+  }, [filteredTeams, selectedTaskDetail, taskIdFromUrl, selectedTeam, handleTeamChange, taskType])
+
+  // Reset initialization when switching from task to new chat
+  useEffect(() => {
+    if (!taskIdFromUrl) {
+      lastSyncedTaskIdRef.current = null
+    }
+  }, [taskIdFromUrl])
+
+  // Save team preference when user manually selects (via QuickAccessCards)
+  const handleTeamSelect = useCallback(
+    (team: Team) => {
+      handleTeamChange(team)
+      saveLastTeamByMode(team.id, taskType)
+    },
+    [handleTeamChange, taskType]
+  )
 
   // Use scroll management hook - consolidates 4 useEffect calls
   const {
@@ -527,7 +623,7 @@ function ChatAreaContent({
               <QuickAccessCards
                 teams={teams}
                 selectedTeam={chatState.selectedTeam}
-                onTeamSelect={chatState.handleTeamChange}
+                onTeamSelect={handleTeamSelect}
                 currentMode={taskType}
                 isLoading={isTeamsLoading}
                 isTeamsLoading={isTeamsLoading}
