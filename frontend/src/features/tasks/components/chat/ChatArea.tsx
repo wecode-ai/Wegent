@@ -109,18 +109,26 @@ function ChatAreaContent({
 
   // Sync team selection between hook and chatState (bidirectional)
   // This allows QuickAccessCards and other components to work properly
+  // Extract values to stable references to avoid lint warnings
+  const hookTeam = teamSelection.selectedTeam
+  const hookSelectTeam = teamSelection.selectTeam
+  const stateTeam = chatState.selectedTeam
+  const stateHandleTeamChange = chatState.handleTeamChange
+
   useEffect(() => {
     // Case 1: Hook has a team, chatState doesn't have one or has different team
     // -> Sync from hook to chatState (auto-selection/restoration)
-    if (teamSelection.selectedTeam && (!chatState.selectedTeam || teamSelection.selectedTeam.id !== chatState.selectedTeam.id)) {
-      chatState.handleTeamChange(teamSelection.selectedTeam)
+    // Only sync when hook has restored preferences and chatState has no team
+    // This prevents overwriting user's manual selection from QuickAccessCards
+    if (hookTeam && !stateTeam) {
+      stateHandleTeamChange(hookTeam)
     }
     // Case 2: chatState has a team that differs from hook
     // -> Sync from chatState to hook (user manual selection from QuickAccessCards)
-    else if (chatState.selectedTeam && (!teamSelection.selectedTeam || chatState.selectedTeam.id !== teamSelection.selectedTeam.id)) {
-      teamSelection.selectTeam(chatState.selectedTeam, true)
+    else if (stateTeam && (!hookTeam || stateTeam.id !== hookTeam.id)) {
+      hookSelectTeam(stateTeam, true)
     }
-  }, [teamSelection.selectedTeam, teamSelection.selectTeam, chatState.selectedTeam, chatState.handleTeamChange])
+  }, [hookTeam, hookSelectTeam, stateTeam, stateHandleTeamChange])
 
   // Use scroll management hook - consolidates 4 useEffect calls
   const {
