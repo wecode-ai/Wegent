@@ -17,6 +17,7 @@ import {
 import WorkbenchToggle from '@/features/layout/WorkbenchToggle'
 import { OpenMenu } from '@/features/tasks/components/input'
 import { GithubStarButton } from '@/features/layout/GithubStarButton'
+import GreyTestButton from '@/features/layout/components/GreyTestButton'
 import { Team, WorkbenchData } from '@/types/api'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
@@ -264,6 +265,7 @@ export function CodePageDesktop() {
           isSidebarCollapsed={isCollapsed}
         >
           {shareButton}
+          <GreyTestButton />
           <GithubStarButton />
           {hasTaskId && <OpenMenu openLinks={openLinks} />}
           {hasTaskId && (

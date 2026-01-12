@@ -16,6 +16,7 @@ import {
   SearchDialog,
 } from '@/features/tasks/components/sidebar'
 import { GithubStarButton } from '@/features/layout/GithubStarButton'
+import GreyTestButton from '@/features/layout/components/GreyTestButton'
 import { Team } from '@/types/api'
 import { saveLastTab } from '@/utils/userPreferences'
 import { useUser } from '@/features/common/UserContext'
@@ -192,6 +193,7 @@ export function ChatPageDesktop() {
             </Button>
           )}
           {shareButton}
+          <GreyTestButton />
           <GithubStarButton />
         </TopNavigation>
         {/* Chat area without repository selector */}
