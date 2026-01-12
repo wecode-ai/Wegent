@@ -72,7 +72,12 @@ class FlowResource(Base):
     __table_args__ = (
         # Unique constraint: (user_id, kind, name, namespace) for CRD-style uniqueness
         Index(
-            "ix_flows_user_kind_name_ns", "user_id", "kind", "name", "namespace", unique=True
+            "ix_flows_user_kind_name_ns",
+            "user_id",
+            "kind",
+            "name",
+            "namespace",
+            unique=True,
         ),
         # Index for scheduler queries: find enabled flows that need execution
         Index("ix_flows_enabled_next_exec", "enabled", "next_execution_time"),

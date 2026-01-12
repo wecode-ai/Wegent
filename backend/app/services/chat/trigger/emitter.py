@@ -293,6 +293,7 @@ class NoOpEventEmitter(ChatEventEmitter):
             f"subtask={subtask_id} (skipped)"
         )
 
+
 class FlowEventEmitter(NoOpEventEmitter):
     """Event emitter for Flow Scheduler tasks.
 
@@ -403,7 +404,9 @@ class FlowEventEmitter(NoOpEventEmitter):
                 f"status to {status}: {e}"
             )
 
-    def _extract_result_summary(self, result: Optional[Dict[str, Any]]) -> Optional[str]:
+    def _extract_result_summary(
+        self, result: Optional[Dict[str, Any]]
+    ) -> Optional[str]:
         """Extract a summary from the result dict.
 
         Args:

@@ -58,15 +58,15 @@ class IntervalTriggerConfig(BaseModel):
     """Interval trigger configuration."""
 
     value: int = Field(..., description="Interval value")
-    unit: str = Field(
-        ..., description="Interval unit: 'minutes', 'hours', 'days'"
-    )
+    unit: str = Field(..., description="Interval unit: 'minutes', 'hours', 'days'")
 
 
 class OneTimeTriggerConfig(BaseModel):
     """One-time trigger configuration."""
 
-    execute_at: datetime = Field(..., description="Specific execution time (ISO format)")
+    execute_at: datetime = Field(
+        ..., description="Specific execution time (ISO format)"
+    )
 
 
 class GitPushEventConfig(BaseModel):
@@ -79,7 +79,9 @@ class GitPushEventConfig(BaseModel):
 class EventTriggerConfig(BaseModel):
     """Event trigger configuration."""
 
-    event_type: FlowEventType = Field(..., description="Event type: 'webhook' or 'git_push'")
+    event_type: FlowEventType = Field(
+        ..., description="Event type: 'webhook' or 'git_push'"
+    )
     git_push: Optional[GitPushEventConfig] = Field(
         None, description="Git push configuration (when event_type is 'git_push')"
     )
@@ -132,7 +134,8 @@ class FlowSpec(BaseModel):
         None, description="Reference to the Workspace (optional)"
     )
     promptTemplate: str = Field(
-        ..., description="Prompt template with variable support ({{date}}, {{time}}, etc.)"
+        ...,
+        description="Prompt template with variable support ({{date}}, {{time}}, etc.)",
     )
     retryCount: int = Field(0, ge=0, le=3, description="Retry count on failure (0-3)")
     enabled: bool = Field(True, description="Whether the flow is enabled")
@@ -142,7 +145,9 @@ class FlowSpec(BaseModel):
 class FlowStatus(BaseModel):
     """Flow CRD status."""
 
-    state: str = Field("Available", description="Flow state: 'Available', 'Unavailable'")
+    state: str = Field(
+        "Available", description="Flow state: 'Available', 'Unavailable'"
+    )
     lastExecutionTime: Optional[datetime] = Field(
         None, description="Last execution timestamp"
     )
@@ -194,9 +199,7 @@ class FlowBase(BaseModel):
     name: str = Field(..., description="Flow unique identifier")
     display_name: str = Field(..., description="Display name")
     description: Optional[str] = Field(None, description="Flow description")
-    task_type: FlowTaskType = Field(
-        FlowTaskType.COLLECTION, description="Task type"
-    )
+    task_type: FlowTaskType = Field(FlowTaskType.COLLECTION, description="Task type")
     trigger_type: FlowTriggerType = Field(..., description="Trigger type")
     trigger_config: Dict[str, Any] = Field(..., description="Trigger configuration")
     team_id: int = Field(..., description="Team (Agent) ID")
@@ -260,7 +263,9 @@ class FlowExecutionBase(BaseModel):
 
     flow_id: int
     trigger_type: str = Field(..., description="What triggered this execution")
-    trigger_reason: Optional[str] = Field(None, description="Human-readable trigger reason")
+    trigger_reason: Optional[str] = Field(
+        None, description="Human-readable trigger reason"
+    )
     prompt: str = Field(..., description="Resolved prompt (with variables substituted)")
 
 

@@ -529,7 +529,11 @@ class FlowService:
 
             # Get flow details (cached)
             if exec.flow_id not in flow_cache:
-                flow = db.query(FlowResource).filter(FlowResource.id == exec.flow_id).first()
+                flow = (
+                    db.query(FlowResource)
+                    .filter(FlowResource.id == exec.flow_id)
+                    .first()
+                )
                 if flow:
                     flow_crd = Flow.model_validate(flow.json)
                     flow_cache[exec.flow_id] = {
@@ -545,7 +549,11 @@ class FlowService:
 
             # Get team name if available
             if exec.flow_id in flow_cache:
-                flow = db.query(FlowResource).filter(FlowResource.id == exec.flow_id).first()
+                flow = (
+                    db.query(FlowResource)
+                    .filter(FlowResource.id == exec.flow_id)
+                    .first()
+                )
                 if flow and flow.team_id:
                     team = db.query(Kind).filter(Kind.id == flow.team_id).first()
                     if team:
@@ -578,7 +586,9 @@ class FlowService:
         exec_dict = self._convert_execution_to_dict(execution)
 
         # Get flow details
-        flow = db.query(FlowResource).filter(FlowResource.id == execution.flow_id).first()
+        flow = (
+            db.query(FlowResource).filter(FlowResource.id == execution.flow_id).first()
+        )
         if flow:
             flow_crd = Flow.model_validate(flow.json)
             exec_dict["flow_name"] = flow.name
@@ -602,7 +612,9 @@ class FlowService:
         error_message: Optional[str] = None,
     ) -> None:
         """Update execution status (called by scheduler/task completion)."""
-        execution = db.query(FlowExecution).filter(FlowExecution.id == execution_id).first()
+        execution = (
+            db.query(FlowExecution).filter(FlowExecution.id == execution_id).first()
+        )
 
         if not execution:
             return
@@ -622,7 +634,9 @@ class FlowService:
             execution.error_message = error_message
 
         # Update flow statistics
-        flow = db.query(FlowResource).filter(FlowResource.id == execution.flow_id).first()
+        flow = (
+            db.query(FlowResource).filter(FlowResource.id == execution.flow_id).first()
+        )
         if flow:
             flow.last_execution_time = datetime.now()
             flow.last_execution_status = status.value
@@ -714,7 +728,9 @@ class FlowService:
                 pattern = "{{" + var_name + "}}"
                 if pattern in result:
                     if isinstance(var_value, (dict, list)):
-                        result = result.replace(pattern, json.dumps(var_value, ensure_ascii=False))
+                        result = result.replace(
+                            pattern, json.dumps(var_value, ensure_ascii=False)
+                        )
                     else:
                         result = result.replace(pattern, str(var_value))
 
@@ -881,8 +897,9 @@ class FlowService:
         if trigger_type_enum == FlowTriggerType.CRON:
             # Use croniter to calculate next run with timezone support
             try:
-                from croniter import croniter
                 from zoneinfo import ZoneInfo
+
+                from croniter import croniter
 
                 cron_expr = trigger_config.get("expression", "0 9 * * *")
                 timezone_str = trigger_config.get("timezone", "UTC")

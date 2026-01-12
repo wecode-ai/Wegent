@@ -107,7 +107,9 @@ async def trigger_ai_response(
     payload: Any,
     task_room: str,
     supports_direct_chat: bool,
-    namespace: Optional[Any] = None,  # ChatNamespace instance for emitting events (optional for HTTP mode)
+    namespace: Optional[
+        Any
+    ] = None,  # ChatNamespace instance for emitting events (optional for HTTP mode)
     user_subtask_id: Optional[
         int
     ] = None,  # User subtask ID for unified context processing
@@ -612,15 +614,14 @@ async def _stream_with_http_adapter(
             Pass NoOpEventEmitter for background tasks without WebSocket (e.g., Flow Scheduler).
     """
     # Import here to avoid circular imports
-    from app.services.chat.trigger.emitter import (
-        ChatEventEmitter,
-        WebSocketEventEmitter,
-    )
-
     from app.core.config import settings
     from app.services.chat.adapters.http import HTTPAdapter
     from app.services.chat.adapters.interface import ChatEventType, ChatRequest
     from app.services.chat.storage import session_manager
+    from app.services.chat.trigger.emitter import (
+        ChatEventEmitter,
+        WebSocketEventEmitter,
+    )
 
     # Use provided emitter or default to WebSocket emitter
     emitter: ChatEventEmitter = event_emitter or WebSocketEventEmitter()

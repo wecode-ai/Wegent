@@ -2295,9 +2295,7 @@ class ExecutorKindsService(
 
             # Find the FlowExecution record
             execution = (
-                db.query(FlowExecution)
-                .filter(FlowExecution.id == execution_id)
-                .first()
+                db.query(FlowExecution).filter(FlowExecution.id == execution_id).first()
             )
 
             if not execution:

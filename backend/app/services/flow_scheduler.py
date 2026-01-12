@@ -35,7 +35,9 @@ from app.services.flow import flow_service
 logger = logging.getLogger(__name__)
 
 # Configuration
-FLOW_SCHEDULER_INTERVAL_SECONDS = getattr(settings, "FLOW_SCHEDULER_INTERVAL_SECONDS", 60)
+FLOW_SCHEDULER_INTERVAL_SECONDS = getattr(
+    settings, "FLOW_SCHEDULER_INTERVAL_SECONDS", 60
+)
 FLOW_SCHEDULER_LOCK_KEY = "flow_scheduler_lock"
 # Set lock expiry to 2x the interval to account for processing time
 FLOW_SCHEDULER_LOCK_EXPIRY = FLOW_SCHEDULER_INTERVAL_SECONDS * 2
@@ -89,11 +91,13 @@ def get_due_flows(db, now: datetime) -> List[FlowResource]:
             FlowResource.enabled == True,
             FlowResource.next_execution_time != None,
             FlowResource.next_execution_time <= now,
-            FlowResource.trigger_type.in_([
-                FlowTriggerType.CRON.value,
-                FlowTriggerType.INTERVAL.value,
-                FlowTriggerType.ONE_TIME.value,
-            ]),
+            FlowResource.trigger_type.in_(
+                [
+                    FlowTriggerType.CRON.value,
+                    FlowTriggerType.INTERVAL.value,
+                    FlowTriggerType.ONE_TIME.value,
+                ]
+            ),
         )
         .all()
     )
@@ -111,7 +115,9 @@ def execute_flow(db, flow: FlowResource) -> None:
 
         # Determine trigger reason based on trigger type
         if trigger_type == FlowTriggerType.CRON.value:
-            trigger_reason = f"Scheduled (cron: {flow_crd.spec.trigger.cron.expression})"
+            trigger_reason = (
+                f"Scheduled (cron: {flow_crd.spec.trigger.cron.expression})"
+            )
         elif trigger_type == FlowTriggerType.INTERVAL.value:
             interval = flow_crd.spec.trigger.interval
             trigger_reason = f"Scheduled (interval: {interval.value} {interval.unit})"
@@ -190,12 +196,16 @@ def _trigger_task_execution(db, flow: FlowResource, execution) -> None:
         # Get team
         team = (
             db.query(Kind)
-            .filter(Kind.id == flow.team_id, Kind.kind == "Team", Kind.is_active == True)
+            .filter(
+                Kind.id == flow.team_id, Kind.kind == "Team", Kind.is_active == True
+            )
             .first()
         )
 
         if not team:
-            logger.error(f"[flow_scheduler] Team {flow.team_id} not found for flow {flow.id}")
+            logger.error(
+                f"[flow_scheduler] Team {flow.team_id} not found for flow {flow.id}"
+            )
             flow_service.update_execution_status(
                 db,
                 execution_id=execution.id,
@@ -207,7 +217,9 @@ def _trigger_task_execution(db, flow: FlowResource, execution) -> None:
         # Get user
         user = db.query(User).filter(User.id == flow.user_id).first()
         if not user:
-            logger.error(f"[flow_scheduler] User {flow.user_id} not found for flow {flow.id}")
+            logger.error(
+                f"[flow_scheduler] User {flow.user_id} not found for flow {flow.id}"
+            )
             flow_service.update_execution_status(
                 db,
                 execution_id=execution.id,
