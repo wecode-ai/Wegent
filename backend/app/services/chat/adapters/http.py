@@ -461,6 +461,9 @@ class HTTPAdapter(ChatInterface):
                         event_data["input"] = data.get("input", {})
                     else:  # TOOL_RESULT
                         event_data["output"] = data.get("output", "")
+                        # Include error field for failed tools
+                        if data.get("error"):
+                            event_data["error"] = data.get("error")
                     logger.info(
                         "[HTTP_ADAPTER] Parsed %s event: data=%s, event_data=%s",
                         event_type.value,

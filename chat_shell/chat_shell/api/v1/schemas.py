@@ -376,6 +376,9 @@ class ToolDone(BaseModel):
     duration_ms: Optional[int] = Field(None, description="Execution duration in ms")
     error: Optional[str] = Field(None, description="Error message if failed")
     sources: Optional[list[dict]] = Field(None, description="Source references")
+    display_name: Optional[str] = Field(
+        None, description="Display name for UI (updates title on completion)"
+    )
 
 
 class ToolCallRequired(BaseModel):

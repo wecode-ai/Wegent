@@ -109,12 +109,35 @@ def _handle_tool_end(
     # Process tool output and extract metadata
     title, sources = _process_tool_output(tool_name, serializable_output)
 
+    # Detect success/failure status from tool output
+    status = "completed"
+    error_msg = None
+    if isinstance(serializable_output, str):
+        try:
+            import json
+
+            parsed_output = json.loads(serializable_output)
+            if isinstance(parsed_output, dict):
+                # Check for explicit success field
+                if parsed_output.get("success") is False:
+                    status = "failed"
+                    error_msg = parsed_output.get("error", "Task failed")
+                    title = (
+                        f"Failed: {error_msg[:50]}..."
+                        if len(str(error_msg)) > 50
+                        else f"Failed: {error_msg}"
+                    )
+                elif parsed_output.get("success") is True:
+                    status = "completed"
+        except json.JSONDecodeError:
+            pass
+
     # Add sources to state
     if sources:
         state.add_sources(sources)
 
     # Try to get better title from display_name
-    if title == f"Tool completed: {tool_name}":
+    if status == "completed" and title == f"Tool completed: {tool_name}":
         title = _build_tool_end_title(agent_builder, tool_name, run_id, state, title)
 
     # Find matching start step and insert result after it
@@ -134,11 +157,14 @@ def _handle_tool_end(
         "details": {
             "type": "tool_result",
             "tool_name": tool_name,
-            "status": "completed",
+            "status": status,
             "output": serializable_output,
             "content": serializable_output,
         },
     }
+    # Add error field if failed
+    if status == "failed" and error_msg:
+        result_step["details"]["error"] = error_msg
 
     if matching_start_idx is not None:
         state.thinking.insert(matching_start_idx + 1, result_step)

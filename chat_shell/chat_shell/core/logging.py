@@ -5,20 +5,44 @@
 """Logging configuration for Chat Shell Service."""
 
 import logging
+import os
 import sys
+
+
+class RelativePathFormatter(logging.Formatter):
+    """Custom formatter that shows relative path instead of full pathname."""
+
+    def __init__(self, fmt=None, datefmt=None, base_path=None):
+        super().__init__(fmt, datefmt)
+        # Use provided base_path or detect from current file location
+        if base_path is None:
+            # Go up from chat_shell/chat_shell/core to chat_shell/
+            self.base_path = os.path.dirname(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            )
+        else:
+            self.base_path = base_path
+
+    def format(self, record):
+        # Convert absolute pathname to relative path
+        if record.pathname.startswith(self.base_path):
+            record.relativepath = record.pathname[len(self.base_path) + 1 :]
+        else:
+            record.relativepath = record.pathname
+        return super().format(record)
 
 
 def setup_logging() -> None:
     """Configure logging format for Chat Shell Service."""
 
-    # Create a custom formatter
+    # Create a custom formatter with relative path and line number for easier debugging
     log_format = (
-        "%(asctime)s %(levelname)-4s [chat-shell] %(filename)s:%(lineno)d : %(message)s"
+        "%(asctime)s %(levelname)-4s [%(relativepath)s:%(lineno)d] : %(message)s"
     )
 
     # Create handler
     handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(logging.Formatter(log_format, datefmt="%Y-%m-%d %H:%M:%S"))
+    handler.setFormatter(RelativePathFormatter(log_format, datefmt="%Y-%m-%d %H:%M:%S"))
 
     # Configure root logger
     root_logger = logging.getLogger()

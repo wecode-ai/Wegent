@@ -455,6 +455,8 @@ async def _stream_chat_response(
                 subtask_id=stream_data.subtask_id,
                 user_id=stream_data.user_id,
                 skill_configs=chat_config.skill_configs,
+                load_skill_tool=load_skill_tool,
+                user_name=stream_data.user_name,
             )
             extra_tools.extend(skill_tools)
 
@@ -892,33 +894,57 @@ async def _stream_with_http_adapter(
                     },  # Skip output to reduce log size
                 )
 
-                # Find matching start step and update display name
-                display_name = f"Tool completed: {tool_name}"
-                for step in thinking_steps:
-                    if (
-                        step.get("run_id") == tool_id
-                        and step.get("details", {}).get("status") == "started"
-                    ):
-                        # Get the original title and remove "正在" prefix
-                        orig_title = step.get("title", "")
-                        if orig_title.startswith("正在"):
-                            display_name = orig_title[2:]
-                        else:
-                            display_name = orig_title
-                        break
+                # Determine status based on event data
+                # chat_shell sends error field directly in tool_done event when failed
+                status = "completed"
+                error_msg = event.data.get("error")
+                if error_msg:
+                    status = "failed"
+                elif isinstance(tool_output, str) and tool_output:
+                    # Also check tool_output JSON for success: false (fallback)
+                    try:
+                        import json
+
+                        parsed = json.loads(tool_output)
+                        if isinstance(parsed, dict) and parsed.get("success") is False:
+                            status = "failed"
+                            error_msg = parsed.get("error", "Task failed")
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+                # Use display_name from event data, or fall back to matching start step
+                display_name = event.data.get("display_name", "")
+                if not display_name:
+                    for step in thinking_steps:
+                        if (
+                            step.get("run_id") == tool_id
+                            and step.get("details", {}).get("status") == "started"
+                        ):
+                            orig_title = step.get("title", "")
+                            if orig_title.startswith("正在"):
+                                display_name = orig_title[2:]
+                            else:
+                                display_name = orig_title
+                            break
+                    if not display_name:
+                        display_name = f"Tool completed: {tool_name}"
+
+                tool_result_details = {
+                    "type": "tool_result",
+                    "tool_name": tool_name,
+                    "status": status,
+                    "output": tool_output,
+                    "content": tool_output,
+                }
+                if status == "failed" and error_msg:
+                    tool_result_details["error"] = error_msg
 
                 thinking_steps.append(
                     {
                         "title": display_name,
                         "next_action": "continue",
                         "run_id": tool_id,
-                        "details": {
-                            "type": "tool_result",
-                            "tool_name": tool_name,
-                            "status": "completed",
-                            "output": tool_output,
-                            "content": tool_output,
-                        },
+                        "details": tool_result_details,
                     }
                 )
 

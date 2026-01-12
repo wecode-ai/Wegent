@@ -312,12 +312,21 @@ async def _stream_response(
                         status = details.get("status")
                         tool_name = details.get("tool_name", details.get("name", ""))
                         run_id = step.get("run_id", "")
+                        title = step.get("title", "")
 
                         # Create unique key for this tool event
                         event_key = f"{run_id}:{status}"
                         if event_key in emitted_tool_run_ids:
                             continue  # Skip already emitted events
                         emitted_tool_run_ids.add(event_key)
+
+                        logger.info(
+                            "[RESPONSE] Processing thinking step: run_id=%s, status=%s, tool=%s, title=%s",
+                            run_id[:20] if run_id else "N/A",
+                            status,
+                            tool_name,
+                            title[:30] if title else "N/A",
+                        )
 
                         if status == "started":
                             yield _format_sse_event(
@@ -329,7 +338,17 @@ async def _stream_response(
                                     display_name=step.get("title", tool_name),
                                 ).model_dump(),
                             )
-                        elif status == "completed":
+                        elif status in ("completed", "failed"):
+                            logger.info(
+                                "[RESPONSE] Emitting TOOL_DONE: run_id=%s, status=%s, error=%s",
+                                run_id[:20] if run_id else "N/A",
+                                status,
+                                (
+                                    details.get("error", "none")[:50]
+                                    if details.get("error")
+                                    else "none"
+                                ),
+                            )
                             yield _format_sse_event(
                                 ResponseEventType.TOOL_DONE.value,
                                 ToolDone(
@@ -338,8 +357,13 @@ async def _stream_response(
                                         "output", details.get("content")
                                     ),
                                     duration_ms=None,
-                                    error=None,
+                                    error=(
+                                        details.get("error")
+                                        if status == "failed"
+                                        else None
+                                    ),
                                     sources=None,
+                                    display_name=title if status == "failed" else None,
                                 ).model_dump(),
                             )
 
