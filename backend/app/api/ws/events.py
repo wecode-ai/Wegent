@@ -120,10 +120,6 @@ class ChatSendPayload(BaseModel):
     contexts: Optional[List[ContextItem]] = Field(
         None, description="Context items (knowledge bases, etc.)"
     )
-    # Skill names to auto-expand into system prompt
-    auto_expand_skill_names: Optional[List[str]] = Field(
-        None, description="Skill names to auto-expand into system prompt"
-    )
     # Repository info for code tasks
     git_url: Optional[str] = Field(None, description="Git repository URL")
     git_repo: Optional[str] = Field(None, description="Git repository name")

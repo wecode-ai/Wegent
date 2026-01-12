@@ -69,10 +69,9 @@ class ChatRequest:
 
     # Skill configuration for dynamic tool loading
     skill_names: list = field(default_factory=list)  # Available skill names
-    skill_configs: list = field(default_factory=list)  # Skill tool configurations
-    auto_expand_skill_names: list = field(
+    skill_configs: list = field(
         default_factory=list
-    )  # Skill names to auto-expand into system prompt
+    )  # Skill tool configurations (with preload field)
 
     # Knowledge base configuration
     knowledge_base_ids: Optional[list] = None  # Knowledge base IDs to search

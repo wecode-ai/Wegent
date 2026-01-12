@@ -112,7 +112,6 @@ class ChatConfigBuilder:
         enable_clarification: bool = False,
         enable_deep_thinking: bool = True,
         task_id: int = 0,
-        auto_expand_skill_names: list[str] | None = None,
     ) -> ChatConfig:
         """Build complete chat configuration.
 
@@ -123,7 +122,6 @@ class ChatConfigBuilder:
             enable_clarification: Whether to enable clarification mode
             enable_deep_thinking: Whether to enable deep thinking mode with search guidance
             task_id: Task ID for placeholder replacement
-            auto_expand_skill_names: Skill names to auto-expand into system prompt (from frontend)
 
         Returns:
             Complete ChatConfig ready for streaming
@@ -172,7 +170,7 @@ class ChatConfigBuilder:
             task_id=task_id,
             team_id=self.team.id,
             skill_names=skill_names,
-            skill_configs=skills,  # Full skill configs for SkillToolRegistry
+            skill_configs=skills,  # Full skill configs with preload field
             enable_clarification=enable_clarification,
             enable_deep_thinking=enable_deep_thinking,
         )
@@ -435,6 +433,7 @@ class ChatConfigBuilder:
                     "description": skill_crd.spec.description,
                     "prompt": skill_crd.spec.prompt,  # Include prompt for LoadSkillTool
                     "displayName": skill_crd.spec.displayName,  # Include displayName
+                    "preload": skill_crd.spec.preload or False,  # Include preload flag
                     "skill_id": skill.id,  # Include skill ID for provider loading
                     "skill_user_id": skill.user_id,  # Include user_id for security check
                 }

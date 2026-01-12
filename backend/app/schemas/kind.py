@@ -545,6 +545,14 @@ class SkillSpec(BaseModel):
         description="Provider configuration for dynamic loading. "
         "If specified, the provider will be loaded from the skill .",
     )
+    preload: Optional[bool] = Field(
+        False,
+        description="Whether to preload this skill's content into the system prompt. "
+        "When True, the skill's prompt will be automatically injected via LoadSkillTool.preload_skill_prompt(), "
+        "and the skill will NOT appear in the load_skill tool's available list. "
+        "When False (default), the skill is loaded on-demand via load_skill tool call. "
+        "Use preload=True for skills that are frequently needed and should always be active.",
+    )
 
 
 class SkillStatus(Status):

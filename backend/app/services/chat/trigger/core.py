@@ -340,7 +340,6 @@ async def _stream_chat_response(
                 enable_clarification=payload.enable_clarification,
                 enable_deep_thinking=True,
                 task_id=stream_data.task_id,
-                auto_expand_skill_names=payload.auto_expand_skill_names,
             )
         except ValueError as e:
             error_msg = str(e)
@@ -456,6 +455,8 @@ async def _stream_chat_response(
                 subtask_id=stream_data.subtask_id,
                 user_id=stream_data.user_id,
                 skill_configs=chat_config.skill_configs,
+                load_skill_tool=load_skill_tool,
+                user_name=stream_data.user_name,
             )
             extra_tools.extend(skill_tools)
 
@@ -737,12 +738,10 @@ async def _stream_with_http_adapter(
         search_engine=ws_config.search_engine,
         bot_name=ws_config.bot_name,
         bot_namespace=ws_config.bot_namespace,
-        skills=ws_config.skills or [],
+        skills=ws_config.skills or [],  # Skill metadata with preload field
         # Add skill and knowledge base parameters for HTTP mode
         skill_names=skill_names or [],
         skill_configs=skill_configs or [],
-        auto_expand_skill_names=auto_expand_skill_names
-        or [],  # Auto-expand skill names
         knowledge_base_ids=knowledge_base_ids,
         document_ids=document_ids,
         table_contexts=table_contexts or [],

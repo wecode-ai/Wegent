@@ -32,10 +32,14 @@ def prepare_load_skill_tool(
     This function creates a LoadSkillTool instance that allows the model
     to dynamically load skill prompts on demand.
 
+    Skills with preload=True are filtered out from the available skill list,
+    as they will be preloaded via preload_skill_prompt() and don't need to be
+    loaded dynamically.
+
     Args:
         skill_names: List of skill names available for this session
         user_id: User ID for skill lookup
-        skill_configs: Optional skill configurations containing prompts
+        skill_configs: Optional skill configurations containing prompts and preload flags
 
     Returns:
         LoadSkillTool instance or None if no skills configured
@@ -47,18 +51,36 @@ def prepare_load_skill_tool(
     from chat_shell.tools.builtin import LoadSkillTool
 
     # Build skill metadata from skill_configs
+    # Filter out preloaded skills (they're injected directly via preload_skill_prompt)
     skill_metadata = {}
     if skill_configs:
         for config in skill_configs:
             name = config.get("name")
-            if name:
-                skill_metadata[name] = {
-                    "description": config.get("description", ""),
-                    "prompt": config.get("prompt", ""),
-                    "displayName": config.get("displayName", ""),
-                }
+            preload = config.get("preload", False)
 
-    # Create LoadSkillTool with the available skills
+            if name:
+                # Only include skills that are NOT preloaded
+                if not preload:
+                    skill_metadata[name] = {
+                        "description": config.get("description", ""),
+                        "prompt": config.get("prompt", ""),
+                        "displayName": config.get("displayName", ""),
+                    }
+                    on_demand_skill_names.append(name)
+                else:
+                    logger.info(
+                        "[skill_factory] Skipping preloaded skill '%s' from LoadSkillTool",
+                        name,
+                    )
+
+    # If all skills are preloaded, don't create LoadSkillTool
+    if not on_demand_skill_names:
+        logger.info(
+            "[skill_factory] All skills are preloaded, LoadSkillTool not needed"
+        )
+        return None
+
+    # Create LoadSkillTool with only on-demand skills
     load_skill_tool = LoadSkillTool(
         user_id=user_id,
         skill_names=skill_names,
@@ -141,9 +163,9 @@ async def prepare_skill_tools(
 
     Skill binaries are downloaded from backend API using REMOTE_STORAGE_URL.
 
-    When a load_skill_tool is provided, this function will also preload the skill
-    prompts into the LoadSkillTool so they are injected into the system prompt
-    via prompt_modifier.
+    When a load_skill_tool is provided, this function will preload skills with
+    preload=True by calling preload_skill_prompt(). These skills will be automatically
+    injected into the system prompt via prompt_modifier.
 
     Args:
         task_id: Task ID for WebSocket room
@@ -151,7 +173,7 @@ async def prepare_skill_tools(
         user_id: User ID for access control
         skill_configs: List of skill configurations from ChatConfig.skill_configs
             Each config contains: {"name": "...", "description": "...", "tools": [...],
-                                   "provider": {...}, "skill_id": int}
+                                   "provider": {...}, "skill_id": int, "preload": bool}
         ws_emitter: Optional WebSocket emitter for real-time communication
         load_skill_tool: Optional LoadSkillTool instance to preload skill prompts
 
@@ -257,17 +279,30 @@ async def prepare_skill_tools(
         tools.extend(skill_tools)
 
         if skill_tools:
-            # Preload skill prompt into LoadSkillTool if provided
+            logger.info(
+                "[skill_factory] Created %d tools for skill '%s': %s",
+                len(skill_tools),
+                skill_name,
+                [t.name for t in skill_tools],
+            )
+
+            # Preload skill prompt into LoadSkillTool if skill has preload=True
             # This ensures the skill prompt is injected into system message
-            # via prompt_modifier when skill tools are directly available
-            #
-            # IMPORTANT: Skip preload for auto-expanded skills to avoid duplication
-            # Auto-expanded skills are already injected via build_system_prompt()
-            is_auto_expand = skill_config.get("autoExpand", False)
-            if load_skill_tool is not None and not is_auto_expand:
+            # via prompt_modifier when the skill should be preloaded
+            preload = skill_config.get("preload", False)
+            if load_skill_tool is not None and preload:
                 skill_prompt = skill_config.get("prompt", "")
                 if skill_prompt:
                     load_skill_tool.preload_skill_prompt(skill_name, skill_config)
+                    logger.info(
+                        "[skill_factory] Preloaded skill prompt for '%s' (preload=True)",
+                        skill_name,
+                    )
+            elif not preload:
+                logger.debug(
+                    "[skill_factory] Skipped preload for skill '%s' (preload=False, will use load_skill tool)",
+                    skill_name,
+                )
 
     # Log summary of all skills loaded
     if tools:

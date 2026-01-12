@@ -182,7 +182,6 @@ async def _stream_response(
         bot_namespace = ""
         skill_names = []
         skill_configs_from_meta = []
-        auto_expand_skill_names = []
         knowledge_base_ids = None
         document_ids = None
         table_contexts = []
@@ -202,9 +201,6 @@ async def _stream_response(
             skill_names = getattr(request.metadata, "skill_names", None) or []
             skill_configs_from_meta = (
                 getattr(request.metadata, "skill_configs", None) or []
-            )
-            auto_expand_skill_names = (
-                getattr(request.metadata, "auto_expand_skill_names", None) or []
             )
             knowledge_base_ids = getattr(request.metadata, "knowledge_base_ids", None)
             document_ids = getattr(request.metadata, "document_ids", None)
@@ -243,7 +239,6 @@ async def _stream_response(
             skills=all_skill_configs,
             skill_names=skill_names,
             skill_configs=all_skill_configs,
-            auto_expand_skill_names=auto_expand_skill_names,
             knowledge_base_ids=knowledge_base_ids,
             document_ids=document_ids,
             table_contexts=table_contexts,

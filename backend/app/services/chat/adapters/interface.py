@@ -67,10 +67,9 @@ class ChatRequest:
 
     # Skill configuration for dynamic tool loading
     skill_names: list = field(default_factory=list)  # Available skill names
-    skill_configs: list = field(default_factory=list)  # Skill tool configurations
-    auto_expand_skill_names: list = field(
+    skill_configs: list = field(
         default_factory=list
-    )  # Skill names to auto-expand
+    )  # Skill tool configurations (with preload field)
 
     # Knowledge base configuration
     knowledge_base_ids: Optional[list] = None  # Knowledge base IDs to search
@@ -118,7 +117,6 @@ class ChatRequest:
             "skills": self.skills,
             "skill_names": self.skill_names,
             "skill_configs": self.skill_configs,
-            "auto_expand_skill_names": self.auto_expand_skill_names,
             "knowledge_base_ids": self.knowledge_base_ids,
             "document_ids": self.document_ids,
             "table_contexts": self.table_contexts,
