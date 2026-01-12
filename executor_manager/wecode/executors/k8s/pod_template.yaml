@@ -78,7 +78,8 @@ spec:
         - name: ENABLE_CODE_REVIEW_PROCESSING
           value: enable
         - name: CUSTOM_CONFIG
-          value: "{{ executor_custom_config }}"
+          value: |-
+            {{ executor_custom_config }}
         - name: POD_NAME
           valueFrom:
             fieldRef:
