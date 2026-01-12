@@ -214,6 +214,10 @@
       "breakpointThreshold": "Breakpoint Threshold",
       "breakpointThresholdHint": "Percentile threshold for determining breakpoints (50-100)"
     },
+    "summary": {
+      "enableLabel": "Auto-generate Summary",
+      "enableDescription": "Automatically generate summaries for documents when uploaded"
+    },
     "retrievalTest": {
       "button": "Retrieval Test",
       "title": "Retrieval Test",

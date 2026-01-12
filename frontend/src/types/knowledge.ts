@@ -65,6 +65,7 @@ export interface KnowledgeBase {
   document_count: number
   is_active: boolean
   retrieval_config?: RetrievalConfig
+  summary_enabled: boolean
   created_at: string
   updated_at: string
 }
@@ -74,6 +75,7 @@ export interface KnowledgeBaseCreate {
   description?: string
   namespace?: string
   retrieval_config?: Partial<RetrievalConfig>
+  summary_enabled?: boolean
 }
 
 export interface RetrievalConfigUpdate {
@@ -90,6 +92,7 @@ export interface KnowledgeBaseUpdate {
   name?: string
   description?: string
   retrieval_config?: RetrievalConfigUpdate
+  summary_enabled?: boolean
 }
 
 export interface KnowledgeBaseListResponse {

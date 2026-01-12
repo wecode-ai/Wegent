@@ -214,6 +214,10 @@
       "breakpointThreshold": "断点阈值",
       "breakpointThresholdHint": "确定断点的百分位阈值 (50-100)"
     },
+    "summary": {
+      "enableLabel": "自动生成摘要",
+      "enableDescription": "上传文档时自动生成文档摘要"
+    },
     "retrievalTest": {
       "button": "召回测试",
       "title": "召回测试",

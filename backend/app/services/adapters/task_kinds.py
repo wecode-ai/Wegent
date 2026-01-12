@@ -358,11 +358,12 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         tasks = db.query(TaskResource).filter(TaskResource.id.in_(task_ids)).all()
 
         # Filter out DELETE status tasks in application layer and restore order
+        # Also filter out background tasks (source=background_executor)
         id_to_task = {}
         for t in tasks:
             task_crd = Task.model_validate(t.json)
             status = task_crd.status.status if task_crd.status else "PENDING"
-            if status != "DELETE":
+            if status != "DELETE" and not self._is_background_task(task_crd):
                 id_to_task[t.id] = t
 
         # Restore the original order and apply limit
@@ -443,11 +444,12 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         tasks = db.query(TaskResource).filter(TaskResource.id.in_(task_ids)).all()
 
         # Filter out DELETE status tasks in application layer and restore order
+        # Also filter out background tasks (source=background_executor)
         id_to_task = {}
         for t in tasks:
             task_crd = Task.model_validate(t.json)
             status = task_crd.status.status if task_crd.status else "PENDING"
-            if status != "DELETE":
+            if status != "DELETE" and not self._is_background_task(task_crd):
                 id_to_task[t.id] = t
 
         # Restore the original order and apply limit
@@ -2746,6 +2748,28 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             data["is_group_chat"] = is_group_chat
 
         return result
+
+    def _is_background_task(self, task_crd: Task) -> bool:
+        """
+        Check if a task is a background task that should be hidden from user task lists.
+
+        Background tasks include:
+        - Summary generation tasks (taskType=summary)
+        - Tasks created by background_executor (source=background_executor)
+        """
+        try:
+            labels = task_crd.metadata.labels
+            if not labels:
+                return False
+
+            # Check for background task indicators
+            return (
+                labels.get("taskType") == "summary"
+                or labels.get("source") == "background_executor"
+                or labels.get("type") == "background"
+            )
+        except Exception:
+            return False
 
     def _convert_to_task_dict_optimized(
         self, task: Kind, related_data: Dict[str, Any], task_crd: Task

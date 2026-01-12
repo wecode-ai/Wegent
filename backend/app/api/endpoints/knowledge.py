@@ -8,6 +8,7 @@ API endpoints for knowledge base and document management.
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
@@ -17,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
+from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.user import User
 from app.schemas.knowledge import (
@@ -336,6 +338,20 @@ async def create_document(
                         "model_namespace", "default"
                     )
 
+                    # Pre-compute KB index info from already-fetched knowledge_base object
+                    # This avoids redundant DB query in the background task
+                    summary_enabled = spec.get("summaryEnabled", False)
+                    if knowledge_base.namespace == "default":
+                        index_owner_user_id = current_user.id
+                    else:
+                        # Group KB - use creator's user_id for shared index
+                        index_owner_user_id = knowledge_base.user_id
+
+                    kb_index_info = KnowledgeBaseIndexInfo(
+                        index_owner_user_id=index_owner_user_id,
+                        summary_enabled=summary_enabled,
+                    )
+
                     # Schedule RAG indexing in background
                     # Note: We use a synchronous function that creates its own event loop
                     # because BackgroundTasks runs in a thread pool without an event loop.
@@ -352,6 +368,7 @@ async def create_document(
                         user_id=current_user.id,
                         splitter_config=data.splitter_config,
                         document_id=document.id,
+                        kb_index_info=kb_index_info,
                     )
                     logger.info(
                         f"Scheduled RAG indexing for document {document.id} in knowledge base {knowledge_base_id}"
@@ -369,17 +386,30 @@ async def create_document(
         )
 
 
-def _get_index_owner_user_id_sync(
-    db: Session, knowledge_base_id: str, current_user_id: int
-) -> int:
+@dataclass
+class KnowledgeBaseIndexInfo:
+    """Container for knowledge base information needed for background indexing.
+
+    This dataclass holds all KB-related information needed by the background
+    indexing task, avoiding redundant database queries in the background task.
     """
-    Get the user_id that should be used for index naming in per_user strategy.
+
+    index_owner_user_id: int
+    summary_enabled: bool = False
+
+
+def _get_kb_index_info_sync(
+    db: Session, knowledge_base_id: str, current_user_id: int
+) -> KnowledgeBaseIndexInfo:
+    """
+    Get knowledge base information needed for indexing in a single query.
     Synchronous version for use in background tasks.
+
+    Returns index_owner_user_id and summary_enabled setting in one operation
+    to avoid redundant database queries.
 
     For personal knowledge bases (namespace="default"), use the current user's ID.
     For group knowledge bases (namespace!="default"), use the knowledge base creator's ID.
-
-    This ensures that all group members access the same index created by the KB owner.
 
     Args:
         db: Database session
@@ -387,18 +417,20 @@ def _get_index_owner_user_id_sync(
         current_user_id: Current requesting user's ID
 
     Returns:
-        User ID to use for index naming
+        KnowledgeBaseIndexInfo containing index_owner_user_id and summary_enabled
     """
     from app.models.kind import Kind
-    from app.services.group_permission import get_effective_role_in_group
 
     try:
         kb_id = int(knowledge_base_id)
     except ValueError:
-        # If knowledge_base_id is not a valid integer, return current user's ID
-        return current_user_id
+        # If knowledge_base_id is not a valid integer, return default info
+        return KnowledgeBaseIndexInfo(
+            index_owner_user_id=current_user_id,
+            summary_enabled=False,
+        )
 
-    # Get the knowledge base
+    # Get the knowledge base (single query for all needed info)
     kb = (
         db.query(Kind)
         .filter(
@@ -410,17 +442,29 @@ def _get_index_owner_user_id_sync(
     )
 
     if not kb:
-        # Knowledge base not found, return current user's ID
-        return current_user_id
+        # Knowledge base not found, return default info
+        return KnowledgeBaseIndexInfo(
+            index_owner_user_id=current_user_id,
+            summary_enabled=False,
+        )
 
-    # Check access permission
+    # Extract summary_enabled from KB spec
+    spec = (kb.json or {}).get("spec", {})
+    summary_enabled = spec.get("summaryEnabled", False)
+
+    # Determine index_owner_user_id based on namespace
     if kb.namespace == "default":
         # Personal knowledge base - use current user's ID
-        return current_user_id
+        index_owner_user_id = current_user_id
     else:
-        # Group knowledge base - return the KB creator's user_id for index naming
+        # Group knowledge base - use KB creator's user_id for index naming
         # This ensures all group members access the same index
-        return kb.user_id
+        index_owner_user_id = kb.user_id
+
+    return KnowledgeBaseIndexInfo(
+        index_owner_user_id=index_owner_user_id,
+        summary_enabled=summary_enabled,
+    )
 
 
 def _index_document_background(
@@ -433,6 +477,7 @@ def _index_document_background(
     user_id: int,
     splitter_config: Optional[SplitterConfig] = None,
     document_id: Optional[int] = None,
+    kb_index_info: Optional[KnowledgeBaseIndexInfo] = None,
 ):
     """
     Background task for RAG document indexing.
@@ -454,6 +499,7 @@ def _index_document_background(
         user_id: User ID (the user who triggered the indexing)
         splitter_config: Optional splitter configuration
         document_id: Optional document ID to use as doc_ref
+        kb_index_info: Pre-computed KB info (avoids redundant DB query if provided)
     """
     logger.info(
         f"Background task started: indexing document for knowledge base {knowledge_base_id}, "
@@ -463,18 +509,25 @@ def _index_document_background(
     # Create a new database session for the background task
     db = SessionLocal()
     try:
-        # Get the correct user_id for index naming
-        # For group knowledge bases, use the KB creator's user_id
-        # This ensures all group members access the same index
-        index_owner_user_id = _get_index_owner_user_id_sync(
-            db=db,
-            knowledge_base_id=knowledge_base_id,
-            current_user_id=user_id,
-        )
-        logger.info(
-            f"Using index_owner_user_id={index_owner_user_id} for indexing "
-            f"(original user_id={user_id})"
-        )
+        # Use pre-computed KB info if provided, otherwise fetch from DB
+        # This optimization avoids redundant DB query when called from create_document
+        if kb_index_info:
+            kb_info = kb_index_info
+            logger.info(
+                f"Using pre-computed KB info: index_owner_user_id={kb_info.index_owner_user_id}, "
+                f"summary_enabled={kb_info.summary_enabled}"
+            )
+        else:
+            # Fallback: fetch KB info from database (for backward compatibility)
+            kb_info = _get_kb_index_info_sync(
+                db=db,
+                knowledge_base_id=knowledge_base_id,
+                current_user_id=user_id,
+            )
+            logger.info(
+                f"Fetched KB info from DB: index_owner_user_id={kb_info.index_owner_user_id}, "
+                f"summary_enabled={kb_info.summary_enabled}"
+            )
 
         # Get retriever from database
         retriever_crd = retriever_kinds_service.get_retriever(
@@ -498,8 +551,6 @@ def _index_document_background(
         # Create document service
         doc_service = DocumentService(storage_backend=storage_backend)
 
-        # Run the async index_document in a new event loop
-        # This is necessary because BackgroundTasks runs in a thread without an event loop
         # Use index_owner_user_id for per_user index strategy to ensure
         # all group members access the same index created by the KB owner
         result = asyncio.run(
@@ -507,7 +558,7 @@ def _index_document_background(
                 knowledge_id=knowledge_base_id,
                 embedding_model_name=embedding_model_name,
                 embedding_model_namespace=embedding_model_namespace,
-                user_id=index_owner_user_id,
+                user_id=kb_info.index_owner_user_id,
                 db=db,
                 attachment_id=attachment_id,
                 splitter_config=splitter_config,
@@ -535,6 +586,33 @@ def _index_document_background(
                 logger.info(
                     f"Updated document {document_id} is_active to True and status to enabled after successful indexing"
                 )
+
+                # Trigger document summary generation automatically after indexing
+                # Check both global setting and knowledge base setting (reuse kb_info from earlier query)
+                try:
+                    global_summary_enabled = getattr(settings, "SUMMARY_ENABLED", True)
+                    if global_summary_enabled and kb_info.summary_enabled:
+                        from app.services.summary_service import get_summary_service
+
+                        summary_service = get_summary_service(db)
+                        asyncio.run(
+                            summary_service.trigger_document_summary(
+                                document_id, user_id
+                            )
+                        )
+                        logger.info(
+                            f"Triggered document summary generation for document {document_id}"
+                        )
+                    else:
+                        logger.info(
+                            f"Skipping document summary for {document_id}: summary not enabled "
+                            f"(global={global_summary_enabled}, kb={kb_info.summary_enabled})"
+                        )
+                except Exception as summary_error:
+                    # Summary generation failure should not affect indexing result
+                    logger.warning(
+                        f"Failed to trigger document summary for {document_id}: {summary_error}"
+                    )
     except Exception as e:
         logger.error(
             f"Failed to index document for knowledge base {knowledge_base_id}: {str(e)}",
@@ -767,3 +845,200 @@ def get_qa_history(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         ) from e
+
+
+# ============== Summary Endpoints ==============
+
+summary_router = APIRouter()
+
+
+@summary_router.get("/{kb_id}/summary")
+async def get_kb_summary(
+    kb_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get knowledge base summary.
+
+    Returns the summary information for a knowledge base including:
+    - short_summary: Brief overview (50-100 characters)
+    - long_summary: Detailed description (up to 500 characters)
+    - topics: List of core topic tags
+    - status: Summary generation status
+    """
+    from app.schemas.summary import KnowledgeBaseSummaryResponse
+    from app.services.summary_service import get_summary_service
+
+    # Validate KB access permission
+    kb = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
+    if not kb:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge base not found or access denied",
+        )
+
+    summary_service = get_summary_service(db)
+    summary = await summary_service.get_kb_summary(kb_id, current_user.id)
+    return KnowledgeBaseSummaryResponse(kb_id=kb_id, summary=summary)
+
+
+@summary_router.post("/{kb_id}/summary/refresh")
+async def refresh_kb_summary(
+    kb_id: int,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Manually refresh knowledge base summary.
+
+    Triggers regeneration of the knowledge base summary based on
+    aggregated document summaries. Runs in background.
+    """
+    from app.schemas.summary import SummaryRefreshResponse
+
+    # Validate KB access permission
+    kb = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
+    if not kb:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge base not found or access denied",
+        )
+
+    # Run in background, return immediately
+    background_tasks.add_task(_run_kb_summary_refresh, kb_id, current_user.id)
+
+    return SummaryRefreshResponse(
+        message="Summary refresh started",
+        status="generating",
+    )
+
+
+@summary_router.get("/{kb_id}/documents/{doc_id}/summary")
+async def get_document_summary(
+    kb_id: int,
+    doc_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get document summary.
+
+    Returns the summary information for a document including:
+    - short_summary: Brief overview (50-100 characters)
+    - long_summary: Detailed description (up to 500 characters)
+    - topics: List of topic tags
+    - meta_info: Extracted metadata
+    - status: Summary generation status
+    """
+    from app.models.knowledge import KnowledgeDocument
+    from app.schemas.summary import DocumentSummaryResponse
+    from app.services.summary_service import get_summary_service
+
+    # Validate KB access permission first
+    kb = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
+    if not kb:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge base not found or access denied",
+        )
+
+    # Validate document belongs to the specified knowledge base
+    document = (
+        db.query(KnowledgeDocument)
+        .filter(
+            KnowledgeDocument.id == doc_id,
+            KnowledgeDocument.kind_id == kb_id,
+        )
+        .first()
+    )
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found in the specified knowledge base",
+        )
+
+    summary_service = get_summary_service(db)
+    summary = await summary_service.get_document_summary(doc_id, current_user.id)
+    return DocumentSummaryResponse(document_id=doc_id, summary=summary)
+
+
+@summary_router.post("/{kb_id}/documents/{doc_id}/summary/refresh")
+async def refresh_document_summary(
+    kb_id: int,
+    doc_id: int,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Manually refresh document summary.
+
+    Triggers regeneration of the document summary. Runs in background.
+    """
+    from app.models.knowledge import KnowledgeDocument
+    from app.schemas.summary import SummaryRefreshResponse
+
+    # Validate KB access permission first
+    kb = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
+    if not kb:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge base not found or access denied",
+        )
+
+    # Validate document belongs to the specified knowledge base
+    document = (
+        db.query(KnowledgeDocument)
+        .filter(
+            KnowledgeDocument.id == doc_id,
+            KnowledgeDocument.kind_id == kb_id,
+        )
+        .first()
+    )
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found in the specified knowledge base",
+        )
+
+    # Run in background, return immediately
+    background_tasks.add_task(_run_document_summary_refresh, doc_id, current_user.id)
+
+    return SummaryRefreshResponse(
+        message="Summary refresh started",
+        status="generating",
+    )
+
+
+async def _run_kb_summary_refresh(kb_id: int, user_id: int):
+    """Background task wrapper for KB summary refresh."""
+    from app.db.session import SessionLocal
+    from app.services.summary_service import get_summary_service
+
+    # Create new session for background task
+    new_db = SessionLocal()
+    try:
+        summary_service = get_summary_service(new_db)
+        await summary_service.refresh_kb_summary(kb_id, user_id)
+    except Exception:
+        logger.exception(f"Failed to refresh KB summary for kb_id={kb_id}")
+    finally:
+        new_db.close()
+
+
+async def _run_document_summary_refresh(doc_id: int, user_id: int):
+    """Background task wrapper for document summary refresh."""
+    from app.db.session import SessionLocal
+    from app.services.summary_service import get_summary_service
+
+    # Create new session for background task
+    new_db = SessionLocal()
+    try:
+        summary_service = get_summary_service(new_db)
+        await summary_service.refresh_document_summary(doc_id, user_id)
+    except Exception:
+        logger.exception(f"Failed to refresh document summary for doc_id={doc_id}")
+    finally:
+        new_db.close()

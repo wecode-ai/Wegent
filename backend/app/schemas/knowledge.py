@@ -61,6 +61,10 @@ class KnowledgeBaseCreate(BaseModel):
     retrieval_config: Optional[RetrievalConfig] = Field(
         None, description="Retrieval configuration"
     )
+    summary_enabled: bool = Field(
+        default=False,
+        description="Enable automatic summary generation for documents",
+    )
 
 
 class RetrievalConfigUpdate(BaseModel):
@@ -89,6 +93,10 @@ class KnowledgeBaseUpdate(BaseModel):
         None,
         description="Retrieval configuration update (excludes retriever and embedding model)",
     )
+    summary_enabled: Optional[bool] = Field(
+        None,
+        description="Enable automatic summary generation for documents",
+    )
 
 
 class KnowledgeBaseResponse(BaseModel):
@@ -103,6 +111,10 @@ class KnowledgeBaseResponse(BaseModel):
     is_active: bool
     retrieval_config: Optional[RetrievalConfig] = Field(
         None, description="Retrieval configuration"
+    )
+    summary_enabled: bool = Field(
+        default=False,
+        description="Enable automatic summary generation for documents",
     )
     created_at: datetime
     updated_at: datetime
@@ -124,6 +136,7 @@ class KnowledgeBaseResponse(BaseModel):
             namespace=kind.namespace,
             document_count=document_count,
             retrieval_config=spec.get("retrievalConfig"),
+            summary_enabled=spec.get("summaryEnabled", False),
             is_active=kind.is_active,
             created_at=kind.created_at,
             updated_at=kind.updated_at,

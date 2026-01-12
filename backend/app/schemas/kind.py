@@ -636,6 +636,10 @@ class KnowledgeBaseSpec(BaseModel):
     retrievalConfig: Optional[RetrievalConfig] = Field(
         None, description="Retrieval configuration"
     )
+    summaryEnabled: bool = Field(
+        default=False,
+        description="Enable automatic summary generation for documents",
+    )
 
 
 class KnowledgeBaseStatus(Status):
