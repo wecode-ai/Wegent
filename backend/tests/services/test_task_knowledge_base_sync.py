@@ -496,7 +496,7 @@ class TestKBRefIdBasedLookup:
                     ):
                         with patch.object(service, "get_user", return_value=mock_user):
                             with patch(
-                                "app.services.task_member_service.task_member_service"
+                                "app.services.knowledge.task_knowledge_base_service.task_member_service"
                             ) as mock_member:
                                 mock_member.is_member.return_value = True
                                 with patch(
@@ -552,7 +552,7 @@ class TestKBRefIdBasedLookup:
                         return_value=mock_knowledge_base,
                     ):
                         with patch(
-                            "app.services.task_member_service.task_member_service"
+                            "app.services.knowledge.task_knowledge_base_service.task_member_service"
                         ) as mock_member:
                             mock_member.is_member.return_value = True
 
