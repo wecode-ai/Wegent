@@ -142,10 +142,13 @@ class ChatService(ChatInterface):
             # Get database session for other operations (tools, skills, etc.)
             async for db in get_db():
                 try:
-                    # Create the agent (note: web search is handled separately below)
+                    # Create the agent
+                    # File skills are only enabled when explicitly requested via
+                    # enable_file_skills. This prevents file tools (read_file, list_files)
+                    # from being sent when the request has no workspace context.
                     agent = create_chat_agent(
                         workspace_root=settings.WORKSPACE_ROOT,
-                        enable_skills=settings.ENABLE_SKILLS,
+                        enable_skills=request.enable_file_skills,
                         enable_web_search=False,  # We'll add it manually if needed
                         enable_checkpointing=settings.ENABLE_CHECKPOINTING,
                     )

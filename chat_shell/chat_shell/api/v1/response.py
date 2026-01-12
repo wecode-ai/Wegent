@@ -231,6 +231,9 @@ async def _stream_response(
             enable_deep_thinking=(
                 request.features.deep_thinking if request.features else False
             ),
+            enable_file_skills=(
+                request.features.file_skills if request.features else False
+            ),
             search_engine=(
                 request.features.search_engine if request.features else None
             ),
