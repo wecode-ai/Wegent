@@ -36,9 +36,11 @@ import ExportSelectModal, {
   type ExportFormat,
 } from '../share/ExportSelectModal'
 import { taskApis } from '@/apis/tasks'
+import { subtaskApis } from '@/apis/subtasks'
 import { TaskMembersPanel } from '../group-chat'
 import { useUser } from '@/features/common/UserContext'
 import { useUnifiedMessages, type DisplayMessage } from '../../hooks/useUnifiedMessages'
+import { useChatStreamContext } from '../../contexts/chatStreamContext'
 import { useStreamingVisibilityRecovery } from '../../hooks/useStreamingVisibilityRecovery'
 import { useTraceAction } from '@/hooks/useTraceAction'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
@@ -194,6 +196,7 @@ export default function MessagesArea({
   const { traceAction } = useTraceAction()
   const { registerCorrectionHandlers } = useSocket()
   const isMobile = useIsMobile()
+  const { resetStream } = useChatStreamContext()
 
   // Use unified messages hook - SINGLE SOURCE OF TRUTH
   // Pass pendingTaskId to query messages when selectedTaskDetail.id is not yet available
@@ -224,6 +227,9 @@ export default function MessagesArea({
 
   // Group chat members panel state
   const [showMembersPanel, setShowMembersPanel] = useState(false)
+
+  // Message edit state
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
 
   // Correction mode state
   const [correctionResults, setCorrectionResults] = useState<Map<number, CorrectionResponse>>(
@@ -656,6 +662,69 @@ export default function MessagesArea({
     refreshSelectedTaskDetail(false)
   }, [refreshTasks, refreshSelectedTaskDetail])
 
+  // Handle edit button click - enter edit mode for a message
+  const handleEditMessage = useCallback((msg: Message) => {
+    if (msg.subtaskId) {
+      setEditingMessageId(String(msg.subtaskId))
+    }
+  }, [])
+
+  // Handle cancel edit - exit edit mode
+  const handleEditCancel = useCallback(() => {
+    setEditingMessageId(null)
+  }, [])
+
+  // Handle save edit - call API to edit message, then resend to trigger AI response
+  const handleEditSave = useCallback(
+    async (newContent: string) => {
+      if (!editingMessageId) return
+
+      const subtaskId = parseInt(editingMessageId, 10)
+      if (isNaN(subtaskId)) return
+
+      try {
+        const response = await subtaskApis.editMessage(subtaskId, newContent)
+
+        if (response.success) {
+          // Exit edit mode first
+          setEditingMessageId(null)
+
+          // Reset stream state to clear local messages cache
+          // This ensures syncBackendMessages will re-sync from backend
+          if (selectedTaskDetail?.id) {
+            resetStream(selectedTaskDetail.id)
+          }
+
+          // Refresh task detail to reload messages from backend (removes deleted messages)
+          await refreshSelectedTaskDetail(true)
+
+          // Automatically resend the edited message to trigger AI response
+          // This is the ChatGPT-style behavior: edit message -> delete all from edited -> resend as new
+          if (onSendMessage) {
+            onSendMessage(newContent)
+          }
+        }
+      } catch (error) {
+        console.error('Failed to edit message:', error)
+        toast({
+          variant: 'destructive',
+          title: t('chat:edit.failed') || 'Failed to edit message',
+          description: (error as Error)?.message || 'Unknown error',
+        })
+        throw error // Re-throw to let InlineMessageEdit know it failed
+      }
+    },
+    [
+      editingMessageId,
+      selectedTaskDetail?.id,
+      resetStream,
+      refreshSelectedTaskDetail,
+      onSendMessage,
+      toast,
+      t,
+    ]
+  )
+
   // Memoize share and export buttons
   const shareButton = useMemo(() => {
     if (!selectedTaskDetail?.id || messages.length === 0) {
@@ -1004,6 +1073,10 @@ export default function MessagesArea({
                 isGroupChat={isGroupChat}
                 isPendingConfirmation={isPendingConfirmation}
                 onContextReselect={onContextReselect}
+                isEditing={msg.subtaskId ? editingMessageId === String(msg.subtaskId) : false}
+                onEdit={handleEditMessage}
+                onEditSave={handleEditSave}
+                onEditCancel={handleEditCancel}
               />
             )
           })}

@@ -220,6 +220,8 @@ interface SyncBackendMessagesOptions {
   currentUserId?: number
   /** Current user name for display (fallback when sender_user_name is empty) */
   currentUserName?: string
+  /** Force clean up messages that are not in subtasks (used after message edit/delete) */
+  forceClean?: boolean
 }
 
 /**
@@ -1687,13 +1689,30 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     (taskId: number, subtasks: TaskDetailSubtask[], options?: SyncBackendMessagesOptions): void => {
       if (!subtasks || subtasks.length === 0) return
 
-      const { teamName, isGroupChat, currentUserId, currentUserName } = options || {}
+      const { teamName, isGroupChat, currentUserId, currentUserName, forceClean } = options || {}
 
       setStreamStates(prev => {
         const newMap = new Map(prev)
         const currentState = newMap.get(taskId) || { ...defaultStreamState }
-        // Start with existing messages, don't create new Map
-        const messages = new Map(currentState.messages)
+
+        // Build a set of valid subtask IDs from backend
+        const validSubtaskIds = new Set(subtasks.map(s => s.id))
+
+        // Start with existing messages, but if forceClean is true,
+        // remove messages whose subtaskId is no longer in backend subtasks
+        let messages: Map<string, UnifiedMessage>
+        if (forceClean && currentState.messages.size > 0) {
+          messages = new Map()
+          // Only keep messages that are in the valid subtask list or are pending (no subtaskId yet)
+          for (const [msgId, msg] of currentState.messages) {
+            // Keep pending messages (no subtaskId) or messages whose subtaskId is still valid
+            if (!msg.subtaskId || validSubtaskIds.has(msg.subtaskId)) {
+              messages.set(msgId, msg)
+            }
+          }
+        } else {
+          messages = new Map(currentState.messages)
+        }
 
         // Build a set of existing subtaskIds to check for duplicates
         // This handles the case where user message has temp ID but same subtaskId
