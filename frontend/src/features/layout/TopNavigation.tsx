@@ -53,11 +53,10 @@ export default function TopNavigation({
       }`}
     >
       {/* Left side - Mobile sidebar toggle, Logo, and Title */}
-      <div className="flex items-center gap-3">
-        {showHamburgerMenu && (
+      <div className="flex items-center gap-3 min-w-0 flex-1 overflow-hidden">{showHamburgerMenu && (
           <button
             type="button"
-            className="lg:hidden p-2 rounded-md text-text-muted hover:text-text-primary hover:bg-muted focus:outline-none focus:ring-2 focus:ring-primary/40 bg-surface border border-border"
+            className="lg:hidden p-2 rounded-md text-text-muted hover:text-text-primary hover:bg-muted focus:outline-none focus:ring-2 focus:ring-primary/40 bg-surface border border-border flex-shrink-0"
             onClick={onMobileSidebarToggle}
             aria-label={t('common:common.open_sidebar')}
           >
@@ -66,7 +65,7 @@ export default function TopNavigation({
         )}
 
         {shouldShowLogo && !showHamburgerMenu && (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-shrink-0">
             <Image
               src="/weibo-logo.png"
               alt="Weibo Logo"
@@ -91,15 +90,12 @@ export default function TopNavigation({
 
         {/* Show title as heading when explicitly provided and not in with-sidebar variant */}
         {title && variant !== 'with-sidebar' && (
-          <h1 className="text-xl font-semibold text-text-primary">{title}</h1>
+          <h1 className="text-xl font-semibold text-text-primary truncate">{title}</h1>
         )}
       </div>
 
-      {/* Center spacer */}
-      <div className="flex-1" />
-
       {/* Right side - User menu and other controls */}
-      {children && <div className="flex items-center gap-2 sm:gap-3">{children}</div>}
+      {children && <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">{children}</div>}
     </div>
   )
 }
