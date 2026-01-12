@@ -164,6 +164,9 @@ class FeaturesConfig(BaseModel):
     message_compression: bool = Field(True, description="Enable message compression")
     web_search: bool = Field(False, description="Enable web search tool")
     search_engine: Optional[str] = Field(None, description="Preferred search engine")
+    file_skills: bool = Field(
+        False, description="Enable file skills (read_file, list_files)"
+    )
 
 
 class Metadata(BaseModel):

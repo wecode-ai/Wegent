@@ -60,6 +60,7 @@ class ChatRequest:
     enable_web_search: bool = False
     enable_clarification: bool = False
     enable_deep_thinking: bool = True
+    enable_file_skills: bool = False  # File tools require explicit enablement
     search_engine: Optional[str] = None
 
     # Bot configuration
