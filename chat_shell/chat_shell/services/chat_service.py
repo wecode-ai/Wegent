@@ -226,6 +226,9 @@ class ChatService(ChatInterface):
                             user_id=request.user_id,
                             skill_configs=request.skill_configs,
                         )
+                        # Add LoadSkillTool to extra_tools if it was created
+                        if load_skill_tool:
+                            extra_tools.append(load_skill_tool)
 
                     # Prepare skill tools from skill_configs
                     if request.skill_configs:
@@ -306,34 +309,6 @@ class ChatService(ChatInterface):
                         # All tools must be explicitly passed by the caller
                         logger.debug(
                             "[CHAT_SERVICE] No MCP servers in request, skipping MCP loading"
-                        )
-
-                    # Merge auto-expand skill names from request and skill_configs
-                    auto_expand_skill_names = set()
-
-                    # Add from request.auto_expand_skill_names
-                    if request.auto_expand_skill_names:
-                        auto_expand_skill_names.update(request.auto_expand_skill_names)
-
-                    # Add from skill_configs with autoExpand=true
-                    if request.skill_configs:
-                        for config in request.skill_configs:
-                            if config.get("autoExpand", False):
-                                skill_name = config.get("name")
-                                if skill_name:
-                                    auto_expand_skill_names.add(skill_name)
-
-                    # Convert to list
-                    auto_expand_skill_names = (
-                        list(auto_expand_skill_names)
-                        if auto_expand_skill_names
-                        else None
-                    )
-
-                    if auto_expand_skill_names:
-                        logger.info(
-                            "[CHAT_SERVICE] Auto-expand skills (merged): %s",
-                            auto_expand_skill_names,
                         )
 
                     # Build agent configuration

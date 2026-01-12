@@ -5,7 +5,7 @@ version: "1.0.0"
 author: "Wegent Team"
 tags: ["subagent", "code-execution", "automation"]
 bindShells: ["Chat"]
-autoExpand: true
+preload: true
 provider:
   module: provider
   class: SubAgentToolProvider

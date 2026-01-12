@@ -71,6 +71,9 @@ class ChatRequest:
         default_factory=list
     )  # Skill tool configurations (with preload field)
 
+    # Preload skills configuration (for testing)
+    preload_skills: list = field(default_factory=list)  # List of skill names to preload
+
     # Knowledge base configuration
     knowledge_base_ids: Optional[list] = None  # Knowledge base IDs to search
     document_ids: Optional[list] = None  # Document IDs to filter retrieval
@@ -117,6 +120,7 @@ class ChatRequest:
             "skills": self.skills,
             "skill_names": self.skill_names,
             "skill_configs": self.skill_configs,
+            "preload_skills": self.preload_skills,
             "knowledge_base_ids": self.knowledge_base_ids,
             "document_ids": self.document_ids,
             "table_contexts": self.table_contexts,

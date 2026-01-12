@@ -112,6 +112,7 @@ class ChatConfigBuilder:
         enable_clarification: bool = False,
         enable_deep_thinking: bool = True,
         task_id: int = 0,
+        preload_skills: list[str] | None = None,
     ) -> ChatConfig:
         """Build complete chat configuration.
 
@@ -122,6 +123,7 @@ class ChatConfigBuilder:
             enable_clarification: Whether to enable clarification mode
             enable_deep_thinking: Whether to enable deep thinking mode with search guidance
             task_id: Task ID for placeholder replacement
+            preload_skills: Optional list of skill names to preload into system prompt
 
         Returns:
             Complete ChatConfig ready for streaming
@@ -140,7 +142,8 @@ class ChatConfigBuilder:
         )
 
         # Get skills for the bot (needed for load_skill tool and prompt enhancement)
-        skills = self._get_bot_skills(bot)
+        skills = self._get_bot_skills(bot, preload_skills=preload_skills or [])
+
         skill_names = [s["name"] for s in skills]
 
         # Get base system prompt (without enhancements - those are handled by chat_shell)
@@ -367,7 +370,9 @@ class ChatConfigBuilder:
 
         return shell_type
 
-    def _get_bot_skills(self, bot: Kind) -> list[dict]:
+    def _get_bot_skills(
+        self, bot: Kind, preload_skills: list[str] = None
+    ) -> list[dict]:
         """
         Get skills for the bot from Ghost.
 
@@ -376,6 +381,10 @@ class ChatConfigBuilder:
 
         The tools field contains tool declarations from SKILL.md frontmatter,
         which are used by SkillToolRegistry to dynamically create tool instances.
+
+        Args:
+            bot: Bot Kind object
+            preload_skills: Optional list of skill names to mark as preloaded
         """
         from app.schemas.kind import Ghost, Skill
 
@@ -424,16 +433,27 @@ class ChatConfigBuilder:
 
         # Query each skill (user's first, then public)
         skills = []
+        preload_set = set(preload_skills) if preload_skills else set()
+
         for skill_name in ghost_crd.spec.skills:
             skill = self._find_skill(skill_name)
             if skill:
                 skill_crd = Skill.model_validate(skill.json)
+
+                # Combine preload: CRD config OR frontend override (union logic)
+                # A skill should be preloaded if EITHER:
+                # 1. It's configured with preload=true in Skill CRD
+                # 2. It's specified in preload_skills from frontend
+                should_preload = (skill_crd.spec.preload or False) or (
+                    skill_name in preload_set
+                )
+
                 skill_data = {
                     "name": skill_crd.metadata.name,
                     "description": skill_crd.spec.description,
                     "prompt": skill_crd.spec.prompt,  # Include prompt for LoadSkillTool
                     "displayName": skill_crd.spec.displayName,  # Include displayName
-                    "preload": skill_crd.spec.preload or False,  # Include preload flag
+                    "preload": should_preload,  # Dynamic preload based on preload_skills or skill config
                     "skill_id": skill.id,  # Include skill ID for provider loading
                     "skill_user_id": skill.user_id,  # Include user_id for security check
                 }

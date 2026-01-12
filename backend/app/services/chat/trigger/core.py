@@ -340,6 +340,7 @@ async def _stream_chat_response(
                 enable_clarification=payload.enable_clarification,
                 enable_deep_thinking=True,
                 task_id=stream_data.task_id,
+                preload_skills=getattr(payload, "preload_skills", None),
             )
         except ValueError as e:
             error_msg = str(e)
@@ -518,6 +519,7 @@ async def _stream_chat_response(
                 knowledge_base_ids=knowledge_base_ids,
                 document_ids=document_ids,
                 table_contexts=table_contexts,
+                preload_skills=getattr(payload, "preload_skills", None),
             )
         elif streaming_mode == "bridge":
             # New architecture: StreamingCore publishes to Redis, WebSocketBridge forwards
@@ -583,6 +585,7 @@ async def _stream_with_http_adapter(
     knowledge_base_ids: list = None,
     document_ids: list = None,
     table_contexts: list = None,
+    preload_skills: list = None,
 ) -> None:
     """Stream using HTTP adapter to call remote chat_shell service.
 
@@ -604,6 +607,7 @@ async def _stream_with_http_adapter(
         knowledge_base_ids: List of knowledge base IDs to search
         document_ids: List of document IDs to filter retrieval
         table_contexts: List of table context dicts for DataTableTool
+        preload_skills: List of skill names to preload into system prompt
     """
     from app.core.config import settings
     from app.services.chat.adapters.http import HTTPAdapter
@@ -742,6 +746,7 @@ async def _stream_with_http_adapter(
         # Add skill and knowledge base parameters for HTTP mode
         skill_names=skill_names or [],
         skill_configs=skill_configs or [],
+        preload_skills=preload_skills or [],  # Pass preload_skills to ChatRequest
         knowledge_base_ids=knowledge_base_ids,
         document_ids=document_ids,
         table_contexts=table_contexts or [],
@@ -751,11 +756,12 @@ async def _stream_with_http_adapter(
 
     logger.info(
         "[HTTP_ADAPTER] ChatRequest built: task_id=%d, skill_names=%s, "
-        "skill_configs_count=%d, knowledge_base_ids=%s, document_ids=%s, "
         "table_contexts_count=%d, table_contexts=%s",
+        "skill_configs_count=%d, preload_skills=%s, knowledge_base_ids=%s, document_ids=%s",
         task_id,
         skill_names,
         len(skill_configs) if skill_configs else 0,
+        preload_skills,
         knowledge_base_ids,
         document_ids,
         len(table_contexts) if table_contexts else 0,

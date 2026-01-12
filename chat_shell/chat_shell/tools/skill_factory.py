@@ -51,43 +51,25 @@ def prepare_load_skill_tool(
     from chat_shell.tools.builtin import LoadSkillTool
 
     # Build skill metadata from skill_configs
-    # Filter out preloaded skills (they're injected directly via preload_skill_prompt)
     skill_metadata = {}
     if skill_configs:
         for config in skill_configs:
             name = config.get("name")
-            preload = config.get("preload", False)
-
             if name:
-                # Only include skills that are NOT preloaded
-                if not preload:
-                    skill_metadata[name] = {
-                        "description": config.get("description", ""),
-                        "prompt": config.get("prompt", ""),
-                        "displayName": config.get("displayName", ""),
-                    }
-                    on_demand_skill_names.append(name)
-                else:
-                    logger.info(
-                        "[skill_factory] Skipping preloaded skill '%s' from LoadSkillTool",
-                        name,
-                    )
+                skill_metadata[name] = {
+                    "description": config.get("description", ""),
+                    "prompt": config.get("prompt", ""),
+                    "displayName": config.get("displayName", ""),
+                }
 
-    # If all skills are preloaded, don't create LoadSkillTool
-    if not on_demand_skill_names:
-        logger.info(
-            "[skill_factory] All skills are preloaded, LoadSkillTool not needed"
-        )
-        return None
-
-    # Create LoadSkillTool with only on-demand skills
+    # Create LoadSkillTool with the available skills
     load_skill_tool = LoadSkillTool(
         user_id=user_id,
         skill_names=skill_names,
         skill_metadata=skill_metadata,
     )
 
-    logger.debug(
+    logger.info(
         "[skill_factory] Created LoadSkillTool with skills: %s",
         skill_names,
     )

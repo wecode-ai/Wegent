@@ -365,14 +365,6 @@ def build_system_prompt(
 
     # Inject on-demand skill metadata (filter out preloaded ones)
     if skills:
-        on_demand_skills = [
-            skill
-            for skill in skills
-            if not skill.get("preload", False)  # Exclude skills with preload=True
-        ]
-        if on_demand_skills:
-            system_prompt = append_skill_metadata_prompt(
-                system_prompt, on_demand_skills
-            )
+        system_prompt = append_skill_metadata_prompt(system_prompt, skills)
 
     return system_prompt
