@@ -109,7 +109,11 @@
     "answer_incomplete": "Incomplete Answer",
     "answer_irrelevant": "Irrelevant Answer",
     "knowledge_gap": "Knowledge Gap",
-    "incomplete_answer": "Incomplete Answer"
+    "incomplete_answer": "Incomplete Answer",
+    "clickToFilter": "Click chart to filter",
+    "filterBy": "Filter",
+    "clearFilter": "Clear filter",
+    "noRecordsForType": "No records for this type"
   },
   "settings": {
     "title": "Settings",

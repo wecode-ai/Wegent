@@ -109,7 +109,11 @@
     "answer_incomplete": "回答不完整",
     "answer_irrelevant": "回答不相关",
     "knowledge_gap": "知识库缺失",
-    "incomplete_answer": "回答不完整"
+    "incomplete_answer": "回答不完整",
+    "clickToFilter": "点击饼图可筛选",
+    "filterBy": "筛选",
+    "clearFilter": "清除筛选",
+    "noRecordsForType": "该类型暂无记录"
   },
   "settings": {
     "title": "设置",

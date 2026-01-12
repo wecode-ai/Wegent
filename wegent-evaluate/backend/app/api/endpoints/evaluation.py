@@ -1,6 +1,7 @@
 """
 Evaluation API endpoints.
 """
+
 from datetime import datetime
 from typing import List, Optional
 
@@ -118,6 +119,7 @@ async def get_evaluation_results(
     embedding_model: Optional[str] = None,
     knowledge_id: Optional[int] = None,
     evaluation_status: Optional[str] = None,
+    issue_type: Optional[str] = Query(None, description="Filter by issue type"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get evaluation results with filtering and pagination."""
@@ -135,6 +137,7 @@ async def get_evaluation_results(
         knowledge_id=knowledge_id,
         evaluation_status=evaluation_status,
         has_cv_alert=has_cv_alert,
+        issue_type=issue_type,
     )
 
     total_pages = (total + page_size - 1) // page_size
@@ -204,8 +207,12 @@ async def get_evaluation_alerts(
 
 @router.get("/metrics-docs", response_model=MetricsDocumentationResponse)
 async def get_metrics_documentation(
-    framework: Optional[str] = Query(None, description="Filter by framework: ragas or trulens"),
-    signal_source: Optional[str] = Query(None, description="Filter by signal source: embedding or llm"),
+    framework: Optional[str] = Query(
+        None, description="Filter by framework: ragas or trulens"
+    ),
+    signal_source: Optional[str] = Query(
+        None, description="Filter by signal source: embedding or llm"
+    ),
 ):
     """Get metrics documentation with optional filtering."""
     metrics = get_all_metrics()

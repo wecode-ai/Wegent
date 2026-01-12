@@ -36,6 +36,7 @@ export async function getEvaluationResults(params: {
   embedding_model?: string
   knowledge_id?: number
   evaluation_status?: string
+  issue_type?: string
 }) {
   const searchParams = new URLSearchParams()
   Object.entries(params).forEach(([key, value]) => {

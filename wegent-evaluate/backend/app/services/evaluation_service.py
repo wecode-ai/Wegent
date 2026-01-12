@@ -689,6 +689,7 @@ class EvaluationService:
         knowledge_id: Optional[int] = None,
         evaluation_status: Optional[str] = None,
         has_cv_alert: Optional[bool] = None,
+        issue_type: Optional[str] = None,
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get evaluation results with filtering and pagination."""
         # Build query
@@ -723,6 +724,16 @@ class EvaluationService:
         if has_cv_alert is not None:
             conditions.append(
                 EvaluationResult.has_cross_validation_alert == has_cv_alert
+            )
+        if issue_type:
+            # Filter by issue_type using JSON_CONTAINS for MySQL
+            # issue_types is a JSON array, e.g., ["retrieval_miss", "answer_incomplete"]
+            conditions.append(
+                func.json_contains(
+                    EvaluationResult.issue_types,
+                    func.json_quote(issue_type),
+                )
+                == 1
             )
 
         if conditions:
