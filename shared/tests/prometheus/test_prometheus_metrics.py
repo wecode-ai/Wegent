@@ -11,23 +11,43 @@ Tests cover:
 - Path normalization
 - Middleware functionality
 - Response generation
+
+NOTE: These tests require prometheus_client and starlette packages.
+The tests will be skipped if the dependencies are not installed.
 """
 
 import os
 from unittest.mock import patch
 
 import pytest
-from prometheus_client import CollectorRegistry
 
-from shared.telemetry.prometheus.config import (DEFAULT_EXCLUDE_PATHS,
-                                                PrometheusConfig,
-                                                get_prometheus_config,
-                                                reset_prometheus_config,
-                                                should_track_path)
-from shared.telemetry.prometheus.metrics import (PrometheusMetrics,
-                                                 reset_prometheus_metrics)
-from shared.telemetry.prometheus.middleware import normalize_path
-from shared.telemetry.prometheus.response import get_metrics_text
+# Check if prometheus dependencies are available
+try:
+    from prometheus_client import CollectorRegistry
+
+    from shared.telemetry.prometheus.config import (
+        DEFAULT_EXCLUDE_PATHS,
+        PrometheusConfig,
+        get_prometheus_config,
+        reset_prometheus_config,
+        should_track_path,
+    )
+    from shared.telemetry.prometheus.metrics import (
+        PrometheusMetrics,
+        reset_prometheus_metrics,
+    )
+    from shared.telemetry.prometheus.middleware import normalize_path
+    from shared.telemetry.prometheus.response import get_metrics_text
+
+    PROMETHEUS_AVAILABLE = True
+except ImportError:
+    PROMETHEUS_AVAILABLE = False
+
+
+pytestmark = pytest.mark.skipif(
+    not PROMETHEUS_AVAILABLE,
+    reason="prometheus_client or starlette not installed",
+)
 
 
 class TestPrometheusConfig:
