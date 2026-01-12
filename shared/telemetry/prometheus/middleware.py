@@ -195,9 +195,8 @@ def setup_prometheus_middleware(
         logger.debug("Prometheus metrics disabled, skipping middleware setup")
         return
 
-    # Update service name in config if provided
-    if service_name:
-        config.service_name = service_name
+    # Determine effective service name for logging
+    effective_service_name = service_name or config.service_name
 
     app.add_middleware(
         PrometheusMiddleware,
@@ -207,6 +206,6 @@ def setup_prometheus_middleware(
     )
 
     logger.info(
-        f"Prometheus middleware enabled for service '{config.service_name}' "
+        f"Prometheus middleware enabled for service '{effective_service_name}' "
         f"at path '{config.metrics_path}'"
     )
