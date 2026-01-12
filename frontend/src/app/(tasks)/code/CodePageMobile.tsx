@@ -10,6 +10,7 @@ import { teamService } from '@/features/tasks/service/teamService'
 import TopNavigation from '@/features/layout/TopNavigation'
 import { TaskSidebar, SearchDialog } from '@/features/tasks/components/sidebar'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
+import GreyTestButton from '@/features/layout/components/GreyTestButton'
 import { Team } from '@/types/api'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
@@ -133,6 +134,7 @@ export function CodePageMobile() {
           isSidebarCollapsed={false}
         >
           {shareButton}
+          <GreyTestButton />
           <ThemeToggle />
           {/* Note: Open menu and workbench toggle are hidden on mobile for simplicity */}
         </TopNavigation>
