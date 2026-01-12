@@ -112,6 +112,7 @@ class ChatConfigBuilder:
         enable_clarification: bool = False,
         enable_deep_thinking: bool = True,
         task_id: int = 0,
+        auto_expand_skill_names: list[str] | None = None,
     ) -> ChatConfig:
         """Build complete chat configuration.
 
@@ -122,6 +123,7 @@ class ChatConfigBuilder:
             enable_clarification: Whether to enable clarification mode
             enable_deep_thinking: Whether to enable deep thinking mode with search guidance
             task_id: Task ID for placeholder replacement
+            auto_expand_skill_names: Skill names to auto-expand into system prompt (from frontend)
 
         Returns:
             Complete ChatConfig ready for streaming

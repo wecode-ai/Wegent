@@ -308,18 +308,33 @@ class ChatService(ChatInterface):
                             "[CHAT_SERVICE] No MCP servers in request, skipping MCP loading"
                         )
 
-                    # Extract auto-expand skill names from skill_configs
-                    auto_expand_skill_names = []
+                    # Merge auto-expand skill names from request and skill_configs
+                    auto_expand_skill_names = set()
+
+                    # Add from request.auto_expand_skill_names
+                    if request.auto_expand_skill_names:
+                        auto_expand_skill_names.update(request.auto_expand_skill_names)
+
+                    # Add from skill_configs with autoExpand=true
                     if request.skill_configs:
                         for config in request.skill_configs:
                             if config.get("autoExpand", False):
-                                auto_expand_skill_names.append(config.get("name"))
-                        if auto_expand_skill_names:
-                            logger.info(
-                                "[CHAT_SERVICE] Found %d auto-expand skills: %s",
-                                len(auto_expand_skill_names),
-                                auto_expand_skill_names,
-                            )
+                                skill_name = config.get("name")
+                                if skill_name:
+                                    auto_expand_skill_names.add(skill_name)
+
+                    # Convert to list
+                    auto_expand_skill_names = (
+                        list(auto_expand_skill_names)
+                        if auto_expand_skill_names
+                        else None
+                    )
+
+                    if auto_expand_skill_names:
+                        logger.info(
+                            "[CHAT_SERVICE] Auto-expand skills (merged): %s",
+                            auto_expand_skill_names,
+                        )
 
                     # Build agent configuration
                     logger.debug(
@@ -342,9 +357,6 @@ class ChatService(ChatInterface):
                         enable_clarification=request.enable_clarification,
                         enable_deep_thinking=request.enable_deep_thinking,
                         skills=request.skill_configs,
-                        auto_expand_skill_names=(
-                            auto_expand_skill_names if auto_expand_skill_names else None
-                        ),
                     )
 
                     # Build messages for the agent

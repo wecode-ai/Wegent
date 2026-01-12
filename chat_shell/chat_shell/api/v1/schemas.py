@@ -193,6 +193,9 @@ class Metadata(BaseModel):
     skill_configs: Optional[list[dict]] = Field(
         None, description="Skill tool configurations"
     )
+    auto_expand_skill_names: Optional[list[str]] = Field(
+        None, description="Skill names to auto-expand into system prompt"
+    )
     # Knowledge base configuration
     knowledge_base_ids: Optional[list[int]] = Field(
         None, description="Knowledge base IDs to search"

@@ -340,6 +340,7 @@ async def _stream_chat_response(
                 enable_clarification=payload.enable_clarification,
                 enable_deep_thinking=True,
                 task_id=stream_data.task_id,
+                auto_expand_skill_names=payload.auto_expand_skill_names,
             )
         except ValueError as e:
             error_msg = str(e)
@@ -740,6 +741,8 @@ async def _stream_with_http_adapter(
         # Add skill and knowledge base parameters for HTTP mode
         skill_names=skill_names or [],
         skill_configs=skill_configs or [],
+        auto_expand_skill_names=auto_expand_skill_names
+        or [],  # Auto-expand skill names
         knowledge_base_ids=knowledge_base_ids,
         document_ids=document_ids,
         table_contexts=table_contexts or [],
