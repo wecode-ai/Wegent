@@ -760,12 +760,12 @@ async def _stream_with_http_adapter(
         "skill_configs_count=%d, preload_skills=%s, knowledge_base_ids=%s, document_ids=%s",
         task_id,
         skill_names,
+        len(table_contexts) if table_contexts else 0,
+        table_contexts,  # Log the actual content
         len(skill_configs) if skill_configs else 0,
         preload_skills,
         knowledge_base_ids,
         document_ids,
-        len(table_contexts) if table_contexts else 0,
-        table_contexts,  # Log the actual content
     )
 
     # Create HTTP adapter
