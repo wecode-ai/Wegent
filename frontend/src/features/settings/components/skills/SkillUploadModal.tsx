@@ -6,7 +6,7 @@
 
 import { useState, useCallback } from 'react'
 import { Skill } from '@/types/api'
-import { uploadSkill, updateSkill, fetchSkillByName } from '@/apis/skills'
+import { uploadSkill, updateSkill, fetchSkillByName, UnifiedSkill } from '@/apis/skills'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
@@ -36,8 +36,26 @@ import { useTranslation } from '@/hooks/useTranslation'
 interface SkillUploadModalProps {
   open: boolean
   onClose: (saved: boolean) => void
-  skill?: Skill | null
+  skill?: Skill | UnifiedSkill | null
   namespace?: string // Namespace for the skill (default: 'default', group name for group skills)
+}
+
+// Helper to get skill name from either type
+function getSkillName(skill: Skill | UnifiedSkill | null | undefined): string {
+  if (!skill) return ''
+  if ('metadata' in skill) {
+    return skill.metadata.name || ''
+  }
+  return skill.name || ''
+}
+
+// Helper to get skill id from either type
+function getSkillId(skill: Skill | UnifiedSkill | null | undefined): number {
+  if (!skill) return 0
+  if ('metadata' in skill) {
+    return parseInt(skill.metadata.labels?.id || '0')
+  }
+  return skill.id || 0
 }
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
@@ -49,7 +67,7 @@ export default function SkillUploadModal({
   namespace: propNamespace,
 }: SkillUploadModalProps) {
   const { t } = useTranslation()
-  const [skillName, setSkillName] = useState(skill?.metadata.name || '')
+  const [skillName, setSkillName] = useState(getSkillName(skill))
   const namespace = propNamespace || 'default'
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [uploading, setUploading] = useState(false)
@@ -162,7 +180,7 @@ export default function SkillUploadModal({
 
     try {
       if (isEditMode && skill) {
-        const skillId = parseInt(skill.metadata.labels?.id || '0')
+        const skillId = getSkillId(skill)
         await updateSkill(skillId, selectedFile, setUploadProgress)
       } else if (overwrite && existingSkill) {
         // Update existing skill

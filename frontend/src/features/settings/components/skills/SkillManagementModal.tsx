@@ -7,8 +7,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { PencilIcon, TrashIcon, DownloadIcon, PackageIcon } from 'lucide-react'
 import LoadingState from '@/features/common/LoadingState'
-import { Skill } from '@/types/api'
-import { fetchSkillsList, deleteSkill, downloadSkill, formatFileSize } from '@/apis/skills'
+import { fetchUnifiedSkillsList, UnifiedSkill, deleteSkill, downloadSkill } from '@/apis/skills'
 import SkillUploadModal from './SkillUploadModal'
 import UnifiedAddButton from '@/components/common/UnifiedAddButton'
 import { Button } from '@/components/ui/button'
@@ -29,28 +28,39 @@ interface SkillManagementModalProps {
   open: boolean
   onClose: () => void
   onSkillsChange?: () => void
+  scope?: 'personal' | 'group' | 'all'
+  groupName?: string | null
 }
 
 export default function SkillManagementModal({
   open,
   onClose,
   onSkillsChange,
+  scope = 'personal',
+  groupName,
 }: SkillManagementModalProps) {
   const { t } = useTranslation()
   const { toast } = useToast()
-  const [skills, setSkills] = useState<Skill[]>([])
+  const [skills, setSkills] = useState<UnifiedSkill[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [uploadModalOpen, setUploadModalOpen] = useState(false)
-  const [editingSkill, setEditingSkill] = useState<Skill | null>(null)
+  const [editingSkill, setEditingSkill] = useState<UnifiedSkill | null>(null)
   const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false)
-  const [skillToDelete, setSkillToDelete] = useState<Skill | null>(null)
+  const [skillToDelete, setSkillToDelete] = useState<UnifiedSkill | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
+
+  // Determine the namespace for uploading skills
+  const uploadNamespace = scope === 'group' && groupName ? groupName : 'default'
 
   const loadSkills = useCallback(async () => {
     setIsLoading(true)
     try {
-      const skillsData = await fetchSkillsList()
-      setSkills(skillsData)
+      const skillsData = await fetchUnifiedSkillsList({
+        scope: scope,
+        groupName: groupName || undefined,
+      })
+      // Filter out public skills for management (only show user's own skills)
+      setSkills(skillsData.filter(s => !s.is_public))
     } catch (error) {
       toast({
         variant: 'destructive',
@@ -60,7 +70,7 @@ export default function SkillManagementModal({
     } finally {
       setIsLoading(false)
     }
-  }, [toast])
+  }, [toast, scope, groupName, t])
 
   useEffect(() => {
     if (open) {
@@ -73,12 +83,12 @@ export default function SkillManagementModal({
     setUploadModalOpen(true)
   }
 
-  const handleEditSkill = (skill: Skill) => {
+  const handleEditSkill = (skill: UnifiedSkill) => {
     setEditingSkill(skill)
     setUploadModalOpen(true)
   }
 
-  const handleDeleteSkill = (skill: Skill) => {
+  const handleDeleteSkill = (skill: UnifiedSkill) => {
     setSkillToDelete(skill)
     setDeleteConfirmVisible(true)
   }
@@ -88,11 +98,10 @@ export default function SkillManagementModal({
 
     setIsDeleting(true)
     try {
-      const skillId = parseInt(skillToDelete.metadata.labels?.id || '0')
-      await deleteSkill(skillId)
+      await deleteSkill(skillToDelete.id)
       toast({
         title: t('common:common.success'),
-        description: t('common:skills.success_delete', { skillName: skillToDelete.metadata.name }),
+        description: t('common:skills.success_delete', { skillName: skillToDelete.name }),
       })
       await loadSkills()
       onSkillsChange?.()
@@ -109,13 +118,12 @@ export default function SkillManagementModal({
     }
   }
 
-  const handleDownloadSkill = async (skill: Skill) => {
+  const handleDownloadSkill = async (skill: UnifiedSkill) => {
     try {
-      const skillId = parseInt(skill.metadata.labels?.id || '0')
-      await downloadSkill(skillId, skill.metadata.name)
+      await downloadSkill(skill.id, skill.name)
       toast({
         title: t('common:common.success'),
-        description: t('common:skills.success_download', { skillName: skill.metadata.name }),
+        description: t('common:skills.success_download', { skillName: skill.name }),
       })
     } catch (error) {
       toast({
@@ -174,7 +182,7 @@ export default function SkillManagementModal({
                   <div className="space-y-3">
                     {skills.map(skill => (
                       <Card
-                        key={skill.metadata.labels?.id || skill.metadata.name}
+                        key={skill.id || skill.name}
                         className="p-4 hover:shadow-md transition-shadow"
                       >
                         <div className="flex items-start justify-between">
@@ -183,25 +191,25 @@ export default function SkillManagementModal({
                             <PackageIcon className="w-5 h-5 text-primary flex-shrink-0 mt-0.5" />
                             <div className="min-w-0 flex-1">
                               <h3 className="text-base font-medium text-text-primary truncate">
-                                {skill.metadata.name}
+                                {skill.name}
                               </h3>
                               <p className="text-sm text-text-secondary mt-1 line-clamp-2">
-                                {skill.spec.description}
+                                {skill.description}
                               </p>
 
                               {/* Tags and Metadata */}
                               <div className="flex flex-wrap gap-1.5 mt-2">
-                                {skill.spec.version && (
+                                {skill.version && (
                                   <Tag variant="default">
-                                    {t('common:skills.version', { version: skill.spec.version })}
+                                    {t('common:skills.version', { version: skill.version })}
                                   </Tag>
                                 )}
-                                {skill.spec.author && (
+                                {skill.author && (
                                   <Tag variant="default">
-                                    {t('common:skills.author', { author: skill.spec.author })}
+                                    {t('common:skills.author', { author: skill.author })}
                                   </Tag>
                                 )}
-                                {skill.spec.tags?.map(tag => (
+                                {skill.tags?.map(tag => (
                                   <Tag key={tag} variant="info">
                                     {tag}
                                   </Tag>
@@ -213,8 +221,8 @@ export default function SkillManagementModal({
                                 <span className="text-xs text-text-muted">
                                   {t('skills.bind_shells')}:
                                 </span>
-                                {skill.spec.bindShells && skill.spec.bindShells.length > 0 ? (
-                                  skill.spec.bindShells.map(shell => (
+                                {skill.bindShells && skill.bindShells.length > 0 ? (
+                                  skill.bindShells.map(shell => (
                                     <Tag key={shell} variant="success">
                                       {shell}
                                     </Tag>
@@ -226,25 +234,16 @@ export default function SkillManagementModal({
                                 )}
                               </div>
 
-                              {/* File Info */}
-                              <div className="flex items-center gap-4 mt-2 text-xs text-text-muted">
-                                {skill.status?.fileSize && (
-                                  <span>{formatFileSize(skill.status.fileSize)}</span>
+                              {/* Namespace info for group skills */}
+                              {scope === 'group' &&
+                                skill.namespace &&
+                                skill.namespace !== 'default' && (
+                                  <div className="flex items-center gap-1.5 mt-2">
+                                    <span className="text-xs text-text-muted">
+                                      {t('common:skills.namespace')}: {skill.namespace}
+                                    </span>
+                                  </div>
                                 )}
-                                {skill.status?.state && (
-                                  <span
-                                    className={
-                                      skill.status.state === 'Available'
-                                        ? 'text-success'
-                                        : 'text-error'
-                                    }
-                                  >
-                                    {skill.status.state === 'Available'
-                                      ? t('common:skills.state_available')
-                                      : t('common:skills.state_unavailable')}
-                                  </span>
-                                )}
-                              </div>
                             </div>
                           </div>
 
@@ -297,7 +296,12 @@ export default function SkillManagementModal({
 
       {/* Upload/Edit Modal */}
       {uploadModalOpen && (
-        <SkillUploadModal open={uploadModalOpen} onClose={handleModalClose} skill={editingSkill} />
+        <SkillUploadModal
+          open={uploadModalOpen}
+          onClose={handleModalClose}
+          skill={editingSkill}
+          namespace={uploadNamespace}
+        />
       )}
 
       {/* Delete Confirmation Dialog */}
@@ -310,7 +314,7 @@ export default function SkillManagementModal({
             <DialogTitle>{t('common:skills.delete_confirm_title')}</DialogTitle>
             <DialogDescription>
               {t('common:skills.delete_confirm_message', {
-                skillName: skillToDelete?.metadata.name,
+                skillName: skillToDelete?.name,
               })}
               {skillToDelete && (
                 <div className="mt-3 p-3 bg-muted rounded-md text-sm">
