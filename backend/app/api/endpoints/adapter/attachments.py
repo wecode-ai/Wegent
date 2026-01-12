@@ -65,22 +65,30 @@ async def upload_attachment(
     if not file.filename:
         raise HTTPException(status_code=400, detail="Filename is required")
 
-    # Read file content
+    # Read file content using chunked streaming to avoid loading
+    # entire file into memory (important for multi-worker deployments)
     try:
-        binary_data = await file.read()
+        CHUNK_SIZE = 1024 * 1024  # 1MB chunks
+        chunks = []
+        file_size = 0
+        while chunk := await file.read(CHUNK_SIZE):
+            file_size += len(chunk)
+            # Check size during streaming to fail fast
+            if not DocumentParser.validate_file_size(file_size):
+                max_size_mb = DocumentParser.get_max_file_size() / (1024 * 1024)
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"File size exceeds maximum limit ({max_size_mb} MB)",
+                )
+            chunks.append(chunk)
+        binary_data = b"".join(chunks)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error reading uploaded file: {e}")
         raise HTTPException(
             status_code=400, detail="Failed to read uploaded file"
         ) from e
-
-    # Validate file size before processing
-    if not DocumentParser.validate_file_size(len(binary_data)):
-        max_size_mb = DocumentParser.get_max_file_size() / (1024 * 1024)
-        raise HTTPException(
-            status_code=400,
-            detail=f"File size exceeds maximum limit ({max_size_mb} MB)",
-        )
 
     try:
         context, truncation_info = context_service.upload_attachment(

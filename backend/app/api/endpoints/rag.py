@@ -217,12 +217,14 @@ async def upload_document(
         # Create document service
         doc_service = DocumentService(storage_backend=storage_backend)
 
-        # Save to temp file
+        # Save to temp file using chunked streaming to avoid loading
+        # entire file into memory (important for multi-worker deployments)
+        CHUNK_SIZE = 1024 * 1024  # 1MB chunks
         with tempfile.NamedTemporaryFile(
             delete=False, suffix=Path(file.filename).suffix
         ) as tmp:
-            content = await file.read()
-            tmp.write(content)
+            while chunk := await file.read(CHUNK_SIZE):
+                tmp.write(chunk)
             tmp_path = tmp.name
 
         try:
