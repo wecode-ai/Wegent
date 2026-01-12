@@ -180,40 +180,8 @@ def create_app(
         allow_headers=["*"],
     )
 
-    # Initialize OpenTelemetry if enabled
+    # Get OTEL config early for use in middleware
     otel_config = get_otel_config("wegent-chat-shell")
-    if otel_config.enabled:
-        try:
-            from shared.telemetry.core import init_telemetry
-            from shared.telemetry.instrumentation import (
-                setup_opentelemetry_instrumentation,
-            )
-
-            init_telemetry(
-                service_name=otel_config.service_name,
-                enabled=otel_config.enabled,
-                otlp_endpoint=otel_config.otlp_endpoint,
-                sampler_ratio=otel_config.sampler_ratio,
-                service_version=__version__,
-                deployment_environment=settings.ENVIRONMENT,
-                metrics_enabled=otel_config.metrics_enabled,
-                capture_request_headers=otel_config.capture_request_headers,
-                capture_request_body=otel_config.capture_request_body,
-                capture_response_headers=otel_config.capture_response_headers,
-                capture_response_body=otel_config.capture_response_body,
-                max_body_size=otel_config.max_body_size,
-            )
-            logger.info("OpenTelemetry initialized successfully")
-
-            # Apply instrumentation
-            setup_opentelemetry_instrumentation(
-                app=app,
-                logger=logger,
-            )
-        except Exception as e:
-            logger.warning(f"Failed to initialize OpenTelemetry: {e}")
-    else:
-        logger.debug("OpenTelemetry is disabled")
 
     # Add exception handler for validation errors (422)
     from fastapi.exceptions import RequestValidationError
@@ -339,6 +307,47 @@ def create_app(
             )
 
         return response
+
+    # CRITICAL: Initialize OpenTelemetry instrumentation AFTER all custom middleware
+    # Due to ASGI/Starlette's LIFO middleware execution order:
+    # - Middleware added LAST executes FIRST
+    # - By adding OpenTelemetry instrumentation here (after trace_requests_middleware),
+    #   the OTEL middleware will execute FIRST and create the span BEFORE our custom middleware
+    # - This ensures trace.get_current_span() returns a valid span with the propagated trace context
+    #
+    # Previously, OTEL was initialized BEFORE custom middleware, causing:
+    # - Custom middleware executed FIRST (before span creation)
+    # - trace.get_current_span() returned invalid span (trace_id=00000000000000000000000000000000)
+    # - Distributed tracing failed because incoming traceparent was not extracted
+    if otel_config.enabled:
+        from shared.telemetry.core import init_telemetry, is_telemetry_enabled
+
+        if not is_telemetry_enabled():
+            # Pass all config values from otel_config to init_telemetry
+            init_telemetry(
+                service_name="wegent-chat-shell",
+                enabled=otel_config.enabled,
+                otlp_endpoint=otel_config.otlp_endpoint,
+                sampler_ratio=otel_config.sampler_ratio,
+                metrics_enabled=otel_config.metrics_enabled,
+                capture_request_headers=otel_config.capture_request_headers,
+                capture_request_body=otel_config.capture_request_body,
+                capture_response_headers=otel_config.capture_response_headers,
+                capture_response_body=otel_config.capture_response_body,
+                max_body_size=otel_config.max_body_size,
+            )
+            logger.info(
+                "OpenTelemetry initialized for chat_shell with endpoint: %s",
+                otel_config.otlp_endpoint,
+            )
+
+        # Setup OpenTelemetry instrumentation for FastAPI
+        from shared.telemetry.instrumentation import setup_opentelemetry_instrumentation
+
+        setup_opentelemetry_instrumentation(app, logger)
+        logger.info(
+            "OpenTelemetry instrumentation enabled (added AFTER custom middleware)"
+        )
 
     # Include v1 response router
     from chat_shell.api.v1.response import router as v1_response_router

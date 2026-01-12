@@ -153,6 +153,7 @@ async def _stream_response(
                     {
                         "name": server.name,
                         "url": server.url,
+                        "type": server.type,
                         "auth": server.auth,
                     }
                 )

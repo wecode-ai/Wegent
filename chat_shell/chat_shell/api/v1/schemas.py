@@ -112,6 +112,9 @@ class MCPServerConfig(BaseModel):
 
     name: str = Field(..., description="Server name")
     url: str = Field(..., description="Server URL")
+    type: str = Field(
+        "streamable-http", description="Transport type: sse, streamable-http, stdio"
+    )
     auth: Optional[dict] = Field(None, description="Authentication config")
 
 
