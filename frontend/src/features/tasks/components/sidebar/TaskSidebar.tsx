@@ -18,6 +18,7 @@ import {
   PanelLeftOpen,
   Code,
   BookOpen,
+  Workflow,
   ChevronDown,
   ChevronUp,
 } from 'lucide-react'
@@ -33,7 +34,7 @@ import { UserFloatingMenu } from '@/features/layout/components/UserFloatingMenu'
 interface TaskSidebarProps {
   isMobileSidebarOpen: boolean
   setIsMobileSidebarOpen: (open: boolean) => void
-  pageType?: 'chat' | 'code' | 'knowledge'
+  pageType?: 'chat' | 'code' | 'flow' | 'knowledge'
   isCollapsed?: boolean
   onToggleCollapsed?: () => void
   // Search dialog control from parent (for global shortcut support)
@@ -108,6 +109,12 @@ export default function TaskSidebar({
       path: paths.code.getHref(),
       isActive: pageType === 'code',
       tooltip: pageType === 'code' ? t('common:tasks.new_task') : undefined,
+    },
+    {
+      label: t('common:navigation.flow'),
+      icon: Workflow,
+      path: paths.flow.getHref(),
+      isActive: pageType === 'flow',
     },
     {
       label: t('common:navigation.wiki'),

@@ -107,7 +107,9 @@ async def trigger_ai_response(
     payload: Any,
     task_room: str,
     supports_direct_chat: bool,
-    namespace: Any,  # ChatNamespace instance for emitting events
+    namespace: Optional[
+        Any
+    ] = None,  # ChatNamespace instance for emitting events (optional for HTTP mode)
     user_subtask_id: Optional[
         int
     ] = None,  # User subtask ID for unified context processing
@@ -135,7 +137,7 @@ async def trigger_ai_response(
         payload: Original chat send payload
         task_room: Task room name for WebSocket events
         supports_direct_chat: Whether team supports direct chat
-        namespace: ChatNamespace instance for emitting events
+        namespace: ChatNamespace instance for emitting events (optional, can be None for HTTP mode)
         user_subtask_id: Optional user subtask ID for unified context processing
             (attachments and knowledge bases are retrieved from this subtask's contexts)
     """
@@ -178,7 +180,7 @@ async def _trigger_direct_chat(
     message: str,
     payload: Any,
     task_room: str,
-    namespace: Any,
+    namespace: Optional[Any],
     user_subtask_id: Optional[int] = None,
 ) -> None:
     """
@@ -194,7 +196,7 @@ async def _trigger_direct_chat(
         message: User message text
         payload: Chat payload with feature flags
         task_room: WebSocket room name
-        namespace: ChatNamespace instance
+        namespace: ChatNamespace instance (optional, can be None for HTTP mode)
         user_subtask_id: Optional user subtask ID for unified context processing
             (attachments and knowledge bases are retrieved from this subtask's contexts)
     """
@@ -230,8 +232,13 @@ async def _trigger_direct_chat(
             user_subtask_id=user_subtask_id,
         )
     )
-    namespace._active_streams[assistant_subtask.id] = stream_task
-    namespace._stream_versions[assistant_subtask.id] = "v2"
+
+    # Track active streams only if namespace is provided (WebSocket mode)
+    # In HTTP mode (e.g., Flow Scheduler), namespace is None and tracking is not needed
+    if namespace is not None:
+        namespace._active_streams[assistant_subtask.id] = stream_task
+        namespace._stream_versions[assistant_subtask.id] = "v2"
+
     logger.info("[ai_trigger] Background stream task started")
 
 
@@ -240,10 +247,11 @@ async def _stream_chat_response(
     message: str,
     payload: Any,
     task_room: str,
-    namespace: Any,
+    namespace: Optional[Any],
     trace_context: Optional[Dict[str, Any]] = None,
     otel_context: Optional[Any] = None,
     user_subtask_id: Optional[int] = None,
+    event_emitter: Optional["ChatEventEmitter"] = None,
 ) -> None:
     """
     Stream chat response using ChatService.
@@ -260,12 +268,22 @@ async def _stream_chat_response(
         message: Original user message
         payload: Chat payload with feature flags (is_group_chat, enable_web_search, etc.)
         task_room: WebSocket room name
-        namespace: ChatNamespace instance
+        namespace: ChatNamespace instance (optional, can be None for HTTP mode)
         trace_context: Copied ContextVars for logging
         otel_context: OpenTelemetry context for tracing
         user_subtask_id: Optional user subtask ID for unified context processing
             (attachments and knowledge bases are retrieved from this subtask's contexts)
+        event_emitter: Optional event emitter for chat events. If None, uses WebSocketEventEmitter.
+            Pass NoOpEventEmitter for background tasks without WebSocket (e.g., Flow Scheduler).
     """
+    # Import here to avoid circular imports
+    from app.services.chat.trigger.emitter import (
+        ChatEventEmitter,
+        WebSocketEventEmitter,
+    )
+
+    # Use provided emitter or default to WebSocket emitter
+    emitter: ChatEventEmitter = event_emitter or WebSocketEventEmitter()
     # Restore trace context at the start of background task
     # This ensures logging uses the correct request_id and user context
     if trace_context:
@@ -315,10 +333,7 @@ async def _stream_chat_response(
         if not team:
             error_msg = "Team not found"
             span_manager.record_error(TelemetryEventNames.TEAM_NOT_FOUND, error_msg)
-            from app.services.chat.ws_emitter import get_ws_emitter
-
-            error_emitter = get_ws_emitter()
-            await error_emitter.emit_chat_error(
+            await emitter.emit_chat_error(
                 task_id=stream_data.task_id,
                 subtask_id=stream_data.subtask_id,
                 error=error_msg,
@@ -346,10 +361,7 @@ async def _stream_chat_response(
             span_manager.record_error(
                 TelemetryEventNames.CONFIG_BUILD_FAILED, error_msg
             )
-            from app.services.chat.ws_emitter import get_ws_emitter
-
-            error_emitter = get_ws_emitter()
-            await error_emitter.emit_chat_error(
+            await emitter.emit_chat_error(
                 task_id=stream_data.task_id,
                 subtask_id=stream_data.subtask_id,
                 error=error_msg,
@@ -403,15 +415,12 @@ async def _stream_chat_response(
                 f"[ai_trigger] user_subtask_id is None, skipping context processing"
             )
 
-        # Emit chat:start event with shell_type using global emitter for cross-worker broadcasting
+        # Emit chat:start event with shell_type using emitter for cross-worker broadcasting
         logger.info(
             "[ai_trigger] Emitting chat:start event with shell_type=%s",
             chat_config.shell_type,
         )
-        from app.services.chat.ws_emitter import get_ws_emitter
-
-        start_emitter = get_ws_emitter()
-        await start_emitter.emit_chat_start(
+        await emitter.emit_chat_start(
             task_id=stream_data.task_id,
             subtask_id=stream_data.subtask_id,
             message_id=stream_data.assistant_message_id,
@@ -516,6 +525,7 @@ async def _stream_chat_response(
                 knowledge_base_ids=knowledge_base_ids,
                 document_ids=document_ids,
                 table_contexts=table_contexts,
+                event_emitter=emitter,
             )
         elif streaming_mode == "bridge":
             # New architecture: StreamingCore publishes to Redis, WebSocketBridge forwards
@@ -550,11 +560,8 @@ async def _stream_chat_response(
         )
         # Record error in span
         span_manager.record_exception(e)
-        # Use global emitter for cross-worker broadcasting
-        from app.services.chat.ws_emitter import get_ws_emitter
-
-        error_emitter = get_ws_emitter()
-        await error_emitter.emit_chat_error(
+        # Use emitter for cross-worker broadcasting
+        await emitter.emit_chat_error(
             task_id=stream_data.task_id,
             subtask_id=stream_data.subtask_id,
             error=str(e),
@@ -581,13 +588,14 @@ async def _stream_with_http_adapter(
     knowledge_base_ids: list = None,
     document_ids: list = None,
     table_contexts: list = None,
+    event_emitter: Optional["ChatEventEmitter"] = None,
 ) -> None:
     """Stream using HTTP adapter to call remote chat_shell service.
 
     This function:
     1. Builds a ChatRequest from the parameters
     2. Uses HTTPAdapter to call chat_shell's /v1/response API
-    3. Processes SSE events and forwards them to WebSocket
+    3. Processes SSE events and forwards them to WebSocket (via event_emitter)
     4. Checks Redis cancel flag and disconnects from chat_shell when cancelled
 
     Args:
@@ -602,12 +610,21 @@ async def _stream_with_http_adapter(
         knowledge_base_ids: List of knowledge base IDs to search
         document_ids: List of document IDs to filter retrieval
         table_contexts: List of table context dicts for DataTableTool
+        event_emitter: Optional event emitter for chat events. If None, uses WebSocketEventEmitter.
+            Pass NoOpEventEmitter for background tasks without WebSocket (e.g., Flow Scheduler).
     """
+    # Import here to avoid circular imports
     from app.core.config import settings
     from app.services.chat.adapters.http import HTTPAdapter
     from app.services.chat.adapters.interface import ChatEventType, ChatRequest
     from app.services.chat.storage import session_manager
-    from app.services.chat.ws_emitter import get_ws_emitter
+    from app.services.chat.trigger.emitter import (
+        ChatEventEmitter,
+        WebSocketEventEmitter,
+    )
+
+    # Use provided emitter or default to WebSocket emitter
+    emitter: ChatEventEmitter = event_emitter or WebSocketEventEmitter()
 
     task_id = ws_config.task_id
     subtask_id = ws_config.subtask_id
@@ -770,9 +787,6 @@ async def _stream_with_http_adapter(
         timeout=300.0,
     )
 
-    # Get WebSocket emitter
-    ws_emitter = get_ws_emitter()
-
     # Track full response and offset for WebSocket events
     full_response = ""
     offset = 0
@@ -806,7 +820,7 @@ async def _stream_with_http_adapter(
                 chunk_text = event.data.get("content", "")
                 if chunk_text:
                     full_response += chunk_text
-                    await ws_emitter.emit_chat_chunk(
+                    await emitter.emit_chat_chunk(
                         task_id=task_id,
                         subtask_id=subtask_id,
                         content=chunk_text,
@@ -867,7 +881,7 @@ async def _stream_with_http_adapter(
                     "shell_type": "Chat",
                     "thinking": thinking_steps.copy(),
                 }
-                await ws_emitter.emit_chat_chunk(
+                await emitter.emit_chat_chunk(
                     task_id=task_id,
                     subtask_id=subtask_id,
                     content="",
@@ -927,7 +941,7 @@ async def _stream_with_http_adapter(
                     "shell_type": "Chat",
                     "thinking": thinking_steps.copy(),
                 }
-                await ws_emitter.emit_chat_chunk(
+                await emitter.emit_chat_chunk(
                     task_id=task_id,
                     subtask_id=subtask_id,
                     content="",
@@ -966,7 +980,7 @@ async def _stream_with_http_adapter(
                     result=result,
                 )
 
-                await ws_emitter.emit_chat_done(
+                await emitter.emit_chat_done(
                     task_id=task_id,
                     subtask_id=subtask_id,
                     offset=offset,
@@ -974,7 +988,7 @@ async def _stream_with_http_adapter(
                     message_id=ws_config.message_id,
                 )
                 # Also emit bot complete for multi-device sync
-                await ws_emitter.emit_chat_bot_complete(
+                await emitter.emit_chat_bot_complete(
                     user_id=stream_data.user_id,
                     task_id=task_id,
                     subtask_id=subtask_id,
@@ -1000,7 +1014,7 @@ async def _stream_with_http_adapter(
                     error=error_msg,
                 )
 
-                await ws_emitter.emit_chat_error(
+                await emitter.emit_chat_error(
                     task_id=task_id,
                     subtask_id=subtask_id,
                     error=error_msg,
@@ -1018,7 +1032,7 @@ async def _stream_with_http_adapter(
                     status="CANCELLED",
                 )
 
-                await ws_emitter.emit_chat_cancelled(
+                await emitter.emit_chat_cancelled(
                     task_id=task_id,
                     subtask_id=subtask_id,
                 )
@@ -1041,7 +1055,7 @@ async def _stream_with_http_adapter(
             )
 
             # Emit cancelled event to WebSocket
-            await ws_emitter.emit_chat_cancelled(
+            await emitter.emit_chat_cancelled(
                 task_id=task_id,
                 subtask_id=subtask_id,
             )
@@ -1070,7 +1084,7 @@ async def _stream_with_http_adapter(
             error=str(e),
         )
 
-        await ws_emitter.emit_chat_error(
+        await emitter.emit_chat_error(
             task_id=task_id,
             subtask_id=subtask_id,
             error=str(e),
@@ -1093,7 +1107,7 @@ async def _stream_with_bridge(
     model_config: dict,
     system_prompt: str,
     ws_config: Any,
-    namespace: Any,
+    namespace: Optional[Any],
 ) -> None:
     """Stream using the new bridge architecture.
 
@@ -1103,13 +1117,16 @@ async def _stream_with_bridge(
     3. StreamingCore publishes events to Redis
     4. WebSocketBridge forwards events to WebSocket
 
+    Note: This mode requires namespace to be provided for WebSocketBridge.
+    If namespace is None, this function will log an error and return early.
+
     Args:
         stream_data: StreamTaskData containing all extracted ORM data
         message: User message
         model_config: Model configuration
         system_prompt: System prompt
         ws_config: WebSocket stream configuration
-        namespace: ChatNamespace instance
+        namespace: ChatNamespace instance (required for bridge mode)
     """
     from chat_shell.agent import AgentConfig, ChatAgent
     from chat_shell.history import get_chat_history
@@ -1346,10 +1363,12 @@ async def _stream_with_bridge(
         await core.release_resources()
         await shutdown_manager.unregister_stream(subtask_id)
 
-        if subtask_id in getattr(namespace, "_active_streams", {}):
-            del namespace._active_streams[subtask_id]
-        if subtask_id in getattr(namespace, "_stream_versions", {}):
-            del namespace._stream_versions[subtask_id]
+        # Clean up namespace tracking only if namespace is provided
+        if namespace is not None:
+            if subtask_id in getattr(namespace, "_active_streams", {}):
+                del namespace._active_streams[subtask_id]
+            if subtask_id in getattr(namespace, "_stream_versions", {}):
+                del namespace._stream_versions[subtask_id]
 
 
 def _get_bot_mcp_servers_for_http(bot_name: str, bot_namespace: str) -> Dict[str, Any]:

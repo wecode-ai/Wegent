@@ -604,7 +604,9 @@ def fetch_available_models(
                     models.append(
                         {
                             "id": model.get("id"),
-                            "name": model.get("id"),  # OpenAI doesn't provide display names
+                            "name": model.get(
+                                "id"
+                            ),  # OpenAI doesn't provide display names
                             "created": model.get("created"),
                             "owned_by": model.get("owned_by"),
                         }

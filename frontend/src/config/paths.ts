@@ -32,6 +32,9 @@ export const paths = {
   wiki: {
     getHref: () => '/knowledge',
   },
+  flow: {
+    getHref: () => '/flow',
+  },
   settings: {
     root: {
       getHref: () => '/settings',

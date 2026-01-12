@@ -15,6 +15,8 @@ class TelemetryEventNames:
 
     # Error events
     BOT_NOT_FOUND = "BotNotFound"
+    TEAM_NOT_FOUND = "TeamNotFound"
+    CONFIG_BUILD_FAILED = "ConfigBuildFailed"
     PROVIDER_CREATION_FAILED = "ProviderCreationFailed"
     STREAM_CHUNK_ERROR = "StreamChunkError"
     STREAM_ERROR = "StreamError"
