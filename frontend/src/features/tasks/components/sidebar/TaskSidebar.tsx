@@ -29,6 +29,7 @@ import { isTaskUnread } from '@/utils/taskViewStatus'
 import MobileSidebar from '@/features/layout/MobileSidebar'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { UserFloatingMenu } from '@/features/layout/components/UserFloatingMenu'
+import { ProjectSection, ProjectProvider, TaskDndProvider } from '@/features/projects'
 
 interface TaskSidebarProps {
   isMobileSidebarOpen: boolean
@@ -347,11 +348,18 @@ export default function TaskSidebar({
       </div>
 
       {/* Tasks Section - matches Figma: left-[20px] top-[198px] with border */}
-      <div
-        className={`flex-1 ${isCollapsed ? 'px-0' : 'px-2.5'} pt-4 overflow-y-auto task-list-scrollbar border-t border-border mt-3`}
-        ref={scrollRef}
-      >
-        {/* Search Result Header */}
+      <ProjectProvider>
+        <TaskDndProvider>
+          <div
+            className={`flex-1 ${isCollapsed ? 'px-0' : 'px-2.5'} pt-4 overflow-y-auto task-list-scrollbar border-t border-border mt-3`}
+            ref={scrollRef}
+          >
+            {/* Projects Section - displayed above group chats */}
+            {!isCollapsed && !isSearchResult && (
+              <ProjectSection onTaskSelect={() => setIsMobileSidebarOpen(false)} />
+            )}
+
+            {/* Search Result Header */}
         {!isCollapsed && isSearchResult && (
           <div className="px-1 pb-2 flex items-center justify-between">
             <span className="text-xs font-medium text-text-muted">
@@ -404,6 +412,7 @@ export default function TaskSidebar({
                         onTaskClick={() => setIsMobileSidebarOpen(false)}
                         isCollapsed={isCollapsed}
                         showTitle={false}
+                        enableDrag={true}
                         key={`search-group-chats-${viewStatusVersion}`}
                       />
                     </>
@@ -428,6 +437,7 @@ export default function TaskSidebar({
                         onTaskClick={() => setIsMobileSidebarOpen(false)}
                         isCollapsed={isCollapsed}
                         showTitle={false}
+                        enableDrag={true}
                         key={`search-regular-tasks-${viewStatusVersion}`}
                       />
                     </>
@@ -492,6 +502,7 @@ export default function TaskSidebar({
                       onTaskClick={() => setIsMobileSidebarOpen(false)}
                       isCollapsed={isCollapsed}
                       showTitle={false}
+                      enableDrag={true}
                       key={`group-chats-${viewStatusVersion}`}
                     />
                     {/* Expand/Collapse button for group chats */}
@@ -617,6 +628,7 @@ export default function TaskSidebar({
                       onTaskClick={() => setIsMobileSidebarOpen(false)}
                       isCollapsed={isCollapsed}
                       showTitle={false}
+                      enableDrag={true}
                       key={`regular-tasks-${viewStatusVersion}`}
                     />
                     {/* Load more button for personal tasks */}
@@ -645,12 +657,14 @@ export default function TaskSidebar({
             )
           })()
         )}
-        {loadingMore && isSearchResult && (
-          <div className="text-center py-2 text-xs text-text-muted">
-            {t('common:tasks.loading')}
+            {loadingMore && isSearchResult && (
+              <div className="text-center py-2 text-xs text-text-muted">
+                {t('common:tasks.loading')}
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        </TaskDndProvider>
+      </ProjectProvider>
 
       {/* User Menu - matches Figma: left-[20px] top-[852px] with border */}
       <div className="px-2.5 py-3 border-t border-border" data-tour="settings-link">
