@@ -15,3 +15,4 @@ class WeCodeConfig:
             ".cursorrules,.windsurfrules,.wecode,.wecoderules,.wecoder,.wecode/rules",
         )
         os.environ.setdefault("CLAUDE_CODE_INCLUDE_CO_AUTHORED_BY", "false")
+        os.environ.setdefault("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
