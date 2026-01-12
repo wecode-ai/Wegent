@@ -6,8 +6,8 @@
 Tests to verify multi-worker issues are fixed.
 
 These tests verify:
-1. File upload uses chunked streaming (not full file read)
-2. Database connection pool has pool_recycle configured
+1. File upload uses chunked streaming (rag.py streams to disk, attachments.py validates early)
+2. Database connection pool is configurable via environment variables
 """
 
 import io
@@ -26,7 +26,7 @@ class TestFileUploadChunkedRead:
 
     def test_rag_upload_uses_chunked_read(self):
         """
-        Verify that RAG upload endpoint uses chunked read.
+        Verify that RAG upload endpoint uses chunked read and streams to disk.
         """
         rag_file = Path(__file__).parent.parent / "app" / "api" / "endpoints" / "rag.py"
         content = rag_file.read_text()
@@ -51,7 +51,7 @@ class TestFileUploadChunkedRead:
 
     def test_attachment_upload_uses_chunked_read(self):
         """
-        Verify that attachment upload endpoint uses chunked read.
+        Verify that attachment upload endpoint uses chunked read for early validation.
         """
         attachments_file = (
             Path(__file__).parent.parent
@@ -80,40 +80,61 @@ class TestFileUploadChunkedRead:
             "This should have been replaced with chunked streaming."
         )
 
+        # Verify comment accurately describes memory accumulation behavior
+        assert "Data is still accumulated in memory" in content, (
+            "Comment should accurately describe that data is accumulated in memory."
+        )
+
 
 class TestDatabaseConnectionPoolConfig:
     """Test database connection pool configuration."""
 
-    def test_engine_has_pool_recycle_configured(self):
+    def test_config_has_pool_settings(self):
         """
-        Verify that the engine has pool_recycle configured.
+        Verify that config.py has database pool configuration options.
+        """
+        from app.core.config import settings
+
+        # Verify all pool settings exist
+        assert hasattr(settings, "DB_POOL_SIZE"), "Config should have DB_POOL_SIZE"
+        assert hasattr(settings, "DB_MAX_OVERFLOW"), "Config should have DB_MAX_OVERFLOW"
+        assert hasattr(settings, "DB_POOL_RECYCLE"), "Config should have DB_POOL_RECYCLE"
+        assert hasattr(settings, "DB_POOL_TIMEOUT"), "Config should have DB_POOL_TIMEOUT"
+
+        # Verify default values
+        assert settings.DB_POOL_SIZE == 5
+        assert settings.DB_MAX_OVERFLOW == 10
+        assert settings.DB_POOL_RECYCLE == 3600
+        assert settings.DB_POOL_TIMEOUT == 30
+
+    def test_engine_uses_config_settings(self):
+        """
+        Verify that the engine uses configuration settings.
         """
         from app.db.session import engine
 
         pool = engine.pool
-        recycle = pool._recycle
 
-        # Should be 3600 (1 hour) after fix
-        assert recycle == 3600, (
-            f"Expected pool_recycle to be 3600, but got {recycle}. "
-            "pool_recycle should be configured to avoid MySQL connection timeout."
-        )
+        # Verify pool settings match config
+        from app.core.config import settings
 
-    def test_session_file_has_pool_recycle(self):
+        assert pool.size() == settings.DB_POOL_SIZE
+        assert pool._max_overflow == settings.DB_MAX_OVERFLOW
+        assert pool._recycle == settings.DB_POOL_RECYCLE
+        assert pool._timeout == settings.DB_POOL_TIMEOUT
+
+    def test_session_file_uses_settings(self):
         """
-        Verify that session.py has pool_recycle in create_engine call.
+        Verify that session.py uses settings for pool configuration.
         """
         session_file = Path(__file__).parent.parent / "app" / "db" / "session.py"
         content = session_file.read_text()
 
-        assert "pool_recycle" in content, (
-            "Expected to find 'pool_recycle' in session.py create_engine call."
-        )
-
-        # Verify it's set to 3600
-        assert "pool_recycle=3600" in content, (
-            "Expected to find 'pool_recycle=3600' in session.py."
-        )
+        # Should use settings for all pool parameters
+        assert "settings.DB_POOL_SIZE" in content
+        assert "settings.DB_MAX_OVERFLOW" in content
+        assert "settings.DB_POOL_RECYCLE" in content
+        assert "settings.DB_POOL_TIMEOUT" in content
 
 
 class TestStreamingUploadBehavior:

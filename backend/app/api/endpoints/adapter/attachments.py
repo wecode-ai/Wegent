@@ -65,15 +65,17 @@ async def upload_attachment(
     if not file.filename:
         raise HTTPException(status_code=400, detail="Filename is required")
 
-    # Read file content using chunked streaming to avoid loading
-    # entire file into memory (important for multi-worker deployments)
+    # Read file content using chunked streaming for early size validation.
+    # Note: Data is still accumulated in memory (b"".join(chunks)) for processing.
+    # For true streaming to disk, context_service.upload_attachment would need to
+    # accept a file path similar to DocumentService.index_document in rag.py.
     try:
         CHUNK_SIZE = 1024 * 1024  # 1MB chunks
         chunks = []
         file_size = 0
         while chunk := await file.read(CHUNK_SIZE):
             file_size += len(chunk)
-            # Check size during streaming to fail fast
+            # Validate size during streaming to fail fast on oversized files
             if not DocumentParser.validate_file_size(file_size):
                 max_size_mb = DocumentParser.get_max_file_size() / (1024 * 1024)
                 raise HTTPException(
