@@ -12,6 +12,7 @@ During graceful shutdown:
 - /shutdown/initiate (POST) triggers graceful shutdown manually
 - /shutdown/wait (POST) waits for streams to complete (for preStop hook)
 - /shutdown/reset (POST) resets shutdown state to restore 200
+- /metrics returns Prometheus metrics (if enabled)
 """
 
 import logging
@@ -20,6 +21,7 @@ from fastapi import APIRouter, Response
 
 from chat_shell.core.config import settings
 from chat_shell.core.shutdown import shutdown_manager
+from shared.telemetry.prometheus import get_metrics_response, get_prometheus_config
 
 router = APIRouter(tags=["health"])
 logger = logging.getLogger(__name__)
@@ -230,3 +232,25 @@ async def reset_shutdown():
         "message": "Shutdown state reset. /ready will now return 200.",
         "was_shutting_down": was_shutting_down,
     }
+
+
+@router.get("/metrics")
+async def metrics():
+    """
+    Prometheus metrics endpoint.
+
+    Returns all collected metrics in Prometheus text exposition format.
+    This endpoint is only active when PROMETHEUS_ENABLED=true.
+
+    Returns:
+        Response: Prometheus metrics in text format
+    """
+    config = get_prometheus_config()
+    if not config.enabled:
+        return Response(
+            content="Prometheus metrics are disabled",
+            status_code=404,
+            media_type="text/plain",
+        )
+
+    return get_metrics_response()

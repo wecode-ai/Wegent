@@ -19,7 +19,7 @@ from executor_manager.clients.task_api_client import TaskApiClient
 from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
 from executor_manager.executors.dispatcher import ExecutorDispatcher
 from executor_manager.tasks.task_processor import TaskProcessor
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 from shared.logger import setup_logger
@@ -29,6 +29,10 @@ from shared.telemetry.context import (
     set_request_context,
     set_task_context,
     set_user_context,
+)
+from shared.telemetry.prometheus import (
+    get_metrics_response,
+    get_prometheus_config,
 )
 
 # Setup logger
@@ -46,7 +50,7 @@ task_processor = TaskProcessor()
 api_client = TaskApiClient()
 
 # Health check paths that should skip logging to reduce overhead
-HEALTH_CHECK_PATHS = {"/", "/health"}
+HEALTH_CHECK_PATHS = {"/", "/health", "/metrics"}
 
 
 @app.middleware("http")
@@ -600,3 +604,25 @@ async def cancel_task(request: CancelTaskRequest, http_request: Request):
     except Exception as e:
         logger.error(f"Error cancelling task {request.task_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/metrics")
+async def metrics():
+    """
+    Prometheus metrics endpoint.
+
+    Returns all collected metrics in Prometheus text exposition format.
+    This endpoint is only active when PROMETHEUS_ENABLED=true.
+
+    Returns:
+        Response: Prometheus metrics in text format
+    """
+    config = get_prometheus_config()
+    if not config.enabled:
+        return Response(
+            content="Prometheus metrics are disabled",
+            status_code=404,
+            media_type="text/plain",
+        )
+
+    return get_metrics_response()

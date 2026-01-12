@@ -32,6 +32,12 @@ dependencies = [
     "opentelemetry-instrumentation-httpx>=0.48b0",
     "opentelemetry-instrumentation-requests>=0.48b0",
     "opentelemetry-instrumentation-system-metrics>=0.48b0",
+
+    # Prometheus metrics
+    "prometheus-client>=0.20.0",
+
+    # Starlette for middleware
+    "starlette>=0.27.0",
 ]
 
 [dependency-groups]
@@ -43,7 +49,7 @@ dev = [
 ]
 
 [tool.setuptools]
-packages = ["shared", "shared.models", "shared.models.db", "shared.db", "shared.telemetry", "shared.telemetry.context", "shared.telemetry.metrics", "shared.utils"]
+packages = ["shared", "shared.models", "shared.models.db", "shared.db", "shared.telemetry", "shared.telemetry.context", "shared.telemetry.metrics", "shared.telemetry.prometheus", "shared.utils"]
 
 [tool.setuptools.package-dir]
 shared = "."

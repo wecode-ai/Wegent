@@ -31,6 +31,11 @@ from app.db.base import Base
 from app.db.session import SessionLocal, engine
 from app.models import *  # noqa: F401,F403
 from app.services.jobs import start_background_jobs, stop_background_jobs
+from shared.telemetry.prometheus import (
+    get_metrics_response,
+    get_prometheus_config,
+    setup_prometheus_middleware,
+)
 
 # Redis lock key for startup operations (migrations + YAML init)
 # Only used to prevent concurrent initialization, not to skip initialization
@@ -336,6 +341,16 @@ def create_app():
             logger.warning(f"Failed to initialize OpenTelemetry: {e}")
     else:
         logger.debug("OpenTelemetry is disabled")
+
+    # Initialize Prometheus metrics if enabled
+    prometheus_config = get_prometheus_config("wegent-backend")
+    if prometheus_config.enabled:
+        setup_prometheus_middleware(app, service_name="wegent-backend")
+        logger.info(
+            f"Prometheus metrics enabled at {prometheus_config.metrics_path}"
+        )
+    else:
+        logger.debug("Prometheus metrics disabled")
 
     @app.middleware("http")
     async def log_requests(request: Request, call_next):
