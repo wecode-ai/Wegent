@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import { Switch } from '@/components/ui/switch'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { KnowledgeBase, KnowledgeBaseUpdate, RetrievalConfigUpdate } from '@/types/knowledge'
@@ -39,6 +40,7 @@ export function EditKnowledgeBaseDialog({
   const { t } = useTranslation()
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
+  const [summaryEnabled, setSummaryEnabled] = useState(false)
   const [error, setError] = useState('')
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [retrievalConfig, setRetrievalConfig] = useState<Partial<RetrievalConfig>>({})
@@ -47,6 +49,7 @@ export function EditKnowledgeBaseDialog({
     if (knowledgeBase) {
       setName(knowledgeBase.name)
       setDescription(knowledgeBase.description || '')
+      setSummaryEnabled(knowledgeBase.summary_enabled || false)
       setShowAdvanced(false) // Reset expanded state
       // Initialize retrieval config from knowledge base
       if (knowledgeBase.retrieval_config) {
@@ -77,7 +80,8 @@ export function EditKnowledgeBaseDialog({
       // Build update data
       const updateData: KnowledgeBaseUpdate = {
         name: name.trim(),
-        description: description.trim() || undefined,
+        description: description.trim(), // Allow empty string to clear description
+        summary_enabled: summaryEnabled,
       }
 
       // Add retrieval config update if advanced settings were modified
@@ -146,6 +150,23 @@ export function EditKnowledgeBaseDialog({
                 placeholder={t('knowledge:document.knowledgeBase.descriptionPlaceholder')}
                 maxLength={500}
                 rows={3}
+              />
+            </div>
+
+            {/* Summary Settings */}
+            <div className="flex items-center justify-between py-2">
+              <div className="space-y-0.5">
+                <Label htmlFor="edit-summary-enabled">
+                  {t('knowledge:document.summary.enableLabel')}
+                </Label>
+                <p className="text-xs text-text-muted">
+                  {t('knowledge:document.summary.enableDescription')}
+                </p>
+              </div>
+              <Switch
+                id="edit-summary-enabled"
+                checked={summaryEnabled}
+                onCheckedChange={setSummaryEnabled}
               />
             </div>
 

@@ -259,6 +259,15 @@ class Settings(BaseSettings):
     # See backend/app/services/tables/DATA_TABLE_CONFIG_EXAMPLE.md for details
     DATA_TABLE_CONFIG: str = ""
 
+    # Knowledge base and document summary configuration
+    # Enable/disable automatic summary generation after document indexing
+    SUMMARY_ENABLED: bool = False
+    # Model configuration for summary generation (JSON string)
+    # Format: {"model_id": "claude-sonnet-4-20250514", "model": "anthropic", "max_tokens": 4096}
+    SUMMARY_MODEL_CONFIG: str = (
+        '{"model_id": "claude-sonnet-4-20250514", "model": "anthropic", "max_tokens": 4096}'
+    )
+
     # OpenTelemetry configuration is centralized in shared/telemetry/config.py
     # Use: from shared.telemetry.config import get_otel_config
     # All OTEL_* environment variables are read from there

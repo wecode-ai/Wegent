@@ -129,6 +129,7 @@ class KnowledgeService:
                 name=data.name,
                 description=data.description or "",
                 retrievalConfig=data.retrieval_config,
+                summaryEnabled=data.summary_enabled,
             ),
         )
 
@@ -362,6 +363,10 @@ class KnowledgeService:
                         data.retrieval_config.hybrid_weights.model_dump()
                     )
                 spec["retrievalConfig"] = current_retrieval_config
+
+        # Update summary_enabled if provided
+        if data.summary_enabled is not None:
+            spec["summaryEnabled"] = data.summary_enabled
 
         kb_json["spec"] = spec
         kb.json = kb_json
@@ -873,7 +878,8 @@ class KnowledgeService:
             AccessibleKnowledgeBase(
                 id=kb.id,
                 name=kb.json.get("spec", {}).get("name", ""),
-                description=kb.json.get("spec", {}).get("description"),
+                description=kb.json.get("spec", {}).get("description")
+                or None,  # Convert empty string to None
                 document_count=KnowledgeService.get_active_document_count(db, kb.id),
                 updated_at=kb.updated_at,
             )
@@ -917,7 +923,8 @@ class KnowledgeService:
                             AccessibleKnowledgeBase(
                                 id=kb.id,
                                 name=kb.json.get("spec", {}).get("name", ""),
-                                description=kb.json.get("spec", {}).get("description"),
+                                description=kb.json.get("spec", {}).get("description")
+                                or None,  # Convert empty string to None
                                 document_count=KnowledgeService.get_active_document_count(
                                     db, kb.id
                                 ),

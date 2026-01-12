@@ -61,6 +61,10 @@ class KnowledgeBaseCreate(BaseModel):
     retrieval_config: Optional[RetrievalConfig] = Field(
         None, description="Retrieval configuration"
     )
+    summary_enabled: bool = Field(
+        default=False,
+        description="Enable automatic summary generation for documents",
+    )
 
 
 class RetrievalConfigUpdate(BaseModel):
@@ -89,6 +93,10 @@ class KnowledgeBaseUpdate(BaseModel):
         None,
         description="Retrieval configuration update (excludes retriever and embedding model)",
     )
+    summary_enabled: Optional[bool] = Field(
+        None,
+        description="Enable automatic summary generation for documents",
+    )
 
 
 class KnowledgeBaseResponse(BaseModel):
@@ -104,6 +112,14 @@ class KnowledgeBaseResponse(BaseModel):
     retrieval_config: Optional[RetrievalConfig] = Field(
         None, description="Retrieval configuration"
     )
+    summary_enabled: bool = Field(
+        default=False,
+        description="Enable automatic summary generation for documents",
+    )
+    summary: Optional[dict] = Field(
+        None,
+        description="Knowledge base summary (short_summary, long_summary, topics, etc.)",
+    )
     created_at: datetime
     updated_at: datetime
 
@@ -116,14 +132,18 @@ class KnowledgeBaseResponse(BaseModel):
             document_count: Document count (should be queried from database)
         """
         spec = kind.json.get("spec", {})
+        # Extract summary from spec.summary if available
+        summary = spec.get("summary")
         return cls(
             id=kind.id,
             name=spec.get("name", ""),
-            description=spec.get("description"),
+            description=spec.get("description") or None,  # Convert empty string to None
             user_id=kind.user_id,
             namespace=kind.namespace,
             document_count=document_count,
             retrieval_config=spec.get("retrievalConfig"),
+            summary_enabled=spec.get("summaryEnabled", False),
+            summary=summary,
             is_active=kind.is_active,
             created_at=kind.created_at,
             updated_at=kind.updated_at,
@@ -288,3 +308,20 @@ class TableUrlValidationResponse(BaseModel):
     error_message: Optional[str] = Field(
         None, description="Error message if validation failed"
     )
+
+
+# ============== Document Detail Schemas ==============
+
+
+class DocumentDetailResponse(BaseModel):
+    """Schema for document detail response (content + summary)."""
+
+    document_id: int = Field(..., description="Document ID")
+    content: Optional[str] = Field(
+        None, description="Extracted text content from document"
+    )
+    content_length: Optional[int] = Field(
+        None, description="Length of content in characters"
+    )
+    truncated: Optional[bool] = Field(None, description="Whether content was truncated")
+    summary: Optional[dict] = Field(None, description="Document summary object")
