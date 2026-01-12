@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.services.rag.embedding.custom import CustomEmbedding
+from app.services.rag.embedding.voyage import VoyageEmbedding
 
 
 def create_embedding_model_from_crd(
@@ -158,7 +159,28 @@ def create_embedding_model_from_crd(
             headers=custom_headers if isinstance(custom_headers, dict) else {},
             api_key=api_key,
         )
+    elif protocol == "voyage":
+        # Voyage AI embedding
+        if not api_key:
+            raise ValueError(
+                f"Model '{model_name}' with protocol 'voyage' requires api_key"
+            )
+
+        # Construct API URL if base_url is provided
+        api_url = None
+        if base_url:
+            if not base_url.endswith("/embeddings"):
+                api_url = f"{base_url.rstrip('/')}/embeddings"
+            else:
+                api_url = base_url
+
+        return VoyageEmbedding(
+            api_key=api_key,
+            model=model_id or "voyage-3",
+            api_url=api_url,
+            headers=custom_headers if isinstance(custom_headers, dict) else {},
+        )
     else:
         raise ValueError(
-            f"Unsupported embedding protocol: {protocol}. Supported: openai, cohere, jina, custom"
+            f"Unsupported embedding protocol: {protocol}. Supported: openai, cohere, jina, voyage, custom"
         )
