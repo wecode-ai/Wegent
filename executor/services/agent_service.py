@@ -9,17 +9,20 @@
 import asyncio
 import threading
 import time
-from typing import Dict, Optional, Any, Tuple, List, ClassVar
 from dataclasses import dataclass
+from typing import Any, ClassVar, Dict, List, Optional, Tuple
 
 from shared.logger import setup_logger
 from shared.status import TaskStatus
+
 from executor.agents import Agent, AgentFactory
-from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
 from executor.agents.agno.agno_agent import AgnoAgent
+from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
 from executor.callback.callback_handler import send_status_callback
+from executor.tasks.task_state_manager import TaskStateManager
 
 logger = setup_logger("agent_service")
+
 
 def _format_task_log(task_id, subtask_id):
     return f"task_id: {task_id}.{subtask_id}"
@@ -32,7 +35,7 @@ class AgentSession:
 
 
 class AgentService:
-    _instance: ClassVar[Optional['AgentService']] = None
+    _instance: ClassVar[Optional["AgentService"]] = None
     _lock: ClassVar[threading.Lock] = threading.Lock()
 
     def __new__(cls):
@@ -57,81 +60,113 @@ class AgentService:
 
         logger.info(f"task_id: [{task_id}] Creating agent")
 
-        if (existing_agent := self.get_agent(f"{task_id}")):
-            logger.info(f"[{_format_task_log(task_id, subtask_id)}] Reusing existing agent")
+        if existing_agent := self.get_agent(f"{task_id}"):
+            logger.info(
+                f"[{_format_task_log(task_id, subtask_id)}] Reusing existing agent"
+            )
             return existing_agent
 
         try:
             # Determine agent type based on task type
             task_type = task_data.get("type", "")
-            
+
             if task_type == "validation":
                 # For validation tasks, use ImageValidatorAgent
                 shell_type = "imagevalidator"
-                logger.info(f"[{_format_task_log(task_id, subtask_id)}] Validation task detected, using ImageValidatorAgent")
+                logger.info(
+                    f"[{_format_task_log(task_id, subtask_id)}] Validation task detected, using ImageValidatorAgent"
+                )
             else:
                 # For regular tasks, get shell_type from bot config
                 bot_config = task_data.get("bot")
                 if isinstance(bot_config, list):
-                    shell_type = bot_config[0].get("shell_type", "").strip().lower() if bot_config else ""
+                    shell_type = (
+                        bot_config[0].get("shell_type", "").strip().lower()
+                        if bot_config
+                        else ""
+                    )
                 elif isinstance(bot_config, dict):
                     shell_type = bot_config.get("shell_type", "").strip().lower()
                 else:
                     shell_type = ""
 
-            logger.info(f"[{_format_task_log(task_id, subtask_id)}] Creating new agent '{shell_type}'")
+            logger.info(
+                f"[{_format_task_log(task_id, subtask_id)}] Creating new agent '{shell_type}'"
+            )
             agent = AgentFactory.get_agent(shell_type, task_data)
 
             if not agent:
-                logger.error(f"[{_format_task_log(task_id, subtask_id)}] Failed to create agent")
-                return None
-                
-            init_status = agent.initialize()
-            if init_status != TaskStatus.SUCCESS:
-                logger.error(f"[{_format_task_log(task_id, subtask_id)}] Failed to initialize agent: {init_status}")
+                logger.error(
+                    f"[{_format_task_log(task_id, subtask_id)}] Failed to create agent"
+                )
                 return None
 
-            self._agent_sessions[task_id] = AgentSession(agent=agent, created_at=time.time())
+            init_status = agent.initialize()
+            if init_status != TaskStatus.SUCCESS:
+                logger.error(
+                    f"[{_format_task_log(task_id, subtask_id)}] Failed to initialize agent: {init_status}"
+                )
+                return None
+
+            self._agent_sessions[task_id] = AgentSession(
+                agent=agent, created_at=time.time()
+            )
             logger.info(f"task_id: [{task_id}] Agent created")
             return agent
 
         except Exception as e:
-            logger.exception(f"[{_format_task_log(task_id, subtask_id)}] Exception during agent creation: {e}")
+            logger.exception(
+                f"[{_format_task_log(task_id, subtask_id)}] Exception during agent creation: {e}"
+            )
             return None
 
-    def execute_agent_task(self, agent: Agent, pre_executed: Optional[TaskStatus] = None) -> Tuple[TaskStatus, Optional[str]]:
+    def execute_agent_task(
+        self, agent: Agent, pre_executed: Optional[TaskStatus] = None
+    ) -> Tuple[TaskStatus, Optional[str]]:
         try:
-            logger.info(f"[{agent.get_name()}][{_format_task_log(agent.task_id, agent.subtask_id)}] Executing with pre_executed={pre_executed}")
+            logger.info(
+                f"[{agent.get_name()}][{_format_task_log(agent.task_id, agent.subtask_id)}] Executing with pre_executed={pre_executed}"
+            )
             return agent.handle(pre_executed)
         except Exception as e:
-            logger.exception(f"[{agent.get_name()}][{_format_task_log(agent.task_id, agent.subtask_id)}] Execution error: {e}")
+            logger.exception(
+                f"[{agent.get_name()}][{_format_task_log(agent.task_id, agent.subtask_id)}] Execution error: {e}"
+            )
             return TaskStatus.FAILED, str(e)
 
-    def execute_task(self, task_data: Dict[str, Any]) -> Tuple[TaskStatus, Optional[str]]:
+    def execute_task(
+        self, task_data: Dict[str, Any]
+    ) -> Tuple[TaskStatus, Optional[str]]:
         task_id = task_data.get("task_id", -1)
         subtask_id = task_data.get("subtask_id", -1)
         try:
             agent = self.get_agent(f"{task_id}")
 
             # If agent exists, update prompt
-            if agent and hasattr(agent, 'update_prompt') and "prompt" in task_data:
+            if agent and hasattr(agent, "update_prompt") and "prompt" in task_data:
                 new_prompt = task_data.get("prompt", "")
-                logger.info(f"[{_format_task_log(task_id, subtask_id)}] Updating prompt for existing agent")
+                logger.info(
+                    f"[{_format_task_log(task_id, subtask_id)}] Updating prompt for existing agent"
+                )
                 agent.update_prompt(new_prompt)
             # If agent doesn't exist, create new agent
             elif not agent:
                 agent = self.create_agent(task_data)
-                
+
             if not agent:
                 msg = f"[{_format_task_log(task_id, subtask_id)}] Unable to get or create agent"
                 logger.error(msg)
                 return TaskStatus.FAILED, msg
             return self.execute_agent_task(agent)
         except Exception as e:
-            logger.exception(f"[{_format_task_log(task_id, subtask_id)}] Task execution error: {e}")
+            logger.exception(
+                f"[{_format_task_log(task_id, subtask_id)}] Task execution error: {e}"
+            )
             return TaskStatus.FAILED, str(e)
 
-    async def _close_agent_session(self, task_id: str, agent: Agent) -> Tuple[TaskStatus, Optional[str]]:
+    async def _close_agent_session(
+        self, task_id: str, agent: Agent
+    ) -> Tuple[TaskStatus, Optional[str]]:
         try:
             agent_name = agent.get_name()
             if agent_name == "ClaudeCodeAgent":
@@ -142,20 +177,30 @@ class AgentService:
                 logger.info(f"[{_format_task_log(task_id, -1)}] Closed Agno client")
             return TaskStatus.SUCCESS, None
         except Exception as e:
-            logger.exception(f"[{_format_task_log(task_id, -1)}] Error closing agent: {e}")
+            logger.exception(
+                f"[{_format_task_log(task_id, -1)}] Error closing agent: {e}"
+            )
             return TaskStatus.FAILED, str(e)
 
-    async def delete_session_async(self, task_id: str) -> Tuple[TaskStatus, Optional[str]]:
+    async def delete_session_async(
+        self, task_id: str
+    ) -> Tuple[TaskStatus, Optional[str]]:
         session = self._agent_sessions.get(task_id)
         if not session:
-            return TaskStatus.FAILED, f"[{_format_task_log(task_id, -1)}] No session found"
+            return (
+                TaskStatus.FAILED,
+                f"[{_format_task_log(task_id, -1)}] No session found",
+            )
 
         try:
             status, error_msg = await self._close_agent_session(task_id, session.agent)
             if status != TaskStatus.SUCCESS:
                 return status, error_msg
             del self._agent_sessions[task_id]
-            return TaskStatus.SUCCESS, f"[{_format_task_log(task_id, -1)}] Session deleted"
+            return (
+                TaskStatus.SUCCESS,
+                f"[{_format_task_log(task_id, -1)}] Session deleted",
+            )
         except Exception as e:
             logger.exception(f"[{task_id}] Error deleting session: {e}")
             return TaskStatus.FAILED, str(e)
@@ -186,22 +231,38 @@ class AgentService:
         logger.info(f"task_id: [{task_id}] Cancelling task")
         session = self._agent_sessions.get(task_id)
         if not session:
-            return TaskStatus.FAILED, f"[{_format_task_log(task_id, -1)}] No session found"
+            return (
+                TaskStatus.FAILED,
+                f"[{_format_task_log(task_id, -1)}] No session found",
+            )
 
         try:
             agent = session.agent
             agent_name = agent.get_name()
 
-            if hasattr(agent, 'cancel_run'):
+            if hasattr(agent, "cancel_run"):
                 success = agent.cancel_run()
                 if success:
-                    logger.info(f"[{_format_task_log(task_id, -1)}] Successfully cancelled {agent_name} task")
-                    return TaskStatus.SUCCESS, f"[{_format_task_log(task_id, -1)}] Task cancelled"
+                    logger.info(
+                        f"[{_format_task_log(task_id, -1)}] Successfully cancelled {agent_name} task"
+                    )
+                    return (
+                        TaskStatus.SUCCESS,
+                        f"[{_format_task_log(task_id, -1)}] Task cancelled",
+                    )
                 else:
-                    logger.warning(f"[{_format_task_log(task_id, -1)}] Failed to cancel {agent_name} task")
-                    return TaskStatus.FAILED, f"[{_format_task_log(task_id, -1)}] Cancel failed"
+                    logger.warning(
+                        f"[{_format_task_log(task_id, -1)}] Failed to cancel {agent_name} task"
+                    )
+                    return (
+                        TaskStatus.FAILED,
+                        f"[{_format_task_log(task_id, -1)}] Cancel failed",
+                    )
             else:
-                return TaskStatus.FAILED, f"[{_format_task_log(task_id, -1)}] {agent_name} agent does not support cancellation"
+                return (
+                    TaskStatus.FAILED,
+                    f"[{_format_task_log(task_id, -1)}] {agent_name} agent does not support cancellation",
+                )
 
         except Exception as e:
             logger.exception(f"[{task_id}] Error cancelling task: {e}")
@@ -211,26 +272,30 @@ class AgentService:
         """
         Asynchronously send cancel task callback
         This method is called in a background task and will not block the cancel API response
-        
+
         Args:
             task_id: Task ID
         """
         try:
             session = self._agent_sessions.get(task_id)
             if not session:
-                logger.warning(f"[{_format_task_log(task_id, -1)}] No session found for sending cancel callback")
+                logger.warning(
+                    f"[{_format_task_log(task_id, -1)}] No session found for sending cancel callback"
+                )
                 return
-            
+
             agent = session.agent
-            task_data = getattr(agent, 'task_data', {})
-            
+            task_data = getattr(agent, "task_data", {})
+
             # Get task information
             subtask_id = task_data.get("subtask_id", -1)
             task_title = task_data.get("task_title", "")
             subtask_title = task_data.get("subtask_title", "")
-            
-            logger.info(f"[{_format_task_log(task_id, subtask_id)}] Sending cancel callback asynchronously")
-            
+
+            logger.info(
+                f"[{_format_task_log(task_id, subtask_id)}] Sending cancel callback asynchronously"
+            )
+
             # Send CANCELLED status callback (not COMPLETED)
             result = send_status_callback(
                 task_id=task_id,
@@ -239,16 +304,39 @@ class AgentService:
                 subtask_title=subtask_title,
                 status=TaskStatus.CANCELLED.value,
                 message="${{tasks.cancel_task}}",
-                progress=100
+                progress=100,
             )
-            
+
             if result and result.get("status") == TaskStatus.SUCCESS.value:
-                logger.info(f"[{_format_task_log(task_id, subtask_id)}] Cancel callback sent successfully")
+                logger.info(
+                    f"[{_format_task_log(task_id, subtask_id)}] Cancel callback sent successfully"
+                )
             else:
-                logger.error(f"[{_format_task_log(task_id, subtask_id)}] Failed to send cancel callback: {result}")
-                
+                logger.error(
+                    f"[{_format_task_log(task_id, subtask_id)}] Failed to send cancel callback: {result}"
+                )
+
+            # Clean up task state after cancel callback is sent
+            # This allows next message to be processed without "Request interrupted" error
+            task_state_manager = TaskStateManager()
+            task_state_manager.cleanup(task_id)
+            logger.info(
+                f"[{_format_task_log(task_id, subtask_id)}] Cleaned up task state after cancel"
+            )
+
         except Exception as e:
             logger.exception(f"[{task_id}] Error sending cancel callback: {e}")
+            # Still attempt to cleanup task state on error
+            try:
+                task_state_manager = TaskStateManager()
+                task_state_manager.cleanup(task_id)
+                logger.info(
+                    f"[{_format_task_log(task_id, -1)}] Cleaned up task state after cancel error"
+                )
+            except Exception as cleanup_error:
+                logger.warning(
+                    f"[{task_id}] Failed to cleanup task state: {cleanup_error}"
+                )
 
     def list_sessions(self) -> List[Dict[str, Any]]:
         return [
@@ -256,7 +344,7 @@ class AgentService:
                 "task_id": task_id,
                 "agent_type": session.agent.get_name(),
                 "pre_executed": session.agent.pre_executed,
-                "created_at": session.created_at
+                "created_at": session.created_at,
             }
             for task_id, session in self._agent_sessions.items()
         ]

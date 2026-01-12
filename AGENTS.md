@@ -11,11 +11,11 @@ Wegent is an open-source AI-native operating system for defining, organizing, an
 - **Frontend** (Next.js 15 + TypeScript + React 19): Web UI with shadcn/ui components
 - **Executor**: Task execution engine (Claude Code, Agno, Dify, ImageValidator)
 - **Executor Manager**: Task orchestration via Docker
+- **Chat Shell**: Lightweight AI chat engine for Chat Shell type (LangGraph + multi-LLM)
 - **Shared**: Common utilities, models, and cryptography
 
 **Core principles:**
 - Kubernetes-inspired CRD design (Ghost, Model, Shell, Bot, Team, Task, Skill, Workspace)
-- High cohesion, low coupling - extract common logic, avoid duplication
 - Choose simplest working solution - prioritize code simplicity and extensibility
 
 **📚 Documentation Principle:**
@@ -56,14 +56,6 @@ Task = Team + Workspace (代码仓库)
 
 **⚠️ Python modules use [uv](https://docs.astral.sh/uv/) for dependency management. Always use `uv run` to execute Python commands.**
 
-```bash
-cd backend && uv run pytest --cov=app           # Backend
-cd executor && uv run pytest                    # Executor
-cd executor_manager && uv run pytest            # Executor Manager
-cd shared && uv run pytest                      # Shared
-cd frontend && npm test                         # Frontend
-cd frontend && npm run test:e2e                 # E2E tests (Playwright)
-```
 
 **Test principles:**
 - Follow AAA pattern: Arrange, Act, Assert
@@ -87,7 +79,6 @@ cd frontend && npm run test:e2e                 # E2E tests (Playwright)
 - **High cohesion, low coupling**: Each module/class should have a single responsibility
 - **File size limit**: If a file exceeds **1000 lines**, split it into multiple sub-modules
 - **Function length**: Max 50 lines per function (preferred)
-- **Avoid duplication**: Extract common logic into shared utilities
 
 ### Code Design Guidelines
 
@@ -104,6 +95,18 @@ cd frontend && npm run test:e2e                 # E2E tests (Playwright)
    - Extract reusable patterns from existing code if found
    - Create shared utilities that can be reused across the codebase
    - Never copy-paste code or write duplicate logic
+
+5. **Refactor before extending**: When analyzing code, identify features related to the new functionality. If related code exists, refactor it using design patterns and extract common methods before adding new features - never re-implement existing logic.
+
+6. **Fix all discovered issues**: When you discover a problem during development, you MUST fix it immediately. Never ignore issues because they seem "unrelated" to the current task - all bugs found must be addressed. **Proactively review** code and documentation for issues - don't wait for users to point them out.
+
+7. **Prefer industry standards over project conventions**: If the project has practices that deviate from industry standards, adopt the standard approach rather than extending non-standard patterns. This improves code maintainability and reduces onboarding friction for new developers.
+
+8. **Delete dead code aggressively**: Regardless of the effort required, ensure that deprecated, unused, or obsolete code is removed. Dead code degrades maintainability and creates confusion - keeping the codebase clean is non-negotiable.
+
+9. **Extract common logic from ALL code**: When making changes and you discover logic that should be extracted into shared utilities, do it immediately. This applies to ALL code - not just "new code reusing old code", but also extracting commonalities between existing code segments. Every opportunity for reuse must be taken.
+
+10. **Avoid backward compatibility - design for the ideal state**: When implementing changes, design as if there is no legacy burden - consider "what would be the best approach if we were starting fresh". Avoid writing compatibility shims or workarounds for old logic. If backward compatibility is absolutely unavoidable, consult with the user before proceeding.
 
 ### Python (Backend, Executor, Shared)
 
@@ -136,20 +139,54 @@ npm run format && npm run lint
 
 1. Search existing components in `src/components/ui/`, `src/components/common/`, `src/features/*/components/`
 2. Extract reusable logic if implementing similar UI patterns multiple times
-3. Avoid duplication - use composition over copy-paste
 
-**Component Organization:**
-```
-frontend/src/components/
-├── ui/              # shadcn/ui pure UI components
-└── common/          # Shared business components
+### Responsive Architecture
 
-frontend/src/features/
-├── layout/          # Layout components
-├── tasks/           # Chat/Code task components
-├── settings/        # Settings page components
-└── [other]/         # Feature-specific components
+⚠️ **Wegent uses a mobile-first, component-separation architecture for responsive design**
+
+**Breakpoint System:**
+- Mobile: ≤767px - Touch-optimized UI with drawer sidebar
+- Tablet: 768px-1023px - Uses desktop layout
+- Desktop: ≥1024px - Full-featured UI with all controls
+
+**When to Separate Components:**
+- Layout differences >30%: Create separate Mobile/Desktop components
+- Different interaction patterns: Separate for better UX
+- Performance optimization: Use code splitting via dynamic imports
+
+**When to Use Tailwind Responsive Classes:**
+- Simple styling adjustments (spacing, font size)
+- Show/hide scenarios
+- Minor layout changes
+
+**Page-Level Separation Pattern:**
 ```
+app/(tasks)/chat/
+├── page.tsx                 # Router component (dynamic imports)
+├── ChatPageDesktop.tsx      # Desktop implementation
+└── ChatPageMobile.tsx       # Mobile implementation
+```
+
+**Component-Level Separation Pattern:**
+```typescript
+// ChatInputControls.tsx (contains routing logic)
+export function ChatInputControls(props: Props) {
+  const isMobile = useIsMobile()
+
+  if (isMobile) {
+    return <MobileChatInputControls {...props} />
+  }
+
+  return <DesktopChatInputControls {...props} />
+}
+```
+
+**Touch-Friendly Requirements (Mobile):**
+- All interactive elements must be at least 44px × 44px
+- Use `h-11 min-w-[44px]` for buttons
+- Example: `<Button className="h-11 min-w-[44px] px-4">...</Button>`
+
+**📖 Detailed Documentation:** See [`docs/en/guides/responsive-development.md`](docs/en/guides/responsive-development.md) or [`docs/zh/guides/responsive-development.md`](docs/zh/guides/responsive-development.md)
 
 ---
 
@@ -222,34 +259,6 @@ const isDesktop = useIsDesktop(); // min-width: 1024px
 
 **⚠️ AI Agents MUST comply with Git hook output - FIX issues, DO NOT use `--no-verify`**
 
----
-
-## 🏗️ Project Structure
-
-```
-wegent/
-├── backend/              # FastAPI backend
-│   ├── app/
-│   │   ├── api/          # Route handlers
-│   │   ├── core/         # Config, security, cache
-│   │   ├── models/       # SQLAlchemy models
-│   │   ├── schemas/      # Pydantic schemas & CRD definitions
-│   │   └── services/     # Business logic
-│   └── alembic/          # Database migrations
-├── frontend/             # Next.js frontend
-│   └── src/
-│       ├── app/          # App Router pages
-│       ├── apis/         # API clients
-│       ├── components/   # UI components
-│       ├── features/     # Feature-specific modules
-│       ├── hooks/        # Custom hooks
-│       ├── i18n/         # Internationalization
-│       └── types/        # TypeScript types
-├── executor/             # Task executor (runs in Docker)
-├── executor_manager/     # Task orchestration
-├── shared/               # Common utilities
-└── docker/               # Dockerfiles
-```
 
 ---
 
@@ -346,20 +355,6 @@ uv run alembic upgrade head                               # Apply
 uv run alembic downgrade -1                               # Rollback
 ```
 
-**Web Search Configuration:**
-- `WEB_SEARCH_ENABLED`: Enable/disable web search feature (default: `false`)
-- `WEB_SEARCH_ENGINES`: JSON config for search engines (see `.env.example` for format)
-- `WEB_SEARCH_DEFAULT_MAX_RESULTS`: Default max results when LLM doesn't specify (default: `100`)
-  - Can be overridden by per-engine `max_results` in `WEB_SEARCH_ENGINES` config
-  - LLM can override by passing `max_results` parameter to the tool
-
-**MCP (Model Context Protocol) Configuration:**
-- `CHAT_MCP_ENABLED`: Enable/disable MCP tools in Chat Shell mode (default: `false`)
-- `CHAT_MCP_SERVERS`: JSON config for MCP servers (see config.py comments for format)
-  - Supports `${{path}}` variable substitution in config values (headers, urls, etc.)
-  - Available variables: `user.name`, `user.id`
-  - Example: `"headers": {"X-User": "${{user.name}}"}` will be replaced with actual username
-
 ### Frontend
 
 **Tech:** Next.js 15, React 19, TypeScript, Tailwind CSS, shadcn/ui, i18next
@@ -417,17 +412,6 @@ const { messages } = useUnifiedMessages({ team, isGroupChat });
 - When exporting/displaying messages, ALWAYS use `messages` from `useUnifiedMessages`
 - This ensures all real-time updates (self, other users, AI) are included
 
-**Common Pitfall:**
-```typescript
-// ❌ BAD - Missing latest WebSocket messages
-const exportMessages = selectedTaskDetail.subtasks.map(...)
-
-// ✅ GOOD - Includes all real-time updates
-const { messages } = useUnifiedMessages(...)
-const exportMessages = messages
-  .filter(msg => msg.status === 'completed')
-  .map(...)
-```
 
 **i18n Rules:**
 
@@ -455,12 +439,33 @@ t('actions.save')             // Ambiguous - which namespace?
 ### Executor
 
 **Agent types:**
-| Agent | Key Features |
-|-------|--------------|
-| `ClaudeCode` | Claude Code SDK, Git clone, Skills, MCP servers |
-| `Agno` | Team modes, SQLite sessions, MCP support |
-| `Dify` | Proxy to Dify API |
-| `ImageValidator` | Custom base image validation |
+| Agent | Type | Key Features |
+|-------|------|--------------|
+| `ClaudeCode` | `local_engine` | Claude Code SDK, Git clone, Skills support, MCP servers, custom instructions (.cursorrules, .windsurfrules) |
+| `Agno` | `local_engine` | Team modes (coordinate/collaborate/route), SQLite sessions, MCP support |
+| `Dify` | `external_api` | Proxy to Dify (chat/chatflow/workflow/agent-chat modes), no local code execution |
+| `ImageValidator` | `validator` | Custom base image validation |
+
+### Executor Manager
+
+**Tech:** Python, Docker SDK, FastAPI, APScheduler
+
+**Deployment Modes:**
+- **Docker Mode**: Uses Docker SDK to manage containers locally
+
+**Common tasks:**
+- Add executor type: Implement in `executors/`
+- Modify orchestration: Update `scheduler/`
+
+### Chat Shell
+
+**Tech:** FastAPI, LangGraph, LangChain, multi-LLM (Anthropic/OpenAI/Google)
+
+**Running Modes:**
+- `http` - Independent HTTP service with `/v1/response` API (default)
+- `package` - Python package imported by Backend
+- `cli` - Command-line interface for interactive chat
+
 
 ---
 
@@ -484,6 +489,7 @@ docker-compose up -d
 cd backend && uv run pytest
 cd executor && uv run pytest
 cd executor_manager && uv run pytest
+cd chat_shell && uv run pytest
 cd shared && uv run pytest
 cd frontend && npm test
 
@@ -495,9 +501,5 @@ cd frontend && npm run format
 cd backend && uv run alembic revision --autogenerate -m "msg" && uv run alembic upgrade head
 ```
 
-**Ports:** 3000 (frontend), 8000 (backend), 8001 (executor manager), 3306 (MySQL), 6379 (Redis)
+**Ports:** 3000 (frontend), 8000 (backend), 8001 (chat shell), 3306 (MySQL), 6379 (Redis)
 
----
-
-**Last Updated**: 2025-12
-**Wegent Version**: 1.0.20
