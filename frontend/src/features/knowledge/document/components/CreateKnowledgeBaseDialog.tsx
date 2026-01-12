@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import { Switch } from '@/components/ui/switch'
 import {
   Accordion,
   AccordionContent,
@@ -32,6 +33,7 @@ interface CreateKnowledgeBaseDialogProps {
     name: string
     description?: string
     retrieval_config?: Partial<RetrievalConfig>
+    summary_enabled?: boolean
   }) => Promise<void>
   loading?: boolean
   scope?: 'personal' | 'group' | 'all'
@@ -49,6 +51,7 @@ export function CreateKnowledgeBaseDialog({
   const { t } = useTranslation()
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
+  const [summaryEnabled, setSummaryEnabled] = useState(false)
   const [retrievalConfig, setRetrievalConfig] = useState<Partial<RetrievalConfig>>({
     retrieval_mode: 'vector',
     top_k: 5,
@@ -95,9 +98,11 @@ export function CreateKnowledgeBaseDialog({
         name: name.trim(),
         description: description.trim() || undefined,
         retrieval_config: retrievalConfig,
+        summary_enabled: summaryEnabled,
       })
       setName('')
       setDescription('')
+      setSummaryEnabled(false)
       setRetrievalConfig({
         retrieval_mode: 'vector',
         top_k: 5,
@@ -116,6 +121,7 @@ export function CreateKnowledgeBaseDialog({
     if (!newOpen) {
       setName('')
       setDescription('')
+      setSummaryEnabled(false)
       setRetrievalConfig({
         retrieval_mode: 'vector',
         top_k: 5,
@@ -160,6 +166,23 @@ export function CreateKnowledgeBaseDialog({
                 placeholder={t('knowledge:document.knowledgeBase.descriptionPlaceholder')}
                 maxLength={500}
                 rows={3}
+              />
+            </div>
+
+            {/* Summary Settings */}
+            <div className="flex items-center justify-between py-2">
+              <div className="space-y-0.5">
+                <Label htmlFor="summary-enabled">
+                  {t('knowledge:document.summary.enableLabel')}
+                </Label>
+                <p className="text-xs text-text-muted">
+                  {t('knowledge:document.summary.enableDescription')}
+                </p>
+              </div>
+              <Switch
+                id="summary-enabled"
+                checked={summaryEnabled}
+                onCheckedChange={setSummaryEnabled}
               />
             </div>
 

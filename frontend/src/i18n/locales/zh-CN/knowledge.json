@@ -102,6 +102,29 @@
         "enable": "批量启用",
         "disable": "批量停用",
         "delete": "批量删除"
+      },
+      "detail": {
+        "title": "文档详情",
+        "backToList": "返回列表",
+        "summary": "文档摘要",
+        "status": "状态",
+        "statusValues": {
+          "pending": "待处理",
+          "generating": "生成中",
+          "completed": "已完成",
+          "failed": "生成失败"
+        },
+        "topics": "主题标签",
+        "metaInfo": "元信息",
+        "content": "文档内容",
+        "truncated": "内容已截断",
+        "copy": "复制",
+        "copied": "已复制",
+        "copySuccess": "复制成功",
+        "copyError": "复制失败",
+        "contentLength": "内容长度",
+        "characters": "字符",
+        "noContent": "暂无内容"
       }
     },
     "upload": {
@@ -213,6 +236,10 @@
       "bufferSizeHint": "语义分段的缓冲区大小 (1-10)",
       "breakpointThreshold": "断点阈值",
       "breakpointThresholdHint": "确定断点的百分位阈值 (50-100)"
+    },
+    "summary": {
+      "enableLabel": "自动生成摘要",
+      "enableDescription": "上传文档时自动生成文档摘要"
     },
     "retrievalTest": {
       "button": "召回测试",

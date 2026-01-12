@@ -65,6 +65,8 @@ export interface KnowledgeBase {
   document_count: number
   is_active: boolean
   retrieval_config?: RetrievalConfig
+  summary_enabled: boolean
+  summary?: KnowledgeBaseSummary | null
   created_at: string
   updated_at: string
 }
@@ -74,6 +76,7 @@ export interface KnowledgeBaseCreate {
   description?: string
   namespace?: string
   retrieval_config?: Partial<RetrievalConfig>
+  summary_enabled?: boolean
 }
 
 export interface RetrievalConfigUpdate {
@@ -90,6 +93,7 @@ export interface KnowledgeBaseUpdate {
   name?: string
   description?: string
   retrieval_config?: RetrievalConfigUpdate
+  summary_enabled?: boolean
 }
 
 export interface KnowledgeBaseListResponse {
@@ -174,4 +178,50 @@ export interface TableUrlValidationResponse {
     | 'TABLE_ACCESS_FAILED'
     | 'TABLE_ACCESS_FAILED_LINKED_TABLE'
   error_message?: string
+}
+
+// Document Summary types
+export interface DocumentSummary {
+  short_summary: string
+  long_summary: string
+  topics: string[]
+  meta_info?: {
+    author?: string
+    source?: string
+    type?: string
+  }
+  status: 'generating' | 'completed' | 'failed'
+  task_id?: string
+  error?: string
+  updated_at?: string
+}
+
+// Knowledge Base Summary types
+export interface KnowledgeBaseSummary {
+  short_summary: string
+  long_summary: string
+  topics: string[]
+  meta_info?: {
+    document_count?: number
+    last_updated?: string
+  }
+  status: 'pending' | 'generating' | 'completed' | 'failed'
+  task_id?: number
+  error?: string
+  updated_at?: string
+  last_summary_doc_count?: number
+}
+
+export interface KnowledgeBaseSummaryResponse {
+  kb_id: number
+  summary: KnowledgeBaseSummary | null
+}
+
+// Document Detail types
+export interface DocumentDetailResponse {
+  document_id: number
+  content?: string
+  content_length?: number
+  truncated?: boolean
+  summary?: DocumentSummary | null
 }
