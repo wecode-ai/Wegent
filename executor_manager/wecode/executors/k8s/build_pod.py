@@ -4,18 +4,17 @@
 
 import json
 import os
+
 import yaml
 from jinja2 import Environment, FileSystemLoader
+from shared.telemetry.config import get_otel_config
 
 from executor_manager.config.config import EXECUTOR_ENV
-from executor_manager.wecode.config.config import (
-    REPO_PROXY_CONFIG
-)
+from executor_manager.wecode.config.config import (EXECUTOR_CUSTOM_CONFIG,
+                                                   REPO_PROXY_CONFIG)
 from executor_manager.wecode.executors.k8s.binary_extractor import (
-    get_init_container_config,
-    should_use_init_container
-)
-from shared.telemetry.config import get_otel_config
+    get_init_container_config, should_use_init_container)
+
 
 def to_nice_yaml(value, indent=2):
     """
@@ -23,11 +22,9 @@ def to_nice_yaml(value, indent=2):
     Note: We preserve the 'name' field for initContainers.
     """
     return yaml.dump(
-        value,
-        default_flow_style=False,
-        indent=indent,
-        sort_keys=False
+        value, default_flow_style=False, indent=indent, sort_keys=False
     ).rstrip()
+
 
 def build_pod_configuration(
     username, executor_name, namespace, task, image, task_id, mode
@@ -55,10 +52,10 @@ def build_pod_configuration(
     env.filters["to_nice_yaml"] = to_nice_yaml
 
     # Load the template
-    template = env.get_template('pod_template.yaml')
+    template = env.get_template("pod_template.yaml")
 
     repo_proxy_config = {}
-    if "github.com" in task.get("git_domain",""):
+    if "github.com" in task.get("git_domain", ""):
         repo_proxy_config = REPO_PROXY_CONFIG
 
     volumes_info = build_pod_volumes(task)
@@ -100,33 +97,36 @@ def build_pod_configuration(
 
     # Prepare template parameters
     template_params = {
-        'username': username,
-        'executor_name': executor_name,
-        'namespace': namespace,
-        'task_str': json.dumps(task),
-        'image': container_image,
-        'task_id': task_id,
-        'task_type': task.get("type", "online"),
-        'mode': mode,
-        'executor_env': EXECUTOR_ENV,
-        'repo_proxy_config': repo_proxy_config,
-        'volumes': volumes_info.get("volumes", []),
-        'volume_mounts': volumes_info.get("volume_mounts", []),
-        'init_container': init_container,
-        'container_entrypoint': container_entrypoint,
-        'use_base_image': use_init_container,
-        'task_api_domain': os.getenv("TASK_API_DOMAIN", "http://wegent-backend-web.wb-plat-ide:8080"),
+        "username": username,
+        "executor_name": executor_name,
+        "namespace": namespace,
+        "task_str": json.dumps(task),
+        "image": container_image,
+        "task_id": task_id,
+        "task_type": task.get("type", "online"),
+        "mode": mode,
+        "executor_env": EXECUTOR_ENV,
+        "repo_proxy_config": repo_proxy_config,
+        "executor_custom_config": EXECUTOR_CUSTOM_CONFIG,
+        "volumes": volumes_info.get("volumes", []),
+        "volume_mounts": volumes_info.get("volume_mounts", []),
+        "init_container": init_container,
+        "container_entrypoint": container_entrypoint,
+        "use_base_image": use_init_container,
+        "task_api_domain": os.getenv(
+            "TASK_API_DOMAIN", "http://wegent-backend-web.wb-plat-ide:8080"
+        ),
         # OpenTelemetry configuration
-        'otel_enabled': otel_config.enabled,
-        'otel_service_name': 'wegent-executor',
-        'otel_otlp_endpoint': otel_config.otlp_endpoint,
-        'otel_sampler_ratio': otel_config.sampler_ratio,
-        'otel_metrics_enabled': otel_config.metrics_enabled,
-        'otel_capture_request_headers': otel_config.capture_request_headers,
-        'otel_capture_request_body': otel_config.capture_request_body,
-        'otel_capture_response_headers': otel_config.capture_response_headers,
-        'otel_capture_response_body': otel_config.capture_response_body,
-        'otel_max_body_size': otel_config.max_body_size,
+        "otel_enabled": otel_config.enabled,
+        "otel_service_name": "wegent-executor",
+        "otel_otlp_endpoint": otel_config.otlp_endpoint,
+        "otel_sampler_ratio": otel_config.sampler_ratio,
+        "otel_metrics_enabled": otel_config.metrics_enabled,
+        "otel_capture_request_headers": otel_config.capture_request_headers,
+        "otel_capture_request_body": otel_config.capture_request_body,
+        "otel_capture_response_headers": otel_config.capture_response_headers,
+        "otel_capture_response_body": otel_config.capture_response_body,
+        "otel_max_body_size": otel_config.max_body_size,
     }
 
     # Render the template
@@ -136,6 +136,7 @@ def build_pod_configuration(
     pod_config = yaml.safe_load(rendered_yaml)
 
     return pod_config
+
 
 def _get_base_image_from_task(task):
     """
@@ -155,54 +156,60 @@ def _get_base_image_from_task(task):
             return first_bot.get("base_image")
     return None
 
+
 def build_pod_volumes(task):
-        """
-        Build Kubernetes pod volumes configuration for Git SSH access
+    """
+    Build Kubernetes pod volumes configuration for Git SSH access
 
-        Args:
-            task: Task dictionary containing user information
+    Args:
+        task: Task dictionary containing user information
 
-        Returns:
-            dict: Volume mounts and volumes configuration
-        """
-        user_info = task.get("user", {})
-        user_name = user_info.get("name", "").replace("_", "--")
-        git_domain = user_info.get("git_domain", "")
+    Returns:
+        dict: Volume mounts and volumes configuration
+    """
+    user_info = task.get("user", {})
+    user_name = user_info.get("name", "").replace("_", "--")
+    git_domain = user_info.get("git_domain", "")
 
-        # Supported Git domains
-        supported_domains = ["git.intra.weibo.com", "git.staff.sina.com.cn", "gitlab.weibo.cn"]
+    # Supported Git domains
+    supported_domains = [
+        "git.intra.weibo.com",
+        "git.staff.sina.com.cn",
+        "gitlab.weibo.cn",
+    ]
 
-        if git_domain in supported_domains:
-            # Base volume mounts (id_rsa.pub is always needed)
-            volume_mounts = [
-                {
-                    "mountPath": "/root/.ssh/id_rsa.pub",
-                    "name": "git-ssh",
-                    "readOnly": True,
-                    "subPath": "id_rsa.pub",
-                }
-            ]
+    if git_domain in supported_domains:
+        # Base volume mounts (id_rsa.pub is always needed)
+        volume_mounts = [
+            {
+                "mountPath": "/root/.ssh/id_rsa.pub",
+                "name": "git-ssh",
+                "readOnly": True,
+                "subPath": "id_rsa.pub",
+            }
+        ]
 
-            # Add domain-specific SSH config
-            volume_mounts.append({
+        # Add domain-specific SSH config
+        volume_mounts.append(
+            {
                 "mountPath": f"/root/.ssh/{git_domain}",
                 "name": "git-ssh",
                 "readOnly": True,
                 "subPath": git_domain,
-            })
-
-            return {
-                "volume_mounts": volume_mounts,
-                "volumes": [
-                    {
-                        "name": "git-ssh",
-                        "secret": {
-                            "defaultMode": 400,
-                            "secretName": f"wecode-secret-{user_name}",
-                        },
-                    }
-                ],
             }
-        else:
-            return {}
+        )
 
+        return {
+            "volume_mounts": volume_mounts,
+            "volumes": [
+                {
+                    "name": "git-ssh",
+                    "secret": {
+                        "defaultMode": 400,
+                        "secretName": f"wecode-secret-{user_name}",
+                    },
+                }
+            ],
+        }
+    else:
+        return {}
