@@ -677,6 +677,7 @@ async def _stream_with_http_adapter(
         team_id=stream_data.team_id,
         team_name=stream_data.team_name,
         message_id=ws_config.message_id,
+        user_message_id=ws_config.user_message_id,  # For history exclusion
         is_group_chat=ws_config.is_group_chat,
         model_config=model_config,
         system_prompt=system_prompt,

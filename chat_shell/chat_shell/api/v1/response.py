@@ -207,6 +207,7 @@ async def _stream_response(
         team_name = ""
         is_group_chat = False
         message_id = None
+        user_message_id = None  # For history exclusion
         bot_name = ""
         bot_namespace = ""
         skill_names = []
@@ -225,6 +226,7 @@ async def _stream_response(
             team_name = getattr(request.metadata, "team_name", "") or ""
             is_group_chat = request.metadata.chat_type == "group"
             message_id = getattr(request.metadata, "message_id", None)
+            user_message_id = getattr(request.metadata, "user_message_id", None)
             bot_name = getattr(request.metadata, "bot_name", "") or ""
             bot_namespace = getattr(request.metadata, "bot_namespace", "") or ""
             skill_names = getattr(request.metadata, "skill_names", None) or []
@@ -249,6 +251,7 @@ async def _stream_response(
             team_id=team_id,
             team_name=team_name,
             message_id=message_id,
+            user_message_id=user_message_id,
             is_group_chat=is_group_chat,
             model_config=model_config,
             system_prompt=request.system or "",

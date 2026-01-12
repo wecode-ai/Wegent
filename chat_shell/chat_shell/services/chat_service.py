@@ -124,15 +124,19 @@ class ChatService(ChatInterface):
             )
 
             # Load chat history (automatically uses remote API in HTTP mode)
+            # Use user_message_id to exclude current user message (and all messages after it)
+            exclude_message_id = request.user_message_id or request.message_id
             logger.debug(
-                "[CHAT_SERVICE] >>> Loading history: task_id=%d, message_id=%s",
+                "[CHAT_SERVICE] >>> Loading history: task_id=%d, exclude_message_id=%s (user_message_id=%s, message_id=%s)",
                 request.task_id,
+                exclude_message_id,
+                request.user_message_id,
                 request.message_id,
             )
             history = await get_chat_history(
                 task_id=request.task_id,
                 is_group_chat=request.is_group_chat,
-                exclude_after_message_id=request.message_id,
+                exclude_after_message_id=exclude_message_id,
             )
             logger.debug(
                 "[CHAT_SERVICE] <<< History loaded: %d messages",
