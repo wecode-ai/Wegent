@@ -81,7 +81,8 @@ class PrometheusMiddleware(BaseHTTPMiddleware):
 
     This middleware automatically tracks:
     - Total HTTP requests (by method, path, status code)
-    - Request duration (histogram)
+    - Request duration (histogram, standard and high-resolution)
+    - Request/response body sizes (summary)
     - In-progress requests (gauge)
 
     Usage:
@@ -116,6 +117,42 @@ class PrometheusMiddleware(BaseHTTPMiddleware):
         self.normalize_paths = normalize_paths
         self.path_patterns = path_patterns
 
+    def _get_request_size(self, request: Request) -> int:
+        """
+        Get the size of the request body from Content-Length header.
+
+        Args:
+            request: The incoming request
+
+        Returns:
+            int: Request body size in bytes, or 0 if not available
+        """
+        content_length = request.headers.get("content-length")
+        if content_length:
+            try:
+                return int(content_length)
+            except (ValueError, TypeError):
+                return 0
+        return 0
+
+    def _get_response_size(self, response: Response) -> int:
+        """
+        Get the size of the response body from Content-Length header.
+
+        Args:
+            response: The response object
+
+        Returns:
+            int: Response body size in bytes, or 0 if not available
+        """
+        content_length = response.headers.get("content-length")
+        if content_length:
+            try:
+                return int(content_length)
+            except (ValueError, TypeError):
+                return 0
+        return 0
+
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         """
         Process the request and record metrics.
@@ -140,6 +177,9 @@ class PrometheusMiddleware(BaseHTTPMiddleware):
         else:
             normalized_path = path
 
+        # Get request size
+        request_size = self._get_request_size(request)
+
         # Record request start
         start_time = time.perf_counter()
         self.metrics.record_request_start(method, normalized_path)
@@ -148,18 +188,31 @@ class PrometheusMiddleware(BaseHTTPMiddleware):
             # Process the request
             response = await call_next(request)
             status_code = response.status_code
-        except Exception as e:
+            response_size = self._get_response_size(response)
+        except Exception:
             # Record as 500 on unhandled exception
             status_code = 500
             duration = time.perf_counter() - start_time
             self.metrics.record_request_end(
-                method, normalized_path, status_code, duration
+                method=method,
+                path=normalized_path,
+                status_code=status_code,
+                duration=duration,
+                request_size=request_size,
+                response_size=0,
             )
             raise
 
         # Record request end
         duration = time.perf_counter() - start_time
-        self.metrics.record_request_end(method, normalized_path, status_code, duration)
+        self.metrics.record_request_end(
+            method=method,
+            path=normalized_path,
+            status_code=status_code,
+            duration=duration,
+            request_size=request_size,
+            response_size=response_size,
+        )
 
         return response
 

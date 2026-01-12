@@ -67,7 +67,7 @@ class TestPrometheusConfig:
 
         assert config.enabled is False
         assert config.metrics_path == "/metrics"
-        assert config.metrics_prefix == "wegent_"
+        assert config.metrics_prefix == ""  # Empty by default for compatibility
         assert config.exclude_paths == DEFAULT_EXCLUDE_PATHS
 
     def test_config_from_env_enabled(self):
@@ -193,6 +193,9 @@ class TestPrometheusMetrics:
 
         assert metrics.http_requests_total is not None
         assert metrics.http_request_duration_seconds is not None
+        assert metrics.http_request_duration_highr_seconds is not None
+        assert metrics.http_request_size_bytes is not None
+        assert metrics.http_response_size_bytes is not None
         assert metrics.http_requests_in_progress is not None
 
     def test_record_request_lifecycle(self):
@@ -202,11 +205,32 @@ class TestPrometheusMetrics:
         # Start request
         metrics.record_request_start("GET", "/api/users")
 
-        # End request
-        metrics.record_request_end("GET", "/api/users", 200, 0.5)
+        # End request with size information
+        metrics.record_request_end(
+            "GET", "/api/users", 200, 0.5, request_size=100, response_size=500
+        )
 
         # Verify metrics were recorded (basic check that no exceptions)
         # Full verification would require checking metric values
+
+    def test_record_request_with_sizes(self):
+        """Test recording request with body sizes."""
+        metrics = PrometheusMetrics(config=self.config, registry=self.registry)
+
+        metrics.record_request_start("POST", "/api/data")
+        metrics.record_request_end(
+            method="POST",
+            path="/api/data",
+            status_code=201,
+            duration=0.3,
+            request_size=1024,
+            response_size=2048,
+        )
+
+        # Verify size metrics are recorded
+        text = get_metrics_text(self.registry)
+        assert "test_http_request_size_bytes" in text
+        assert "test_http_response_size_bytes" in text
 
     def test_register_custom_counter(self):
         """Test registering a custom counter."""
@@ -315,3 +339,4 @@ class TestMetricsResponse:
 
         assert "test_http_requests_total" in text
         assert "test_http_request_duration_seconds" in text
+        assert "test_http_request_duration_highr_seconds" in text

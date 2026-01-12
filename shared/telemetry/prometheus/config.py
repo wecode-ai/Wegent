@@ -11,7 +11,7 @@ for Prometheus metrics collection across all Wegent services.
 Environment Variables:
     PROMETHEUS_ENABLED: Enable/disable Prometheus metrics (default: false)
     PROMETHEUS_METRICS_PATH: Metrics endpoint path (default: /metrics)
-    PROMETHEUS_METRICS_PREFIX: Prefix for all metric names (default: wegent_)
+    PROMETHEUS_METRICS_PREFIX: Prefix for all metric names (default: empty string for compatibility)
     PROMETHEUS_EXCLUDE_PATHS: Comma-separated list of paths to exclude from metrics
 """
 
@@ -31,14 +31,14 @@ class PrometheusConfig:
     Attributes:
         enabled: Whether Prometheus metrics collection is enabled
         metrics_path: The path where metrics will be exposed (default: /metrics)
-        metrics_prefix: Prefix for all metric names (default: wegent_)
+        metrics_prefix: Prefix for all metric names (default: empty string)
         exclude_paths: List of URL paths to exclude from metrics collection
         service_name: Name of the service for metric labels
     """
 
     enabled: bool = False
     metrics_path: str = "/metrics"
-    metrics_prefix: str = "wegent_"
+    metrics_prefix: str = ""  # Empty by default for prometheus-fastapi-instrumentator compatibility
     exclude_paths: List[str] = field(default_factory=list)
     service_name: str = "wegent-service"
 
@@ -102,7 +102,7 @@ def get_prometheus_config(
         _prometheus_config = PrometheusConfig(
             enabled=os.getenv("PROMETHEUS_ENABLED", "false").lower() == "true",
             metrics_path=os.getenv("PROMETHEUS_METRICS_PATH", "/metrics"),
-            metrics_prefix=os.getenv("PROMETHEUS_METRICS_PREFIX", "wegent_"),
+            metrics_prefix=os.getenv("PROMETHEUS_METRICS_PREFIX", ""),
             exclude_paths=exclude_paths,
             service_name=service_name,
         )
