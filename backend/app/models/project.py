@@ -39,6 +39,7 @@ class Project(Base):
     id = Column(Integer, primary_key=True, index=True, comment="Primary key")
     user_id = Column(
         Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
         comment="Project owner user ID",
@@ -50,8 +51,8 @@ class Project(Base):
     )
     description = Column(
         Text,
-        nullable=False,
-        default="",
+        nullable=True,
+        default=None,
         comment="Project description",
     )
     color = Column(

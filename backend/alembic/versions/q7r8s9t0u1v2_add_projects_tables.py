@@ -34,7 +34,7 @@ def upgrade() -> None:
         id INT NOT NULL AUTO_INCREMENT COMMENT 'Primary key',
         user_id INT NOT NULL COMMENT 'Project owner user ID',
         name VARCHAR(100) NOT NULL COMMENT 'Project name',
-        description TEXT NOT NULL COMMENT 'Project description',
+        description TEXT DEFAULT NULL COMMENT 'Project description',
         color VARCHAR(20) DEFAULT NULL COMMENT 'Project color identifier (e.g., #FF5733)',
         sort_order INT NOT NULL DEFAULT 0 COMMENT 'Sort order for display',
         is_expanded TINYINT(1) NOT NULL DEFAULT 1 COMMENT 'Whether the project is expanded in UI',
@@ -43,7 +43,8 @@ def upgrade() -> None:
         updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'Last update timestamp',
         PRIMARY KEY (id),
         KEY idx_projects_user_id (user_id),
-        KEY idx_projects_sort_order (sort_order)
+        KEY idx_projects_sort_order (sort_order),
+        CONSTRAINT fk_projects_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Projects table for task organization'
     """
     )

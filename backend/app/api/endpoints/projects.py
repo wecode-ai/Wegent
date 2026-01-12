@@ -7,7 +7,7 @@ Project API endpoints for managing projects and project-task associations.
 
 Projects are containers for organizing tasks. A task can belong to multiple projects.
 """
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -93,7 +93,7 @@ def get_project_endpoint(
 @router.put("/{project_id}", response_model=ProjectResponse)
 def update_project_endpoint(
     project_id: int = Path(..., description="Project ID"),
-    project_update: ProjectUpdate = None,
+    project_update: ProjectUpdate = Body(...),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -152,7 +152,7 @@ def delete_project_endpoint(
 )
 def add_task_to_project_endpoint(
     project_id: int = Path(..., description="Project ID"),
-    task_data: ProjectTaskCreate = None,
+    task_data: ProjectTaskCreate = Body(...),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -218,7 +218,7 @@ def remove_task_from_project_endpoint(
 )
 def reorder_project_tasks_endpoint(
     project_id: int = Path(..., description="Project ID"),
-    reorder_data: ProjectTaskReorderRequest = None,
+    reorder_data: ProjectTaskReorderRequest = Body(...),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
