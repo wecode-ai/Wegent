@@ -44,7 +44,8 @@ class ChatRequest:
     team_id: int
     team_name: str
     request_id: str = ""
-    message_id: Optional[int] = None
+    message_id: Optional[int] = None  # Assistant's message_id for frontend ordering
+    user_message_id: Optional[int] = None  # User's message_id for history exclusion
     is_group_chat: bool = False
 
     # Model configuration
