@@ -11,6 +11,7 @@ import { teamService } from '@/features/tasks/service/teamService'
 import TopNavigation from '@/features/layout/TopNavigation'
 import { TaskSidebar, SearchDialog } from '@/features/tasks/components/sidebar'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
+import GreyTestButton from '@/features/layout/components/GreyTestButton'
 import { Team } from '@/types/api'
 import { saveLastTab } from '@/utils/userPreferences'
 import { useUser } from '@/features/common/UserContext'
@@ -157,6 +158,7 @@ export function ChatPageMobile() {
             </Button>
           )}
           {shareButton}
+          <GreyTestButton />
           <ThemeToggle />
         </TopNavigation>
         {/* Chat area without repository selector */}
