@@ -7,12 +7,26 @@ Storage backend abstract interface for attachment storage.
 
 This module defines the abstract base class for storage backends,
 allowing pluggable storage solutions (MySQL, S3, MinIO, etc.).
+
+ENCRYPTION SUPPORT:
+Storage backends can optionally encrypt attachment binary data using AES-256-CBC.
+Encryption is controlled by the ATTACHMENT_ENCRYPTION_ENABLED environment variable.
+When enabled, backends should:
+1. Encrypt binary data before saving using _encrypt_if_enabled()
+2. Decrypt binary data when retrieving using _decrypt_if_needed()
+3. Store encryption metadata in the context's type_data field
+
+Encryption is transparent to API consumers - they always receive decrypted data.
 """
 
+import logging
+import os
 import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Dict, Optional
+
+logger = logging.getLogger(__name__)
 
 
 class StorageBackend(ABC):
@@ -21,7 +35,70 @@ class StorageBackend(ABC):
 
     Different storage backends (MySQL, S3, MinIO, etc.) should implement this interface.
     This allows the attachment service to use any storage backend without changes.
+
+    ENCRYPTION SUPPORT:
+    Subclasses can use the helper methods _should_encrypt(), _encrypt_if_enabled(),
+    and _decrypt_if_needed() to implement transparent encryption/decryption.
     """
+
+    @staticmethod
+    def _should_encrypt() -> bool:
+        """
+        Check if attachment encryption is enabled.
+
+        Returns:
+            True if ATTACHMENT_ENCRYPTION_ENABLED is set to true, False otherwise
+        """
+        return (
+            os.environ.get("ATTACHMENT_ENCRYPTION_ENABLED", "false").lower() == "true"
+        )
+
+    @staticmethod
+    def _encrypt_if_enabled(data: bytes) -> bytes:
+        """
+        Conditionally encrypt data if encryption is enabled.
+
+        Args:
+            data: Binary data to encrypt
+
+        Returns:
+            Encrypted data if encryption is enabled, otherwise original data
+
+        Raises:
+            Exception: If encryption is enabled but fails
+        """
+        if not StorageBackend._should_encrypt():
+            return data
+
+        # Import here to avoid circular dependency
+        from shared.utils.crypto import encrypt_attachment
+
+        logger.info("Encrypting attachment data with AES-256-CBC")
+        return encrypt_attachment(data)
+
+    @staticmethod
+    def _decrypt_if_needed(data: bytes, is_encrypted: bool) -> bytes:
+        """
+        Conditionally decrypt data if it's marked as encrypted.
+
+        Args:
+            data: Binary data to decrypt
+            is_encrypted: Whether the data is encrypted (from type_data)
+
+        Returns:
+            Decrypted data if encrypted, otherwise original data
+
+        Raises:
+            Exception: If decryption fails
+        """
+        if not is_encrypted:
+            return data
+
+        # Import here to avoid circular dependency
+        from shared.utils.crypto import decrypt_attachment
+
+        logger.debug("Decrypting attachment data")
+        return decrypt_attachment(data)
 
     @abstractmethod
     def save(self, key: str, data: bytes, metadata: Dict) -> str:
