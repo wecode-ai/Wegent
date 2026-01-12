@@ -10,7 +10,7 @@ embedding API, supporting models like voyage-3.
 """
 
 import asyncio
-from typing import ClassVar, Dict, List, Optional
+from typing import Any, ClassVar, Dict, List, Optional
 
 import requests
 from llama_index.core.base.embeddings.base import BaseEmbedding
@@ -135,7 +135,7 @@ def verify_voyage_connection(
     api_key: str,
     model_id: str = "voyage-3",
     base_url: Optional[str] = None,
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """
     Verify Voyage API connection by making a simple embedding request.
 
