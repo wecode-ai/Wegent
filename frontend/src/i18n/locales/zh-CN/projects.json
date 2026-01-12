@@ -1,0 +1,70 @@
+{
+  "title": "项目",
+  "newProject": "新建项目",
+  "noProjects": "暂无项目",
+  "noProjectsDesc": "创建一个项目来组织你的任务",
+  "taskCount": "{{count}} 个任务",
+  "emptyProject": "暂无任务",
+  "emptyProjectDesc": "拖拽任务到这里",
+  "dropHere": "放置到此项目",
+  "section": {
+    "title": "对话分组",
+    "empty": "暂无项目，点击 + 创建",
+    "noTasks": "暂无任务"
+  },
+  "actions": {
+    "edit": "编辑",
+    "delete": "删除"
+  },
+  "create": {
+    "title": "新建项目",
+    "description": "创建一个新项目来组织你的任务",
+    "nameLabel": "项目名称",
+    "namePlaceholder": "输入项目名称",
+    "descriptionLabel": "描述（可选）",
+    "descriptionPlaceholder": "输入项目描述",
+    "colorLabel": "颜色",
+    "submit": "创建",
+    "cancel": "取消"
+  },
+  "edit": {
+    "title": "编辑项目",
+    "description": "修改项目信息",
+    "submit": "保存",
+    "cancel": "取消"
+  },
+  "delete": {
+    "title": "删除项目",
+    "description": "确定要删除项目「{{name}}」吗？项目中的任务不会被删除，只会解除与项目的关联。",
+    "confirm": "删除",
+    "cancel": "取消"
+  },
+  "menu": {
+    "edit": "编辑",
+    "delete": "删除",
+    "removeTask": "从项目移除"
+  },
+  "toast": {
+    "createSuccess": "项目创建成功",
+    "createSuccessDesc": "项目「{{name}}」已创建",
+    "createFailed": "创建项目失败",
+    "updateSuccess": "项目更新成功",
+    "updateFailed": "更新项目失败",
+    "deleteSuccess": "项目删除成功",
+    "deleteFailed": "删除项目失败",
+    "addTaskSuccess": "任务已添加到项目",
+    "addTaskFailed": "添加任务失败",
+    "removeTaskSuccess": "任务已从项目移除",
+    "removeTaskFailed": "移除任务失败"
+  },
+  "colors": {
+    "red": "红色",
+    "orange": "橙色",
+    "yellow": "黄色",
+    "green": "绿色",
+    "blue": "蓝色",
+    "purple": "紫色",
+    "pink": "粉色",
+    "gray": "灰色"
+  }
+}
