@@ -21,13 +21,13 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import {
-  Drawer,
-  DrawerContent,
-  DrawerDescription,
-  DrawerFooter,
-  DrawerHeader,
-  DrawerTitle,
-} from '@/components/ui/drawer'
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Switch } from '@/components/ui/switch'
 import { flowApis } from '@/apis/flow'
 import { teamApis } from '@/apis/team'
@@ -40,6 +40,7 @@ import type {
   FlowUpdateRequest,
 } from '@/types/flow'
 import { toast } from 'sonner'
+import { CronSchedulePicker } from './CronSchedulePicker'
 
 interface FlowFormProps {
   open: boolean
@@ -165,11 +166,12 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
         toast.success(t('update_success'))
       } else {
         // Generate name from display name
-        const generatedName = displayName
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, '-')
-          .replace(/^-|-$/g, '')
-          .slice(0, 50) || `flow-${Date.now()}`
+        const generatedName =
+          displayName
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-|-$/g, '')
+            .slice(0, 50) || `flow-${Date.now()}`
 
         const createData: FlowCreateRequest = {
           name: generatedName,
@@ -216,21 +218,10 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
     switch (triggerType) {
       case 'cron':
         return (
-          <div className="space-y-3">
-            <div>
-              <Label>{t('cron_expression')}</Label>
-              <Input
-                value={(triggerConfig.expression as string) || ''}
-                onChange={e =>
-                  setTriggerConfig({ ...triggerConfig, expression: e.target.value })
-                }
-                placeholder="0 9 * * *"
-              />
-              <p className="mt-1 text-xs text-text-muted">
-                {t('cron_hint')}
-              </p>
-            </div>
-          </div>
+          <CronSchedulePicker
+            value={(triggerConfig.expression as string) || '0 9 * * *'}
+            onChange={expression => setTriggerConfig({ ...triggerConfig, expression })}
+          />
         )
       case 'interval':
         return (
@@ -253,9 +244,7 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
               <Label>{t('interval_unit')}</Label>
               <Select
                 value={(triggerConfig.unit as string) || 'hours'}
-                onValueChange={value =>
-                  setTriggerConfig({ ...triggerConfig, unit: value })
-                }
+                onValueChange={value => setTriggerConfig({ ...triggerConfig, unit: value })}
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -269,37 +258,46 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
             </div>
           </div>
         )
-      case 'one_time':
+      case 'one_time': {
+        // Convert ISO string to local datetime-local format (YYYY-MM-DDTHH:mm)
+        const getLocalDateTimeValue = (isoString: string | undefined): string => {
+          if (!isoString) return ''
+          const date = new Date(isoString)
+          if (isNaN(date.getTime())) return ''
+          // Format as local time for datetime-local input
+          const year = date.getFullYear()
+          const month = String(date.getMonth() + 1).padStart(2, '0')
+          const day = String(date.getDate()).padStart(2, '0')
+          const hours = String(date.getHours()).padStart(2, '0')
+          const minutes = String(date.getMinutes()).padStart(2, '0')
+          return `${year}-${month}-${day}T${hours}:${minutes}`
+        }
+
         return (
           <div>
             <Label>{t('execute_at')}</Label>
             <Input
               type="datetime-local"
-              value={
-                triggerConfig.execute_at
-                  ? new Date(triggerConfig.execute_at as string)
-                      .toISOString()
-                      .slice(0, 16)
-                  : ''
-              }
-              onChange={e =>
-                setTriggerConfig({
-                  ...triggerConfig,
-                  execute_at: new Date(e.target.value).toISOString(),
-                })
-              }
+              value={getLocalDateTimeValue(triggerConfig.execute_at as string)}
+              onChange={e => {
+                if (e.target.value) {
+                  setTriggerConfig({
+                    ...triggerConfig,
+                    execute_at: new Date(e.target.value).toISOString(),
+                  })
+                }
+              }}
             />
           </div>
         )
+      }
       case 'event':
         return (
           <div>
             <Label>{t('event_type')}</Label>
             <Select
               value={(triggerConfig.event_type as string) || 'webhook'}
-              onValueChange={value =>
-                setTriggerConfig({ ...triggerConfig, event_type: value })
-              }
+              onValueChange={value => setTriggerConfig({ ...triggerConfig, event_type: value })}
             >
               <SelectTrigger>
                 <SelectValue />
@@ -314,12 +312,20 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
                 <div>
                   <Label>{t('git_repository')}</Label>
                   <Input
-                    value={(triggerConfig.git_push as { repository?: string; branch?: string } | undefined)?.repository || ''}
+                    value={
+                      (
+                        triggerConfig.git_push as
+                          | { repository?: string; branch?: string }
+                          | undefined
+                      )?.repository || ''
+                    }
                     onChange={e =>
                       setTriggerConfig({
                         ...triggerConfig,
                         git_push: {
-                          ...(triggerConfig.git_push as { repository?: string; branch?: string } | undefined),
+                          ...(triggerConfig.git_push as
+                            | { repository?: string; branch?: string }
+                            | undefined),
                           repository: e.target.value,
                         },
                       })
@@ -330,12 +336,20 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
                 <div>
                   <Label>{t('git_branch')}</Label>
                   <Input
-                    value={(triggerConfig.git_push as { repository?: string; branch?: string } | undefined)?.branch || ''}
+                    value={
+                      (
+                        triggerConfig.git_push as
+                          | { repository?: string; branch?: string }
+                          | undefined
+                      )?.branch || ''
+                    }
                     onChange={e =>
                       setTriggerConfig({
                         ...triggerConfig,
                         git_push: {
-                          ...(triggerConfig.git_push as { repository?: string; branch?: string } | undefined),
+                          ...(triggerConfig.git_push as
+                            | { repository?: string; branch?: string }
+                            | undefined),
                           branch: e.target.value,
                         },
                       })
@@ -353,18 +367,16 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
   }
 
   return (
-    <Drawer open={open} onOpenChange={onOpenChange}>
-      <DrawerContent className="w-[500px] overflow-y-auto sm:max-w-[500px]">
-        <DrawerHeader>
-          <DrawerTitle>
-            {isEditing ? t('edit_flow') : t('create_flow')}
-          </DrawerTitle>
-          <DrawerDescription>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-hidden flex flex-col">
+        <DialogHeader>
+          <DialogTitle>{isEditing ? t('edit_flow') : t('create_flow')}</DialogTitle>
+          <DialogDescription>
             {isEditing ? t('edit_flow_desc') : t('create_flow_desc')}
-          </DrawerDescription>
-        </DrawerHeader>
+          </DialogDescription>
+        </DialogHeader>
 
-        <div className="mt-6 space-y-6">
+        <div className="flex-1 overflow-y-auto space-y-6 py-4">
           {/* Display Name */}
           <div>
             <Label>{t('display_name')} *</Label>
@@ -388,10 +400,7 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
           {/* Task Type */}
           <div>
             <Label>{t('task_type')} *</Label>
-            <Select
-              value={taskType}
-              onValueChange={value => setTaskType(value as FlowTaskType)}
-            >
+            <Select value={taskType} onValueChange={value => setTaskType(value as FlowTaskType)}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
@@ -409,10 +418,7 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
           {/* Trigger Type */}
           <div>
             <Label>{t('trigger_type')} *</Label>
-            <Select
-              value={triggerType}
-              onValueChange={handleTriggerTypeChange}
-            >
+            <Select value={triggerType} onValueChange={handleTriggerTypeChange}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
@@ -461,9 +467,7 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
               placeholder={t('prompt_template_placeholder')}
               rows={4}
             />
-            <p className="mt-1 text-xs text-text-muted">
-              {t('prompt_variables_hint')}
-            </p>
+            <p className="mt-1 text-xs text-text-muted">{t('prompt_variables_hint')}</p>
           </div>
 
           {/* Retry Count */}
@@ -492,12 +496,8 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
           </div>
         </div>
 
-        <DrawerFooter className="mt-6">
-          <Button
-            variant="outline"
-            onClick={() => onOpenChange(false)}
-            disabled={submitting}
-          >
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
             {t('common:actions.cancel')}
           </Button>
           <Button onClick={handleSubmit} disabled={submitting}>
@@ -507,8 +507,8 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
                 ? t('common:actions.save')
                 : t('common:actions.create')}
           </Button>
-        </DrawerFooter>
-      </DrawerContent>
-    </Drawer>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

@@ -45,10 +45,10 @@ class FlowService:
 
     # Supported prompt template variables
     TEMPLATE_VARIABLES = {
-        "date": lambda: datetime.utcnow().strftime("%Y-%m-%d"),
-        "time": lambda: datetime.utcnow().strftime("%H:%M:%S"),
-        "datetime": lambda: datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
-        "timestamp": lambda: str(int(datetime.utcnow().timestamp())),
+        "date": lambda: datetime.now().strftime("%Y-%m-%d"),
+        "time": lambda: datetime.now().strftime("%H:%M:%S"),
+        "datetime": lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "timestamp": lambda: str(int(datetime.now().timestamp())),
     }
 
     def create_flow(
@@ -334,7 +334,7 @@ class FlowService:
 
         # Save changes
         flow.json = flow_crd.model_dump(mode="json")
-        flow.updated_at = datetime.utcnow()
+        flow.updated_at = datetime.now()
         flag_modified(flow, "json")
 
         db.commit()
@@ -366,7 +366,7 @@ class FlowService:
         # Soft delete
         flow.is_active = False
         flow.enabled = False
-        flow.updated_at = datetime.utcnow()
+        flow.updated_at = datetime.now()
 
         db.commit()
 
@@ -406,7 +406,7 @@ class FlowService:
             flow.next_execution_time = None
 
         flow.json = flow_crd.model_dump(mode="json")
-        flow.updated_at = datetime.utcnow()
+        flow.updated_at = datetime.now()
         flag_modified(flow, "json")
 
         db.commit()
@@ -608,12 +608,12 @@ class FlowService:
             return
 
         execution.status = status.value
-        execution.updated_at = datetime.utcnow()
+        execution.updated_at = datetime.now()
 
         if status == FlowExecutionStatus.RUNNING:
-            execution.started_at = datetime.utcnow()
+            execution.started_at = datetime.now()
         elif status in (FlowExecutionStatus.COMPLETED, FlowExecutionStatus.FAILED):
-            execution.completed_at = datetime.utcnow()
+            execution.completed_at = datetime.now()
 
         if result_summary:
             execution.result_summary = result_summary
@@ -624,7 +624,7 @@ class FlowService:
         # Update flow statistics
         flow = db.query(FlowResource).filter(FlowResource.id == execution.flow_id).first()
         if flow:
-            flow.last_execution_time = datetime.utcnow()
+            flow.last_execution_time = datetime.now()
             flow.last_execution_status = status.value
             flow.execution_count += 1
 
@@ -637,7 +637,7 @@ class FlowService:
             flow_crd = Flow.model_validate(flow.json)
             if flow_crd.status is None:
                 flow_crd.status = FlowStatus()
-            flow_crd.status.lastExecutionTime = datetime.utcnow()
+            flow_crd.status.lastExecutionTime = datetime.now()
             flow_crd.status.lastExecutionStatus = status
             flow_crd.status.executionCount = flow.execution_count
             flow_crd.status.successCount = flow.success_count
@@ -862,23 +862,54 @@ class FlowService:
         trigger_type: FlowTriggerType,
         trigger_config: Dict[str, Any],
     ) -> Optional[datetime]:
-        """Calculate the next execution time based on trigger configuration."""
+        """Calculate the next execution time based on trigger configuration.
+
+        For cron triggers, the timezone from trigger_config is used to interpret
+        the cron expression. The returned datetime is always in UTC for storage.
+
+        For example, if cron is "0 9 * * *" with timezone "Asia/Shanghai",
+        it means 9:00 AM Shanghai time, which is 1:00 AM UTC.
+        """
         trigger_type_enum = (
             trigger_type
             if isinstance(trigger_type, FlowTriggerType)
             else FlowTriggerType(trigger_type)
         )
 
-        now = datetime.utcnow()
+        now = datetime.now()
 
         if trigger_type_enum == FlowTriggerType.CRON:
-            # Use croniter to calculate next run
+            # Use croniter to calculate next run with timezone support
             try:
                 from croniter import croniter
+                from zoneinfo import ZoneInfo
 
                 cron_expr = trigger_config.get("expression", "0 9 * * *")
-                iter = croniter(cron_expr, now)
-                return iter.get_next(datetime)
+                timezone_str = trigger_config.get("timezone", "UTC")
+
+                # Get the user's timezone
+                try:
+                    user_tz = ZoneInfo(timezone_str)
+                except Exception:
+                    logger.warning(
+                        f"Invalid timezone '{timezone_str}', falling back to UTC"
+                    )
+                    user_tz = ZoneInfo("UTC")
+
+                # Use local time for cron calculation
+                now_local = datetime.now()
+
+                # Calculate next execution in local timezone
+                iter = croniter(cron_expr, now_local)
+                next_local = iter.get_next(datetime)
+
+                logger.debug(
+                    f"Cron calculation: expr={cron_expr}, tz={timezone_str}, "
+                    f"now_local={now_local}, next_local={next_local}"
+                )
+
+                # Return the next execution time in local timezone
+                return next_local
             except Exception as e:
                 logger.warning(f"Failed to parse cron expression: {e}")
                 return None

@@ -132,8 +132,18 @@ class ExecutorKindsService(
     def _get_first_subtasks_for_tasks(
         self, db: Session, status: str, limit: int, type: str
     ) -> List[Subtask]:
-        """Get first subtask for multiple tasks using tasks table"""
+        """Get first subtask for multiple tasks using tasks table.
+
+        Note: This method filters out Chat Shell type tasks because they are handled
+        directly by the backend (via WebSocket or Flow Scheduler), not by executor_manager.
+        Chat Shell tasks are identified by:
+        - source='chat_shell' (WebSocket chat)
+        - source='flow' with Chat shell type (Flow Scheduler triggered)
+        """
         # Step 1: First query tasks table to get limit tasks
+        # Exclude tasks that should be handled by Chat Shell (not executor_manager)
+        # - source='chat_shell': Direct WebSocket chat
+        # - source='flow': Flow Scheduler triggered (Chat Shell type is handled by Flow Scheduler directly)
         tasks = None
         if type == "offline":
             tasks = (
@@ -144,7 +154,9 @@ class ExecutorKindsService(
                     text(
                         "JSON_EXTRACT(json, '$.metadata.labels.type') = 'offline' "
                         "and JSON_EXTRACT(json, '$.status.status') = :status "
-                        "and (JSON_EXTRACT(json, '$.metadata.labels.source') IS NULL OR JSON_EXTRACT(json, '$.metadata.labels.source') != 'chat_shell')"
+                        "and (JSON_EXTRACT(json, '$.metadata.labels.source') IS NULL "
+                        "    OR (JSON_EXTRACT(json, '$.metadata.labels.source') != 'chat_shell' "
+                        "        AND JSON_EXTRACT(json, '$.metadata.labels.source') != 'flow'))"
                     ),
                 )
                 .params(status=status)
@@ -161,7 +173,9 @@ class ExecutorKindsService(
                     text(
                         "(JSON_EXTRACT(json, '$.metadata.labels.type') IS NULL OR JSON_EXTRACT(json, '$.metadata.labels.type') = 'online') "
                         "and JSON_EXTRACT(json, '$.status.status') = :status "
-                        "and (JSON_EXTRACT(json, '$.metadata.labels.source') IS NULL OR JSON_EXTRACT(json, '$.metadata.labels.source') != 'chat_shell')"
+                        "and (JSON_EXTRACT(json, '$.metadata.labels.source') IS NULL "
+                        "    OR (JSON_EXTRACT(json, '$.metadata.labels.source') != 'chat_shell' "
+                        "        AND JSON_EXTRACT(json, '$.metadata.labels.source') != 'flow'))"
                     ),
                 )
                 .params(status=status)
@@ -1446,6 +1460,9 @@ class ExecutorKindsService(
         # Send notification when task is completed or failed
         self._send_task_completion_notification(db, task_id, task_crd)
 
+        # Update Flow execution status if this is a Flow task
+        self._update_flow_execution_status(db, task_id, task_crd)
+
         # Send WebSocket event for task status update
         if task_crd.status:
             self._emit_task_status_ws_event(
@@ -2230,6 +2247,106 @@ class ExecutorKindsService(
         except Exception as e:
             logger.error(
                 f"Failed to schedule webhook notification for task {task_id}: {str(e)}"
+            )
+
+    def _update_flow_execution_status(
+        self, db: Session, task_id: int, task_crd: Task
+    ) -> None:
+        """
+        Update Flow execution status when a Flow-triggered task completes.
+
+        This method checks if the task was triggered by a Flow (via flowExecutionId label),
+        and if so, updates the corresponding FlowExecution record in the database.
+
+        Args:
+            db: Database session
+            task_id: Task ID
+            task_crd: Task CRD object
+        """
+        # Only update when task is in a final state
+        if not task_crd.status or task_crd.status.status not in [
+            "COMPLETED",
+            "FAILED",
+            "CANCELLED",
+        ]:
+            return
+
+        # Check if this task was triggered by a Flow
+        flow_execution_id = None
+        if task_crd.metadata and task_crd.metadata.labels:
+            flow_execution_id = task_crd.metadata.labels.get("flowExecutionId")
+
+        if not flow_execution_id:
+            # Not a Flow-triggered task
+            return
+
+        try:
+            # Import FlowExecution model
+            from app.models.flow import FlowExecution, FlowResource
+
+            # Convert to int if it's a string
+            try:
+                execution_id = int(flow_execution_id)
+            except (ValueError, TypeError):
+                logger.warning(
+                    f"Invalid flowExecutionId '{flow_execution_id}' for task {task_id}"
+                )
+                return
+
+            # Find the FlowExecution record
+            execution = (
+                db.query(FlowExecution)
+                .filter(FlowExecution.id == execution_id)
+                .first()
+            )
+
+            if not execution:
+                logger.warning(
+                    f"FlowExecution {execution_id} not found for task {task_id}"
+                )
+                return
+
+            # Update execution status based on task status
+            if task_crd.status.status == "COMPLETED":
+                execution.status = "COMPLETED"
+                execution.result_summary = "Task completed successfully"
+            elif task_crd.status.status == "FAILED":
+                execution.status = "FAILED"
+                execution.error_message = task_crd.status.errorMessage or "Task failed"
+            elif task_crd.status.status == "CANCELLED":
+                execution.status = "CANCELLED"
+                execution.error_message = "Task was cancelled"
+
+            execution.completed_at = datetime.now()
+            execution.updated_at = datetime.now()
+            db.add(execution)
+
+            # Also update the Flow's statistics
+            flow = (
+                db.query(FlowResource)
+                .filter(FlowResource.id == execution.flow_id)
+                .first()
+            )
+
+            if flow:
+                flow.last_execution_time = datetime.now()
+                flow.last_execution_status = execution.status
+                if execution.status == "COMPLETED":
+                    flow.success_count = (flow.success_count or 0) + 1
+                elif execution.status in ["FAILED", "CANCELLED"]:
+                    flow.failure_count = (flow.failure_count or 0) + 1
+                flow.updated_at = datetime.now()
+                db.add(flow)
+
+            logger.info(
+                f"Updated FlowExecution {execution_id} status to {execution.status} "
+                f"for task {task_id}"
+            )
+
+        except Exception as e:
+            logger.error(
+                f"Failed to update Flow execution status for task {task_id}: {str(e)}",
+                exc_info=True,
             )
 
     def delete_executor_task_sync(

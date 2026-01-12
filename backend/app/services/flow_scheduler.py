@@ -7,6 +7,12 @@ Flow scheduler for triggering scheduled Flow executions.
 
 This module integrates with the existing background job system to periodically
 check for flows that need to be executed and trigger them.
+
+For Chat Shell type tasks, this module:
+1. Creates Task and Workspace resources
+2. Creates User and Assistant Subtasks
+3. Triggers AI response via the chat trigger system
+4. Monitors task completion to update Flow execution status
 """
 import asyncio
 import logging
@@ -18,7 +24,12 @@ from app.core.cache import cache_manager
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.flow import FlowResource
+from app.models.kind import Kind
+from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
+from app.models.task import TaskResource
+from app.models.user import User
 from app.schemas.flow import Flow, FlowExecutionStatus, FlowTriggerType
+from app.schemas.kind import Task, Team
 from app.services.flow import flow_service
 
 logger = logging.getLogger(__name__)
@@ -162,12 +173,17 @@ def _trigger_task_execution(db, flow: FlowResource, execution) -> None:
     """
     Trigger the actual task execution for a flow.
 
-    This creates a Task resource and links it to the flow execution.
-    The task will be executed by the existing task execution system.
+    This function:
+    1. Uses task_kinds_service.create_task_or_append to create Task and Subtasks
+    2. For Chat Shell type: triggers AI response via trigger_ai_response
+    3. For Executor type: subtasks are picked up by executor_manager automatically
+
+    The task completion status is monitored separately to update Flow execution status.
     """
     try:
-        from app.models.task import TaskResource
-        from app.models.kind import Kind
+        from app.schemas.task import TaskCreate
+        from app.services.adapters.task_kinds import task_kinds_service
+        from app.services.chat.config import should_use_direct_chat
 
         flow_crd = Flow.model_validate(flow.json)
 
@@ -188,10 +204,22 @@ def _trigger_task_execution(db, flow: FlowResource, execution) -> None:
             )
             return
 
-        # Get workspace if specified
-        workspace = None
+        # Get user
+        user = db.query(User).filter(User.id == flow.user_id).first()
+        if not user:
+            logger.error(f"[flow_scheduler] User {flow.user_id} not found for flow {flow.id}")
+            flow_service.update_execution_status(
+                db,
+                execution_id=execution.id,
+                status=FlowExecutionStatus.FAILED,
+                error_message=f"User {flow.user_id} not found",
+            )
+            return
+
+        # Get workspace info if specified
         git_url = ""
         git_repo = ""
+        git_repo_id = 0
         git_domain = ""
         branch_name = ""
 
@@ -207,83 +235,231 @@ def _trigger_task_execution(db, flow: FlowResource, execution) -> None:
             )
             if workspace:
                 ws_json = workspace.json
-                git_url = ws_json.get("spec", {}).get("repository", {}).get("url", "")
-                git_repo = ws_json.get("spec", {}).get("repository", {}).get("name", "")
-                git_domain = ws_json.get("spec", {}).get("repository", {}).get("domain", "")
-                branch_name = ws_json.get("spec", {}).get("repository", {}).get("branch", "")
+                repo = ws_json.get("spec", {}).get("repository", {})
+                git_url = repo.get("gitUrl", "")
+                git_repo = repo.get("gitRepo", "")
+                git_repo_id = repo.get("gitRepoId", 0)
+                git_domain = repo.get("gitDomain", "")
+                branch_name = repo.get("branchName", "")
 
-        # Create task resource
-        import uuid
-        from sqlalchemy.orm.attributes import flag_modified
+        # Generate title from flow display name or prompt
+        flow_display_name = flow_crd.spec.displayName or flow.name
+        task_title = f"[Flow] {flow_display_name}"
+        if execution.prompt:
+            prompt_preview = execution.prompt[:50]
+            if len(execution.prompt) > 50:
+                prompt_preview += "..."
+            task_title = f"[Flow] {flow_display_name}: {prompt_preview}"
 
-        task_name = f"flow-{flow.id}-exec-{execution.id}-{uuid.uuid4().hex[:8]}"
-
-        task_json = {
-            "apiVersion": "agent.wecode.io/v1",
-            "kind": "Task",
-            "metadata": {
-                "name": task_name,
-                "namespace": flow.namespace,
-            },
-            "spec": {
-                "teamRef": {
-                    "name": team.name,
-                    "namespace": team.namespace,
-                },
-                "workspaceRef": (
-                    {
-                        "name": workspace.name if workspace else "",
-                        "namespace": workspace.namespace if workspace else "",
-                    }
-                    if workspace
-                    else None
-                ),
-                "prompt": execution.prompt,
-            },
-            "status": {
-                "phase": "PENDING",
-                "progress": 0,
-            },
-        }
-
-        task = TaskResource(
-            user_id=flow.user_id,
-            kind="Task",
-            name=task_name,
-            namespace=flow.namespace,
-            json=task_json,
-            is_active=True,
+        # Create TaskCreate object
+        task_create = TaskCreate(
+            team_id=team.id,
+            team_name=team.name,
+            team_namespace=team.namespace,
+            title=task_title,
+            prompt=execution.prompt or "",
+            git_url=git_url,
+            git_repo=git_repo,
+            git_repo_id=git_repo_id,
+            git_domain=git_domain,
+            branch_name=branch_name,
+            type="online",
+            task_type="chat",
+            auto_delete_executor="false",
+            source="flow",
         )
 
-        db.add(task)
-        db.commit()
-        db.refresh(task)
+        # Use task_kinds_service to create task and subtasks
+        # This handles both Task creation and Subtask creation
+        task_dict = task_kinds_service.create_task_or_append(
+            db=db,
+            obj_in=task_create,
+            user=user,
+            task_id=None,  # Create new task
+        )
 
+        task_id = task_dict["id"]
+
+        # Add flow-specific labels to the task
+        # Add flow-specific labels to the task
+        task = (
+            db.query(TaskResource)
+            .filter(TaskResource.id == task_id, TaskResource.kind == "Task")
+            .first()
+        )
+        if task:
+            task_crd = Task.model_validate(task.json)
+            if task_crd.metadata.labels:
+                task_crd.metadata.labels["flowId"] = str(flow.id)
+                task_crd.metadata.labels["executionId"] = str(execution.id)
+                # Add flowExecutionId for executor_kinds to update Flow execution status
+                task_crd.metadata.labels["flowExecutionId"] = str(execution.id)
+            task.json = task_crd.model_dump(mode="json")
+            db.commit()
         # Link task to execution
-        execution.task_id = task.id
-        execution.status = FlowExecutionStatus.PENDING.value
+        execution.task_id = task_id
+        execution.status = FlowExecutionStatus.RUNNING.value
         db.commit()
 
         logger.info(
-            f"[flow_scheduler] Created task {task.id} for flow execution {execution.id}"
+            f"[flow_scheduler] Created task {task_id} for flow execution {execution.id}"
         )
 
-        # Update execution status to running
-        flow_service.update_execution_status(
-            db,
-            execution_id=execution.id,
-            status=FlowExecutionStatus.RUNNING,
-        )
+        # Check if this is a Chat Shell type team
+        supports_direct_chat = should_use_direct_chat(db, team, flow.user_id)
+
+        if supports_direct_chat:
+            # For Chat Shell type, we need to trigger AI response
+            # This is done asynchronously in a background task
+            logger.info(
+                f"[flow_scheduler] Chat Shell type detected, triggering AI response for task {task_id}"
+            )
+            _trigger_chat_shell_response(
+                db, task_id, team, user, execution.prompt or "", execution.id
+            )
+        else:
+            # For Executor type (ClaudeCode, Agno, Dify, etc.)
+            # The subtask is already in PENDING status
+            # executor_manager will pick it up automatically
+            logger.info(
+                f"[flow_scheduler] Executor type detected, task {task_id} will be picked up by executor_manager"
+            )
 
     except Exception as e:
         logger.error(
-            f"[flow_scheduler] Error triggering task for flow {flow.id}: {str(e)}"
+            f"[flow_scheduler] Error triggering task for flow {flow.id}: {str(e)}",
+            exc_info=True,
         )
         flow_service.update_execution_status(
             db,
             execution_id=execution.id,
             status=FlowExecutionStatus.FAILED,
             error_message=str(e),
+        )
+
+
+def _trigger_chat_shell_response(
+    db, task_id: int, team: Kind, user: User, message: str, execution_id: int
+) -> None:
+    """
+    Trigger Chat Shell AI response for a flow task.
+
+    This function creates the necessary context and triggers the AI response
+    using the same mechanism as WebSocket chat:send.
+
+    Note: Unlike WebSocket requests which run in FastAPI's main event loop,
+    Flow Scheduler runs in a background thread with its own event loop.
+    We must wait for the streaming task to complete before closing the loop.
+
+    Args:
+        db: Database session
+        task_id: Task ID
+        team: Team Kind object
+        user: User object
+        message: User message
+        execution_id: FlowExecution ID for status updates
+    """
+    try:
+        from app.services.chat.trigger.core import (
+            StreamTaskData,
+            _stream_chat_response,
+        )
+        from app.services.chat.trigger.emitter import FlowEventEmitter
+
+        # Get the assistant subtask that was created
+        assistant_subtask = (
+            db.query(Subtask)
+            .filter(
+                Subtask.task_id == task_id,
+                Subtask.user_id == user.id,
+                Subtask.role == SubtaskRole.ASSISTANT,
+                Subtask.status == SubtaskStatus.PENDING,
+            )
+            .order_by(Subtask.id.desc())
+            .first()
+        )
+
+        if not assistant_subtask:
+            logger.error(
+                f"[flow_scheduler] No pending assistant subtask found for task {task_id}"
+            )
+            return
+
+        # Get the user subtask for context
+        user_subtask = (
+            db.query(Subtask)
+            .filter(
+                Subtask.task_id == task_id,
+                Subtask.user_id == user.id,
+                Subtask.role == SubtaskRole.USER,
+            )
+            .order_by(Subtask.id.desc())
+            .first()
+        )
+
+        # Get task resource
+        task = (
+            db.query(TaskResource)
+            .filter(TaskResource.id == task_id, TaskResource.kind == "Task")
+            .first()
+        )
+
+        if not task:
+            logger.error(f"[flow_scheduler] Task {task_id} not found")
+            return
+
+        # Create a minimal payload object for streaming
+        class FlowPayload:
+            def __init__(self):
+                self.force_override_bot_model = None
+                self.enable_clarification = False
+                self.enable_deep_thinking = True
+                self.is_group_chat = False
+                self.enable_web_search = False
+                self.search_engine = None
+
+        payload = FlowPayload()
+        task_room = f"task_{task_id}"
+
+        # Extract data from ORM objects before starting the streaming task
+        # This prevents DetachedInstanceError when the session is closed
+        stream_data = StreamTaskData.from_orm(task, team, user, assistant_subtask)
+
+        # Run the streaming directly in a new event loop
+        # Unlike trigger_ai_response which creates a background task,
+        # we call _stream_chat_response directly and wait for it to complete
+        #
+        # Use FlowEventEmitter to update FlowExecution status when streaming
+        # completes or fails. This ensures Flow execution status is properly
+        # tracked even without WebSocket connections.
+        flow_emitter = FlowEventEmitter(execution_id=execution_id)
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(
+                _stream_chat_response(
+                    stream_data=stream_data,
+                    message=message,
+                    payload=payload,
+                    task_room=task_room,
+                    namespace=None,  # No WebSocket namespace for flow tasks
+                    trace_context=None,
+                    otel_context=None,
+                    user_subtask_id=user_subtask.id if user_subtask else None,
+                    event_emitter=flow_emitter,  # Update FlowExecution status
+                )
+            )
+            logger.info(
+                f"[flow_scheduler] Chat Shell AI response completed for task {task_id}"
+            )
+        finally:
+            loop.close()
+
+    except Exception as e:
+        logger.error(
+            f"[flow_scheduler] Error triggering Chat Shell response for task {task_id}: {str(e)}",
+            exc_info=True,
         )
 
 
@@ -314,7 +490,7 @@ def flow_scheduler_worker(stop_event: threading.Event) -> None:
 
                     db = SessionLocal()
                     try:
-                        now = datetime.utcnow()
+                        now = datetime.now()
                         due_flows = get_due_flows(db, now)
 
                         if due_flows:
