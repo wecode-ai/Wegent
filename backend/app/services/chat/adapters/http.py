@@ -59,6 +59,8 @@ class HTTPAdapter(ChatInterface):
 
     def _get_headers(self) -> dict:
         """Get HTTP headers for requests."""
+        from shared.telemetry.context import get_request_id
+
         headers = {
             "Content-Type": "application/json",
             "Accept": "text/event-stream",
@@ -67,6 +69,10 @@ class HTTPAdapter(ChatInterface):
             headers["Authorization"] = f"Bearer {self.token}"
         # Inject trace context for distributed tracing
         inject_trace_context_to_headers(headers)
+        # Inject request ID for log correlation
+        request_id = get_request_id()
+        if request_id:
+            headers["X-Request-ID"] = request_id
         return headers
 
     def _build_response_request(self, request: ChatRequest) -> dict:
