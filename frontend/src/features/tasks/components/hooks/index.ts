@@ -12,8 +12,5 @@ export type {
   FloatingMetrics,
 } from './useFloatingInput'
 
-export { useTeamPreferences } from './useTeamPreferences'
-export type { UseTeamPreferencesOptions } from './useTeamPreferences'
-
 export { useAttachmentUpload } from './useAttachmentUpload'
 export type { UseAttachmentUploadOptions, UseAttachmentUploadReturn } from './useAttachmentUpload'

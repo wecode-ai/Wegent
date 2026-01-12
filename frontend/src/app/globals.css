@@ -93,6 +93,32 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+/* Prevent horizontal overflow globally */
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#__next {
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+/* Ensure all text elements can truncate properly */
+p,
+span,
+div,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  overflow-wrap: break-word;
+  word-wrap: break-word;
+}
+
 /* 100vh fallback for better mobile compatibility */
 html {
   height: 100%;

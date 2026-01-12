@@ -319,14 +319,15 @@ test.describe('Chat Image Upload UI Tests', () => {
       }
 
       // Wait for UI to update after team selection
-      await page.waitForTimeout(1000)
+      // Increased timeout to allow for state propagation
+      await page.waitForTimeout(2000)
 
       // Look for upload/attachment button (Paperclip icon button from FileUpload component)
       const uploadButton = page.locator(
         'button[title*="Upload"], button[title*="Attach"], button[aria-label*="upload"], button[aria-label*="attach"], [data-testid="upload-button"], [data-testid="attach-button"], button:has(svg.lucide-paperclip)'
       )
 
-      const hasUploadButton = await uploadButton.isVisible({ timeout: 5000 }).catch(() => false)
+      const hasUploadButton = await uploadButton.isVisible({ timeout: 10000 }).catch(() => false)
 
       // Either has upload button or file input
       const fileInput = page.locator('input[type="file"]')

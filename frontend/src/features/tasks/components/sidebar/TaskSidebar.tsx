@@ -674,6 +674,7 @@ export default function TaskSidebar({
         isOpen={isMobileSidebarOpen}
         onClose={() => setIsMobileSidebarOpen(false)}
         title={t('common:navigation.tasks')}
+        hideTitle={true}
         data-tour="task-sidebar"
       >
         {sidebarContent}

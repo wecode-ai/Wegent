@@ -14,9 +14,10 @@ interface MobileSidebarProps {
   onClose: () => void
   children: React.ReactNode
   title?: string
+  hideTitle?: boolean // New prop to hide title bar while keeping structure
 }
 
-export function MobileSidebar({ isOpen, onClose, children, title }: MobileSidebarProps) {
+export function MobileSidebar({ isOpen, onClose, children, title, hideTitle = false }: MobileSidebarProps) {
   const { t } = useTranslation()
 
   return (
@@ -70,7 +71,8 @@ export function MobileSidebar({ isOpen, onClose, children, title }: MobileSideba
 
               {/* 侧边栏内容容器 - 现代化设计 */}
               <div className="flex grow flex-col overflow-y-auto bg-surface shadow-2xl w-full">
-                {title && (
+                {/* Only render title bar if hideTitle is false */}
+                {!hideTitle && title && (
                   <div className="flex h-12 shrink-0 items-center px-4 border-b border-border/50 bg-gradient-to-r from-surface to-muted/30">
                     <h2 className="text-base font-semibold text-text-primary tracking-tight">
                       {title}
