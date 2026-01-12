@@ -13,6 +13,7 @@ import logging
 from typing import AsyncIterator, Optional
 
 import httpx
+from shared.telemetry.context.propagation import inject_trace_context_to_headers
 
 from .interface import ChatEvent, ChatEventType, ChatInterface, ChatRequest
 
@@ -64,6 +65,8 @@ class HTTPAdapter(ChatInterface):
         }
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
+        # Inject trace context for distributed tracing
+        inject_trace_context_to_headers(headers)
         return headers
 
     def _build_response_request(self, request: ChatRequest) -> dict:
