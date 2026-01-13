@@ -408,6 +408,9 @@ def _test_llm_connection(
         }
 
     # LLM test using LangChain
+    # Set timeout to 30 seconds to avoid long waits
+    timeout_seconds = 30
+
     if provider_type == "openai":
         from langchain_openai import ChatOpenAI
 
@@ -415,6 +418,7 @@ def _test_llm_connection(
             "model": model_id,
             "api_key": api_key,
             "max_tokens": 128,
+            "timeout": timeout_seconds,
         }
         if base_url:
             chat_kwargs["base_url"] = base_url
@@ -436,6 +440,7 @@ def _test_llm_connection(
             "api_key": api_key,
             "max_tokens": 128,
             "use_responses_api": True,
+            "timeout": timeout_seconds,
         }
         if base_url:
             chat_kwargs["base_url"] = base_url
@@ -456,6 +461,7 @@ def _test_llm_connection(
             "model": model_id,
             "api_key": api_key,
             "max_tokens": 128,
+            "timeout": timeout_seconds,
         }
         if base_url:
             chat_kwargs["base_url"] = base_url
@@ -476,6 +482,7 @@ def _test_llm_connection(
             "model": model_id,
             "google_api_key": api_key,
             "max_output_tokens": 128,
+            "timeout": timeout_seconds,
         }
         # Note: ChatGoogleGenerativeAI doesn't support custom base_url or headers directly
         # For custom endpoints, users should use environment variables
@@ -604,7 +611,9 @@ def fetch_available_models(
                     models.append(
                         {
                             "id": model.get("id"),
-                            "name": model.get("id"),  # OpenAI doesn't provide display names
+                            "name": model.get(
+                                "id"
+                            ),  # OpenAI doesn't provide display names
                             "created": model.get("created"),
                             "owned_by": model.get("owned_by"),
                         }

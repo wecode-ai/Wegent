@@ -313,6 +313,78 @@ const socket = io(API_URL + '/chat', {
 - Go to Network tab → WS filter
 - Check WebSocket connection status and messages
 
+### Issue 8: API Proxy Timeout Error
+
+**Symptoms**: `HeadersTimeoutError: Headers Timeout Error` in frontend logs, requests to backend timing out
+
+**Error Example**:
+```
+[API Proxy] Error proxying request: TypeError: fetch failed
+  [cause]: [Error [HeadersTimeoutError]: Headers Timeout Error] {
+    code: 'UND_ERR_HEADERS_TIMEOUT'
+  }
+```
+
+**Solutions**:
+
+**1. Check backend service health**
+```bash
+# Verify backend is running
+docker-compose ps backend
+
+# Check backend logs for errors
+docker-compose logs --tail=100 backend
+
+# Test backend directly
+curl http://localhost:8000/api/health
+```
+
+**2. Check for slow API endpoints**
+- Some operations (like model connection tests, large file uploads) may take longer
+- The frontend API proxy has a 5-minute timeout configured
+- If operations consistently timeout, check backend performance
+
+**3. Check network connectivity between services**
+```bash
+# From frontend container, test backend connectivity
+docker-compose exec frontend curl http://backend:8000/api/health
+```
+
+**4. Increase timeout if needed**
+- The default timeout is 5 minutes (300 seconds)
+- For very long operations, consider using WebSocket or polling instead
+
+### Issue 9: Model Connection Test Timeout
+
+**Symptoms**: Model connection test hangs indefinitely or takes too long
+
+**Solutions**:
+
+**1. Check API key validity**
+```bash
+# Test API key directly (example for OpenAI)
+curl https://api.openai.com/v1/models \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+**2. Check network connectivity to LLM provider**
+```bash
+# Test connectivity
+curl -I https://api.openai.com
+curl -I https://api.anthropic.com
+```
+
+**3. Configure proxy if behind firewall**
+```bash
+# In .env file
+HTTP_PROXY=http://proxy.example.com:8080
+HTTPS_PROXY=http://proxy.example.com:8080
+```
+
+**4. The connection test has a 30-second timeout**
+- If the test times out, check network connectivity
+- Verify the API endpoint URL is correct
+
 ---
 
 ## ⚙️ Task Execution Issues

@@ -175,10 +175,12 @@ class LangChainModelFactory:
         if cfg.get("api_format") == "responses":
             api_format_log = ", api_format=responses"
 
-        logger.debug(
-            "Creating LangChain model: %s, type=%s, key=%s%s",
+        logger.info(
+            "[LangChainModelFactory] Creating model: model_id=%s, model_type=%s, "
+            "base_url=%s, key=%s%s",
             cfg["model_id"],
             model_type,
+            cfg.get("base_url", "N/A"),
             _mask_api_key(cfg["api_key"]),
             api_format_log,
         )

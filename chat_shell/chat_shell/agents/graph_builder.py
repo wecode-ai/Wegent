@@ -23,6 +23,7 @@ from langchain_core.tools.base import BaseTool
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.errors import GraphRecursionError
 from langgraph.prebuilt import create_react_agent
+from openai import BadRequestError
 
 from ..tools.base import ToolRegistry
 
@@ -128,10 +129,22 @@ class LangGraphAgentBuilder:
 
         return prompt_modifier
 
-    def _build_agent(self):
-        """Build the LangGraph ReAct agent lazily."""
-        if self._agent is not None:
-            return self._agent
+    def _build_agent(self, with_tools: bool = True):
+        """Build the LangGraph ReAct agent lazily.
+
+        Args:
+            with_tools: Whether to include tools in the agent. Set to False for
+                       APIs that don't support the tools parameter.
+        """
+        # Cache key based on whether tools are included
+        cache_key = "with_tools" if with_tools else "no_tools"
+
+        # Use separate cache for with/without tools agents
+        if not hasattr(self, "_agent_cache"):
+            self._agent_cache = {}
+
+        if cache_key in self._agent_cache:
+            return self._agent_cache[cache_key]
 
         # Use LangGraph's prebuilt create_react_agent
         checkpointer = MemorySaver() if self.enable_checkpointing else None
@@ -140,14 +153,17 @@ class LangGraphAgentBuilder:
         prompt_modifier = self._create_prompt_modifier()
 
         # Build agent with optional prompt modifier for dynamic system prompt updates
-        self._agent = create_react_agent(
+        tools_to_use = self.tools if with_tools else []
+
+        agent = create_react_agent(
             model=self.llm,
-            tools=self.tools,
+            tools=tools_to_use,
             checkpointer=checkpointer,
             prompt=prompt_modifier,
         )
 
-        return self._agent
+        self._agent_cache[cache_key] = agent
+        return agent
 
     async def execute(
         self,
@@ -223,6 +239,7 @@ class LangGraphAgentBuilder:
         config: dict[str, Any] | None = None,
         cancel_event: asyncio.Event | None = None,
         on_tool_event: Callable[[str, dict], None] | None = None,
+        _retry_without_tools: bool = False,
     ) -> AsyncGenerator[str, None]:
         """Stream tokens from agent execution.
 
@@ -235,11 +252,13 @@ class LangGraphAgentBuilder:
             config: Optional configuration
             cancel_event: Optional cancellation event
             on_tool_event: Optional callback for tool events (kind, event_data)
+            _retry_without_tools: Internal flag to retry without tools (for API compatibility)
 
         Yields:
             Content tokens as they are generated
         """
-        agent = self._build_agent()
+        # Build agent with or without tools based on retry flag
+        agent = self._build_agent(with_tools=not _retry_without_tools)
         lc_messages = convert_to_messages(messages)
 
         exec_config = {"configurable": config} if config else None
@@ -472,6 +491,30 @@ class LangGraphAgentBuilder:
                 logger.exception(
                     "Error generating final response after tool limit reached"
                 )
+                raise
+
+        except BadRequestError as e:
+            # Check if this is a tools parameter error and we haven't retried yet
+            error_msg = str(e)
+            if "tools" in error_msg.lower() and not _retry_without_tools:
+                logger.warning(
+                    "[stream_tokens] BadRequestError with tools parameter: %s. "
+                    "Retrying without tools (API may not support tools parameter).",
+                    error_msg[:200],
+                )
+                # Retry without tools - this handles APIs that don't support the tools parameter
+                async for token in self.stream_tokens(
+                    messages=messages,
+                    config=config,
+                    cancel_event=cancel_event,
+                    on_tool_event=on_tool_event,
+                    _retry_without_tools=True,
+                ):
+                    yield token
+                return
+            else:
+                # Either not a tools error or already retried, re-raise
+                logger.exception("Error in stream_tokens (BadRequestError)")
                 raise
 
         except Exception as e:

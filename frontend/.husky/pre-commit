@@ -3,6 +3,10 @@
 # Get the project root directory
 PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
+# Load nvm if available to ensure correct Node.js version
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+
 # =============================================================================
 # Python Code Formatting Auto-fix (black + isort)
 # =============================================================================

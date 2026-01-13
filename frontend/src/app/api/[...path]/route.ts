@@ -34,6 +34,9 @@ async function proxyRequest(
     targetUrl.searchParams.append(key, value)
   })
 
+  const startTime = Date.now()
+  console.log(`[API Proxy] ${request.method} ${targetPath} -> ${targetUrl.toString()}`)
+
   try {
     // Forward headers, excluding host-related ones
     const headers = new Headers()
@@ -55,14 +58,44 @@ async function proxyRequest(
       body = await request.arrayBuffer()
     }
 
-    // Forward the request to backend
-    const response = await fetch(targetUrl.toString(), {
-      method: request.method,
-      headers,
-      body,
-      // Don't follow redirects, let the client handle them
-      redirect: 'manual',
-    })
+    // Forward the request to backend with timeout configuration
+    // Use AbortController for timeout control
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 300000) // 5 minutes timeout
+
+    let response: Response
+    try {
+      response = await fetch(targetUrl.toString(), {
+        method: request.method,
+        headers,
+        body,
+        // Don't follow redirects, let the client handle them
+        redirect: 'manual',
+        signal: controller.signal,
+      })
+
+      clearTimeout(timeoutId)
+      const duration = Date.now() - startTime
+      console.log(
+        `[API Proxy] ${request.method} ${targetPath} completed in ${duration}ms (status: ${response.status})`
+      )
+    } catch (fetchError) {
+      clearTimeout(timeoutId)
+      const duration = Date.now() - startTime
+
+      if (fetchError instanceof Error && fetchError.name === 'AbortError') {
+        console.error(
+          `[API Proxy] Request timeout after ${duration}ms: ${request.method} ${targetPath}`
+        )
+        throw new Error(`Request timeout after ${duration}ms`)
+      }
+
+      console.error(
+        `[API Proxy] Fetch failed after ${duration}ms: ${request.method} ${targetPath}`,
+        fetchError
+      )
+      throw fetchError
+    }
 
     // Create response headers, excluding hop-by-hop headers
     const responseHeaders = new Headers()

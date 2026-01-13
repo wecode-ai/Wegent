@@ -349,7 +349,79 @@ const socket = io(API_URL + '/chat', {
 - 进入 Network 标签 → WS 过滤器
 - 检查 WebSocket 连接状态和消息
 
-### 问题 9: GitHub API 连接失败
+### 问题 9: API 代理超时错误
+
+**症状**: 前端日志显示 `HeadersTimeoutError: Headers Timeout Error`，请求后端超时
+
+**错误示例**:
+```
+[API Proxy] Error proxying request: TypeError: fetch failed
+  [cause]: [Error [HeadersTimeoutError]: Headers Timeout Error] {
+    code: 'UND_ERR_HEADERS_TIMEOUT'
+  }
+```
+
+**解决方案**:
+
+**1. 检查后端服务健康状态**
+```bash
+# 验证后端正在运行
+docker-compose ps backend
+
+# 检查后端日志是否有错误
+docker-compose logs --tail=100 backend
+
+# 直接测试后端
+curl http://localhost:8000/api/health
+```
+
+**2. 检查慢速 API 端点**
+- 某些操作（如模型连接测试、大文件上传）可能需要更长时间
+- 前端 API 代理配置了 5 分钟超时
+- 如果操作持续超时，检查后端性能
+
+**3. 检查服务间网络连接**
+```bash
+# 从前端容器测试后端连接
+docker-compose exec frontend curl http://backend:8000/api/health
+```
+
+**4. 如需要可增加超时时间**
+- 默认超时为 5 分钟（300 秒）
+- 对于非常长的操作，考虑使用 WebSocket 或轮询代替
+
+### 问题 10: 模型连接测试超时
+
+**症状**: 模型连接测试无限期挂起或耗时过长
+
+**解决方案**:
+
+**1. 检查 API Key 有效性**
+```bash
+# 直接测试 API Key（以 OpenAI 为例）
+curl https://api.openai.com/v1/models \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+**2. 检查到 LLM 提供商的网络连接**
+```bash
+# 测试连接
+curl -I https://api.openai.com
+curl -I https://api.anthropic.com
+```
+
+**3. 如在防火墙后配置代理**
+```bash
+# 在 .env 文件中
+HTTP_PROXY=http://proxy.example.com:8080
+HTTPS_PROXY=http://proxy.example.com:8080
+```
+
+**4. 连接测试有 30 秒超时**
+- 如果测试超时，检查网络连接
+- 验证 API 端点 URL 是否正确
+
+### 问题 11: GitHub API 连接失败
 
 **症状**: 无法克隆仓库或访问 GitHub
 
@@ -393,7 +465,7 @@ ssh -T git@github.com
 
 ## ⚙️ 任务执行问题
 
-### 问题 10: 任务一直处于 PENDING 状态
+### 问题 12: 任务一直处于 PENDING 状态
 
 **诊断流程**:
 
@@ -435,7 +507,7 @@ curl http://localhost:8000/api/tasks/<task-id>
 # 检查 Bot、Shell、Model 配置是否正确
 ```
 
-### 问题 11: 任务执行失败
+### 问题 13: 任务执行失败
 
 **诊断步骤**:
 
@@ -468,7 +540,7 @@ docker logs -f <executor-container-id>
 | `Timeout` | 执行超时 | 增加超时设置或优化任务 |
 | `Out of memory` | 内存不足 | 增加容器内存限制 |
 
-### 问题 12: Agent 无响应或卡住
+### 问题 14: Agent 无响应或卡住
 
 **解决方案**:
 
@@ -500,7 +572,7 @@ docker kill <executor-container-id>
 
 ## ⚡ 性能问题
 
-### 问题 13: 系统响应慢
+### 问题 15: 系统响应慢
 
 **诊断和优化**:
 
@@ -550,7 +622,7 @@ services:
           memory: 4G
 ```
 
-### 问题 14: 磁盘空间不足
+### 问题 16: 磁盘空间不足
 
 **清理方案**:
 
@@ -577,7 +649,7 @@ find /path/to/workspace -type d -mtime +90 -exec rm -rf {} \;
 
 ## 💻 开发环境问题
 
-### 问题 15: Python 依赖安装失败
+### 问题 17: Python 依赖安装失败
 
 **解决方案**:
 
@@ -598,7 +670,7 @@ conda activate wegent
 uv sync
 ```
 
-### 问题 16: Node.js 依赖安装失败
+### 问题 18: Node.js 依赖安装失败
 
 **解决方案**:
 
@@ -621,7 +693,7 @@ nvm use 18
 npm install
 ```
 
-### 问题 17: 热重载不工作
+### 问题 19: 热重载不工作
 
 **前端热重载**:
 ```bash
