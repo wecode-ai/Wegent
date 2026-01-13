@@ -247,10 +247,6 @@ export default function BotList({ scope = 'personal', groupName, groupRoleMap }:
   return (
     <>
       <div className="space-y-3">
-        {/*<div>*/}
-        {/*  <h2 className="text-xl font-semibold text-text-primary mb-1">{t('common:bots.title')}</h2>*/}
-        {/*  <p className="text-sm text-text-muted mb-1">{t('common:bots.description')}</p>*/}
-        {/*</div>*/}
         <div
           className={`bg-base border border-border rounded-md p-2 w-full ${
             isEditing
