@@ -32,6 +32,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # Import telemetry config (always available)
 from shared.telemetry.config import get_otel_config
+from shared.telemetry.prometheus import (
+    get_prometheus_config,
+    setup_prometheus_middleware,
+)
 from starlette.responses import StreamingResponse
 
 from chat_shell import __version__
@@ -220,6 +224,16 @@ def create_app(
         logger.info(
             "OpenTelemetry instrumentation enabled (ASGI-level, before HTTP middleware)"
         )
+
+    # Initialize Prometheus metrics if enabled
+    prometheus_config = get_prometheus_config("wegent-chat-shell")
+    if prometheus_config.enabled:
+        setup_prometheus_middleware(app, service_name="wegent-chat-shell")
+        logger.info(
+            f"Prometheus metrics enabled at {prometheus_config.metrics_path}"
+        )
+    else:
+        logger.debug("Prometheus metrics disabled")
 
     # Add exception handler for validation errors (422)
     from fastapi.exceptions import RequestValidationError

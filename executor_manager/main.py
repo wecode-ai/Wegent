@@ -20,6 +20,10 @@ import uvicorn
 # Import the shared logger
 from shared.logger import setup_logger
 from shared.telemetry.config import get_otel_config
+from shared.telemetry.prometheus import (
+    get_prometheus_config,
+    setup_prometheus_middleware,
+)
 
 from executor_manager.services.sandbox import get_sandbox_manager
 from routers.routers import app  # Import the FastAPI app defined in routes.py
@@ -63,6 +67,17 @@ async def lifespan(app):
             setup_opentelemetry_instrumentation(app, logger)
         except Exception as e:
             logger.warning(f"Failed to initialize OpenTelemetry: {e}")
+
+    # Initialize Prometheus metrics if enabled
+    prometheus_config = get_prometheus_config("wegent-executor-manager")
+    if prometheus_config.enabled:
+        setup_prometheus_middleware(app, service_name="wegent-executor-manager")
+        logger.info(
+            f"Prometheus metrics enabled at {prometheus_config.metrics_path}"
+        )
+    else:
+        logger.debug("Prometheus metrics disabled")
+
     # Extract executor binary to Named Volume on startup
     logger.info("Extracting executor binary to Named Volume...")
     try:

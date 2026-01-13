@@ -36,6 +36,10 @@ dependencies = [
     "opentelemetry-instrumentation-httpx>=0.48b0",
     "opentelemetry-instrumentation-requests>=0.48b0",
     "opentelemetry-instrumentation-system-metrics>=0.48b0",
+
+    # Prometheus metrics
+    "prometheus-client>=0.20.0",
+    "starlette>=0.27.0",
 ]
 
 [dependency-groups]

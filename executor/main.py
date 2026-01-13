@@ -14,15 +14,28 @@ from contextlib import asynccontextmanager
 from typing import Any, Dict, Optional
 
 import uvicorn
-from fastapi import (BackgroundTasks, Body, FastAPI, HTTPException, Query,
-                     Request)
+from fastapi import (
+    BackgroundTasks,
+    Body,
+    FastAPI,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+)
 from pydantic import BaseModel
+
 # Import the shared logger
 from shared.logger import setup_logger
 from shared.status import TaskStatus
 from shared.telemetry.config import get_otel_config
 from shared.telemetry.context import set_task_context, set_user_context
 from shared.telemetry.core import is_telemetry_enabled
+from shared.telemetry.prometheus import (
+    get_metrics_response,
+    get_prometheus_config,
+    setup_prometheus_middleware,
+)
 
 from executor.services.agent_service import AgentService
 from executor.services.heartbeat_service import start_heartbeat, stop_heartbeat
@@ -72,6 +85,17 @@ async def lifespan(app: FastAPI):
             logger.debug("Restored trace context from environment")
         except Exception as e:
             logger.warning(f"Failed to initialize OpenTelemetry: {e}")
+
+    # Initialize Prometheus metrics if enabled
+    prometheus_config = get_prometheus_config("wegent-executor")
+    if prometheus_config.enabled:
+        setup_prometheus_middleware(app, service_name="wegent-executor")
+        logger.info(
+            f"Prometheus metrics enabled at {prometheus_config.metrics_path}"
+        )
+    else:
+        logger.debug("Prometheus metrics disabled")
+
     try:
         if os.getenv("TASK_INFO"):
             # Generate a request_id for startup task execution
@@ -439,6 +463,28 @@ async def close_all_agent_sessions():
         raise HTTPException(
             status_code=500, detail=f"Error closing connections: {str(e)}"
         )
+
+
+@app.get("/metrics")
+async def metrics():
+    """
+    Prometheus metrics endpoint.
+
+    Returns all collected metrics in Prometheus text exposition format.
+    This endpoint is only active when PROMETHEUS_ENABLED=true.
+
+    Returns:
+        Response: Prometheus metrics in text format
+    """
+    config = get_prometheus_config()
+    if not config.enabled:
+        return Response(
+            content="Prometheus metrics are disabled",
+            status_code=404,
+            media_type="text/plain",
+        )
+
+    return get_metrics_response()
 
 
 def main():
