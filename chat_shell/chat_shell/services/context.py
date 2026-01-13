@@ -17,6 +17,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from shared.telemetry.decorators import add_span_event, trace_async
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from chat_shell.core.config import settings
@@ -70,6 +71,18 @@ class ChatContext:
         self._db_session: AsyncSession | None = None
         self._load_skill_tool: Any = None
 
+    @trace_async(
+        span_name="chat_context.prepare",
+        tracer_name="chat_shell.services",
+        extract_attributes=lambda self, *args, **kwargs: {
+            "context.task_id": self._request.task_id,
+            "context.subtask_id": self._request.subtask_id,
+            "context.user_id": self._request.user_id,
+            "context.has_skill_names": bool(self._request.skill_names),
+            "context.has_kb_ids": bool(self._request.knowledge_base_ids),
+            "context.has_mcp_servers": bool(self._request.mcp_servers),
+        },
+    )
     async def prepare(self) -> ChatContextResult:
         """Prepare all chat context resources in parallel.
 
@@ -77,6 +90,8 @@ class ChatContext:
             ChatContextResult containing all prepared resources
         """
         from chat_shell.tools.skill_factory import prepare_load_skill_tool
+
+        add_span_event("context_prepare_started", {"task_id": self._request.task_id})
 
         logger.debug(
             "[CHAT_CONTEXT] Preparing context: task_id=%d, subtask_id=%d",
@@ -87,6 +102,10 @@ class ChatContext:
         # Prepare load_skill_tool synchronously (fast, needed by skill_tools task)
         # This is a builtin tool that will be added to extra_tools
         if self._request.skill_names:
+            add_span_event(
+                "preparing_load_skill_tool",
+                {"skill_count": len(self._request.skill_names)},
+            )
             self._load_skill_tool = prepare_load_skill_tool(
                 skill_names=self._request.skill_names,
                 user_id=self._request.user_id,
@@ -96,12 +115,14 @@ class ChatContext:
         # Use context manager for database session
         async with get_db_context() as db:
             self._db_session = db
+            add_span_event("db_session_acquired")
             logger.debug(
                 "[CHAT_CONTEXT] >>> Starting parallel initialization tasks",
             )
 
             # Execute all independent tasks in parallel
             # Note: Agent creation is NOT done here - it belongs to the service layer
+            add_span_event("parallel_tasks_started")
             (
                 history,
                 kb_result,
@@ -114,12 +135,22 @@ class ChatContext:
                 self._connect_mcp_servers(),
             )
 
+            add_span_event(
+                "parallel_tasks_completed",
+                {
+                    "history_count": len(history),
+                    "kb_tools_count": len(kb_result[0]) if kb_result else 0,
+                    "skill_tools_count": len(skill_tools),
+                    "mcp_tools_count": len(mcp_result[0]) if mcp_result else 0,
+                },
+            )
             logger.debug(
                 "[CHAT_CONTEXT] <<< Parallel tasks complete: history=%d messages",
                 len(history),
             )
 
             # Build extra_tools from all sources (including builtin tools)
+            add_span_event("building_extra_tools")
             extra_tools = self._build_extra_tools(kb_result, skill_tools, mcp_result)
 
             # Process KB tools result for system prompt
@@ -132,6 +163,14 @@ class ChatContext:
             _, mcp_clients = mcp_result
             self._mcp_clients = mcp_clients
 
+            add_span_event(
+                "context_prepare_completed",
+                {
+                    "total_extra_tools": len(extra_tools),
+                    "mcp_clients_count": len(mcp_clients),
+                },
+            )
+
             return ChatContextResult(
                 history=history,
                 extra_tools=extra_tools,
@@ -139,11 +178,19 @@ class ChatContext:
                 mcp_clients=mcp_clients,
             )
 
+    @trace_async(
+        span_name="chat_context.cleanup",
+        tracer_name="chat_shell.services",
+        extract_attributes=lambda self, *args, **kwargs: {
+            "context.mcp_clients_count": len(self._mcp_clients),
+        },
+    )
     async def cleanup(self) -> None:
         """Clean up all chat context resources.
 
         This method should be called after chat completion to release resources.
         """
+        add_span_event("cleanup_started", {"mcp_clients_count": len(self._mcp_clients)})
         if self._mcp_clients:
             logger.debug(
                 "[CHAT_CONTEXT] Cleaning up %d MCP clients", len(self._mcp_clients)
@@ -153,31 +200,55 @@ class ChatContext:
                 return_exceptions=True,
             )
             self._mcp_clients = []
+        add_span_event("cleanup_completed")
 
+    @trace_async(
+        span_name="chat_context.load_chat_history",
+        tracer_name="chat_shell.services",
+        extract_attributes=lambda self, *args, **kwargs: {
+            "context.task_id": self._request.task_id,
+            "context.is_group_chat": self._request.is_group_chat,
+        },
+    )
     async def _load_chat_history(self) -> list:
         """Load chat history asynchronously."""
         from chat_shell.history import get_chat_history
 
-        return await get_chat_history(
+        add_span_event("loading_chat_history")
+        history = await get_chat_history(
             task_id=self._request.task_id,
             is_group_chat=self._request.is_group_chat,
             exclude_after_message_id=self._request.message_id,
         )
+        add_span_event("chat_history_loaded", {"message_count": len(history)})
+        return history
 
+    @trace_async(
+        span_name="chat_context.prepare_kb_tools",
+        tracer_name="chat_shell.services",
+        extract_attributes=lambda self, db, *args, **kwargs: {
+            "context.kb_ids_count": len(self._request.knowledge_base_ids or []),
+        },
+    )
     async def _prepare_kb_tools(self, db: AsyncSession) -> tuple[list, str]:
         """Prepare knowledge base tools asynchronously."""
         from chat_shell.tools.knowledge_factory import prepare_knowledge_base_tools
 
         base_system_prompt = self._request.system_prompt or ""
         if not self._request.knowledge_base_ids:
+            add_span_event("no_kb_ids_skipped")
             return [], base_system_prompt
 
+        add_span_event(
+            "preparing_kb_tools",
+            {"kb_ids_count": len(self._request.knowledge_base_ids)},
+        )
         context_window = (
             self._request.model_config.get("context_window")
             if self._request.model_config
             else None
         )
-        return await prepare_knowledge_base_tools(
+        result = await prepare_knowledge_base_tools(
             knowledge_base_ids=self._request.knowledge_base_ids,
             user_id=self._request.user_id,
             db=db,
@@ -187,7 +258,17 @@ class ChatContext:
             document_ids=self._request.document_ids,
             context_window=context_window,
         )
+        add_span_event("kb_tools_prepared", {"tools_count": len(result[0])})
+        return result
 
+    @trace_async(
+        span_name="chat_context.prepare_skill_tools",
+        tracer_name="chat_shell.services",
+        extract_attributes=lambda self, load_skill_tool, *args, **kwargs: {
+            "context.skill_configs_count": len(self._request.skill_configs or []),
+            "context.has_load_skill_tool": load_skill_tool is not None,
+        },
+    )
     async def _prepare_skill_tools(self, load_skill_tool) -> list:
         """Prepare skill tools asynchronously.
 
@@ -197,9 +278,14 @@ class ChatContext:
         from chat_shell.tools.skill_factory import prepare_skill_tools
 
         if not self._request.skill_configs:
+            add_span_event("no_skill_configs_skipped")
             return []
 
-        return await prepare_skill_tools(
+        add_span_event(
+            "preparing_skill_tools",
+            {"skill_configs_count": len(self._request.skill_configs)},
+        )
+        tools = await prepare_skill_tools(
             task_id=self._request.task_id,
             subtask_id=self._request.subtask_id,
             user_id=self._request.user_id,
@@ -208,12 +294,23 @@ class ChatContext:
             preload_skills=self._request.preload_skills,
             user_name=self._request.user_name,
         )
+        add_span_event("skill_tools_prepared", {"tools_count": len(tools)})
+        return tools
 
+    @trace_async(
+        span_name="chat_context.connect_single_mcp_server",
+        tracer_name="chat_shell.services",
+        extract_attributes=lambda self, server, *args, **kwargs: {
+            "mcp.server_name": server.get("name", "server"),
+            "mcp.transport_type": server.get("type", "streamable-http"),
+        },
+    )
     async def _connect_single_mcp_server(self, server: dict) -> dict:
         """Connect to a single MCP server."""
         from chat_shell.tools.mcp import MCPClient
 
         server_name = server.get("name", "server")
+        add_span_event("connecting_mcp_server", {"server_name": server_name})
         try:
             transport_type = server.get("type", "streamable-http")
             server_url = server.get("url", "")
@@ -231,6 +328,10 @@ class ChatContext:
             await client.connect()
             if client.is_connected:
                 tools = client.get_tools()
+                add_span_event(
+                    "mcp_server_connected",
+                    {"server_name": server_name, "tools_count": len(tools)},
+                )
                 return {
                     "success": True,
                     "tools": tools,
@@ -238,6 +339,7 @@ class ChatContext:
                     "summary": f"{server_name}({len(tools)})",
                 }
             else:
+                add_span_event("mcp_server_not_ready", {"server_name": server_name})
                 logger.warning(
                     "[CHAT_CONTEXT] MCP server %s connected but not ready",
                     server_name,
@@ -254,6 +356,10 @@ class ChatContext:
                     else:
                         error_msg = str(exc)
                     break
+            add_span_event(
+                "mcp_server_connection_failed",
+                {"server_name": server_name, "error": error_msg},
+            )
             logger.warning(
                 "[CHAT_CONTEXT] Failed to load MCP server %s: %s",
                 server_name,
@@ -261,11 +367,23 @@ class ChatContext:
             )
             return {"success": False, "client": None}
 
+    @trace_async(
+        span_name="chat_context.connect_mcp_servers",
+        tracer_name="chat_shell.services",
+        extract_attributes=lambda self, *args, **kwargs: {
+            "context.mcp_servers_count": len(self._request.mcp_servers or []),
+        },
+    )
     async def _connect_mcp_servers(self) -> tuple[list, list]:
         """Connect to all MCP servers in parallel."""
         if not self._request.mcp_servers:
+            add_span_event("no_mcp_servers_skipped")
             return [], []
 
+        add_span_event(
+            "connecting_mcp_servers",
+            {"servers_count": len(self._request.mcp_servers)},
+        )
         logger.debug(
             "[CHAT_CONTEXT] Loading %d MCP servers from request for task %d",
             len(self._request.mcp_servers),
@@ -293,6 +411,13 @@ class ChatContext:
             elif result.get("client"):
                 mcp_clients.append(result["client"])
 
+        add_span_event(
+            "mcp_servers_connected",
+            {
+                "connected_count": len(mcp_summary),
+                "total_tools": len(mcp_tools),
+            },
+        )
         if mcp_summary:
             logger.info(
                 "[CHAT_CONTEXT] Connected %d MCP servers: %s",

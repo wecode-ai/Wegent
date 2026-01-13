@@ -14,6 +14,8 @@ This service handles:
 import logging
 from typing import AsyncIterator
 
+from shared.telemetry.decorators import add_span_event, trace_async_generator
+
 from chat_shell.core.config import settings
 from chat_shell.interface import ChatEvent, ChatEventType, ChatInterface, ChatRequest
 from chat_shell.services.context import ChatContext
@@ -40,6 +42,17 @@ class ChatService(ChatInterface):
         """Initialize chat service."""
         self._storage = session_manager
 
+    @trace_async_generator(
+        span_name="chat_service.chat",
+        tracer_name="chat_shell.services",
+        extract_attributes=lambda self, request, *args, **kwargs: {
+            "chat.task_id": request.task_id,
+            "chat.subtask_id": request.subtask_id,
+            "chat.user_id": request.user_id,
+            "chat.user_name": request.user_name or "",
+            "chat.is_group_chat": request.is_group_chat,
+        },
+    )
     async def chat(self, request: ChatRequest) -> AsyncIterator[ChatEvent]:
         """Process a chat request and stream events.
 
@@ -49,6 +62,8 @@ class ChatService(ChatInterface):
         Yields:
             ChatEvent: Events during chat processing
         """
+        add_span_event("chat_started", {"task_id": request.task_id})
+
         emitter = SSEEmitter()
         state = StreamingState(
             task_id=request.task_id,
@@ -69,33 +84,53 @@ class ChatService(ChatInterface):
 
         try:
             # Acquire resources
+            add_span_event("acquiring_resources")
             logger.debug("[CHAT_SERVICE] Acquiring resources...")
             if not await core.acquire_resources():
                 # Emit error event if resources couldn't be acquired
+                add_span_event("resources_acquisition_failed")
                 logger.warning("[CHAT_SERVICE] Failed to acquire resources!")
                 async for event in self._emit_pending_events(emitter):
                     yield event
                 return
 
+            add_span_event("resources_acquired")
             logger.debug("[CHAT_SERVICE] Resources acquired, emitting start event...")
             # Emit start event
             async for event in self._emit_pending_events(emitter):
                 yield event
 
             # Process chat with the agent
+            add_span_event("processing_chat_started")
             logger.debug("[CHAT_SERVICE] Starting _process_chat...")
             async for event in self._process_chat(request, core, state, emitter):
                 yield event
 
+            add_span_event("processing_chat_completed")
+
         except Exception as e:
+            add_span_event("chat_error", {"error": str(e)})
             logger.exception("[CHAT_SERVICE] Exception in chat(): %s", e)
             await core.handle_error(e)
             async for event in self._emit_pending_events(emitter):
                 yield event
         finally:
+            add_span_event("releasing_resources")
             logger.debug("[CHAT_SERVICE] Releasing resources...")
             await core.release_resources()
+            add_span_event("resources_released")
 
+    @trace_async_generator(
+        span_name="chat_service.process_chat",
+        tracer_name="chat_shell.services",
+        extract_attributes=lambda self, request, core, state, emitter, *args, **kwargs: {
+            "process.task_id": request.task_id,
+            "process.subtask_id": request.subtask_id,
+            "process.model": (
+                request.model_config.get("model") if request.model_config else "gpt-4"
+            ),
+        },
+    )
     async def _process_chat(
         self,
         request: ChatRequest,
@@ -104,7 +139,11 @@ class ChatService(ChatInterface):
         emitter: SSEEmitter,
     ) -> AsyncIterator[ChatEvent]:
         """Process chat request with agent streaming."""
+        import time
+
         from chat_shell import AgentConfig, create_chat_agent
+
+        add_span_event("process_chat_started", {"task_id": request.task_id})
 
         # Create chat context for resource management
         context = ChatContext(request)
@@ -117,9 +156,16 @@ class ChatService(ChatInterface):
             )
 
             # Prepare all context resources in parallel
+            add_span_event("preparing_context")
+            t0 = time.perf_counter()
             ctx_result = await context.prepare()
+            logger.info(
+                "[CHAT_SERVICE_PERF] context.prepare: %.2fms",
+                (time.perf_counter() - t0) * 1000,
+            )
 
             # Create chat agent (agent creation belongs to service layer, not context)
+            add_span_event("creating_chat_agent")
             agent = create_chat_agent(
                 workspace_root=settings.WORKSPACE_ROOT,
                 enable_skills=settings.ENABLE_SKILLS,
@@ -127,6 +173,13 @@ class ChatService(ChatInterface):
                 enable_checkpointing=settings.ENABLE_CHECKPOINTING,
             )
 
+            add_span_event(
+                "context_prepared",
+                {
+                    "history_count": len(ctx_result.history),
+                    "extra_tools_count": len(ctx_result.extra_tools),
+                },
+            )
             logger.debug(
                 "[CHAT_SERVICE] Context prepared: history=%d, extra_tools=%d",
                 len(ctx_result.history),
@@ -140,6 +193,7 @@ class ChatService(ChatInterface):
                     [t.name for t in ctx_result.extra_tools],
                 )
 
+            add_span_event("building_agent_config")
             agent_config = AgentConfig(
                 model_config=request.model_config or {"model": "gpt-4"},
                 system_prompt=ctx_result.system_prompt,
@@ -152,9 +206,11 @@ class ChatService(ChatInterface):
             )
 
             # Build messages for the agent
+            add_span_event("building_messages")
             model_id = (
                 request.model_config.get("model") if request.model_config else None
             )
+            t1 = time.perf_counter()
             messages = agent.build_messages(
                 history=ctx_result.history,
                 current_message=request.message,
@@ -163,16 +219,30 @@ class ChatService(ChatInterface):
                 config=agent_config,
                 model_id=model_id,
             )
+            logger.info(
+                "[CHAT_SERVICE_PERF] build_messages: %.2fms",
+                (time.perf_counter() - t1) * 1000,
+            )
+            add_span_event("messages_built", {"message_count": len(messages)})
 
             # Create tool event handler using the agent builder
+            add_span_event("creating_tool_event_handler")
+            t2 = time.perf_counter()
             agent_builder = agent.create_agent_builder(agent_config)
+
             on_tool_event = create_tool_event_handler(state, emitter, agent_builder)
             logger.debug(
                 "[CHAT_SERVICE] Created tool event handler, agent_builder=%s",
                 type(agent_builder).__name__,
             )
+            logger.info(
+                "[CHAT_SERVICE_PERF] create_agent_builder: %.2fms",
+                (time.perf_counter() - t2) * 1000,
+            )
 
             # Stream tokens from agent
+            add_span_event("streaming_started")
+            token_count = 0
             async for token in agent.stream(
                 messages=messages,
                 config=agent_config,
@@ -180,29 +250,42 @@ class ChatService(ChatInterface):
                 on_tool_event=on_tool_event,
             ):
                 if core.is_cancelled():
+                    add_span_event(
+                        "streaming_cancelled", {"tokens_processed": token_count}
+                    )
                     break
 
                 if not await core.process_token(token):
+                    add_span_event(
+                        "token_processing_stopped", {"tokens_processed": token_count}
+                    )
                     break
 
+                token_count += 1
                 # Yield any pending events
                 async for event in self._emit_pending_events(emitter):
                     yield event
 
             # Finalize if not cancelled
             if not core.is_cancelled():
+                add_span_event("finalizing", {"total_tokens": token_count})
                 await core.finalize()
+
+            add_span_event("streaming_completed", {"total_tokens": token_count})
 
             # Yield remaining events
             async for event in self._emit_pending_events(emitter):
                 yield event
 
         except Exception as e:
+            add_span_event("process_chat_error", {"error": str(e)})
             logger.exception("[CHAT_SERVICE] Error processing chat: %s", e)
             raise
         finally:
             # Clean up context resources
+            add_span_event("cleaning_up_context")
             await context.cleanup()
+            add_span_event("context_cleaned_up")
 
     async def _emit_pending_events(
         self, emitter: SSEEmitter
