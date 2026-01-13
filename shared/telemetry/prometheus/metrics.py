@@ -18,7 +18,7 @@ Metrics included (compatible with prometheus-fastapi-instrumentator):
 """
 
 import logging
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from prometheus_client import (REGISTRY, CollectorRegistry, Counter, Gauge,
                                Histogram, Summary)
@@ -170,7 +170,7 @@ class PrometheusMetrics:
         )
 
         # Custom metrics registry for extensibility
-        self._custom_metrics: Dict[str, any] = {}
+        self._custom_metrics: Dict[str, Any] = {}
 
     def record_request_start(self, method: str, path: str) -> None:
         """
