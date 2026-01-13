@@ -40,13 +40,16 @@ class AgentConfig:
 
     This dataclass holds all the parameters needed to create and configure
     a chat agent, keeping the creation logic clean and type-safe.
+
+    Note: Tools that implement PromptModifierTool protocol (e.g., LoadSkillTool)
+    should be included in extra_tools. The LangGraphAgentBuilder will automatically
+    detect and use them for dynamic prompt modification.
     """
 
     model_config: dict[str, Any]
     system_prompt: str = ""
     max_iterations: int = 10  # Default, can be overridden by settings
     extra_tools: list[BaseTool] | None = None
-    load_skill_tool: Any = None
     streaming: bool = True
     # Prompt enhancement options (handled internally by ChatAgent)
     enable_clarification: bool = False
@@ -132,18 +135,18 @@ class ChatAgent:
         for tool in self.tool_registry.get_all():
             tool_registry.register(tool)
 
-        # Add extra tools
+        # Add extra tools (including PromptModifierTool instances like LoadSkillTool)
+        # LangGraphAgentBuilder will automatically detect PromptModifierTool instances
         if config.extra_tools:
             for tool in config.extra_tools:
                 tool_registry.register(tool)
 
-        # Create agent builder with load_skill_tool for dynamic skill prompt injection
+        # Create agent builder - it will auto-detect PromptModifierTool from registry
         return LangGraphAgentBuilder(
             llm=llm,
             tool_registry=tool_registry,
             max_iterations=config.max_iterations,
             enable_checkpointing=self.enable_checkpointing,
-            load_skill_tool=config.load_skill_tool,
         )
 
     async def execute(
