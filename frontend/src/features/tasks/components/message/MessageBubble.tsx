@@ -1426,16 +1426,33 @@ const MessageBubble = memo(
             {/* Show error message and retry button for failed messages */}
             {!isUserTypeMessage && msg.status === 'error' && msg.error && (
               <div className="mt-4 space-y-3">
-                {/* Error message */}
+                {/* Error message with details */}
                 <div className="flex items-start gap-2 p-3 rounded-lg bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800">
                   <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
-                  <div className="flex-1">
+                  <div className="flex-1 min-w-0">
+                    {/* Generic error message */}
                     <p className="text-sm text-red-800 dark:text-red-200">
                       {onRetry
                         ? t('chat:errors.request_failed_retry')
                         : t('chat:errors.model_unsupported')}
                     </p>
+                    {/* Detailed error message from backend */}
+                    <p className="mt-1 text-xs text-red-600 dark:text-red-300 break-all">
+                      {msg.error}
+                    </p>
                   </div>
+                  {/* Copy error button */}
+                  <CopyButton
+                    content={msg.error}
+                    className="h-7 w-7 flex-shrink-0 !rounded-md bg-red-100 dark:bg-red-900/30 hover:!bg-red-200 dark:hover:!bg-red-900/50"
+                    tooltip={t('chat:errors.copy_error') || 'Copy error'}
+                    onCopySuccess={() =>
+                      trace.event('error-copy', {
+                        'error.message': msg.error?.substring(0, 100),
+                        ...(msg.subtaskId && { 'subtask.id': msg.subtaskId }),
+                      })
+                    }
+                  />
                 </div>
 
                 {/* Retry button - positioned like BubbleTools for consistency */}
@@ -1516,6 +1533,7 @@ const MessageBubble = memo(
       prevSourcesLen === nextSourcesLen &&
       prevReasoningLen === nextReasoningLen &&
       prevProps.msg.status === nextProps.msg.status &&
+      prevProps.msg.error === nextProps.msg.error &&
       prevProps.isPendingConfirmation === nextProps.isPendingConfirmation
 
     return shouldSkipRender

@@ -178,7 +178,8 @@
     "invalid_parameter": "Invalid parameter: Request parameters are incorrect, please check your input",
     "network_error": "Network error: Please check your connection and try again",
     "timeout_error": "Request timeout: Service response time exceeded, please try again later",
-    "generic_error": "Request failed: Unknown error, please try again or contact administrator"
+    "generic_error": "Request failed: Unknown error, please try again or contact administrator",
+    "copy_error": "Copy error details"
   },
   "clarification": {
     "title": "Smart Follow-up",
