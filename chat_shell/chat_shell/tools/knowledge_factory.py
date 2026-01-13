@@ -10,8 +10,9 @@ Responsible for creating knowledge base search tools and enhancing system prompt
 import logging
 from typing import List, Optional
 
-from shared.utils.markdown_util import remap_markdown_headings
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from shared.utils.prompt_builder import PromptBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +61,10 @@ async def prepare_knowledge_base_tools(
             kb_meta_prompt = await _build_historical_kb_meta_prompt(db, task_id)
             if kb_meta_prompt:
                 enhanced_system_prompt = (
-                    f"{base_system_prompt}{remap_markdown_headings(kb_meta_prompt)}"
+                    PromptBuilder()
+                    .base(base_system_prompt)
+                    .append(kb_meta_prompt)
+                    .build()
                 )
         return extra_tools, enhanced_system_prompt
 
@@ -109,7 +113,7 @@ async def prepare_knowledge_base_tools(
         )
 
     enhanced_system_prompt = (
-        f"{base_system_prompt}{remap_markdown_headings(kb_instruction)}"
+        PromptBuilder().base(base_system_prompt).append(kb_instruction).build()
     )
 
     # Add historical knowledge base meta info if available
@@ -117,7 +121,10 @@ async def prepare_knowledge_base_tools(
         kb_meta_prompt = await _build_historical_kb_meta_prompt(db, task_id)
         if kb_meta_prompt:
             enhanced_system_prompt = (
-                f"{enhanced_system_prompt}{remap_markdown_headings(kb_meta_prompt)}"
+                PromptBuilder()
+                .base(enhanced_system_prompt)
+                .append(kb_meta_prompt)
+                .build()
             )
 
     return extra_tools, enhanced_system_prompt

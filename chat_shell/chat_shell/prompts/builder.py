@@ -12,6 +12,7 @@ Also contains the Deep Thinking Mode prompt for search tool usage guidance.
 """
 
 from shared.utils.markdown_util import remap_markdown_headings
+from shared.utils.prompt_builder import PromptBuilder
 
 CLARIFICATION_PROMPT = """
 
@@ -146,7 +147,7 @@ def get_clarification_prompt() -> str:
     Returns:
         The clarification prompt string to append to system prompt.
     """
-    return remap_markdown_headings(CLARIFICATION_PROMPT)
+    return PromptBuilder().base(CLARIFICATION_PROMPT).build()
 
 
 def append_clarification_prompt(system_prompt: str, enable_clarification: bool) -> str:
@@ -160,9 +161,12 @@ def append_clarification_prompt(system_prompt: str, enable_clarification: bool) 
     Returns:
         The system prompt with clarification instructions appended if enabled.
     """
-    if enable_clarification:
-        return system_prompt + remap_markdown_headings(CLARIFICATION_PROMPT)
-    return system_prompt
+    return (
+        PromptBuilder()
+        .base(system_prompt)
+        .append_if(enable_clarification, CLARIFICATION_PROMPT)
+        .build()
+    )
 
 
 # Deep Thinking Mode Prompt
@@ -262,7 +266,7 @@ def get_deep_thinking_prompt() -> str:
     Returns:
         The deep thinking prompt string to append to system prompt.
     """
-    return remap_markdown_headings(DEEP_THINKING_PROMPT)
+    return PromptBuilder().base(DEEP_THINKING_PROMPT).build()
 
 
 def append_deep_thinking_prompt(system_prompt: str, enable_deep_thinking: bool) -> str:
@@ -276,9 +280,12 @@ def append_deep_thinking_prompt(system_prompt: str, enable_deep_thinking: bool) 
     Returns:
         The system prompt with deep thinking instructions appended if enabled.
     """
-    if enable_deep_thinking:
-        return system_prompt + remap_markdown_headings(DEEP_THINKING_PROMPT)
-    return system_prompt
+    return (
+        PromptBuilder()
+        .base(system_prompt)
+        .append_if(enable_deep_thinking, DEEP_THINKING_PROMPT)
+        .build()
+    )
 
 
 # Skill Metadata Prompt Template
@@ -319,10 +326,12 @@ def append_skill_metadata_prompt(system_prompt: str, skills: list[dict]) -> str:
         [f"- **{s['name']}**: {s['description']}" for s in valid_skills]
     )
 
-    skill_section = remap_markdown_headings(
-        SKILL_METADATA_PROMPT.format(skill_list=skill_list)
+    return (
+        PromptBuilder()
+        .base(system_prompt)
+        .append_formatted(SKILL_METADATA_PROMPT, skill_list=skill_list)
+        .build()
     )
-    return system_prompt + skill_section
 
 
 def build_system_prompt(
@@ -347,18 +356,25 @@ def build_system_prompt(
     Returns:
         The final system prompt with all enhancements applied
     """
-    system_prompt = remap_markdown_headings(base_prompt)
-
-    # Append clarification mode instructions if enabled
-    if enable_clarification:
-        system_prompt = append_clarification_prompt(system_prompt, True)
-
-    # Append deep thinking mode instructions if enabled
-    if enable_deep_thinking:
-        system_prompt = append_deep_thinking_prompt(system_prompt, True)
-
-    # Inject skill metadata if skills are configured
+    # Filter valid skills upfront
+    valid_skills = []
     if skills:
-        system_prompt = append_skill_metadata_prompt(system_prompt, skills)
+        valid_skills = [s for s in skills if s.get("name") and s.get("description")]
 
-    return system_prompt
+    skill_list = ""
+    if valid_skills:
+        skill_list = "\n".join(
+            [f"- **{s['name']}**: {s['description']}" for s in valid_skills]
+        )
+
+    return (
+        PromptBuilder()
+        .base(base_prompt)
+        .append_if(enable_clarification, CLARIFICATION_PROMPT)
+        .append_if(enable_deep_thinking, DEEP_THINKING_PROMPT)
+        .append_if(
+            bool(valid_skills),
+            SKILL_METADATA_PROMPT.format(skill_list=skill_list) if valid_skills else "",
+        )
+        .build()
+    )
