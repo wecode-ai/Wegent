@@ -10,7 +10,15 @@
     "copy": "Copy",
     "regenerate": "Regenerate",
     "stop": "Stop",
-    "retry": "Retry"
+    "retry": "Retry",
+    "edit": "Edit",
+    "save": "Save",
+    "cancel": "Cancel"
+  },
+  "edit": {
+    "tooltip": "Edit message",
+    "success": "Message edited successfully",
+    "failed": "Failed to edit message"
   },
   "quote": {
     "ask_wegent": "Ask Wegent",

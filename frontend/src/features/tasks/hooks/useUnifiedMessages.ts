@@ -148,6 +148,8 @@ export function useUnifiedMessages({
 
   // Track the last synced task to avoid unnecessary syncs
   const lastSyncedTaskIdRef = useRef<number | undefined>(undefined)
+  // Track the last synced subtasks count to detect deletions (e.g., after message edit)
+  const lastSyncedSubtasksCountRef = useRef<number>(0)
   // Track whether we've attempted to resume streaming for this task
   const attemptedResumeRef = useRef<number | undefined>(undefined)
 
@@ -164,25 +166,34 @@ export function useUnifiedMessages({
   // This initializes the message list from backend data
   useEffect(() => {
     const hasMessages = streamState?.messages && streamState.messages.size > 0
+    const currentSubtasksCount = subtasks?.length || 0
+
+    // Detect if subtasks were deleted (e.g., after message edit)
+    // This forces a resync to remove deleted messages from the UI
+    const subtasksWereDeleted =
+      taskId === lastSyncedTaskIdRef.current &&
+      currentSubtasksCount < lastSyncedSubtasksCountRef.current
 
     // Only sync when:
     // 1. We have a taskId
     // 2. We have subtasks
     // 3. The task has changed (different from last synced) OR messages are empty
-    //    (force resync after clearAllStreams to fix double-click blank message bug)
+    //    OR subtasks were deleted (force resync after message edit)
     if (
       taskId &&
       subtasks &&
       subtasks.length > 0 &&
-      (taskId !== lastSyncedTaskIdRef.current || !hasMessages)
+      (taskId !== lastSyncedTaskIdRef.current || !hasMessages || subtasksWereDeleted)
     ) {
       syncBackendMessages(taskId, subtasks, {
         teamName: team?.name,
         isGroupChat,
         currentUserId: user?.id,
         currentUserName: user?.user_name,
+        forceClean: subtasksWereDeleted, // Clean up messages that were deleted after edit
       })
       lastSyncedTaskIdRef.current = taskId
+      lastSyncedSubtasksCountRef.current = currentSubtasksCount
 
       // KEY FIX: If there's a RUNNING/PENDING AI subtask, call resumeStream to receive
       // streaming data. This handles the task switch case where syncBackendMessages
@@ -208,6 +219,7 @@ export function useUnifiedMessages({
     // Reset tracking when task is cleared
     if (!taskId) {
       lastSyncedTaskIdRef.current = undefined
+      lastSyncedSubtasksCountRef.current = 0
       attemptedResumeRef.current = undefined
     }
   }, [

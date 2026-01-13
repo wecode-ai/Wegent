@@ -10,7 +10,15 @@
     "copy": "复制",
     "regenerate": "重新生成",
     "stop": "停止",
-    "retry": "重试"
+    "retry": "重试",
+    "edit": "编辑",
+    "save": "保存",
+    "cancel": "取消"
+  },
+  "edit": {
+    "tooltip": "编辑消息",
+    "success": "消息编辑成功",
+    "failed": "编辑消息失败"
   },
   "quote": {
     "ask_wegent": "询问 Wegent",
