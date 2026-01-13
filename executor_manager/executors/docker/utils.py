@@ -81,10 +81,10 @@ def find_available_port() -> int:
         logger.info(
             "Docker ports in use by executor_manager: %s", sorted(docker_used_ports)
         )
-        
+
         # Find first available port in range
         return _get_first_available_port(docker_used_ports)
-        
+
     except subprocess.CalledProcessError as e:
         logger.error("Error checking Docker ports: %s", e.stderr or e)
         raise
@@ -96,13 +96,13 @@ def find_available_port() -> int:
 def _get_first_available_port(used_ports: Set[int]) -> int:
     """
     Find the first available port in the defined range.
-    
+
     Args:
         used_ports: Set of ports already in use
-        
+
     Returns:
         int: First available port
-        
+
     Raises:
         RuntimeError: If no ports are available
     """
@@ -110,10 +110,8 @@ def _get_first_available_port(used_ports: Set[int]) -> int:
         if port not in used_ports:
             logger.info("Selected available port: %d", port)
             return port
-            
-    raise RuntimeError(
-        f"No available ports in range {PORT_RANGE_MIN}-{PORT_RANGE_MAX}"
-    )
+
+    raise RuntimeError(f"No available ports in range {PORT_RANGE_MIN}-{PORT_RANGE_MAX}")
 
 
 def get_docker_used_ports() -> Set[int]:
@@ -203,21 +201,87 @@ def delete_container(container_name: str) -> dict:
         return {"status": "failed", "error_msg": f"Error: {e}"}
 
 
+def pause_container(container_name: str) -> dict:
+    """
+    Pause a running Docker container (E2B standard).
+
+    This preserves the container state without consuming CPU resources.
+
+    Args:
+        container_name (str): Name of the container to pause
+
+    Returns:
+        dict: Result with status and optional error message
+    """
+    try:
+        # Check ownership first
+        if not check_container_ownership(container_name):
+            return {
+                "status": "failed",
+                "error_msg": f"Container '{container_name}' not found or not owned by executor_manager",
+            }
+
+        cmd = ["docker", "pause", container_name]
+        subprocess.run(cmd, check=True, capture_output=True)
+        logger.info(f"Paused Docker container '{container_name}'")
+        return {"status": "success"}
+    except subprocess.CalledProcessError as e:
+        error_msg = e.stderr.decode() if hasattr(e.stderr, "decode") else str(e.stderr)
+        logger.error(f"Docker error pausing container '{container_name}': {error_msg}")
+        return {"status": "failed", "error_msg": f"Docker error: {error_msg}"}
+    except Exception as e:
+        logger.error(f"Error pausing Docker container '{container_name}': {e}")
+        return {"status": "failed", "error_msg": f"Error: {e}"}
+
+
+def unpause_container(container_name: str) -> dict:
+    """
+    Resume (unpause) a paused Docker container (E2B standard).
+
+    Args:
+        container_name (str): Name of the container to unpause
+
+    Returns:
+        dict: Result with status and optional error message
+    """
+    try:
+        # Check ownership first
+        if not check_container_ownership(container_name):
+            return {
+                "status": "failed",
+                "error_msg": f"Container '{container_name}' not found or not owned by executor_manager",
+            }
+
+        cmd = ["docker", "unpause", container_name]
+        subprocess.run(cmd, check=True, capture_output=True)
+        logger.info(f"Unpaused Docker container '{container_name}'")
+        return {"status": "success"}
+    except subprocess.CalledProcessError as e:
+        error_msg = e.stderr.decode() if hasattr(e.stderr, "decode") else str(e.stderr)
+        logger.error(
+            f"Docker error unpausing container '{container_name}': {error_msg}"
+        )
+        return {"status": "failed", "error_msg": f"Docker error: {error_msg}"}
+    except Exception as e:
+        logger.error(f"Error unpausing Docker container '{container_name}': {e}")
+        return {"status": "failed", "error_msg": f"Error: {e}"}
+
+
 def _build_docker_ps_command(label_selector: str = None) -> list:
     """
     Build docker ps command with appropriate filters.
-    
+
     Args:
         label_selector (str, optional): Additional label selector
-        
+
     Returns:
         list: Command arguments list
     """
     cmd = ["docker", "ps", "--filter", "label=owner=executor_manager"]
-    
+
     if label_selector:
         cmd.extend(["--filter", f"label={label_selector}"])
-        
+
     cmd.extend(["--format", "{{.Names}}"])
     return cmd
 
@@ -235,15 +299,17 @@ def count_running_containers(label_selector: str = None) -> dict:
     try:
         cmd = _build_docker_ps_command(label_selector)
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-        
+
         # Count non-empty lines in output
         container_count = sum(1 for line in result.stdout.split("\n") if line.strip())
-        
-        logger.info(f"Found {container_count} running containers with owner=executor_manager")
+
+        logger.info(
+            f"Found {container_count} running containers with owner=executor_manager"
+        )
         return {"status": "success", "count": container_count}
-        
+
     except Exception as e:
-        error_msg = getattr(e, 'stderr', str(e))
+        error_msg = getattr(e, "stderr", str(e))
         logger.error(f"Error listing Docker containers: {error_msg}")
         return {"status": "failed", "error_msg": f"Error: {error_msg}", "count": 0}
 
@@ -251,7 +317,7 @@ def count_running_containers(label_selector: str = None) -> dict:
 def get_running_task_details(label_selector: str = None) -> dict:
     """
     Get detailed information about running tasks from Docker containers.
-    
+
     This function retrieves task_id, subtask_id, and subtask_next_id from
     running containers to determine which tasks are currently executing.
 
@@ -264,52 +330,54 @@ def get_running_task_details(label_selector: str = None) -> dict:
     try:
         # Base command with owner filter
         cmd = ["docker", "ps", "--filter", "label=owner=executor_manager"]
-        
+
         # Add additional label selector if provided
         if label_selector:
             cmd.extend(["--filter", f"label={label_selector}"])
-            
+
         # Format to get task_id, subtask_id, subtask_next_id and container name
         # Using go template formatting to get multiple fields
-        cmd.extend([
-            "--format",
-            "{{.Label \"task_id\"}}|{{.Label \"subtask_id\"}}|{{.Label \"subtask_next_id\"}}|{{.Label \"aigc.weibo.com/task-type\"}}|{{.Names}}"
-        ])
-        
+        cmd.extend(
+            [
+                "--format",
+                '{{.Label "task_id"}}|{{.Label "subtask_id"}}|{{.Label "subtask_next_id"}}|{{.Label "aigc.weibo.com/task-type"}}|{{.Names}}',
+            ]
+        )
+
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-        
+
         # Process container information
         containers = []
         task_map = {}
-        
+
         for line in result.stdout.split("\n"):
             if not line.strip():
                 continue
-                
+
             parts = line.strip().split("|")
-            
+
             if len(parts) >= 5:
                 task_id = parts[0]
                 subtask_id = parts[1]
                 subtask_next_id = parts[2]
                 task_type = parts[3] if parts[3] else "online"
                 container_name = parts[4]
-                                
+
                 container_info = {
                     "task_id": task_id,
                     "subtask_id": subtask_id,
                     "container_name": container_name,
                     "subtask_next_id": subtask_next_id,
-                    "task_type": task_type
+                    "task_type": task_type,
                 }
-                
+
                 containers.append(container_info)
-                
+
                 # Group by task_id
                 if task_id not in task_map:
                     task_map[task_id] = []
                 task_map[task_id].append(container_info)
-        
+
         # Determine which tasks are still running
         running_task_ids = []
         for task_id, task_containers in task_map.items():
@@ -317,37 +385,39 @@ def get_running_task_details(label_selector: str = None) -> dict:
 
             has_completed = False
             has_completed = any(
-                container.get("subtask_next_id") == ""
-                for container in task_containers
+                container.get("subtask_next_id") == "" for container in task_containers
             )
-            
+
             if not has_completed:
                 running_task_ids.append(task_id)
-        
-        logger.info(f"Found {len(running_task_ids)} running tasks with owner=executor_manager")
+
+        logger.info(
+            f"Found {len(running_task_ids)} running tasks with owner=executor_manager"
+        )
         return {
             "status": "success",
             "task_ids": running_task_ids,
-            "containers": containers
+            "containers": containers,
         }
-        
+
     except Exception as e:
-        error_msg = getattr(e, 'stderr', str(e))
+        error_msg = getattr(e, "stderr", str(e))
         logger.error(f"Error getting task details from Docker containers: {error_msg}")
         return {
             "status": "failed",
             "error_msg": f"Error: {error_msg}",
             "task_ids": [],
-            "containers": []
+            "containers": [],
         }
+
 
 def get_container_ports(container_name: str) -> dict:
     """
     Get port mappings for a specific container by name.
-    
+
     Args:
         container_name (str): Name of the container
-        
+
     Returns:
         dict: Result with status, ports information and optional error message
     """
@@ -357,9 +427,9 @@ def get_container_ports(container_name: str) -> dict:
             return {
                 "status": "failed",
                 "error_msg": f"Container '{container_name}' not found or not owned by executor_manager",
-                "ports": []
+                "ports": [],
             }
-            
+
         # Get ports information for the specific container
         cmd = [
             "docker",
@@ -370,43 +440,42 @@ def get_container_ports(container_name: str) -> dict:
             "{{.Ports}}",
         ]
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-        
+
         # Parse port information
         ports = []
         port_pattern = r"0\.0\.0\.0:(\d+)->(\d+)/(\w+)"
-        
+
         for line in result.stdout.splitlines():
             if line.strip():
                 matches = re.findall(port_pattern, line)
                 for match in matches:
                     host_port, container_port, protocol = match
-                    ports.append({
-                        "host_port": int(host_port),
-                        "container_port": int(container_port),
-                        "protocol": protocol
-                    })
-        
-        logger.info(f"Retrieved port mappings for container '{container_name}': {ports}")
-        return {
-            "status": "success",
-            "ports": ports
-        }
-        
+                    ports.append(
+                        {
+                            "host_port": int(host_port),
+                            "container_port": int(container_port),
+                            "protocol": protocol,
+                        }
+                    )
+
+        logger.info(
+            f"Retrieved port mappings for container '{container_name}': {ports}"
+        )
+        return {"status": "success", "ports": ports}
+
     except subprocess.CalledProcessError as e:
-        error_msg = e.stderr.decode() if hasattr(e, 'stderr') else str(e)
-        logger.error(f"Docker error getting ports for container '{container_name}': {error_msg}")
+        error_msg = e.stderr.decode() if hasattr(e, "stderr") else str(e)
+        logger.error(
+            f"Docker error getting ports for container '{container_name}': {error_msg}"
+        )
         return {
             "status": "failed",
             "error_msg": f"Docker error: {error_msg}",
-            "ports": []
+            "ports": [],
         }
     except Exception as e:
         logger.error(f"Error getting ports for container '{container_name}': {e}")
-        return {
-            "status": "failed",
-            "error_msg": f"Error: {e}",
-            "ports": []
-        }
+        return {"status": "failed", "error_msg": f"Error: {e}", "ports": []}
 
 
 if __name__ == "__main__":

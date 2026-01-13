@@ -537,6 +537,165 @@ def _test_embedding_connection(
         }
 
 
+@router.post("/fetch-available-models")
+def fetch_available_models(
+    fetch_data: dict,
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Fetch available models from API provider
+
+    Request body:
+    {
+      "provider_type": "openai" | "anthropic" | "gemini" | "custom",
+      "api_key": "sk-...",
+      "base_url": "https://api.openai.com/v1",  // optional
+      "custom_headers": {"header-name": "header-value"}  // optional
+    }
+
+    Response:
+    {
+      "success": true | false,
+      "models": [
+        {
+          "id": "gpt-4-turbo",
+          "name": "GPT-4 Turbo",
+          "created": 1234567890,
+          "owned_by": "openai"
+        }
+      ],
+      "message": "Error message"  // only present on failure
+    }
+    """
+    import httpx
+
+    provider_type = fetch_data.get("provider_type")
+    api_key = fetch_data.get("api_key")
+    base_url = fetch_data.get("base_url")
+    custom_headers = fetch_data.get("custom_headers", {})
+
+    if not provider_type or not api_key:
+        return {
+            "success": False,
+            "message": "Missing required fields: provider_type, api_key",
+            "models": [],
+        }
+
+    # Ensure custom_headers is a dict
+    if not isinstance(custom_headers, dict):
+        custom_headers = {}
+
+    try:
+        # OpenAI and custom OpenAI-compatible APIs
+        if provider_type in ["openai", "custom"]:
+            url = f"{base_url or 'https://api.openai.com/v1'}/models"
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                **custom_headers,
+            }
+
+            with httpx.Client(timeout=30.0) as client:
+                response = client.get(url, headers=headers)
+                response.raise_for_status()
+                data = response.json()
+
+                models = []
+                for model in data.get("data", []):
+                    models.append(
+                        {
+                            "id": model.get("id"),
+                            "name": model.get(
+                                "id"
+                            ),  # OpenAI doesn't provide display names
+                            "created": model.get("created"),
+                            "owned_by": model.get("owned_by"),
+                        }
+                    )
+
+                return {"success": True, "models": models}
+
+        # Anthropic
+        elif provider_type == "anthropic":
+            url = f"{base_url or 'https://api.anthropic.com'}/v1/models"
+            headers = {
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                **custom_headers,
+            }
+
+            with httpx.Client(timeout=30.0) as client:
+                response = client.get(url, headers=headers)
+                response.raise_for_status()
+                data = response.json()
+
+                models = []
+                for model in data.get("data", []):
+                    models.append(
+                        {
+                            "id": model.get("id"),
+                            "name": model.get("display_name") or model.get("id"),
+                            "created": model.get("created_at"),
+                        }
+                    )
+
+                return {"success": True, "models": models}
+
+        # Gemini
+        elif provider_type == "gemini":
+            url = f"{base_url or 'https://generativelanguage.googleapis.com'}/v1/models"
+            params = {"key": api_key}
+
+            with httpx.Client(timeout=30.0) as client:
+                response = client.get(url, params=params, headers=custom_headers)
+                response.raise_for_status()
+                data = response.json()
+
+                models = []
+                for model in data.get("models", []):
+                    model_id = model.get("name", "").replace("models/", "")
+                    models.append(
+                        {
+                            "id": model_id,
+                            "name": model.get("displayName") or model_id,
+                        }
+                    )
+
+                return {"success": True, "models": models}
+
+        else:
+            return {
+                "success": False,
+                "message": f"Unsupported provider type: {provider_type}",
+                "models": [],
+            }
+
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        if status_code == 401:
+            message = "API Key authentication failed"
+        elif status_code == 403:
+            message = "Permission denied"
+        elif status_code == 404:
+            message = "API endpoint not found"
+        else:
+            message = f"HTTP error {status_code}"
+
+        logger.error(f"Failed to fetch models from {provider_type}: {message}")
+        return {"success": False, "message": message, "models": []}
+
+    except httpx.RequestError as e:
+        logger.error(f"Network error fetching models from {provider_type}: {str(e)}")
+        return {
+            "success": False,
+            "message": "Network connection failed",
+            "models": [],
+        }
+
+    except Exception as e:
+        logger.error(f"Unexpected error fetching models from {provider_type}: {str(e)}")
+        return {"success": False, "message": str(e), "models": []}
+
+
 @router.get("/compatible")
 def get_compatible_models(
     shell_type: str = Query(..., description="Shell type (Agno or ClaudeCode)"),

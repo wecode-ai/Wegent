@@ -287,6 +287,9 @@ class BackendStreamHandler:
                 if data.get("error"):
                     step["error"] = data["error"]
                     step["status"] = "failed"
+                # Update title if display_name is provided (for failed tools)
+                if data.get("display_name"):
+                    step["title"] = data["display_name"]
                 break
 
         # Add sources from tool output if present

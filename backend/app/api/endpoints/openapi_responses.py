@@ -30,7 +30,6 @@ from app.schemas.openapi_response import (
 )
 from app.schemas.task import TaskCreate
 from app.services.adapters.task_kinds import task_kinds_service
-from app.services.adapters.team_kinds import team_kinds_service
 from app.services.openapi.chat_response import (
     create_streaming_response,
     create_sync_response,
@@ -196,8 +195,12 @@ async def create_response(
                 )
 
     # Verify team exists and user has access
-    team = team_kinds_service.get_team_by_name_and_namespace_with_public_group(
-        db, model_info["team_name"], model_info["namespace"], current_user.id
+    team = kindReader.get_by_name_and_namespace(
+        db,
+        current_user.id,
+        KindType.TEAM,
+        model_info["namespace"],
+        model_info["team_name"],
     )
     if not team:
         raise HTTPException(
@@ -217,6 +220,17 @@ async def create_response(
             model_namespace,
             model_name,
         )
+
+        # If not found and namespace is not default, try with default namespace
+        # This handles the case where user passes group#group_team#public_model_id
+        if not model and model_namespace != "default":
+            model = kindReader.get_by_name_and_namespace(
+                db,
+                current_user.id,
+                KindType.MODEL,
+                "default",
+                model_name,
+            )
 
         if not model:
             raise HTTPException(

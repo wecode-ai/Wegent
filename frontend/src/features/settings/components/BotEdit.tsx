@@ -1467,6 +1467,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       <SkillManagementModal
         open={skillManagementModalOpen}
         onClose={() => setSkillManagementModalOpen(false)}
+        scope={scope}
+        groupName={groupName}
         onSkillsChange={() => {
           // Reload skills list when skills are changed
           const fetchSkills = async () => {
