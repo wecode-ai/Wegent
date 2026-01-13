@@ -20,6 +20,7 @@ import logging
 from typing import List, Optional
 
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.session import make_transient_to_detached
 
 from app.models.user import User
 from app.services.readers.users import IUserReader, UserReader
@@ -142,15 +143,21 @@ class CachedUserReader(UserReader):
         except Exception as e:
             logger.warning(f"Cache idx set error: {e}")
 
-    def _to_model(self, data: dict) -> Optional[User]:
-        return dict_to_model(data, User)
+    def _to_model(self, db: Session, data: dict) -> Optional[User]:
+        model = dict_to_model(data, User)
+        if model:
+            # Make transient object look like detached (previously loaded from DB)
+            make_transient_to_detached(model)
+            # Attach to session without re-loading from DB
+            return db.merge(model, load=False)
+        return None
 
     # Query methods
 
     def get_by_id(self, db: Session, user_id: int) -> Optional[User]:
         cached = self._get_data(user_id)
         if cached is not None:
-            return self._to_model(cached)
+            return self._to_model(db, cached)
 
         result = super().get_by_id(db, user_id)
         if result:
@@ -166,7 +173,7 @@ class CachedUserReader(UserReader):
                 return None
             cached = self._get_data(cached_id)
             if cached is not None:
-                return self._to_model(cached)
+                return self._to_model(db, cached)
 
         result = super().get_by_name(db, user_name)
         if result:
