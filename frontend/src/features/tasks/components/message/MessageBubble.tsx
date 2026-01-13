@@ -36,7 +36,8 @@ import FinalPromptMessage from './FinalPromptMessage'
 import ClarificationAnswerSummary from '../clarification/ClarificationAnswerSummary'
 import ContextBadgeList from './ContextBadgeList'
 import StreamingWaitIndicator from './StreamingWaitIndicator'
-import BubbleTools, { CopyButton } from './BubbleTools'
+import BubbleTools, { CopyButton, EditButton } from './BubbleTools'
+import InlineMessageEdit from './InlineMessageEdit'
 import { SourceReferences } from '../chat/SourceReferences'
 import CollapsibleMessage from './CollapsibleMessage'
 import type { ClarificationData, FinalPromptData, ClarificationAnswer } from '@/types/api'
@@ -150,6 +151,14 @@ export interface MessageBubbleProps {
   onPipelineStageConfirmed?: () => void
   /** Callback when user clicks on a context badge to re-select it */
   onContextReselect?: (context: SubtaskContextBrief) => void
+  /** Whether this message is currently in edit mode */
+  isEditing?: boolean
+  /** Callback when user clicks the edit button */
+  onEdit?: (msg: Message) => void
+  /** Callback when user saves edited message */
+  onEditSave?: (content: string) => Promise<void>
+  /** Callback when user cancels editing */
+  onEditCancel?: () => void
 }
 
 // Component for rendering a paragraph with hover action button
@@ -265,6 +274,10 @@ const MessageBubble = memo(
     isPendingConfirmation,
     onPipelineStageConfirmed,
     onContextReselect,
+    isEditing,
+    onEdit,
+    onEditSave,
+    onEditCancel,
   }: MessageBubbleProps) {
     // Use trace hook for telemetry (auto-includes user and task context)
     const { trace } = useTraceAction()
@@ -1357,10 +1370,22 @@ const MessageBubble = memo(
       }
     }
 
+    // When editing, expand to full width for better editing experience
+    const containerWidthClass = isEditing
+      ? 'w-full'
+      : shouldAlignRight
+        ? 'max-w-[75%] w-auto'
+        : isUserTypeMessage
+          ? 'max-w-[75%] w-auto'
+          : 'w-full'
+
     return (
-      <div className={`flex ${shouldAlignRight ? 'justify-end' : 'justify-start'}`} translate="no">
+      <div
+        className={`flex ${isEditing ? 'justify-start' : shouldAlignRight ? 'justify-end' : 'justify-start'}`}
+        translate="no"
+      >
         <div
-          className={`flex ${shouldAlignRight ? 'max-w-[75%] w-auto' : isUserTypeMessage ? 'max-w-[75%] w-auto' : 'w-full'} flex-col ${shouldAlignRight ? 'items-end' : 'items-start'}`}
+          className={`flex ${containerWidthClass} flex-col ${isEditing ? 'items-start' : shouldAlignRight ? 'items-end' : 'items-start'}`}
         >
           {/* Show thinking display for AI messages */}
           {!isUserTypeMessage && msg.thinking && (
@@ -1412,6 +1437,13 @@ const MessageBubble = memo(
             {/* Show waiting indicator when streaming but no content yet */}
             {isWaiting || msg.isWaiting ? (
               <StreamingWaitIndicator isWaiting={true} />
+            ) : isEditing && isUserTypeMessage && onEditSave && onEditCancel ? (
+              /* Show inline edit component when editing a user message */
+              <InlineMessageEdit
+                initialContent={msg.content}
+                onSave={onEditSave}
+                onCancel={onEditCancel}
+              />
             ) : (
               <>
                 {/* Show recovered content if available, otherwise show normal content */}
@@ -1477,7 +1509,7 @@ const MessageBubble = memo(
             )}
 
             {/* Show copy button for user messages - visible on hover */}
-            {isUserTypeMessage && (
+            {isUserTypeMessage && !isEditing && (
               <div className="absolute -bottom-8 left-2 flex items-center gap-1 z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                 <CopyButton
                   content={msg.content}
@@ -1485,6 +1517,14 @@ const MessageBubble = memo(
                   tooltip={t('chat:actions.copy') || 'Copy'}
                   onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
                 />
+                {/* Edit button - only show for non-group chat and when not streaming */}
+                {!isGroupChat && !isStreaming && onEdit && (
+                  <EditButton
+                    onEdit={() => onEdit(msg)}
+                    className="h-[30px] w-[30px] !rounded-full bg-fill-tert hover:!bg-fill-sec"
+                    tooltip={t('chat:actions.edit') || 'Edit'}
+                  />
+                )}
               </div>
             )}
           </div>
@@ -1534,7 +1574,8 @@ const MessageBubble = memo(
       prevReasoningLen === nextReasoningLen &&
       prevProps.msg.status === nextProps.msg.status &&
       prevProps.msg.error === nextProps.msg.error &&
-      prevProps.isPendingConfirmation === nextProps.isPendingConfirmation
+      prevProps.isPendingConfirmation === nextProps.isPendingConfirmation &&
+      prevProps.isEditing === nextProps.isEditing
 
     return shouldSkipRender
   }

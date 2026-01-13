@@ -220,6 +220,8 @@ interface SyncBackendMessagesOptions {
   currentUserId?: number
   /** Current user name for display (fallback when sender_user_name is empty) */
   currentUserName?: string
+  /** Force clean up messages that are not in subtasks (used after message edit/delete) */
+  forceClean?: boolean
 }
 
 /**
@@ -282,6 +284,8 @@ interface ChatStreamContextType {
     subtasks: TaskDetailSubtask[],
     options?: SyncBackendMessagesOptions
   ) => void
+  /** Clean up messages after editing (remove edited message and all subsequent messages) */
+  cleanupMessagesAfterEdit: (taskId: number, editedSubtaskId: number) => void
   /** Version number that increments when clearAllStreams is called */
   clearVersion: number
 }
@@ -1332,9 +1336,17 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
 
         // Join the task room for receiving AI response events
         if (realTaskId !== immediateTaskId && realTaskId > 0) {
+          console.log(
+            '[ChatStreamContext] joinTask called from sendMessage (new task), taskId:',
+            realTaskId
+          )
           await joinTask(realTaskId)
         } else if (request.task_id && request.task_id > 0) {
           // Existing task, join the room for receiving AI response events
+          console.log(
+            '[ChatStreamContext] joinTask called from sendMessage (existing task), taskId:',
+            request.task_id
+          )
           await joinTask(request.task_id)
         }
 
@@ -1568,10 +1580,12 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
 
       try {
         // Join task room and check for active streaming
-        // Use forceRefresh=true to always get the latest streaming status
-        // This is important because the task may have been joined before
-        // but we need fresh streaming info for resumption
-        const response = await joinTask(taskId, true)
+        // NOTE: We don't use forceRefresh=true here because:
+        // 1. If already joined, we don't need to send another task:join request
+        // 2. The streaming status is returned on first join, and we can check local state
+        // 3. Using forceRefresh causes duplicate task:join requests
+        console.log('[ChatStreamContext] joinTask called from resumeStream, taskId:', taskId)
+        const response = await joinTask(taskId)
 
         if (response.error) {
           console.error('[ChatStreamContext] Failed to join task:', response.error)
@@ -1687,13 +1701,30 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     (taskId: number, subtasks: TaskDetailSubtask[], options?: SyncBackendMessagesOptions): void => {
       if (!subtasks || subtasks.length === 0) return
 
-      const { teamName, isGroupChat, currentUserId, currentUserName } = options || {}
+      const { teamName, isGroupChat, currentUserId, currentUserName, forceClean } = options || {}
 
       setStreamStates(prev => {
         const newMap = new Map(prev)
         const currentState = newMap.get(taskId) || { ...defaultStreamState }
-        // Start with existing messages, don't create new Map
-        const messages = new Map(currentState.messages)
+
+        // Build a set of valid subtask IDs from backend
+        const validSubtaskIds = new Set(subtasks.map(s => s.id))
+
+        // Start with existing messages, but if forceClean is true,
+        // remove messages whose subtaskId is no longer in backend subtasks
+        let messages: Map<string, UnifiedMessage>
+        if (forceClean && currentState.messages.size > 0) {
+          messages = new Map()
+          // Only keep messages that are in the valid subtask list or are pending (no subtaskId yet)
+          for (const [msgId, msg] of currentState.messages) {
+            // Keep pending messages (no subtaskId) or messages whose subtaskId is still valid
+            if (!msg.subtaskId || validSubtaskIds.has(msg.subtaskId)) {
+              messages.set(msgId, msg)
+            }
+          }
+        } else {
+          messages = new Map(currentState.messages)
+        }
 
         // Build a set of existing subtaskIds to check for duplicates
         // This handles the case where user message has temp ID but same subtaskId
@@ -1918,6 +1949,64 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     []
   )
 
+  /**
+   * Clean up messages after editing
+   * Removes the edited message and all subsequent messages (by messageId)
+   * This is called immediately before refreshing to ensure UI consistency
+   */
+  const cleanupMessagesAfterEdit = useCallback((taskId: number, editedSubtaskId: number): void => {
+    setStreamStates(prev => {
+      const newMap = new Map(prev)
+      const currentState = newMap.get(taskId)
+
+      if (!currentState || currentState.messages.size === 0) {
+        return prev
+      }
+
+      // Find the edited message to get its messageId
+      let editedMessageId: number | undefined
+      for (const msg of currentState.messages.values()) {
+        if (msg.subtaskId === editedSubtaskId) {
+          editedMessageId = msg.messageId
+          break
+        }
+      }
+
+      if (editedMessageId === undefined) {
+        console.log('[ChatStreamContext] cleanupMessagesAfterEdit: Could not find message', {
+          taskId,
+          editedSubtaskId,
+        })
+        return prev
+      }
+
+      console.log('[ChatStreamContext] cleanupMessagesAfterEdit: Cleaning messages', {
+        taskId,
+        editedSubtaskId,
+        editedMessageId,
+        totalMessages: currentState.messages.size,
+      })
+
+      // Remove all messages with messageId >= editedMessageId
+      const newMessages = new Map<string, UnifiedMessage>()
+      for (const [msgId, msg] of currentState.messages) {
+        // Keep messages without messageId (pending) or with messageId < editedMessageId
+        if (msg.messageId === undefined || msg.messageId < editedMessageId) {
+          newMessages.set(msgId, msg)
+        }
+      }
+
+      console.log('[ChatStreamContext] cleanupMessagesAfterEdit: Result', {
+        originalCount: currentState.messages.size,
+        newCount: newMessages.size,
+        removedCount: currentState.messages.size - newMessages.size,
+      })
+
+      newMap.set(taskId, { ...currentState, messages: newMessages })
+      return newMap
+    })
+  }, [])
+
   return (
     <ChatStreamContext.Provider
       value={{
@@ -1930,6 +2019,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         clearAllStreams,
         resumeStream,
         syncBackendMessages,
+        cleanupMessagesAfterEdit,
         clearVersion,
       }}
     >

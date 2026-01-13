@@ -10,7 +10,19 @@
     "copy": "Copy",
     "regenerate": "Regenerate",
     "stop": "Stop",
-    "retry": "Retry"
+    "retry": "Retry",
+    "edit": "Edit",
+    "save": "Save",
+    "cancel": "Cancel"
+  },
+  "edit": {
+    "tooltip": "Edit message",
+    "success": "Message edited successfully",
+    "failed": "Failed to edit message",
+    "confirm_title": "Confirm Edit",
+    "confirm_description": "This edit will clear this message and all subsequent messages. The conversation will restart from this point. Are you sure you want to continue?",
+    "confirm_button": "Confirm",
+    "confirming": "Processing..."
   },
   "quote": {
     "ask_wegent": "Ask Wegent",

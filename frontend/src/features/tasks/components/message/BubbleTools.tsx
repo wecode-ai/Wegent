@@ -5,7 +5,7 @@
 'use client'
 
 import React, { useState } from 'react'
-import { Copy, Check, ThumbsUp, ThumbsDown } from 'lucide-react'
+import { Copy, Check, ThumbsUp, ThumbsDown, Pencil } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useTranslation } from 'react-i18next'
@@ -75,6 +75,45 @@ export const CopyButton = ({
       <Tooltip>
         <TooltipTrigger asChild>{button}</TooltipTrigger>
         <TooltipContent>{copied ? 'Copied!' : tooltip}</TooltipContent>
+      </Tooltip>
+    )
+  }
+
+  return button
+}
+
+// EditButton component for editing user messages
+export const EditButton = ({
+  onEdit,
+  className,
+  tooltip,
+  disabled,
+}: {
+  onEdit: () => void
+  className?: string
+  tooltip?: string
+  disabled?: boolean
+}) => {
+  const button = (
+    <Button
+      variant="ghost"
+      size="icon"
+      onClick={onEdit}
+      disabled={disabled}
+      className={
+        className ??
+        'h-[30px] w-[30px] !rounded-full bg-fill-tert hover:!bg-fill-sec disabled:opacity-50'
+      }
+    >
+      <Pencil className="h-3.5 w-3.5 text-text-muted" />
+    </Button>
+  )
+
+  if (tooltip) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>{button}</TooltipTrigger>
+        <TooltipContent>{tooltip}</TooltipContent>
       </Tooltip>
     )
   }

@@ -15,7 +15,7 @@ Usage:
 import logging
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Optional, Set
+from typing import List, Optional, Set
 
 from sqlalchemy.orm import Session
 
@@ -68,6 +68,13 @@ class IKindReader(ABC):
         pass
 
     @abstractmethod
+    def get_by_ids(
+        self, db: Session, kind: KindType, resource_ids: List[int]
+    ) -> List[Kind]:
+        """Get resources by IDs."""
+        pass
+
+    @abstractmethod
     def get_personal(
         self, db: Session, user_id: int, kind: KindType, namespace: str, name: str
     ) -> Optional[Kind]:
@@ -89,14 +96,19 @@ class IKindReader(ABC):
         pass
 
     def get_by_name_and_namespace(
-        self, db: Session, user_id: int, kind: KindType, namespace: str, name: str
+        self,
+        db: Session,
+        user_id: int,
+        kind: KindType,
+        namespace: str,
+        name: str,
     ) -> Optional[Kind]:
         """
         Unified query for resource by name and namespace.
 
         Args:
             db: Database session
-            user_id: Resource owner's user ID (not the requesting user)
+            user_id: The user making the request
             kind: Resource kind type
             namespace: Resource namespace
             name: Resource name
@@ -105,7 +117,15 @@ class IKindReader(ABC):
         - namespace == "default" and kind supports public fallback: personal -> public
         - namespace == "default" and kind doesn't support public fallback: personal only
         - namespace != "default": group resource
+
+        Team special logic:
+        - namespace == "default": personal -> shared teams (check if shared to user)
+        - namespace != "default": group team (check namespace visibility and membership)
         """
+        # Team has special logic
+        if kind == KindType.TEAM:
+            return self._get_team(db, user_id, namespace, name)
+
         if namespace == "default":
             if user_id != 0:
                 result = self.get_personal(db, user_id, kind, namespace, name)
@@ -118,6 +138,72 @@ class IKindReader(ABC):
             return None
         else:
             return self.get_group(db, kind, namespace, name)
+
+    def _get_team(
+        self,
+        db: Session,
+        user_id: int,
+        namespace: str,
+        name: str,
+    ) -> Optional[Kind]:
+        """
+        Get Team with special permission logic.
+
+        For namespace == "default":
+            1. Query user's own Team
+            2. If not found, query shared Teams
+
+        For namespace != "default":
+            1. Query group Team
+            2. Check namespace permission (public or user is member)
+        """
+        from app.services.readers.group_members import groupMemberReader
+        from app.services.readers.groups import groupReader
+        from app.services.readers.shared_teams import sharedTeamReader
+
+        if namespace == "default":
+            # First, query user's own Team
+            if user_id != 0:
+                result = self.get_personal(db, user_id, KindType.TEAM, namespace, name)
+                if result:
+                    return result
+
+                # If not found, check shared Teams
+                # Get all team_ids shared to this user, then find the one with matching name
+                shared_team_ids = sharedTeamReader.get_shared_team_ids(db, user_id)
+                if shared_team_ids:
+                    team = (
+                        db.query(Kind)
+                        .filter(
+                            Kind.id.in_(shared_team_ids),
+                            Kind.kind == KindType.TEAM.value,
+                            Kind.namespace == namespace,
+                            Kind.name == name,
+                            Kind.is_active == True,
+                        )
+                        .first()
+                    )
+                    if team:
+                        return team
+
+            return None
+        else:
+            # Group Team
+            team = self.get_group(db, KindType.TEAM, namespace, name)
+            if not team:
+                return None
+
+            # Check namespace permission
+            # If namespace is public, allow access
+            if groupReader.is_public(db, namespace):
+                return team
+
+            # If namespace is internal/private, check if user is member
+            if user_id != 0 and groupMemberReader.is_member(db, namespace, user_id):
+                return team
+
+            logger.debug(f"User {user_id} has no access to team {namespace}/{name}")
+            return None
 
     @abstractmethod
     def on_change(
@@ -151,6 +237,21 @@ class KindReader(IKindReader):
                 Kind.is_active == True,
             )
             .first()
+        )
+
+    def get_by_ids(
+        self, db: Session, kind: KindType, resource_ids: List[int]
+    ) -> List[Kind]:
+        if not resource_ids:
+            return []
+        return (
+            db.query(Kind)
+            .filter(
+                Kind.id.in_(resource_ids),
+                Kind.kind == kind.value,
+                Kind.is_active == True,
+            )
+            .all()
         )
 
     def get_personal(

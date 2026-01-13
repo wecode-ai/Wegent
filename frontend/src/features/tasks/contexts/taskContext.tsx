@@ -711,6 +711,9 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   }
 
   // Trigger task detail refresh and manage WebSocket room when selectedTask changes
+  // NOTE: joinTask is called here, and SocketContext's joinTask already has deduplication logic
+  // (joinedTasksRef.current.has(taskId) check), so multiple calls are safe but wasteful.
+  // We only call joinTask when isConnected is true to avoid unnecessary calls.
   useEffect(() => {
     const currentTaskId = selectedTask?.id ?? null
     const previousTaskId = previousTaskIdRef.current
@@ -724,27 +727,28 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     previousTaskIdRef.current = currentTaskId
 
     if (selectedTask) {
-      // Join the new task room to receive chat:start, chat:chunk, chat:done events
-      // This is important for executor tasks (Code page) where the user needs to
-      // receive AI response events via WebSocket
-      joinTask(selectedTask.id)
+      // Only join task room when WebSocket is connected
+      // This prevents duplicate joins when both selectedTask and isConnected change
+      if (isConnected) {
+        console.log(
+          '[TaskContext] joinTask called from selectedTask useEffect, taskId:',
+          selectedTask.id
+        )
+        joinTask(selectedTask.id)
+      }
 
       refreshSelectedTaskDetail(false) // Manual task selection, not auto-refresh
     } else {
       setSelectedTaskDetail(null)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTask, leaveTask, joinTask])
+  }, [selectedTask, leaveTask, joinTask, isConnected])
 
-  // Re-join task room when WebSocket reconnects
-  // This handles the case where page is refreshed and selectedTask is set from URL
-  // before WebSocket connection is established
-  useEffect(() => {
-    if (isConnected && selectedTask) {
-      joinTask(selectedTask.id)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConnected])
+  // NOTE: Removed separate isConnected useEffect to prevent duplicate joinTask calls.
+  // The selectedTask useEffect above now handles both cases:
+  // 1. When selectedTask changes (and isConnected is true)
+  // 2. When isConnected changes (and selectedTask is set)
+  // This is because we added isConnected to the dependency array.
 
   // Mark task as viewed when selectedTaskDetail is loaded
   // This ensures we have the correct status and timestamps from the backend

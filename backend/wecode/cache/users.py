@@ -22,11 +22,14 @@ from typing import List, Optional
 from sqlalchemy.orm import Session
 
 from app.models.user import User
-from app.services.readers.users import IUserReader
+from app.services.readers.users import IUserReader, UserReader
 from wecode.cache.base import (
     CACHE_TTL,
+    CACHE_VERSION,
     NULL_MARKER,
+    dict_to_model,
     get_redis_client,
+    model_to_dict,
     register_events,
 )
 
@@ -42,10 +45,10 @@ _events_registered = False
 
 def wrap(base_reader: IUserReader) -> Optional[IUserReader]:
     """
-    Wrap base reader with Redis caching.
+    Create cached reader with Redis caching.
 
     Args:
-        base_reader: The underlying reader
+        base_reader: The underlying reader (kept for API compatibility, not used)
 
     Returns:
         Cached reader if Redis available, None otherwise
@@ -56,7 +59,7 @@ def wrap(base_reader: IUserReader) -> Optional[IUserReader]:
     if redis is None:
         return None
 
-    reader = CachedUserReader(base_reader, redis)
+    reader = CachedUserReader(redis)
 
     if not _events_registered:
         register_events(User, _on_change, reader)
@@ -69,7 +72,9 @@ def wrap(base_reader: IUserReader) -> Optional[IUserReader]:
 def _on_change(operation: str, target, reader: IUserReader) -> None:
     """Handle model change event."""
     try:
-        logger.info(f"[user] {operation}: {target.user_name} (id={target.id})")
+        logger.info(
+            f"[user change event] {operation}: {target.user_name} (id={target.id})"
+        )
         reader.on_change(
             user_id=target.id,
             user_name=target.user_name,
@@ -83,20 +88,19 @@ def _on_change(operation: str, target, reader: IUserReader) -> None:
 # =============================================================================
 
 
-class CachedUserReader(IUserReader):
-    """Cached User reader using Redis."""
+class CachedUserReader(UserReader):
+    """Cached User reader using Redis, inherits from UserReader for fallback."""
 
-    def __init__(self, base: IUserReader, redis):
-        self._base = base
+    def __init__(self, redis):
         self._redis = redis
 
     # Key generation
 
     def _key_data(self, user_id: int) -> str:
-        return f"user:data:{user_id}"
+        return f"user:{CACHE_VERSION}:data:{user_id}"
 
     def _key_idx_name(self, user_name: str) -> str:
-        return f"user:idx:name:{user_name}"
+        return f"user:{CACHE_VERSION}:idx:name:{user_name}"
 
     # Cache operations
 
@@ -126,15 +130,7 @@ class CachedUserReader(IUserReader):
         try:
             import json
 
-            data = {
-                "id": value.id,
-                "user_name": value.user_name,
-                "email": value.email,
-                "role": value.role,
-                "auth_source": value.auth_source,
-                "preferences": value.preferences,
-                "is_active": value.is_active,
-            }
+            data = model_to_dict(value)
             self._redis.setex(self._key_data(user_id), CACHE_TTL, json.dumps(data))
         except Exception as e:
             logger.warning(f"Cache set error: {e}")
@@ -147,17 +143,7 @@ class CachedUserReader(IUserReader):
             logger.warning(f"Cache idx set error: {e}")
 
     def _to_model(self, data: dict) -> Optional[User]:
-        if not data:
-            return None
-        obj = User()
-        obj.id = data.get("id")
-        obj.user_name = data.get("user_name")
-        obj.email = data.get("email")
-        obj.role = data.get("role")
-        obj.auth_source = data.get("auth_source")
-        obj.preferences = data.get("preferences")
-        obj.is_active = data.get("is_active")
-        return obj
+        return dict_to_model(data, User)
 
     # Query methods
 
@@ -166,7 +152,7 @@ class CachedUserReader(IUserReader):
         if cached is not None:
             return self._to_model(cached)
 
-        result = self._base.get_by_id(db, user_id)
+        result = super().get_by_id(db, user_id)
         if result:
             self._set_data(user_id, result)
         return result
@@ -182,7 +168,7 @@ class CachedUserReader(IUserReader):
             if cached is not None:
                 return self._to_model(cached)
 
-        result = self._base.get_by_name(db, user_name)
+        result = super().get_by_name(db, user_name)
         if result:
             self._set_data(result.id, result)
             self._set_idx(idx_key, result.id)
@@ -191,8 +177,8 @@ class CachedUserReader(IUserReader):
         return result
 
     def get_all(self, db: Session) -> List[User]:
-        """Get all users (not cached, delegates to base reader)."""
-        return self._base.get_all(db)
+        """Get all users (not cached, delegates to parent)."""
+        return super().get_all(db)
 
     # Cache invalidation
 

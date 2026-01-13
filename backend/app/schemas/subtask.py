@@ -295,3 +295,19 @@ class SubtaskExecutorUpdate(BaseModel):
     executor_name: Optional[str] = None
     result: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None
+
+
+class MessageEditRequest(BaseModel):
+    """Request model for editing a user message"""
+
+    new_content: str = Field(..., min_length=1, description="New message content")
+
+
+class MessageEditResponse(BaseModel):
+    """Response model for message edit operation"""
+
+    success: bool = True
+    subtask_id: int
+    message_id: int
+    deleted_count: int = Field(description="Number of subsequent messages deleted")
+    new_content: str = Field(description="The updated message content")
