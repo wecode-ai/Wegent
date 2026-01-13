@@ -430,7 +430,7 @@ class ChatContext:
     async def _close_mcp_client(self, client) -> None:
         """Close a single MCP client safely."""
         try:
-            await client.close()
+            await client.disconnect()
         except Exception as e:
             logger.warning("[CHAT_CONTEXT] Failed to close MCP client: %s", e)
 
