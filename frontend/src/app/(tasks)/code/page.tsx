@@ -18,13 +18,19 @@ import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useUser } from '@/features/common/UserContext'
 
 // Dynamic imports for mobile and desktop page components with code splitting
-const CodePageDesktop = dynamic(() => import('./CodePageDesktop').then(mod => ({ default: mod.CodePageDesktop })), {
-  ssr: false,
-})
+const CodePageDesktop = dynamic(
+  () => import('./CodePageDesktop').then(mod => ({ default: mod.CodePageDesktop })),
+  {
+    ssr: false,
+  }
+)
 
-const CodePageMobile = dynamic(() => import('./CodePageMobile').then(mod => ({ default: mod.CodePageMobile })), {
-  ssr: false,
-})
+const CodePageMobile = dynamic(
+  () => import('./CodePageMobile').then(mod => ({ default: mod.CodePageMobile })),
+  {
+    ssr: false,
+  }
+)
 
 /**
  * Code Page Router Component
