@@ -64,6 +64,14 @@ def build_pod_configuration(
     base_image = _get_base_image_from_task(task)
     use_init_container = should_use_init_container(base_image)
 
+    # Check task type for sandbox/subagent support
+    task_type = task.get("type", "online")
+    is_sandbox = task_type == "sandbox"
+
+    # Get sandbox metadata for e2b protocol support
+    sandbox_metadata = task.get("sandbox_metadata", {})
+    sandbox_id = sandbox_metadata.get("sandbox_id")
+
     # Initialize init_container and additional volume info
     init_container = None
     init_container_volume = None
@@ -115,6 +123,13 @@ def build_pod_configuration(
         "use_base_image": use_init_container,
         "task_api_domain": os.getenv(
             "TASK_API_DOMAIN", "http://wegent-backend-web.wb-plat-ide:8080"
+        ),
+        # Sandbox/Subagent support for e2b protocol
+        "is_sandbox": is_sandbox,
+        "sandbox_id": sandbox_id,
+        "executor_manager_heartbeat_base_url": os.getenv(
+            "EXECUTOR_MANAGER_HEARTBEAT_BASE_URL",
+            "http://wegent-executor-manager-web.wb-plat-ide:8080/executor-manager",
         ),
         # OpenTelemetry configuration
         "otel_enabled": otel_config.enabled,
