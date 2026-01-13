@@ -27,7 +27,6 @@ from .knowledge_base import (
     KB_PROMPT_RELAXED,
     KB_PROMPT_STRICT,
 )
-from .remap_prompts import remap_prompts_headings
 
 __all__ = [
     # Prompts
@@ -43,5 +42,4 @@ __all__ = [
     "append_deep_thinking_prompt",
     "append_skill_metadata_prompt",
     "build_system_prompt",
-    "remap_prompts_headings",
 ]

@@ -14,13 +14,12 @@ In HTTP mode, skill prompts are obtained from the skill_configs passed via ChatR
 """
 
 import logging
-from typing import Optional, Set
+from typing import Set
 
 from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field, PrivateAttr
-
-from chat_shell.prompts.remap_prompts import remap_prompts_headings
+from shared.utils.markdown_util import remap_markdown_headings
 
 logger = logging.getLogger(__name__)
 
@@ -211,7 +210,7 @@ class LoadSkillTool(BaseTool):
         parts = []
         for skill_name, prompt in self._loaded_skill_prompts.items():
             parts.append(
-                f"\n\n### Skill: {skill_name}\n\n{remap_prompts_headings(prompt, 4)}"
+                f"\n\n### Skill: {skill_name}\n\n{remap_markdown_headings(prompt, 4)}"
             )
 
         return (
