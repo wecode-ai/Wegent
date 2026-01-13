@@ -284,6 +284,8 @@ interface ChatStreamContextType {
     subtasks: TaskDetailSubtask[],
     options?: SyncBackendMessagesOptions
   ) => void
+  /** Clean up messages after editing (remove edited message and all subsequent messages) */
+  cleanupMessagesAfterEdit: (taskId: number, editedSubtaskId: number) => void
   /** Version number that increments when clearAllStreams is called */
   clearVersion: number
 }
@@ -1937,6 +1939,64 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     []
   )
 
+  /**
+   * Clean up messages after editing
+   * Removes the edited message and all subsequent messages (by messageId)
+   * This is called immediately before refreshing to ensure UI consistency
+   */
+  const cleanupMessagesAfterEdit = useCallback((taskId: number, editedSubtaskId: number): void => {
+    setStreamStates(prev => {
+      const newMap = new Map(prev)
+      const currentState = newMap.get(taskId)
+
+      if (!currentState || currentState.messages.size === 0) {
+        return prev
+      }
+
+      // Find the edited message to get its messageId
+      let editedMessageId: number | undefined
+      for (const msg of currentState.messages.values()) {
+        if (msg.subtaskId === editedSubtaskId) {
+          editedMessageId = msg.messageId
+          break
+        }
+      }
+
+      if (editedMessageId === undefined) {
+        console.log('[ChatStreamContext] cleanupMessagesAfterEdit: Could not find message', {
+          taskId,
+          editedSubtaskId,
+        })
+        return prev
+      }
+
+      console.log('[ChatStreamContext] cleanupMessagesAfterEdit: Cleaning messages', {
+        taskId,
+        editedSubtaskId,
+        editedMessageId,
+        totalMessages: currentState.messages.size,
+      })
+
+      // Remove all messages with messageId >= editedMessageId
+      const newMessages = new Map<string, UnifiedMessage>()
+      for (const [msgId, msg] of currentState.messages) {
+        // Keep messages without messageId (pending) or with messageId < editedMessageId
+        if (msg.messageId === undefined || msg.messageId < editedMessageId) {
+          newMessages.set(msgId, msg)
+        }
+      }
+
+      console.log('[ChatStreamContext] cleanupMessagesAfterEdit: Result', {
+        originalCount: currentState.messages.size,
+        newCount: newMessages.size,
+        removedCount: currentState.messages.size - newMessages.size,
+      })
+
+      newMap.set(taskId, { ...currentState, messages: newMessages })
+      return newMap
+    })
+  }, [])
+
   return (
     <ChatStreamContext.Provider
       value={{
@@ -1949,6 +2009,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         clearAllStreams,
         resumeStream,
         syncBackendMessages,
+        cleanupMessagesAfterEdit,
         clearVersion,
       }}
     >

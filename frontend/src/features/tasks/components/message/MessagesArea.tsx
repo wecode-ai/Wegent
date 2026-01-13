@@ -196,7 +196,6 @@ export default function MessagesArea({
   const { traceAction } = useTraceAction()
   const { registerCorrectionHandlers } = useSocket()
   const isMobile = useIsMobile()
-  const { resetStream } = useChatStreamContext()
 
   // Use unified messages hook - SINGLE SOURCE OF TRUTH
   // Pass pendingTaskId to query messages when selectedTaskDetail.id is not yet available
@@ -674,6 +673,9 @@ export default function MessagesArea({
     setEditingMessageId(null)
   }, [])
 
+  // Get cleanupMessagesAfterEdit from chat stream context
+  const { cleanupMessagesAfterEdit } = useChatStreamContext()
+
   // Handle save edit - call API to edit message, then resend to trigger AI response
   const handleEditSave = useCallback(
     async (newContent: string) => {
@@ -689,13 +691,14 @@ export default function MessagesArea({
           // Exit edit mode first
           setEditingMessageId(null)
 
-          // Reset stream state to clear local messages cache
-          // This ensures syncBackendMessages will re-sync from backend
+          // Immediately clean up messages from the edited position in local state
+          // This removes the edited message and all subsequent messages before refreshing
+          // to ensure UI consistency (no stale messages visible)
           if (selectedTaskDetail?.id) {
-            resetStream(selectedTaskDetail.id)
+            cleanupMessagesAfterEdit(selectedTaskDetail.id, subtaskId)
           }
 
-          // Refresh task detail to reload messages from backend (removes deleted messages)
+          // Refresh task detail to reload messages from backend
           await refreshSelectedTaskDetail(true)
 
           // Automatically resend the edited message to trigger AI response
@@ -717,7 +720,7 @@ export default function MessagesArea({
     [
       editingMessageId,
       selectedTaskDetail?.id,
-      resetStream,
+      cleanupMessagesAfterEdit,
       refreshSelectedTaskDetail,
       onSendMessage,
       toast,
