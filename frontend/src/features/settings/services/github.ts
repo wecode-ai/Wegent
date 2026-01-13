@@ -58,9 +58,9 @@ export async function saveGitToken(
     gitInfoToSave.user_name = username
   }
 
-  // Add auth_type for Gerrit (only if provided)
-  if (detectedType === 'gerrit' && authType) {
-    gitInfoToSave.auth_type = authType
+  // Add auth_type for Gerrit (always set to ensure value is preserved on updates)
+  if (detectedType === 'gerrit') {
+    gitInfoToSave.auth_type = authType || 'digest'
   }
 
   // Send only the single git_info item being saved

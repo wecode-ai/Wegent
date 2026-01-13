@@ -296,6 +296,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
               <label className="flex items-center gap-1 text-sm text-text-primary">
                 <input
                   type="radio"
+                  name="authType"
                   value="digest"
                   checked={authType === 'digest'}
                   onChange={() => setAuthType('digest')}
@@ -305,6 +306,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
               <label className="flex items-center gap-1 text-sm text-text-primary">
                 <input
                   type="radio"
+                  name="authType"
                   value="basic"
                   checked={authType === 'basic'}
                   onChange={() => setAuthType('basic')}
