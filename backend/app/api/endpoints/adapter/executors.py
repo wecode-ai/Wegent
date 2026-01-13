@@ -2,14 +2,16 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.schemas.subtask import SubtaskExecutorUpdate
 from app.services.adapters.executor_kinds import executor_kinds_service
+from app.services.streaming.executor_streaming import executor_streaming_service
 
 router = APIRouter()
 
@@ -66,4 +68,54 @@ async def update_subtask(
     """
     return await executor_kinds_service.update_subtask(
         db=db, subtask_update=subtask_update
+    )
+
+
+# ============================================================
+# Chunk Callback Endpoint (Incremental Callback Mode)
+# ============================================================
+
+
+class ChunkUpdateRequest(BaseModel):
+    """Request model for incremental chunk updates from executor manager."""
+
+    task_id: int = Field(..., description="Task ID")
+    subtask_id: int = Field(..., description="Subtask ID")
+    chunk_type: str = Field(
+        ..., description="Chunk type: chunk, thinking, reasoning, workbench_delta, status"
+    )
+    data: Dict[str, Any] = Field(..., description="Chunk data payload")
+    executor_name: Optional[str] = Field(default=None, description="Executor name")
+    executor_namespace: Optional[str] = Field(
+        default=None, description="Executor namespace"
+    )
+    timestamp: Optional[str] = Field(default=None, description="ISO timestamp")
+
+
+@router.post("/tasks/chunk")
+async def receive_chunk(
+    request: ChunkUpdateRequest,
+    db: Session = Depends(get_db),
+):
+    """Receive incremental chunk updates from executor manager.
+
+    This endpoint receives streaming updates from executors and:
+    1. Caches content in Redis for fast recovery
+    2. Broadcasts updates via WebSocket to connected clients
+    3. Periodically persists to database
+
+    Args:
+        request: ChunkUpdateRequest containing chunk type and data
+
+    Returns:
+        Processing result
+    """
+    return await executor_streaming_service.process_chunk(
+        db=db,
+        task_id=request.task_id,
+        subtask_id=request.subtask_id,
+        chunk_type=request.chunk_type,
+        data=request.data,
+        executor_name=request.executor_name,
+        timestamp=request.timestamp,
     )

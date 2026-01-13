@@ -464,6 +464,165 @@ async def _handle_sandbox_callback(request: CallbackRequest):
     )
 
 
+# ============================================================
+# Chunk Callback Endpoint (Incremental Callback Mode)
+# ============================================================
+
+
+class ChunkCallbackRequest(BaseModel):
+    """Request model for incremental chunk callbacks.
+
+    This endpoint receives streaming updates from executors with lower latency
+    than full result callbacks.
+    """
+
+    task_id: int
+    subtask_id: int
+    chunk_type: str  # chunk, thinking, reasoning, workbench_delta, status
+    data: Dict[str, Any]
+    executor_name: Optional[str] = None
+    executor_namespace: Optional[str] = None
+    timestamp: Optional[str] = None
+    task_type: Optional[str] = None  # validation, sandbox, or None for regular
+
+
+@app.post("/executor-manager/callback/chunk")
+async def chunk_callback_handler(request: ChunkCallbackRequest, http_request: Request):
+    """
+    Receive incremental chunk callbacks from executors.
+
+    This endpoint is used for streaming updates with lower latency than full callbacks.
+    It forwards chunk data to the Backend for real-time WebSocket broadcasting.
+
+    Args:
+        request: ChunkCallbackRequest containing task_id, subtask_id, chunk_type and data
+
+    Returns:
+        dict: Processing result
+    """
+    try:
+        client_ip = http_request.client.host if http_request.client else "unknown"
+        logger.debug(
+            f"Received chunk callback: task_id={request.task_id}, "
+            f"subtask_id={request.subtask_id}, type={request.chunk_type} from {client_ip}"
+        )
+
+        # Set task context for tracing
+        set_task_context(task_id=request.task_id, subtask_id=request.subtask_id)
+
+        # Check if this is a sandbox task - handle locally without forwarding
+        if request.task_type == "sandbox":
+            await _handle_sandbox_chunk_callback(request)
+            return {
+                "status": "success",
+                "message": f"Processed sandbox chunk callback for subtask {request.subtask_id}",
+            }
+
+        # Forward to Backend for WebSocket broadcasting
+        await _forward_chunk_to_backend(request)
+
+        return {
+            "status": "success",
+            "message": f"Processed chunk callback for subtask {request.subtask_id}",
+        }
+    except Exception as e:
+        logger.error(f"Error processing chunk callback: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def _forward_chunk_to_backend(request: ChunkCallbackRequest):
+    """Forward chunk callback to Backend for WebSocket broadcasting."""
+    import httpx
+
+    task_api_domain = os.getenv("TASK_API_DOMAIN", "http://localhost:8000")
+    chunk_url = f"{task_api_domain}/api/adapter/tasks/chunk"
+
+    payload = {
+        "task_id": request.task_id,
+        "subtask_id": request.subtask_id,
+        "chunk_type": request.chunk_type,
+        "data": request.data,
+        "executor_name": request.executor_name,
+        "executor_namespace": request.executor_namespace,
+        "timestamp": request.timestamp,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.post(chunk_url, json=payload)
+            if response.status_code == 200:
+                logger.debug(
+                    f"Successfully forwarded chunk callback: "
+                    f"subtask_id={request.subtask_id}, type={request.chunk_type}"
+                )
+            else:
+                logger.warning(
+                    f"Failed to forward chunk callback: "
+                    f"{response.status_code} {response.text}"
+                )
+    except Exception as e:
+        logger.error(f"Error forwarding chunk callback: {e}")
+
+
+async def _handle_sandbox_chunk_callback(request: ChunkCallbackRequest):
+    """Handle sandbox execution chunk callback.
+
+    Updates the execution state in sandbox_manager based on chunk data.
+
+    Args:
+        request: Chunk callback request
+    """
+    from executor_manager.services.sandbox import get_sandbox_manager
+
+    task_id = request.task_id
+    subtask_id = request.subtask_id
+
+    logger.debug(
+        f"[SandboxChunkCallback] Processing chunk: "
+        f"task_id={task_id}, subtask_id={subtask_id}, type={request.chunk_type}"
+    )
+
+    manager = get_sandbox_manager()
+    execution = manager._repository.load_execution(task_id, subtask_id)
+
+    if not execution:
+        logger.error(
+            f"[SandboxChunkCallback] Execution not found: "
+            f"task_id={task_id}, subtask_id={subtask_id}"
+        )
+        return
+
+    chunk_type = request.chunk_type
+    data = request.data
+
+    if chunk_type == "chunk":
+        # Content chunk - append to accumulated content
+        content = data.get("content", "")
+        if content:
+            current_result = execution.result or ""
+            execution.result = current_result + content
+
+    elif chunk_type == "status":
+        # Status update chunk
+        status = data.get("status", "").lower()
+        progress = data.get("progress", execution.progress)
+        execution.progress = progress
+
+        if status == "completed":
+            execution.set_completed(execution.result or "")
+        elif status == "failed":
+            error_msg = data.get("error_message", "Execution failed")
+            execution.set_failed(error_msg)
+
+    # Save updated execution state
+    manager._repository.save_execution(execution)
+
+    logger.debug(
+        f"[SandboxChunkCallback] Updated execution: "
+        f"task_id={task_id}, subtask_id={subtask_id}, type={chunk_type}"
+    )
+
+
 @app.post("/executor-manager/tasks/receive")
 async def receive_tasks(request: TasksRequest, http_request: Request):
     """

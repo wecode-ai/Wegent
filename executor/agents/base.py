@@ -7,11 +7,20 @@
 # -*- coding: utf-8 -*-
 
 import os
+import time
 from collections import OrderedDict
 from datetime import datetime
 from typing import Any, Dict, Optional, Tuple
 
 from executor.callback.callback_client import CallbackClient
+from executor.callback.callback_handler import (
+    is_incremental_callback_enabled,
+    send_content_chunk_callback,
+    send_reasoning_chunk_callback,
+    send_status_chunk_callback,
+    send_thinking_chunk_callback,
+    send_workbench_delta_callback,
+)
 from executor.config import config
 from shared.logger import setup_logger
 from shared.status import TaskStatus
@@ -54,6 +63,14 @@ class Agent:
         )  # Task type (e.g., "validation" for validation tasks)
         self.execution_status = TaskStatus.INITIALIZED
         self.project_path = None
+
+        # Incremental callback state
+        self._incremental_enabled = is_incremental_callback_enabled()
+        self._content_offset = 0
+        self._reasoning_offset = 0
+        self._thinking_step_count = 0
+        self._last_chunk_time = 0.0
+        self._chunk_interval = config.CHUNK_CALLBACK_INTERVAL
 
     def handle(
         self, pre_executed: Optional[TaskStatus] = None
@@ -144,6 +161,148 @@ class Agent:
                 f"[CALLBACK_FAIL] task_id={self.task_id}, progress={progress}, "
                 f"status={status}, error={type(e).__name__}: {str(e)}"
             )
+
+    # ============================================================
+    # Incremental Callback Methods
+    # ============================================================
+
+    def report_content_chunk(self, content: str) -> None:
+        """
+        Report incremental content chunk.
+
+        Args:
+            content: Incremental text content to report
+        """
+        if not self._incremental_enabled or not content:
+            return
+
+        # Throttle chunks if sending too frequently
+        if not self._should_send_chunk():
+            return
+
+        self._content_offset += len(content)
+
+        try:
+            send_content_chunk_callback(
+                task_id=self.task_id,
+                subtask_id=self.subtask_id,
+                content=content,
+                offset=self._content_offset,
+                task_type=self.task_type,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to send content chunk callback: {e}")
+
+    def report_thinking_chunk(self, step: Dict[str, Any], step_index: int = -1) -> None:
+        """
+        Report thinking step chunk.
+
+        Args:
+            step: Thinking step data dict
+            step_index: Step index (-1 to append)
+        """
+        if not self._incremental_enabled:
+            return
+
+        if step_index < 0:
+            step_index = self._thinking_step_count
+            self._thinking_step_count += 1
+
+        try:
+            send_thinking_chunk_callback(
+                task_id=self.task_id,
+                subtask_id=self.subtask_id,
+                step=step,
+                step_index=step_index,
+                task_type=self.task_type,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to send thinking chunk callback: {e}")
+
+    def report_reasoning_chunk(self, content: str) -> None:
+        """
+        Report reasoning content chunk (DeepSeek R1).
+
+        Args:
+            content: Incremental reasoning content
+        """
+        if not self._incremental_enabled or not content:
+            return
+
+        self._reasoning_offset += len(content)
+
+        try:
+            send_reasoning_chunk_callback(
+                task_id=self.task_id,
+                subtask_id=self.subtask_id,
+                content=content,
+                offset=self._reasoning_offset,
+                task_type=self.task_type,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to send reasoning chunk callback: {e}")
+
+    def report_workbench_delta(self, delta: Dict[str, Any]) -> None:
+        """
+        Report workbench delta/patch update.
+
+        Args:
+            delta: Delta data dict (file_changes, git_info, status, error)
+        """
+        if not self._incremental_enabled or not delta:
+            return
+
+        try:
+            send_workbench_delta_callback(
+                task_id=self.task_id,
+                subtask_id=self.subtask_id,
+                delta=delta,
+                task_type=self.task_type,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to send workbench delta callback: {e}")
+
+    def report_status_chunk(
+        self,
+        status: str,
+        progress: int = 0,
+        error_message: Optional[str] = None,
+    ) -> None:
+        """
+        Report status update chunk.
+
+        Args:
+            status: Status string (RUNNING, COMPLETED, FAILED)
+            progress: Progress percentage
+            error_message: Optional error message
+        """
+        if not self._incremental_enabled:
+            return
+
+        try:
+            send_status_chunk_callback(
+                task_id=self.task_id,
+                subtask_id=self.subtask_id,
+                status=status,
+                progress=progress,
+                error_message=error_message,
+                task_type=self.task_type,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to send status chunk callback: {e}")
+
+    def _should_send_chunk(self) -> bool:
+        """Check if enough time has passed to send next chunk."""
+        current_time = time.time()
+        if current_time - self._last_chunk_time >= self._chunk_interval:
+            self._last_chunk_time = current_time
+            return True
+        return False
+
+    @property
+    def incremental_callback_enabled(self) -> bool:
+        """Check if incremental callbacks are enabled for this agent."""
+        return self._incremental_enabled
 
     def pre_execute(self) -> TaskStatus:
         """
