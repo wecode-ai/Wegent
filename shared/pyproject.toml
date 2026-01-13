@@ -16,6 +16,7 @@ dependencies = [
     "cryptography>=42.0.4",
     "httpx>=0.26.0",
     "requests>=2.31.0",
+    "pydantic>=2.0.0",
 
     # Database ORM
     "sqlalchemy>=2.0.25",

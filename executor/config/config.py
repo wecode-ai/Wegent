@@ -14,6 +14,20 @@ Global configuration for workspace paths and other shared settings.
 WORKSPACE_ROOT = os.environ.get("WORKSPACE_ROOT", "/workspace/")
 CALLBACK_URL = os.environ.get("CALLBACK_URL", "")
 
+# Incremental callback configuration
+# When enabled, executor sends incremental chunks instead of full result
+ENABLE_INCREMENTAL_CALLBACK = (
+    os.environ.get("ENABLE_INCREMENTAL_CALLBACK", "true").lower() == "true"
+)
+# Chunk callback endpoint (appended to base callback URL)
+CHUNK_CALLBACK_ENDPOINT = os.environ.get(
+    "CHUNK_CALLBACK_ENDPOINT", "/executor-manager/callback/chunk"
+)
+# Minimum interval between chunk callbacks (seconds)
+CHUNK_CALLBACK_INTERVAL = float(os.environ.get("CHUNK_CALLBACK_INTERVAL", "0.5"))
+# Maximum retry attempts for chunk callbacks (fewer retries than full callback)
+CHUNK_CALLBACK_MAX_RETRIES = int(os.environ.get("CHUNK_CALLBACK_MAX_RETRIES", "3"))
+
 # Agno Agent default headers configuration
 EXECUTOR_ENV = os.environ.get("EXECUTOR_ENV", "{}")
 DEBUG_RUN = os.environ.get("DEBUG_RUN", "")

@@ -7,17 +7,20 @@
 # -*- coding: utf-8 -*-
 
 """
-Callback client module, handles communication with the executor_manager callback API
+Callback client module, handles communication with the executor_manager callback API.
+
+Supports both full result callbacks and incremental chunk callbacks.
 """
 
 import os
-import requests
 import time
-import json
-from typing import Dict, Any, Optional
+from datetime import datetime
+from typing import Any, Dict, Optional
+from urllib.parse import urljoin, urlparse
+
+import requests
 
 from executor.config import config
-
 from shared.logger import setup_logger
 from shared.status import TaskStatus
 from shared.telemetry.config import get_otel_config
@@ -28,7 +31,12 @@ logger = setup_logger("callback_client")
 
 
 class CallbackClient:
-    """Callback client class, responsible for sending callbacks to executor_manager"""
+    """Callback client class, responsible for sending callbacks to executor_manager.
+
+    Supports both:
+    - Full result callbacks (existing behavior)
+    - Incremental chunk callbacks (new, lower latency)
+    """
 
     def __init__(
         self,
@@ -39,10 +47,11 @@ class CallbackClient:
         retry_backoff: int = 2,
     ):
         """
-        Initialize the callback client
+        Initialize the callback client.
 
         Args:
-            callback_url: URL for the callback endpoint. If not provided, will use config.CALLBACK_URL (which supports env override).
+            callback_url: URL for the callback endpoint. If not provided,
+                will use config.CALLBACK_URL (which supports env override).
             timeout: Request timeout in seconds
             max_retries: Maximum number of retry attempts
             retry_delay: Initial delay between retries in seconds
@@ -57,16 +66,36 @@ class CallbackClient:
         self.retry_delay = retry_delay
         self.retry_backoff = retry_backoff
 
+        # Chunk callback configuration
+        self._chunk_callback_url = self._build_chunk_callback_url()
+        self._chunk_max_retries = config.CHUNK_CALLBACK_MAX_RETRIES
+        self._incremental_enabled = config.ENABLE_INCREMENTAL_CALLBACK
+
+    def _build_chunk_callback_url(self) -> str:
+        """Build the chunk callback URL from base callback URL."""
+        if not self.callback_url:
+            return ""
+
+        # Parse base URL and replace path with chunk endpoint
+        parsed = urlparse(self.callback_url)
+        base_url = f"{parsed.scheme}://{parsed.netloc}"
+        return urljoin(base_url, config.CHUNK_CALLBACK_ENDPOINT)
+
+    @property
+    def incremental_enabled(self) -> bool:
+        """Check if incremental callbacks are enabled."""
+        return self._incremental_enabled and bool(self._chunk_callback_url)
+
     def _request_with_retry(self, request_func, max_retries=None) -> Dict[str, Any]:
         """
-        Generic request retry logic
+        Generic request retry logic.
 
         Args:
             request_func: Function to execute the request
             max_retries: Maximum number of retries, defaults to self.max_retries
 
         Returns:
-            Tuple of (success, result)
+            Dict with status and optional data/error
         """
         retries = 0
         delay = self.retry_delay
@@ -81,7 +110,8 @@ class CallbackClient:
                     return {"status": TaskStatus.FAILED.value, "error_msg": str(e)}
 
                 logger.warning(
-                    f"Request failed (attempt {retries + 1}/{retry_limit}): {e}. Retrying in {delay} seconds..."
+                    f"Request failed (attempt {retries + 1}/{retry_limit}): {e}. "
+                    f"Retrying in {delay} seconds..."
                 )
                 time.sleep(delay)
                 retries += 1
@@ -102,11 +132,13 @@ class CallbackClient:
         task_type: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Send a callback to the executor_manager
+        Send a full result callback to the executor_manager.
 
         Args:
             task_id: The ID of the task
+            subtask_id: The ID of the subtask
             task_title: The title of the task
+            subtask_title: The title of the subtask
             progress: The progress percentage (0-100)
             status: Optional status string
             message: Optional message string
@@ -119,7 +151,8 @@ class CallbackClient:
             Dict[str, Any]: Result returned by the callback interface
         """
         logger.info(
-            f"Sending callback: task_id={task_id} subtask_id={subtask_id}, task_title={task_title}, progress={progress}, task_type={task_type}"
+            f"Sending callback: task_id={task_id} subtask_id={subtask_id}, "
+            f"task_title={task_title}, progress={progress}, task_type={task_type}"
         )
 
         if executor_name is None:
@@ -147,22 +180,76 @@ class CallbackClient:
 
         try:
             return self._request_with_retry(lambda: self._do_send_callback(data))
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse response data: {e}")
-            return {"status": TaskStatus.FAILED.value, "error_msg": str(e)}
         except Exception as e:
             logger.error(f"Unexpected error during send_callback: {e}")
             return {"status": TaskStatus.FAILED.value, "error_msg": str(e)}
 
+    def send_chunk_callback(
+        self,
+        task_id: int,
+        subtask_id: int,
+        chunk_type: str,
+        data: Dict[str, Any],
+        executor_name: Optional[str] = None,
+        executor_namespace: Optional[str] = None,
+        task_type: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Send an incremental chunk callback to the executor_manager.
+
+        This method is used for streaming updates with lower latency than full callbacks.
+
+        Args:
+            task_id: The ID of the task
+            subtask_id: The ID of the subtask
+            chunk_type: Type of chunk (chunk, thinking, reasoning, workbench_delta, status)
+            data: Chunk data payload
+            executor_name: Optional executor name
+            executor_namespace: Optional executor namespace
+            task_type: Optional task type
+
+        Returns:
+            Dict[str, Any]: Result returned by the callback interface
+        """
+        if not self.incremental_enabled:
+            logger.debug("Incremental callbacks disabled, skipping chunk callback")
+            return {"status": TaskStatus.SUCCESS.value}
+
+        if executor_name is None:
+            executor_name = os.getenv("EXECUTOR_NAME")
+        if executor_namespace is None:
+            executor_namespace = os.getenv("EXECUTOR_NAMESPACE")
+
+        payload = {
+            "task_id": task_id,
+            "subtask_id": subtask_id,
+            "chunk_type": chunk_type,
+            "data": data,
+            "executor_name": executor_name,
+            "executor_namespace": executor_namespace,
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+        }
+        if task_type:
+            payload["task_type"] = task_type
+
+        try:
+            return self._request_with_retry(
+                lambda: self._do_send_chunk_callback(payload),
+                max_retries=self._chunk_max_retries,
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error during send_chunk_callback: {e}")
+            return {"status": TaskStatus.FAILED.value, "error_msg": str(e)}
+
     def _do_send_callback(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Execute the callback request
+        Execute the full callback request.
 
         Args:
             data: The data to send in the request
 
         Returns:
-            Tuple of (success, result)
+            Dict with status and optional data
         """
         # Mask sensitive data in callback payload for logging
         masked_data = mask_sensitive_data(data)
@@ -172,8 +259,8 @@ class CallbackClient:
         headers = {"Content-Type": "application/json"}
         otel_config = get_otel_config()
         if otel_config.enabled:
-            from shared.telemetry.core import is_telemetry_enabled
             from shared.telemetry.context import inject_trace_context_to_headers
+            from shared.telemetry.core import is_telemetry_enabled
 
             if is_telemetry_enabled():
                 headers = inject_trace_context_to_headers(headers)
@@ -184,15 +271,48 @@ class CallbackClient:
         )
         return self._handle_response(response)
 
+    def _do_send_chunk_callback(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Execute the chunk callback request.
+
+        Args:
+            data: The chunk data to send
+
+        Returns:
+            Dict with status and optional data
+        """
+        logger.debug(
+            "Sending chunk callback to %s, type=%s, subtask_id=%s",
+            self._chunk_callback_url,
+            data.get("chunk_type"),
+            data.get("subtask_id"),
+        )
+
+        # Prepare headers with trace context for distributed tracing
+        headers = {"Content-Type": "application/json"}
+        otel_config = get_otel_config()
+        if otel_config.enabled:
+            from shared.telemetry.context import inject_trace_context_to_headers
+            from shared.telemetry.core import is_telemetry_enabled
+
+            if is_telemetry_enabled():
+                headers = inject_trace_context_to_headers(headers)
+
+        # Send chunk data
+        response = requests.post(
+            self._chunk_callback_url, json=data, headers=headers, timeout=self.timeout
+        )
+        return self._handle_response(response)
+
     def _handle_response(self, response: requests.Response) -> Dict[str, Any]:
         """
-        Handle the response from the callback request
+        Handle the response from the callback request.
 
         Args:
             response: The response object
 
         Returns:
-            Tuple of (success, result)
+            Dict with status and optional data
         """
         logger.info(
             f"Received response from callback: {response.status_code}, {response.text}"
@@ -206,7 +326,7 @@ class CallbackClient:
         elif 400 <= response.status_code < 500:
             error_msg = f"Client error ({response.status_code}) during callback"
             logger.error(
-                "error_msg: %s, handele_response: %s", error_msg, response.text
+                "error_msg: %s, handle_response: %s", error_msg, response.text
             )
             return {"status": TaskStatus.FAILED.value, "error_msg": error_msg}
         else:
