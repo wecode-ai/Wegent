@@ -182,6 +182,7 @@ async def _stream_response(
         bot_namespace = ""
         skill_names = []
         skill_configs_from_meta = []
+        preload_skills = []
         knowledge_base_ids = None
         document_ids = None
         table_contexts = []
@@ -202,6 +203,7 @@ async def _stream_response(
             skill_configs_from_meta = (
                 getattr(request.metadata, "skill_configs", None) or []
             )
+            preload_skills = getattr(request.metadata, "preload_skills", None) or []
             knowledge_base_ids = getattr(request.metadata, "knowledge_base_ids", None)
             document_ids = getattr(request.metadata, "document_ids", None)
             table_contexts = getattr(request.metadata, "table_contexts", None) or []
@@ -239,6 +241,7 @@ async def _stream_response(
             skills=all_skill_configs,
             skill_names=skill_names,
             skill_configs=all_skill_configs,
+            preload_skills=preload_skills,
             knowledge_base_ids=knowledge_base_ids,
             document_ids=document_ids,
             table_contexts=table_contexts,
@@ -249,7 +252,7 @@ async def _stream_response(
         logger.info(
             "[RESPONSE] Processing request: task_id=%d, subtask_id=%d, "
             "enable_web_search=%s, mcp_servers=%d, skills=%d, "
-            "skill_names=%s, knowledge_base_ids=%s, document_ids=%s, "
+            "skill_names=%s, preload_skills=%s, knowledge_base_ids=%s, document_ids=%s, "
             "table_contexts_count=%d, table_contexts=%s",
             task_id,
             subtask_id,
@@ -257,6 +260,7 @@ async def _stream_response(
             len(mcp_servers),
             len(all_skill_configs),
             skill_names,
+            preload_skills,
             knowledge_base_ids,
             document_ids,
             len(table_contexts),
