@@ -714,7 +714,7 @@
     "no_skills_hint": "Upload a skill ZIP package or use system skills",
     "preload_skills_section": "Preload Skills",
     "preload_skills_description": "Select skills to preload",
-    "preload_skills_hint": "Preloaded skills will be automatically injected into the system prompt and can be used without tool calls",
+    "preload_skills_hint": "Preloaded skills will be automatically injected into the system prompt",
     "preload_only_public_hint": "Note: Only public skills can be preloaded",
     "no_skills_selected": "Please select skills first",
     "delete_success": "Skill deleted successfully",

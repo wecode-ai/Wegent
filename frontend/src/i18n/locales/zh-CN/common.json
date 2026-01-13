@@ -714,7 +714,7 @@
     "no_skills_hint": "上传技能 ZIP 包或使用系统技能",
     "preload_skills_section": "预加载技能",
     "preload_skills_description": "选择需要预加载的技能",
-    "preload_skills_hint": "预加载的技能会自动注入到系统提示词中，无需调用工具即可使用",
+    "preload_skills_hint": "预加载的技能会自动注入到系统提示词中",
     "preload_only_public_hint": "注意：只有公共技能才能被设置为预加载",
     "no_skills_selected": "请先选择技能",
     "delete_success": "技能删除成功",
