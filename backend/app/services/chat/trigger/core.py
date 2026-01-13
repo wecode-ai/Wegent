@@ -756,7 +756,7 @@ async def _stream_with_http_adapter(
 
     logger.info(
         "[HTTP_ADAPTER] ChatRequest built: task_id=%d, skill_names=%s, "
-        "table_contexts_count=%d, table_contexts=%s",
+        "table_contexts_count=%d, table_contexts=%s, "
         "skill_configs_count=%d, preload_skills=%s, knowledge_base_ids=%s, document_ids=%s",
         task_id,
         skill_names,
