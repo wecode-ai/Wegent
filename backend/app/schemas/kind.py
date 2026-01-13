@@ -113,6 +113,12 @@ class GhostSpec(BaseModel):
     systemPrompt: str
     mcpServers: Optional[Dict[str, Any]] = None
     skills: Optional[List[str]] = None  # Skill names list
+    preload_skills: Optional[List[str]] = Field(
+        None,
+        description="List of skill names to preload into system prompt. "
+        "Must be a subset of skills. When specified, these skills' prompts "
+        "will be automatically injected into the system message.",
+    )
 
 
 class GhostStatus(Status):
@@ -544,14 +550,6 @@ class SkillSpec(BaseModel):
         None,
         description="Provider configuration for dynamic loading. "
         "If specified, the provider will be loaded from the skill .",
-    )
-    preload: Optional[bool] = Field(
-        False,
-        description="Whether to preload this skill's content into the system prompt. "
-        "When True, the skill's prompt will be automatically injected via LoadSkillTool.preload_skill_prompt(), "
-        "and the skill will NOT appear in the load_skill tool's available list. "
-        "When False (default), the skill is loaded on-demand via load_skill tool call. "
-        "Use preload=True for skills that are frequently needed and should always be active.",
     )
 
 

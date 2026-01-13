@@ -519,7 +519,7 @@ async def _stream_chat_response(
                 knowledge_base_ids=knowledge_base_ids,
                 document_ids=document_ids,
                 table_contexts=table_contexts,
-                preload_skills=getattr(payload, "preload_skills", None),
+                preload_skills=chat_config.preload_skills,  # Use resolved from ChatConfig
             )
         elif streaming_mode == "bridge":
             # New architecture: StreamingCore publishes to Redis, WebSocketBridge forwards

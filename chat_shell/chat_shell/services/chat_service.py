@@ -238,6 +238,7 @@ class ChatService(ChatInterface):
                             user_id=request.user_id,
                             skill_configs=request.skill_configs,
                             load_skill_tool=load_skill_tool,
+                            preload_skills=request.preload_skills,
                         )
                         extra_tools.extend(skill_tools)
 
