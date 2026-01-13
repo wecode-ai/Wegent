@@ -18,7 +18,11 @@
   "edit": {
     "tooltip": "编辑消息",
     "success": "消息编辑成功",
-    "failed": "编辑消息失败"
+    "failed": "编辑消息失败",
+    "confirm_title": "确认编辑",
+    "confirm_description": "此编辑操作将清除本条消息及其后的所有消息，对话将从当前位置重新开始。确定要继续吗？",
+    "confirm_button": "确认",
+    "confirming": "处理中..."
   },
   "quote": {
     "ask_wegent": "询问 Wegent",

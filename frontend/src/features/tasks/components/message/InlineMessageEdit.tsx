@@ -7,6 +7,16 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { useTranslation } from 'react-i18next'
 import { Loader2 } from 'lucide-react'
 
@@ -32,6 +42,7 @@ const InlineMessageEdit: React.FC<InlineMessageEditProps> = ({
   const { t } = useTranslation()
   const [content, setContent] = useState(initialContent)
   const [isSaving, setIsSaving] = useState(false)
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // Focus textarea on mount
@@ -52,13 +63,9 @@ const InlineMessageEdit: React.FC<InlineMessageEditProps> = ({
     }
   }, [content])
 
-  const handleSave = useCallback(async () => {
+  // Actual save logic after user confirms
+  const performSave = useCallback(async () => {
     const trimmedContent = content.trim()
-    if (!trimmedContent || trimmedContent === initialContent.trim()) {
-      onCancel()
-      return
-    }
-
     setIsSaving(true)
     try {
       await onSave(trimmedContent)
@@ -66,8 +73,26 @@ const InlineMessageEdit: React.FC<InlineMessageEditProps> = ({
       console.error('Failed to save message:', error)
     } finally {
       setIsSaving(false)
+      setShowConfirmDialog(false)
     }
-  }, [content, initialContent, onSave, onCancel])
+  }, [content, onSave])
+
+  // Show confirmation dialog before saving
+  const handleSave = useCallback(() => {
+    const trimmedContent = content.trim()
+    if (!trimmedContent || trimmedContent === initialContent.trim()) {
+      onCancel()
+      return
+    }
+
+    // Show confirmation dialog
+    setShowConfirmDialog(true)
+  }, [content, initialContent, onCancel])
+
+  // Handle confirmation dialog cancel
+  const handleConfirmCancel = useCallback(() => {
+    setShowConfirmDialog(false)
+  }, [])
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -108,6 +133,34 @@ const InlineMessageEdit: React.FC<InlineMessageEditProps> = ({
           )}
         </Button>
       </div>
+
+      {/* Confirmation Dialog */}
+      <AlertDialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('chat:edit.confirm_title') || 'Confirm Edit'}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('chat:edit.confirm_description') ||
+                'This edit will clear this message and all subsequent messages. The conversation will restart from this point. Are you sure you want to continue?'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={handleConfirmCancel} disabled={isSaving}>
+              {t('chat:actions.cancel') || 'Cancel'}
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={performSave} disabled={isSaving}>
+              {isSaving ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                  {t('chat:edit.confirming') || 'Processing...'}
+                </>
+              ) : (
+                t('chat:edit.confirm_button') || 'Confirm'
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
