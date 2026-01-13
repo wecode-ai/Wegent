@@ -50,9 +50,11 @@ spec:
             fieldRef:
               apiVersion: v1
               fieldPath: metadata.labels['topology.weibo.com/region']
+        {% if not is_sandbox %}
         - name: TASK_INFO
           value: |-
             {{ task_str }}
+        {% endif %}
         - name: EXECUTOR_NAME
           value: {{ executor_name }}
         - name: EXECUTOR_NAMESPACE
@@ -93,6 +95,15 @@ spec:
         {% if use_base_image %}
         - name: USE_BASE_IMAGE
           value: "true"
+        {% endif %}
+        {% if is_sandbox and sandbox_id %}
+        # Sandbox/Subagent support for e2b protocol
+        - name: SANDBOX_ID
+          value: "{{ sandbox_id }}"
+        - name: HEARTBEAT_ENABLED
+          value: "true"
+        - name: EXECUTOR_MANAGER_HEARTBEAT_BASE_URL
+          value: "{{ executor_manager_heartbeat_base_url }}"
         {% endif %}
         {% if otel_enabled %}
         # OpenTelemetry configuration environment variables

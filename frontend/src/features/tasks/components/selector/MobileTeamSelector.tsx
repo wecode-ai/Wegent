@@ -100,9 +100,7 @@ export default function MobileTeamSelector({
           <span className="truncate text-xs min-w-0">
             {triggerText || selectedTeam?.name || t('common:teams.select_team')}
           </span>
-          {triggerText && (
-            <ChevronDown className="w-2.5 h-2.5 text-text-muted flex-shrink-0" />
-          )}
+          {triggerText && <ChevronDown className="w-2.5 h-2.5 text-text-muted flex-shrink-0" />}
         </button>
       </DrawerTrigger>
 
@@ -178,7 +176,10 @@ export default function MobileTeamSelector({
                             {team.name}
                           </span>
                           {isGroupTeam && (
-                            <Tag className="text-[11px] !m-0 flex-shrink-0 py-0 px-1.5" variant="info">
+                            <Tag
+                              className="text-[11px] !m-0 flex-shrink-0 py-0 px-1.5"
+                              variant="info"
+                            >
                               {team.namespace}
                             </Tag>
                           )}

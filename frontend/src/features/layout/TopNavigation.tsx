@@ -53,7 +53,8 @@ export default function TopNavigation({
       }`}
     >
       {/* Left side - Mobile sidebar toggle, Logo, and Title */}
-      <div className="flex items-center gap-3 min-w-0 flex-1 overflow-hidden">{showHamburgerMenu && (
+      <div className="flex items-center gap-3 min-w-0 flex-1 overflow-hidden">
+        {showHamburgerMenu && (
           <button
             type="button"
             className="lg:hidden p-2 rounded-md text-text-muted hover:text-text-primary hover:bg-muted focus:outline-none focus:ring-2 focus:ring-primary/40 bg-surface border border-border flex-shrink-0"

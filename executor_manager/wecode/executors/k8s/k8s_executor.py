@@ -10,6 +10,8 @@ from typing import Any, Dict, Optional
 import requests
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
+from shared.logger import setup_logger
+from shared.status import TaskStatus
 
 from executor_manager.executors.base import Executor
 from executor_manager.executors.docker.constants import (
@@ -20,8 +22,6 @@ from executor_manager.wecode.config.config import (
     USER_WHITELIST_TASK_LIMIT_MAP)
 from executor_manager.wecode.executors.k8s.build_pod import \
     build_pod_configuration
-from shared.logger import setup_logger
-from shared.status import TaskStatus
 
 logger = setup_logger(__name__)
 
@@ -135,8 +135,11 @@ class K8sExecutor(Executor):
         user_config = task.get("user") or {}
         user_name = user_config.get("name", "unknown")
 
-        # Check if this is a validation task
-        is_validation_task = task.get("type") == "validation"
+        # Check task type for special handling
+        task_type = task.get("type")
+        is_validation_task = task_type == "validation"
+        is_subagent_task = task_type == "subagent"
+        is_sandbox_task = task_type == "sandbox"
 
         status = "success"
         progress = 30
@@ -242,8 +245,14 @@ class K8sExecutor(Executor):
                         task, "starting_container", error_msg
                     )
 
-        # Call callback function only for regular tasks (not validation tasks)
-        if not is_validation_task and callback and executor_name:
+        # Call callback function only for regular tasks
+        # Skip callback for validation tasks and subagent tasks (they have their own callback mechanism)
+        if (
+            not is_validation_task
+            and not is_subagent_task
+            and callback
+            and executor_name
+        ):
             try:
                 callback(
                     task_id=task_id,
@@ -493,6 +502,53 @@ class K8sExecutor(Executor):
         except Exception as e:
             logger.error(f"Error listing pods for executor '{executor_name}': {e}")
             return {"status": "failed", "error_msg": f"Error: {e}", "pods": []}
+
+    def get_container_address(self, executor_name: str) -> Dict[str, Any]:
+        """Get container base URL for sandbox proxy.
+
+        This method is called by SandboxManager to get the address for proxying
+        requests to the sandbox container.
+
+        Args:
+            executor_name: Executor/Pod name
+
+        Returns:
+            Dict with status and base_url (e.g., http://10.0.0.1:8080)
+        """
+        pod_result = self.get_pods_by_executor_name(executor_name)
+        if pod_result.get("status") != "success":
+            return {
+                "status": "failed",
+                "error_msg": pod_result.get("error_msg", "Failed to get pod info"),
+            }
+
+        pods = pod_result.get("pods", [])
+        if not pods:
+            return {
+                "status": "failed",
+                "error_msg": f"No pod found for executor {executor_name}",
+            }
+
+        pod = pods[0]
+        pod_ip = pod.get("ip")
+        pod_status = pod.get("status")
+
+        if not pod_ip:
+            return {
+                "status": "failed",
+                "error_msg": f"Pod {executor_name} has no IP address",
+            }
+
+        if pod_status != "Running":
+            return {
+                "status": "failed",
+                "error_msg": f"Pod {executor_name} is not running (status: {pod_status})",
+            }
+
+        return {
+            "status": "success",
+            "base_url": f"http://{pod_ip}:8080",
+        }
 
     @staticmethod
     def get_user_max_tasks(user_name: str) -> int:

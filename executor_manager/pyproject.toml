@@ -21,6 +21,7 @@ dependencies = [
     "pyjwt==2.8.0",
     "pytz==2024.1",
     "pyyaml==6.0.1",
+    "redis>=5.0.0",
     "requests==2.31.0",
     "requests-oauthlib==2.0.0",
     "starlette>=0.49.1",
@@ -52,7 +53,7 @@ dev = [
 ]
 
 [tool.setuptools]
-packages = ["executor_manager", "executor_manager.clients", "executor_manager.config", "executor_manager.executors", "executor_manager.executors.docker", "executor_manager.github", "executor_manager.routers", "executor_manager.scheduler", "executor_manager.tasks", "executor_manager.utils"]
+packages = ["executor_manager", "executor_manager.clients", "executor_manager.config", "executor_manager.executors", "executor_manager.executors.docker", "executor_manager.github", "executor_manager.models", "executor_manager.routers", "executor_manager.scheduler", "executor_manager.services", "executor_manager.tasks", "executor_manager.utils"]
 
 [tool.setuptools.package-dir]
 executor_manager = "."

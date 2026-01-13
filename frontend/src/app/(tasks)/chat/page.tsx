@@ -20,13 +20,19 @@ import { useUser } from '@/features/common/UserContext'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 
 // Dynamic imports for mobile and desktop page components with code splitting
-const ChatPageDesktop = dynamic(() => import('./ChatPageDesktop').then(mod => ({ default: mod.ChatPageDesktop })), {
-  ssr: false,
-})
+const ChatPageDesktop = dynamic(
+  () => import('./ChatPageDesktop').then(mod => ({ default: mod.ChatPageDesktop })),
+  {
+    ssr: false,
+  }
+)
 
-const ChatPageMobile = dynamic(() => import('./ChatPageMobile').then(mod => ({ default: mod.ChatPageMobile })), {
-  ssr: false,
-})
+const ChatPageMobile = dynamic(
+  () => import('./ChatPageMobile').then(mod => ({ default: mod.ChatPageMobile })),
+  {
+    ssr: false,
+  }
+)
 
 /**
  * Chat Page Router Component

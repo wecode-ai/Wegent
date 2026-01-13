@@ -21,11 +21,13 @@ import uvicorn
 from shared.logger import setup_logger
 from shared.telemetry.config import get_otel_config
 
+from executor_manager.services.sandbox import get_sandbox_manager
 from routers.routers import app  # Import the FastAPI app defined in routes.py
 from scheduler.scheduler import TaskScheduler
 
 # Setup logger
 logger = setup_logger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app):
@@ -57,6 +59,7 @@ async def lifespan(app):
             # Apply instrumentation
             from shared.telemetry.instrumentation import \
                 setup_opentelemetry_instrumentation
+
             setup_opentelemetry_instrumentation(app, logger)
         except Exception as e:
             logger.warning(f"Failed to initialize OpenTelemetry: {e}")
@@ -64,23 +67,38 @@ async def lifespan(app):
     logger.info("Extracting executor binary to Named Volume...")
     try:
         from executors.docker.binary_extractor import extract_executor_binary
+
         if extract_executor_binary():
             logger.info("Executor binary extraction completed")
         else:
-            logger.warning("Executor binary extraction failed, custom base images may not work")
+            logger.warning(
+                "Executor binary extraction failed, custom base images may not work"
+            )
     except Exception as e:
-        logger.warning(f"Executor binary extraction error: {e}, custom base images may not work")
+        logger.warning(
+            f"Executor binary extraction error: {e}, custom base images may not work"
+        )
 
     # Start the task scheduler
     logger.info("Initializing task scheduler...")
     scheduler_instance = TaskScheduler()
 
     # Start the scheduler in a separate thread
-    scheduler_thread = threading.Thread(target=start_scheduler, args=(scheduler_instance,))
+    scheduler_thread = threading.Thread(
+        target=start_scheduler, args=(scheduler_instance,)
+    )
     scheduler_thread.daemon = True
     scheduler_thread.start()
 
     logger.info("Task scheduler started successfully")
+
+    # Start SandboxManager scheduler for GC
+    sandbox_manager = get_sandbox_manager()
+    try:
+        await sandbox_manager.start_gc_task()
+        logger.info("SandboxManager scheduler started successfully")
+    except Exception as e:
+        logger.warning(f"Failed to start SandboxManager scheduler: {e}")
 
     yield  # During FastAPI application runtime
 
@@ -90,11 +108,18 @@ async def lifespan(app):
     if scheduler_instance:
         scheduler_instance.stop()
 
+    # Stop SandboxManager garbage collection
+    if sandbox_manager:
+        logger.info("Stopping SandboxManager...")
+        await sandbox_manager.stop_gc_task()
+
     # Shutdown OpenTelemetry
     if otel_config.enabled:
         from shared.telemetry.core import shutdown_telemetry
+
         shutdown_telemetry()
         logger.info("OpenTelemetry shutdown completed")
+
 
 def start_scheduler(scheduler):
     """Start the task scheduler in a separate thread"""
@@ -106,8 +131,10 @@ def start_scheduler(scheduler):
         return 1
     return 0
 
+
 # Set the FastAPI application's lifecycle manager
 app.router.lifespan_context = lifespan
+
 
 def main():
     """

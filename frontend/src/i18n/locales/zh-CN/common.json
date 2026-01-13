@@ -396,6 +396,7 @@
     "cancel_task": "取消任务",
     "delete_task": "删除任务",
     "searching": "搜索中...",
+    "refreshing": "同步中...",
     "press_enter_to_search": "按 Enter 键搜索",
     "search_hint": "输入关键词搜索对话",
     "clear_search": "清除",

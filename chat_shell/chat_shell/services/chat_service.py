@@ -235,6 +235,7 @@ class ChatService(ChatInterface):
                             user_id=request.user_id,
                             skill_configs=request.skill_configs,
                             load_skill_tool=load_skill_tool,
+                            user_name=request.user_name,
                         )
                         extra_tools.extend(skill_tools)
 

@@ -50,6 +50,9 @@ ENV HOST=0.0.0.0
 # Default: 600 seconds (10 minutes) for long-running streaming requests to complete
 ENV GRACEFUL_SHUTDOWN_TIMEOUT=600
 
+ENV EXECUTOR_MANAGER_URL=http://wegent-executor-manager-web.wb-plat-ide.svc.cluster.local:8080
+ENV E2B_API_KEY=kucvaN-qowmax-kyvni7
+
 # Expose port
 EXPOSE ${PORT}
 
