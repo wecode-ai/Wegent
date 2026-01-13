@@ -3,10 +3,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Unit tests for MySQL storage backend encryption functionality.
+Unit tests for MySQL storage backend.
+
+Note: Encryption/decryption is now handled at the context_service layer,
+not in storage backends. These tests verify that storage backends correctly
+store and retrieve raw binary data without modification.
 """
 
-import os
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -16,20 +19,20 @@ from app.services.attachment.mysql_storage import MySQLStorageBackend
 from app.services.attachment.storage_backend import StorageError
 
 
-class TestMySQLStorageEncryption:
-    """Test cases for MySQL storage backend encryption."""
+class TestMySQLStorageBackend:
+    """Test cases for MySQL storage backend."""
 
     def setup_method(self):
         """Set up test fixtures."""
         self.mock_db = MagicMock()
         self.storage = MySQLStorageBackend(self.mock_db)
 
-    def test_save_with_encryption_enabled(self):
-        """Test saving attachment with encryption enabled."""
+    def test_save_stores_data_as_is(self):
+        """Test that save stores data without modification."""
         # Arrange
         storage_key = "attachments/test123_20250113_1_100"
         test_data = b"Test attachment data"
-        metadata = {"filename": "test.pdf"}
+        metadata = {"filename": "test.pdf", "is_encrypted": False}
 
         mock_context = MagicMock(spec=SubtaskContext)
         mock_context.id = 100
@@ -40,27 +43,27 @@ class TestMySQLStorageEncryption:
         )
 
         # Act
-        with patch.dict(os.environ, {"ATTACHMENT_ENCRYPTION_ENABLED": "true"}):
-            with patch("app.services.attachment.mysql_storage.flag_modified"):
-                result_key = self.storage.save(storage_key, test_data, metadata)
+        with patch("app.services.attachment.mysql_storage.flag_modified"):
+            result_key = self.storage.save(storage_key, test_data, metadata)
 
         # Assert
         assert result_key == storage_key
-        # Verify binary_data was set (should be encrypted, different from original)
-        assert mock_context.binary_data != test_data
-        assert len(mock_context.binary_data) % 16 == 0  # Should be AES block aligned
-        # Verify type_data was updated with encryption metadata
-        assert mock_context.type_data["is_encrypted"] is True
-        assert mock_context.type_data["encryption_version"] == 1
+        # Verify binary_data was set exactly as provided (no encryption by storage backend)
+        assert mock_context.binary_data == test_data
+        # Verify type_data was updated
         assert mock_context.type_data["storage_backend"] == "mysql"
         assert mock_context.type_data["storage_key"] == storage_key
 
-    def test_save_without_encryption(self):
-        """Test saving attachment without encryption."""
+    def test_save_stores_encrypted_data_as_is(self):
+        """Test that save stores pre-encrypted data without modification."""
         # Arrange
         storage_key = "attachments/test123_20250113_1_100"
-        test_data = b"Test attachment data"
-        metadata = {"filename": "test.pdf"}
+        # Simulate pre-encrypted data from context_service layer
+        from shared.utils.crypto import encrypt_attachment
+
+        original_data = b"Test attachment data"
+        encrypted_data = encrypt_attachment(original_data)
+        metadata = {"filename": "test.pdf", "is_encrypted": True}
 
         mock_context = MagicMock(spec=SubtaskContext)
         mock_context.id = 100
@@ -71,34 +74,49 @@ class TestMySQLStorageEncryption:
         )
 
         # Act
-        with patch.dict(os.environ, {"ATTACHMENT_ENCRYPTION_ENABLED": "false"}):
-            with patch("app.services.attachment.mysql_storage.flag_modified"):
-                result_key = self.storage.save(storage_key, test_data, metadata)
+        with patch("app.services.attachment.mysql_storage.flag_modified"):
+            result_key = self.storage.save(storage_key, encrypted_data, metadata)
 
         # Assert
         assert result_key == storage_key
-        # Verify binary_data was set (should be plain, same as original)
-        assert mock_context.binary_data == test_data
-        # Verify type_data was updated without encryption metadata
-        assert mock_context.type_data["is_encrypted"] is False
-        assert mock_context.type_data["encryption_version"] == 0
+        # Verify storage backend stores the encrypted data as-is
+        assert mock_context.binary_data == encrypted_data
+        assert mock_context.binary_data != original_data
 
-    def test_get_with_encrypted_data(self):
-        """Test retrieving and automatically decrypting encrypted attachment."""
+    def test_get_returns_raw_data(self):
+        """Test that get returns raw data without decryption."""
+        # Arrange
+        storage_key = "attachments/test123_20250113_1_100"
+        test_data = b"Test attachment data"
+
+        mock_context = MagicMock(spec=SubtaskContext)
+        mock_context.id = 100
+        mock_context.binary_data = test_data
+
+        self.mock_db.query.return_value.filter.return_value.first.return_value = (
+            mock_context
+        )
+
+        # Act
+        result_data = self.storage.get(storage_key)
+
+        # Assert - should return exactly what's stored
+        assert result_data == test_data
+
+    def test_get_returns_encrypted_data_as_is(self):
+        """Test that get returns encrypted data without decryption (decryption is done at service layer)."""
         # Arrange
         storage_key = "attachments/test123_20250113_1_100"
         original_data = b"Test attachment data"
 
-        # Encrypt the test data first
-        with patch.dict(os.environ, {"ATTACHMENT_ENCRYPTION_ENABLED": "true"}):
-            from shared.utils.crypto import encrypt_attachment
+        # Encrypt the data
+        from shared.utils.crypto import encrypt_attachment
 
-            encrypted_data = encrypt_attachment(original_data)
+        encrypted_data = encrypt_attachment(original_data)
 
         mock_context = MagicMock(spec=SubtaskContext)
         mock_context.id = 100
         mock_context.binary_data = encrypted_data
-        mock_context.type_data = {"is_encrypted": True, "encryption_version": 1}
 
         self.mock_db.query.return_value.filter.return_value.first.return_value = (
             mock_context
@@ -107,30 +125,9 @@ class TestMySQLStorageEncryption:
         # Act
         result_data = self.storage.get(storage_key)
 
-        # Assert
-        assert result_data == original_data
-        assert result_data != encrypted_data
-
-    def test_get_with_plain_data(self):
-        """Test retrieving plain (unencrypted) attachment."""
-        # Arrange
-        storage_key = "attachments/test123_20250113_1_100"
-        original_data = b"Test attachment data"
-
-        mock_context = MagicMock(spec=SubtaskContext)
-        mock_context.id = 100
-        mock_context.binary_data = original_data
-        mock_context.type_data = {"is_encrypted": False}
-
-        self.mock_db.query.return_value.filter.return_value.first.return_value = (
-            mock_context
-        )
-
-        # Act
-        result_data = self.storage.get(storage_key)
-
-        # Assert
-        assert result_data == original_data
+        # Assert - storage backend returns raw encrypted data (decryption is done at service layer)
+        assert result_data == encrypted_data
+        assert result_data != original_data
 
     def test_get_nonexistent_context(self):
         """Test retrieving attachment when context doesn't exist."""
@@ -159,42 +156,58 @@ class TestMySQLStorageEncryption:
 
         assert "Context not found" in str(exc_info.value)
 
-    def test_mixed_encrypted_and_plain_attachments(self):
-        """Test handling both encrypted and plain attachments in same database."""
+    def test_delete_sets_empty_bytes(self):
+        """Test that delete sets binary_data to empty bytes."""
         # Arrange
-        plain_key = "attachments/plain_20250113_1_100"
-        encrypted_key = "attachments/encrypted_20250113_1_101"
-        test_data = b"Test data"
+        storage_key = "attachments/test123_20250113_1_100"
 
-        # Set up plain attachment
-        plain_context = MagicMock(spec=SubtaskContext)
-        plain_context.id = 100
-        plain_context.binary_data = test_data
-        plain_context.type_data = {"is_encrypted": False}
+        mock_context = MagicMock(spec=SubtaskContext)
+        mock_context.id = 100
+        mock_context.binary_data = b"Some data"
 
-        # Set up encrypted attachment
-        with patch.dict(os.environ, {"ATTACHMENT_ENCRYPTION_ENABLED": "true"}):
-            from shared.utils.crypto import encrypt_attachment
-
-            encrypted_data = encrypt_attachment(test_data)
-
-        encrypted_context = MagicMock(spec=SubtaskContext)
-        encrypted_context.id = 101
-        encrypted_context.binary_data = encrypted_data
-        encrypted_context.type_data = {"is_encrypted": True, "encryption_version": 1}
-
-        # Act - Retrieve plain attachment
         self.mock_db.query.return_value.filter.return_value.first.return_value = (
-            plain_context
+            mock_context
         )
-        plain_result = self.storage.get(plain_key)
 
-        # Act - Retrieve encrypted attachment
+        # Act
+        result = self.storage.delete(storage_key)
+
+        # Assert
+        assert result is True
+        assert mock_context.binary_data == b""
+
+    def test_exists_returns_true_when_has_data(self):
+        """Test exists returns True when context has binary data."""
+        # Arrange
+        storage_key = "attachments/test123_20250113_1_100"
+
+        mock_context = MagicMock(spec=SubtaskContext)
+        mock_context.binary_data = b"Some data"
+
         self.mock_db.query.return_value.filter.return_value.first.return_value = (
-            encrypted_context
+            mock_context
         )
-        encrypted_result = self.storage.get(encrypted_key)
 
-        # Assert - Both should return the same original data
-        assert plain_result == test_data
-        assert encrypted_result == test_data
+        # Act
+        result = self.storage.exists(storage_key)
+
+        # Assert
+        assert result is True
+
+    def test_exists_returns_false_when_no_data(self):
+        """Test exists returns False when context has no binary data."""
+        # Arrange
+        storage_key = "attachments/test123_20250113_1_100"
+
+        mock_context = MagicMock(spec=SubtaskContext)
+        mock_context.binary_data = b""
+
+        self.mock_db.query.return_value.filter.return_value.first.return_value = (
+            mock_context
+        )
+
+        # Act
+        result = self.storage.exists(storage_key)
+
+        # Assert
+        assert result is False

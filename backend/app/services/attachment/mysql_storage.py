@@ -54,14 +54,13 @@ class MySQLStorageBackend(StorageBackend):
         context record. The context record should already exist with
         the ID extracted from the key.
 
-        Encryption support: If ATTACHMENT_ENCRYPTION_ENABLED is true, the binary
-        data will be encrypted before saving. The encryption status is stored in
-        type_data.is_encrypted for transparent decryption during retrieval.
+        Note: Encryption is handled at the context_service layer, not here.
+        Storage backends are responsible only for raw data storage.
 
         Args:
             key: Storage key (format: attachments/{context_id})
-            data: File binary data (will be encrypted if encryption is enabled)
-            metadata: Additional metadata (not used for MySQL backend)
+            data: File binary data (already encrypted if encryption is enabled)
+            metadata: Additional metadata including is_encrypted flag
 
         Returns:
             The storage key
@@ -80,22 +79,14 @@ class MySQLStorageBackend(StorageBackend):
             if context is None:
                 raise StorageError(f"Context not found: {context_id}", key)
 
-            # Encrypt data if encryption is enabled
-            is_encrypted = self._should_encrypt()
-            if is_encrypted:
-                data = self._encrypt_if_enabled(data)
-                logger.info(f"Encrypted attachment data for context {context_id}")
-
             context.binary_data = data
 
-            # Update storage_backend, storage_key, and encryption metadata in type_data
+            # Update storage_backend and storage_key in type_data
             if context.type_data and isinstance(context.type_data, dict):
                 context.type_data = {
                     **context.type_data,
                     "storage_backend": self.BACKEND_TYPE,
                     "storage_key": key,
-                    "is_encrypted": is_encrypted,
-                    "encryption_version": 1 if is_encrypted else 0,
                 }
                 # Mark JSON field as modified so SQLAlchemy detects the change
                 flag_modified(context, "type_data")
@@ -114,15 +105,14 @@ class MySQLStorageBackend(StorageBackend):
         """
         Get file data from MySQL.
 
-        Encryption support: If the data is marked as encrypted (type_data.is_encrypted),
-        it will be automatically decrypted before returning. This is transparent to
-        the caller - they always receive plain text data.
+        Note: Decryption is handled at the context_service layer, not here.
+        This method returns raw binary data as stored in the database.
 
         Args:
             key: Storage key (format: attachments/{context_id})
 
         Returns:
-            File binary data (decrypted if necessary), or None if not found
+            File binary data (raw, may be encrypted), or None if not found
         """
         try:
             context_id = self._extract_attachment_id(key)
@@ -135,18 +125,7 @@ class MySQLStorageBackend(StorageBackend):
             if context is None:
                 return None
 
-            binary_data = context.binary_data
-
-            # Check if data is encrypted and decrypt if needed
-            is_encrypted = False
-            if context.type_data and isinstance(context.type_data, dict):
-                is_encrypted = context.type_data.get("is_encrypted", False)
-
-            if is_encrypted:
-                logger.debug(f"Decrypting attachment data for context {context_id}")
-                binary_data = self._decrypt_if_needed(binary_data, is_encrypted)
-
-            return binary_data
+            return context.binary_data
 
         except Exception as e:
             logger.error(f"Failed to get from MySQL storage: {e}")
