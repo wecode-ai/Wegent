@@ -1446,6 +1446,12 @@ const MessageBubble = memo(
                     content={msg.error}
                     className="h-7 w-7 flex-shrink-0 !rounded-md bg-red-100 dark:bg-red-900/30 hover:!bg-red-200 dark:hover:!bg-red-900/50"
                     tooltip={t('chat:errors.copy_error') || 'Copy error'}
+                    onCopySuccess={() =>
+                      trace.event('error-copy', {
+                        'error.message': msg.error?.substring(0, 100),
+                        ...(msg.subtaskId && { 'subtask.id': msg.subtaskId }),
+                      })
+                    }
                   />
                 </div>
 
@@ -1527,6 +1533,7 @@ const MessageBubble = memo(
       prevSourcesLen === nextSourcesLen &&
       prevReasoningLen === nextReasoningLen &&
       prevProps.msg.status === nextProps.msg.status &&
+      prevProps.msg.error === nextProps.msg.error &&
       prevProps.isPendingConfirmation === nextProps.isPendingConfirmation
 
     return shouldSkipRender
