@@ -177,7 +177,11 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
 
     // Only update if no error occurred
     if (!result.error) {
-      setTasks(prev => [...prev, ...result.items])
+      setTasks(prev => {
+        const existingIds = new Set(prev.map(t => t.id))
+        const newItems = result.items.filter(t => !existingIds.has(t.id))
+        return [...prev, ...newItems]
+      })
       setLoadedPages(prev =>
         Array.from(new Set([...prev, ...(result.pages || [])])).sort((a, b) => a - b)
       )
@@ -195,7 +199,11 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     const result = await loadGroupPages([nextPage])
 
     if (!result.error) {
-      setGroupTasks(prev => [...prev, ...result.items])
+      setGroupTasks(prev => {
+        const existingIds = new Set(prev.map(t => t.id))
+        const newItems = result.items.filter(t => !existingIds.has(t.id))
+        return [...prev, ...newItems]
+      })
       setLoadedGroupPages(prev =>
         Array.from(new Set([...prev, ...(result.pages || [])])).sort((a, b) => a - b)
       )
@@ -212,7 +220,11 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     const result = await loadPersonalPages([nextPage])
 
     if (!result.error) {
-      setPersonalTasks(prev => [...prev, ...result.items])
+      setPersonalTasks(prev => {
+        const existingIds = new Set(prev.map(t => t.id))
+        const newItems = result.items.filter(t => !existingIds.has(t.id))
+        return [...prev, ...newItems]
+      })
       setLoadedPersonalPages(prev =>
         Array.from(new Set([...prev, ...(result.pages || [])])).sort((a, b) => a - b)
       )

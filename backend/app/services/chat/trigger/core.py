@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from shared.telemetry.context import (
+    SpanAttributes,
     SpanManager,
     SpanNames,
     TelemetryEventNames,
@@ -27,6 +28,7 @@ from shared.telemetry.context import (
     copy_context_vars,
     detach_otel_context,
     restore_context_vars,
+    set_span_attributes,
 )
 
 from app.core.config import settings
@@ -642,65 +644,14 @@ async def _stream_with_http_adapter(
         subtask_id,
     )
 
-    # Parse MCP server configuration for HTTP mode
-    # Format: list of {"name": "...", "url": "...", "type": "...", "auth": ...}
-    mcp_servers = []
-    if settings.CHAT_MCP_ENABLED:
-        import json
+    # Parse MCP servers with separate span
+    mcp_servers = _append_mcp_servers(ws_config.bot_name, ws_config.bot_namespace)
 
-        mcp_servers_config = getattr(settings, "CHAT_MCP_SERVERS", "{}")
-        if mcp_servers_config:
-            try:
-                config = json.loads(mcp_servers_config)
-                servers = config.get("mcpServers", {})
-                for name, server_config in servers.items():
-                    server_type = server_config.get("type", "streamable-http")
-                    url = server_config.get("url", "")
-                    headers = server_config.get("headers", {})
-                    if url:
-                        server_entry = {
-                            "name": name,
-                            "type": server_type,
-                            "url": url,
-                        }
-                        if headers:
-                            server_entry["auth"] = headers
-                        mcp_servers.append(server_entry)
-                logger.info(
-                    "[HTTP_ADAPTER] Parsed MCP servers: %d servers",
-                    len(mcp_servers),
-                )
-            except json.JSONDecodeError as e:
-                logger.warning("[HTTP_ADAPTER] Failed to parse CHAT_MCP_SERVERS: %s", e)
+    # Append skills with separate span
+    _append_skills(skill_names, skill_configs)
 
-    # Load Bot MCP servers from Ghost configuration
-    if ws_config.bot_name:
-        try:
-            bot_mcp_servers = _get_bot_mcp_servers_for_http(
-                ws_config.bot_name, ws_config.bot_namespace or "default"
-            )
-            for name, server_config in bot_mcp_servers.items():
-                server_type = server_config.get("type", "streamable-http")
-                url = server_config.get("url", "")
-                headers = server_config.get("headers", {})
-                if url:
-                    server_entry = {
-                        "name": name,
-                        "type": server_type,
-                        "url": url,
-                    }
-                    if headers:
-                        server_entry["auth"] = headers
-                    mcp_servers.append(server_entry)
-            if bot_mcp_servers:
-                logger.info(
-                    "[HTTP_ADAPTER] Added %d Bot MCP servers for bot %s/%s",
-                    len(bot_mcp_servers),
-                    ws_config.bot_namespace or "default",
-                    ws_config.bot_name,
-                )
-        except Exception as e:
-            logger.warning("[HTTP_ADAPTER] Failed to load Bot MCP servers: %s", e)
+    # Append knowledge with separate span
+    _append_knowledge(knowledge_base_ids, document_ids, table_contexts)
 
     # Build ChatRequest
     # Note: enable_web_search should follow settings.WEB_SEARCH_ENABLED for consistency with bridge mode
@@ -760,6 +711,19 @@ async def _stream_with_http_adapter(
         document_ids,
         len(table_contexts) if table_contexts else 0,
         table_contexts,  # Log the actual content
+    )
+
+    # Record chat request details to trace
+    # Note: MCP, Skills, Knowledge attributes are recorded in separate spans (append.mcp, append.skills, append.knowledge)
+    set_span_attributes(
+        {
+            SpanAttributes.TASK_ID: task_id,
+            SpanAttributes.SUBTASK_ID: subtask_id,
+            SpanAttributes.CHAT_WEB_SEARCH: enable_web_search,
+            SpanAttributes.CHAT_DEEP_THINKING: ws_config.enable_deep_thinking,
+            SpanAttributes.CHAT_CLARIFICATION: ws_config.enable_clarification,
+            SpanAttributes.CHAT_TYPE: "group" if ws_config.is_group_chat else "single",
+        }
     )
 
     # Create HTTP adapter
@@ -1376,6 +1340,190 @@ async def _stream_with_bridge(
             del namespace._active_streams[subtask_id]
         if subtask_id in getattr(namespace, "_stream_versions", {}):
             del namespace._stream_versions[subtask_id]
+
+
+from shared.telemetry.decorators import trace_sync
+
+
+@trace_sync(
+    span_name="append.mcp",
+    tracer_name="backend.chat",
+)
+def _append_mcp_servers(
+    bot_name: Optional[str] = None,
+    bot_namespace: Optional[str] = None,
+) -> list[Dict[str, Any]]:
+    """Append MCP server configuration for HTTP mode.
+
+    Creates a separate span for MCP server parsing and loading.
+
+    Args:
+        bot_name: Optional bot name to load Bot MCP servers
+        bot_namespace: Optional bot namespace
+
+    Returns:
+        List of MCP server configurations
+    """
+    import json
+
+    from shared.telemetry.context import SpanAttributes, set_span_attributes
+
+    mcp_servers = []
+
+    # Parse global MCP servers from settings
+    if settings.CHAT_MCP_ENABLED:
+        mcp_servers_config = getattr(settings, "CHAT_MCP_SERVERS", "{}")
+        if mcp_servers_config:
+            try:
+                config = json.loads(mcp_servers_config)
+                servers = config.get("mcpServers", {})
+                for name, server_config in servers.items():
+                    server_type = server_config.get("type", "streamable-http")
+                    url = server_config.get("url", "")
+                    headers = server_config.get("headers", {})
+                    if url:
+                        server_entry = {
+                            "name": name,
+                            "type": server_type,
+                            "url": url,
+                        }
+                        if headers:
+                            server_entry["auth"] = headers
+                        mcp_servers.append(server_entry)
+                logger.info(
+                    "[MCP] Parsed global MCP servers: %d servers",
+                    len(mcp_servers),
+                )
+                set_span_attributes(
+                    {
+                        SpanAttributes.MCP_SERVERS_COUNT: len(mcp_servers),
+                        SpanAttributes.MCP_SERVER_NAMES: ",".join(
+                            s["name"] for s in mcp_servers
+                        ),
+                    }
+                )
+            except json.JSONDecodeError as e:
+                logger.warning("[MCP] Failed to parse CHAT_MCP_SERVERS: %s", e)
+
+    # Load Bot MCP servers from Ghost configuration
+    if bot_name:
+        try:
+            bot_mcp_servers = _get_bot_mcp_servers_for_http(
+                bot_name, bot_namespace or "default"
+            )
+            bot_server_count = 0
+            for name, server_config in bot_mcp_servers.items():
+                server_type = server_config.get("type", "streamable-http")
+                url = server_config.get("url", "")
+                headers = server_config.get("headers", {})
+                if url:
+                    server_entry = {
+                        "name": name,
+                        "type": server_type,
+                        "url": url,
+                    }
+                    if headers:
+                        server_entry["auth"] = headers
+                    mcp_servers.append(server_entry)
+                    bot_server_count += 1
+            if bot_server_count > 0:
+                logger.info(
+                    "[MCP] Added %d Bot MCP servers for bot %s/%s",
+                    bot_server_count,
+                    bot_namespace or "default",
+                    bot_name,
+                )
+                set_span_attributes(
+                    {
+                        SpanAttributes.MCP_BOT_SERVERS_COUNT: bot_server_count,
+                        SpanAttributes.BOT_NAME: f"{bot_namespace or 'default'}/{bot_name}",
+                    }
+                )
+        except Exception as e:
+            logger.warning("[MCP] Failed to load Bot MCP servers: %s", e)
+
+    return mcp_servers
+
+
+@trace_sync(
+    span_name="append.skills",
+    tracer_name="backend.chat",
+)
+def _append_skills(
+    skill_names: Optional[list[str]] = None,
+    skill_configs: Optional[list[dict]] = None,
+) -> tuple[list[str], list[dict]]:
+    """Append skills configuration.
+
+    Args:
+        skill_names: List of skill names
+        skill_configs: List of skill configurations
+
+    Returns:
+        Tuple of (skill_names, skill_configs)
+    """
+    from shared.telemetry.context import SpanAttributes, set_span_attributes
+
+    names = skill_names or []
+    configs = skill_configs or []
+
+    if names or configs:
+        logger.info(
+            "[SKILLS] Appending skills: names=%s, configs_count=%d", names, len(configs)
+        )
+        set_span_attributes(
+            {
+                SpanAttributes.SKILL_NAMES: ",".join(names) if names else "",
+                SpanAttributes.SKILL_COUNT: len(configs),
+            }
+        )
+
+    return names, configs
+
+
+@trace_sync(
+    span_name="append.knowledge",
+    tracer_name="backend.chat",
+)
+def _append_knowledge(
+    knowledge_base_ids: Optional[list[int]] = None,
+    document_ids: Optional[list[int]] = None,
+    table_contexts: Optional[list[dict]] = None,
+) -> tuple[Optional[list[int]], Optional[list[int]], list[dict]]:
+    """Append knowledge base configuration.
+
+    Args:
+        knowledge_base_ids: List of knowledge base IDs
+        document_ids: List of document IDs
+        table_contexts: List of table contexts
+
+    Returns:
+        Tuple of (knowledge_base_ids, document_ids, table_contexts)
+    """
+    from shared.telemetry.context import SpanAttributes, set_span_attributes
+
+    contexts = table_contexts or []
+
+    if knowledge_base_ids or document_ids or contexts:
+        logger.info(
+            "[KNOWLEDGE] Appending knowledge: kb_ids=%s, doc_ids=%s, table_contexts_count=%d",
+            knowledge_base_ids,
+            document_ids,
+            len(contexts),
+        )
+        set_span_attributes(
+            {
+                SpanAttributes.KB_IDS: (
+                    ",".join(map(str, knowledge_base_ids)) if knowledge_base_ids else ""
+                ),
+                SpanAttributes.KB_DOCUMENT_IDS: (
+                    ",".join(map(str, document_ids)) if document_ids else ""
+                ),
+                SpanAttributes.KB_TABLE_CONTEXTS_COUNT: len(contexts),
+            }
+        )
+
+    return knowledge_base_ids, document_ids, contexts
 
 
 def _get_bot_mcp_servers_for_http(bot_name: str, bot_namespace: str) -> Dict[str, Any]:

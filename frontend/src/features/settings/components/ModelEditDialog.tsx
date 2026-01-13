@@ -23,7 +23,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
-import { Loader2 } from 'lucide-react'
+import { Loader2, RefreshCw } from 'lucide-react'
 import { EyeIcon, EyeSlashIcon, BeakerIcon } from '@heroicons/react/24/outline'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -34,6 +34,7 @@ import {
   STTConfig,
   EmbeddingConfig,
   RerankConfig,
+  AvailableModel,
 } from '@/apis/models'
 
 interface ModelEditDialogProps {
@@ -161,6 +162,17 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   const [rerankTopN, setRerankTopN] = useState<number | undefined>(undefined)
   const [rerankReturnDocuments, setRerankReturnDocuments] = useState(true)
 
+  // Fetch models state
+  const [fetchingModels, setFetchingModels] = useState(false)
+  const [fetchedModels, setFetchedModels] = useState<AvailableModel[]>([])
+  const [fetchError, setFetchError] = useState('')
+
+  // Model list cache (in-memory, expires after 5 minutes)
+  const modelCacheRef = React.useRef<Map<string, { models: AvailableModel[]; timestamp: number }>>(
+    new Map()
+  )
+  const CACHE_DURATION = 5 * 60 * 1000 // 5 minutes
+
   // Reset form when dialog opens/closes or model changes
   useEffect(() => {
     if (open) {
@@ -254,7 +266,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   // Determine model options based on model category type and provider
   // For embedding/rerank, only show "Custom..." option since they don't use preset LLM models
   // For openai-responses, use the same model options as openai
-  const modelOptions =
+  const baseModelOptions =
     modelCategoryType === 'embedding' || modelCategoryType === 'rerank'
       ? [{ value: 'custom', label: 'Custom...' }]
       : providerType === 'openai' || providerType === 'openai-responses'
@@ -263,8 +275,27 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           ? GEMINI_MODEL_OPTIONS
           : ANTHROPIC_MODEL_OPTIONS
 
+  // Merge fetched models with base options
+  const modelOptions = React.useMemo(() => {
+    if (fetchedModels.length > 0) {
+      // Use fetched models + Custom option
+      const fetchedOptions = fetchedModels.map(m => ({
+        value: m.id,
+        label: m.name || m.id,
+      }))
+      return [...fetchedOptions, { value: 'custom', label: 'Custom...' }]
+    }
+    return baseModelOptions
+  }, [fetchedModels, baseModelOptions])
+
   // Get available protocols for current category type
   const availableProtocols = PROTOCOL_BY_CATEGORY[modelCategoryType] || []
+
+  // Clear fetched models when provider type or base URL changes
+  useEffect(() => {
+    setFetchedModels([])
+    setFetchError('')
+  }, [providerType, baseUrl])
 
   // Handle model category type change
   const handleModelCategoryTypeChange = (value: ModelCategoryType) => {
@@ -365,6 +396,93 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
       })
     } finally {
       setTesting(false)
+    }
+  }
+
+  const handleFetchModels = async () => {
+    if (!apiKey.trim()) {
+      setFetchError(t('common:models.fetch_error_no_api_key'))
+      toast({
+        variant: 'destructive',
+        title: t('common:models.fetch_error_no_api_key'),
+      })
+      return
+    }
+
+    // Parse custom headers
+    const parsedHeaders = validateCustomHeaders(customHeaders)
+    if (parsedHeaders === null) {
+      setFetchError(t('common:models.errors.custom_headers_invalid'))
+      return
+    }
+
+    // Check cache
+    const cacheKey = `${providerType}_${baseUrl || 'default'}`
+    const cached = modelCacheRef.current.get(cacheKey)
+    const now = Date.now()
+
+    if (cached && now - cached.timestamp < CACHE_DURATION) {
+      // Use cached models
+      setFetchedModels(cached.models)
+      setFetchError('')
+      toast({
+        title: t('common:models.fetch_success', { count: cached.models.length }),
+      })
+      return
+    }
+
+    setFetchingModels(true)
+    setFetchError('')
+
+    try {
+      const result = await modelApis.fetchAvailableModels({
+        provider_type: providerType as 'openai' | 'anthropic' | 'gemini' | 'custom',
+        api_key: apiKey,
+        base_url: baseUrl || undefined,
+        custom_headers: Object.keys(parsedHeaders).length > 0 ? parsedHeaders : undefined,
+      })
+
+      if (result.success && result.models) {
+        // Cache the result
+        modelCacheRef.current.set(cacheKey, {
+          models: result.models,
+          timestamp: now,
+        })
+
+        setFetchedModels(result.models)
+        setFetchError('')
+
+        toast({
+          title: t('common:models.fetch_success', { count: result.models.length }),
+        })
+      } else {
+        const errorMsg = result.message || t('common:models.fetch_failed')
+        setFetchError(errorMsg)
+        toast({
+          variant: 'destructive',
+          title: t('common:models.fetch_failed'),
+          description: errorMsg,
+        })
+      }
+    } catch (error) {
+      const errorMsg = (error as Error).message
+      setFetchError(errorMsg)
+
+      // Map error to user-friendly message
+      let userMessage = errorMsg
+      if (errorMsg.includes('401') || errorMsg.includes('authentication')) {
+        userMessage = t('common:models.fetch_error_auth')
+      } else if (errorMsg.includes('network') || errorMsg.includes('fetch')) {
+        userMessage = t('common:models.fetch_error_network')
+      }
+
+      toast({
+        variant: 'destructive',
+        title: t('common:models.fetch_failed'),
+        description: userMessage,
+      })
+    } finally {
+      setFetchingModels(false)
     }
   }
 
@@ -667,9 +785,36 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="model_id" className="text-sm font-medium">
-                {t('common:models.model_id')} <span className="text-red-400">*</span>
-              </Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="model_id" className="text-sm font-medium">
+                  {t('common:models.model_id')} <span className="text-red-400">*</span>
+                </Label>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleFetchModels}
+                  disabled={fetchingModels || !apiKey.trim()}
+                  className="h-7 px-2 text-xs"
+                  title={
+                    !apiKey.trim()
+                      ? t('common:models.fetch_error_no_api_key')
+                      : t('common:models.fetch_models')
+                  }
+                >
+                  {fetchingModels ? (
+                    <>
+                      <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                      {t('common:models.fetching_models')}
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="mr-1 h-3 w-3" />
+                      {t('common:models.fetch_models')}
+                    </>
+                  )}
+                </Button>
+              </div>
               <Select value={modelId} onValueChange={setModelId}>
                 <SelectTrigger className="bg-base">
                   <SelectValue placeholder={t('common:models.select_model_id')} />
@@ -682,6 +827,12 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                   ))}
                 </SelectContent>
               </Select>
+              {fetchError && <p className="text-xs text-error">{fetchError}</p>}
+              {!apiKey.trim() && (
+                <p className="text-xs text-text-muted">
+                  {t('common:models.fetch_models_hint', '请先填写 API Key 后点击"加载模型"按钮')}
+                </p>
+              )}
               {modelId === 'custom' && (
                 <Input
                   value={customModelId}

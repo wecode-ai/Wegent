@@ -11,6 +11,8 @@ including thinking step generation and event emission.
 import logging
 from typing import Any, Callable
 
+from shared.telemetry.decorators import add_span_event, set_span_attribute
+
 logger = logging.getLogger(__name__)
 
 
@@ -62,6 +64,16 @@ def _handle_tool_start(
     # Convert input to JSON-serializable format
     serializable_input = _make_serializable(tool_input)
 
+    # Add OpenTelemetry span event for tool start
+    add_span_event(
+        f"tool_start:{tool_name}",
+        attributes={
+            "tool.name": tool_name,
+            "tool.run_id": run_id,
+            "tool.input": str(serializable_input)[:1000],
+        },
+    )
+
     # Build friendly title
     title = _build_tool_start_title(agent_builder, tool_name, serializable_input)
 
@@ -105,6 +117,19 @@ def _handle_tool_end(
     # Extract and serialize tool output
     tool_output = event_data.get("data", {}).get("output", "")
     serializable_output = _make_output_serializable(tool_output)
+
+    # Add OpenTelemetry span event for tool end
+    output_str = str(serializable_output)
+    add_span_event(
+        f"tool_end:{tool_name}",
+        attributes={
+            "tool.name": tool_name,
+            "tool.run_id": run_id,
+            "tool.output_length": len(output_str),
+            "tool.output": output_str[:1000],
+            "tool.status": "completed",
+        },
+    )
 
     # Process tool output and extract metadata
     title, sources = _process_tool_output(tool_name, serializable_output)
