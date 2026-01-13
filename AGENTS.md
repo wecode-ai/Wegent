@@ -479,6 +479,19 @@ t('actions.save')             // Ambiguous - which namespace?
 
 ---
 
+## 📊 OpenTelemetry Tracing
+
+**Location:** `shared/telemetry/decorators.py`
+
+| Scenario | Method |
+|----------|--------|
+| Trace entire async function | `@trace_async(span_name, tracer_name, extract_attributes)` |
+| Trace entire sync function | `@trace_sync(span_name, tracer_name, extract_attributes)` |
+| Add event to current span | `add_span_event(name, attributes)` |
+| Set attribute on current span | `set_span_attribute(key, value)` |
+
+---
+
 ## 🎯 Quick Reference
 
 ```bash
