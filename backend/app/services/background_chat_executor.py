@@ -91,15 +91,31 @@ class BackgroundChatExecutor:
         Returns:
             BackgroundTaskResult containing task result
         """
+        logger.info(
+            f"[BackgroundChatExecutor] Starting background task: "
+            f"type={config.task_type}, summary_type={config.summary_type}, "
+            f"document_id={config.document_id}, kb_id={config.knowledge_base_id}"
+        )
+
         # 1. Create Task and Subtask records
         task, _user_subtask, assistant_subtask = self._create_task_records(
             config, user_message
+        )
+
+        logger.info(
+            f"[BackgroundChatExecutor] Task records created: "
+            f"task_id={task.id}, subtask_id={assistant_subtask.id}"
         )
 
         try:
             # 2. Update status to RUNNING
             assistant_subtask.status = SubtaskStatus.RUNNING
             self.db.commit()
+
+            logger.info(
+                f"[BackgroundChatExecutor] Task started: task_id={task.id}, "
+                f"subtask_id={assistant_subtask.id}"
+            )
 
             # 3. Build ChatRequest
             model_config = config.model_config or self._get_default_model_config()
@@ -119,24 +135,47 @@ class BackgroundChatExecutor:
             )
 
             # 4. Call Chat Shell, accumulate complete response
+            logger.info(
+                f"[BackgroundChatExecutor] Sending request to Chat Shell: "
+                f"task_id={task.id}"
+            )
+
             accumulated_content = ""
+            chunk_count = 0
             async for event in self._adapter.chat(chat_request):
                 if event.type == ChatEventType.CHUNK:
                     content = event.data.get("content", "")
                     if content:
                         accumulated_content += content
+                        chunk_count += 1
                 elif event.type == ChatEventType.ERROR:
                     error_msg = event.data.get("error", "Unknown error")
+                    logger.error(
+                        f"[BackgroundChatExecutor] Chat Shell error: "
+                        f"task_id={task.id}, error={error_msg}"
+                    )
                     raise Exception(error_msg)
                 elif event.type == ChatEventType.DONE:
                     logger.info(
-                        f"[BackgroundChatExecutor] Task completed: task_id={task.id}"
+                        f"[BackgroundChatExecutor] Chat Shell response completed: "
+                        f"task_id={task.id}, chunks_received={chunk_count}, "
+                        f"content_length={len(accumulated_content)}"
                     )
 
             # 5. Parse JSON (if needed)
             parsed_content = None
             if parse_json and accumulated_content:
                 parsed_content = self._parse_json_response(accumulated_content)
+                if parsed_content:
+                    logger.info(
+                        f"[BackgroundChatExecutor] JSON parsed successfully: "
+                        f"task_id={task.id}, keys={list(parsed_content.keys())}"
+                    )
+                else:
+                    logger.warning(
+                        f"[BackgroundChatExecutor] Failed to parse JSON response: "
+                        f"task_id={task.id}"
+                    )
 
             # 6. Update Subtask status to COMPLETED
             result = {"value": accumulated_content}
@@ -146,7 +185,26 @@ class BackgroundChatExecutor:
             assistant_subtask.status = SubtaskStatus.COMPLETED
             assistant_subtask.result = result
             assistant_subtask.completed_at = datetime.now()
+
+            # 7. Update Task status to COMPLETED
+            task_json = task.json
+            if task_json and "status" in task_json:
+                task_json["status"]["status"] = "COMPLETED"
+                task_json["status"]["progress"] = 100
+                task_json["status"]["updatedAt"] = datetime.now().isoformat()
+                task_json["status"]["completedAt"] = datetime.now().isoformat()
+                task.json = task_json
+                from sqlalchemy.orm.attributes import flag_modified
+
+                flag_modified(task, "json")
+
             self.db.commit()
+
+            logger.info(
+                f"[BackgroundChatExecutor] Task completed successfully: "
+                f"task_id={task.id}, subtask_id={assistant_subtask.id}, "
+                f"has_parsed_content={parsed_content is not None}"
+            )
 
             return BackgroundTaskResult(
                 success=True,
@@ -158,13 +216,29 @@ class BackgroundChatExecutor:
 
         except Exception as e:
             logger.exception(
-                f"[BackgroundChatExecutor] Task failed: task_id={task.id}"
+                f"[BackgroundChatExecutor] Task failed: "
+                f"task_id={task.id}, subtask_id={assistant_subtask.id}, "
+                f"error={str(e)}"
             )
 
-            # Update status to FAILED
+            # Update Subtask status to FAILED
             assistant_subtask.status = SubtaskStatus.FAILED
             assistant_subtask.error_message = str(e)
             assistant_subtask.completed_at = datetime.now()
+
+            # Update Task status to FAILED
+            task_json = task.json
+            if task_json and "status" in task_json:
+                task_json["status"]["status"] = "FAILED"
+                task_json["status"]["progress"] = 0
+                task_json["status"]["errorMessage"] = str(e)
+                task_json["status"]["updatedAt"] = datetime.now().isoformat()
+                task_json["status"]["completedAt"] = datetime.now().isoformat()
+                task.json = task_json
+                from sqlalchemy.orm.attributes import flag_modified
+
+                flag_modified(task, "json")
+
             self.db.commit()
 
             return BackgroundTaskResult(
@@ -286,23 +360,26 @@ class BackgroundChatExecutor:
         return task, user_subtask, assistant_subtask
 
     def _get_default_model_config(self) -> Dict[str, Any]:
-        """Get default model configuration (from environment variables)."""
-        config_str = getattr(settings, "SUMMARY_MODEL_CONFIG", None)
-        if config_str:
-            try:
-                return json.loads(config_str)
-            except Exception as e:
-                logger.warning(
-                    f"Failed to parse SUMMARY_MODEL_CONFIG: {e}. "
-                    f"Config value: {config_str!r}. Using default configuration."
-                )
+        """Get default model configuration (from environment variables).
 
-        # Default configuration
-        return {
-            "model_id": "claude-sonnet-4-20250514",
-            "model": "anthropic",
-            "max_tokens": 4096,
-        }
+        Raises:
+            ValueError: If SUMMARY_MODEL_CONFIG is not set or cannot be parsed
+        """
+        config_str = getattr(settings, "SUMMARY_MODEL_CONFIG", None)
+        if not config_str:
+            raise ValueError(
+                "SUMMARY_MODEL_CONFIG environment variable is not set. "
+                "Please configure it in .env file with model configuration JSON."
+            )
+
+        try:
+            return json.loads(config_str)
+        except Exception as e:
+            raise ValueError(
+                f"Failed to parse SUMMARY_MODEL_CONFIG: {e}. "
+                f"Config value: {config_str!r}. "
+                f"Expected JSON format: {{'model_id': '...', 'model': 'anthropic', 'api_key': '...', 'base_url': '...', 'max_tokens': 96000}}"
+            ) from e
 
     def _parse_json_response(self, content: str) -> Optional[Dict[str, Any]]:
         """

@@ -80,7 +80,7 @@ export function EditKnowledgeBaseDialog({
       // Build update data
       const updateData: KnowledgeBaseUpdate = {
         name: name.trim(),
-        description: description.trim() || undefined,
+        description: description.trim(), // Allow empty string to clear description
         summary_enabled: summaryEnabled,
       }
 

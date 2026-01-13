@@ -87,9 +87,7 @@ class KnowledgeDocument(Base):
     source_config = Column(
         JSON, nullable=False, default={}
     )  # Source configuration (e.g., {"url": "..."} for table)
-    summary = Column(
-        JSON, nullable=True
-    )  # Document summary information (JSON)
+    summary = Column(JSON, nullable=True)  # Document summary information (JSON)
     created_at = Column(DateTime, nullable=False, default=func.now())
     updated_at = Column(
         DateTime, nullable=False, default=func.now(), onupdate=func.now()

@@ -25,6 +25,7 @@ from app.schemas.knowledge import (
     AccessibleKnowledgeResponse,
     BatchDocumentIds,
     BatchOperationResult,
+    DocumentDetailResponse,
     DocumentSourceType,
     KnowledgeBaseCreate,
     KnowledgeBaseListResponse,
@@ -467,6 +468,87 @@ def _get_kb_index_info_sync(
     )
 
 
+def _resolve_kb_index_info(
+    db: Session,
+    knowledge_base_id: str,
+    user_id: int,
+    kb_index_info: Optional[KnowledgeBaseIndexInfo] = None,
+) -> KnowledgeBaseIndexInfo:
+    """
+    Resolve knowledge base index information.
+
+    Use pre-computed KB info if provided, otherwise fetch from DB.
+    This optimization avoids redundant DB query when called from create_document.
+
+    Args:
+        db: Database session
+        knowledge_base_id: Knowledge base ID
+        user_id: User ID (the user who triggered the indexing)
+        kb_index_info: Pre-computed KB info (optional)
+
+    Returns:
+        KnowledgeBaseIndexInfo containing index_owner_user_id and summary_enabled
+    """
+    if kb_index_info:
+        logger.info(
+            f"Using pre-computed KB info: index_owner_user_id={kb_index_info.index_owner_user_id}, "
+            f"summary_enabled={kb_index_info.summary_enabled}"
+        )
+        return kb_index_info
+    else:
+        # Fallback: fetch KB info from database (for backward compatibility)
+        kb_info = _get_kb_index_info_sync(
+            db=db,
+            knowledge_base_id=knowledge_base_id,
+            current_user_id=user_id,
+        )
+        logger.info(
+            f"Fetched KB info from DB: index_owner_user_id={kb_info.index_owner_user_id}, "
+            f"summary_enabled={kb_info.summary_enabled}"
+        )
+        return kb_info
+
+
+def _trigger_document_summary_if_enabled(
+    db: Session,
+    document_id: int,
+    user_id: int,
+    kb_info: KnowledgeBaseIndexInfo,
+):
+    """
+    Trigger document summary generation if enabled.
+
+    Check both global setting and knowledge base setting before triggering.
+    Summary generation failure should not affect indexing result.
+
+    Args:
+        db: Database session
+        document_id: Document ID
+        user_id: User ID (the user who triggered the indexing)
+        kb_info: Knowledge base index information
+    """
+    try:
+        global_summary_enabled = getattr(settings, "SUMMARY_ENABLED", True)
+        if global_summary_enabled and kb_info.summary_enabled:
+            from app.services.summary_service import get_summary_service
+
+            summary_service = get_summary_service(db)
+            asyncio.run(summary_service.trigger_document_summary(document_id, user_id))
+            logger.info(
+                f"Triggered document summary generation for document {document_id}"
+            )
+        else:
+            logger.info(
+                f"Skipping document summary for {document_id}: summary not enabled "
+                f"(global={global_summary_enabled}, kb={kb_info.summary_enabled})"
+            )
+    except Exception as summary_error:
+        # Summary generation failure should not affect indexing result
+        logger.warning(
+            f"Failed to trigger document summary for {document_id}: {summary_error}"
+        )
+
+
 def _index_document_background(
     knowledge_base_id: str,
     attachment_id: int,
@@ -509,25 +591,13 @@ def _index_document_background(
     # Create a new database session for the background task
     db = SessionLocal()
     try:
-        # Use pre-computed KB info if provided, otherwise fetch from DB
-        # This optimization avoids redundant DB query when called from create_document
-        if kb_index_info:
-            kb_info = kb_index_info
-            logger.info(
-                f"Using pre-computed KB info: index_owner_user_id={kb_info.index_owner_user_id}, "
-                f"summary_enabled={kb_info.summary_enabled}"
-            )
-        else:
-            # Fallback: fetch KB info from database (for backward compatibility)
-            kb_info = _get_kb_index_info_sync(
-                db=db,
-                knowledge_base_id=knowledge_base_id,
-                current_user_id=user_id,
-            )
-            logger.info(
-                f"Fetched KB info from DB: index_owner_user_id={kb_info.index_owner_user_id}, "
-                f"summary_enabled={kb_info.summary_enabled}"
-            )
+        # Resolve KB index info (use pre-computed or fetch from DB)
+        kb_info = _resolve_kb_index_info(
+            db=db,
+            knowledge_base_id=knowledge_base_id,
+            user_id=user_id,
+            kb_index_info=kb_index_info,
+        )
 
         # Get retriever from database
         retriever_crd = retriever_kinds_service.get_retriever(
@@ -587,32 +657,13 @@ def _index_document_background(
                     f"Updated document {document_id} is_active to True and status to enabled after successful indexing"
                 )
 
-                # Trigger document summary generation automatically after indexing
-                # Check both global setting and knowledge base setting (reuse kb_info from earlier query)
-                try:
-                    global_summary_enabled = getattr(settings, "SUMMARY_ENABLED", True)
-                    if global_summary_enabled and kb_info.summary_enabled:
-                        from app.services.summary_service import get_summary_service
-
-                        summary_service = get_summary_service(db)
-                        asyncio.run(
-                            summary_service.trigger_document_summary(
-                                document_id, user_id
-                            )
-                        )
-                        logger.info(
-                            f"Triggered document summary generation for document {document_id}"
-                        )
-                    else:
-                        logger.info(
-                            f"Skipping document summary for {document_id}: summary not enabled "
-                            f"(global={global_summary_enabled}, kb={kb_info.summary_enabled})"
-                        )
-                except Exception as summary_error:
-                    # Summary generation failure should not affect indexing result
-                    logger.warning(
-                        f"Failed to trigger document summary for {document_id}: {summary_error}"
-                    )
+                # Trigger document summary generation if enabled
+                _trigger_document_summary_if_enabled(
+                    db=db,
+                    document_id=document_id,
+                    user_id=user_id,
+                    kb_info=kb_info,
+                )
     except Exception as e:
         logger.error(
             f"Failed to index document for knowledge base {knowledge_base_id}: {str(e)}",
@@ -912,6 +963,113 @@ async def refresh_kb_summary(
     return SummaryRefreshResponse(
         message="Summary refresh started",
         status="generating",
+    )
+
+
+@summary_router.get(
+    "/{kb_id}/documents/{doc_id}/detail", response_model=DocumentDetailResponse
+)
+async def get_document_detail(
+    kb_id: int,
+    doc_id: int,
+    include_content: bool = Query(
+        default=True, description="Include document content in response"
+    ),
+    include_summary: bool = Query(
+        default=True, description="Include document summary in response"
+    ),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get document detail including content and summary.
+
+    Query parameters:
+    - include_content: Whether to include extracted text content (default: true)
+    - include_summary: Whether to include AI-generated summary (default: true)
+
+    Returns:
+    - document_id: Document ID
+    - content: Extracted text content (if include_content=true)
+    - content_length: Length of content in characters (if include_content=true)
+    - truncated: Whether content was truncated (if include_content=true)
+    - summary: Document summary object (if include_summary=true)
+    """
+    from app.models.knowledge import KnowledgeDocument
+    from app.models.subtask_context import SubtaskContext
+    from app.services.summary_service import get_summary_service
+
+    # Validate KB access permission first
+    kb = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
+    if not kb:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge base not found or access denied",
+        )
+
+    # Validate document belongs to the specified knowledge base
+    document = (
+        db.query(KnowledgeDocument)
+        .filter(
+            KnowledgeDocument.id == doc_id,
+            KnowledgeDocument.kind_id == kb_id,
+        )
+        .first()
+    )
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found in the specified knowledge base",
+        )
+
+    # Initialize response data
+    content = None
+    content_length = None
+    truncated = None
+    summary = None
+
+    # Get document content if requested
+    if include_content:
+        content = ""
+        truncated = False
+        max_length = 100000  # 100k characters limit for frontend display
+
+        if document.attachment_id:
+            context = (
+                db.query(SubtaskContext)
+                .filter(SubtaskContext.id == document.attachment_id)
+                .first()
+            )
+
+            if context and context.extracted_text:
+                content = context.extracted_text
+                # Truncate if too long
+                if len(content) > max_length:
+                    content = content[:max_length]
+                    truncated = True
+
+        content_length = len(content)
+
+    # Get document summary if requested
+    if include_summary:
+        summary_service = get_summary_service(db)
+        summary_obj = await summary_service.get_document_summary(
+            doc_id, current_user.id
+        )
+        # Convert DocumentSummary object to dict for response
+        if summary_obj:
+            summary = (
+                summary_obj.model_dump()
+                if hasattr(summary_obj, "model_dump")
+                else summary_obj
+            )
+
+    return DocumentDetailResponse(
+        document_id=doc_id,
+        content=content,
+        content_length=content_length,
+        truncated=truncated,
+        summary=summary,
     )
 
 

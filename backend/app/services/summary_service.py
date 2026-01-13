@@ -114,6 +114,11 @@ class SummaryService:
         Returns:
             BackgroundTaskResult or None (if trigger conditions not met)
         """
+        logger.info(
+            f"[SummaryService] Triggering document summary: "
+            f"document_id={document_id}, user_id={user_id}"
+        )
+
         # 1. Get document
         document = (
             self.db.query(KnowledgeDocument)
@@ -127,13 +132,25 @@ class SummaryService:
 
         # 2. Check document type (only FILE and TEXT supported)
         if document.source_type == DocumentSourceType.TABLE.value:
-            logger.info(f"[SummaryService] Skipping TABLE type document: {document_id}")
+            logger.info(
+                f"[SummaryService] Skipping TABLE type document: "
+                f"document_id={document_id}, name={document.name}"
+            )
             return None
 
         # 3. Check if document is active
         if not document.is_active:
-            logger.info(f"[SummaryService] Document not active yet: {document_id}")
+            logger.info(
+                f"[SummaryService] Document not active yet: "
+                f"document_id={document_id}, name={document.name}"
+            )
             return None
+
+        logger.info(
+            f"[SummaryService] Document validation passed: "
+            f"document_id={document_id}, name={document.name}, "
+            f"source_type={document.source_type}, kb_id={document.kind_id}"
+        )
 
         try:
             # 4. Update status to generating
@@ -144,12 +161,25 @@ class SummaryService:
             flag_modified(document, "summary")
             self.db.commit()
 
+            logger.info(
+                f"[SummaryService] Document summary status set to generating: "
+                f"document_id={document_id}"
+            )
+
             # 5. Get document content
             content = await self._get_document_content(document)
             if not content:
                 raise Exception("Failed to get document content")
 
+            logger.info(
+                f"[SummaryService] Document content retrieved: "
+                f"document_id={document_id}, content_length={len(content)}"
+            )
+
             # 6. Execute summary generation
+            logger.info(
+                f"[SummaryService] Starting summary generation: document_id={document_id}"
+            )
             executor = BackgroundChatExecutor(self.db, user_id)
             result = await executor.execute(
                 system_prompt=DOCUMENT_SUMMARY_PROMPT,
@@ -171,6 +201,10 @@ class SummaryService:
                     "task_id": result.task_id,
                     "updated_at": datetime.now().isoformat(),
                 }
+                logger.info(
+                    f"[SummaryService] Document summary completed: "
+                    f"document_id={document_id}, task_id={result.task_id}"
+                )
             else:
                 summary_data = {
                     "status": "failed",
@@ -178,6 +212,10 @@ class SummaryService:
                     "task_id": result.task_id,
                     "updated_at": datetime.now().isoformat(),
                 }
+                logger.error(
+                    f"[SummaryService] Document summary failed: "
+                    f"document_id={document_id}, error={result.error}"
+                )
 
             document.summary = summary_data
             flag_modified(document, "summary")
@@ -185,12 +223,18 @@ class SummaryService:
 
             # 8. Check if knowledge base summary needs to be triggered
             if result.success:
+                logger.info(
+                    f"[SummaryService] Checking KB summary trigger: kb_id={document.kind_id}"
+                )
                 await self._check_and_trigger_kb_summary(document.kind_id, user_id)
 
             return result
 
         except Exception as e:
-            logger.exception(f"[SummaryService] Document summary failed: {document_id}")
+            logger.exception(
+                f"[SummaryService] Document summary generation failed: "
+                f"document_id={document_id}, error={str(e)}"
+            )
             self.db.rollback()
             try:
                 summary_data = {
@@ -242,6 +286,11 @@ class SummaryService:
             user_id: Triggering user ID
             force: Whether to force trigger (ignore change threshold)
         """
+        logger.info(
+            f"[SummaryService] Triggering KB summary: "
+            f"kb_id={kb_id}, user_id={user_id}, force={force}"
+        )
+
         # 1. Get knowledge base with row lock to prevent TOCTOU race condition
         # This ensures atomic check-and-set for "generating" status
         kb = (
@@ -258,21 +307,31 @@ class SummaryService:
             logger.warning(f"[SummaryService] KnowledgeBase not found: {kb_id}")
             return None
 
+        logger.info(f"[SummaryService] KB found: kb_id={kb_id}, name={kb.name}")
+
         # 2. Check if trigger is needed (unless forced)
         # This check is now atomic with the lock
         if not force and not self._should_trigger_kb_summary(kb):
             logger.info(
-                f"[SummaryService] KB summary trigger condition not met: {kb_id}"
+                f"[SummaryService] KB summary trigger condition not met: "
+                f"kb_id={kb_id} (already generating or no changes)"
             )
             return None
 
         # 3. Aggregate completed document summaries (single query for both text and count)
+        logger.info(f"[SummaryService] Aggregating document summaries: kb_id={kb_id}")
         aggregation = self._get_document_aggregation(kb_id)
         if not aggregation.aggregated_text:
             logger.info(
-                f"[SummaryService] No completed document summaries for KB: {kb_id}"
+                f"[SummaryService] No completed document summaries for KB: "
+                f"kb_id={kb_id}, completed_count={aggregation.completed_count}"
             )
             return None
+
+        logger.info(
+            f"[SummaryService] Document summaries aggregated: "
+            f"kb_id={kb_id}, completed_count={aggregation.completed_count}"
+        )
 
         try:
             # 4. Update status to generating (atomic with the lock)
@@ -288,7 +347,14 @@ class SummaryService:
             flag_modified(kb, "json")
             self.db.commit()  # Release the lock after setting status
 
+            logger.info(
+                f"[SummaryService] KB summary status set to generating: kb_id={kb_id}"
+            )
+
             # 5. Execute summary generation
+            logger.info(
+                f"[SummaryService] Starting KB summary generation: kb_id={kb_id}"
+            )
             executor = BackgroundChatExecutor(self.db, user_id)
             result = await executor.execute(
                 system_prompt=KB_SUMMARY_PROMPT,
@@ -314,6 +380,11 @@ class SummaryService:
                         "last_updated": datetime.now().isoformat(),
                     },
                 }
+                logger.info(
+                    f"[SummaryService] KB summary completed: "
+                    f"kb_id={kb_id}, task_id={result.task_id}, "
+                    f"doc_count={aggregation.completed_count}"
+                )
             else:
                 summary_data = {
                     "status": "failed",
@@ -321,6 +392,10 @@ class SummaryService:
                     "task_id": result.task_id,
                     "updated_at": datetime.now().isoformat(),
                 }
+                logger.error(
+                    f"[SummaryService] KB summary failed: "
+                    f"kb_id={kb_id}, error={result.error}"
+                )
 
             spec["summary"] = summary_data
             kb_json["spec"] = spec
@@ -331,7 +406,10 @@ class SummaryService:
             return result
 
         except Exception as e:
-            logger.exception(f"[SummaryService] KB summary failed: {kb_id}")
+            logger.exception(
+                f"[SummaryService] KB summary generation failed: "
+                f"kb_id={kb_id}, error={str(e)}"
+            )
             self.db.rollback()
             try:
                 kb_json = kb.json or {}
@@ -457,11 +535,22 @@ class SummaryService:
         - Document aggregation and summary generation
         """
         logger.info(
-            f"[SummaryService] Checking KB summary trigger after doc summary: {kb_id}"
+            f"[SummaryService] Checking KB summary trigger after doc summary: kb_id={kb_id}"
         )
         # Directly call trigger_kb_summary - it handles all the logic including
         # KB fetch with lock, trigger condition check, and aggregation
-        await self.trigger_kb_summary(kb_id, user_id, force=False)
+        result = await self.trigger_kb_summary(kb_id, user_id, force=False)
+
+        if result:
+            logger.info(
+                f"[SummaryService] KB summary triggered successfully: "
+                f"kb_id={kb_id}, task_id={result.task_id}"
+            )
+        else:
+            logger.info(
+                f"[SummaryService] KB summary not triggered: "
+                f"kb_id={kb_id} (conditions not met or already generating)"
+            )
 
     def _get_document_aggregation(self, kb_id: int) -> "DocumentAggregation":
         """

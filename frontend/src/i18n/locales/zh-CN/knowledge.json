@@ -102,6 +102,28 @@
         "enable": "批量启用",
         "disable": "批量停用",
         "delete": "批量删除"
+      },
+      "detail": {
+        "title": "文档详情",
+        "backToList": "返回列表",
+        "summary": "文档摘要",
+        "status": "状态",
+        "statusValues": {
+          "generating": "生成中",
+          "completed": "已完成",
+          "failed": "生成失败"
+        },
+        "topics": "主题标签",
+        "metaInfo": "元信息",
+        "content": "文档内容",
+        "truncated": "内容已截断",
+        "copy": "复制",
+        "copied": "已复制",
+        "copySuccess": "复制成功",
+        "copyError": "复制失败",
+        "contentLength": "内容长度",
+        "characters": "字符",
+        "noContent": "暂无内容"
       }
     },
     "upload": {

@@ -878,7 +878,8 @@ class KnowledgeService:
             AccessibleKnowledgeBase(
                 id=kb.id,
                 name=kb.json.get("spec", {}).get("name", ""),
-                description=kb.json.get("spec", {}).get("description"),
+                description=kb.json.get("spec", {}).get("description")
+                or None,  # Convert empty string to None
                 document_count=KnowledgeService.get_active_document_count(db, kb.id),
                 updated_at=kb.updated_at,
             )
@@ -922,7 +923,8 @@ class KnowledgeService:
                             AccessibleKnowledgeBase(
                                 id=kb.id,
                                 name=kb.json.get("spec", {}).get("name", ""),
-                                description=kb.json.get("spec", {}).get("description"),
+                                description=kb.json.get("spec", {}).get("description")
+                                or None,  # Convert empty string to None
                                 document_count=KnowledgeService.get_active_document_count(
                                     db, kb.id
                                 ),
