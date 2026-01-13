@@ -51,6 +51,7 @@ export interface BotFormData {
   system_prompt: string
   mcp_servers: Record<string, unknown>
   skills: string[]
+  // preload_skills: string[]
 }
 
 /** Interface for validation result */
@@ -159,6 +160,9 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     baseBot?.mcp_servers ? JSON.stringify(baseBot.mcp_servers, null, 2) : ''
   )
   const [selectedSkills, setSelectedSkills] = useState<string[]>(baseBot?.skills || [])
+  const [preloadSkills, setPreloadSkills] = useState<string[]>(baseBot?.preload_skills || [])
+  // Initial bot skills snapshot for preload selection - remains constant during edit session
+  const [initialBotSkills, setInitialBotSkills] = useState<string[]>(baseBot?.skills || [])
   const [allSkills, setAllSkills] = useState<UnifiedSkill[]>([])
   const [availableSkills, setAvailableSkills] = useState<UnifiedSkill[]>([])
   const [loadingSkills, setLoadingSkills] = useState(false)
@@ -351,6 +355,14 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     return shellType === 'ClaudeCode'
   }, [agentName, shells])
 
+  // Check if current agent supports preload skills (Chat only)
+  const supportsPreloadSkills = useMemo(() => {
+    const selectedShell = shells.find(s => s.name === agentName)
+    const shellType = selectedShell?.shellType || agentName
+    // Preload skills are only supported for Chat shell type
+    return shellType === 'Chat'
+  }, [agentName, shells])
+
   // Get current shell type for skill filtering
   const currentShellType = useMemo(() => {
     const selectedShell = shells.find(s => s.name === agentName)
@@ -487,6 +499,9 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     setPrompt(baseBot?.system_prompt || '')
     setMcpConfig(baseBot?.mcp_servers ? JSON.stringify(baseBot.mcp_servers, null, 2) : '')
     setSelectedSkills(baseBot?.skills || [])
+    setPreloadSkills(baseBot?.preload_skills || [])
+    // Capture initial bot skills - this list remains constant for preload selection
+    setInitialBotSkills(baseBot?.skills || [])
     setAgentConfigError(false)
     setMcpConfigError(false)
 
@@ -630,6 +645,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       system_prompt: isDifyAgent ? '' : prompt.trim() || '',
       mcp_servers: parsedMcpConfig,
       skills: selectedSkills.length > 0 ? selectedSkills : [],
+      // preload_skills: preloadSkills.length > 0 ? preloadSkills : [],
     }
   }, [
     validateBot,
@@ -644,6 +660,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     botName,
     prompt,
     selectedSkills,
+    preloadSkills,
   ])
 
   // Save bot and return the bot id
@@ -671,6 +688,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         system_prompt: botData.system_prompt,
         mcp_servers: botData.mcp_servers,
         skills: botData.skills,
+        // preload_skills: botData.preload_skills,
         namespace: scope === 'group' && groupName ? groupName : undefined,
       }
 
@@ -829,6 +847,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         system_prompt: isDifyAgent ? '' : prompt.trim() || '', // Clear system_prompt for Dify
         mcp_servers: parsedMcpConfig ?? {},
         skills: selectedSkills.length > 0 ? selectedSkills : [],
+        // preload_skills: preloadSkills.length > 0 ? preloadSkills : [],
         namespace: scope === 'group' && groupName ? groupName : undefined,
       }
 
@@ -1354,6 +1373,89 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                             })}
                           </div>
                         )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Preload Skills Selection - Hidden from UI (kept for future use) */}
+              {false && supportsPreloadSkills && initialBotSkills.length > 0 && (
+                <div className="flex flex-col">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center">
+                      <label className="block text-base font-medium text-text-primary">
+                        {t('common:skills.preload_skills_section')}
+                      </label>
+                      <span className="text-xs text-text-muted ml-2">
+                        {t('common:skills.preload_skills_description')}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="bg-base rounded-md p-2 min-h-[60px]">
+                    {loadingSkills ? (
+                      <div className="text-sm text-text-muted">
+                        {t('common:skills.loading_skills')}
+                      </div>
+                    ) : initialBotSkills.length === 0 ? (
+                      <div className="text-sm text-text-muted">
+                        {t('common:skills.no_skills_selected')}
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="flex flex-wrap gap-2">
+                          {initialBotSkills
+                            .filter(skillName => {
+                              // Only allow public skills to be preloaded
+                              const skill = availableSkills.find(s => s.name === skillName)
+                              // If skill not found in availableSkills yet (still loading), include it
+                              // It will be filtered out in the next render after loading completes
+                              if (!skill) return true
+                              return skill.is_public === true
+                            })
+                            .map(skillName => {
+                              const skill = availableSkills.find(s => s.name === skillName)
+                              const isPreloaded = preloadSkills.includes(skillName)
+                              // Don't render if skill is found but not public
+                              if (skill && !skill.is_public) return null
+
+                              return (
+                                <label
+                                  key={skillName}
+                                  className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-sm cursor-pointer transition-colors ${
+                                    isPreloaded
+                                      ? 'bg-primary/10 border border-primary text-primary'
+                                      : 'bg-muted border border-border text-text-primary hover:bg-muted/70'
+                                  } ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={isPreloaded}
+                                    onChange={e => {
+                                      if (readOnly) return
+                                      if (e.target.checked) {
+                                        setPreloadSkills([...preloadSkills, skillName])
+                                      } else {
+                                        setPreloadSkills(preloadSkills.filter(s => s !== skillName))
+                                      }
+                                    }}
+                                    disabled={readOnly}
+                                    className="w-4 h-4 rounded border-border text-primary focus:ring-primary"
+                                  />
+                                  <span>{skill?.displayName || skillName}</span>
+                                </label>
+                              )
+                            })}
+                        </div>
+                        {availableSkills.length > 0 &&
+                          initialBotSkills.some(skillName => {
+                            const skill = availableSkills.find(s => s.name === skillName)
+                            return skill && skill.is_public !== true
+                          }) && (
+                            <div className="text-xs text-text-muted mt-2 p-2 bg-muted/50 rounded">
+                              {t('common:skills.preload_only_public_hint')}
+                            </div>
+                          )}
                       </div>
                     )}
                   </div>

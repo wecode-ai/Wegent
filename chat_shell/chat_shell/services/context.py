@@ -189,7 +189,11 @@ class ChatContext:
         )
 
     async def _prepare_skill_tools(self, load_skill_tool) -> list:
-        """Prepare skill tools asynchronously."""
+        """Prepare skill tools asynchronously.
+
+        This method also handles preloading skill prompts for skills
+        specified in request.preload_skills.
+        """
         from chat_shell.tools.skill_factory import prepare_skill_tools
 
         if not self._request.skill_configs:
@@ -201,6 +205,7 @@ class ChatContext:
             user_id=self._request.user_id,
             skill_configs=self._request.skill_configs,
             load_skill_tool=load_skill_tool,
+            preload_skills=self._request.preload_skills,
             user_name=self._request.user_name,
         )
 

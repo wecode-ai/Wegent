@@ -208,6 +208,7 @@ class LoadSkillTool(BaseTool):
             Combined string of all loaded skill prompts, or empty string if none loaded
         """
         if not self._loaded_skill_prompts:
+            logger.debug("[LoadSkillTool.get_combined_skill_prompt] No loaded skills")
             return ""
 
         parts = []

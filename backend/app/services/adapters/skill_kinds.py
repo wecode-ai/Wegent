@@ -87,6 +87,7 @@ class SkillKindsService:
                 "bindShells": metadata.get("bindShells"),
                 "tools": metadata.get("tools"),
                 "provider": metadata.get("provider"),
+                "preload": metadata.get("preload", False),
             },
             "status": {
                 "state": "Available",
@@ -376,6 +377,7 @@ class SkillKindsService:
                 "bindShells": metadata.get("bindShells"),
                 "tools": metadata.get("tools"),
                 "provider": metadata.get("provider"),
+                "preload": metadata.get("preload", False),
             }
         )
         skill_json["status"].update(
