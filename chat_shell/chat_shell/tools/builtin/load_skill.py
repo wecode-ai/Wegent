@@ -112,7 +112,6 @@ class LoadSkillTool(BaseTool):
         if display_name:
             self._skill_display_names[skill_name] = display_name
 
-
         # Return a confirmation message (the actual prompt will be injected into system prompt)
         return f"Skill '{skill_name}' has been loaded. The instructions have been added to the system prompt. Please follow them strictly."
 
@@ -198,8 +197,12 @@ class LoadSkillTool(BaseTool):
             len(prompt),
         )
 
-    def get_combined_skill_prompt(self) -> str:
-        """Get combined skill prompts for system prompt injection.
+    def get_prompt_modification(self) -> str:
+        """Get prompt modification content for system prompt injection.
+
+        This method implements the PromptModifierTool protocol, allowing
+        LangGraphAgentBuilder to automatically detect and use this tool
+        for dynamic prompt modification.
 
         Returns:
             Combined string of all loaded skill prompts, or empty string if none loaded
@@ -216,3 +219,8 @@ class LoadSkillTool(BaseTool):
             "\n\n# Loaded Skill Instructions\n\nThe following skills have been loaded. "
             + "".join(parts)
         )
+
+    # Alias for backward compatibility
+    def get_combined_skill_prompt(self) -> str:
+        """Alias for get_prompt_modification for backward compatibility."""
+        return self.get_prompt_modification()

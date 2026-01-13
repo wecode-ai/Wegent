@@ -335,7 +335,6 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       // Use socketRef for reliable access (socket state may be stale)
       const currentSocket = socketRef.current
       if (!currentSocket?.connected) {
-        console.log('[Socket.IO] joinTask skipped - not connected, taskId:', taskId)
         return { error: 'Not connected' }
       }
 
@@ -344,15 +343,6 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       // Exception 2: If forceRefresh is true, always request to get streaming status
       const alreadyJoined = joinedTasksRef.current.has(taskId)
       const shouldSkip = alreadyJoined && !hasReconnectedRef.current && !forceRefresh
-
-      console.log('[Socket.IO] joinTask check:', {
-        taskId,
-        alreadyJoined,
-        hasReconnected: hasReconnectedRef.current,
-        forceRefresh,
-        shouldSkip,
-        joinedTasks: Array.from(joinedTasksRef.current),
-      })
 
       if (shouldSkip) {
         console.log('[Socket.IO] joinTask skipped - already joined, taskId:', taskId)
@@ -368,7 +358,6 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       // This is crucial because the socket.emit is async and multiple calls
       // could pass the above check before any callback completes
       joinedTasksRef.current.add(taskId)
-      console.log('[Socket.IO] joinTask emitting task:join, taskId:', taskId)
 
       return new Promise(resolve => {
         currentSocket.emit(
@@ -386,7 +375,6 @@ export function SocketProvider({ children }: { children: ReactNode }) {
             if (response.error) {
               joinedTasksRef.current.delete(taskId)
             }
-            console.log('[Socket.IO] joinTask response, taskId:', taskId, 'response:', response)
             resolve(response)
           }
         )

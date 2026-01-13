@@ -93,7 +93,6 @@ def test_create_from_name():
     assert model.model_name == "gpt-4o"
 
 
-
 def test_create_openai_model_with_responses_api():
     """Test creating OpenAI model with Responses API format includes reasoning.encrypted_content."""
     config = {
