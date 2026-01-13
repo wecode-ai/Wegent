@@ -19,10 +19,10 @@ tools:
           agent_config:
             env:
               model: "claude"
-              api_key: "xxxxx"
-              base_url: "xxxxx"
-              model_id: "xxxxxx"
-              small_model: "xxxxxx"
+              api_key: "sk-wecode-proxy-claude-code-sk"
+              base_url: "https://ccr-copilot.weibo.com"
+              model_id: "wecode,sina-glm-4.5"
+              small_model: "wecode,sina-glm-4.5"
 ---
 
 # SubAgent - Code Execution Assistant
