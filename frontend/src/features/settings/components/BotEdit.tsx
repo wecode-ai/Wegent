@@ -1403,9 +1403,6 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                       </div>
                     ) : (
                       <div className="space-y-2">
-                        <div className="text-xs text-text-muted mb-2">
-                          {t('common:skills.preload_skills_hint')}
-                        </div>
                         <div className="flex flex-wrap gap-2">
                           {initialBotSkills
                             .filter(skillName => {
