@@ -310,17 +310,6 @@ class StreamingCore:
         # Regular content
         self.state.append_content(token)
 
-        # Log each chunk content for debugging
-        logger.info(
-            "[CHAT_SHELL_CHUNK] subtask_id=%d, task_id=%d, offset=%d, "
-            "token_len=%d, content=%s",
-            self.state.subtask_id,
-            self.state.task_id,
-            self.state.offset - len(token),
-            len(token),
-            repr(token[:100]) if len(token) > 100 else repr(token),
-        )
-
         is_chat_mode = self.state.shell_type == "Chat"
         result = self.state.get_current_result(
             include_value=False,
