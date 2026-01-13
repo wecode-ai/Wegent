@@ -50,6 +50,9 @@ import { fetchRuntimeConfig, getSocketUrl } from '@/lib/runtime-config'
 
 const SOCKETIO_PATH = '/socket.io'
 
+/** Callback type for reconnect event */
+export type ReconnectCallback = () => void
+
 interface SocketContextType {
   /** Socket.IO instance */
   socket: Socket | null
@@ -103,6 +106,8 @@ interface SocketContextType {
   sendSkillResponse: (payload: SkillResponsePayload) => void
   /** Register correction event handlers */
   registerCorrectionHandlers: (handlers: CorrectionEventHandlers) => () => void
+  /** Register a callback to be called when WebSocket reconnects */
+  onReconnect: (callback: ReconnectCallback) => () => void
 }
 
 /** Chat event handlers for streaming */
@@ -152,6 +157,8 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   const socketRef = useRef<Socket | null>(null)
   // Track reconnection attempts for rejoining tasks
   const hasReconnectedRef = useRef<boolean>(false)
+  // Store reconnect callbacks - single source of truth for reconnection events
+  const reconnectCallbacksRef = useRef<Set<ReconnectCallback>>(new Set())
 
   /**
    * Internal function to create socket connection
@@ -246,6 +253,16 @@ export function SocketProvider({ children }: { children: ReactNode }) {
             console.log(`[Socket.IO] Successfully rejoined task ${taskId}`)
           }
         })
+      })
+
+      // Notify all registered reconnect callbacks
+      // This is the single source of truth for reconnection events
+      reconnectCallbacksRef.current.forEach(callback => {
+        try {
+          callback()
+        } catch (err) {
+          console.error('[Socket.IO] Error in reconnect callback:', err)
+        }
       })
     })
 
@@ -613,6 +630,18 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     [] // No dependencies - use socketRef
   )
 
+  /**
+   * Register a callback to be called when WebSocket reconnects
+   * This is the single source of truth for reconnection events in the app.
+   * Returns a cleanup function to unregister the callback.
+   */
+  const onReconnect = useCallback((callback: ReconnectCallback): (() => void) => {
+    reconnectCallbacksRef.current.add(callback)
+    return () => {
+      reconnectCallbacksRef.current.delete(callback)
+    }
+  }, [])
+
   // Auto-connect when component mounts if token is available
   useEffect(() => {
     // Only run on client side
@@ -683,6 +712,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         registerSkillHandlers,
         sendSkillResponse,
         registerCorrectionHandlers,
+        onReconnect,
       }}
     >
       {children}
