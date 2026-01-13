@@ -236,7 +236,7 @@ class SummaryService:
         except Exception as e:
             logger.exception(
                 f"[SummaryService] Document summary generation failed: "
-                f"document_id={document_id}, error={str(e)}"
+                f"document_id={document_id}"
             )
             self.db.rollback()
             try:
@@ -255,9 +255,7 @@ class SummaryService:
                 self.db.rollback()
             return None
 
-    async def get_document_summary(
-        self, document_id: int, user_id: int
-    ) -> Optional[DocumentSummary]:
+    async def get_document_summary(self, document_id: int) -> Optional[DocumentSummary]:
         """Get document summary."""
         document = (
             self.db.query(KnowledgeDocument)
@@ -410,8 +408,7 @@ class SummaryService:
 
         except Exception as e:
             logger.exception(
-                f"[SummaryService] KB summary generation failed: "
-                f"kb_id={kb_id}, error={str(e)}"
+                f"[SummaryService] KB summary generation failed: " f"kb_id={kb_id}"
             )
             self.db.rollback()
             try:
@@ -433,9 +430,7 @@ class SummaryService:
                 self.db.rollback()
             return None
 
-    async def get_kb_summary(
-        self, kb_id: int, user_id: int
-    ) -> Optional[KnowledgeBaseSummary]:
+    async def get_kb_summary(self, kb_id: int) -> Optional[KnowledgeBaseSummary]:
         """Get knowledge base summary."""
         kb = (
             self.db.query(Kind)
@@ -472,7 +467,6 @@ class SummaryService:
         Prioritize reusing RAG chunk content, use Map-Reduce if chunks are too many.
         """
         from app.models.subtask_context import SubtaskContext
-        from app.services.context import context_service
 
         # Try to get extracted text from attachment context
         try:

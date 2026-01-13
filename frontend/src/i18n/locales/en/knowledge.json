@@ -109,6 +109,7 @@
         "summary": "Document Summary",
         "status": "Status",
         "statusValues": {
+          "pending": "Pending",
           "generating": "Generating",
           "completed": "Completed",
           "failed": "Failed"

@@ -109,6 +109,7 @@
         "summary": "文档摘要",
         "status": "状态",
         "statusValues": {
+          "pending": "待处理",
           "generating": "生成中",
           "completed": "已完成",
           "failed": "生成失败"

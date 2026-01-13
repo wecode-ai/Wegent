@@ -2790,7 +2790,8 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
 
             # Check for background task indicators
             return (
-                labels.get("source") == "background_executor"
+                labels.get("taskType") == "summary"
+                or labels.get("source") == "background_executor"
                 or labels.get("type") == "background"
             )
         except Exception:

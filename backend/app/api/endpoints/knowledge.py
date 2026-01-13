@@ -930,7 +930,7 @@ async def get_kb_summary(
         )
 
     summary_service = get_summary_service(db)
-    summary = await summary_service.get_kb_summary(kb_id, current_user.id)
+    summary = await summary_service.get_kb_summary(kb_id)
     return KnowledgeBaseSummaryResponse(kb_id=kb_id, summary=summary)
 
 
@@ -1053,9 +1053,7 @@ async def get_document_detail(
     # Get document summary if requested
     if include_summary:
         summary_service = get_summary_service(db)
-        summary_obj = await summary_service.get_document_summary(
-            doc_id, current_user.id
-        )
+        summary_obj = await summary_service.get_document_summary(doc_id)
         # Convert DocumentSummary object to dict for response
         if summary_obj:
             summary = (
@@ -1118,7 +1116,7 @@ async def get_document_summary(
         )
 
     summary_service = get_summary_service(db)
-    summary = await summary_service.get_document_summary(doc_id, current_user.id)
+    summary = await summary_service.get_document_summary(doc_id)
     return DocumentSummaryResponse(document_id=doc_id, summary=summary)
 
 
