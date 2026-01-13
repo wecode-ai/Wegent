@@ -136,6 +136,7 @@ async def prepare_skill_tools(
     ws_emitter: Any = None,
     load_skill_tool: Optional[Any] = None,
     preload_skills: Optional[list[str]] = None,
+    user_name: str = "",
 ) -> list[Any]:
     """
     Prepare skill tools dynamically using SkillToolRegistry.
@@ -161,6 +162,7 @@ async def prepare_skill_tools(
         load_skill_tool: Optional LoadSkillTool instance to preload skill prompts
         preload_skills: Optional list of skill names to preload into system prompt.
                        Skills in this list will have their prompts injected automatically.
+        user_name: Username for identifying the user
 
     Returns:
         List of tool instances created from skill configurations
@@ -257,6 +259,7 @@ async def prepare_skill_tools(
             db_session=None,
             ws_emitter=ws_emitter,
             skill_config=skill_config,
+            user_name=user_name,
         )
 
         # Create tools using the registry

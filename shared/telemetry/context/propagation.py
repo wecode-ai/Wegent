@@ -14,7 +14,8 @@ import os
 from typing import Dict, Optional
 
 from opentelemetry import context, trace
-from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+from opentelemetry.trace.propagation.tracecontext import \
+    TraceContextTextMapPropagator
 
 logger = logging.getLogger(__name__)
 
@@ -39,12 +40,35 @@ def get_trace_context_for_propagation() -> Dict[str, str]:
     try:
         # Get the current span context
         span = trace.get_current_span()
-        if span is None or not span.get_span_context().is_valid:
+        if span is None:
+            logger.debug("No current span found for trace propagation")
+            return context_dict
+
+        span_context = span.get_span_context()
+        if not span_context.is_valid:
+            logger.debug(
+                "Invalid span context for trace propagation: trace_id=%s, span_id=%s",
+                (
+                    format(span_context.trace_id, "032x")
+                    if span_context.trace_id
+                    else "None"
+                ),
+                (
+                    format(span_context.span_id, "016x")
+                    if span_context.span_id
+                    else "None"
+                ),
+            )
             return context_dict
 
         # Use W3C TraceContext propagator to inject context
         propagator = TraceContextTextMapPropagator()
         propagator.inject(context_dict)
+
+        logger.debug(
+            "Trace context extracted for propagation: traceparent=%s",
+            context_dict.get("traceparent", "NOT_SET"),
+        )
 
     except Exception as e:
         logger.debug(f"Failed to extract trace context for propagation: {e}")

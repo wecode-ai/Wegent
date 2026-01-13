@@ -13,6 +13,7 @@ import logging
 from typing import AsyncIterator, Optional
 
 import httpx
+from shared.telemetry.context.propagation import inject_trace_context_to_headers
 
 from .interface import ChatEvent, ChatEventType, ChatInterface, ChatRequest
 
@@ -58,12 +59,20 @@ class HTTPAdapter(ChatInterface):
 
     def _get_headers(self) -> dict:
         """Get HTTP headers for requests."""
+        from shared.telemetry.context import get_request_id
+
         headers = {
             "Content-Type": "application/json",
             "Accept": "text/event-stream",
         }
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
+        # Inject trace context for distributed tracing
+        inject_trace_context_to_headers(headers)
+        # Inject request ID for log correlation
+        request_id = get_request_id()
+        if request_id:
+            headers["X-Request-ID"] = request_id
         return headers
 
     def _build_response_request(self, request: ChatRequest) -> dict:
@@ -462,6 +471,9 @@ class HTTPAdapter(ChatInterface):
                         event_data["input"] = data.get("input", {})
                     else:  # TOOL_RESULT
                         event_data["output"] = data.get("output", "")
+                        # Include error field for failed tools
+                        if data.get("error"):
+                            event_data["error"] = data.get("error")
                     logger.info(
                         "[HTTP_ADAPTER] Parsed %s event: data=%s, event_data=%s",
                         event_type.value,

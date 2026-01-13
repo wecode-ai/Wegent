@@ -14,17 +14,19 @@ from contextlib import asynccontextmanager
 from typing import Any, Dict, Optional
 
 import uvicorn
-from executor.services.agent_service import AgentService
-from executor.tasks import process, run_task
-from fastapi import BackgroundTasks, Body, FastAPI, HTTPException, Query, Request
+from fastapi import (BackgroundTasks, Body, FastAPI, HTTPException, Query,
+                     Request)
 from pydantic import BaseModel
-
 # Import the shared logger
 from shared.logger import setup_logger
 from shared.status import TaskStatus
 from shared.telemetry.config import get_otel_config
 from shared.telemetry.context import set_task_context, set_user_context
 from shared.telemetry.core import is_telemetry_enabled
+
+from executor.services.agent_service import AgentService
+from executor.services.heartbeat_service import start_heartbeat, stop_heartbeat
+from executor.tasks import process, run_task
 
 # Use the shared logger setup function
 logger = setup_logger("task_executor")
@@ -59,9 +61,8 @@ async def lifespan(app: FastAPI):
             logger.info("OpenTelemetry initialized successfully")
 
             # Apply instrumentation
-            from shared.telemetry.instrumentation import (
-                setup_opentelemetry_instrumentation,
-            )
+            from shared.telemetry.instrumentation import \
+                setup_opentelemetry_instrumentation
 
             setup_opentelemetry_instrumentation(app, logger)
 
@@ -90,7 +91,21 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.exception(f"Error running task at startup: {str(e)}")
 
+    # Start heartbeat service for sandbox health monitoring
+    try:
+        if start_heartbeat():
+            logger.info("Heartbeat service started successfully")
+    except Exception as e:
+        logger.warning(f"Failed to start heartbeat service: {e}")
+
     yield  # Application runs here
+
+    # Stop heartbeat service
+    try:
+        stop_heartbeat()
+        logger.info("Heartbeat service stopped")
+    except Exception as e:
+        logger.warning(f"Error stopping heartbeat service: {e}")
 
     # Shutdown OpenTelemetry
     if otel_config.enabled:
@@ -125,10 +140,8 @@ async def log_requests(request: Request, call_next):
     start_time = time.time()
 
     # Always set request context for logging (works even without OTEL)
-    from shared.telemetry.context import (
-        extract_trace_context_from_headers,
-        set_request_context,
-    )
+    from shared.telemetry.context import (extract_trace_context_from_headers,
+                                          set_request_context)
 
     set_request_context(request_id)
 
@@ -265,6 +278,12 @@ async def log_requests(request: Request, call_next):
 
 
 agent_service = AgentService()
+
+
+@app.get("/")
+async def health_check():
+    """Health check endpoint for container readiness probes."""
+    return {"status": "healthy", "service": "task_executor"}
 
 
 class TaskResponse(BaseModel):

@@ -187,12 +187,10 @@ class ProgressStateManager:
         elif self.task_data.get("prompt"):
             summary = self.task_data.get("prompt")
 
-        git_domain = self.task_data["git_domain"]
-        if "github.com" in git_domain.lower():
+        git_domain = self.task_data.get("git_domain", "")
+        git_type = "gitlab"  # Default to gitlab
+        if git_domain and "github.com" in git_domain.lower():
             git_type = "github"
-        else:
-            # All other domains are considered gitlab
-            git_type = "gitlab"
 
         workbench = {
             "taskTitle": self.task_data.get("task_title", ""),

@@ -26,6 +26,7 @@ import {
 } from '@/utils/taskViewStatus'
 import { useSocket } from '@/contexts/SocketContext'
 import { TaskCreatedPayload, TaskInvitedPayload, TaskStatusPayload } from '@/types/socket'
+import { usePageVisibility } from '@/hooks/usePageVisibility'
 
 type TaskContextType = {
   tasks: Task[]
@@ -60,6 +61,8 @@ type TaskContextType = {
   // Access denied state for 403 errors when accessing shared tasks
   accessDenied: boolean
   clearAccessDenied: () => void
+  // Refreshing state for auto-refresh indicator
+  isRefreshing: boolean
 }
 
 const TaskContext = createContext<TaskContextType | undefined>(undefined)
@@ -80,15 +83,23 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   const [viewStatusVersion, setViewStatusVersion] = useState<number>(0)
   // Access denied state for 403 errors when accessing shared tasks
   const [accessDenied, setAccessDenied] = useState<boolean>(false)
+  // Refreshing state for auto-refresh (page visibility or WebSocket reconnect)
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false)
 
   // Track task status for notification
   const taskStatusMapRef = useRef<Map<number, TaskStatus>>(new Map())
 
   // WebSocket connection for real-time task updates
-  const { registerTaskHandlers, isConnected, leaveTask, joinTask } = useSocket()
+  const { registerTaskHandlers, isConnected, leaveTask, joinTask, onReconnect } = useSocket()
 
   // Track previous task ID for leaving WebSocket room when switching tasks
   const previousTaskIdRef = useRef<number | null>(null)
+
+  // Track if auto-refresh is in progress to prevent duplicate requests
+  const isAutoRefreshingRef = useRef<boolean>(false)
+
+  // Minimum hidden duration (30 seconds) before triggering refresh on page visibility
+  const MIN_HIDDEN_DURATION_MS = 30000
 
   // Pagination related - legacy combined list
   const [hasMore, setHasMore] = useState(true)
@@ -334,6 +345,55 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     refreshTasks()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  /**
+   * Auto-refresh task list with debounce protection.
+   * Called when page becomes visible after being hidden or when WebSocket reconnects.
+   */
+  const triggerAutoRefresh = useCallback(async () => {
+    // Prevent duplicate refreshes
+    if (isAutoRefreshingRef.current) {
+      console.log('[TaskContext] Auto-refresh already in progress, skipping')
+      return
+    }
+
+    isAutoRefreshingRef.current = true
+    setIsRefreshing(true)
+    console.log('[TaskContext] Starting auto-refresh...')
+
+    try {
+      await refreshTasks()
+      console.log('[TaskContext] Auto-refresh completed')
+    } catch (error) {
+      // Silent error handling - don't affect user operation
+      console.error('[TaskContext] Auto-refresh failed:', error)
+    } finally {
+      isAutoRefreshingRef.current = false
+      setIsRefreshing(false)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Page visibility recovery: refresh task list when page becomes visible after 30+ seconds hidden
+  usePageVisibility({
+    minHiddenTime: MIN_HIDDEN_DURATION_MS,
+    onVisible: (wasHiddenFor: number) => {
+      console.log(`[TaskContext] Page became visible after ${wasHiddenFor}ms hidden`)
+      if (wasHiddenFor >= MIN_HIDDEN_DURATION_MS) {
+        triggerAutoRefresh()
+      }
+    },
+  })
+
+  // WebSocket reconnect recovery: refresh task list when WebSocket reconnects
+  useEffect(() => {
+    const unsubscribe = onReconnect(() => {
+      console.log('[TaskContext] WebSocket reconnected, refreshing task list...')
+      triggerAutoRefresh()
+    })
+
+    return unsubscribe
+  }, [onReconnect, triggerAutoRefresh])
 
   // Handle new task created via WebSocket
   const handleTaskCreated = useCallback((data: TaskCreatedPayload) => {
@@ -651,6 +711,9 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   }
 
   // Trigger task detail refresh and manage WebSocket room when selectedTask changes
+  // NOTE: joinTask is called here, and SocketContext's joinTask already has deduplication logic
+  // (joinedTasksRef.current.has(taskId) check), so multiple calls are safe but wasteful.
+  // We only call joinTask when isConnected is true to avoid unnecessary calls.
   useEffect(() => {
     const currentTaskId = selectedTask?.id ?? null
     const previousTaskId = previousTaskIdRef.current
@@ -664,27 +727,28 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     previousTaskIdRef.current = currentTaskId
 
     if (selectedTask) {
-      // Join the new task room to receive chat:start, chat:chunk, chat:done events
-      // This is important for executor tasks (Code page) where the user needs to
-      // receive AI response events via WebSocket
-      joinTask(selectedTask.id)
+      // Only join task room when WebSocket is connected
+      // This prevents duplicate joins when both selectedTask and isConnected change
+      if (isConnected) {
+        console.log(
+          '[TaskContext] joinTask called from selectedTask useEffect, taskId:',
+          selectedTask.id
+        )
+        joinTask(selectedTask.id)
+      }
 
       refreshSelectedTaskDetail(false) // Manual task selection, not auto-refresh
     } else {
       setSelectedTaskDetail(null)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTask, leaveTask, joinTask])
+  }, [selectedTask, leaveTask, joinTask, isConnected])
 
-  // Re-join task room when WebSocket reconnects
-  // This handles the case where page is refreshed and selectedTask is set from URL
-  // before WebSocket connection is established
-  useEffect(() => {
-    if (isConnected && selectedTask) {
-      joinTask(selectedTask.id)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConnected])
+  // NOTE: Removed separate isConnected useEffect to prevent duplicate joinTask calls.
+  // The selectedTask useEffect above now handles both cases:
+  // 1. When selectedTask changes (and isConnected is true)
+  // 2. When isConnected changes (and selectedTask is set)
+  // This is because we added isConnected to the dependency array.
 
   // Mark task as viewed when selectedTaskDetail is loaded
   // This ensures we have the correct status and timestamps from the backend
@@ -788,6 +852,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
         viewStatusVersion,
         accessDenied,
         clearAccessDenied,
+        isRefreshing,
       }}
     >
       {children}
