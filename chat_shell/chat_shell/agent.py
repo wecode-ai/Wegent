@@ -51,7 +51,7 @@ class AgentConfig:
     # Prompt enhancement options (handled internally by ChatAgent)
     enable_clarification: bool = False
     enable_deep_thinking: bool = True
-    skills: list[dict[str, Any]] | None = None  # Skill metadata for prompt injection
+    skills: list[dict[str, Any]] | None = None  # All skill configs (with preload field)
 
 
 class ChatAgent:

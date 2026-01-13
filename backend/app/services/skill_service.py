@@ -115,6 +115,12 @@ class SkillValidator:
                 if bind_shells is None:
                     bind_shells = ["ClaudeCode"]
 
+                # Default preload to False if not specified
+                preload = metadata.get("preload", False)
+                # Ensure preload is a boolean
+                if not isinstance(preload, bool):
+                    preload = False
+
                 return {
                     "description": metadata.get("description", ""),
                     "displayName": metadata.get("displayName"),
@@ -129,6 +135,7 @@ class SkillValidator:
                     "provider": metadata.get(
                         "provider"
                     ),  # Provider config for dynamic loading
+                    "preload": preload,  # Whether to preload into system prompt
                     "file_size": file_size,
                     "file_hash": file_hash,
                 }

@@ -226,6 +226,9 @@ class ChatService(ChatInterface):
                             user_id=request.user_id,
                             skill_configs=request.skill_configs,
                         )
+                        # Add LoadSkillTool to extra_tools if it was created
+                        if load_skill_tool:
+                            extra_tools.append(load_skill_tool)
 
                     # Prepare skill tools from skill_configs
                     if request.skill_configs:
@@ -235,6 +238,7 @@ class ChatService(ChatInterface):
                             user_id=request.user_id,
                             skill_configs=request.skill_configs,
                             load_skill_tool=load_skill_tool,
+                            preload_skills=request.preload_skills,
                             user_name=request.user_name,
                         )
                         extra_tools.extend(skill_tools)
@@ -329,7 +333,7 @@ class ChatService(ChatInterface):
                         streaming=True,
                         enable_clarification=request.enable_clarification,
                         enable_deep_thinking=request.enable_deep_thinking,
-                        skills=request.skills,
+                        skills=request.skill_configs,
                     )
 
                     # Build messages for the agent

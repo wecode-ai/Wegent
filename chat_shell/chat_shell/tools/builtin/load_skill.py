@@ -112,6 +112,7 @@ class LoadSkillTool(BaseTool):
         if display_name:
             self._skill_display_names[skill_name] = display_name
 
+
         # Return a confirmation message (the actual prompt will be injected into system prompt)
         return f"Skill '{skill_name}' has been loaded. The instructions have been added to the system prompt. Please follow them strictly."
 
@@ -204,6 +205,7 @@ class LoadSkillTool(BaseTool):
             Combined string of all loaded skill prompts, or empty string if none loaded
         """
         if not self._loaded_skill_prompts:
+            logger.debug("[LoadSkillTool.get_combined_skill_prompt] No loaded skills")
             return ""
 
         parts = []
