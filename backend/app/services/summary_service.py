@@ -32,6 +32,9 @@ from app.services.background_chat_executor import (
 
 logger = logging.getLogger(__name__)
 
+# Maximum character length for document content before truncation
+MAX_DOCUMENT_CONTENT_LENGTH = 50000
+
 # System prompt for document summary generation
 DOCUMENT_SUMMARY_PROMPT = """You are a professional document summary assistant. Your task is:
 1. Read and understand the provided document content
@@ -484,12 +487,14 @@ class SummaryService:
                     content = context.extracted_text
 
                     # Check content length, truncate if too long
-                    max_length = 50000  # About 50k characters
-                    if len(content) > max_length:
+                    if len(content) > MAX_DOCUMENT_CONTENT_LENGTH:
                         logger.warning(
                             f"[SummaryService] Document too long ({len(content)} chars), truncating"
                         )
-                        content = content[:max_length] + "\n\n[Content truncated...]"
+                        content = (
+                            content[:MAX_DOCUMENT_CONTENT_LENGTH]
+                            + "\n\n[Content truncated...]"
+                        )
 
                     return content
 

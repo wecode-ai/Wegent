@@ -217,8 +217,7 @@ class BackgroundChatExecutor:
         except Exception as e:
             logger.exception(
                 f"[BackgroundChatExecutor] Task failed: "
-                f"task_id={task.id}, subtask_id={assistant_subtask.id}, "
-                f"error={str(e)}"
+                f"task_id={task.id}, subtask_id={assistant_subtask.id}"
             )
 
             # Update Subtask status to FAILED
