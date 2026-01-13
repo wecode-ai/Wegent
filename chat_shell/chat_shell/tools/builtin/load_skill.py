@@ -20,6 +20,8 @@ from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field, PrivateAttr
 
+from chat_shell.prompts.remap_prompts import remap_prompts_headings
+
 logger = logging.getLogger(__name__)
 
 
@@ -208,9 +210,11 @@ class LoadSkillTool(BaseTool):
 
         parts = []
         for skill_name, prompt in self._loaded_skill_prompts.items():
-            parts.append(f"\n\n## Skill: {skill_name}\n\n{prompt}")
+            parts.append(
+                f"\n\n### Skill: {skill_name}\n\n{remap_prompts_headings(prompt, 4)}"
+            )
 
         return (
-            "\n\n# Loaded Skill Instructions\n\nThe following skills have been loaded. "
+            "\n\n## Loaded Skill Instructions\n\nThe following skills have been loaded. "
             + "".join(parts)
         )

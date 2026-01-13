@@ -11,6 +11,8 @@ When enabled, the AI will ask targeted clarification questions before proceeding
 Also contains the Deep Thinking Mode prompt for search tool usage guidance.
 """
 
+from .remap_prompts import remap_prompts_headings
+
 CLARIFICATION_PROMPT = """
 
 ## Smart Follow-up Mode (智能追问模式)
@@ -144,7 +146,7 @@ def get_clarification_prompt() -> str:
     Returns:
         The clarification prompt string to append to system prompt.
     """
-    return CLARIFICATION_PROMPT
+    return remap_prompts_headings(CLARIFICATION_PROMPT)
 
 
 def append_clarification_prompt(system_prompt: str, enable_clarification: bool) -> str:
@@ -159,7 +161,7 @@ def append_clarification_prompt(system_prompt: str, enable_clarification: bool) 
         The system prompt with clarification instructions appended if enabled.
     """
     if enable_clarification:
-        return system_prompt + CLARIFICATION_PROMPT
+        return system_prompt + remap_prompts_headings(CLARIFICATION_PROMPT)
     return system_prompt
 
 
@@ -260,7 +262,7 @@ def get_deep_thinking_prompt() -> str:
     Returns:
         The deep thinking prompt string to append to system prompt.
     """
-    return DEEP_THINKING_PROMPT
+    return remap_prompts_headings(DEEP_THINKING_PROMPT)
 
 
 def append_deep_thinking_prompt(system_prompt: str, enable_deep_thinking: bool) -> str:
@@ -275,7 +277,7 @@ def append_deep_thinking_prompt(system_prompt: str, enable_deep_thinking: bool) 
         The system prompt with deep thinking instructions appended if enabled.
     """
     if enable_deep_thinking:
-        return system_prompt + DEEP_THINKING_PROMPT
+        return system_prompt + remap_prompts_headings(DEEP_THINKING_PROMPT)
     return system_prompt
 
 
@@ -317,7 +319,9 @@ def append_skill_metadata_prompt(system_prompt: str, skills: list[dict]) -> str:
         [f"- **{s['name']}**: {s['description']}" for s in valid_skills]
     )
 
-    skill_section = SKILL_METADATA_PROMPT.format(skill_list=skill_list)
+    skill_section = remap_prompts_headings(
+        SKILL_METADATA_PROMPT.format(skill_list=skill_list)
+    )
     return system_prompt + skill_section
 
 
@@ -343,7 +347,7 @@ def build_system_prompt(
     Returns:
         The final system prompt with all enhancements applied
     """
-    system_prompt = base_prompt
+    system_prompt = remap_prompts_headings(base_prompt)
 
     # Append clarification mode instructions if enabled
     if enable_clarification:

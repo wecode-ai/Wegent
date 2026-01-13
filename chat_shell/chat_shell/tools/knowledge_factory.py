@@ -12,6 +12,8 @@ from typing import Any, List, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from chat_shell.prompts.remap_prompts import remap_prompts_headings
+
 logger = logging.getLogger(__name__)
 
 
@@ -58,7 +60,9 @@ async def prepare_knowledge_base_tools(
         if task_id:
             kb_meta_prompt = await _build_historical_kb_meta_prompt(db, task_id)
             if kb_meta_prompt:
-                enhanced_system_prompt = f"{base_system_prompt}{kb_meta_prompt}"
+                enhanced_system_prompt = (
+                    f"{base_system_prompt}{remap_prompts_headings(kb_meta_prompt)}"
+                )
         return extra_tools, enhanced_system_prompt
 
     logger.info(
@@ -89,12 +93,12 @@ async def prepare_knowledge_base_tools(
     extra_tools.append(kb_tool)
 
     # Import shared prompt constants from chat_shell prompts module
-    from chat_shell.prompts import KB_PROMPT_RELAXED, KB_PROMPT_STRICT
+    from chat_shell.prompts import KB_PROMPT_RELAXED
 
     # Choose prompt based on whether KB is user-selected or inherited from task
     if is_user_selected:
         # Strict mode: User explicitly selected KB for this message
-        kb_instruction = KB_PROMPT_STRICT
+        kb_instruction = ""
         logger.info(
             "[knowledge_factory] Using STRICT mode prompt (user explicitly selected KB)"
         )
@@ -105,13 +109,17 @@ async def prepare_knowledge_base_tools(
             "[knowledge_factory] Using RELAXED mode prompt (KB inherited from task)"
         )
 
-    enhanced_system_prompt = f"{base_system_prompt}{kb_instruction}"
+    enhanced_system_prompt = (
+        f"{base_system_prompt}{remap_prompts_headings(kb_instruction)}"
+    )
 
     # Add historical knowledge base meta info if available
     if task_id:
         kb_meta_prompt = await _build_historical_kb_meta_prompt(db, task_id)
         if kb_meta_prompt:
-            enhanced_system_prompt = f"{enhanced_system_prompt}{kb_meta_prompt}"
+            enhanced_system_prompt = (
+                f"{enhanced_system_prompt}{remap_prompts_headings(kb_meta_prompt)}"
+            )
 
     return extra_tools, enhanced_system_prompt
 
