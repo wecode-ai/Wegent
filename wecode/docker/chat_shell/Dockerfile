@@ -44,6 +44,14 @@ ENV CHAT_SHELL_MODE="http"
 ENV CHAT_SHELL_STORAGE_TYPE="remote"
 ENV CHAT_SHELL_REMOTE_STORAGE_URL="http://wegent-backend-web.wb-plat-ide.svc.cluster.local:8000/api/internal"
 
+# OpenTelemetry configuration
+ENV OTEL_ENABLED=true
+ENV OTEL_MAX_BODY_SIZE=1048576
+ENV OTEL_CAPTURE_REQUEST_HEADERS=true
+ENV OTEL_CAPTURE_REQUEST_BODY=true
+ENV OTEL_TRACES_SAMPLER_ARG=1.0
+ENV OTEL_EXPORTER_OTLP_ENDPOINT=http://wegent-otel-web.wb-plat-ide.svc.cluster.local:4317
+
 # Server configuration
 ENV PORT=8100
 ENV HOST=0.0.0.0
