@@ -10,7 +10,7 @@ This tool allows AI to query data from external table sources
 
 import json
 import logging
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 from langchain_core.callbacks import CallbackManagerForToolRun
@@ -64,9 +64,6 @@ class DataTableTool(BaseTool):
 
     # User name for access control
     user_name: str = ""
-
-    # Database session (optional, for future use)
-    db_session: Optional[Any] = None
 
     class Config:
         arbitrary_types_allowed = True

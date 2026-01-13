@@ -93,6 +93,14 @@ class LangChainModelFactory:
                 ),
                 # Enable Responses API when api_format is "responses"
                 "use_responses_api": cfg.get("api_format") == "responses" or None,
+                # Include reasoning.encrypted_content for Responses API to properly handle
+                # multi-turn conversations with reasoning models (e.g., GPT-5.x)
+                # Without this, the server returns "unrecognized reasoning ID" errors
+                "include": (
+                    ["reasoning.encrypted_content"]
+                    if cfg.get("api_format") == "responses"
+                    else None
+                ),
             },
         },
         "anthropic": {
@@ -115,7 +123,6 @@ class LangChainModelFactory:
                 "model_kwargs": {
                     "extra_headers": {
                         **(cfg.get("default_headers") or {}),
-                        "anthropic-beta": "prompt-caching-2024-07-31",
                     }
                 },
             },

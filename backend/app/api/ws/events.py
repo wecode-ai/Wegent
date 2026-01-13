@@ -9,7 +9,6 @@ This module defines all event names and Pydantic models for
 Socket.IO message payloads.
 """
 
-from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -128,6 +127,9 @@ class ChatSendPayload(BaseModel):
     branch_name: Optional[str] = Field(None, description="Git branch name")
     task_type: Optional[Literal["chat", "code"]] = Field(
         None, description="Task type: chat or code"
+    )
+    preload_skills: Optional[List[str]] = Field(
+        None, description="List of skill names to preload into system prompt"
     )
 
 

@@ -69,6 +69,7 @@ export interface Bot {
   system_prompt: string
   mcp_servers: Record<string, unknown>
   skills?: string[] // Skills associated with this bot
+  preload_skills?: string[] // Skills to preload into system prompt
   is_active: boolean
   created_at: string
   updated_at: string
