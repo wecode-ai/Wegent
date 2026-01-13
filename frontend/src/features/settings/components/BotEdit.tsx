@@ -51,7 +51,7 @@ export interface BotFormData {
   system_prompt: string
   mcp_servers: Record<string, unknown>
   skills: string[]
-  preload_skills: string[]
+  // preload_skills: string[]
 }
 
 /** Interface for validation result */
@@ -645,7 +645,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       system_prompt: isDifyAgent ? '' : prompt.trim() || '',
       mcp_servers: parsedMcpConfig,
       skills: selectedSkills.length > 0 ? selectedSkills : [],
-      preload_skills: preloadSkills.length > 0 ? preloadSkills : [],
+      // preload_skills: preloadSkills.length > 0 ? preloadSkills : [],
     }
   }, [
     validateBot,
@@ -688,7 +688,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         system_prompt: botData.system_prompt,
         mcp_servers: botData.mcp_servers,
         skills: botData.skills,
-        preload_skills: botData.preload_skills,
+        // preload_skills: botData.preload_skills,
         namespace: scope === 'group' && groupName ? groupName : undefined,
       }
 
@@ -847,7 +847,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         system_prompt: isDifyAgent ? '' : prompt.trim() || '', // Clear system_prompt for Dify
         mcp_servers: parsedMcpConfig ?? {},
         skills: selectedSkills.length > 0 ? selectedSkills : [],
-        preload_skills: preloadSkills.length > 0 ? preloadSkills : [],
+        // preload_skills: preloadSkills.length > 0 ? preloadSkills : [],
         namespace: scope === 'group' && groupName ? groupName : undefined,
       }
 
@@ -1379,8 +1379,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                 </div>
               )}
 
-              {/* Preload Skills Selection - Show only for Chat shell with selected skills */}
-              {supportsPreloadSkills && initialBotSkills.length > 0 && (
+              {/* Preload Skills Selection - Hidden from UI (kept for future use) */}
+              {false && supportsPreloadSkills && initialBotSkills.length > 0 && (
                 <div className="flex flex-col">
                   <div className="flex items-center justify-between mb-1">
                     <div className="flex items-center">
