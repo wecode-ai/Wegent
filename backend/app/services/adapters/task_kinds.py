@@ -16,7 +16,6 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.config import settings
 from app.models.kind import Kind
-from app.models.shared_team import SharedTeam
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
@@ -26,6 +25,8 @@ from app.services.adapters.executor_kinds import executor_kinds_service
 from app.services.adapters.pipeline_stage import pipeline_stage_service
 from app.services.adapters.team_kinds import team_kinds_service
 from app.services.base import BaseService
+from app.services.readers.kinds import KindType, kindReader
+from app.services.readers.users import userReader
 
 logger = logging.getLogger(__name__)
 
@@ -142,14 +143,14 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             is_group_member = task_member_service.is_member(db, task_id, user.id)
 
             if is_group_member:
-                # Group chat member - get team without user ownership check
-                team = team_kinds_service.get_team_by_name_and_namespace_without_user_check(
-                    db, team_name, team_namespace
+                # Group chat member - get team using task owner's user_id
+                team = kindReader.get_by_name_and_namespace(
+                    db, existing_task.user_id, KindType.TEAM, team_namespace, team_name
                 )
             else:
-                # Regular user - check team ownership
-                team = team_kinds_service.get_team_by_name_and_namespace(
-                    db, team_name, team_namespace, user.id
+                # Regular user - check team ownership and permissions
+                team = kindReader.get_by_name_and_namespace(
+                    db, user.id, KindType.TEAM, team_namespace, team_name
                 )
 
             if not team:
@@ -168,13 +169,30 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             task = existing_task
         else:
             # Validate team exists and belongs to user
-            team = team_kinds_service.get_team_by_id_or_name_and_namespace(
-                db,
-                team_id=obj_in.team_id,
-                team_name=obj_in.team_name,
-                team_namespace=obj_in.team_namespace,
-                user_id=user.id,
-            )
+            if obj_in.team_id:
+                # Query by team_id first, then verify user has access
+                team_by_id = kindReader.get_by_id(db, KindType.TEAM, obj_in.team_id)
+                if team_by_id:
+                    # Verify user has access to this specific team
+                    team = kindReader.get_by_name_and_namespace(
+                        db,
+                        user.id,
+                        KindType.TEAM,
+                        team_by_id.namespace,
+                        team_by_id.name,
+                    )
+                    # Ensure the returned team is the same as requested
+                    if team and team.id != obj_in.team_id:
+                        team = None
+                else:
+                    team = None
+            elif obj_in.team_name and obj_in.team_namespace:
+                # Query by name and namespace
+                team = kindReader.get_by_name_and_namespace(
+                    db, user.id, KindType.TEAM, obj_in.team_namespace, obj_in.team_name
+                )
+            else:
+                team = None
 
             if not team:
                 raise HTTPException(
@@ -1280,7 +1298,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         task_dict = self.get_task_by_id(db, task_id=task_id, user_id=user_id)
 
         # Get related user
-        user = db.query(User).filter(User.id == user_id).first()
+        user = userReader.get_by_id(db, user_id)
 
         # Get related team
         team_id = task_dict.get("team_id")
@@ -1289,7 +1307,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             logger.info(
                 f"[get_task_detail] task_id={task_id}, team_id={team_id}, user_id={user_id}"
             )
-            team = db.query(Kind).filter(Kind.id == team_id).first()
+            team = kindReader.get_by_id(db, KindType.TEAM, team_id)
             if team:
                 # For both owner and group members, use the task owner's user_id to get team info
                 # This ensures group members can see the team's bots and configuration
@@ -1342,17 +1360,8 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         bots = {}
         if all_bot_ids:
             # Get bots from kinds table (Bot kind)
-            bot_objects = (
-                db.query(Kind)
-                .filter(
-                    Kind.id.in_(list(all_bot_ids)),
-                    Kind.kind == "Bot",
-                    Kind.is_active.is_(True),
-                )
-                .all()
-            )
+            bot_objects = kindReader.get_by_ids(db, KindType.BOT, list(all_bot_ids))
 
-            # Convert bot objects to dict using bot JSON data
             # Convert bot objects to dict using bot JSON data
             for bot in bot_objects:
                 bot_crd = Bot.model_validate(bot.json)
@@ -1363,64 +1372,40 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 system_prompt = ""
                 mcp_servers = {}
 
-                # Get Ghost data from kinds table
-                ghost = (
-                    db.query(Kind)
-                    .filter(
-                        Kind.user_id == user_id,
-                        Kind.kind == "Ghost",
-                        Kind.name == bot_crd.spec.ghostRef.name,
-                        Kind.namespace == bot_crd.spec.ghostRef.namespace,
-                        Kind.is_active.is_(True),
-                    )
-                    .first()
+                # Get Ghost data using bot owner's user_id
+                ghost = kindReader.get_by_name_and_namespace(
+                    db,
+                    bot.user_id,
+                    KindType.GHOST,
+                    bot_crd.spec.ghostRef.namespace,
+                    bot_crd.spec.ghostRef.name,
                 )
                 if ghost and ghost.json:
                     ghost_crd = Ghost.model_validate(ghost.json)
                     system_prompt = ghost_crd.spec.systemPrompt
                     mcp_servers = ghost_crd.spec.mcpServers or {}
 
-                # Get Model data from kinds table (modelRef is optional)
+                # Get Model data (modelRef is optional)
                 if bot_crd.spec.modelRef:
-                    model = (
-                        db.query(Kind)
-                        .filter(
-                            Kind.user_id == user_id,
-                            Kind.kind == "Model",
-                            Kind.name == bot_crd.spec.modelRef.name,
-                            Kind.namespace == bot_crd.spec.modelRef.namespace,
-                            Kind.is_active.is_(True),
-                        )
-                        .first()
+                    model = kindReader.get_by_name_and_namespace(
+                        db,
+                        bot.user_id,
+                        KindType.MODEL,
+                        bot_crd.spec.modelRef.namespace,
+                        bot_crd.spec.modelRef.name,
                     )
                     if model and model.json:
                         model_crd = Model.model_validate(model.json)
                         agent_config = model_crd.spec.modelConfig
 
-                # Get Shell data from kinds table (first check user's shells, then public shells)
-                shell = (
-                    db.query(Kind)
-                    .filter(
-                        Kind.user_id == user_id,
-                        Kind.kind == "Shell",
-                        Kind.name == bot_crd.spec.shellRef.name,
-                        Kind.namespace == bot_crd.spec.shellRef.namespace,
-                        Kind.is_active.is_(True),
-                    )
-                    .first()
+                # Get Shell data (personal -> public fallback handled by kindReader)
+                shell = kindReader.get_by_name_and_namespace(
+                    db,
+                    bot.user_id,
+                    KindType.SHELL,
+                    bot_crd.spec.shellRef.namespace,
+                    bot_crd.spec.shellRef.name,
                 )
-                if not shell:
-                    # If not found in user's shells, check public shells (user_id = 0)
-                    shell = (
-                        db.query(Kind)
-                        .filter(
-                            Kind.user_id == 0,
-                            Kind.kind == "Shell",
-                            Kind.name == bot_crd.spec.shellRef.name,
-                            Kind.is_active.is_(True),
-                        )
-                        .first()
-                    )
                 if shell and shell.json:
                     shell_crd = Shell.model_validate(shell.json)
                     shell_type = shell_crd.spec.shellType
@@ -2247,39 +2232,13 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 pass
 
         # Get team data (including shared teams)
-        team = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == user_id,
-                Kind.kind == "Team",
-                Kind.name == task_crd.spec.teamRef.name,
-                Kind.namespace == task_crd.spec.teamRef.namespace,
-                Kind.is_active.is_(True),
-            )
-            .first()
+        team = kindReader.get_by_name_and_namespace(
+            db,
+            user_id,
+            KindType.TEAM,
+            task_crd.spec.teamRef.namespace,
+            task_crd.spec.teamRef.name,
         )
-
-        # If not found in user's own teams, check shared teams
-        if not team:
-            shared_teams = (
-                db.query(SharedTeam)
-                .filter(SharedTeam.user_id == user_id, SharedTeam.is_active.is_(True))
-                .all()
-            )
-
-            original_user_ids = [st.original_user_id for st in shared_teams]
-            if original_user_ids:
-                team = (
-                    db.query(Kind)
-                    .filter(
-                        Kind.user_id.in_(original_user_ids),
-                        Kind.kind == "Team",
-                        Kind.name == task_crd.spec.teamRef.name,
-                        Kind.namespace == task_crd.spec.teamRef.namespace,
-                        Kind.is_active.is_(True),
-                    )
-                    .first()
-                )
 
         team_id = team.id if team else None
 
@@ -2302,7 +2261,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 updated_at = task.updated_at
 
         # Get user info
-        user = db.query(User).filter(User.id == user_id).first()
+        user = userReader.get_by_id(db, user_id)
         user_name = user.user_name if user else ""
 
         type = (
@@ -2361,17 +2320,9 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         # Convert members to bots format
         bots = []
         for member in team_crd.spec.members:
-            # Find bot in kinds table
-            bot = (
-                db.query(Kind)
-                .filter(
-                    Kind.user_id == user_id,
-                    Kind.kind == "Bot",
-                    Kind.name == member.botRef.name,
-                    Kind.namespace == member.botRef.namespace,
-                    Kind.is_active.is_(True),
-                )
-                .first()
+            # Find bot using kindReader
+            bot = kindReader.get_by_name_and_namespace(
+                db, user_id, KindType.BOT, member.botRef.namespace, member.botRef.name
             )
 
             if bot:
@@ -2386,7 +2337,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         workflow = {"mode": team_crd.spec.collaborationModel}
 
         # Get user info for user name
-        user = db.query(User).filter(User.id == team.user_id).first()
+        user = userReader.get_by_id(db, team.user_id)
         user_name = user.user_name if user else ""
 
         return {
@@ -2420,19 +2371,14 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         # Get bot IDs from team members
         bot_ids = []
         for member in team_crd.spec.members:
-            # Find bot in kinds table
-            bot = (
-                db.query(Kind)
-                .filter(
-                    Kind.user_id == team.user_id,
-                    Kind.kind == "Bot",
-                    Kind.name == member.botRef.name,
-                    Kind.namespace == member.botRef.namespace,
-                    Kind.is_active.is_(True),
-                )
-                .first()
+            # Find bot using kindReader
+            bot = kindReader.get_by_name_and_namespace(
+                db,
+                team.user_id,
+                KindType.BOT,
+                member.botRef.namespace,
+                member.botRef.name,
             )
-
             if bot:
                 bot_ids.append(bot.id)
 
@@ -2518,16 +2464,12 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
 
             # Get the target bot for the determined stage
             target_member = team_crd.spec.members[target_stage_index]
-            bot = (
-                db.query(Kind)
-                .filter(
-                    Kind.user_id == team.user_id,
-                    Kind.kind == "Bot",
-                    Kind.name == target_member.botRef.name,
-                    Kind.namespace == target_member.botRef.namespace,
-                    Kind.is_active.is_(True),
-                )
-                .first()
+            bot = kindReader.get_by_name_and_namespace(
+                db,
+                team.user_id,
+                KindType.BOT,
+                target_member.botRef.namespace,
+                target_member.botRef.name,
             )
 
             if bot is None:
@@ -2643,14 +2585,23 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             for workspace in workspaces:
                 key = f"{workspace.name}:{workspace.namespace}"
                 if workspace.json:
-                    workspace_crd = Workspace.model_validate(workspace.json)
-                    workspace_data[key] = {
-                        "git_url": workspace_crd.spec.repository.gitUrl,
-                        "git_repo": workspace_crd.spec.repository.gitRepo,
-                        "git_repo_id": workspace_crd.spec.repository.gitRepoId or 0,
-                        "git_domain": workspace_crd.spec.repository.gitDomain,
-                        "branch_name": workspace_crd.spec.repository.branchName,
-                    }
+                    try:
+                        workspace_crd = Workspace.model_validate(workspace.json)
+                        workspace_data[key] = {
+                            "git_url": workspace_crd.spec.repository.gitUrl,
+                            "git_repo": workspace_crd.spec.repository.gitRepo,
+                            "git_repo_id": workspace_crd.spec.repository.gitRepoId or 0,
+                            "git_domain": workspace_crd.spec.repository.gitDomain,
+                            "branch_name": workspace_crd.spec.repository.branchName,
+                        }
+                    except Exception:
+                        workspace_data[key] = {
+                            "git_url": "",
+                            "git_repo": "",
+                            "git_repo_id": 0,
+                            "git_domain": "",
+                            "branch_name": "",
+                        }
                 else:
                     workspace_data[key] = {
                         "git_url": "",
@@ -2686,27 +2637,20 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 ref for ref in team_refs if f"{ref[0]}:{ref[1]}" not in team_data
             ]
             if missing_team_refs:
-                # Get all shared teams for this user
-                shared_teams = (
-                    db.query(SharedTeam)
-                    .filter(
-                        SharedTeam.user_id == user_id, SharedTeam.is_active.is_(True)
-                    )
-                    .all()
-                )
+                # Get all shared team_ids for this user
+                from app.services.readers.shared_teams import sharedTeamReader
 
-                # Get original user IDs from shared teams
-                original_user_ids = [st.original_user_id for st in shared_teams]
+                shared_team_ids = sharedTeamReader.get_shared_team_ids(db, user_id)
 
-                if original_user_ids:
-                    # Query teams from shared team owners
+                if shared_team_ids:
+                    # Query teams from shared team ids
                     missing_team_names, missing_team_namespaces = zip(
                         *missing_team_refs
                     )
                     shared_team_kinds = (
                         db.query(Kind)
                         .filter(
-                            Kind.user_id.in_(original_user_ids),
+                            Kind.id.in_(shared_team_ids),
                             Kind.kind == "Team",
                             Kind.name.in_(missing_team_names),
                             Kind.namespace.in_(missing_team_namespaces),
@@ -2720,7 +2664,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                         team_data[key] = team
 
         # Get user info once
-        user = db.query(User).filter(User.id == user_id).first()
+        user = userReader.get_by_id(db, user_id)
         user_name = user.user_name if user else ""
 
         # Build result mapping

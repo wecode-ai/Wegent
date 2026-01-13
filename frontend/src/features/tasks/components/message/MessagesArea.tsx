@@ -36,9 +36,11 @@ import ExportSelectModal, {
   type ExportFormat,
 } from '../share/ExportSelectModal'
 import { taskApis } from '@/apis/tasks'
+import { subtaskApis } from '@/apis/subtasks'
 import { TaskMembersPanel } from '../group-chat'
 import { useUser } from '@/features/common/UserContext'
 import { useUnifiedMessages, type DisplayMessage } from '../../hooks/useUnifiedMessages'
+import { useChatStreamContext } from '../../contexts/chatStreamContext'
 import { useStreamingVisibilityRecovery } from '../../hooks/useStreamingVisibilityRecovery'
 import { useTraceAction } from '@/hooks/useTraceAction'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
@@ -224,6 +226,9 @@ export default function MessagesArea({
 
   // Group chat members panel state
   const [showMembersPanel, setShowMembersPanel] = useState(false)
+
+  // Message edit state
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
 
   // Correction mode state
   const [correctionResults, setCorrectionResults] = useState<Map<number, CorrectionResponse>>(
@@ -656,6 +661,73 @@ export default function MessagesArea({
     refreshSelectedTaskDetail(false)
   }, [refreshTasks, refreshSelectedTaskDetail])
 
+  // Handle edit button click - enter edit mode for a message
+  const handleEditMessage = useCallback((msg: Message) => {
+    if (msg.subtaskId) {
+      setEditingMessageId(String(msg.subtaskId))
+    }
+  }, [])
+
+  // Handle cancel edit - exit edit mode
+  const handleEditCancel = useCallback(() => {
+    setEditingMessageId(null)
+  }, [])
+
+  // Get cleanupMessagesAfterEdit from chat stream context
+  const { cleanupMessagesAfterEdit } = useChatStreamContext()
+
+  // Handle save edit - call API to edit message, then resend to trigger AI response
+  const handleEditSave = useCallback(
+    async (newContent: string) => {
+      if (!editingMessageId) return
+
+      const subtaskId = parseInt(editingMessageId, 10)
+      if (isNaN(subtaskId)) return
+
+      try {
+        const response = await subtaskApis.editMessage(subtaskId, newContent)
+
+        if (response.success) {
+          // Exit edit mode first
+          setEditingMessageId(null)
+
+          // Immediately clean up messages from the edited position in local state
+          // This removes the edited message and all subsequent messages before refreshing
+          // to ensure UI consistency (no stale messages visible)
+          if (selectedTaskDetail?.id) {
+            cleanupMessagesAfterEdit(selectedTaskDetail.id, subtaskId)
+          }
+
+          // Refresh task detail to reload messages from backend
+          await refreshSelectedTaskDetail(true)
+
+          // Automatically resend the edited message to trigger AI response
+          // This is the ChatGPT-style behavior: edit message -> delete all from edited -> resend as new
+          if (onSendMessage) {
+            onSendMessage(newContent)
+          }
+        }
+      } catch (error) {
+        console.error('Failed to edit message:', error)
+        toast({
+          variant: 'destructive',
+          title: t('chat:edit.failed') || 'Failed to edit message',
+          description: (error as Error)?.message || 'Unknown error',
+        })
+        throw error // Re-throw to let InlineMessageEdit know it failed
+      }
+    },
+    [
+      editingMessageId,
+      selectedTaskDetail?.id,
+      cleanupMessagesAfterEdit,
+      refreshSelectedTaskDetail,
+      onSendMessage,
+      toast,
+      t,
+    ]
+  )
+
   // Memoize share and export buttons
   const shareButton = useMemo(() => {
     if (!selectedTaskDetail?.id || messages.length === 0) {
@@ -1004,6 +1076,10 @@ export default function MessagesArea({
                 isGroupChat={isGroupChat}
                 isPendingConfirmation={isPendingConfirmation}
                 onContextReselect={onContextReselect}
+                isEditing={msg.subtaskId ? editingMessageId === String(msg.subtaskId) : false}
+                onEdit={handleEditMessage}
+                onEditSave={handleEditSave}
+                onEditCancel={handleEditCancel}
               />
             )
           })}
