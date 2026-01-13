@@ -20,6 +20,7 @@ import logging
 from typing import List, Optional
 
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.session import make_transient_to_detached
 
 from app.models.kind import Kind
 from app.services.readers.kinds import IKindReader, KindReader, KindType
@@ -155,8 +156,14 @@ class CachedKindReader(KindReader):
         except Exception as e:
             logger.warning(f"Cache idx set error: {e}")
 
-    def _to_model(self, data: dict) -> Optional[Kind]:
-        return dict_to_model(data, Kind)
+    def _to_model(self, db: Session, data: dict) -> Optional[Kind]:
+        model = dict_to_model(data, Kind)
+        if model:
+            # Make transient object look like detached (previously loaded from DB)
+            make_transient_to_detached(model)
+            # Attach to session without re-loading from DB
+            return db.merge(model, load=False)
+        return None
 
     # Query methods
 
@@ -165,7 +172,7 @@ class CachedKindReader(KindReader):
     ) -> Optional[Kind]:
         cached = self._get_data(kind, resource_id)
         if cached is not None:
-            return self._to_model(cached)
+            return self._to_model(db, cached)
 
         result = super().get_by_id(db, kind, resource_id)
         if result:
@@ -185,7 +192,7 @@ class CachedKindReader(KindReader):
         for rid in resource_ids:
             cached = self._get_data(kind, rid)
             if cached is not None:
-                model = self._to_model(cached)
+                model = self._to_model(db, cached)
                 if model:
                     results.append(model)
             else:
@@ -211,7 +218,7 @@ class CachedKindReader(KindReader):
                 return None
             cached = self._get_data(kind, cached_id)
             if cached is not None:
-                return self._to_model(cached)
+                return self._to_model(db, cached)
 
         result = super().get_personal(db, user_id, kind, namespace, name)
         if result:
@@ -232,7 +239,7 @@ class CachedKindReader(KindReader):
                 return None
             cached = self._get_data(kind, cached_id)
             if cached is not None:
-                return self._to_model(cached)
+                return self._to_model(db, cached)
 
         result = super().get_public(db, kind, namespace, name)
         if result:
@@ -253,7 +260,7 @@ class CachedKindReader(KindReader):
                 return None
             cached = self._get_data(kind, cached_id)
             if cached is not None:
-                return self._to_model(cached)
+                return self._to_model(db, cached)
 
         result = super().get_group(db, kind, namespace, name)
         if result:
