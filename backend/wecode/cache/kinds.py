@@ -17,16 +17,19 @@ Benefits:
 """
 
 import logging
-from typing import Optional
+from typing import List, Optional
 
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
-from app.services.readers.kinds import IKindReader, KindType
+from app.services.readers.kinds import IKindReader, KindReader, KindType
 from wecode.cache.base import (
     CACHE_TTL,
+    CACHE_VERSION,
     NULL_MARKER,
+    dict_to_model,
     get_redis_client,
+    model_to_dict,
     register_events,
 )
 
@@ -42,10 +45,10 @@ _events_registered = False
 
 def wrap(base_reader: IKindReader) -> Optional[IKindReader]:
     """
-    Wrap base reader with Redis caching.
+    Create cached reader with Redis caching.
 
     Args:
-        base_reader: The underlying reader
+        base_reader: The underlying reader (kept for API compatibility, not used)
 
     Returns:
         Cached reader if Redis available, None otherwise
@@ -56,7 +59,7 @@ def wrap(base_reader: IKindReader) -> Optional[IKindReader]:
     if redis is None:
         return None
 
-    reader = CachedKindReader(base_reader, redis)
+    reader = CachedKindReader(redis)
 
     if not _events_registered:
         register_events(Kind, _on_change, reader)
@@ -88,28 +91,27 @@ def _on_change(operation: str, target, reader: IKindReader) -> None:
 # =============================================================================
 
 
-class CachedKindReader(IKindReader):
-    """Cached Kind reader using Redis."""
+class CachedKindReader(KindReader):
+    """Cached Kind reader using Redis, inherits from KindReader for fallback."""
 
-    def __init__(self, base: IKindReader, redis):
-        self._base = base
+    def __init__(self, redis):
         self._redis = redis
 
     # Key generation
 
     def _key_data(self, kind: KindType, resource_id: int) -> str:
-        return f"kind:data:{kind.value}:{resource_id}"
+        return f"kind:{CACHE_VERSION}:data:{kind.value}:{resource_id}"
 
     def _key_idx_personal(
         self, user_id: int, kind: KindType, namespace: str, name: str
     ) -> str:
-        return f"kind:idx:personal:{kind.value}:{user_id}:{namespace}:{name}"
+        return f"kind:{CACHE_VERSION}:idx:personal:{kind.value}:{user_id}:{namespace}:{name}"
 
     def _key_idx_public(self, kind: KindType, namespace: str, name: str) -> str:
-        return f"kind:idx:public:{kind.value}:{namespace}:{name}"
+        return f"kind:{CACHE_VERSION}:idx:public:{kind.value}:{namespace}:{name}"
 
     def _key_idx_group(self, kind: KindType, namespace: str, name: str) -> str:
-        return f"kind:idx:group:{kind.value}:{namespace}:{name}"
+        return f"kind:{CACHE_VERSION}:idx:group:{kind.value}:{namespace}:{name}"
 
     # Cache operations
 
@@ -139,15 +141,7 @@ class CachedKindReader(IKindReader):
         try:
             import json
 
-            data = {
-                "id": value.id,
-                "user_id": value.user_id,
-                "kind": value.kind,
-                "namespace": value.namespace,
-                "name": value.name,
-                "json": value.json,
-                "is_active": value.is_active,
-            }
+            data = model_to_dict(value)
             self._redis.setex(
                 self._key_data(kind, resource_id), CACHE_TTL, json.dumps(data)
             )
@@ -162,17 +156,7 @@ class CachedKindReader(IKindReader):
             logger.warning(f"Cache idx set error: {e}")
 
     def _to_model(self, data: dict) -> Optional[Kind]:
-        if not data:
-            return None
-        obj = Kind()
-        obj.id = data.get("id")
-        obj.user_id = data.get("user_id")
-        obj.kind = data.get("kind")
-        obj.namespace = data.get("namespace")
-        obj.name = data.get("name")
-        obj.json = data.get("json")
-        obj.is_active = data.get("is_active")
-        return obj
+        return dict_to_model(data, Kind)
 
     # Query methods
 
@@ -183,10 +167,38 @@ class CachedKindReader(IKindReader):
         if cached is not None:
             return self._to_model(cached)
 
-        result = self._base.get_by_id(db, kind, resource_id)
+        result = super().get_by_id(db, kind, resource_id)
         if result:
             self._set_data(kind, resource_id, result)
         return result
+
+    def get_by_ids(
+        self, db: Session, kind: KindType, resource_ids: List[int]
+    ) -> List[Kind]:
+        if not resource_ids:
+            return []
+
+        results = []
+        missing_ids = []
+
+        # Try to get from cache first
+        for rid in resource_ids:
+            cached = self._get_data(kind, rid)
+            if cached is not None:
+                model = self._to_model(cached)
+                if model:
+                    results.append(model)
+            else:
+                missing_ids.append(rid)
+
+        # Query missing from database
+        if missing_ids:
+            db_results = super().get_by_ids(db, kind, missing_ids)
+            for item in db_results:
+                self._set_data(kind, item.id, item)
+                results.append(item)
+
+        return results
 
     def get_personal(
         self, db: Session, user_id: int, kind: KindType, namespace: str, name: str
@@ -201,7 +213,7 @@ class CachedKindReader(IKindReader):
             if cached is not None:
                 return self._to_model(cached)
 
-        result = self._base.get_personal(db, user_id, kind, namespace, name)
+        result = super().get_personal(db, user_id, kind, namespace, name)
         if result:
             self._set_data(kind, result.id, result)
             self._set_idx(idx_key, result.id)
@@ -222,7 +234,7 @@ class CachedKindReader(IKindReader):
             if cached is not None:
                 return self._to_model(cached)
 
-        result = self._base.get_public(db, kind, namespace, name)
+        result = super().get_public(db, kind, namespace, name)
         if result:
             self._set_data(kind, result.id, result)
             self._set_idx(idx_key, result.id)
@@ -243,7 +255,7 @@ class CachedKindReader(IKindReader):
             if cached is not None:
                 return self._to_model(cached)
 
-        result = self._base.get_group(db, kind, namespace, name)
+        result = super().get_group(db, kind, namespace, name)
         if result:
             self._set_data(kind, result.id, result)
             self._set_idx(idx_key, result.id)

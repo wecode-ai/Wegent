@@ -9,15 +9,58 @@ Provides:
 - Constants (CACHE_TTL, NULL_MARKER)
 - Redis client factory
 - SQLAlchemy event registration helper
+- Model serialization/deserialization helpers
 """
 
 import logging
+from datetime import datetime
+from typing import Any, Dict, Optional, Type, TypeVar
 
 logger = logging.getLogger(__name__)
 
 # Cache configuration
 CACHE_TTL = 300  # seconds
 NULL_MARKER = "__NULL__"
+CACHE_VERSION = "v2"  # Increment when cache format changes
+
+T = TypeVar("T")
+
+
+def model_to_dict(obj: Any) -> Dict[str, Any]:
+    """
+    Convert SQLAlchemy model to dictionary using table columns.
+
+    Automatically handles datetime serialization to ISO format.
+    """
+    data = {}
+    for column in obj.__table__.columns:
+        value = getattr(obj, column.name)
+        # Handle datetime serialization
+        if isinstance(value, datetime):
+            value = value.isoformat()
+        data[column.name] = value
+    return data
+
+
+def dict_to_model(data: Dict[str, Any], model_class: Type[T]) -> Optional[T]:
+    """
+    Convert dictionary to SQLAlchemy model instance.
+
+    Automatically handles datetime deserialization from ISO format.
+    """
+    if not data:
+        return None
+
+    obj = model_class()
+    for column in model_class.__table__.columns:
+        if column.name in data:
+            value = data[column.name]
+            # Handle datetime deserialization
+            if value is not None and hasattr(column.type, "python_type"):
+                if column.type.python_type == datetime and isinstance(value, str):
+                    value = datetime.fromisoformat(value)
+            setattr(obj, column.name, value)
+    return obj
 
 
 def get_redis_client():
