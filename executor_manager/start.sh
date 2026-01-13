@@ -30,7 +30,7 @@ NC='\033[0m' # No Color
 # Default configuration
 DEFAULT_PORT=8001
 DEFAULT_HOST="0.0.0.0"
-DEFAULT_EXECUTOR_IMAGE="ghcr.io/wecode-ai/wegent-executor:1.0.16"
+DEFAULT_EXECUTOR_IMAGE="ghcr.io/wecode-ai/wegent-executor:1.0.30-21"
 DEFAULT_TASK_API_DOMAIN="http://localhost:8000"
 PYTHON_PATH=""
 

@@ -137,6 +137,9 @@ class StreamingState:
                     "status": details.get("status"),
                     "tool_name": details.get("tool_name") or details.get("name"),
                 }
+                # Preserve error field for failed status
+                if details.get("error"):
+                    slim_details["error"] = details["error"]
                 slim_step["details"] = slim_details
             slimmed.append(slim_step)
         return slimmed

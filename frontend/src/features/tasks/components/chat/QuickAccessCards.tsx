@@ -452,42 +452,42 @@ export function QuickAccessCards({
             {/* Dropdown with team list */}
             {showMoreTeams && (
               <div className="absolute top-full left-0 mt-2 z-50 min-w-[300px] max-w-[400px] bg-surface border border-border rounded-xl shadow-xl overflow-hidden">
-              {/* Search input */}
-              <div className="p-2 border-b border-border">
-                <div className="relative">
-                  <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={e => setSearchQuery(e.target.value)}
-                    placeholder={t('teams.search_team')}
-                    className="w-full pl-9 pr-3 py-2 text-sm bg-base border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 placeholder:text-text-muted"
-                    autoFocus
-                  />
+                {/* Search input */}
+                <div className="p-2 border-b border-border">
+                  <div className="relative">
+                    <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={e => setSearchQuery(e.target.value)}
+                      placeholder={t('teams.search_team')}
+                      className="w-full pl-9 pr-3 py-2 text-sm bg-base border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 placeholder:text-text-muted"
+                      autoFocus
+                    />
+                  </div>
                 </div>
-              </div>
 
-              {/* Team list */}
-              <div className="max-h-[240px] overflow-y-auto">
-                {isTeamsLoading ? (
-                  <div className="py-4 text-center text-sm text-text-muted">
-                    {t('actions.loading')}
-                  </div>
-                ) : dropdownTeams.length === 0 ? (
-                  <div className="py-4 text-center text-sm text-text-muted">
-                    {t('teams.no_match')}
-                  </div>
-                ) : (
-                  dropdownTeams.map(team => {
-                    const isSelected = selectedTeam?.id === team.id
-                    const isSharedTeam = team.share_status === 2 && team.user?.user_name
-                    const isGroupTeam = team.namespace && team.namespace !== 'default'
+                {/* Team list */}
+                <div className="max-h-[240px] overflow-y-auto">
+                  {isTeamsLoading ? (
+                    <div className="py-4 text-center text-sm text-text-muted">
+                      {t('actions.loading')}
+                    </div>
+                  ) : dropdownTeams.length === 0 ? (
+                    <div className="py-4 text-center text-sm text-text-muted">
+                      {t('teams.no_match')}
+                    </div>
+                  ) : (
+                    dropdownTeams.map(team => {
+                      const isSelected = selectedTeam?.id === team.id
+                      const isSharedTeam = team.share_status === 2 && team.user?.user_name
+                      const isGroupTeam = team.namespace && team.namespace !== 'default'
 
-                    return (
-                      <div
-                        key={team.id}
-                        onClick={() => handleTeamSelectFromDropdown(team)}
-                        className={`
+                      return (
+                        <div
+                          key={team.id}
+                          onClick={() => handleTeamSelectFromDropdown(team)}
+                          className={`
                             flex items-center gap-3 px-3 py-2 mx-1 my-0.5 rounded-md cursor-pointer
                             transition-colors duration-150
                             ${
@@ -496,53 +496,53 @@ export function QuickAccessCards({
                                 : 'hover:bg-hover text-text-primary'
                             }
                           `}
-                      >
-                        <CheckIcon
-                          className={`w-4 h-4 flex-shrink-0 ${isSelected ? 'opacity-100 text-primary' : 'opacity-0'}`}
-                        />
-                        <TeamIconDisplay
-                          iconId={team.icon}
-                          size="sm"
-                          className="flex-shrink-0 text-text-muted"
-                        />
-                        <span className="flex-1 text-sm font-medium truncate" title={team.name}>
-                          {team.name}
-                        </span>
-                        {isGroupTeam && (
-                          <Tag className="text-xs !m-0 flex-shrink-0" variant="info">
-                            {team.namespace}
-                          </Tag>
-                        )}
-                        {isSharedTeam && (
-                          <Tag
-                            className="text-xs !m-0 flex-shrink-0"
-                            variant="default"
-                            style={sharedBadgeStyle}
-                          >
-                            {team.user?.user_name}
-                          </Tag>
-                        )}
-                      </div>
-                    )
-                  })
-                )}
-              </div>
+                        >
+                          <CheckIcon
+                            className={`w-4 h-4 flex-shrink-0 ${isSelected ? 'opacity-100 text-primary' : 'opacity-0'}`}
+                          />
+                          <TeamIconDisplay
+                            iconId={team.icon}
+                            size="sm"
+                            className="flex-shrink-0 text-text-muted"
+                          />
+                          <span className="flex-1 text-sm font-medium truncate" title={team.name}>
+                            {team.name}
+                          </span>
+                          {isGroupTeam && (
+                            <Tag className="text-xs !m-0 flex-shrink-0" variant="info">
+                              {team.namespace}
+                            </Tag>
+                          )}
+                          {isSharedTeam && (
+                            <Tag
+                              className="text-xs !m-0 flex-shrink-0"
+                              variant="default"
+                              style={sharedBadgeStyle}
+                            >
+                              {team.user?.user_name}
+                            </Tag>
+                          )}
+                        </div>
+                      )
+                    })
+                  )}
+                </div>
 
-              {/* Footer with settings link */}
-              <div
-                className="border-t border-border bg-base cursor-pointer group flex items-center space-x-2 px-3 py-2.5 text-xs text-text-secondary hover:bg-muted transition-colors duration-150"
-                onClick={() => {
-                  setShowMoreTeams(false)
-                  router.push(paths.settings.team.getHref())
-                }}
-              >
-                <Cog6ToothIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
-                <span className="font-medium group-hover:text-text-primary">
-                  {t('teams.manage')}
-                </span>
+                {/* Footer with settings link */}
+                <div
+                  className="border-t border-border bg-base cursor-pointer group flex items-center space-x-2 px-3 py-2.5 text-xs text-text-secondary hover:bg-muted transition-colors duration-150"
+                  onClick={() => {
+                    setShowMoreTeams(false)
+                    router.push(paths.settings.team.getHref())
+                  }}
+                >
+                  <Cog6ToothIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
+                  <span className="font-medium group-hover:text-text-primary">
+                    {t('teams.manage')}
+                  </span>
+                </div>
               </div>
-            </div>
-          )}
+            )}
           </div>
         )}
 
