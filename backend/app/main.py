@@ -329,7 +329,6 @@ def create_app():
             setup_opentelemetry_instrumentation(
                 app=app,
                 logger=logger,
-                enable_sqlalchemy=True,
                 sqlalchemy_engine=engine,
             )
         except Exception as e:
