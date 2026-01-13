@@ -18,6 +18,7 @@ import logging
 from typing import Optional
 
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.session import make_transient_to_detached
 
 from app.models.namespace import Namespace
 from app.services.readers.groups import VISIBILITY_PUBLIC, GroupReader, IGroupReader
@@ -123,17 +124,23 @@ class CachedGroupReader(GroupReader):
         except Exception as e:
             logger.warning(f"Cache set error: {e}")
 
-    def _to_model(self, data: dict) -> Optional[Namespace]:
+    def _to_model(self, db: Session, data: dict) -> Optional[Namespace]:
         if not data or data.get("_null"):
             return None
-        return dict_to_model(data, Namespace)
+        model = dict_to_model(data, Namespace)
+        if model:
+            # Make transient object look like detached (previously loaded from DB)
+            make_transient_to_detached(model)
+            # Attach to session without re-loading from DB
+            return db.merge(model, load=False)
+        return None
 
     # Query methods
 
     def get_by_name(self, db: Session, name: str) -> Optional[Namespace]:
         cached = self._get_data(name)
         if cached is not None:
-            return self._to_model(cached)
+            return self._to_model(db, cached)
 
         result = super().get_by_name(db, name)
         self._set_data(name, result)
