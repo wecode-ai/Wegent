@@ -1332,9 +1332,17 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
 
         // Join the task room for receiving AI response events
         if (realTaskId !== immediateTaskId && realTaskId > 0) {
+          console.log(
+            '[ChatStreamContext] joinTask called from sendMessage (new task), taskId:',
+            realTaskId
+          )
           await joinTask(realTaskId)
         } else if (request.task_id && request.task_id > 0) {
           // Existing task, join the room for receiving AI response events
+          console.log(
+            '[ChatStreamContext] joinTask called from sendMessage (existing task), taskId:',
+            request.task_id
+          )
           await joinTask(request.task_id)
         }
 
@@ -1568,10 +1576,12 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
 
       try {
         // Join task room and check for active streaming
-        // Use forceRefresh=true to always get the latest streaming status
-        // This is important because the task may have been joined before
-        // but we need fresh streaming info for resumption
-        const response = await joinTask(taskId, true)
+        // NOTE: We don't use forceRefresh=true here because:
+        // 1. If already joined, we don't need to send another task:join request
+        // 2. The streaming status is returned on first join, and we can check local state
+        // 3. Using forceRefresh causes duplicate task:join requests
+        console.log('[ChatStreamContext] joinTask called from resumeStream, taskId:', taskId)
+        const response = await joinTask(taskId)
 
         if (response.error) {
           console.error('[ChatStreamContext] Failed to join task:', response.error)
