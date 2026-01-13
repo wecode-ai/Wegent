@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 from fastapi import HTTPException
-from requests.auth import HTTPDigestAuth
+from requests.auth import HTTPBasicAuth, HTTPDigestAuth
 from shared.utils.sensitive_data_masker import mask_string
 from shared.utils.url_util import build_url
 
@@ -66,6 +66,7 @@ class GerritProvider(RepositoryProvider):
                         "git_token": info.get("git_token", ""),
                         "user_name": info.get("user_name", ""),
                         "type": info.get("type", ""),
+                        "auth_type": info.get("auth_type", "digest"),
                     }
                 )
 
@@ -127,14 +128,16 @@ class GerritProvider(RepositoryProvider):
         url: str,
         username: str,
         http_password: str,
+        auth_type: str = "digest",
         params: Dict[str, Any] = None,
         json_data: Dict[str, Any] = None,
         **kwargs,
     ) -> requests.Response:
         """
-        Make HTTP request with HTTP Digest Authentication
+        Make HTTP request with HTTP Digest or Basic Authentication
 
-        Gerrit uses HTTP Digest Authentication by default. The /a/ prefix in the URL
+        Gerrit uses HTTP Digest Authentication by default, but some instances
+        may use HTTP Basic Authentication. The /a/ prefix in the URL
         indicates authenticated access.
 
         Args:
@@ -142,6 +145,7 @@ class GerritProvider(RepositoryProvider):
             url: Request URL (should include /a/ prefix for authenticated endpoints)
             username: Gerrit username
             http_password: HTTP password from Gerrit Settings
+            auth_type: Authentication type ('digest' or 'basic'), defaults to 'digest'
             params: Query parameters
             json_data: JSON payload for POST requests
             **kwargs: Additional arguments for requests
@@ -152,8 +156,11 @@ class GerritProvider(RepositoryProvider):
         Raises:
             requests.exceptions.RequestException: If request fails
         """
-        # Use HTTP Digest Authentication (Gerrit default)
-        auth = HTTPDigestAuth(username, http_password)
+        # Select authentication method based on auth_type
+        if auth_type == "basic":
+            auth = HTTPBasicAuth(username, http_password)
+        else:
+            auth = HTTPDigestAuth(username, http_password)
 
         headers = {"Accept": "application/json", "Content-Type": "application/json"}
 
@@ -175,18 +182,20 @@ class GerritProvider(RepositoryProvider):
         url: str,
         username: str,
         http_password: str,
+        auth_type: str = "digest",
         params: Dict[str, Any] = None,
         json_data: Dict[str, Any] = None,
         **kwargs,
     ) -> requests.Response:
         """
-        Async version of _make_request with HTTP Digest Authentication
+        Async version of _make_request with HTTP Digest or Basic Authentication
 
         Args:
             method: HTTP method (GET, POST, etc.)
             url: Request URL (should include /a/ prefix for authenticated endpoints)
             username: Gerrit username
             http_password: HTTP password
+            auth_type: Authentication type ('digest' or 'basic'), defaults to 'digest'
             params: Query parameters
             json_data: JSON payload
             **kwargs: Additional arguments
@@ -194,8 +203,11 @@ class GerritProvider(RepositoryProvider):
         Returns:
             Response object
         """
-        # Use HTTP Digest Authentication (Gerrit default)
-        auth = HTTPDigestAuth(username, http_password)
+        # Select authentication method based on auth_type
+        if auth_type == "basic":
+            auth = HTTPBasicAuth(username, http_password)
+        else:
+            auth = HTTPDigestAuth(username, http_password)
 
         headers = {"Accept": "application/json", "Content-Type": "application/json"}
 
@@ -237,6 +249,7 @@ class GerritProvider(RepositoryProvider):
             git_token = entry.get("git_token") or ""
             git_domain = entry.get("git_domain") or ""
             user_name = entry.get("user_name") or ""
+            auth_type = entry.get("auth_type") or "digest"
 
             if not git_token or not user_name:
                 # Skip empty token/user_name entries
@@ -275,6 +288,7 @@ class GerritProvider(RepositoryProvider):
                     url=f"{api_base_url}/projects/",
                     username=user_name,
                     http_password=git_token,
+                    auth_type=auth_type,
                     params={"d": ""},  # Include descriptions
                 )
 
@@ -367,6 +381,7 @@ class GerritProvider(RepositoryProvider):
         git_info = self._pick_git_info(user, git_domain)
         git_token = git_info["git_token"]
         user_name = git_info["user_name"]
+        auth_type = git_info.get("auth_type") or "digest"
 
         if not git_token or not user_name:
             raise HTTPException(
@@ -387,6 +402,7 @@ class GerritProvider(RepositoryProvider):
                 url=f"{api_base_url}/projects/{encoded_project}/branches/",
                 username=user_name,
                 http_password=git_token,
+                auth_type=auth_type,
             )
 
             # Parse response and strip XSSI prefix
@@ -399,7 +415,7 @@ class GerritProvider(RepositoryProvider):
 
             # Get default branch (HEAD ref)
             default_branch_name = self._get_default_branch(
-                repo_name, git_domain, user_name, git_token
+                repo_name, git_domain, user_name, git_token, auth_type
             )
 
             branches = []
@@ -421,7 +437,12 @@ class GerritProvider(RepositoryProvider):
             raise HTTPException(status_code=502, detail=f"Gerrit API error: {str(e)}")
 
     def _get_default_branch(
-        self, repo_name: str, git_domain: str, user_name: str, git_token: str
+        self,
+        repo_name: str,
+        git_domain: str,
+        user_name: str,
+        git_token: str,
+        auth_type: str = "digest",
     ) -> str:
         """
         Get default branch for a Gerrit project
@@ -431,6 +452,7 @@ class GerritProvider(RepositoryProvider):
             git_domain: Git domain
             user_name: Gerrit user_name
             git_token: HTTP password
+            auth_type: Authentication type ('digest' or 'basic')
 
         Returns:
             Default branch name (e.g., "master" or "main")
@@ -445,6 +467,7 @@ class GerritProvider(RepositoryProvider):
                 url=f"{api_base_url}/projects/{encoded_project}/HEAD",
                 username=user_name,
                 http_password=git_token,
+                auth_type=auth_type,
             )
 
             # Parse response and strip XSSI prefix
@@ -464,7 +487,11 @@ class GerritProvider(RepositoryProvider):
             return "master"  # Fallback to master
 
     def validate_token(
-        self, token: str, git_domain: str = None, user_name: str = None
+        self,
+        token: str,
+        git_domain: str = None,
+        user_name: str = None,
+        auth_type: str = "digest",
     ) -> Dict[str, Any]:
         """
         Validate Gerrit HTTP password
@@ -473,6 +500,7 @@ class GerritProvider(RepositoryProvider):
             token: HTTP password from Gerrit Settings
             git_domain: Gerrit domain
             user_name: Gerrit user_name
+            auth_type: Authentication type ('digest' or 'basic'), defaults to 'digest'
 
         Returns:
             Validation result including validity, user information, etc.
@@ -497,6 +525,7 @@ class GerritProvider(RepositoryProvider):
                 url=f"{api_base_url}/accounts/self",
                 username=user_name,
                 http_password=decrypt_token,
+                auth_type=auth_type,
             )
 
             # Parse response and strip XSSI prefix
@@ -522,10 +551,12 @@ class GerritProvider(RepositoryProvider):
             self.logger.error(f"Gerrit API request failed: {str(e)}")
             if hasattr(e, "response") and e.response and e.response.status_code == 401:
                 self.logger.warning(
-                    f"Gerrit token validation failed: 401 Unauthorized, git_domain: {git_domain}, user_name: {user_name}"
+                    f"Gerrit token validation failed: 401 Unauthorized, git_domain: {git_domain}, user_name: {user_name}, auth_type: {auth_type}"
                 )
                 return {
                     "valid": False,
+                    "error": "auth_failed",
+                    "message": f"Authentication failed. Please check if the auth method ({auth_type}) is correct.",
                 }
             raise HTTPException(status_code=502, detail=f"Gerrit API error: {str(e)}")
         except Exception as e:
@@ -563,6 +594,7 @@ class GerritProvider(RepositoryProvider):
             git_token = entry.get("git_token") or ""
             git_domain = entry.get("git_domain") or ""
             user_name = entry.get("user_name") or ""
+            auth_type = entry.get("auth_type") or "digest"
 
             if not git_token or not user_name:
                 # Skip empty token/user_name entries
@@ -650,7 +682,7 @@ class GerritProvider(RepositoryProvider):
 
             # 3) No cache and not building, trigger domain-level full retrieval
             await self._fetch_all_repositories_async(
-                user, git_token, user_name, git_domain
+                user, git_token, user_name, git_domain, auth_type
             )
 
             # 4) Try cache after building
@@ -688,7 +720,12 @@ class GerritProvider(RepositoryProvider):
         return all_results
 
     async def _fetch_all_repositories_async(
-        self, user: User, git_token: str, user_name: str, git_domain: str
+        self,
+        user: User,
+        git_token: str,
+        user_name: str,
+        git_domain: str,
+        auth_type: str = "digest",
     ) -> None:
         """
         Asynchronously fetch all user's Gerrit projects and cache them
@@ -698,6 +735,7 @@ class GerritProvider(RepositoryProvider):
             git_token: HTTP password
             user_name: Gerrit user_name
             git_domain: Git domain
+            auth_type: Authentication type ('digest' or 'basic')
         """
         # Check if already building
         if await cache_manager.is_building(user.id, git_domain):
@@ -717,6 +755,7 @@ class GerritProvider(RepositoryProvider):
                 url=f"{api_base_url}/projects/",
                 username=user_name,
                 http_password=git_token,
+                auth_type=auth_type,
                 params={"d": ""},  # Include descriptions
             )
 
@@ -911,6 +950,7 @@ class GerritProvider(RepositoryProvider):
         git_info = self._pick_git_info(user, git_domain)
         git_token = git_info["git_token"]
         user_name = git_info["user_name"]
+        auth_type = git_info.get("auth_type") or "digest"
 
         if not git_token or not user_name:
             raise HTTPException(
@@ -938,6 +978,7 @@ class GerritProvider(RepositoryProvider):
                 url=f"{api_base_url}/changes/",
                 username=user_name,
                 http_password=git_token,
+                auth_type=auth_type,
                 json_data=change_input,
             )
 
