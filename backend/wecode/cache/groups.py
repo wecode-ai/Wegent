@@ -20,7 +20,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.models.namespace import Namespace
-from app.services.readers.groups import VISIBILITY_PUBLIC, IGroupReader
+from app.services.readers.groups import VISIBILITY_PUBLIC, GroupReader, IGroupReader
 from wecode.cache.base import (
     CACHE_TTL,
     CACHE_VERSION,
@@ -43,10 +43,10 @@ _events_registered = False
 
 def wrap(base_reader: IGroupReader) -> Optional[IGroupReader]:
     """
-    Wrap base reader with Redis caching.
+    Create cached reader with Redis caching.
 
     Args:
-        base_reader: The underlying reader
+        base_reader: The underlying reader (kept for API compatibility, not used)
 
     Returns:
         Cached reader if Redis available, None otherwise
@@ -57,7 +57,7 @@ def wrap(base_reader: IGroupReader) -> Optional[IGroupReader]:
     if redis is None:
         return None
 
-    reader = CachedGroupReader(base_reader, redis)
+    reader = CachedGroupReader(redis)
 
     if not _events_registered:
         register_events(Namespace, _on_change, reader)
@@ -81,11 +81,10 @@ def _on_change(operation: str, target, reader: IGroupReader) -> None:
 # =============================================================================
 
 
-class CachedGroupReader(IGroupReader):
-    """Cached Group reader using Redis."""
+class CachedGroupReader(GroupReader):
+    """Cached Group reader using Redis, inherits from GroupReader for fallback."""
 
-    def __init__(self, base: IGroupReader, redis):
-        self._base = base
+    def __init__(self, redis):
         self._redis = redis
 
     # Key generation
@@ -136,7 +135,7 @@ class CachedGroupReader(IGroupReader):
         if cached is not None:
             return self._to_model(cached)
 
-        result = self._base.get_by_name(db, name)
+        result = super().get_by_name(db, name)
         self._set_data(name, result)
         return result
 
@@ -147,7 +146,7 @@ class CachedGroupReader(IGroupReader):
                 return None
             return cached.get("visibility")
 
-        group = self._base.get_by_name(db, name)
+        group = super().get_by_name(db, name)
         self._set_data(name, group)
         return group.visibility if group else None
 

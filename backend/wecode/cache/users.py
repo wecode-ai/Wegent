@@ -22,7 +22,7 @@ from typing import List, Optional
 from sqlalchemy.orm import Session
 
 from app.models.user import User
-from app.services.readers.users import IUserReader
+from app.services.readers.users import IUserReader, UserReader
 from wecode.cache.base import (
     CACHE_TTL,
     CACHE_VERSION,
@@ -45,10 +45,10 @@ _events_registered = False
 
 def wrap(base_reader: IUserReader) -> Optional[IUserReader]:
     """
-    Wrap base reader with Redis caching.
+    Create cached reader with Redis caching.
 
     Args:
-        base_reader: The underlying reader
+        base_reader: The underlying reader (kept for API compatibility, not used)
 
     Returns:
         Cached reader if Redis available, None otherwise
@@ -59,7 +59,7 @@ def wrap(base_reader: IUserReader) -> Optional[IUserReader]:
     if redis is None:
         return None
 
-    reader = CachedUserReader(base_reader, redis)
+    reader = CachedUserReader(redis)
 
     if not _events_registered:
         register_events(User, _on_change, reader)
@@ -88,11 +88,10 @@ def _on_change(operation: str, target, reader: IUserReader) -> None:
 # =============================================================================
 
 
-class CachedUserReader(IUserReader):
-    """Cached User reader using Redis."""
+class CachedUserReader(UserReader):
+    """Cached User reader using Redis, inherits from UserReader for fallback."""
 
-    def __init__(self, base: IUserReader, redis):
-        self._base = base
+    def __init__(self, redis):
         self._redis = redis
 
     # Key generation
@@ -153,7 +152,7 @@ class CachedUserReader(IUserReader):
         if cached is not None:
             return self._to_model(cached)
 
-        result = self._base.get_by_id(db, user_id)
+        result = super().get_by_id(db, user_id)
         if result:
             self._set_data(user_id, result)
         return result
@@ -169,7 +168,7 @@ class CachedUserReader(IUserReader):
             if cached is not None:
                 return self._to_model(cached)
 
-        result = self._base.get_by_name(db, user_name)
+        result = super().get_by_name(db, user_name)
         if result:
             self._set_data(result.id, result)
             self._set_idx(idx_key, result.id)
@@ -178,8 +177,8 @@ class CachedUserReader(IUserReader):
         return result
 
     def get_all(self, db: Session) -> List[User]:
-        """Get all users (not cached, delegates to base reader)."""
-        return self._base.get_all(db)
+        """Get all users (not cached, delegates to parent)."""
+        return super().get_all(db)
 
     # Cache invalidation
 

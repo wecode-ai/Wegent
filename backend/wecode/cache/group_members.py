@@ -21,7 +21,7 @@ from typing import List, Optional
 from sqlalchemy.orm import Session
 
 from app.models.namespace_member import NamespaceMember
-from app.services.readers.group_members import IGroupMemberReader
+from app.services.readers.group_members import GroupMemberReader, IGroupMemberReader
 from wecode.cache.base import (
     CACHE_TTL,
     CACHE_VERSION,
@@ -42,10 +42,10 @@ _events_registered = False
 
 def wrap(base_reader: IGroupMemberReader) -> Optional[IGroupMemberReader]:
     """
-    Wrap base reader with Redis caching.
+    Create cached reader with Redis caching.
 
     Args:
-        base_reader: The underlying reader
+        base_reader: The underlying reader (kept for API compatibility, not used)
 
     Returns:
         Cached reader if Redis available, None otherwise
@@ -56,7 +56,7 @@ def wrap(base_reader: IGroupMemberReader) -> Optional[IGroupMemberReader]:
     if redis is None:
         return None
 
-    reader = CachedGroupMemberReader(base_reader, redis)
+    reader = CachedGroupMemberReader(redis)
 
     if not _events_registered:
         register_events(NamespaceMember, _on_change, reader)
@@ -85,11 +85,10 @@ def _on_change(operation: str, target, reader: IGroupMemberReader) -> None:
 # =============================================================================
 
 
-class CachedGroupMemberReader(IGroupMemberReader):
-    """Cached GroupMember reader using Redis."""
+class CachedGroupMemberReader(GroupMemberReader):
+    """Cached GroupMember reader using Redis, inherits from GroupMemberReader for fallback."""
 
-    def __init__(self, base: IGroupMemberReader, redis):
-        self._base = base
+    def __init__(self, redis):
         self._redis = redis
 
     # Key generation
@@ -160,15 +159,15 @@ class CachedGroupMemberReader(IGroupMemberReader):
         if cached is not None:
             return None if cached == NULL_MARKER else cached
 
-        result = self._base.get_role(db, group_name, user_id)
+        result = super().get_role(db, group_name, user_id)
         self._set_idx(idx_key, result if result else NULL_MARKER)
         return result
 
     def get_by_group_and_user(
         self, db: Session, group_name: str, user_id: int
     ) -> Optional[NamespaceMember]:
-        # Not cached, delegates to base reader
-        return self._base.get_by_group_and_user(db, group_name, user_id)
+        # Not cached, delegates to parent
+        return super().get_by_group_and_user(db, group_name, user_id)
 
     def get_user_groups(self, db: Session, user_id: int) -> List[str]:
         list_key = self._key_idx_user_groups(user_id)
@@ -177,7 +176,7 @@ class CachedGroupMemberReader(IGroupMemberReader):
         if cached is not None:
             return cached
 
-        result = self._base.get_user_groups(db, user_id)
+        result = super().get_user_groups(db, user_id)
         self._set_list(list_key, result)
         return result
 

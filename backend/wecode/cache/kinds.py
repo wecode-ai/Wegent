@@ -22,7 +22,7 @@ from typing import List, Optional
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
-from app.services.readers.kinds import IKindReader, KindType
+from app.services.readers.kinds import IKindReader, KindReader, KindType
 from wecode.cache.base import (
     CACHE_TTL,
     CACHE_VERSION,
@@ -45,10 +45,10 @@ _events_registered = False
 
 def wrap(base_reader: IKindReader) -> Optional[IKindReader]:
     """
-    Wrap base reader with Redis caching.
+    Create cached reader with Redis caching.
 
     Args:
-        base_reader: The underlying reader
+        base_reader: The underlying reader (kept for API compatibility, not used)
 
     Returns:
         Cached reader if Redis available, None otherwise
@@ -59,7 +59,7 @@ def wrap(base_reader: IKindReader) -> Optional[IKindReader]:
     if redis is None:
         return None
 
-    reader = CachedKindReader(base_reader, redis)
+    reader = CachedKindReader(redis)
 
     if not _events_registered:
         register_events(Kind, _on_change, reader)
@@ -91,11 +91,10 @@ def _on_change(operation: str, target, reader: IKindReader) -> None:
 # =============================================================================
 
 
-class CachedKindReader(IKindReader):
-    """Cached Kind reader using Redis."""
+class CachedKindReader(KindReader):
+    """Cached Kind reader using Redis, inherits from KindReader for fallback."""
 
-    def __init__(self, base: IKindReader, redis):
-        self._base = base
+    def __init__(self, redis):
         self._redis = redis
 
     # Key generation
@@ -168,7 +167,7 @@ class CachedKindReader(IKindReader):
         if cached is not None:
             return self._to_model(cached)
 
-        result = self._base.get_by_id(db, kind, resource_id)
+        result = super().get_by_id(db, kind, resource_id)
         if result:
             self._set_data(kind, resource_id, result)
         return result
@@ -194,7 +193,7 @@ class CachedKindReader(IKindReader):
 
         # Query missing from database
         if missing_ids:
-            db_results = self._base.get_by_ids(db, kind, missing_ids)
+            db_results = super().get_by_ids(db, kind, missing_ids)
             for item in db_results:
                 self._set_data(kind, item.id, item)
                 results.append(item)
@@ -214,7 +213,7 @@ class CachedKindReader(IKindReader):
             if cached is not None:
                 return self._to_model(cached)
 
-        result = self._base.get_personal(db, user_id, kind, namespace, name)
+        result = super().get_personal(db, user_id, kind, namespace, name)
         if result:
             self._set_data(kind, result.id, result)
             self._set_idx(idx_key, result.id)
@@ -235,7 +234,7 @@ class CachedKindReader(IKindReader):
             if cached is not None:
                 return self._to_model(cached)
 
-        result = self._base.get_public(db, kind, namespace, name)
+        result = super().get_public(db, kind, namespace, name)
         if result:
             self._set_data(kind, result.id, result)
             self._set_idx(idx_key, result.id)
@@ -256,7 +255,7 @@ class CachedKindReader(IKindReader):
             if cached is not None:
                 return self._to_model(cached)
 
-        result = self._base.get_group(db, kind, namespace, name)
+        result = super().get_group(db, kind, namespace, name)
         if result:
             self._set_data(kind, result.id, result)
             self._set_idx(idx_key, result.id)

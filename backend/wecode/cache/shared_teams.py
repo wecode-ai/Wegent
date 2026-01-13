@@ -21,7 +21,7 @@ from typing import List, Optional
 from sqlalchemy.orm import Session
 
 from app.models.shared_team import SharedTeam
-from app.services.readers.shared_teams import ISharedTeamReader
+from app.services.readers.shared_teams import ISharedTeamReader, SharedTeamReader
 from wecode.cache.base import (
     CACHE_TTL,
     CACHE_VERSION,
@@ -42,10 +42,10 @@ _events_registered = False
 
 def wrap(base_reader: ISharedTeamReader) -> Optional[ISharedTeamReader]:
     """
-    Wrap base reader with Redis caching.
+    Create cached reader with Redis caching.
 
     Args:
-        base_reader: The underlying reader
+        base_reader: The underlying reader (kept for API compatibility, not used)
 
     Returns:
         Cached reader if Redis available, None otherwise
@@ -56,7 +56,7 @@ def wrap(base_reader: ISharedTeamReader) -> Optional[ISharedTeamReader]:
     if redis is None:
         return None
 
-    reader = CachedSharedTeamReader(base_reader, redis)
+    reader = CachedSharedTeamReader(redis)
 
     if not _events_registered:
         register_events(SharedTeam, _on_change, reader)
@@ -85,11 +85,10 @@ def _on_change(operation: str, target, reader: ISharedTeamReader) -> None:
 # =============================================================================
 
 
-class CachedSharedTeamReader(ISharedTeamReader):
-    """Cached SharedTeam reader using Redis."""
+class CachedSharedTeamReader(SharedTeamReader):
+    """Cached SharedTeam reader using Redis, inherits from SharedTeamReader for fallback."""
 
-    def __init__(self, base: ISharedTeamReader, redis):
-        self._base = base
+    def __init__(self, redis):
         self._redis = redis
 
     # Key generation
@@ -156,7 +155,7 @@ class CachedSharedTeamReader(ISharedTeamReader):
         if cached is not None:
             return cached != NULL_MARKER
 
-        result = self._base.is_shared_to_user(db, team_id, user_id)
+        result = super().is_shared_to_user(db, team_id, user_id)
         self._set_idx(idx_key, "1" if result else NULL_MARKER)
         return result
 
@@ -167,15 +166,15 @@ class CachedSharedTeamReader(ISharedTeamReader):
         if cached is not None:
             return cached
 
-        result = self._base.get_shared_team_ids(db, user_id)
+        result = super().get_shared_team_ids(db, user_id)
         self._set_list(list_key, result)
         return result
 
     def get_by_team_and_user(
         self, db: Session, team_id: int, user_id: int
     ) -> Optional[SharedTeam]:
-        # Not cached, delegates to base reader
-        return self._base.get_by_team_and_user(db, team_id, user_id)
+        # Not cached, delegates to parent
+        return super().get_by_team_and_user(db, team_id, user_id)
 
     # Cache invalidation
 
