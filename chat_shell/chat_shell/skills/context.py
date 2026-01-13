@@ -35,6 +35,7 @@ class SkillToolContext:
     db_session: Any  # SQLAlchemy AsyncSession
     ws_emitter: Any  # WebSocket emitter
     skill_config: dict[str, Any] = field(default_factory=dict)
+    user_name: str = ""
 
     def get_config(self, key: str, default: Any = None) -> Any:
         """Get a configuration value from skill config.

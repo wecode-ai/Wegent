@@ -62,6 +62,9 @@ dependencies = [
     "pillow>=12.0.0",
     "markdown>=3.5.0",
     "beautifulsoup4>=4.12.0",
+    # E2B sandbox
+    "e2b==2.9.1",
+    "e2b-code-interpreter==2.4.1",
     # RAG
     "llama-index-core>=0.12.0",
     "llama-index-vector-stores-elasticsearch>=0.4.0",

@@ -15,21 +15,19 @@ import time
 import uuid
 from typing import Any, Dict, Optional
 
-from executor_manager.clients.task_api_client import TaskApiClient
-from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
-from executor_manager.executors.dispatcher import ExecutorDispatcher
-from executor_manager.tasks.task_processor import TaskProcessor
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 from shared.logger import setup_logger
 from shared.models.task import TasksRequest
 from shared.telemetry.config import get_otel_config
-from shared.telemetry.context import (
-    set_request_context,
-    set_task_context,
-    set_user_context,
-)
+from shared.telemetry.context import (set_request_context, set_task_context,
+                                      set_user_context)
+
+from executor_manager.clients.task_api_client import TaskApiClient
+from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
+from executor_manager.executors.dispatcher import ExecutorDispatcher
+from executor_manager.tasks.task_processor import TaskProcessor
 
 # Setup logger
 logger = setup_logger(__name__)
@@ -39,6 +37,29 @@ app = FastAPI(
     title="Executor Manager API",
     description="API for managing executor tasks and callbacks",
 )
+
+# E2B Standard API routes
+from executor_manager.routers.e2b import router as e2b_router
+from executor_manager.routers.sandbox import router as sandbox_router
+# Wegent E2B private protocol proxy routes
+from executor_manager.routers.wegent_e2b_proxy import \
+    router as wegent_e2b_proxy_router
+
+app.include_router(sandbox_router, prefix="/executor-manager")
+
+# E2B standard endpoints:
+# All E2B routes are prefixed with /executor_manager/e2b for unified routing
+# - /executor_manager/e2b/sandboxes - Create sandbox (POST), Get sandbox (GET), Delete (DELETE)
+# - /executor_manager/e2b/v2/sandboxes - List sandboxes
+# - /executor_manager/e2b/sandboxes/{id}/timeout - Set timeout
+# - /executor_manager/e2b/sandboxes/{id}/pause - Pause sandbox
+# - /executor_manager/e2b/sandboxes/{id}/resume - Resume sandbox
+# - /executor_manager/e2b/sandboxes/{id}/connect - Connect to sandbox
+app.include_router(e2b_router, prefix="/executor_manager/e2b")
+
+# Private protocol proxy for sandbox access
+# Routes: /executor_manager/e2b/proxy/<sandboxID>/<port>/<path> -> container
+app.include_router(wegent_e2b_proxy_router, prefix="")
 
 # Create task processor for handling callbacks
 task_processor = TaskProcessor()
@@ -205,6 +226,7 @@ class CallbackRequest(BaseModel):
     task_type: Optional[str] = (
         None  # Task type: "validation" for validation tasks, None for regular tasks
     )
+    subagent_metadata: Optional[Dict[str, Any]] = None  # SubAgent metadata from task
 
 
 @app.post("/executor-manager/callback")
@@ -234,7 +256,9 @@ async def callback_handler(request: CallbackRequest, http_request: Request):
             )
             if result_value:
                 # Log first 200 chars of content
-                preview = result_value[:200] if len(result_value) > 200 else result_value
+                preview = (
+                    result_value[:200] if len(result_value) > 200 else result_value
+                )
                 logger.info(f"[DEBUG] Content preview: {preview}...")
 
         # Set task context for tracing (function handles OTEL enabled check internally)
@@ -256,6 +280,18 @@ async def callback_handler(request: CallbackRequest, http_request: Request):
             return {
                 "status": "success",
                 "message": f"Successfully processed validation callback for task {request.task_id}",
+            }
+
+        # Check if this is a Sandbox execution callback
+        is_sandbox_task = request.task_type == "sandbox"
+        if is_sandbox_task:
+            await _handle_sandbox_callback(request)
+            logger.info(
+                f"Successfully processed Sandbox callback for task {request.task_id}"
+            )
+            return {
+                "status": "success",
+                "message": f"Successfully processed Sandbox callback for task {request.task_id}",
             }
 
         # For regular tasks, update task status in database
@@ -348,6 +384,86 @@ async def _forward_validation_callback(request: CallbackRequest):
         logger.error(f"Error forwarding validation callback: {e}")
 
 
+async def _handle_sandbox_callback(request: CallbackRequest):
+    """Handle Sandbox execution callback.
+
+    This function updates the execution status in sandbox_manager based on
+    the callback from executor container.
+
+    Args:
+        request: Callback request containing execution status and result
+    """
+    from executor_manager.services.sandbox import get_sandbox_manager
+
+    # Use task_id and subtask_id from callback request to identify execution
+    task_id = request.task_id
+    subtask_id = request.subtask_id
+
+    logger.info(
+        f"[SandboxCallback] Processing callback: "
+        f"task_id={task_id}, subtask_id={subtask_id}, "
+        f"status={request.status}, progress={request.progress}"
+    )
+
+    # Get sandbox manager
+    manager = get_sandbox_manager()
+
+    # Load execution from Redis Hash by task_id and subtask_id
+    execution = manager._repository.load_execution(task_id, subtask_id)
+    if not execution:
+        logger.error(
+            f"[SandboxCallback] Execution not found in Redis: "
+            f"task_id={task_id}, subtask_id={subtask_id}"
+        )
+        return
+
+    # Update execution status based on callback
+    status_lower = request.status.lower() if request.status else ""
+
+    if status_lower == "completed":
+        # Extract result from callback
+        result_value = None
+        if request.result:
+            result_value = request.result.get("value", "")
+
+        execution.set_completed(result_value or "")
+        logger.info(
+            f"[SandboxCallback] Execution completed: "
+            f"task_id={task_id}, subtask_id={subtask_id}, "
+            f"result_length={len(result_value) if result_value else 0}"
+        )
+
+    elif status_lower == "failed":
+        error_msg = request.error_message or "Execution failed"
+        execution.set_failed(error_msg)
+        logger.info(
+            f"[SandboxCallback] Execution failed: "
+            f"task_id={task_id}, subtask_id={subtask_id}, error={error_msg}"
+        )
+
+    elif status_lower == "running":
+        # Update progress for running status
+        execution.progress = request.progress
+        logger.debug(
+            f"[SandboxCallback] Execution progress: "
+            f"task_id={task_id}, subtask_id={subtask_id}, progress={request.progress}"
+        )
+
+    else:
+        logger.warning(
+            f"[SandboxCallback] Unknown status: "
+            f"task_id={task_id}, subtask_id={subtask_id}, status={request.status}"
+        )
+
+    # Save updated execution state to Redis
+    manager._repository.save_execution(execution)
+
+    logger.info(
+        f"[SandboxCallback] Execution updated: "
+        f"task_id={task_id}, subtask_id={subtask_id}, status={execution.status.value}"
+    )
+
+
 @app.post("/executor-manager/tasks/receive")
 async def receive_tasks(request: TasksRequest, http_request: Request):
     """
@@ -392,6 +508,12 @@ async def root_health_check():
 async def health_check():
     """Health check endpoint"""
     return {"status": "healthy"}
+
+
+@app.get("/ready")
+async def readiness_check():
+    """Readiness probe endpoint."""
+    return {"status": "ready"}
 
 
 class DeleteExecutorRequest(BaseModel):

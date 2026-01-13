@@ -5,17 +5,18 @@ test.describe('Settings - Bot Management', () => {
     // Bot management is accessed through "Manage Bots" button in team tab
     await page.goto('/settings?tab=team')
     await page.waitForLoadState('domcontentloaded')
+    // Wait for team page content to fully load - the title is "Team List" or "智能体列表"
+    await expect(
+      page.locator('h2:has-text("Team List"), h2:has-text("智能体列表")')
+    ).toBeVisible({ timeout: 15000 })
   })
 
   test('should access bot management via manage bots button', async ({ page }) => {
     await expect(page).toHaveURL(/\/settings/)
 
-    // Wait for team page to load
-    await expect(page.locator('h2:has-text("Team")')).toBeVisible({ timeout: 10000 })
-
     // Click "Manage Bots" button to open bot list dialog
-    const manageBots = page.locator('button:has-text("Manage Bots"), button:has-text("管理Bot")')
-    await expect(manageBots).toBeVisible({ timeout: 5000 })
+    const manageBots = page.locator('button:has-text("Manage Bots"), button:has-text("管理机器人")')
+    await expect(manageBots).toBeVisible({ timeout: 10000 })
     await manageBots.click()
 
     // Bot list dialog should open
@@ -31,7 +32,7 @@ test.describe('Settings - Bot Management', () => {
 
   test('should display bot list or empty state in dialog', async ({ page }) => {
     // Open Manage Bots dialog
-    const manageBots = page.locator('button:has-text("Manage Bots"), button:has-text("管理Bot")')
+    const manageBots = page.locator('button:has-text("Manage Bots"), button:has-text("管理机器人")')
     await expect(manageBots).toBeVisible({ timeout: 10000 })
     await manageBots.click()
 
@@ -55,7 +56,7 @@ test.describe('Settings - Bot Management', () => {
 
   test('should open create bot form', async ({ page }) => {
     // Open Manage Bots dialog
-    const manageBots = page.locator('button:has-text("Manage Bots"), button:has-text("管理Bot")')
+    const manageBots = page.locator('button:has-text("Manage Bots"), button:has-text("管理机器人")')
     await expect(manageBots).toBeVisible({ timeout: 10000 })
     await manageBots.click()
 
@@ -86,7 +87,7 @@ test.describe('Settings - Bot Management', () => {
     const botName = TestData.uniqueName(`${testPrefix}-bot`)
 
     // Open Manage Bots dialog
-    const manageBots = page.locator('button:has-text("Manage Bots"), button:has-text("管理Bot")')
+    const manageBots = page.locator('button:has-text("Manage Bots"), button:has-text("管理机器人")')
     await expect(manageBots).toBeVisible({ timeout: 10000 })
     await manageBots.click()
 
@@ -124,7 +125,7 @@ test.describe('Settings - Bot Management', () => {
 
   test('should show edit and delete buttons for existing bots', async ({ page }) => {
     // Open Manage Bots dialog
-    const manageBots = page.locator('button:has-text("Manage Bots"), button:has-text("管理Bot")')
+    const manageBots = page.locator('button:has-text("Manage Bots"), button:has-text("管理机器人")')
     await expect(manageBots).toBeVisible({ timeout: 10000 })
     await manageBots.click()
 

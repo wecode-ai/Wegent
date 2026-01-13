@@ -15,6 +15,8 @@ from app.core import security
 from app.models.subtask import Subtask
 from app.models.user import User
 from app.schemas.subtask import (
+    MessageEditRequest,
+    MessageEditResponse,
     PollMessagesResponse,
     StreamingStatus,
     SubtaskInDB,
@@ -125,6 +127,41 @@ def delete_subtask(
         db=db, subtask_id=subtask_id, user_id=current_user.id
     )
     return {"message": "Subtask deleted successfully"}
+
+
+@router.post("/{subtask_id}/edit", response_model=MessageEditResponse)
+def edit_user_message(
+    subtask_id: int,
+    request: MessageEditRequest,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Edit a user message by deleting it and all subsequent messages.
+
+    This implements ChatGPT-style message editing. The edited message and all
+    messages after it are deleted. The frontend should then send a new message
+    with the edited content to trigger a fresh AI response.
+
+    Constraints:
+    - Only USER role messages can be edited
+    - Not available in group chat
+    - Cannot edit while AI is generating a response
+    """
+    returned_subtask_id, message_id, deleted_count = subtask_service.edit_user_message(
+        db=db,
+        subtask_id=subtask_id,
+        new_content=request.new_content,
+        user_id=current_user.id,
+    )
+
+    return MessageEditResponse(
+        success=True,
+        subtask_id=returned_subtask_id,
+        message_id=message_id,
+        deleted_count=deleted_count,
+        new_content=request.new_content,
+    )
 
 
 @router.get("/tasks/{task_id}/messages/poll", response_model=PollMessagesResponse)
