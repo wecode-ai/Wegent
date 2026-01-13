@@ -500,8 +500,8 @@ class ClaudeCodeAgent(Agent):
             # Check if bot config is available
             if "bot" in self.task_data and len(self.task_data["bot"]) > 0:
                 bot_config = self.task_data["bot"][0]
-                user_name = self.task_data["user"]["name"]
-                git_url = self.task_data["git_url"]
+                user_name = self.task_data.get("user", {}).get("name", "unknown")
+                git_url = self.task_data.get("git_url", "")
                 # Get config from bot
                 agent_config = self._create_claude_model(
                     bot_config, user_name=user_name, git_url=git_url
@@ -653,7 +653,7 @@ class ClaudeCodeAgent(Agent):
             "max_buffer_size": 50 * 1024 * 1024,  # 50MB
         }
         bots = task_data.get("bot", [])
-        bot_config = bots[0]
+        bot_config = bots[0] if bots else {}
         # Extract all non-None parameters from bot_config
         if bot_config:
             # Extract MCP servers configuration
@@ -901,12 +901,11 @@ class ClaudeCodeAgent(Agent):
             prompt = self.prompt
             if self.options.get("cwd"):
                 prompt = (
-                    prompt
-                    + "\nCurrent working directory: "
-                    + self.options.get("cwd")
-                    + "\n project url:"
-                    + self.task_data.get("git_url")
+                    prompt + "\nCurrent working directory: " + self.options.get("cwd")
                 )
+                git_url = self.task_data.get("git_url")
+                if git_url:
+                    prompt = prompt + "\n project url:" + git_url
 
             progress = 75
             # Update current progress
@@ -1383,10 +1382,11 @@ class ClaudeCodeAgent(Agent):
                 logger.warning("No auth token available, cannot download attachments")
                 return
 
-            # Determine workspace path
-            workspace = self.project_path or os.path.join(
-                config.WORKSPACE_ROOT, str(self.task_id)
-            )
+            # Determine workspace path for attachments
+            # Attachments should be stored in WORKSPACE_ROOT/task_id, not in the project path
+            # This ensures attachments are accessible at /workspace/{task_id}:executor:attachments/...
+            # instead of /workspace/{task_id}/{repo_name}/{task_id}:executor:attachments/...
+            workspace = os.path.join(config.WORKSPACE_ROOT, str(self.task_id))
 
             # Import and use attachment downloader
             from executor.services.attachment_downloader import \
