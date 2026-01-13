@@ -78,10 +78,12 @@ def parse_wegent_tools(tools: Optional[List[WegentTool]]) -> Dict[str, Any]:
         Dict with parsed tool settings:
         - enable_chat_bot: bool (enables all server-side capabilities)
         - mcp_servers: dict (custom MCP server configurations, format: {name: config})
+        - preload_skills: list (skills to preload for the bot)
     """
     result: Dict[str, Any] = {
         "enable_chat_bot": False,
         "mcp_servers": {},
+        "preload_skills": [],
     }
     if tools:
         for tool in tools:
@@ -103,6 +105,9 @@ def parse_wegent_tools(tools: Optional[List[WegentTool]]) -> Dict[str, Any]:
                                 "command": config.get("command"),
                                 "args": config.get("args"),
                             }
+            elif tool.type == "skill" and tool.preload_skills:
+                # Add skills to preload_skills list
+                result["preload_skills"].extend(tool.preload_skills)
     return result
 
 

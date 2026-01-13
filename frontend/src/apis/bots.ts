@@ -14,6 +14,7 @@ export interface CreateBotRequest {
   system_prompt: string
   mcp_servers: Record<string, unknown>
   skills?: string[]
+  preload_skills?: string[] // Skills to preload into system prompt
   namespace?: string // Group namespace, defaults to 'default' for personal bots
 }
 
@@ -24,6 +25,7 @@ export interface UpdateBotRequest {
   system_prompt?: string
   mcp_servers?: Record<string, unknown>
   skills?: string[]
+  preload_skills?: string[] // Skills to preload into system prompt
   is_active?: boolean
   namespace?: string // Group namespace
 }

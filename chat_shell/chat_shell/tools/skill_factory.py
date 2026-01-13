@@ -32,10 +32,14 @@ def prepare_load_skill_tool(
     This function creates a LoadSkillTool instance that allows the model
     to dynamically load skill prompts on demand.
 
+    Skills with preload=True are filtered out from the available skill list,
+    as they will be preloaded via preload_skill_prompt() and don't need to be
+    loaded dynamically.
+
     Args:
         skill_names: List of skill names available for this session
         user_id: User ID for skill lookup
-        skill_configs: Optional skill configurations containing prompts
+        skill_configs: Optional skill configurations containing prompts and preload flags
 
     Returns:
         LoadSkillTool instance or None if no skills configured
@@ -65,7 +69,7 @@ def prepare_load_skill_tool(
         skill_metadata=skill_metadata,
     )
 
-    logger.debug(
+    logger.info(
         "[skill_factory] Created LoadSkillTool with skills: %s",
         skill_names,
     )
@@ -131,6 +135,7 @@ async def prepare_skill_tools(
     skill_configs: list[dict[str, Any]],
     ws_emitter: Any = None,
     load_skill_tool: Optional[Any] = None,
+    preload_skills: Optional[list[str]] = None,
     user_name: str = "",
 ) -> list[Any]:
     """
@@ -142,9 +147,9 @@ async def prepare_skill_tools(
 
     Skill binaries are downloaded from backend API using REMOTE_STORAGE_URL.
 
-    When a load_skill_tool is provided, this function will also preload the skill
-    prompts into the LoadSkillTool so they are injected into the system prompt
-    via prompt_modifier.
+    When a load_skill_tool is provided, this function will preload skills specified
+    in preload_skills by calling preload_skill_prompt(). These skills will be automatically
+    injected into the system prompt via prompt_modifier.
 
     Args:
         task_id: Task ID for WebSocket room
@@ -155,6 +160,8 @@ async def prepare_skill_tools(
                                    "provider": {...}, "skill_id": int}
         ws_emitter: Optional WebSocket emitter for real-time communication
         load_skill_tool: Optional LoadSkillTool instance to preload skill prompts
+        preload_skills: Optional list of skill names to preload into system prompt.
+                       Skills in this list will have their prompts injected automatically.
         user_name: Username for identifying the user
 
     Returns:
@@ -260,13 +267,30 @@ async def prepare_skill_tools(
         tools.extend(skill_tools)
 
         if skill_tools:
-            # Preload skill prompt into LoadSkillTool if provided
+            logger.info(
+                "[skill_factory] Created %d tools for skill '%s': %s",
+                len(skill_tools),
+                skill_name,
+                [t.name for t in skill_tools],
+            )
+
+            # Preload skill prompt into LoadSkillTool if skill is in preload_skills list
             # This ensures the skill prompt is injected into system message
-            # via prompt_modifier when skill tools are directly available
-            if load_skill_tool is not None:
+            # via prompt_modifier when the skill should be preloaded
+            should_preload = preload_skills is not None and skill_name in preload_skills
+            if load_skill_tool is not None and should_preload:
                 skill_prompt = skill_config.get("prompt", "")
                 if skill_prompt:
                     load_skill_tool.preload_skill_prompt(skill_name, skill_config)
+                    logger.info(
+                        "[skill_factory] Preloaded skill prompt for '%s' (in preload_skills list)",
+                        skill_name,
+                    )
+            elif not should_preload:
+                logger.debug(
+                    "[skill_factory] Skipped preload for skill '%s' (not in preload_skills list, will use load_skill tool)",
+                    skill_name,
+                )
 
     # Log summary of all skills loaded
     if tools:

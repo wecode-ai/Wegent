@@ -331,17 +331,27 @@ def build_system_prompt(
     Build the final system prompt with optional enhancements.
 
     This function centralizes all prompt building logic within chat_shell,
-    applying clarification mode, deep thinking mode, and skill metadata
+    applying clarification mode, deep thinking mode, and on-demand skill metadata
     based on the provided configuration.
+
+    Note: Skills with preload=True will be automatically injected by prompt_modifier
+    via LoadSkillTool.get_combined_skill_prompt(), so they are NOT included here.
 
     Args:
         base_prompt: The base system prompt from Ghost
         enable_clarification: Whether to enable clarification mode
         enable_deep_thinking: Whether to enable deep thinking mode
-        skills: List of skill metadata [{"name": "...", "description": "..."}]
+        skills: List of all skill configs [{"name": "...", "description": "...", "prompt": "...", "preload": bool, ...}]
 
     Returns:
         The final system prompt with all enhancements applied
+
+    Injection Order:
+        1. Base prompt
+        2. Clarification mode instructions (if enabled)
+        3. Deep thinking mode instructions (if enabled)
+        4. On-demand skill metadata (for load_skill tool)
+        5. Preloaded skills (injected later by prompt_modifier)
     """
     system_prompt = base_prompt
 
@@ -353,7 +363,7 @@ def build_system_prompt(
     if enable_deep_thinking:
         system_prompt = append_deep_thinking_prompt(system_prompt, True)
 
-    # Inject skill metadata if skills are configured
+    # Inject on-demand skill metadata (filter out preloaded ones)
     if skills:
         system_prompt = append_skill_metadata_prompt(system_prompt, skills)
 
