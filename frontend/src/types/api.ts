@@ -133,7 +133,7 @@ export interface Team {
   user_id: number
   created_at: string
   updated_at: string
-  share_status?: number // 0: 个人团队, 1: 分享中, 2: 共享团队
+  share_status?: number // 0: private, 1: sharing, 2: shared from others, 3: marketplace installed
   agent_type?: string // agno, claude, dify, etc.
   is_mix_team?: boolean // true if team has multiple different agent types (e.g., ClaudeCode + Agno)
   recommended_mode?: 'chat' | 'code' | 'both' // Recommended usage mode (for QuickAccess)

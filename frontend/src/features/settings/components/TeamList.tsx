@@ -282,13 +282,13 @@ export default function TeamList({
     setTeamToDelete(teamId)
     setIsCheckingTasks(true)
 
-    // Check if this is a shared team
+    // Check if this is a shared team or marketplace team
     const team = teams.find(t => t.id === teamId)
-    const isShared = team?.share_status === 2
-    setIsUnbindingSharedTeam(isShared)
+    const isSharedOrMarketplace = team?.share_status === 2 || team?.share_status === 3
+    setIsUnbindingSharedTeam(isSharedOrMarketplace)
 
-    // For shared teams, skip running tasks check and show unbind confirmation directly
-    if (isShared) {
+    // For shared/marketplace teams, skip running tasks check and show unbind confirmation directly
+    if (isSharedOrMarketplace) {
       setIsCheckingTasks(false)
       setDeleteConfirmVisible(true)
       return
@@ -391,8 +391,8 @@ export default function TeamList({
 
   // Check if edit button should be shown
   const shouldShowEdit = (team: Team) => {
-    // Shared teams don't show edit button
-    if (team.share_status === 2) return false
+    // Shared teams and marketplace teams don't show edit button
+    if (team.share_status === 2 || team.share_status === 3) return false
     // For group teams, check group permissions
     if (isGroupTeam(team)) {
       return canEditGroupResource(team.namespace!)
@@ -411,9 +411,9 @@ export default function TeamList({
     return true
   }
 
-  // Check if this is a shared team (need to show "unbind" instead of "delete")
-  const isSharedTeam = (team: Team) => {
-    return team.share_status === 2
+  // Check if this is a shared team or marketplace team (need to show "unbind" instead of "delete")
+  const isSharedOrMarketplaceTeam = (team: Team) => {
+    return team.share_status === 2 || team.share_status === 3
   }
 
   // Check if share button should be shown
@@ -533,6 +533,15 @@ export default function TeamList({
                                   },
                                 ]
                               : []),
+                            ...(team.share_status === 3
+                              ? [
+                                  {
+                                    key: 'marketplace',
+                                    label: t('marketplace:marketplace_tag'),
+                                    variant: 'secondary' as const,
+                                  },
+                                ]
+                              : []),
                             ...(team.bots.length > 0
                               ? [
                                   {
@@ -626,10 +635,10 @@ export default function TeamList({
                               size="icon"
                               onClick={() => handleDelete(team.id)}
                               disabled={isCheckingTasks}
-                              title={isSharedTeam(team) ? t('teams.unbind') : t('teams.delete')}
+                              title={isSharedOrMarketplaceTeam(team) ? t('teams.unbind') : t('teams.delete')}
                               className="h-7 w-7 sm:h-8 sm:w-8 hover:text-error"
                             >
-                              {isSharedTeam(team) ? (
+                              {isSharedOrMarketplaceTeam(team) ? (
                                 <LinkSlashIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                               ) : (
                                 <TrashIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />

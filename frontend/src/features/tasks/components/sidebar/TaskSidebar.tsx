@@ -20,6 +20,7 @@ import {
   BookOpen,
   ChevronDown,
   ChevronUp,
+  Store,
 } from 'lucide-react'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
@@ -115,6 +116,12 @@ export default function TaskSidebar({
       icon: BookOpen,
       path: paths.wiki.getHref(),
       isActive: pageType === 'knowledge',
+    },
+    {
+      label: t('common:navigation.marketplace'),
+      icon: Store,
+      path: paths.marketplace.getHref(),
+      isActive: false,
     },
   ]
 

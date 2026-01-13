@@ -1,0 +1,39 @@
+{
+  "title": "Agent Marketplace",
+  "description": "Browse and install AI agents from the marketplace",
+  "search_placeholder": "Search agents...",
+  "categories": {
+    "all": "All",
+    "development": "Development",
+    "office": "Office",
+    "creative": "Creative",
+    "data_analysis": "Data Analysis",
+    "education": "Education",
+    "other": "Other"
+  },
+  "install": "Install",
+  "uninstall": "Uninstall",
+  "installed": "Installed",
+  "installing": "Installing...",
+  "install_count": "{{count}} installs",
+  "install_success": "Agent installed successfully",
+  "install_failed": "Failed to install agent",
+  "uninstall_success": "Agent uninstalled successfully",
+  "uninstall_failed": "Failed to uninstall agent",
+  "install_mode": {
+    "title": "Choose Install Mode",
+    "description": "How would you like to install \"{{name}}\"?",
+    "reference": "Reference Mode",
+    "reference_desc": "Use directly, auto-sync updates, cannot modify",
+    "copy": "Copy Mode",
+    "copy_desc": "Create a private copy, can freely modify"
+  },
+  "no_teams": "No agents found",
+  "no_teams_hint": "Try adjusting your search or category filter",
+  "no_description": "No description available",
+  "loading": "Loading agents...",
+  "loading_more": "Loading...",
+  "load_more": "Load More",
+  "error_loading": "Failed to load marketplace agents",
+  "marketplace_tag": "Marketplace"
+}
