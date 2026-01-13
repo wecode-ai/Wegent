@@ -205,30 +205,35 @@ export default function SkillUploadModal({
                 ? t('common:skills.update_modal_title')
                 : t('common:skills.upload_modal_title')}
             </DialogTitle>
-            <DialogDescription>
-              {isEditMode
-                ? t('common:skills.update_modal_description')
-                : t('common:skills.upload_modal_description')}
-              <div className="mt-2 text-xs text-text-muted">
-                <strong>Expected ZIP structure:</strong>
-                <div className="font-mono bg-muted p-2 rounded mt-1">
-                  my-skill.zip
-                  <br />
-                  └── my-skill/
-                  <br />
-                  &nbsp;&nbsp;&nbsp;&nbsp;├── SKILL.md
-                  <br />
-                  &nbsp;&nbsp;&nbsp;&nbsp;└── resources/
-                </div>
-                <div className="mt-2">
-                  <a
-                    href="https://support.claude.com/en/articles/12512198-how-to-create-custom-skills"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-link hover:underline"
-                  >
-                    Learn how to create custom skills →
-                  </a>
+            <DialogDescription asChild>
+              <div>
+                <p>
+                  {isEditMode
+                    ? t('common:skills.update_modal_description')
+                    : t('common:skills.upload_modal_description')}
+                </p>
+
+                <div className="mt-2 text-xs text-text-muted">
+                  <strong>Expected ZIP structure:</strong>
+                  <div className="font-mono bg-muted p-2 rounded mt-1">
+                    my-skill.zip
+                    <br />
+                    └── my-skill/
+                    <br />
+                    &nbsp;&nbsp;&nbsp;&nbsp;├── SKILL.md
+                    <br />
+                    &nbsp;&nbsp;&nbsp;&nbsp;└── resources/
+                  </div>
+                  <div className="mt-2">
+                    <a
+                      href="https://support.claude.com/en/articles/12512198-how-to-create-custom-skills"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-link hover:underline"
+                    >
+                      Learn how to create custom skills →
+                    </a>
+                  </div>
                 </div>
               </div>
             </DialogDescription>
