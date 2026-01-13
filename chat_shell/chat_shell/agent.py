@@ -97,11 +97,11 @@ class ChatAgent:
         self._enable_web_search_default = enable_web_search
 
         # Register built-in skills
-        if enable_skills:
-            from .tools.builtin import FileListSkill, FileReaderSkill
+        # if enable_skills:
+        # from .tools.builtin import FileListSkill, FileReaderSkill
 
-            self.tool_registry.register(FileReaderSkill(workspace_root=workspace_root))
-            self.tool_registry.register(FileListSkill(workspace_root=workspace_root))
+        # self.tool_registry.register(FileReaderSkill(workspace_root=workspace_root))
+        # self.tool_registry.register(FileListSkill(workspace_root=workspace_root))
 
         # Register web search if enabled globally
         web_search_enabled = getattr(settings, "WEB_SEARCH_ENABLED", False)

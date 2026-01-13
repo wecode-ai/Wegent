@@ -180,22 +180,27 @@ def create_app(
         allow_headers=["*"],
     )
 
-    # Initialize OpenTelemetry if enabled
+    # Get OTEL config early for use in middleware
     otel_config = get_otel_config("wegent-chat-shell")
-    if otel_config.enabled:
-        try:
-            from shared.telemetry.core import init_telemetry
-            from shared.telemetry.instrumentation import (
-                setup_opentelemetry_instrumentation,
-            )
 
+    # CRITICAL: Initialize OpenTelemetry instrumentation BEFORE custom middleware
+    # FastAPIInstrumentor adds ASGI-level middleware that extracts trace context
+    # from incoming headers and creates spans. This must happen at the ASGI layer
+    # BEFORE any HTTP middleware runs, so that trace.get_current_span() returns
+    # the correct span with propagated trace context in our custom middleware.
+    #
+    # Note: @app.middleware("http") uses BaseHTTPMiddleware which runs AFTER
+    # ASGI middleware regardless of declaration order. So we initialize OTEL first.
+    if otel_config.enabled:
+        from shared.telemetry.core import init_telemetry, is_telemetry_enabled
+
+        if not is_telemetry_enabled():
+            # Pass all config values from otel_config to init_telemetry
             init_telemetry(
-                service_name=otel_config.service_name,
+                service_name="wegent-chat-shell",
                 enabled=otel_config.enabled,
                 otlp_endpoint=otel_config.otlp_endpoint,
                 sampler_ratio=otel_config.sampler_ratio,
-                service_version=__version__,
-                deployment_environment=settings.ENVIRONMENT,
                 metrics_enabled=otel_config.metrics_enabled,
                 capture_request_headers=otel_config.capture_request_headers,
                 capture_request_body=otel_config.capture_request_body,
@@ -203,17 +208,18 @@ def create_app(
                 capture_response_body=otel_config.capture_response_body,
                 max_body_size=otel_config.max_body_size,
             )
-            logger.info("OpenTelemetry initialized successfully")
-
-            # Apply instrumentation
-            setup_opentelemetry_instrumentation(
-                app=app,
-                logger=logger,
+            logger.info(
+                "OpenTelemetry initialized for chat_shell with endpoint: %s",
+                otel_config.otlp_endpoint,
             )
-        except Exception as e:
-            logger.warning(f"Failed to initialize OpenTelemetry: {e}")
-    else:
-        logger.debug("OpenTelemetry is disabled")
+
+        # Setup OpenTelemetry instrumentation for FastAPI
+        from shared.telemetry.instrumentation import setup_opentelemetry_instrumentation
+
+        setup_opentelemetry_instrumentation(app, logger)
+        logger.info(
+            "OpenTelemetry instrumentation enabled (ASGI-level, before HTTP middleware)"
+        )
 
     # Add exception handler for validation errors (422)
     from fastapi.exceptions import RequestValidationError
@@ -249,6 +255,26 @@ def create_app(
         start_time = time.time()
 
         client_ip = request.client.host if request.client else "Unknown"
+
+        # Log traceparent header for debugging distributed tracing
+        traceparent = request.headers.get("traceparent")
+        logger.debug(
+            "[TRACE] traceparent header: %s for %s %s",
+            traceparent or "NOT_PRESENT",
+            request.method,
+            request.url.path,
+        )
+
+        # Extract and attach trace context from headers
+        # BaseHTTPMiddleware runs in a new async task, so contextvars from
+        # OTEL ASGI middleware are not propagated. We need to manually extract
+        # and attach the trace context to enable distributed tracing.
+        from opentelemetry import context as otel_context
+        from opentelemetry.propagate import extract
+
+        headers_dict = dict(request.headers)
+        extracted_ctx = extract(headers_dict)
+        token = otel_context.attach(extracted_ctx)
 
         # Set request context for logging (works even without OTEL)
         from shared.telemetry.context import (
@@ -313,32 +339,41 @@ def create_app(
         )
 
         # Process request
-        response = await call_next(request)
-        process_time = (time.time() - start_time) * 1000
+        try:
+            response = await call_next(request)
+            process_time = (time.time() - start_time) * 1000
 
-        # For streaming responses, wrap the body iterator to log after completion
-        if isinstance(response, StreamingResponse):
-            original_body_iterator = response.body_iterator
+            # For streaming responses, wrap the body iterator to log after completion
+            if isinstance(response, StreamingResponse):
+                original_body_iterator = response.body_iterator
 
-            async def logging_body_iterator():
-                try:
-                    async for chunk in original_body_iterator:
-                        yield chunk
-                finally:
-                    # Log after streaming completes
-                    total_time = (time.time() - start_time) * 1000
-                    logger.info(
-                        f"response: {request.method} {request.url.path} {response.status_code} {total_time:.2f}ms {request_id} (streamed)"
-                    )
+                async def logging_body_iterator():
+                    try:
+                        async for chunk in original_body_iterator:
+                            yield chunk
+                    finally:
+                        # Log after streaming completes
+                        total_time = (time.time() - start_time) * 1000
+                        logger.info(
+                            f"response: {request.method} {request.url.path} {response.status_code} {total_time:.2f}ms {request_id} (streamed)"
+                        )
+                        # Detach trace context after streaming completes
+                        otel_context.detach(token)
 
-            response.body_iterator = logging_body_iterator()
-        else:
-            # Post-request logging for non-streaming responses
-            logger.info(
-                f"response: {request.method} {request.url.path} {response.status_code} {process_time:.2f}ms {request_id}"
-            )
+                response.body_iterator = logging_body_iterator()
+            else:
+                # Post-request logging for non-streaming responses
+                logger.info(
+                    f"response: {request.method} {request.url.path} {response.status_code} {process_time:.2f}ms {request_id}"
+                )
+                # Detach trace context for non-streaming responses
+                otel_context.detach(token)
 
-        return response
+            return response
+        except Exception:
+            # Detach trace context on error
+            otel_context.detach(token)
+            raise
 
     # Include v1 response router
     from chat_shell.api.v1.response import router as v1_response_router

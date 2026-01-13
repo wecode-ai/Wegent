@@ -17,21 +17,24 @@ from typing import Optional, Sequence
 
 from opentelemetry import metrics, trace
 from opentelemetry.context import Context
-from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import \
+    OTLPMetricExporter
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import \
+    OTLPSpanExporter
+from opentelemetry.propagate import set_global_textmap
+from opentelemetry.propagators.composite import CompositePropagator
 from opentelemetry.sdk.metrics import MeterProvider as SDKMeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import ReadableSpan, Span, SpanProcessor
 from opentelemetry.sdk.trace import TracerProvider as SDKTracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.sdk.trace.sampling import (
-    Decision,
-    ParentBasedTraceIdRatio,
-    Sampler,
-    SamplingResult,
-)
+from opentelemetry.sdk.trace.sampling import (Decision,
+                                              ParentBasedTraceIdRatio, Sampler,
+                                              SamplingResult)
 from opentelemetry.trace import Link, SpanKind
+from opentelemetry.trace.propagation.tracecontext import \
+    TraceContextTextMapPropagator
 from opentelemetry.util.types import Attributes
 
 logger = logging.getLogger(__name__)
@@ -181,6 +184,14 @@ def init_tracer_provider(
         otlp_endpoint: OTLP gRPC endpoint URL
         sampler_ratio: Trace sampling ratio (0.0 to 1.0)
     """
+    # Configure global propagator for W3C Trace Context
+    # This is CRITICAL for distributed tracing - FastAPIInstrumentor uses this
+    # to extract trace context (traceparent header) from incoming HTTP requests
+    # Without this, each service starts a new trace instead of continuing the parent trace
+    propagator = CompositePropagator([TraceContextTextMapPropagator()])
+    set_global_textmap(propagator)
+    logger.debug("Global propagator configured for W3C Trace Context")
+
     # Create sampler
     sampler = ParentBasedTraceIdRatio(sampler_ratio)
 
