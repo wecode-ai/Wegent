@@ -115,7 +115,6 @@ class LangChainModelFactory:
                 "model_kwargs": {
                     "extra_headers": {
                         **(cfg.get("default_headers") or {}),
-                        "anthropic-beta": "prompt-caching-2024-07-31",
                     }
                 },
             },
