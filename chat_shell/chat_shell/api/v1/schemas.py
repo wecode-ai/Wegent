@@ -194,7 +194,10 @@ class Metadata(BaseModel):
         None, description="Available skill names for dynamic loading"
     )
     skill_configs: Optional[list[dict]] = Field(
-        None, description="Skill tool configurations"
+        None, description="Skill tool configurations (with preload field)"
+    )
+    preload_skills: Optional[list[str]] = Field(
+        None, description="Skills to preload at start (skill names)"
     )
     # Knowledge base configuration
     knowledge_base_ids: Optional[list[int]] = Field(
