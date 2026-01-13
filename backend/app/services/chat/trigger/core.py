@@ -783,6 +783,9 @@ async def _stream_with_http_adapter(
     # Track last Redis save time for periodic saves (every 1 second)
     last_redis_save = asyncio.get_event_loop().time()
     redis_save_interval = 1.0  # Save to Redis every 1 second
+    # Track TTFT (Time To First Token)
+    stream_start_time = asyncio.get_event_loop().time()
+    first_token_received = False
 
     try:
         # Stream events from chat_shell and forward to WebSocket
@@ -805,6 +808,21 @@ async def _stream_with_http_adapter(
                 # Text chunk - forward to WebSocket
                 chunk_text = event.data.get("content", "")
                 if chunk_text:
+                    # Log TTFT (Time To First Token) for the first content chunk
+                    if not first_token_received:
+                        ttft_ms = (
+                            asyncio.get_event_loop().time() - stream_start_time
+                        ) * 1000
+                        first_token_received = True
+                        logger.info(
+                            "[BACKEND_TTFT] First token received from chat_shell: "
+                            "task_id=%d, subtask_id=%d, ttft_ms=%.2f, token_len=%d",
+                            task_id,
+                            subtask_id,
+                            ttft_ms,
+                            len(chunk_text),
+                        )
+
                     full_response += chunk_text
                     await ws_emitter.emit_chat_chunk(
                         task_id=task_id,

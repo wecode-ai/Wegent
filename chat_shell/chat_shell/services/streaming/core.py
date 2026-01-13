@@ -13,6 +13,7 @@ This module provides the unified streaming infrastructure that handles:
 import asyncio
 import logging
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any, Optional, Protocol
 
@@ -71,6 +72,10 @@ class StreamingState:
     thinking: list = field(default_factory=list)
     sources: list = field(default_factory=list)
     reasoning_content: str = ""
+
+    # TTFT tracking
+    stream_start_time: Optional[float] = None
+    first_token_received: bool = False
 
     def append_content(self, token: str) -> None:
         """Append token to accumulated response."""
@@ -215,6 +220,9 @@ class StreamingCore:
         else:
             self._cancel_event = asyncio.Event()
 
+        # Record stream start time for TTFT calculation
+        self.state.stream_start_time = time.time()
+
         # Emit start event via emitter
         await self.emitter.emit_start(
             self.state.task_id,
@@ -248,6 +256,19 @@ class StreamingCore:
         Returns:
             True if processing should continue, False if cancelled
         """
+        # Log TTFT (Time To First Token) for the first token
+        if not self.state.first_token_received and self.state.stream_start_time:
+            ttft_ms = (time.time() - self.state.stream_start_time) * 1000
+            self.state.first_token_received = True
+            logger.info(
+                "[CHAT_SHELL_TTFT] First token received: subtask_id=%d, task_id=%d, "
+                "ttft_ms=%.2f, token_len=%d",
+                self.state.subtask_id,
+                self.state.task_id,
+                ttft_ms,
+                len(token),
+            )
+
         logger.debug(
             "[STREAMING] process_token: subtask_id=%d, token_len=%d",
             self.state.subtask_id,
@@ -285,6 +306,17 @@ class StreamingCore:
 
         # Regular content
         self.state.append_content(token)
+
+        # Log each chunk content for debugging
+        logger.info(
+            "[CHAT_SHELL_CHUNK] subtask_id=%d, task_id=%d, offset=%d, "
+            "token_len=%d, content=%s",
+            self.state.subtask_id,
+            self.state.task_id,
+            self.state.offset - len(token),
+            len(token),
+            repr(token[:100]) if len(token) > 100 else repr(token),
+        )
 
         is_chat_mode = self.state.shell_type == "Chat"
         result = self.state.get_current_result(
