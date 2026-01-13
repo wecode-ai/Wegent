@@ -39,16 +39,22 @@ function parseSourceType(gitUrl: string): 'github' | 'gitlab' | 'gitee' | 'unkno
 }
 
 /**
- * Extract domain from git URL
+ * Extract domain from git URL (preserves protocol)
+ *
+ * Returns protocol + hostname (e.g., "https://github.com" or "http://gitlab.example.com")
+ * This is important because the backend needs to know whether to use http or https
+ * when making API requests to GitLab/GitHub servers.
  */
 function extractDomain(gitUrl: string): string {
   try {
     const url = new URL(gitUrl)
-    return url.hostname
+    // Return protocol + hostname (e.g., "https://github.com")
+    return `${url.protocol}//${url.hostname}`
   } catch {
-    // Try to extract from git@ format
+    // Try to extract from git@ format (SSH URLs don't have protocol)
     const match = gitUrl.match(/@([^:]+):/)
     if (match) {
+      // For SSH URLs, return just the hostname (backend will default to https)
       return match[1]
     }
     return ''
