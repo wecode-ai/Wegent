@@ -2,7 +2,14 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from pydantic_settings import BaseSettings
+from typing import Tuple, Type
+
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
+from shared.utils.settings import NoInterpolationDotEnvSettingsSource
 
 
 class WikiSettings(BaseSettings):
@@ -50,11 +57,35 @@ class WikiSettings(BaseSettings):
         "weki"  # Internal authentication token for content write API
     )
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        env_prefix = "WIKI_"  # Environment variable prefix
-        extra = "ignore"  # Ignore extra fields from .env file
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: Type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> Tuple[PydanticBaseSettingsSource, ...]:
+        """Customize settings sources to use NoInterpolationDotEnvSettingsSource.
+
+        This ensures that template variables like ${{user.name}} in .env files
+        are preserved and not incorrectly parsed by dotenv's interpolation.
+
+        See: shared/utils/settings.py for implementation details.
+        """
+        return (
+            init_settings,
+            env_settings,
+            NoInterpolationDotEnvSettingsSource(settings_cls),
+            file_secret_settings,
+        )
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        env_prefix="WIKI_",
+        extra="ignore",
+    )
 
 
 # Global wiki configuration instance
