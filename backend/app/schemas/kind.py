@@ -551,6 +551,14 @@ class SkillSpec(BaseModel):
         description="Provider configuration for dynamic loading. "
         "If specified, the provider will be loaded from the skill .",
     )
+    mcpServers: Optional[List[str]] = Field(
+        None,
+        description="List of MCP server names required by this skill. "
+        "When the skill is loaded via load_skill(), the system will "
+        "look for these servers in Ghost.spec.mcpServers and dynamically "
+        "connect to them, making their tools available to the agent. "
+        "Example: ['weiboServer', 'githubServer']",
+    )
 
 
 class SkillStatus(Status):
