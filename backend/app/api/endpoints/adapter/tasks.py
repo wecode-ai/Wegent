@@ -23,6 +23,11 @@ from app.schemas.shared_task import (
     TaskShareInfo,
     TaskShareResponse,
 )
+from app.schemas.service import (
+    ServiceDeleteRequest,
+    ServiceResponse,
+    ServiceUpdate,
+)
 from app.schemas.task import (
     ConfirmStageRequest,
     ConfirmStageResponse,
@@ -496,3 +501,148 @@ async def export_task_docx(
     except Exception as e:
         logger.error(f"Failed to export task {task_id} to DOCX: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to generate DOCX document")
+
+
+@router.get("/{task_id}/services", response_model=ServiceResponse)
+def get_task_services(
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get task services/app configuration.
+
+    Returns the app field from the task JSON containing service information
+    like name, host, previewUrl, mysql, etc.
+    """
+    from app.models.task import TaskResource
+    from app.services.task_member_service import task_member_service
+
+    # Check if user has access to the task
+    if not task_member_service.is_member(db, task_id, current_user.id):
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task = (
+        db.query(TaskResource)
+        .filter(
+            TaskResource.id == task_id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active == True,
+        )
+        .first()
+    )
+
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    app_data = task.json.get("app", {}) if task.json else {}
+    return {"app": app_data}
+
+
+@router.post("/{task_id}/services", response_model=ServiceResponse)
+def update_task_services(
+    service_update: ServiceUpdate,
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Update task services/app configuration (partial merge).
+
+    Merges the provided fields with existing app data.
+    Only provided non-None fields will be updated.
+    """
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.models.task import TaskResource
+    from app.services.task_member_service import task_member_service
+
+    # Check if user has access to the task
+    if not task_member_service.is_member(db, task_id, current_user.id):
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task = (
+        db.query(TaskResource)
+        .filter(
+            TaskResource.id == task_id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active == True,
+        )
+        .first()
+    )
+
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # Get existing app data or initialize empty dict
+    task_json = task.json or {}
+    app_data = task_json.get("app", {}) or {}
+
+    # Merge only non-None fields from the request
+    update_data = service_update.model_dump(exclude_none=True)
+    app_data.update(update_data)
+
+    # Update task JSON with new app data
+    task_json["app"] = app_data
+    task.json = task_json
+    task.updated_at = datetime.now()
+    flag_modified(task, "json")
+
+    db.commit()
+    db.refresh(task)
+
+    return {"app": app_data}
+
+
+@router.delete("/{task_id}/services", response_model=ServiceResponse)
+def delete_task_services(
+    delete_request: ServiceDeleteRequest,
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Delete specified fields from task services/app configuration.
+
+    Removes the specified field names from the app object.
+    """
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.models.task import TaskResource
+    from app.services.task_member_service import task_member_service
+
+    # Check if user has access to the task
+    if not task_member_service.is_member(db, task_id, current_user.id):
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task = (
+        db.query(TaskResource)
+        .filter(
+            TaskResource.id == task_id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active == True,
+        )
+        .first()
+    )
+
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # Get existing app data
+    task_json = task.json or {}
+    app_data = task_json.get("app", {}) or {}
+
+    # Remove specified fields
+    for field_name in delete_request.fields:
+        app_data.pop(field_name, None)
+
+    # Update task JSON
+    task_json["app"] = app_data
+    task.json = task_json
+    task.updated_at = datetime.now()
+    flag_modified(task, "json")
+
+    db.commit()
+    db.refresh(task)
+
+    return {"app": app_data}
