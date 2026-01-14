@@ -651,7 +651,10 @@
       }
     },
     "saving": "保存中...",
-    "save_token": "保存令牌"
+    "save_token": "保存令牌",
+    "auth_type": "认证方式",
+    "auth_type_digest": "Digest Auth（摘要认证）",
+    "auth_type_basic": "Basic Auth（基本认证）"
   },
   "skills": {
     "title": "技能",

@@ -651,7 +651,10 @@
       }
     },
     "saving": "Saving...",
-    "save_token": "Save Token"
+    "save_token": "Save Token",
+    "auth_type": "Authentication Method",
+    "auth_type_digest": "Digest Auth",
+    "auth_type_basic": "Basic Auth"
   },
   "skills": {
     "title": "Skills",
