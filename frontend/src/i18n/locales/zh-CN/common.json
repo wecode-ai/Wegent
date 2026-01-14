@@ -579,6 +579,12 @@
     "cannotUndo": "此操作无法撤销",
     "coming_soon": "即将推出"
   },
+  "dialog": {
+    "confirm_close_title": "确认关闭",
+    "confirm_close_description": "您有未保存的更改，确定要关闭吗？",
+    "confirm_close_cancel": "取消",
+    "confirm_close_confirm": "确认关闭"
+  },
   "correction": {
     "result_title": "纠正结果"
   },
