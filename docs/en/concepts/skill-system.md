@@ -218,9 +218,49 @@ The `SkillToolRegistry` (`backend/app/services/chat_v2/skills/registry.py`) mana
 - Dynamic Provider loading from ZIP packages
 - Tool instance creation for skills
 
+### MCP Server Integration
+
+Skills can integrate with external MCP (Model Context Protocol) servers to provide dynamic tools:
+
+```yaml
+---
+description: "Use this skill to interact with Weibo data..."
+mcpServers:
+  - weiboServer
+---
+```
+
+When a skill declares `mcpServers` in its metadata:
+1. The system looks for the named servers in Ghost's `spec.mcpServers`
+2. Connects to those servers when the skill is loaded
+3. Makes the server's tools available to the agent
+4. Supports variable substitution: `${{user.weibo_token}}` → actual token value
+
+**Example Ghost Configuration:**
+
+```yaml
+apiVersion: agent.wecode.io/v1
+kind: Ghost
+spec:
+  skills:
+    - weibo
+  mcpServers:
+    weiboServer:
+      type: streamable-http
+      url: https://weibo-api.example.com
+      headers:
+        Authorization: Bearer ${{user.weibo_token}}
+```
+
 ### Security Considerations
 
 ⚠️ **Important:** Only public Skills (user_id=0) can load dynamic code from providers. User-uploaded Skills can only provide prompt content. This prevents malicious code execution from user uploads.
+
+**MCP Server Security:**
+- Always use variable substitution for sensitive credentials (`${{user.weibo_token}}`)
+- Never hardcode API tokens in Ghost configurations
+- Validate MCP server URLs to prevent SSRF attacks
+- Implement rate limiting for MCP tool calls
 
 ---
 
@@ -304,6 +344,7 @@ Located in `backend/init_data/skills/`:
 |-------|-------------|
 | `mermaid-diagram` | Diagram visualization using Mermaid.js |
 | `wiki_submit` | Wiki submission capability |
+| `weibo` | Weibo data access through MCP servers (search posts, users, timelines) |
 
 ---
 

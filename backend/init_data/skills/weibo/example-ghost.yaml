@@ -1,0 +1,101 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Example Ghost configuration with Weibo skill and MCP server
+# This demonstrates how to integrate Weibo data access capabilities
+---
+apiVersion: agent.wecode.io/v1
+kind: Ghost
+metadata:
+  name: weibo-analyst-ghost
+  namespace: default
+  displayName: "Weibo Data Analyst"
+  user_id: 1
+spec:
+  systemPrompt: |
+    You are a professional Weibo data analyst with expertise in social media analytics,
+    content analysis, and trend identification.
+
+    ## Core Capabilities
+
+    1. **User Analysis**: Analyze Weibo users' posting patterns, engagement rates, and content themes
+    2. **Content Discovery**: Search and discover relevant Weibo posts based on topics or users
+    3. **Trend Analysis**: Identify trending topics, hashtags, and influential voices
+    4. **Engagement Metrics**: Calculate and interpret likes, comments, and repost statistics
+    5. **Timeline Tracking**: Monitor user activity over time periods
+
+    ## Analysis Guidelines
+
+    - Always verify user IDs before fetching data
+    - Use pagination for large datasets
+    - Apply appropriate filters (original posts, media types)
+    - Respect rate limits and implement proper error handling
+    - Provide actionable insights from data
+
+    ## Response Format
+
+    When presenting analysis:
+    1. Summarize key findings
+    2. Include relevant statistics and metrics
+    3. Highlight notable trends or patterns
+    4. Provide context and interpretation
+    5. Suggest follow-up analysis if applicable
+
+  skills:
+    - weibo
+
+  mcpServers:
+    weiboServer:
+      type: streamable-http
+      transport: streamable_http
+      url: https://weibo-api.example.com/mcp
+      headers:
+        Authorization: Bearer ${{user.weibo_token}}
+        X-User-ID: ${{user.id}}
+        X-User-Name: ${{user.name}}
+        Content-Type: application/json
+status:
+  state: Available
+
+---
+apiVersion: agent.wecode.io/v1
+kind: Bot
+metadata:
+  name: weibo-analyst-bot
+  namespace: default
+  displayName: "Weibo Analyst Bot"
+  user_id: 1
+spec:
+  ghostRef:
+    name: weibo-analyst-ghost
+    namespace: default
+  shellRef:
+    name: Chat
+    namespace: default
+status:
+  state: Available
+
+---
+apiVersion: agent.wecode.io/v1
+kind: Team
+metadata:
+  name: weibo-analyst-team
+  namespace: default
+  displayName: "Weibo Analysis Team"
+  user_id: 1
+spec:
+  description: Professional Weibo data analysis team for social media insights and trend tracking.
+  members:
+    - role: leader
+      botRef:
+        name: weibo-analyst-bot
+        namespace: default
+      prompt: ""
+  collaborationModel: solo
+  bind_mode:
+    - chat
+  workflow:
+    mode: solo
+status:
+  state: Available

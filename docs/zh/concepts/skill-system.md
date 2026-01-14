@@ -217,9 +217,49 @@ class MermaidToolProvider(SkillToolProvider):
 - 从 ZIP 包动态加载 Provider
 - 为 skills 创建工具实例
 
+### MCP 服务器集成
+
+Skills 可以集成外部 MCP（模型上下文协议）服务器来提供动态工具：
+
+```yaml
+---
+description: "使用此技能与微博数据交互..."
+mcpServers:
+  - weiboServer
+---
+```
+
+当 skill 在元数据中声明 `mcpServers` 时：
+1. 系统会在 Ghost 的 `spec.mcpServers` 中查找命名的服务器
+2. 在加载 skill 时连接到这些服务器
+3. 将服务器的工具提供给智能体
+4. 支持变量替换：`${{user.weibo_token}}` → 实际令牌值
+
+**Ghost 配置示例：**
+
+```yaml
+apiVersion: agent.wecode.io/v1
+kind: Ghost
+spec:
+  skills:
+    - weibo
+  mcpServers:
+    weiboServer:
+      type: streamable-http
+      url: https://weibo-api.example.com
+      headers:
+        Authorization: Bearer ${{user.weibo_token}}
+```
+
 ### 安全考虑
 
 ⚠️ **重要：** 只有公共 Skills（user_id=0）可以从 provider 加载动态代码。用户上传的 Skills 只能提供提示词内容。这可以防止用户上传恶意代码执行。
+
+**MCP 服务器安全：**
+- 始终对敏感凭证使用变量替换（`${{user.weibo_token}}`）
+- 永远不要在 Ghost 配置中硬编码 API 令牌
+- 验证 MCP 服务器 URL 以防止 SSRF 攻击
+- 为 MCP 工具调用实施速率限制
 
 ---
 
@@ -303,6 +343,7 @@ CREATE TABLE skill_binaries (
 |-------|------|
 | `mermaid-diagram` | 使用 Mermaid.js 进行图表可视化 |
 | `wiki_submit` | Wiki 提交能力 |
+| `weibo` | 通过 MCP 服务器访问微博数据（搜索帖子、用户、时间线） |
 
 ---
 
