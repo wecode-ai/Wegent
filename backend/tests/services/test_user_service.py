@@ -190,7 +190,7 @@ class TestUserServiceGetUser:
     def test_get_all_users_excludes_inactive(self, test_db: Session, test_user: User, test_inactive_user: User, mocker):
         """Test getting all users excludes inactive users"""
         service = UserService(User)
-        
+
         # Mock decrypt_user_git_info to handle None git_info
         mocker.patch.object(service, 'decrypt_user_git_info', side_effect=lambda user: user)
 
@@ -199,3 +199,224 @@ class TestUserServiceGetUser:
         usernames = [u.user_name for u in users]
         assert test_user.user_name in usernames
         assert test_inactive_user.user_name not in usernames
+
+
+@pytest.mark.unit
+class TestUserServiceGerritAuthType:
+    """Test UserService._validate_git_info for Gerrit auth_type handling"""
+
+    def test_validate_gerrit_with_digest_auth(self, mocker):
+        """Test validation with Gerrit digest authentication"""
+        service = UserService(User)
+
+        # Mock GerritProvider.validate_token to return valid result
+        mock_validate = mocker.patch(
+            "app.repository.gerrit_provider.GerritProvider.validate_token",
+            return_value={
+                "valid": True,
+                "user": {
+                    "id": 12345,
+                    "login": "gerrit_user",
+                    "email": "gerrit@example.com"
+                }
+            }
+        )
+
+        # Mock encryption functions
+        mocker.patch(
+            "app.services.user.encrypt_git_token",
+            return_value="encrypted_token"
+        )
+        mocker.patch(
+            "app.services.user.is_token_encrypted",
+            return_value=False
+        )
+
+        git_info = [{
+            "git_token": "valid_gerrit_token",
+            "git_domain": "gerrit.example.com",
+            "type": "gerrit",
+            "user_name": "gerrit_user",
+            "auth_type": "digest"
+        }]
+
+        result = service._validate_git_info(git_info)
+
+        assert len(result) == 1
+        assert result[0]["git_id"] == "12345"
+        assert result[0]["git_login"] == "gerrit_user"
+
+        # Verify validate_token was called with auth_type parameter
+        mock_validate.assert_called_once_with(
+            "valid_gerrit_token",
+            git_domain="gerrit.example.com",
+            user_name="gerrit_user",
+            auth_type="digest"
+        )
+
+    def test_validate_gerrit_with_basic_auth(self, mocker):
+        """Test validation with Gerrit basic authentication"""
+        service = UserService(User)
+
+        # Mock GerritProvider.validate_token to return valid result
+        mock_validate = mocker.patch(
+            "app.repository.gerrit_provider.GerritProvider.validate_token",
+            return_value={
+                "valid": True,
+                "user": {
+                    "id": 67890,
+                    "login": "basic_user",
+                    "email": "basic@example.com"
+                }
+            }
+        )
+
+        # Mock encryption functions
+        mocker.patch(
+            "app.services.user.encrypt_git_token",
+            return_value="encrypted_token"
+        )
+        mocker.patch(
+            "app.services.user.is_token_encrypted",
+            return_value=False
+        )
+
+        git_info = [{
+            "git_token": "valid_gerrit_token",
+            "git_domain": "gerrit.example.com",
+            "type": "gerrit",
+            "user_name": "basic_user",
+            "auth_type": "basic"
+        }]
+
+        result = service._validate_git_info(git_info)
+
+        assert len(result) == 1
+        assert result[0]["git_id"] == "67890"
+
+        # Verify validate_token was called with auth_type="basic"
+        mock_validate.assert_called_once_with(
+            "valid_gerrit_token",
+            git_domain="gerrit.example.com",
+            user_name="basic_user",
+            auth_type="basic"
+        )
+
+    def test_validate_gerrit_defaults_to_digest_auth(self, mocker):
+        """Test that Gerrit validation defaults to digest auth when auth_type is not specified"""
+        service = UserService(User)
+
+        # Mock GerritProvider.validate_token to return valid result
+        mock_validate = mocker.patch(
+            "app.repository.gerrit_provider.GerritProvider.validate_token",
+            return_value={
+                "valid": True,
+                "user": {
+                    "id": 11111,
+                    "login": "default_user",
+                    "email": "default@example.com"
+                }
+            }
+        )
+
+        # Mock encryption functions
+        mocker.patch(
+            "app.services.user.encrypt_git_token",
+            return_value="encrypted_token"
+        )
+        mocker.patch(
+            "app.services.user.is_token_encrypted",
+            return_value=False
+        )
+
+        git_info = [{
+            "git_token": "valid_gerrit_token",
+            "git_domain": "gerrit.example.com",
+            "type": "gerrit",
+            "user_name": "default_user",
+            # No auth_type specified - should default to "digest"
+        }]
+
+        result = service._validate_git_info(git_info)
+
+        assert len(result) == 1
+
+        # Verify validate_token was called with auth_type="digest" (default)
+        mock_validate.assert_called_once_with(
+            "valid_gerrit_token",
+            git_domain="gerrit.example.com",
+            user_name="default_user",
+            auth_type="digest"
+        )
+
+    def test_validate_gerrit_raises_auth_error_message(self, mocker):
+        """Test that validation raises error with auth method message from Gerrit"""
+        service = UserService(User)
+
+        # Mock GerritProvider.validate_token to return auth failure with message
+        mock_validate = mocker.patch(
+            "app.repository.gerrit_provider.GerritProvider.validate_token",
+            return_value={
+                "valid": False,
+                "error": "auth_failed",
+                "message": "Authentication failed. Please check if the auth method (basic) is correct."
+            }
+        )
+
+        git_info = [{
+            "git_token": "invalid_token",
+            "git_domain": "gerrit.example.com",
+            "type": "gerrit",
+            "user_name": "test_user",
+            "auth_type": "basic"
+        }]
+
+        with pytest.raises(ValidationException) as exc_info:
+            service._validate_git_info(git_info)
+
+        # Verify the error message contains the auth method hint
+        assert "Authentication failed" in str(exc_info.value.detail)
+        assert "basic" in str(exc_info.value.detail)
+
+    def test_validate_gerrit_raises_generic_error_without_message(self, mocker):
+        """Test that validation raises generic error when no message is provided"""
+        service = UserService(User)
+
+        # Mock GerritProvider.validate_token to return auth failure without message
+        mock_validate = mocker.patch(
+            "app.repository.gerrit_provider.GerritProvider.validate_token",
+            return_value={
+                "valid": False
+            }
+        )
+
+        git_info = [{
+            "git_token": "invalid_token",
+            "git_domain": "gerrit.example.com",
+            "type": "gerrit",
+            "user_name": "test_user",
+            "auth_type": "digest"
+        }]
+
+        with pytest.raises(ValidationException) as exc_info:
+            service._validate_git_info(git_info)
+
+        # Verify the generic error message is raised
+        assert "Invalid gerrit token" in str(exc_info.value.detail)
+
+    def test_validate_gerrit_requires_username(self):
+        """Test that Gerrit validation requires username"""
+        service = UserService(User)
+
+        git_info = [{
+            "git_token": "valid_token",
+            "git_domain": "gerrit.example.com",
+            "type": "gerrit",
+            "auth_type": "digest"
+            # Missing user_name
+        }]
+
+        with pytest.raises(ValidationException) as exc_info:
+            service._validate_git_info(git_info)
+
+        assert "username is required for Gerrit" in str(exc_info.value.detail)
