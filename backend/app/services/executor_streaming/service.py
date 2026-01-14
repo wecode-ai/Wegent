@@ -34,6 +34,9 @@ DB_SAVE_INTERVAL = 5.0
 # Redis save interval (seconds) - save to Redis every 1 second
 REDIS_SAVE_INTERVAL = 1.0
 
+# Stale entry timeout (seconds) - cleanup tracking entries older than 1 hour
+STALE_ENTRY_TIMEOUT = 3600.0
+
 
 class ExecutorStreamingService:
     """
@@ -50,6 +53,54 @@ class ExecutorStreamingService:
         self._last_db_save_times: Dict[int, float] = {}
         # Track last Redis save times per subtask
         self._last_redis_save_times: Dict[int, float] = {}
+        # Track last cleanup time
+        self._last_cleanup_time: float = 0.0
+
+    def _cleanup_stale_entries(self) -> None:
+        """
+        Clean up tracking entries older than STALE_ENTRY_TIMEOUT.
+
+        This prevents memory leaks from abandoned streams (executor crashes,
+        network failures, client disconnects without error events).
+        """
+        current_time = time.time()
+
+        # Only run cleanup every 5 minutes
+        if current_time - self._last_cleanup_time < 300:
+            return
+
+        self._last_cleanup_time = current_time
+        stale_cutoff = current_time - STALE_ENTRY_TIMEOUT
+
+        # Find and remove stale entries from DB tracking
+        stale_db_keys = [
+            subtask_id
+            for subtask_id, last_time in self._last_db_save_times.items()
+            if last_time < stale_cutoff
+        ]
+        for subtask_id in stale_db_keys:
+            self._last_db_save_times.pop(subtask_id, None)
+            logger.debug(
+                f"[ExecutorStreaming] Cleaned up stale DB tracking for subtask {subtask_id}"
+            )
+
+        # Find and remove stale entries from Redis tracking
+        stale_redis_keys = [
+            subtask_id
+            for subtask_id, last_time in self._last_redis_save_times.items()
+            if last_time < stale_cutoff
+        ]
+        for subtask_id in stale_redis_keys:
+            self._last_redis_save_times.pop(subtask_id, None)
+            logger.debug(
+                f"[ExecutorStreaming] Cleaned up stale Redis tracking for subtask {subtask_id}"
+            )
+
+        if stale_db_keys or stale_redis_keys:
+            logger.info(
+                f"[ExecutorStreaming] Cleaned up {len(stale_db_keys)} DB entries "
+                f"and {len(stale_redis_keys)} Redis entries"
+            )
 
     async def handle_streaming_event(
         self,
@@ -71,6 +122,9 @@ class ExecutorStreamingService:
             StreamingEventResponse indicating success/failure
         """
         try:
+            # Periodically clean up stale tracking entries
+            self._cleanup_stale_entries()
+
             logger.info(
                 f"[ExecutorStreaming] Handling {event.event_type} event for "
                 f"task={task_id}, subtask={subtask_id}"
@@ -173,17 +227,17 @@ class ExecutorStreamingService:
         offset = event.offset or 0
         result = event.result
 
-        # Append content to Redis cache (throttled)
+        # Always append content to Redis for reconnection support
+        _, new_length = await self._state_manager.append_streaming_content(
+            subtask_id, content
+        )
+
+        # Throttle state metadata updates (offset, content_length) to reduce Redis writes
         current_time = time.time()
         last_redis_save = self._last_redis_save_times.get(subtask_id, 0)
 
         if current_time - last_redis_save >= REDIS_SAVE_INTERVAL:
-            # Append to cached content
-            success, new_length = await self._state_manager.append_streaming_content(
-                subtask_id, content
-            )
-
-            # Update state
+            # Update state metadata
             await self._state_manager.update_streaming_state(
                 subtask_id,
                 {
@@ -191,7 +245,6 @@ class ExecutorStreamingService:
                     "offset": offset + len(content),
                 },
             )
-
             self._last_redis_save_times[subtask_id] = current_time
 
         # Emit WebSocket chat:chunk event
