@@ -201,6 +201,7 @@ async def _stream_response(
         # Extract metadata
         task_id = 0
         subtask_id = 0
+        user_subtask_id = None  # User subtask ID for RAG persistence
         user_id = 0
         user_name = ""
         team_id = 0
@@ -221,6 +222,7 @@ async def _stream_response(
         if request.metadata:
             task_id = getattr(request.metadata, "task_id", 0) or 0
             subtask_id = getattr(request.metadata, "subtask_id", 0) or 0
+            user_subtask_id = getattr(request.metadata, "user_subtask_id", None)
             user_id = request.metadata.user_id or 0
             user_name = request.metadata.user_name or ""
             team_id = getattr(request.metadata, "team_id", 0) or 0
@@ -250,6 +252,7 @@ async def _stream_response(
         chat_request = ChatRequest(
             task_id=task_id,
             subtask_id=subtask_id,
+            user_subtask_id=user_subtask_id,  # User subtask ID for RAG persistence
             message=message,
             user_id=user_id,
             user_name=user_name,
@@ -285,12 +288,13 @@ async def _stream_response(
         )
 
         logger.info(
-            "[RESPONSE] Processing request: task_id=%d, subtask_id=%d, "
+            "[RESPONSE] Processing request: task_id=%d, subtask_id=%d, user_subtask_id=%s, "
             "enable_web_search=%s, mcp_servers=%d, skills=%d, "
             "skill_names=%s, preload_skills=%s, knowledge_base_ids=%s, document_ids=%s, "
             "table_contexts_count=%d, table_contexts=%s",
             task_id,
             subtask_id,
+            user_subtask_id,
             enable_web_search,
             len(mcp_servers),
             len(all_skill_configs),

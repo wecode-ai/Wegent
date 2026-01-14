@@ -540,6 +540,7 @@ async def _stream_chat_response(
                 table_contexts=table_contexts,
                 is_user_selected_kb=is_user_selected_kb,
                 preload_skills=chat_config.preload_skills,  # Use resolved from ChatConfig
+                user_subtask_id=user_subtask_id,  # Pass user subtask ID for RAG persistence
             )
         elif streaming_mode == "bridge":
             # New architecture: StreamingCore publishes to Redis, WebSocketBridge forwards
@@ -607,6 +608,7 @@ async def _stream_with_http_adapter(
     table_contexts: list = None,
     is_user_selected_kb: bool = True,
     preload_skills: list = None,
+    user_subtask_id: Optional[int] = None,
 ) -> None:
     """Stream using HTTP adapter to call remote chat_shell service.
 
@@ -631,6 +633,8 @@ async def _stream_with_http_adapter(
         is_user_selected_kb: Whether KB is explicitly selected by user (strict mode)
             or inherited from task (relaxed mode). Defaults to True for backward compatibility.
         preload_skills: List of skill names to preload into system prompt
+        user_subtask_id: User subtask ID for RAG result persistence (different from
+            stream_data.subtask_id which is AI response's subtask)
     """
     from app.core.config import settings
     from app.services.chat.adapters.http import HTTPAdapter
@@ -698,6 +702,7 @@ async def _stream_with_http_adapter(
     chat_request = ChatRequest(
         task_id=task_id,
         subtask_id=subtask_id,
+        user_subtask_id=user_subtask_id,  # User subtask ID for RAG persistence
         message=message,
         user_id=stream_data.user_id,
         user_name=stream_data.user_name,
@@ -728,10 +733,12 @@ async def _stream_with_http_adapter(
     )
 
     logger.info(
-        "[HTTP_ADAPTER] ChatRequest built: task_id=%d, skill_names=%s, "
-        "table_contexts_count=%d, table_contexts=%s, "
+        "[HTTP_ADAPTER] ChatRequest built: task_id=%d, subtask_id=%d, user_subtask_id=%s, "
+        "skill_names=%s, table_contexts_count=%d, table_contexts=%s, "
         "skill_configs_count=%d, preload_skills=%s, knowledge_base_ids=%s, document_ids=%s",
         task_id,
+        subtask_id,
+        user_subtask_id,
         skill_names,
         len(table_contexts) if table_contexts else 0,
         table_contexts,  # Log the actual content

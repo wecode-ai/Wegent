@@ -44,6 +44,8 @@ class ChatRequest:
     request_id: str = ""
     message_id: Optional[int] = None
     is_group_chat: bool = False
+    # User subtask ID for RAG result persistence (different from subtask_id which is AI response's subtask)
+    user_subtask_id: Optional[int] = None
 
     # Model configuration
     model_config: dict = field(default_factory=dict)
@@ -99,6 +101,7 @@ class ChatRequest:
         return {
             "task_id": self.task_id,
             "subtask_id": self.subtask_id,
+            "user_subtask_id": self.user_subtask_id,
             "message": self.message,
             "user_id": self.user_id,
             "user_name": self.user_name,
