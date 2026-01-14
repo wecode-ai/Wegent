@@ -13,6 +13,9 @@ export type EvaluationStatus =
 // Sync Status
 export type SyncStatus = 'started' | 'running' | 'completed' | 'failed'
 
+// Three-state evaluation judgment
+export type EvaluationJudgment = 'pass' | 'fail' | 'undetermined'
+
 // Sync Job
 export interface SyncJob {
   sync_id: string
@@ -341,7 +344,11 @@ export interface EvaluationResultItem {
   generation_score?: number
   is_failed?: boolean
   failure_reason?: string
-  // TruLens groundedness for list view (事实性)
+  // Three-state evaluation judgment
+  evaluation_judgment?: EvaluationJudgment
+  // Four core metrics for list view
+  ragas_query_context_relevance?: number
+  trulens_context_relevance?: number
   trulens_groundedness?: number
 }
 

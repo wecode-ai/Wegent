@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     EVALUATION_BATCH_SIZE: int = 10
     EVALUATION_CONCURRENCY: int = 1
 
+    # Evaluation threshold for core metrics (default: 0.6)
+    EVALUATION_CORE_THRESHOLD: float = 0.6
+
     # Frontend URL for CORS
     FRONTEND_URL: str = "http://localhost:13000"
 

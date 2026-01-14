@@ -62,6 +62,12 @@ class EvaluationResultItem(BaseModel):
     generation_score: Optional[float] = None
     is_failed: Optional[bool] = False
     failure_reason: Optional[str] = None
+    # Three-state evaluation judgment
+    evaluation_judgment: Optional[str] = None
+    # Core metrics for list view
+    ragas_query_context_relevance: Optional[float] = None
+    trulens_context_relevance: Optional[float] = None
+    trulens_groundedness: Optional[float] = None
 
     class Config:
         from_attributes = True
@@ -225,6 +231,8 @@ class EvaluationResultDetail(BaseModel):
     generation_score: Optional[float] = None
     is_failed: Optional[bool] = False
     failure_reason: Optional[str] = None
+    # Three-state evaluation judgment
+    evaluation_judgment: Optional[str] = None
 
     # Cross-validation
     cross_validation_results: Optional[Dict[str, Any]] = None

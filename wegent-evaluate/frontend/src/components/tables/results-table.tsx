@@ -42,41 +42,42 @@ export function ResultsTable({ items }: ResultsTableProps) {
             <th className="px-4 py-3 text-left font-medium">
               {t('results.status', 'Status')}
             </th>
-            {/* New Total Score column */}
+            {/* Total Score column */}
             <th className="px-4 py-3 text-left font-medium">
               <span className="flex items-center gap-1">
                 <Trophy className="h-4 w-4 text-primary" />
                 {t('metrics.totalScore', 'Total')}
               </span>
             </th>
-            {/* Pass/Fail Status */}
+            {/* Three-state Pass/Fail Status */}
             <th className="px-4 py-3 text-left font-medium">
               {t('metrics.passStatus', 'Pass/Fail')}
             </th>
-            {/* Core metrics */}
+            {/* Core Metric 1: Query Context Relevance (RAGAS) */}
+            <th className="px-4 py-3 text-left font-medium">
+              <span className="text-purple-600">
+                {t('resultDetail.queryContextRelevance', 'Query-Context Rel.')}
+              </span>
+            </th>
+            {/* Core Metric 2: Faithfulness (RAGAS) */}
             <th className="px-4 py-3 text-left font-medium">
               <span className="text-green-600">
                 {t('results.faithfulness', 'Faithfulness')}
               </span>
             </th>
+            {/* Core Metric 3: Context Relevance (TruLens) */}
+            <th className="px-4 py-3 text-left font-medium">
+              <span className="text-orange-600">
+                {t('resultDetail.contextRelevance', 'Context Rel.')}
+              </span>
+            </th>
+            {/* Core Metric 4: Groundedness/事实性 (TruLens) */}
             <th className="px-4 py-3 text-left font-medium">
               <span className="text-blue-600">
                 {t('resultDetail.groundedness', 'Groundedness')}
               </span>
             </th>
-            {/* Legacy metrics */}
-            <th className="px-4 py-3 text-left font-medium">
-              {t('results.answerRelevancy', 'Answer Rel.')}
-            </th>
-            <th className="px-4 py-3 text-left font-medium">
-              {t('results.contextPrecision', 'Context Prec.')}
-            </th>
-            <th className="px-4 py-3 text-left font-medium">
-              {t('results.overall', 'Overall')}
-            </th>
-            <th className="px-4 py-3 text-left font-medium">
-              {t('results.hasIssue', 'Issue')}
-            </th>
+            {/* CV Alert column */}
             <th className="px-4 py-3 text-left font-medium">
               {t('dashboard.cvAlerts', 'CV Alert')}
             </th>
@@ -90,7 +91,7 @@ export function ResultsTable({ items }: ResultsTableProps) {
             <tr
               key={item.conversation_record_id}
               className={`border-t hover:bg-secondary/50 ${
-                item.is_failed ? 'bg-red-50/50' : ''
+                item.evaluation_judgment === 'fail' ? 'bg-red-50/50' : ''
               }`}
             >
               <td className="px-4 py-3">{item.conversation_record_id}</td>
@@ -107,7 +108,7 @@ export function ResultsTable({ items }: ResultsTableProps) {
               <td className="px-4 py-3">
                 <span
                   className={`font-semibold ${
-                    item.is_failed
+                    item.evaluation_judgment === 'fail'
                       ? 'text-gray-400 line-through'
                       : item.total_score && item.total_score >= 70
                         ? 'text-green-600'
@@ -119,9 +120,17 @@ export function ResultsTable({ items }: ResultsTableProps) {
                   {formatTotalScore(item.total_score)}
                 </span>
               </td>
-              {/* Pass/Fail Status */}
+              {/* Three-state Pass/Fail Status using evaluation_judgment */}
               <td className="px-4 py-3">
-                {item.is_failed ? (
+                {item.evaluation_judgment === 'undetermined' ? (
+                  <span
+                    className="inline-flex items-center gap-1 rounded bg-yellow-100 px-2 py-1 text-xs font-medium text-yellow-700"
+                    title={item.failure_reason || t('metrics.coreMetricsIncomplete', 'Core metrics incomplete')}
+                  >
+                    <AlertTriangle className="h-3 w-3" />
+                    {t('metrics.undetermined', 'N/A')}
+                  </span>
+                ) : item.evaluation_judgment === 'fail' ? (
                   <span
                     className="inline-flex items-center gap-1 rounded bg-red-100 px-2 py-1 text-xs font-medium text-red-700"
                     title={item.failure_reason || undefined}
@@ -129,7 +138,7 @@ export function ResultsTable({ items }: ResultsTableProps) {
                     <XCircle className="h-3 w-3" />
                     {t('metrics.failed', 'FAILED')}
                   </span>
-                ) : item.total_score != null ? (
+                ) : item.evaluation_judgment === 'pass' ? (
                   <span className="inline-flex items-center gap-1 rounded bg-green-100 px-2 py-1 text-xs font-medium text-green-700">
                     <CheckCircle className="h-3 w-3" />
                     {t('metrics.passed', 'PASSED')}
@@ -138,7 +147,22 @@ export function ResultsTable({ items }: ResultsTableProps) {
                   <span className="text-gray-400">-</span>
                 )}
               </td>
-              {/* Faithfulness with threshold warning */}
+              {/* Query Context Relevance (RAGAS) with threshold warning */}
+              <td className="px-4 py-3">
+                <span
+                  className={
+                    item.ragas_query_context_relevance != null && item.ragas_query_context_relevance < 0.6
+                      ? 'text-red-600 font-medium'
+                      : ''
+                  }
+                >
+                  {formatScore(item.ragas_query_context_relevance)}
+                  {item.ragas_query_context_relevance != null && item.ragas_query_context_relevance < 0.6 && (
+                    <span className="ml-1 text-red-500">⚠️</span>
+                  )}
+                </span>
+              </td>
+              {/* Faithfulness (RAGAS) with threshold warning */}
               <td className="px-4 py-3">
                 <span
                   className={
@@ -153,7 +177,22 @@ export function ResultsTable({ items }: ResultsTableProps) {
                   )}
                 </span>
               </td>
-              {/* Groundedness (事实性) with threshold warning */}
+              {/* Context Relevance (TruLens) with threshold warning */}
+              <td className="px-4 py-3">
+                <span
+                  className={
+                    item.trulens_context_relevance != null && item.trulens_context_relevance < 0.6
+                      ? 'text-red-600 font-medium'
+                      : ''
+                  }
+                >
+                  {formatScore(item.trulens_context_relevance)}
+                  {item.trulens_context_relevance != null && item.trulens_context_relevance < 0.6 && (
+                    <span className="ml-1 text-red-500">⚠️</span>
+                  )}
+                </span>
+              </td>
+              {/* Groundedness/事实性 (TruLens) with threshold warning */}
               <td className="px-4 py-3">
                 <span
                   className={
@@ -168,26 +207,7 @@ export function ResultsTable({ items }: ResultsTableProps) {
                   )}
                 </span>
               </td>
-              <td className="px-4 py-3">
-                {formatScore(item.answer_relevancy_score)}
-              </td>
-              <td className="px-4 py-3">
-                {formatScore(item.context_precision_score)}
-              </td>
-              <td className="px-4 py-3 font-medium">
-                {formatScore(item.overall_score)}
-              </td>
-              <td className="px-4 py-3">
-                {item.has_issue ? (
-                  <span className="rounded bg-red-100 px-2 py-1 text-xs text-red-700">
-                    {t('common.yes', 'Yes')}
-                  </span>
-                ) : (
-                  <span className="rounded bg-green-100 px-2 py-1 text-xs text-green-700">
-                    {t('common.no', 'No')}
-                  </span>
-                )}
-              </td>
+              {/* CV Alert */}
               <td className="px-4 py-3">
                 {item.has_cv_alert ? (
                   <span className="inline-flex items-center rounded bg-purple-100 px-2 py-1 text-xs text-purple-700">

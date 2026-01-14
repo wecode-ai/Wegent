@@ -1,6 +1,7 @@
 """
 EvaluationResult model for storing RAGAS and TruLens evaluation results.
 """
+import enum
 from datetime import datetime
 from typing import Optional
 
@@ -20,6 +21,14 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
+
+
+class EvaluationJudgment(str, enum.Enum):
+    """Three-state evaluation judgment."""
+
+    PASS = "pass"
+    FAIL = "fail"
+    UNDETERMINED = "undetermined"
 
 
 class EvaluationResult(Base):
@@ -75,6 +84,15 @@ class EvaluationResult(Base):
     is_failed = Column(Boolean, default=False, nullable=True)
     failure_reason = Column(String(500), nullable=True)
 
+    # Three-state evaluation judgment field
+    evaluation_judgment = Column(
+        String(20),
+        nullable=True,
+        default=None,
+        index=True,
+        comment="Three-state evaluation judgment: pass/fail/undetermined",
+    )
+
     # Cross-validation results
     cross_validation_results = Column(JSON, nullable=True)
     has_cross_validation_alert = Column(Boolean, default=False, nullable=True)
@@ -121,10 +139,19 @@ class EvaluationResult(Base):
         Index("idx_total_score", "total_score"),
         Index("idx_is_failed", "is_failed"),
         Index("idx_er_version_id", "version_id"),
+        Index("idx_evaluation_judgment", "evaluation_judgment"),
     )
 
     def calculate_tiered_scores(self) -> None:
-        """Calculate total score, retrieval score, generation score, and failure status."""
+        """Calculate total score, retrieval score, generation score, and evaluation judgment.
+
+        Three-state evaluation judgment logic:
+        - pass: All four core metrics >= threshold (0.6)
+        - fail: All core metrics have values, but at least one < threshold
+        - undetermined: At least one core metric is None/null
+        """
+        from app.core.config import settings
+
         # Retrieval Score (45%)
         retrieval = (
             0.25 * (self.ragas_query_context_relevance or 0)
@@ -143,18 +170,41 @@ class EvaluationResult(Base):
         self.generation_score = generation
         self.total_score = 100 * (retrieval + generation)
 
-        # Hard threshold check
-        faithfulness = self.faithfulness_score or 0
-        groundedness = self.trulens_groundedness or 0
+        # Four core metrics for three-state judgment
+        core_metrics = {
+            "faithfulness": self.faithfulness_score,
+            "groundedness": self.trulens_groundedness,
+            "query_context_relevance": self.ragas_query_context_relevance,
+            "context_relevance": self.trulens_context_relevance,
+        }
 
-        reasons = []
-        if faithfulness < 0.6:
-            reasons.append(f"Faithfulness ({faithfulness:.2f}) < 0.6")
-        if groundedness < 0.6:
-            reasons.append(f"Groundedness ({groundedness:.2f}) < 0.6")
+        threshold = getattr(settings, "EVALUATION_CORE_THRESHOLD", 0.6)
 
-        self.is_failed = len(reasons) > 0
-        self.failure_reason = "; ".join(reasons) if reasons else None
+        # Priority: first check for None values, then check threshold
+        has_none = any(v is None for v in core_metrics.values())
+
+        if has_none:
+            # undetermined: any core metric is None
+            self.evaluation_judgment = EvaluationJudgment.UNDETERMINED.value
+            self.is_failed = False
+            self.failure_reason = "Core metrics incomplete"
+        else:
+            # Check if any metric is below threshold
+            failed_metrics = []
+            for name, value in core_metrics.items():
+                if value < threshold:
+                    failed_metrics.append(f"{name} ({value:.2f}) < {threshold}")
+
+            if failed_metrics:
+                # fail: all metrics have values, but at least one < threshold
+                self.evaluation_judgment = EvaluationJudgment.FAIL.value
+                self.is_failed = True
+                self.failure_reason = "; ".join(failed_metrics)
+            else:
+                # pass: all metrics >= threshold
+                self.evaluation_judgment = EvaluationJudgment.PASS.value
+                self.is_failed = False
+                self.failure_reason = None
 
     def __repr__(self) -> str:
         return f"<EvaluationResult(id={self.id}, total_score={self.total_score}, is_failed={self.is_failed})>"

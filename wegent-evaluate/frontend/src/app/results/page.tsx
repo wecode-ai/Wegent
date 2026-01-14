@@ -12,7 +12,6 @@ interface Filters {
   start_date: string
   end_date: string
   evaluation_status: string
-  has_issue: string
 }
 
 export default function ResultsPage() {
@@ -30,7 +29,6 @@ export default function ResultsPage() {
     start_date: '',
     end_date: '',
     evaluation_status: '',
-    has_issue: '',
   })
 
   const fetchResults = useCallback(async () => {
@@ -50,9 +48,6 @@ export default function ResultsPage() {
       }
       if (filters.evaluation_status) {
         params.evaluation_status = filters.evaluation_status
-      }
-      if (filters.has_issue) {
-        params.has_issue = filters.has_issue === 'true'
       }
       if (currentVersion?.id) {
         params.version_id = currentVersion.id
@@ -99,7 +94,7 @@ export default function ResultsPage() {
         <h1 className="text-2xl font-semibold">{t('results.title')}</h1>
       </div>
 
-      {/* Filters */}
+      {/* Filters - removed has_issue filter */}
       <div className="flex flex-wrap gap-4 rounded-lg border bg-card p-4">
         <div className="flex items-center gap-2">
           <Filter className="h-4 w-4 text-muted-foreground" />
@@ -128,15 +123,6 @@ export default function ResultsPage() {
             <option value="completed">Completed</option>
             <option value="failed">Failed</option>
             <option value="skipped">Skipped</option>
-          </select>
-          <select
-            value={filters.has_issue}
-            onChange={(e) => handleFilterChange('has_issue', e.target.value)}
-            className="rounded-md border bg-background px-3 py-1.5 text-sm"
-          >
-            <option value="">{t('results.hasIssue')} - All</option>
-            <option value="true">Yes</option>
-            <option value="false">No</option>
           </select>
           <button
             onClick={handleSearch}

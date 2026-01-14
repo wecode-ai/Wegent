@@ -813,7 +813,17 @@ class EvaluationService:
                 "generation_score": evaluation.generation_score if evaluation else None,
                 "is_failed": evaluation.is_failed if evaluation else False,
                 "failure_reason": evaluation.failure_reason if evaluation else None,
-                # TruLens groundedness for list view (事实性)
+                # Three-state evaluation judgment
+                "evaluation_judgment": (
+                    evaluation.evaluation_judgment if evaluation else None
+                ),
+                # Four core metrics for list view
+                "ragas_query_context_relevance": (
+                    evaluation.ragas_query_context_relevance if evaluation else None
+                ),
+                "trulens_context_relevance": (
+                    evaluation.trulens_context_relevance if evaluation else None
+                ),
                 "trulens_groundedness": (
                     evaluation.trulens_groundedness if evaluation else None
                 ),
@@ -880,6 +890,8 @@ class EvaluationService:
             "generation_score": evaluation.generation_score,
             "is_failed": evaluation.is_failed,
             "failure_reason": evaluation.failure_reason,
+            # Three-state evaluation judgment
+            "evaluation_judgment": evaluation.evaluation_judgment,
             # Cross-validation
             "cross_validation_results": evaluation.cross_validation_results,
             "has_cross_validation_alert": evaluation.has_cross_validation_alert,
