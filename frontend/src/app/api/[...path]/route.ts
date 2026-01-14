@@ -34,6 +34,11 @@ async function proxyRequest(
     targetUrl.searchParams.append(key, value)
   })
 
+  // Set up abort controller for timeout
+  // Link preview API may take up to 30+ seconds for screenshots
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 60000) // 60 second timeout
+
   try {
     // Forward headers, excluding host-related ones
     const headers = new Headers()
@@ -62,7 +67,10 @@ async function proxyRequest(
       body,
       // Don't follow redirects, let the client handle them
       redirect: 'manual',
+      signal: controller.signal,
     })
+
+    clearTimeout(timeoutId)
 
     // Create response headers, excluding hop-by-hop headers
     const responseHeaders = new Headers()
@@ -84,6 +92,7 @@ async function proxyRequest(
       headers: responseHeaders,
     })
   } catch (error) {
+    clearTimeout(timeoutId)
     console.error('[API Proxy] Error proxying request:', error)
     return NextResponse.json({ error: 'Failed to proxy request to backend' }, { status: 502 })
   }
