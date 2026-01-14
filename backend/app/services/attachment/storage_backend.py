@@ -7,12 +7,22 @@ Storage backend abstract interface for attachment storage.
 
 This module defines the abstract base class for storage backends,
 allowing pluggable storage solutions (MySQL, S3, MinIO, etc.).
+
+IMPORTANT: Encryption/decryption is handled at the context_service layer,
+NOT in storage backends. Storage backends are only responsible for raw data
+storage and retrieval. This design ensures:
+1. New storage backends don't need to implement encryption logic
+2. Encryption behavior is consistent across all backends
+3. Encryption metadata (is_encrypted) is managed in SubtaskContext.type_data
 """
 
+import logging
 import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Dict, Optional
+
+logger = logging.getLogger(__name__)
 
 
 class StorageBackend(ABC):
@@ -21,6 +31,9 @@ class StorageBackend(ABC):
 
     Different storage backends (MySQL, S3, MinIO, etc.) should implement this interface.
     This allows the attachment service to use any storage backend without changes.
+
+    IMPORTANT: Storage backends should NOT implement encryption/decryption logic.
+    Encryption is handled at the context_service layer for consistency.
     """
 
     @abstractmethod

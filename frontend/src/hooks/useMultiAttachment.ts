@@ -51,8 +51,15 @@ export function useMultiAttachment(): UseMultiAttachmentReturn {
     async (files: File | File[]) => {
       const fileList = Array.isArray(files) ? files : [files]
 
+      // Clear previous errors before new upload attempt
+      setState(prev => ({
+        ...prev,
+        errors: new Map(),
+      }))
+
       for (const file of fileList) {
-        const fileId = `${file.name}-${file.size}-${Date.now()}`
+        // Use only filename as fileId to avoid duplicate errors for the same file
+        const fileId = file.name
 
         // Validate file type
         if (!isSupportedExtension(file.name)) {

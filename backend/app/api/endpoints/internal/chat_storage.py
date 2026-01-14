@@ -260,18 +260,19 @@ def _build_user_message_content(
     for attachment in attachments:
         # Check if it's an image
         if attachment.mime_type and attachment.mime_type.startswith("image/"):
-            if attachment.binary_data:
-                encoded_data = base64.b64encode(attachment.binary_data).decode("utf-8")
+            # Use stored image_base64 if available (preferred, already decoded)
+            # This is generated at upload time from the original unencrypted binary data
+            if attachment.image_base64:
                 vision_parts.append(
                     {
                         "type": "image_url",
                         "image_url": {
-                            "url": f"data:{attachment.mime_type};base64,{encoded_data}",
+                            "url": f"data:{attachment.mime_type};base64,{attachment.image_base64}",
                         },
                     }
                 )
                 logger.debug(
-                    f"[history] Loaded image attachment: id={attachment.id}, "
+                    f"[history] Loaded image attachment from image_base64: id={attachment.id}, "
                     f"name={attachment.name}, mime_type={attachment.mime_type}"
                 )
         else:
