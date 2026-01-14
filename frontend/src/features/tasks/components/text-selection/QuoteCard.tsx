@@ -37,7 +37,7 @@ export function QuoteCard() {
       : quote.text
 
   return (
-    <div className="mx-4 mb-2 animate-in slide-in-from-bottom-2 duration-200">
+    <div className="mx-4 mt-2 mb-2 animate-in slide-in-from-bottom-2 duration-200">
       <div className="flex items-start gap-2 py-2 px-3 bg-surface rounded-xl border border-border/60">
         {/* Quote icon */}
         <CornerDownRight className="flex-shrink-0 h-4 w-4 mt-0.5 text-text-muted" />
