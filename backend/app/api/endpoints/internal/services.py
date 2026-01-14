@@ -87,7 +87,7 @@ def update_task_services(
         .filter(
             TaskResource.id == request.task_id,
             TaskResource.kind == "Task",
-            TaskResource.is_active == True,
+            TaskResource.is_active.is_(True),
         )
         .first()
     )
@@ -146,7 +146,7 @@ def get_task_services(
         .filter(
             TaskResource.id == task_id,
             TaskResource.kind == "Task",
-            TaskResource.is_active == True,
+            TaskResource.is_active.is_(True),
         )
         .first()
     )
