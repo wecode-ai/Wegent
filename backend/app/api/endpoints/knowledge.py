@@ -713,21 +713,34 @@ def update_document(
 @document_router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_document(
     document_id: int,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
     """Delete a document from the knowledge base."""
     try:
-        deleted = KnowledgeService.delete_document(
+        result = KnowledgeService.delete_document(
             db=db,
             document_id=document_id,
             user_id=current_user.id,
         )
 
-        if not deleted:
+        if not result.success:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Document not found or access denied",
+            )
+
+        # Trigger KB summary update in background after successful deletion
+        if result.kb_id is not None:
+            logger.info(
+                f"[KnowledgeAPI] Scheduling KB summary update after deletion: "
+                f"kb_id={result.kb_id}, document_id={document_id}"
+            )
+            background_tasks.add_task(
+                _update_kb_summary_after_deletion,
+                kb_id=result.kb_id,
+                user_id=current_user.id,
             )
 
         return None
@@ -744,6 +757,7 @@ def delete_document(
 @document_router.post("/batch/delete", response_model=BatchOperationResult)
 def batch_delete_documents(
     data: BatchDocumentIds,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -754,17 +768,35 @@ def batch_delete_documents(
     Returns a summary of successful and failed operations.
     Raises 403 if all operations fail due to permission issues.
     """
-    result = KnowledgeService.batch_delete_documents(
+    batch_result = KnowledgeService.batch_delete_documents(
         db=db,
         document_ids=data.document_ids,
         user_id=current_user.id,
     )
+
+    result = batch_result.result
+    kb_ids = batch_result.kb_ids
+
     # If all operations failed, raise an error
     if result.success_count == 0 and result.failed_count > 0:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only Owner or Maintainer can delete documents from this knowledge base",
         )
+
+    # Trigger KB summary update ONCE for each affected KB after all deletions complete
+    if kb_ids:
+        logger.info(
+            f"[KnowledgeAPI] Scheduling KB summary updates after batch deletion: "
+            f"kb_ids={kb_ids}, deleted_count={result.success_count}"
+        )
+        for kb_id in kb_ids:
+            background_tasks.add_task(
+                _update_kb_summary_after_deletion,
+                kb_id=kb_id,
+                user_id=current_user.id,
+            )
+
     return result
 
 
@@ -1198,3 +1230,56 @@ async def _run_document_summary_refresh(doc_id: int, user_id: int):
         logger.exception(f"Failed to refresh document summary for doc_id={doc_id}")
     finally:
         new_db.close()
+
+
+def _update_kb_summary_after_deletion(kb_id: int, user_id: int):
+    """
+    Background task to update KB summary after document deletion.
+
+    - If no active documents remain, clear the summary
+    - If active documents remain, regenerate the summary
+    - Errors are logged but don't affect the deletion operation
+    - Respects debounce pattern (skip if summary is currently generating)
+
+    This is a synchronous function that creates its own event loop to run
+    the async summary service methods. This is necessary because FastAPI's
+    BackgroundTasks runs tasks in a thread pool without an event loop.
+
+    Args:
+        kb_id: Knowledge base ID
+        user_id: User who triggered the deletion
+    """
+    from app.services.summary_service import get_summary_service
+
+    logger.info(
+        f"[KnowledgeAPI] Starting KB summary update after deletion: kb_id={kb_id}"
+    )
+
+    # Create a new database session for the background task
+    db = SessionLocal()
+    try:
+        summary_service = get_summary_service(db)
+
+        # Trigger KB summary with clear_if_empty=True
+        # This will:
+        # - Clear summary if no active documents remain
+        # - Regenerate summary if active documents exist with completed summaries
+        # - Skip if currently generating (debounce)
+        asyncio.run(
+            summary_service.trigger_kb_summary(
+                kb_id, user_id, force=False, clear_if_empty=True
+            )
+        )
+
+    except Exception as e:
+        # Log error but don't re-raise - deletion should succeed regardless
+        logger.error(
+            f"[KnowledgeAPI] Failed to update KB summary after deletion: "
+            f"kb_id={kb_id}, error={str(e)}",
+            exc_info=True,
+        )
+    finally:
+        db.close()
+        logger.info(
+            f"[KnowledgeAPI] KB summary update task completed: kb_id={kb_id}"
+        )

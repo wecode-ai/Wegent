@@ -6,6 +6,7 @@
 Knowledge base and document service using kinds table.
 """
 
+from dataclasses import dataclass
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -36,6 +37,29 @@ from app.services.group_permission import (
     get_effective_role_in_group,
     get_user_groups,
 )
+
+
+@dataclass
+class DocumentDeleteResult:
+    """Result of a document deletion operation.
+
+    Contains information needed to trigger KB summary updates after deletion.
+    """
+
+    success: bool
+    kb_id: Optional[int] = None
+
+
+@dataclass
+class BatchDeleteResult:
+    """Result of a batch document deletion operation.
+
+    Contains the standard batch operation result plus additional info
+    for triggering KB summary updates.
+    """
+
+    result: BatchOperationResult
+    kb_ids: list[int]  # Unique KB IDs from successfully deleted documents
 
 
 class KnowledgeService:
@@ -687,7 +711,7 @@ class KnowledgeService:
         db: Session,
         document_id: int,
         user_id: int,
-    ) -> bool:
+    ) -> DocumentDeleteResult:
         """
         Physically delete a document, its RAG index, and associated attachment.
 
@@ -697,7 +721,7 @@ class KnowledgeService:
             user_id: Requesting user ID
 
         Returns:
-            True if deleted, False if not found
+            DocumentDeleteResult with success status and kb_id for summary updates
 
         Raises:
             ValueError: If permission denied
@@ -732,7 +756,7 @@ class KnowledgeService:
 
         doc = KnowledgeService.get_document(db, document_id, user_id)
         if not doc:
-            return False
+            return DocumentDeleteResult(success=False, kb_id=None)
 
         # Check permission for team knowledge base
         kb = (
@@ -842,7 +866,7 @@ class KnowledgeService:
                     exc_info=True,
                 )
 
-        return True
+        return DocumentDeleteResult(success=True, kb_id=kind_id)
 
     # ============== Accessible Knowledge Query ==============
 
@@ -981,7 +1005,7 @@ class KnowledgeService:
         db: Session,
         document_ids: list[int],
         user_id: int,
-    ) -> BatchOperationResult:
+    ) -> BatchDeleteResult:
         """
         Batch delete multiple documents.
 
@@ -991,26 +1015,34 @@ class KnowledgeService:
             user_id: Requesting user ID
 
         Returns:
-            BatchOperationResult with success/failure counts
+            BatchDeleteResult with operation result and KB IDs for summary updates
         """
         success_count = 0
         failed_ids = []
+        kb_ids = set()  # Collect unique KB IDs from deleted documents
 
         for doc_id in document_ids:
             try:
-                deleted = KnowledgeService.delete_document(db, doc_id, user_id)
-                if deleted:
+                result = KnowledgeService.delete_document(db, doc_id, user_id)
+                if result.success:
                     success_count += 1
+                    if result.kb_id is not None:
+                        kb_ids.add(result.kb_id)
                 else:
                     failed_ids.append(doc_id)
             except (ValueError, Exception):
                 failed_ids.append(doc_id)
 
-        return BatchOperationResult(
+        operation_result = BatchOperationResult(
             success_count=success_count,
             failed_count=len(failed_ids),
             failed_ids=failed_ids,
             message=f"Successfully deleted {success_count} documents, {len(failed_ids)} failed",
+        )
+
+        return BatchDeleteResult(
+            result=operation_result,
+            kb_ids=list(kb_ids),
         )
 
     @staticmethod

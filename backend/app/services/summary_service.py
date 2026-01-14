@@ -277,7 +277,7 @@ class SummaryService:
     # ==================== Knowledge Base Summary ====================
 
     async def trigger_kb_summary(
-        self, kb_id: int, user_id: int, force: bool = False
+        self, kb_id: int, user_id: int, force: bool = False, clear_if_empty: bool = False
     ) -> Optional[BackgroundTaskResult]:
         """
         Trigger knowledge base summary generation.
@@ -286,10 +286,12 @@ class SummaryService:
             kb_id: Knowledge base ID (Kind.id)
             user_id: Triggering user ID
             force: Whether to force trigger (ignore change threshold)
+            clear_if_empty: If True and no active documents exist, clear the summary
+                           (used after document deletion)
         """
         logger.info(
             f"[SummaryService] Triggering KB summary: "
-            f"kb_id={kb_id}, user_id={user_id}, force={force}"
+            f"kb_id={kb_id}, user_id={user_id}, force={force}, clear_if_empty={clear_if_empty}"
         )
 
         # 1. Get knowledge base with row lock to prevent TOCTOU race condition
@@ -323,10 +325,8 @@ class SummaryService:
         logger.info(f"[SummaryService] Aggregating document summaries: kb_id={kb_id}")
         aggregation = self._get_document_aggregation(kb_id)
         if not aggregation.aggregated_text:
-            logger.info(
-                f"[SummaryService] No completed document summaries for KB: "
-                f"kb_id={kb_id}, completed_count={aggregation.completed_count}"
-            )
+            # No completed document summaries - handle empty state
+            self._handle_empty_kb_summary(kb, kb_id, clear_if_empty, aggregation.completed_count)
             return None
 
         logger.info(
@@ -459,6 +459,47 @@ class SummaryService:
         return await self.trigger_kb_summary(kb_id, user_id, force=True)
 
     # ==================== Helper Methods ====================
+
+    def _handle_empty_kb_summary(
+        self, kb: Kind, kb_id: int, clear_if_empty: bool, completed_count: int
+    ) -> None:
+        """
+        Handle the case when there are no completed document summaries.
+
+        This method is called when no active documents with completed summaries exist.
+        It either clears the KB summary (if called from deletion flow) or just logs the state.
+
+        Args:
+            kb: Knowledge base Kind object (already fetched with row lock)
+            kb_id: Knowledge base ID for logging
+            clear_if_empty: If True, clear the summary (used after document deletion)
+            completed_count: Number of completed document summaries (for logging)
+        """
+        if clear_if_empty:
+            # Called from deletion flow - clear the summary if it exists
+            logger.info(
+                f"[SummaryService] No active documents, clearing KB summary: kb_id={kb_id}"
+            )
+            kb_json = kb.json or {}
+            spec = kb_json.get("spec", {})
+            if spec.get("summary") is not None:
+                spec["summary"] = None
+                kb_json["spec"] = spec
+                kb.json = kb_json
+                flag_modified(kb, "json")
+                self.db.commit()
+                logger.info(
+                    f"[SummaryService] KB summary cleared (no active documents): kb_id={kb_id}"
+                )
+            else:
+                logger.info(
+                    f"[SummaryService] KB summary already cleared: kb_id={kb_id}"
+                )
+        else:
+            logger.info(
+                f"[SummaryService] No completed document summaries for KB: "
+                f"kb_id={kb_id}, completed_count={completed_count}"
+            )
 
     async def _get_document_content(self, document: KnowledgeDocument) -> Optional[str]:
         """
