@@ -77,7 +77,7 @@ const DialogContent = React.forwardRef<
   ) => {
     const { t } = useTranslation('common')
     const [showConfirmDialog, setShowConfirmDialog] = React.useState(false)
-    const [pendingCloseAction, setPendingCloseAction] = React.useState<'escape' | 'outside' | 'button' | null>(null)
+    const [_pendingCloseAction, setPendingCloseAction] = React.useState<'escape' | 'outside' | 'button' | null>(null)
 
     // Handle ESC key press
     const handleEscapeKeyDown = React.useCallback(
