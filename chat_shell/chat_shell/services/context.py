@@ -60,16 +60,25 @@ class ChatContext:
       all execute concurrently
     """
 
-    def __init__(self, request: ChatRequest):
+    def __init__(
+        self,
+        request: ChatRequest,
+        streaming_state: Any = None,
+        stream_emitter: Any = None,
+    ):
         """Initialize chat context.
 
         Args:
             request: The chat request containing all configuration
+            streaming_state: Optional StreamingState for tool events (HTTP mode)
+            stream_emitter: Optional StreamEmitter for tool events (HTTP mode)
         """
         self._request = request
         self._mcp_clients: list = []
         self._db_session: AsyncSession | None = None
         self._load_skill_tool: Any = None
+        self._streaming_state = streaming_state
+        self._stream_emitter = stream_emitter
 
     @trace_async(
         span_name="chat_context.prepare",
@@ -293,6 +302,8 @@ class ChatContext:
             load_skill_tool=load_skill_tool,
             preload_skills=self._request.preload_skills,
             user_name=self._request.user_name,
+            streaming_state=self._streaming_state,
+            stream_emitter=self._stream_emitter,
         )
         add_span_event("skill_tools_prepared", {"tools_count": len(tools)})
         return tools

@@ -137,6 +137,8 @@ async def prepare_skill_tools(
     load_skill_tool: Optional[Any] = None,
     preload_skills: Optional[list[str]] = None,
     user_name: str = "",
+    streaming_state: Any = None,
+    stream_emitter: Any = None,
 ) -> list[Any]:
     """
     Prepare skill tools dynamically using SkillToolRegistry.
@@ -260,6 +262,8 @@ async def prepare_skill_tools(
             ws_emitter=ws_emitter,
             skill_config=skill_config,
             user_name=user_name,
+            streaming_state=streaming_state,
+            stream_emitter=stream_emitter,
         )
 
         # Create tools using the registry

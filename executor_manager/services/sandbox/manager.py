@@ -222,15 +222,31 @@ class SandboxManager(metaclass=SingletonMeta):
         Returns:
             base_url if ready, None otherwise
         """
+        logger.info(
+            f"[SandboxManager] Waiting for container ready: {container_name}, "
+            f"max_retries={max_retries}, interval={interval}s"
+        )
+
         for i in range(max_retries):
+            logger.debug(
+                f"[SandboxManager] _wait_for_container_ready: attempt {i + 1}/{max_retries}"
+            )
             result = await asyncio.to_thread(
                 executor.get_container_address, container_name
             )
+            logger.debug(f"[SandboxManager] get_container_address result: {result}")
+
             if result.get("status") == "success":
                 base_url = result.get("base_url")
                 if base_url:
+                    logger.info(
+                        f"[SandboxManager] Got base_url={base_url}, checking health..."
+                    )
                     # Check if container is healthy
                     is_healthy = await self._check_container_health(base_url)
+                    logger.info(
+                        f"[SandboxManager] Health check result: is_healthy={is_healthy}"
+                    )
                     if is_healthy:
                         logger.info(
                             f"[SandboxManager] Container ready: {container_name}, "
@@ -245,7 +261,8 @@ class SandboxManager(metaclass=SingletonMeta):
             await asyncio.sleep(interval)
 
         logger.error(
-            f"[SandboxManager] Container {container_name} failed to become ready"
+            f"[SandboxManager] Container {container_name} failed to become ready "
+            f"after {max_retries} attempts"
         )
         return None
 

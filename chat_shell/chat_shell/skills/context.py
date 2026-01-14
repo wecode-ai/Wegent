@@ -36,6 +36,9 @@ class SkillToolContext:
     ws_emitter: Any  # WebSocket emitter
     skill_config: dict[str, Any] = field(default_factory=dict)
     user_name: str = ""
+    # Streaming support for tool events (HTTP mode)
+    streaming_state: Any = None  # StreamingState for adding thinking steps
+    stream_emitter: Any = None  # StreamEmitter for emitting events
 
     def get_config(self, key: str, default: Any = None) -> Any:
         """Get a configuration value from skill config.
