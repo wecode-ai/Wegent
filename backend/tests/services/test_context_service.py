@@ -59,12 +59,17 @@ class TestContextServiceStorage:
 
     def test_get_binary_data_from_mysql(self):
         """Test retrieving binary data from MySQL storage"""
+        import sys
+
         from app.models.subtask_context import (
             ContextStatus,
             ContextType,
             SubtaskContext,
         )
         from app.services.context.context_service import context_service as cs_instance
+
+        # Get the actual module (not the singleton instance) for patching
+        cs_module = sys.modules["app.services.context.context_service"]
 
         # Arrange
         mock_db = Mock()
@@ -85,10 +90,8 @@ class TestContextServiceStorage:
         context.id = 100
 
         # Mock the storage backend to return the binary data
-        # Patch the function where it's imported (in context_service.py module)
-        with patch(
-            "app.services.context.context_service.get_storage_backend"
-        ) as mock_get_backend:
+        # Use patch.object with the module to avoid name conflicts
+        with patch.object(cs_module, "get_storage_backend") as mock_get_backend:
             mock_backend = Mock()
             mock_backend.get.return_value = b"stored data"
             mock_get_backend.return_value = mock_backend
@@ -102,6 +105,8 @@ class TestContextServiceStorage:
 
     def test_get_binary_data_with_encryption(self):
         """Test retrieving and decrypting encrypted binary data"""
+        import sys
+
         from shared.utils.crypto import encrypt_attachment
 
         from app.models.subtask_context import (
@@ -110,6 +115,9 @@ class TestContextServiceStorage:
             SubtaskContext,
         )
         from app.services.context.context_service import context_service as cs_instance
+
+        # Get the actual module (not the singleton instance) for patching
+        cs_module = sys.modules["app.services.context.context_service"]
 
         # Arrange
         mock_db = Mock()
@@ -133,10 +141,8 @@ class TestContextServiceStorage:
         context.id = 100
 
         # Mock the storage backend to return encrypted data
-        # Patch the function where it's imported (in context_service.py module)
-        with patch(
-            "app.services.context.context_service.get_storage_backend"
-        ) as mock_get_backend:
+        # Use patch.object with the module to avoid name conflicts
+        with patch.object(cs_module, "get_storage_backend") as mock_get_backend:
             mock_backend = Mock()
             mock_backend.get.return_value = encrypted_data
             mock_get_backend.return_value = mock_backend
