@@ -4,6 +4,8 @@
 
 This directory contains YAML configuration files for initializing the Wegent system. The system automatically scans this directory on startup and applies all YAML resources using the batch service API.
 
+**Standalone Deployment**: The `init_data` directory is built into the Docker image, so users can deploy Wegent with just the `docker-compose.yml` file - no local code repository needed.
+
 ## How It Works
 
 1. **Auto-scan**: On startup, the backend scans `INIT_DATA_DIR` (default: `/app/init_data`) for all `.yaml` and `.yml` files
@@ -32,16 +34,6 @@ If you want to update an existing resource to match YAML:
 3. Or manually update it through the UI/API
 
 ## Configuration
-
-### Environment Variables
-
-```bash
-# Enable/disable YAML initialization (default: True)
-INIT_DATA_ENABLED=True
-
-# Directory to scan for YAML files (default: /app/init_data)
-INIT_DATA_DIR=/app/init_data
-```
 
 ### Default Admin User
 
@@ -131,16 +123,43 @@ status:
 
 ## Docker Integration
 
-The directory is mounted as read-only in `docker-compose.yml`:
+The `init_data` directory is built into the Docker image for standalone deployment. Users only need the `docker-compose.yml` file to start Wegent - no local code repository required.
+
+### Default Behavior
+
+The Docker image includes:
+- Default resources (`01-default-resources.yaml`)
+- Public shell configurations (`02-public-shells.yaml`)
+- Built-in skills (`skills/` directory)
+
+### Customizing Initialization Data
+
+To override the built-in initialization data with your own configuration:
 
 ```yaml
-volumes:
-  - ./backend/init_data:/app/init_data:ro
+# In docker-compose.yml, add a volume mount to the backend service:
+backend:
+  volumes:
+    - ./custom_init_data:/app/init_data:ro
 ```
 
-To add custom resources:
-1. Add YAML files to `backend/init_data/`
-2. Restart the backend container
+Create your custom directory structure:
+```
+custom_init_data/
+├── 01-default-resources.yaml  # Your custom resources
+├── 02-public-shells.yaml      # Your custom shells
+└── skills/                    # Your custom skills
+```
+
+### Environment Variables
+
+```bash
+# Enable/disable YAML initialization (default: True)
+INIT_DATA_ENABLED=True
+
+# Directory to scan for YAML files (default: /app/init_data)
+INIT_DATA_DIR=/app/init_data
+```
 
 ## Advantages
 

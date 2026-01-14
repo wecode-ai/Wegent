@@ -74,7 +74,9 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./backend/init_data:/app/init_data:ro
+      # init_data is now built into the Docker image for standalone deployment.
+      # To customize initialization data, uncomment and mount your own directory:
+      # - ./custom_init_data:/app/init_data:ro
     environment:
       ENVIRONMENT: development
       DB_AUTO_MIGRATE: "True"

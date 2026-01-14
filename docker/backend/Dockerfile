@@ -33,6 +33,10 @@ COPY backend /app
 # Also copy shared to /app/shared for PYTHONPATH imports
 COPY shared /app/shared
 
+# Copy init_data directory into the image for standalone deployment
+# This includes default resources, public shells, and skills
+COPY backend/init_data /app/init_data
+
 # Create .env file (if it doesn't exist)
 RUN if [ ! -f .env ]; then cp .env.example .env; fi
 
