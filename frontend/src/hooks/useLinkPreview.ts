@@ -172,7 +172,6 @@ export function prefetchLinkPreview(url: string): void {
         image: null,
         favicon: null,
         site_name: null,
-        type: 'website',
         success: false,
       }
       previewCache.set(url, failedResult)
