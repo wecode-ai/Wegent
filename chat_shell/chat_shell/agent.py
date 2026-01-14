@@ -222,6 +222,7 @@ class ChatAgent:
         config: AgentConfig,
         cancel_event: asyncio.Event | None = None,
         on_tool_event: Callable[[str, dict], None] | None = None,
+        agent_builder: LangGraphAgentBuilder | None = None,
     ):
         """Stream tokens from agent execution.
 
@@ -233,16 +234,20 @@ class ChatAgent:
             config: Agent configuration
             cancel_event: Optional cancellation event
             on_tool_event: Optional callback for tool events (kind, event_data)
+            agent_builder: Optional pre-created agent builder to reuse (avoids duplicate creation)
 
         Yields:
             Tokens from the agent
         """
-        add_span_event("stream_creating_agent_builder")
-        agent = self.create_agent_builder(config)
-        add_span_event("stream_agent_builder_created")
+        if agent_builder is None:
+            add_span_event("stream_creating_agent_builder")
+            agent_builder = self.create_agent_builder(config)
+            add_span_event("stream_agent_builder_created")
+        else:
+            add_span_event("stream_reusing_agent_builder")
 
         add_span_event("stream_tokens_starting")
-        async for token in agent.stream_tokens(
+        async for token in agent_builder.stream_tokens(
             messages,
             cancel_event=cancel_event,
             on_tool_event=on_tool_event,
