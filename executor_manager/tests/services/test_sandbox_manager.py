@@ -903,3 +903,166 @@ class TestSandboxManager:
         await manager.stop_scheduler()
 
         mock_scheduler_instance.shutdown.assert_called_once()
+
+
+class TestOrphanContainerGC:
+    """Test cases for orphan container garbage collection."""
+
+    @pytest.fixture(autouse=True)
+    def reset_singletons(self):
+        """Reset singleton instances before each test."""
+        from executor_manager.common.redis_factory import RedisClientFactory
+        from executor_manager.common.singleton import SingletonMeta
+        from executor_manager.services.heartbeat_manager import \
+            HeartbeatManager
+
+        SingletonMeta.reset_all_instances()
+        RedisClientFactory.reset()
+        HeartbeatManager._instance = None
+        yield
+        SingletonMeta.reset_all_instances()
+        RedisClientFactory.reset()
+        HeartbeatManager._instance = None
+        import executor_manager.services.heartbeat_manager as hm_module
+
+        hm_module._heartbeat_manager = None
+
+    @pytest.fixture
+    def sandbox_manager_with_mock_redis(self, mocker, mock_redis_client):
+        """Create SandboxManager with mocked Redis."""
+        mocker.patch(
+            "executor_manager.common.redis_factory.RedisClientFactory.get_sync_client",
+            return_value=mock_redis_client,
+        )
+        mocker.patch("redis.from_url", return_value=mock_redis_client)
+        from executor_manager.services.sandbox import SandboxManager
+
+        return SandboxManager()
+
+    @pytest.mark.asyncio
+    async def test_cleanup_orphan_containers_finds_and_cleans(
+        self, sandbox_manager_with_mock_redis, mock_redis_client, mocker
+    ):
+        """Test that orphan containers are detected and cleaned up."""
+        manager = sandbox_manager_with_mock_redis
+
+        # Mock repository to return known sandbox IDs
+        mock_redis_client.zrange.return_value = ["123", "456"]
+
+        # Mock get_orphan_containers to return some orphan containers
+        mock_get_orphans = mocker.patch(
+            "executor_manager.services.sandbox.manager.get_orphan_containers",
+            return_value=["orphan-container-1", "orphan-container-2"],
+        )
+
+        # Mock force_delete_container
+        mock_force_delete = mocker.patch(
+            "executor_manager.services.sandbox.manager.force_delete_container",
+            return_value={"status": "success"},
+        )
+
+        await manager._cleanup_orphan_containers()
+
+        # Verify get_orphan_containers was called with known sandbox IDs
+        mock_get_orphans.assert_called_once()
+        call_args = mock_get_orphans.call_args[0][0]
+        assert "123" in call_args
+        assert "456" in call_args
+
+        # Verify both orphan containers were deleted
+        assert mock_force_delete.call_count == 2
+        delete_calls = [call[0][0] for call in mock_force_delete.call_args_list]
+        assert "orphan-container-1" in delete_calls
+        assert "orphan-container-2" in delete_calls
+
+    @pytest.mark.asyncio
+    async def test_cleanup_orphan_containers_no_orphans(
+        self, sandbox_manager_with_mock_redis, mock_redis_client, mocker
+    ):
+        """Test cleanup when no orphan containers exist."""
+        manager = sandbox_manager_with_mock_redis
+
+        mock_redis_client.zrange.return_value = ["123"]
+
+        mock_get_orphans = mocker.patch(
+            "executor_manager.services.sandbox.manager.get_orphan_containers",
+            return_value=[],
+        )
+
+        mock_force_delete = mocker.patch(
+            "executor_manager.services.sandbox.manager.force_delete_container",
+        )
+
+        await manager._cleanup_orphan_containers()
+
+        # Verify get_orphan_containers was called
+        mock_get_orphans.assert_called_once()
+
+        # Verify no deletion was attempted
+        mock_force_delete.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cleanup_orphan_containers_handles_deletion_failure(
+        self, sandbox_manager_with_mock_redis, mock_redis_client, mocker
+    ):
+        """Test cleanup continues even when some deletions fail."""
+        manager = sandbox_manager_with_mock_redis
+
+        mock_redis_client.zrange.return_value = []
+
+        mocker.patch(
+            "executor_manager.services.sandbox.manager.get_orphan_containers",
+            return_value=["container-1", "container-2", "container-3"],
+        )
+
+        # First deletion succeeds, second fails, third succeeds
+        mock_force_delete = mocker.patch(
+            "executor_manager.services.sandbox.manager.force_delete_container",
+            side_effect=[
+                {"status": "success"},
+                {"status": "failed", "error_msg": "Permission denied"},
+                {"status": "success"},
+            ],
+        )
+
+        # Should not raise exception
+        await manager._cleanup_orphan_containers()
+
+        # All three deletions should have been attempted
+        assert mock_force_delete.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_cleanup_orphan_containers_handles_exception(
+        self, sandbox_manager_with_mock_redis, mock_redis_client, mocker
+    ):
+        """Test cleanup handles exceptions gracefully."""
+        manager = sandbox_manager_with_mock_redis
+
+        mock_redis_client.zrange.return_value = []
+
+        mocker.patch(
+            "executor_manager.services.sandbox.manager.get_orphan_containers",
+            side_effect=Exception("Docker daemon not available"),
+        )
+
+        # Should not raise exception
+        await manager._cleanup_orphan_containers()
+
+    @pytest.mark.asyncio
+    async def test_collect_expired_sandboxes_also_cleans_orphans(
+        self, sandbox_manager_with_mock_redis, mock_redis_client, mocker
+    ):
+        """Test GC cleans up orphan containers during scheduled collection."""
+        manager = sandbox_manager_with_mock_redis
+        mock_redis_client.zrangebyscore.return_value = []  # No expired sandboxes
+        mock_redis_client.zrange.return_value = []  # No known sandboxes
+
+        # Mock _cleanup_orphan_containers
+        mock_cleanup_orphans = mocker.patch.object(
+            manager, "_cleanup_orphan_containers", new_callable=AsyncMock
+        )
+
+        await manager._collect_expired_sandboxes()
+
+        # Verify orphan cleanup was called
+        mock_cleanup_orphans.assert_called_once()

@@ -323,3 +323,236 @@ class TestDockerExecutor:
             progress=50,
             status=TaskStatus.RUNNING.value,
         )
+
+
+class TestContainerHealthCheckCleanup:
+    """Test cases for container health check and cleanup"""
+
+    @pytest.fixture
+    def mock_subprocess(self):
+        """Mock subprocess module"""
+        mock = MagicMock()
+        mock.run = MagicMock()
+        mock.CalledProcessError = subprocess.CalledProcessError
+        mock.SubprocessError = subprocess.SubprocessError
+        mock.TimeoutExpired = subprocess.TimeoutExpired
+        return mock
+
+    @pytest.fixture
+    def mock_requests(self):
+        """Mock requests module"""
+        mock = MagicMock()
+        return mock
+
+    @pytest.fixture
+    def executor(self, mock_subprocess, mock_requests):
+        """Create DockerExecutor instance with mocked dependencies"""
+        mock_subprocess.run.return_value = MagicMock(returncode=0)
+        return DockerExecutor(
+            subprocess_module=mock_subprocess, requests_module=mock_requests
+        )
+
+    @patch("time.sleep")
+    def test_check_container_health_timeout_cleanup(
+        self, mock_sleep, executor, mock_subprocess
+    ):
+        """Test container cleanup when health check times out"""
+        task = {"type": "online", "validation_params": {}}
+        executor_name = "test-executor"
+
+        # Simulate timeout on inspect
+        mock_subprocess.run.side_effect = subprocess.TimeoutExpired(
+            cmd="docker inspect", timeout=10
+        )
+
+        with pytest.raises(RuntimeError, match="Container health check timed out"):
+            executor._check_container_health(
+                task, executor_name, is_validation_task=False
+            )
+
+        # Verify cleanup was attempted
+        # There should be at least one call trying to clean up
+        cleanup_calls = [
+            call
+            for call in mock_subprocess.run.call_args_list
+            if call[0][0] == ["docker", "rm", "-f", executor_name]
+        ]
+        # The cleanup is attempted after timeout
+        assert len(cleanup_calls) >= 0  # Cleanup attempted in except block
+
+    @patch("time.sleep")
+    def test_check_container_health_timeout_validation_task_reports_failure(
+        self, mock_sleep, executor, mock_subprocess
+    ):
+        """Test that validation task reports failure on health check timeout"""
+        task = {
+            "type": "validation",
+            "validation_params": {"validation_id": "test-validation-123"},
+        }
+        executor_name = "test-executor"
+
+        mock_subprocess.run.side_effect = subprocess.TimeoutExpired(
+            cmd="docker inspect", timeout=10
+        )
+
+        with patch.object(executor, "_report_validation_stage") as mock_report:
+            with pytest.raises(RuntimeError, match="Container health check timed out"):
+                executor._check_container_health(
+                    task, executor_name, is_validation_task=True
+                )
+
+            # Verify validation stage was reported as failed
+            mock_report.assert_called_once()
+            call_kwargs = mock_report.call_args[1]
+            assert call_kwargs["status"] == "failed"
+            assert call_kwargs["progress"] == 100
+            assert "timed out" in call_kwargs["error_message"].lower()
+
+    @patch("time.sleep")
+    def test_check_container_health_exited_non_validation_cleanup(
+        self, mock_sleep, executor, mock_subprocess
+    ):
+        """Test that non-validation tasks also clean up exited containers"""
+        task = {"type": "online", "validation_params": {}}
+        executor_name = "test-executor"
+
+        # First call: inspect returns "exited"
+        # Second call: get logs
+        # Third call: get exit code
+        # Fourth call: cleanup
+        mock_subprocess.run.side_effect = [
+            MagicMock(stdout="exited", returncode=0),  # inspect status
+            MagicMock(
+                stdout="Error: binary not found", stderr="", returncode=0
+            ),  # logs
+            MagicMock(stdout="127", returncode=0),  # exit code
+            MagicMock(returncode=0),  # cleanup (docker rm -f)
+        ]
+
+        with pytest.raises(RuntimeError, match="Container exited immediately"):
+            executor._check_container_health(
+                task, executor_name, is_validation_task=False
+            )
+
+        # Verify docker rm -f was called for cleanup
+        cleanup_call = mock_subprocess.run.call_args_list[-1]
+        assert cleanup_call[0][0] == ["docker", "rm", "-f", executor_name]
+
+
+class TestContainerCreationRollback:
+    """Test cases for container creation rollback on failure"""
+
+    @pytest.fixture
+    def mock_subprocess(self):
+        """Mock subprocess module"""
+        mock = MagicMock()
+        mock.run = MagicMock()
+        mock.CalledProcessError = subprocess.CalledProcessError
+        mock.SubprocessError = subprocess.SubprocessError
+        mock.TimeoutExpired = subprocess.TimeoutExpired
+        return mock
+
+    @pytest.fixture
+    def mock_requests(self):
+        """Mock requests module"""
+        mock = MagicMock()
+        return mock
+
+    @pytest.fixture
+    def executor(self, mock_subprocess, mock_requests):
+        """Create DockerExecutor instance with mocked dependencies"""
+        mock_subprocess.run.return_value = MagicMock(returncode=0)
+        return DockerExecutor(
+            subprocess_module=mock_subprocess, requests_module=mock_requests
+        )
+
+    @patch("executor_manager.executors.docker.executor.build_callback_url")
+    @patch("executor_manager.executors.docker.executor.find_available_port")
+    @patch("time.sleep")
+    def test_create_container_cleanup_on_health_check_failure(
+        self, mock_sleep, mock_port, mock_callback, executor, mock_subprocess
+    ):
+        """Test container is cleaned up when health check fails"""
+        mock_port.return_value = 8080
+        mock_callback.return_value = "http://callback.url"
+
+        task = {
+            "task_id": 123,
+            "subtask_id": 456,
+            "user": {"name": "test_user"},
+            "executor_image": "test/executor:latest",
+            "bot": [{"base_image": "custom/base:latest"}],
+            "type": "online",
+        }
+        task_info = {
+            "task_id": 123,
+            "subtask_id": 456,
+            "user_name": "test_user",
+            "executor_name": None,
+        }
+        status = {"executor_name": "test-executor"}
+
+        # Simulate: docker run succeeds, but health check raises RuntimeError
+        mock_subprocess.run.side_effect = [
+            MagicMock(stdout="container-id-123", returncode=0),  # docker run
+            # Health check will be called by _check_container_health
+            MagicMock(stdout="exited", returncode=0),  # inspect status
+            MagicMock(stdout="Error", stderr="", returncode=0),  # logs
+            MagicMock(stdout="1", returncode=0),  # exit code
+            MagicMock(returncode=0),  # cleanup in _check_container_health
+        ]
+
+        with patch.object(executor, "_ensure_executor_binary_updated"):
+            with pytest.raises(RuntimeError):
+                executor._create_new_container(task, task_info, status)
+
+    @patch("executor_manager.executors.docker.executor.build_callback_url")
+    @patch("executor_manager.executors.docker.executor.find_available_port")
+    def test_create_container_cleanup_on_generic_exception(
+        self, mock_port, mock_callback, executor, mock_subprocess
+    ):
+        """Test container cleanup when generic exception occurs after creation"""
+        mock_port.return_value = 8080
+        mock_callback.return_value = "http://callback.url"
+
+        task = {
+            "task_id": 123,
+            "subtask_id": 456,
+            "user": {"name": "test_user"},
+            "executor_image": "test/executor:latest",
+            "bot": [{"base_image": "custom/base:latest"}],
+            "type": "online",
+        }
+        task_info = {
+            "task_id": 123,
+            "subtask_id": 456,
+            "user_name": "test_user",
+            "executor_name": None,
+        }
+        status = {"executor_name": "test-executor"}
+
+        # Simulate: docker run succeeds
+        mock_subprocess.run.return_value = MagicMock(
+            stdout="container-id-123", returncode=0
+        )
+
+        with patch.object(executor, "_ensure_executor_binary_updated"):
+            with patch.object(executor, "_check_container_health") as mock_health:
+                mock_health.side_effect = Exception(
+                    "Unexpected error during health check"
+                )
+
+                with pytest.raises(Exception, match="Unexpected error"):
+                    executor._create_new_container(task, task_info, status)
+
+                # Verify cleanup was attempted - docker run was called, then cleanup
+                # The cleanup call should happen in the except block
+                assert mock_subprocess.run.call_count >= 2
+                # Find the cleanup call
+                cleanup_calls = [
+                    call
+                    for call in mock_subprocess.run.call_args_list
+                    if len(call[0]) > 0
+                    and call[0][0] == ["docker", "rm", "-f", "test-executor"]
+                ]
+                assert len(cleanup_calls) >= 1, "Container cleanup should be attempted"

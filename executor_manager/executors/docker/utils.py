@@ -180,7 +180,11 @@ def check_container_ownership(container_name: str) -> bool:
 
 def delete_container(container_name: str) -> dict:
     """
-    Stop and remove a Docker container.
+    Stop and remove a Docker container using force remove.
+
+    Uses `docker rm -f` which forces removal even if container is running
+    or already stopped. This avoids race conditions where container state
+    changes between stop and rm commands.
 
     Args:
         container_name (str): Name of the container to delete
@@ -189,14 +193,19 @@ def delete_container(container_name: str) -> dict:
         dict: Result with status and optional error message
     """
     try:
-        # Stop and remove container in one command
-        cmd = f"docker stop {container_name} && docker rm {container_name}"
-        subprocess.run(cmd, shell=True, check=True, capture_output=True)
+        # Use docker rm -f to force stop and remove container in one atomic operation
+        # This is more robust than docker stop && docker rm because:
+        # 1. Works even if container is already stopped
+        # 2. No race condition between stop and rm
+        # 3. Single command failure mode
+        cmd = ["docker", "rm", "-f", container_name]
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
         logger.info(f"Deleted Docker container '{container_name}'")
         return {"status": "success"}
     except subprocess.CalledProcessError as e:
-        logger.error(f"Docker error deleting container '{container_name}': {e.stderr}")
-        return {"status": "failed", "error_msg": f"Docker error: {e.stderr}"}
+        error_msg = e.stderr if e.stderr else str(e)
+        logger.error(f"Docker error deleting container '{container_name}': {error_msg}")
+        return {"status": "failed", "error_msg": f"Docker error: {error_msg}"}
     except Exception as e:
         logger.error(f"Error deleting Docker container '{container_name}': {e}")
         return {"status": "failed", "error_msg": f"Error: {e}"}
@@ -477,6 +486,192 @@ def get_container_ports(container_name: str) -> dict:
     except Exception as e:
         logger.error(f"Error getting ports for container '{container_name}': {e}")
         return {"status": "failed", "error_msg": f"Error: {e}", "ports": []}
+
+
+def force_delete_container(container_name: str) -> dict:
+    """
+    Force delete a Docker container using docker rm -f.
+
+    This is an alias for delete_container that emphasizes the force behavior.
+    Use this when cleanup must succeed even if container state is unknown.
+
+    Args:
+        container_name (str): Name of the container to delete
+
+    Returns:
+        dict: Result with status and optional error message
+    """
+    return delete_container(container_name)
+
+
+def get_all_executor_containers() -> list:
+    """
+    Get list of all containers created by executor_manager.
+
+    This queries Docker for all containers (running or stopped) with
+    the owner=executor_manager label.
+
+    Returns:
+        list: List of container names owned by executor_manager
+    """
+    try:
+        cmd = [
+            "docker",
+            "ps",
+            "-a",
+            "--filter",
+            "label=owner=executor_manager",
+            "--format",
+            "{{.Names}}",
+        ]
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+
+        containers = [
+            name.strip() for name in result.stdout.splitlines() if name.strip()
+        ]
+        logger.debug(f"Found {len(containers)} executor_manager containers")
+        return containers
+
+    except subprocess.CalledProcessError as e:
+        error_msg = e.stderr if e.stderr else str(e)
+        logger.error(f"Docker error listing executor_manager containers: {error_msg}")
+        return []
+    except Exception as e:
+        logger.error(f"Error listing executor_manager containers: {e}")
+        return []
+
+
+def cleanup_all_executor_containers() -> dict:
+    """
+    Clean up all containers created by executor_manager.
+
+    This is intended for graceful shutdown scenarios where all managed
+    containers should be terminated.
+
+    Returns:
+        dict: Result with status, cleaned count, and any errors
+    """
+    containers = get_all_executor_containers()
+    if not containers:
+        logger.info("No executor_manager containers to clean up")
+        return {"status": "success", "cleaned": 0, "errors": []}
+
+    logger.info(f"Cleaning up {len(containers)} executor_manager containers")
+
+    cleaned = 0
+    errors = []
+
+    for container_name in containers:
+        try:
+            result = force_delete_container(container_name)
+            if result.get("status") == "success":
+                cleaned += 1
+                logger.debug(f"Cleaned up container: {container_name}")
+            else:
+                errors.append(
+                    {
+                        "container": container_name,
+                        "error": result.get("error_msg", "Unknown error"),
+                    }
+                )
+        except Exception as e:
+            errors.append({"container": container_name, "error": str(e)})
+            logger.warning(f"Failed to clean up container {container_name}: {e}")
+
+    logger.info(
+        f"Container cleanup completed: {cleaned}/{len(containers)} cleaned, "
+        f"{len(errors)} errors"
+    )
+
+    return {
+        "status": "success" if not errors else "partial",
+        "cleaned": cleaned,
+        "total": len(containers),
+        "errors": errors,
+    }
+
+
+def get_orphan_containers(known_sandbox_ids: Set[str]) -> list:
+    """
+    Get list of orphan containers that exist in Docker but not in Redis.
+
+    An orphan container is one that:
+    1. Has the owner=executor_manager label
+    2. Has a sandbox_id or task_id label that is NOT in known_sandbox_ids
+    3. Has been running for more than a threshold time (to avoid race with creation)
+
+    Args:
+        known_sandbox_ids: Set of sandbox/task IDs currently tracked in Redis
+
+    Returns:
+        list: List of orphan container names
+    """
+    import time
+
+    # Minimum age in seconds before a container is considered orphan
+    # This avoids race conditions with container creation
+    MIN_ORPHAN_AGE = 120  # 2 minutes
+
+    try:
+        # Get all executor_manager containers with their labels and creation time
+        cmd = [
+            "docker",
+            "ps",
+            "-a",
+            "--filter",
+            "label=owner=executor_manager",
+            "--format",
+            '{{.Names}}|{{.Label "task_id"}}|{{.CreatedAt}}',
+        ]
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+
+        orphans = []
+        current_time = time.time()
+
+        for line in result.stdout.splitlines():
+            if not line.strip():
+                continue
+
+            parts = line.strip().split("|")
+            if len(parts) < 3:
+                continue
+
+            container_name = parts[0]
+            task_id = parts[1]
+            created_at_str = parts[2]
+
+            # Parse creation time (Docker format: 2024-01-15 10:30:00 +0800 CST)
+            try:
+                # Simple parsing - just extract the timestamp
+                from datetime import datetime
+
+                # Docker uses format like "2024-01-15 10:30:00 +0800 CST"
+                # We'll parse the first 19 characters as datetime
+                created_dt = datetime.strptime(created_at_str[:19], "%Y-%m-%d %H:%M:%S")
+                container_age = current_time - created_dt.timestamp()
+            except Exception:
+                # If parsing fails, assume container is old enough
+                container_age = MIN_ORPHAN_AGE + 1
+
+            # Check if container is old enough and not in known set
+            if container_age > MIN_ORPHAN_AGE:
+                if task_id and task_id not in known_sandbox_ids:
+                    orphans.append(container_name)
+                    logger.debug(
+                        f"Found orphan container: {container_name} (task_id={task_id}, age={container_age:.0f}s)"
+                    )
+
+        if orphans:
+            logger.info(f"Found {len(orphans)} orphan containers")
+        return orphans
+
+    except subprocess.CalledProcessError as e:
+        error_msg = e.stderr if e.stderr else str(e)
+        logger.error(f"Docker error finding orphan containers: {error_msg}")
+        return []
+    except Exception as e:
+        logger.error(f"Error finding orphan containers: {e}")
+        return []
 
 
 if __name__ == "__main__":

@@ -239,6 +239,9 @@ class DockerExecutor(Executor):
             f"Starting Docker container for task {task_id}: {executor_name} (base_image={base_image or 'default'})"
         )
 
+        # Track if container was created to enable cleanup on failure
+        container_created = False
+
         try:
             result = self.subprocess.run(
                 cmd, check=True, capture_output=True, text=True
@@ -246,6 +249,7 @@ class DockerExecutor(Executor):
 
             # Record container ID
             container_id = result.stdout.strip()
+            container_created = True
             logger.info(
                 f"Started Docker container {executor_name} with ID {container_id}"
             )
@@ -283,6 +287,23 @@ class DockerExecutor(Executor):
                     error_message=error_msg,
                     valid=False,
                 )
+            raise
+        except Exception as e:
+            # Clean up container if it was created but failed during post-creation steps
+            if container_created:
+                try:
+                    self.subprocess.run(
+                        ["docker", "rm", "-f", executor_name],
+                        capture_output=True,
+                        timeout=10,
+                    )
+                    logger.info(
+                        f"Cleaned up container {executor_name} after creation exception: {e}"
+                    )
+                except Exception as cleanup_error:
+                    logger.warning(
+                        f"Failed to clean up container {executor_name} after exception: {cleanup_error}"
+                    )
             raise
 
     def _check_container_health(
@@ -371,21 +392,54 @@ class DockerExecutor(Executor):
                         valid=False,
                     )
 
-                    # Clean up the failed container
-                    try:
-                        self.subprocess.run(
-                            ["docker", "rm", "-f", executor_name],
-                            capture_output=True,
-                            timeout=10,
-                        )
-                    except Exception:
-                        pass
+                # Clean up the failed container (for both validation and non-validation tasks)
+                try:
+                    self.subprocess.run(
+                        ["docker", "rm", "-f", executor_name],
+                        capture_output=True,
+                        timeout=10,
+                    )
+                    logger.info(f"Cleaned up exited container: {executor_name}")
+                except Exception as cleanup_error:
+                    logger.warning(
+                        f"Failed to clean up exited container {executor_name}: {cleanup_error}"
+                    )
 
-                    # Raise exception to mark task as failed
-                    raise RuntimeError(f"Container exited immediately: {error_msg}")
+                # Raise exception to mark task as failed
+                raise RuntimeError(f"Container exited immediately: {error_msg}")
 
         except subprocess.TimeoutExpired:
-            logger.warning(f"Timeout checking container health for {executor_name}")
+            logger.warning(
+                f"Timeout checking container health for {executor_name}, cleaning up"
+            )
+            # Clean up the container on timeout
+            try:
+                self.subprocess.run(
+                    ["docker", "rm", "-f", executor_name],
+                    capture_output=True,
+                    timeout=10,
+                )
+                logger.info(
+                    f"Cleaned up container after health check timeout: {executor_name}"
+                )
+            except Exception as cleanup_error:
+                logger.warning(
+                    f"Failed to clean up container {executor_name} after timeout: {cleanup_error}"
+                )
+
+            # Report failure for validation tasks
+            if is_validation_task:
+                self._report_validation_stage(
+                    task,
+                    stage="starting_container",
+                    status="failed",
+                    progress=100,
+                    message="Health check timeout",
+                    error_message="Container health check timed out",
+                    valid=False,
+                )
+
+            raise RuntimeError("Container health check timed out")
         except RuntimeError:
             # Re-raise RuntimeError from container failure
             raise

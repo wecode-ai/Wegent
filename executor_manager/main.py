@@ -113,6 +113,19 @@ async def lifespan(app):
         logger.info("Stopping SandboxManager...")
         await sandbox_manager.stop_gc_task()
 
+    # Clean up all executor_manager containers on graceful shutdown
+    logger.info("Cleaning up all executor_manager containers...")
+    try:
+        from executors.docker.utils import cleanup_all_executor_containers
+
+        cleanup_result = cleanup_all_executor_containers()
+        logger.info(
+            f"Container cleanup result: {cleanup_result.get('cleaned', 0)} cleaned, "
+            f"{len(cleanup_result.get('errors', []))} errors"
+        )
+    except Exception as e:
+        logger.warning(f"Failed to clean up containers on shutdown: {e}")
+
     # Shutdown OpenTelemetry
     if otel_config.enabled:
         from shared.telemetry.core import shutdown_telemetry

@@ -22,7 +22,9 @@ from executor_manager.common.config import get_config
 from executor_manager.common.singleton import SingletonMeta
 from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
 from executor_manager.executors.dispatcher import ExecutorDispatcher
-from executor_manager.executors.docker.utils import delete_container
+from executor_manager.executors.docker.utils import (delete_container,
+                                                     force_delete_container,
+                                                     get_orphan_containers)
 from executor_manager.models.sandbox import (Execution, ExecutionStatus,
                                              Sandbox, SandboxStatus)
 from executor_manager.services.heartbeat_manager import get_heartbeat_manager
@@ -910,46 +912,104 @@ class SandboxManager(metaclass=SingletonMeta):
                 logger.warning(f"[SandboxManager] Error deleting container: {e}")
 
     async def _collect_expired_sandboxes(self) -> None:
-        """Terminate expired sandboxes.
+        """Terminate expired sandboxes and clean up orphan containers.
 
         Uses repository to efficiently find sandboxes whose last_activity_timestamp
-        is older than the configured TTL.
+        is older than the configured TTL. Also detects and cleans up orphan containers
+        that exist in Docker but not in Redis.
         """
         logger.info("[SandboxManager] Running sandbox GC...")
+
+        # First, clean up expired sandboxes from Redis
         expired_task_ids = self._repository.get_expired_sandbox_ids(
             self._config.timeout.redis_ttl
         )
 
-        if not expired_task_ids:
-            logger.info("[SandboxManager] No expired sandboxes found")
-            return
+        if expired_task_ids:
+            logger.info(
+                f"[SandboxManager] Found {len(expired_task_ids)} expired sandboxes to clean up"
+            )
 
-        logger.info(
-            f"[SandboxManager] Found {len(expired_task_ids)} expired sandboxes to clean up"
-        )
+            for task_id_str in expired_task_ids:
+                try:
+                    sandbox = self._repository.load_sandbox(task_id_str)
+                    if sandbox is None:
+                        # Clean up orphaned ZSet entry
+                        self._repository.remove_from_active_set(task_id_str)
+                        logger.debug(
+                            f"[SandboxManager] Cleaned orphaned ZSet entry: {task_id_str}"
+                        )
+                        continue
 
-        for task_id_str in expired_task_ids:
-            try:
-                sandbox = self._repository.load_sandbox(task_id_str)
-                if sandbox is None:
-                    # Clean up orphaned ZSet entry
-                    self._repository.remove_from_active_set(task_id_str)
-                    logger.debug(
-                        f"[SandboxManager] Cleaned orphaned ZSet entry: {task_id_str}"
+                    logger.info(
+                        f"[SandboxManager] Terminating expired sandbox: {sandbox.sandbox_id}, "
+                        f"last_activity={sandbox.last_activity_at}"
+                    )
+                    await self.terminate_sandbox(task_id_str)
+
+                except Exception as e:
+                    logger.warning(
+                        f"[SandboxManager] Failed to terminate expired sandbox {task_id_str}: {e}"
                     )
                     continue
+        else:
+            logger.info("[SandboxManager] No expired sandboxes found")
 
-                logger.info(
-                    f"[SandboxManager] Terminating expired sandbox: {sandbox.sandbox_id}, "
-                    f"last_activity={sandbox.last_activity_at}"
-                )
-                await self.terminate_sandbox(task_id_str)
+        # Second, detect and clean up orphan containers
+        await self._cleanup_orphan_containers()
 
-            except Exception as e:
-                logger.warning(
-                    f"[SandboxManager] Failed to terminate expired sandbox {task_id_str}: {e}"
-                )
-                continue
+    async def _cleanup_orphan_containers(self) -> None:
+        """Detect and clean up orphan containers.
+
+        An orphan container is one that exists in Docker but is not tracked
+        in Redis. This can happen if:
+        - Redis data was lost
+        - executor_manager crashed during container creation
+        - Container was created but not properly registered
+
+        This method finds such containers and removes them.
+        """
+        try:
+            # Get all known sandbox/task IDs from Redis
+            known_sandbox_ids = set(self._repository.get_active_sandbox_ids())
+
+            # Find orphan containers
+            orphan_containers = get_orphan_containers(known_sandbox_ids)
+
+            if not orphan_containers:
+                logger.debug("[SandboxManager] No orphan containers found")
+                return
+
+            logger.info(
+                f"[SandboxManager] Found {len(orphan_containers)} orphan containers to clean up"
+            )
+
+            cleaned = 0
+            for container_name in orphan_containers:
+                try:
+                    result = force_delete_container(container_name)
+                    if result.get("status") == "success":
+                        cleaned += 1
+                        logger.info(
+                            f"[SandboxManager] Cleaned up orphan container: {container_name}"
+                        )
+                    else:
+                        logger.warning(
+                            f"[SandboxManager] Failed to clean up orphan container {container_name}: "
+                            f"{result.get('error_msg')}"
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"[SandboxManager] Error cleaning up orphan container {container_name}: {e}"
+                    )
+
+            logger.info(
+                f"[SandboxManager] Orphan container cleanup completed: "
+                f"{cleaned}/{len(orphan_containers)} cleaned"
+            )
+
+        except Exception as e:
+            logger.error(f"[SandboxManager] Error during orphan container cleanup: {e}")
 
 
 def get_sandbox_manager() -> SandboxManager:
