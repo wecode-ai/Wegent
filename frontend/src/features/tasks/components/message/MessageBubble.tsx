@@ -502,6 +502,7 @@ const MessageBubble = memo(
         <MarkdownWithMermaid
           source={normalizedResult}
           theme={theme}
+          disableLinkPreview={isStreaming}
           components={
             paragraphAction
               ? {
@@ -1299,6 +1300,7 @@ const MessageBubble = memo(
               <MarkdownWithMermaid
                 source={contentToRender}
                 theme={theme}
+                disableLinkPreview={isStreaming}
                 components={{
                   a: ({ href, children }) => {
                     if (!href) {

@@ -8,6 +8,7 @@ Utility API endpoints.
 
 from fastapi import APIRouter, Query
 
+from app.services.link_preview import LinkPreviewResult, fetch_link_preview
 from app.services.url_metadata import UrlMetadataResult, fetch_url_metadata
 
 router = APIRouter()
@@ -34,3 +35,34 @@ async def get_url_metadata(
         - success: Whether the fetch was successful
     """
     return await fetch_url_metadata(url)
+
+
+@router.get("/link-preview", response_model=LinkPreviewResult)
+async def get_link_preview(
+    url: str = Query(..., description="The URL to fetch preview for"),
+) -> LinkPreviewResult:
+    """
+    Fetch rich link preview metadata including Open Graph image.
+
+    This endpoint is used by the frontend to render [card:url] syntax
+    as rich preview cards in chat messages.
+
+    Supports:
+    - Standard web pages with Open Graph metadata (og:image, og:title, etc.)
+    - Direct image URLs (jpg, png, gif, webp, etc.)
+    - Video platform URLs (YouTube, Bilibili, Vimeo) with thumbnail extraction
+
+    - **url**: The full URL to fetch preview for
+
+    Returns:
+        LinkPreviewResult containing:
+        - url: The original URL
+        - title: Page title
+        - description: Page description
+        - image: Preview image URL (og:image or video thumbnail)
+        - favicon: Site favicon URL
+        - site_name: Site name (og:site_name)
+        - type: URL type ("website", "image", or "video")
+        - success: Whether the fetch was successful
+    """
+    return await fetch_link_preview(url)
