@@ -70,6 +70,7 @@ class ChatContext:
         self._mcp_clients: list = []
         self._db_session: AsyncSession | None = None
         self._load_skill_tool: Any = None
+        self._extra_tools: list = []  # Track dynamically loaded tools
 
     @trace_async(
         span_name="chat_context.prepare",
@@ -101,6 +102,7 @@ class ChatContext:
 
         # Prepare load_skill_tool synchronously (fast, needed by skill_tools task)
         # This is a builtin tool that will be added to extra_tools
+        # Pass callbacks for lazy loading of skill tools and MCP servers
         if self._request.skill_names:
             add_span_event(
                 "preparing_load_skill_tool",
@@ -110,6 +112,11 @@ class ChatContext:
                 skill_names=self._request.skill_names,
                 user_id=self._request.user_id,
                 skill_configs=self._request.skill_configs,
+                # Pass callbacks for lazy loading
+                skill_loader_callback=self.lazy_load_skill_tools,
+                mcp_loader_callback=self.lazy_load_skill_mcp_servers,
+                task_id=self._request.task_id,
+                subtask_id=self._request.subtask_id,
             )
 
         # Use context manager for database session
@@ -122,17 +129,15 @@ class ChatContext:
 
             # Execute all independent tasks in parallel
             # Note: Agent creation is NOT done here - it belongs to the service layer
+            # Note: Skill tools and MCP servers are NOT preloaded here - they are
+            #       loaded lazily when load_skill() is called by the LLM
             add_span_event("parallel_tasks_started")
             (
                 history,
                 kb_result,
-                skill_tools,
-                mcp_result,
             ) = await asyncio.gather(
                 self._load_chat_history(),
                 self._prepare_kb_tools(db),
-                self._prepare_skill_tools(self._load_skill_tool),
-                self._connect_mcp_servers(),
             )
 
             add_span_event(
@@ -140,18 +145,18 @@ class ChatContext:
                 {
                     "history_count": len(history),
                     "kb_tools_count": len(kb_result[0]) if kb_result else 0,
-                    "skill_tools_count": len(skill_tools),
-                    "mcp_tools_count": len(mcp_result[0]) if mcp_result else 0,
                 },
             )
             logger.debug(
-                "[CHAT_CONTEXT] <<< Parallel tasks complete: history=%d messages",
+                "[CHAT_CONTEXT] <<< Parallel tasks complete: history=%d messages, kb_tools=%d",
                 len(history),
+                len(kb_result[0]) if kb_result else 0,
             )
 
             # Build extra_tools from all sources (including builtin tools)
+            # Note: Skill tools and MCP tools will be added dynamically via lazy loading
             add_span_event("building_extra_tools")
-            extra_tools = self._build_extra_tools(kb_result, skill_tools, mcp_result)
+            extra_tools = self._build_extra_tools(kb_result)
 
             # Process KB tools result for system prompt
             system_prompt = self._request.system_prompt or ""
@@ -159,15 +164,14 @@ class ChatContext:
             if kb_tools:
                 system_prompt = updated_system_prompt
 
-            # Track MCP clients for cleanup
-            _, mcp_clients = mcp_result
-            self._mcp_clients = mcp_clients
+            # Track MCP clients for cleanup (initially empty, will be populated by lazy loading)
+            self._mcp_clients = []
 
             add_span_event(
                 "context_prepare_completed",
                 {
                     "total_extra_tools": len(extra_tools),
-                    "mcp_clients_count": len(mcp_clients),
+                    "mcp_clients_count": 0,  # Will be populated by lazy loading
                 },
             )
 
@@ -175,7 +179,7 @@ class ChatContext:
                 history=history,
                 extra_tools=extra_tools,
                 system_prompt=system_prompt,
-                mcp_clients=mcp_clients,
+                mcp_clients=self._mcp_clients,
             )
 
     @trace_async(
@@ -480,21 +484,189 @@ class ChatContext:
         except Exception as e:
             logger.warning("[CHAT_CONTEXT] Failed to close MCP client: %s", e)
 
+    @trace_async(
+        span_name="chat_context.lazy_load_skill_tools",
+        tracer_name="chat_shell.services",
+        extract_attributes=lambda self, skill_name, skill_config, *args, **kwargs: {
+            "skill.name": skill_name,
+            "skill.has_tools": bool(skill_config.get("tools")),
+            "skill.has_provider": bool(skill_config.get("provider")),
+        },
+    )
+    async def lazy_load_skill_tools(
+        self, skill_name: str, skill_config: dict
+    ) -> list[Any]:
+        """Lazily load skill tools when load_skill() is called.
+
+        This callback is invoked by LoadSkillTool._arun() when a skill is loaded.
+        It dynamically creates tool instances for the skill and adds them to
+        the extra_tools list.
+
+        Args:
+            skill_name: Name of the skill being loaded
+            skill_config: Full skill configuration
+
+        Returns:
+            List of newly created tool instances
+        """
+        from chat_shell.tools.skill_factory import prepare_skill_tools
+
+        add_span_event(
+            "lazy_loading_skill_tools",
+            {"skill_name": skill_name},
+        )
+
+        logger.info(
+            "[CHAT_CONTEXT] Lazy loading tools for skill '%s'",
+            skill_name,
+        )
+
+        # Create tools for this specific skill by passing only its config
+        tools = await prepare_skill_tools(
+            task_id=self._request.task_id,
+            subtask_id=self._request.subtask_id,
+            user_id=self._request.user_id,
+            skill_configs=[skill_config],  # Only load this skill
+            load_skill_tool=None,  # Don't pass load_skill_tool to avoid recursion
+            preload_skills=None,  # No preloading in lazy mode
+            user_name=self._request.user_name,
+        )
+
+        # Add to extra_tools list for dynamic registration
+        if tools:
+            self._extra_tools.extend(tools)
+            add_span_event(
+                "skill_tools_lazy_loaded",
+                {"skill_name": skill_name, "tools_count": len(tools)},
+            )
+            logger.info(
+                "[CHAT_CONTEXT] Lazy loaded %d tools for skill '%s': %s",
+                len(tools),
+                skill_name,
+                [t.name for t in tools],
+            )
+
+        return tools
+
+    @trace_async(
+        span_name="chat_context.lazy_load_skill_mcp_servers",
+        tracer_name="chat_shell.services",
+        extract_attributes=lambda self, skill_name, mcp_server_names, *args, **kwargs: {
+            "skill.name": skill_name,
+            "mcp.server_count": len(mcp_server_names),
+        },
+    )
+    async def lazy_load_skill_mcp_servers(
+        self, skill_name: str, mcp_server_names: list[str]
+    ) -> list[Any]:
+        """Lazily load MCP servers when load_skill() is called.
+
+        This callback is invoked by LoadSkillTool._arun() when a skill declares
+        MCP server requirements. It connects to the specified MCP servers and
+        adds their tools to the extra_tools list.
+
+        Args:
+            skill_name: Name of the skill being loaded
+            mcp_server_names: List of MCP server names to load
+
+        Returns:
+            List of tools from newly connected MCP servers
+        """
+        add_span_event(
+            "lazy_loading_skill_mcp_servers",
+            {
+                "skill_name": skill_name,
+                "mcp_server_names": mcp_server_names,
+            },
+        )
+
+        logger.info(
+            "[CHAT_CONTEXT] Lazy loading MCP servers for skill '%s': %s",
+            skill_name,
+            mcp_server_names,
+        )
+
+        # Find the MCP server configurations from Ghost's mcp_servers
+        # request.mcp_servers contains the full list from Ghost.spec.mcpServers
+        if not self._request.mcp_servers:
+            logger.warning(
+                "[CHAT_CONTEXT] Skill '%s' requires MCP servers %s but no Ghost MCP config found",
+                skill_name,
+                mcp_server_names,
+            )
+            return []
+
+        # Filter mcp_servers to only include the ones required by this skill
+        servers_to_connect = [
+            server
+            for server in self._request.mcp_servers
+            if server.get("name") in mcp_server_names
+        ]
+
+        if not servers_to_connect:
+            logger.warning(
+                "[CHAT_CONTEXT] Skill '%s' requires MCP servers %s but none found in Ghost config",
+                skill_name,
+                mcp_server_names,
+            )
+            return []
+
+        add_span_event(
+            "connecting_lazy_mcp_servers",
+            {"servers_count": len(servers_to_connect)},
+        )
+
+        # Connect to MCP servers in parallel
+        results = await asyncio.gather(
+            *[self._connect_single_mcp_server(s) for s in servers_to_connect],
+            return_exceptions=True,
+        )
+
+        mcp_tools = []
+        for result in results:
+            if isinstance(result, Exception):
+                logger.warning(
+                    "[CHAT_CONTEXT] Lazy MCP connection exception: %s", result
+                )
+                continue
+            if result.get("success"):
+                tools = result["tools"]
+                client = result["client"]
+                mcp_tools.extend(tools)
+                self._mcp_clients.append(client)
+                logger.info(
+                    "[CHAT_CONTEXT] Lazy loaded MCP server '%s' with %d tools",
+                    result["summary"],
+                    len(tools),
+                )
+
+        # Add to extra_tools list for dynamic registration
+        if mcp_tools:
+            self._extra_tools.extend(mcp_tools)
+            add_span_event(
+                "skill_mcp_tools_lazy_loaded",
+                {
+                    "skill_name": skill_name,
+                    "tools_count": len(mcp_tools),
+                },
+            )
+
+        return mcp_tools
+
     def _build_extra_tools(
         self,
         kb_result: tuple[list, str],
-        skill_tools: list,
-        mcp_result: tuple[list, list],
     ) -> list:
         """Build the complete list of extra tools from all sources.
 
         This includes builtin tools (LoadSkillTool, WebSearchTool, DataTableTool),
-        KB tools, skill tools, and MCP tools.
+        KB tools, and any dynamically loaded tools from lazy loading.
+
+        Note: Skill tools and MCP tools are NOT included at initialization.
+        They will be added dynamically when load_skill() is called.
 
         Args:
             kb_result: Tuple of (kb_tools, updated_system_prompt)
-            skill_tools: List of skill tools
-            mcp_result: Tuple of (mcp_tools, mcp_clients)
 
         Returns:
             Complete list of extra tools
@@ -558,13 +730,25 @@ class ChatContext:
         if kb_tools:
             extra_tools.extend(kb_tools)
 
-        # Add skill tools (dynamically created from skill configs)
-        if skill_tools:
-            extra_tools.extend(skill_tools)
-
-        # Add MCP tools
-        mcp_tools, _ = mcp_result
-        if mcp_tools:
-            extra_tools.extend(mcp_tools)
+        # Add any dynamically loaded tools (populated by lazy loading callbacks)
+        if self._extra_tools:
+            extra_tools.extend(self._extra_tools)
+            logger.info(
+                "[CHAT_CONTEXT] Added %d dynamically loaded tools",
+                len(self._extra_tools),
+            )
 
         return extra_tools
+
+    def get_extra_tools(self) -> list:
+        """Get the current list of extra tools including dynamically loaded ones.
+
+        This method allows external code to access the up-to-date tool list
+        after lazy loading has occurred.
+
+        Returns:
+            Current list of all tools
+        """
+        # Rebuild the tools list to include any newly loaded tools
+        kb_result = ([], self._request.system_prompt or "")  # Empty KB result
+        return self._build_extra_tools(kb_result)

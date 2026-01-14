@@ -14,7 +14,7 @@ In HTTP mode, skill prompts are obtained from the skill_configs passed via ChatR
 """
 
 import logging
-from typing import Optional, Set
+from typing import Any, Optional, Set
 
 from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
@@ -59,6 +59,16 @@ class LoadSkillTool(BaseTool):
     skill_names: list[str]  # Available skill names for this session
     # Skill metadata from ChatRequest (skill_configs)
     skill_metadata: dict[str, dict] = {}  # skill_name -> {description, prompt, ...}
+
+    # Callbacks for lazy loading skill tools and MCP servers
+    # These callbacks are called when a skill is loaded via load_skill()
+    skill_loader_callback: Optional[Any] = None  # Async callback to load skill tools
+    mcp_loader_callback: Optional[Any] = None  # Async callback to load MCP servers
+
+    # Full skill configs for lazy loading
+    skill_configs: list[dict] = Field(default_factory=list)
+    task_id: int = 0
+    subtask_id: int = 0
 
     # Private instance attribute for session-level cache (not shared between instances)
     # This tracks which skills have been expanded in the current conversation turn
@@ -120,8 +130,95 @@ class LoadSkillTool(BaseTool):
         skill_name: str,
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
-        """Load skill asynchronously (same as sync since no I/O needed)."""
-        return self._run(skill_name, run_manager)
+        """Load skill asynchronously and trigger lazy loading of tools/MCP servers."""
+        # First do the basic skill loading (prompt injection)
+        if skill_name not in self.skill_names:
+            return (
+                f"Error: Skill '{skill_name}' is not available. "
+                f"Available skills: {', '.join(self.skill_names)}"
+            )
+
+        # Check if skill was already expanded in this turn
+        if skill_name in self._expanded_skills:
+            return (
+                f"Skill '{skill_name}' is already active in this conversation turn. "
+                f"The skill instructions have been added to the system prompt."
+            )
+
+        # Get skill metadata
+        skill_info = self.skill_metadata.get(skill_name, {})
+        prompt = skill_info.get("prompt", "")
+
+        if not prompt:
+            return f"Error: Skill '{skill_name}' has no prompt content."
+
+        # Mark skill as expanded for this turn and store the prompt
+        self._expanded_skills.add(skill_name)
+        self._loaded_skill_prompts[skill_name] = prompt
+
+        # Cache the display name
+        display_name = skill_info.get("displayName")
+        if display_name:
+            self._skill_display_names[skill_name] = display_name
+
+        # NEW: Trigger lazy loading of skill tools and MCP servers
+        await self._lazy_load_skill_resources(skill_name, skill_info)
+
+        # Return confirmation message
+        return f"Skill '{skill_name}' has been loaded. The instructions have been added to the system prompt. Please follow them strictly."
+
+    async def _lazy_load_skill_resources(
+        self, skill_name: str, skill_info: dict
+    ) -> None:
+        """Lazily load skill tools and MCP servers when skill is activated.
+
+        Args:
+            skill_name: Name of the skill being loaded
+            skill_info: Skill metadata containing tools and mcpServers declarations
+        """
+        # Find the full skill config for this skill
+        skill_config = next(
+            (sc for sc in self.skill_configs if sc.get("name") == skill_name), None
+        )
+
+        if not skill_config:
+            logger.warning(
+                "[LoadSkillTool] No skill_config found for '%s', skipping lazy loading",
+                skill_name,
+            )
+            return
+
+        # Step 1: Load skill tools if declared
+        has_tools = skill_config.get("tools") or skill_config.get("provider")
+        if has_tools and self.skill_loader_callback:
+            try:
+                logger.info(
+                    "[LoadSkillTool] Lazy loading tools for skill '%s'", skill_name
+                )
+                await self.skill_loader_callback(skill_name, skill_config)
+            except Exception as e:
+                logger.error(
+                    "[LoadSkillTool] Error loading tools for skill '%s': %s",
+                    skill_name,
+                    str(e),
+                )
+
+        # Step 2: Load MCP servers if declared
+        mcp_servers = skill_config.get("mcpServers", [])
+        if mcp_servers and self.mcp_loader_callback:
+            try:
+                logger.info(
+                    "[LoadSkillTool] Lazy loading MCP servers for skill '%s': %s",
+                    skill_name,
+                    mcp_servers,
+                )
+                await self.mcp_loader_callback(skill_name, mcp_servers)
+            except Exception as e:
+                logger.error(
+                    "[LoadSkillTool] Error loading MCP servers for skill '%s': %s",
+                    skill_name,
+                    str(e),
+                )
 
     def clear_expanded_skills(self) -> None:
         """Clear the expanded skills cache and loaded prompts.

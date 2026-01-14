@@ -25,6 +25,10 @@ def prepare_load_skill_tool(
     skill_names: list[str],
     user_id: int,
     skill_configs: list[dict] | None = None,
+    skill_loader_callback: Optional[Any] = None,
+    mcp_loader_callback: Optional[Any] = None,
+    task_id: int = 0,
+    subtask_id: int = 0,
 ) -> Optional[Any]:
     """
     Prepare LoadSkillTool if skills are configured.
@@ -40,6 +44,10 @@ def prepare_load_skill_tool(
         skill_names: List of skill names available for this session
         user_id: User ID for skill lookup
         skill_configs: Optional skill configurations containing prompts and preload flags
+        skill_loader_callback: Async callback to load skill tools dynamically
+        mcp_loader_callback: Async callback to load MCP servers dynamically
+        task_id: Task ID for context
+        subtask_id: Subtask ID for context
 
     Returns:
         LoadSkillTool instance or None if no skills configured
@@ -62,16 +70,23 @@ def prepare_load_skill_tool(
                     "displayName": config.get("displayName", ""),
                 }
 
-    # Create LoadSkillTool with the available skills
+    # Create LoadSkillTool with the available skills and lazy loading callbacks
     load_skill_tool = LoadSkillTool(
         user_id=user_id,
         skill_names=skill_names,
         skill_metadata=skill_metadata,
+        skill_loader_callback=skill_loader_callback,
+        mcp_loader_callback=mcp_loader_callback,
+        skill_configs=skill_configs or [],
+        task_id=task_id,
+        subtask_id=subtask_id,
     )
 
     logger.info(
-        "[skill_factory] Created LoadSkillTool with skills: %s",
+        "[skill_factory] Created LoadSkillTool with skills: %s (callbacks: tools=%s, mcp=%s)",
         skill_names,
+        skill_loader_callback is not None,
+        mcp_loader_callback is not None,
     )
 
     return load_skill_tool
