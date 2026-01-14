@@ -1651,7 +1651,16 @@ class ClaudeCodeAgent(Agent):
         # Normalize bot name for filename (lowercase, replace spaces/underscores with hyphens)
         raw_name = bot.get("name", "unnamed")
         bot_id = bot.get("id", "")
-        name = raw_name.lower().replace("_", "-").replace(" ", "-")
+        # Remove unsafe filesystem characters and normalize
+        name = (
+            re.sub(r"[^\w\s-]", "", raw_name)
+            .lower()
+            .replace("_", "-")
+            .replace(" ", "-")
+        )
+        # Ensure name is not empty after sanitization
+        if not name:
+            name = "unnamed"
         # Append bot ID to prevent filename collisions (e.g., "My Bot" vs "my_bot")
         if bot_id:
             name = f"{name}-{bot_id}"
@@ -1662,12 +1671,17 @@ class ClaudeCodeAgent(Agent):
         # Generate description from bot name or use existing description
         description = bot.get("description") or f"Handle tasks related to {raw_name}"
 
+        # Escape YAML special characters in description to prevent parsing issues
+        # Wrap in double quotes and escape internal quotes
+        escaped_description = description.replace('"', '\\"').replace("\n", " ")
+        escaped_description = f'"{escaped_description}"'
+
         # Build SubAgent config content
         # - model: inherit -> use same model as Leader
         # - tools: omitted -> inherit all tools from Leader (including MCP)
         content = f"""---
 name: {name}
-description: {description}
+description: {escaped_description}
 model: inherit
 ---
 
@@ -1675,7 +1689,9 @@ model: inherit
 """
 
         filepath = os.path.join(agents_dir, f"{name}.md")
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write(content)
-
-        logger.info(f"Generated SubAgent config: {filepath}")
+        try:
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(content)
+            logger.info(f"Generated SubAgent config: {filepath}")
+        except Exception as e:
+            logger.warning(f"Failed to generate SubAgent config for {raw_name}: {e}")
