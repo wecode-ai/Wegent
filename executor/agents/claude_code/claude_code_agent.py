@@ -711,6 +711,9 @@ class ClaudeCodeAgent(Agent):
                     # Setup Claude.md symlink from Agents.md if exists
                     self._setup_claude_md_symlink(self.project_path)
 
+                    # Setup SubAgent configuration files for coordinate mode
+                    self._setup_coordinate_mode()
+
                 except Exception as e:
                     logger.warning(f"Failed to process custom instructions: {e}")
                     # Continue execution with original systemPrompt
@@ -1593,3 +1596,82 @@ class ClaudeCodeAgent(Agent):
         except Exception as e:
             logger.error(f"Error in _download_and_deploy_skills: {str(e)}")
             # Don't raise - skills deployment failure shouldn't block task execution
+
+    def _setup_coordinate_mode(self) -> None:
+        """
+        Setup SubAgent configuration files for coordinate mode.
+
+        In coordinate mode with multiple bots, the Leader (bot[0]) coordinates
+        work among members (bot[1:]). This method generates .claude/agents/*.md
+        configuration files for each member bot so that Claude Code can invoke
+        them as SubAgents.
+        """
+        bots = self.task_data.get("bot", [])
+        mode = self.task_data.get("mode")
+
+        # Only setup for coordinate mode with multiple bots
+        if mode != "coordinate" or len(bots) <= 1:
+            return
+
+        if not self.project_path:
+            return
+
+        # Leader is bot[0], members are bot[1:]
+        member_bots = bots[1:]
+
+        if not member_bots:
+            return
+
+        # Create .claude/agents directory
+        agents_dir = os.path.join(self.project_path, ".claude", "agents")
+        os.makedirs(agents_dir, exist_ok=True)
+
+        # Generate SubAgent config file for each member
+        for bot in member_bots:
+            self._generate_subagent_file(agents_dir, bot)
+
+        # Add to git exclude to prevent showing in git diff
+        self._add_to_git_exclude(self.project_path, ".claude/agents/")
+
+        logger.info(
+            f"Generated {len(member_bots)} SubAgent config files for coordinate mode"
+        )
+
+    def _generate_subagent_file(self, agents_dir: str, bot: Dict[str, Any]) -> None:
+        """
+        Generate SubAgent Markdown configuration file.
+
+        The generated file follows Claude Code's SubAgent format with YAML frontmatter
+        containing name, description, and model settings.
+
+        Args:
+            agents_dir: Path to the .claude/agents directory
+            bot: Bot configuration dictionary containing name, system_prompt, etc.
+        """
+        # Normalize bot name for filename (lowercase, replace spaces/underscores with hyphens)
+        raw_name = bot.get("name", "unnamed")
+        name = raw_name.lower().replace("_", "-").replace(" ", "-")
+
+        # Get system prompt from bot config
+        system_prompt = bot.get("system_prompt", "")
+
+        # Generate description from bot name or use existing description
+        description = bot.get("description") or f"Handle tasks related to {raw_name}"
+
+        # Build SubAgent config content
+        # - model: inherit -> use same model as Leader
+        # - tools: omitted -> inherit all tools from Leader (including MCP)
+        content = f"""---
+name: {name}
+description: {description}
+model: inherit
+---
+
+{system_prompt}
+"""
+
+        filepath = os.path.join(agents_dir, f"{name}.md")
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(content)
+
+        logger.info(f"Generated SubAgent config: {filepath}")
