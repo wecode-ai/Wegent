@@ -1,6 +1,7 @@
 """
 TruLens evaluator with LLM-based metrics.
 """
+import asyncio
 import json
 from typing import Any, Dict, Optional
 
@@ -10,6 +11,10 @@ from langchain_openai import ChatOpenAI
 from app.core.config import settings
 
 logger = structlog.get_logger(__name__)
+
+# Retry configuration
+MAX_RETRIES = 3
+RETRY_DELAY_SECONDS = 1.0
 
 
 # Prompt templates for TruLens LLM-based metrics
@@ -151,6 +156,38 @@ class TruLensLLMEvaluator:
             )
         return self._llm
 
+    async def _invoke_llm_with_retry(self, prompt: str) -> str:
+        """Invoke LLM with retry logic."""
+        last_error = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                response = await self.llm.ainvoke(prompt)
+                return response.content
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    "TruLens LLM API call failed, retrying",
+                    attempt=attempt + 1,
+                    max_retries=MAX_RETRIES,
+                    error_type=type(e).__name__,
+                    error=str(e),
+                    model=settings.RAGAS_LLM_MODEL,
+                    base_url=settings.RAGAS_LLM_BASE_URL,
+                )
+                if attempt < MAX_RETRIES - 1:
+                    await asyncio.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
+
+        # Log final failure with full details
+        logger.error(
+            "TruLens LLM API call failed after all retries",
+            error_type=type(last_error).__name__,
+            error=str(last_error),
+            model=settings.RAGAS_LLM_MODEL,
+            base_url=settings.RAGAS_LLM_BASE_URL,
+            api_key_set=bool(settings.RAGAS_LLM_API_KEY and settings.RAGAS_LLM_API_KEY != "your_openai_api_key"),
+        )
+        raise last_error
+
     def _parse_llm_response(self, response_text: str) -> Dict[str, Any]:
         """Parse LLM response JSON."""
         try:
@@ -184,7 +221,7 @@ class TruLensLLMEvaluator:
             answer: The AI's answer
 
         Returns:
-            Score between 0 and 1 (higher means more grounded)
+            Score between 0 and 1 (higher means more grounded), or None if evaluation fails
         """
         try:
             prompt = GROUNDEDNESS_PROMPT.format(
@@ -193,8 +230,8 @@ class TruLensLLMEvaluator:
                 answer=answer[:3000] if answer else "N/A",
             )
 
-            response = await self.llm.ainvoke(prompt)
-            result = self._parse_llm_response(response.content)
+            response_content = await self._invoke_llm_with_retry(prompt)
+            result = self._parse_llm_response(response_content)
 
             score = result.get("score")
             if score is not None:
@@ -202,7 +239,14 @@ class TruLensLLMEvaluator:
             return None
 
         except Exception as e:
-            logger.exception("Failed to evaluate TruLens groundedness", error=str(e))
+            logger.error(
+                "Failed to evaluate TruLens groundedness",
+                error_type=type(e).__name__,
+                error=str(e),
+                question_length=len(question),
+                context_length=len(context) if context else 0,
+                answer_length=len(answer) if answer else 0,
+            )
             return None
 
     async def evaluate_relevance_llm(
@@ -221,7 +265,7 @@ class TruLensLLMEvaluator:
             answer: The AI's answer
 
         Returns:
-            Score between 0 and 1 (higher means more relevant)
+            Score between 0 and 1 (higher means more relevant), or None if evaluation fails
         """
         try:
             prompt = RELEVANCE_LLM_PROMPT.format(
@@ -229,8 +273,8 @@ class TruLensLLMEvaluator:
                 answer=answer[:3000] if answer else "N/A",
             )
 
-            response = await self.llm.ainvoke(prompt)
-            result = self._parse_llm_response(response.content)
+            response_content = await self._invoke_llm_with_retry(prompt)
+            result = self._parse_llm_response(response_content)
 
             score = result.get("score")
             if score is not None:
@@ -238,7 +282,13 @@ class TruLensLLMEvaluator:
             return None
 
         except Exception as e:
-            logger.exception("Failed to evaluate TruLens relevance (LLM)", error=str(e))
+            logger.error(
+                "Failed to evaluate TruLens relevance (LLM)",
+                error_type=type(e).__name__,
+                error=str(e),
+                question_length=len(question),
+                answer_length=len(answer) if answer else 0,
+            )
             return None
 
     async def evaluate_coherence(
@@ -254,7 +304,7 @@ class TruLensLLMEvaluator:
             answer: The AI's answer
 
         Returns:
-            Score between 0 and 1 (higher means more coherent)
+            Score between 0 and 1 (higher means more coherent), or None if evaluation fails
         """
         try:
             prompt = COHERENCE_PROMPT.format(
@@ -262,8 +312,8 @@ class TruLensLLMEvaluator:
                 answer=answer[:3000] if answer else "N/A",
             )
 
-            response = await self.llm.ainvoke(prompt)
-            result = self._parse_llm_response(response.content)
+            response_content = await self._invoke_llm_with_retry(prompt)
+            result = self._parse_llm_response(response_content)
 
             score = result.get("score")
             if score is not None:
@@ -271,7 +321,13 @@ class TruLensLLMEvaluator:
             return None
 
         except Exception as e:
-            logger.exception("Failed to evaluate TruLens coherence", error=str(e))
+            logger.error(
+                "Failed to evaluate TruLens coherence",
+                error_type=type(e).__name__,
+                error=str(e),
+                question_length=len(question),
+                answer_length=len(answer) if answer else 0,
+            )
             return None
 
     async def evaluate_harmlessness(
@@ -290,7 +346,7 @@ class TruLensLLMEvaluator:
             answer: The AI's answer
 
         Returns:
-            Score between 0 and 1 (higher means more harmless/safe)
+            Score between 0 and 1 (higher means more harmless/safe), or None if evaluation fails
         """
         try:
             prompt = HARMLESSNESS_PROMPT.format(
@@ -298,8 +354,8 @@ class TruLensLLMEvaluator:
                 answer=answer[:3000] if answer else "N/A",
             )
 
-            response = await self.llm.ainvoke(prompt)
-            result = self._parse_llm_response(response.content)
+            response_content = await self._invoke_llm_with_retry(prompt)
+            result = self._parse_llm_response(response_content)
 
             score = result.get("score")
             if score is not None:
@@ -307,7 +363,13 @@ class TruLensLLMEvaluator:
             return None
 
         except Exception as e:
-            logger.exception("Failed to evaluate TruLens harmlessness", error=str(e))
+            logger.error(
+                "Failed to evaluate TruLens harmlessness",
+                error_type=type(e).__name__,
+                error=str(e),
+                question_length=len(question),
+                answer_length=len(answer) if answer else 0,
+            )
             return None
 
     async def evaluate_all(
@@ -327,7 +389,16 @@ class TruLensLLMEvaluator:
         Returns:
             Dictionary containing all metric scores
         """
-        import asyncio
+        # Log start of evaluation with configuration info
+        logger.info(
+            "Starting TruLens LLM metrics evaluation",
+            question_length=len(question),
+            context_length=len(context) if context else 0,
+            answer_length=len(answer) if answer else 0,
+            llm_model=settings.RAGAS_LLM_MODEL,
+            llm_base_url=settings.RAGAS_LLM_BASE_URL,
+            api_key_configured=bool(settings.RAGAS_LLM_API_KEY and settings.RAGAS_LLM_API_KEY != "your_openai_api_key"),
+        )
 
         results = await asyncio.gather(
             self.evaluate_groundedness(question, context, answer),
@@ -337,12 +408,37 @@ class TruLensLLMEvaluator:
             return_exceptions=True,
         )
 
-        return {
-            "groundedness": results[0] if not isinstance(results[0], Exception) else None,
-            "relevance_llm": results[1] if not isinstance(results[1], Exception) else None,
-            "coherence": results[2] if not isinstance(results[2], Exception) else None,
-            "harmlessness": results[3] if not isinstance(results[3], Exception) else None,
-        }
+        # Process results and log any exceptions
+        processed_results = {}
+        metric_names = ["groundedness", "relevance_llm", "coherence", "harmlessness"]
+
+        for name, result in zip(metric_names, results):
+            if isinstance(result, Exception):
+                logger.error(
+                    f"TruLens LLM metric {name} raised exception",
+                    metric=name,
+                    error_type=type(result).__name__,
+                    error=str(result),
+                )
+                processed_results[name] = None
+            else:
+                processed_results[name] = result
+
+        # Log summary of results
+        null_metrics = [name for name, val in processed_results.items() if val is None]
+        if null_metrics:
+            logger.warning(
+                "TruLens LLM evaluation completed with null metrics",
+                null_metrics=null_metrics,
+                successful_metrics=[name for name, val in processed_results.items() if val is not None],
+            )
+        else:
+            logger.info(
+                "TruLens LLM evaluation completed successfully",
+                results=processed_results,
+            )
+
+        return processed_results
 
 
 # Global evaluator instance

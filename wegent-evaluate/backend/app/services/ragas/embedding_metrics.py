@@ -12,6 +12,10 @@ from app.core.config import settings
 
 logger = structlog.get_logger(__name__)
 
+# Retry configuration
+MAX_RETRIES = 3
+RETRY_DELAY_SECONDS = 1.0
+
 
 class EmbeddingMetricsEvaluator:
     """Evaluator for Embedding-based RAGAS metrics."""
@@ -42,33 +46,91 @@ class EmbeddingMetricsEvaluator:
         return float(dot_product / (norm1 * norm2))
 
     async def _get_embedding(self, text: str) -> List[float]:
-        """Get embedding for a text string."""
+        """Get embedding for a text string with retry logic."""
         # Truncate text if too long (most embedding models have token limits)
         max_chars = 8000
         if len(text) > max_chars:
             text = text[:max_chars]
 
-        embedding = await asyncio.to_thread(
-            self.embeddings.embed_query, text
+        last_error = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                embedding = await asyncio.to_thread(
+                    self.embeddings.embed_query, text
+                )
+                return embedding
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    "Embedding API call failed, retrying",
+                    attempt=attempt + 1,
+                    max_retries=MAX_RETRIES,
+                    error_type=type(e).__name__,
+                    error=str(e),
+                    text_length=len(text),
+                    model=settings.RAGAS_EMBEDDING_MODEL,
+                    base_url=settings.RAGAS_EMBEDDING_BASE_URL,
+                )
+                if attempt < MAX_RETRIES - 1:
+                    await asyncio.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
+
+        # Log final failure with full details
+        logger.error(
+            "Embedding API call failed after all retries",
+            error_type=type(last_error).__name__,
+            error=str(last_error),
+            text_length=len(text),
+            model=settings.RAGAS_EMBEDDING_MODEL,
+            base_url=settings.RAGAS_EMBEDDING_BASE_URL,
+            api_key_set=bool(settings.RAGAS_EMBEDDING_API_KEY and settings.RAGAS_EMBEDDING_API_KEY != "your_openai_api_key"),
         )
-        return embedding
+        raise last_error
 
     async def _get_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
-        """Get embeddings for multiple texts."""
+        """Get embeddings for multiple texts with retry logic."""
         # Truncate texts if too long
         max_chars = 8000
         truncated_texts = [t[:max_chars] if len(t) > max_chars else t for t in texts]
 
-        embeddings = await asyncio.to_thread(
-            self.embeddings.embed_documents, truncated_texts
+        last_error = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                embeddings = await asyncio.to_thread(
+                    self.embeddings.embed_documents, truncated_texts
+                )
+                return embeddings
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    "Batch embedding API call failed, retrying",
+                    attempt=attempt + 1,
+                    max_retries=MAX_RETRIES,
+                    error_type=type(e).__name__,
+                    error=str(e),
+                    batch_size=len(truncated_texts),
+                    model=settings.RAGAS_EMBEDDING_MODEL,
+                    base_url=settings.RAGAS_EMBEDDING_BASE_URL,
+                )
+                if attempt < MAX_RETRIES - 1:
+                    await asyncio.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
+
+        # Log final failure with full details
+        logger.error(
+            "Batch embedding API call failed after all retries",
+            error_type=type(last_error).__name__,
+            error=str(last_error),
+            batch_size=len(truncated_texts),
+            model=settings.RAGAS_EMBEDDING_MODEL,
+            base_url=settings.RAGAS_EMBEDDING_BASE_URL,
+            api_key_set=bool(settings.RAGAS_EMBEDDING_API_KEY and settings.RAGAS_EMBEDDING_API_KEY != "your_openai_api_key"),
         )
-        return embeddings
+        raise last_error
 
     async def evaluate_query_context_relevance(
         self,
         query: str,
         contexts: List[str],
-    ) -> float:
+    ) -> Optional[float]:
         """
         Evaluate query-context relevance using embedding similarity.
 
@@ -80,7 +142,7 @@ class EmbeddingMetricsEvaluator:
             contexts: List of retrieved context chunks
 
         Returns:
-            Score between 0 and 1 (higher is better)
+            Score between 0 and 1 (higher is better), or None if evaluation fails
         """
         if not contexts:
             return 0.0
@@ -107,7 +169,13 @@ class EmbeddingMetricsEvaluator:
             return max(0.0, min(1.0, normalized_score))
 
         except Exception as e:
-            logger.exception("Failed to evaluate query_context_relevance", error=str(e))
+            logger.error(
+                "Failed to evaluate query_context_relevance",
+                error_type=type(e).__name__,
+                error=str(e),
+                query_length=len(query),
+                contexts_count=len(contexts),
+            )
             return None
 
     async def evaluate_context_precision(
@@ -115,7 +183,7 @@ class EmbeddingMetricsEvaluator:
         query: str,
         contexts: List[str],
         relevance_threshold: float = 0.5,
-    ) -> float:
+    ) -> Optional[float]:
         """
         Evaluate context precision using embedding similarity.
 
@@ -129,7 +197,7 @@ class EmbeddingMetricsEvaluator:
             relevance_threshold: Similarity threshold for relevance (default 0.5)
 
         Returns:
-            Score between 0 and 1 (higher is better)
+            Score between 0 and 1 (higher is better), or None if evaluation fails
         """
         if not contexts:
             return 0.0
@@ -156,13 +224,19 @@ class EmbeddingMetricsEvaluator:
             return max(0.0, min(1.0, precision))
 
         except Exception as e:
-            logger.exception("Failed to evaluate context_precision", error=str(e))
+            logger.error(
+                "Failed to evaluate context_precision",
+                error_type=type(e).__name__,
+                error=str(e),
+                query_length=len(query),
+                contexts_count=len(contexts),
+            )
             return None
 
     async def evaluate_context_diversity(
         self,
         contexts: List[str],
-    ) -> float:
+    ) -> Optional[float]:
         """
         Evaluate context diversity using pairwise embedding similarity.
 
@@ -175,7 +249,7 @@ class EmbeddingMetricsEvaluator:
             contexts: List of retrieved context chunks
 
         Returns:
-            Score between 0 and 1 (higher means more diverse)
+            Score between 0 and 1 (higher means more diverse), or None if evaluation fails
         """
         if len(contexts) < 2:
             # Single context or no context - consider it as diverse
@@ -209,7 +283,12 @@ class EmbeddingMetricsEvaluator:
             return max(0.0, min(1.0, diversity))
 
         except Exception as e:
-            logger.exception("Failed to evaluate context_diversity", error=str(e))
+            logger.error(
+                "Failed to evaluate context_diversity",
+                error_type=type(e).__name__,
+                error=str(e),
+                contexts_count=len(contexts),
+            )
             return None
 
     async def evaluate_all(
@@ -227,6 +306,16 @@ class EmbeddingMetricsEvaluator:
         Returns:
             Dictionary containing all metric scores
         """
+        # Log start of evaluation with configuration info
+        logger.info(
+            "Starting RAGAS embedding metrics evaluation",
+            query_length=len(query),
+            contexts_count=len(contexts),
+            embedding_model=settings.RAGAS_EMBEDDING_MODEL,
+            embedding_base_url=settings.RAGAS_EMBEDDING_BASE_URL,
+            api_key_configured=bool(settings.RAGAS_EMBEDDING_API_KEY and settings.RAGAS_EMBEDDING_API_KEY != "your_openai_api_key"),
+        )
+
         # Run all evaluations concurrently
         results = await asyncio.gather(
             self.evaluate_query_context_relevance(query, contexts),
@@ -235,11 +324,37 @@ class EmbeddingMetricsEvaluator:
             return_exceptions=True,
         )
 
-        return {
-            "query_context_relevance": results[0] if not isinstance(results[0], Exception) else None,
-            "context_precision_emb": results[1] if not isinstance(results[1], Exception) else None,
-            "context_diversity": results[2] if not isinstance(results[2], Exception) else None,
-        }
+        # Process results and log any exceptions
+        processed_results = {}
+        metric_names = ["query_context_relevance", "context_precision_emb", "context_diversity"]
+
+        for i, (name, result) in enumerate(zip(metric_names, results)):
+            if isinstance(result, Exception):
+                logger.error(
+                    f"RAGAS embedding metric {name} raised exception",
+                    metric=name,
+                    error_type=type(result).__name__,
+                    error=str(result),
+                )
+                processed_results[name] = None
+            else:
+                processed_results[name] = result
+
+        # Log summary of results
+        null_metrics = [name for name, val in processed_results.items() if val is None]
+        if null_metrics:
+            logger.warning(
+                "RAGAS embedding evaluation completed with null metrics",
+                null_metrics=null_metrics,
+                successful_metrics=[name for name, val in processed_results.items() if val is not None],
+            )
+        else:
+            logger.info(
+                "RAGAS embedding evaluation completed successfully",
+                results=processed_results,
+            )
+
+        return processed_results
 
 
 # Global evaluator instance

@@ -1,6 +1,7 @@
 """
 Extended RAGAS evaluator with LLM-based metrics.
 """
+import asyncio
 import json
 from typing import Any, Dict, Optional
 
@@ -10,6 +11,10 @@ from langchain_openai import ChatOpenAI
 from app.core.config import settings
 
 logger = structlog.get_logger(__name__)
+
+# Retry configuration
+MAX_RETRIES = 3
+RETRY_DELAY_SECONDS = 1.0
 
 
 # Prompt templates for LLM-based metrics
@@ -92,6 +97,38 @@ class LLMMetricsEvaluator:
             )
         return self._llm
 
+    async def _invoke_llm_with_retry(self, prompt: str) -> str:
+        """Invoke LLM with retry logic."""
+        last_error = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                response = await self.llm.ainvoke(prompt)
+                return response.content
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    "RAGAS LLM API call failed, retrying",
+                    attempt=attempt + 1,
+                    max_retries=MAX_RETRIES,
+                    error_type=type(e).__name__,
+                    error=str(e),
+                    model=settings.RAGAS_LLM_MODEL,
+                    base_url=settings.RAGAS_LLM_BASE_URL,
+                )
+                if attempt < MAX_RETRIES - 1:
+                    await asyncio.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
+
+        # Log final failure with full details
+        logger.error(
+            "RAGAS LLM API call failed after all retries",
+            error_type=type(last_error).__name__,
+            error=str(last_error),
+            model=settings.RAGAS_LLM_MODEL,
+            base_url=settings.RAGAS_LLM_BASE_URL,
+            api_key_set=bool(settings.RAGAS_LLM_API_KEY and settings.RAGAS_LLM_API_KEY != "your_openai_api_key"),
+        )
+        raise last_error
+
     def _parse_llm_response(self, response_text: str) -> Dict[str, Any]:
         """Parse LLM response JSON."""
         try:
@@ -123,7 +160,7 @@ class LLMMetricsEvaluator:
             answer: The AI's answer
 
         Returns:
-            Score between 0 and 1 (higher means better utilization)
+            Score between 0 and 1 (higher means better utilization), or None if evaluation fails
         """
         try:
             prompt = CONTEXT_UTILIZATION_PROMPT.format(
@@ -132,8 +169,8 @@ class LLMMetricsEvaluator:
                 answer=answer[:3000] if answer else "N/A",
             )
 
-            response = await self.llm.ainvoke(prompt)
-            result = self._parse_llm_response(response.content)
+            response_content = await self._invoke_llm_with_retry(prompt)
+            result = self._parse_llm_response(response_content)
 
             score = result.get("score")
             if score is not None:
@@ -141,7 +178,14 @@ class LLMMetricsEvaluator:
             return None
 
         except Exception as e:
-            logger.exception("Failed to evaluate context_utilization", error=str(e))
+            logger.error(
+                "Failed to evaluate context_utilization",
+                error_type=type(e).__name__,
+                error=str(e),
+                question_length=len(question),
+                context_length=len(context) if context else 0,
+                answer_length=len(answer) if answer else 0,
+            )
             return None
 
     async def evaluate_coherence(
@@ -157,7 +201,7 @@ class LLMMetricsEvaluator:
             answer: The AI's answer
 
         Returns:
-            Score between 0 and 1 (higher means more coherent)
+            Score between 0 and 1 (higher means more coherent), or None if evaluation fails
         """
         try:
             prompt = COHERENCE_PROMPT.format(
@@ -165,8 +209,8 @@ class LLMMetricsEvaluator:
                 answer=answer[:3000] if answer else "N/A",
             )
 
-            response = await self.llm.ainvoke(prompt)
-            result = self._parse_llm_response(response.content)
+            response_content = await self._invoke_llm_with_retry(prompt)
+            result = self._parse_llm_response(response_content)
 
             score = result.get("score")
             if score is not None:
@@ -174,7 +218,13 @@ class LLMMetricsEvaluator:
             return None
 
         except Exception as e:
-            logger.exception("Failed to evaluate coherence", error=str(e))
+            logger.error(
+                "Failed to evaluate coherence",
+                error_type=type(e).__name__,
+                error=str(e),
+                question_length=len(question),
+                answer_length=len(answer) if answer else 0,
+            )
             return None
 
     async def evaluate_all(
@@ -197,7 +247,16 @@ class LLMMetricsEvaluator:
         Returns:
             Dictionary containing metric scores
         """
-        import asyncio
+        # Log start of evaluation with configuration info
+        logger.info(
+            "Starting RAGAS LLM metrics evaluation",
+            question_length=len(question),
+            context_length=len(context) if context else 0,
+            answer_length=len(answer) if answer else 0,
+            llm_model=settings.RAGAS_LLM_MODEL,
+            llm_base_url=settings.RAGAS_LLM_BASE_URL,
+            api_key_configured=bool(settings.RAGAS_LLM_API_KEY and settings.RAGAS_LLM_API_KEY != "your_openai_api_key"),
+        )
 
         # Run evaluations concurrently
         results = await asyncio.gather(
@@ -206,10 +265,37 @@ class LLMMetricsEvaluator:
             return_exceptions=True,
         )
 
-        return {
-            "context_utilization": results[0] if not isinstance(results[0], Exception) else None,
-            "coherence": results[1] if not isinstance(results[1], Exception) else None,
-        }
+        # Process results and log any exceptions
+        processed_results = {}
+        metric_names = ["context_utilization", "coherence"]
+
+        for name, result in zip(metric_names, results):
+            if isinstance(result, Exception):
+                logger.error(
+                    f"RAGAS LLM metric {name} raised exception",
+                    metric=name,
+                    error_type=type(result).__name__,
+                    error=str(result),
+                )
+                processed_results[name] = None
+            else:
+                processed_results[name] = result
+
+        # Log summary of results
+        null_metrics = [name for name, val in processed_results.items() if val is None]
+        if null_metrics:
+            logger.warning(
+                "RAGAS LLM evaluation completed with null metrics",
+                null_metrics=null_metrics,
+                successful_metrics=[name for name, val in processed_results.items() if val is not None],
+            )
+        else:
+            logger.info(
+                "RAGAS LLM evaluation completed successfully",
+                results=processed_results,
+            )
+
+        return processed_results
 
 
 # Global evaluator instance

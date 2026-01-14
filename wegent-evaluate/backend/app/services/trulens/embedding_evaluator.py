@@ -12,6 +12,10 @@ from app.core.config import settings
 
 logger = structlog.get_logger(__name__)
 
+# Retry configuration
+MAX_RETRIES = 3
+RETRY_DELAY_SECONDS = 1.0
+
 
 class TruLensEmbeddingEvaluator:
     """Evaluator for TruLens Embedding-based metrics."""
@@ -42,15 +46,44 @@ class TruLensEmbeddingEvaluator:
         return float(dot_product / (norm1 * norm2))
 
     async def _get_embedding(self, text: str) -> List[float]:
-        """Get embedding for a text string."""
+        """Get embedding for a text string with retry logic."""
         max_chars = 8000
         if len(text) > max_chars:
             text = text[:max_chars]
 
-        embedding = await asyncio.to_thread(
-            self.embeddings.embed_query, text
+        last_error = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                embedding = await asyncio.to_thread(
+                    self.embeddings.embed_query, text
+                )
+                return embedding
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    "TruLens embedding API call failed, retrying",
+                    attempt=attempt + 1,
+                    max_retries=MAX_RETRIES,
+                    error_type=type(e).__name__,
+                    error=str(e),
+                    text_length=len(text),
+                    model=settings.RAGAS_EMBEDDING_MODEL,
+                    base_url=settings.RAGAS_EMBEDDING_BASE_URL,
+                )
+                if attempt < MAX_RETRIES - 1:
+                    await asyncio.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
+
+        # Log final failure with full details
+        logger.error(
+            "TruLens embedding API call failed after all retries",
+            error_type=type(last_error).__name__,
+            error=str(last_error),
+            text_length=len(text),
+            model=settings.RAGAS_EMBEDDING_MODEL,
+            base_url=settings.RAGAS_EMBEDDING_BASE_URL,
+            api_key_set=bool(settings.RAGAS_EMBEDDING_API_KEY and settings.RAGAS_EMBEDDING_API_KEY != "your_openai_api_key"),
         )
-        return embedding
+        raise last_error
 
     async def evaluate_context_relevance(
         self,
@@ -68,7 +101,7 @@ class TruLensEmbeddingEvaluator:
             contexts: List of retrieved context chunks
 
         Returns:
-            Score between 0 and 1 (higher is better)
+            Score between 0 and 1 (higher is better), or None if evaluation fails
         """
         if not contexts:
             return 0.0
@@ -90,7 +123,13 @@ class TruLensEmbeddingEvaluator:
             return max(0.0, min(1.0, normalized_score))
 
         except Exception as e:
-            logger.exception("Failed to evaluate TruLens context_relevance", error=str(e))
+            logger.error(
+                "Failed to evaluate TruLens context_relevance",
+                error_type=type(e).__name__,
+                error=str(e),
+                query_length=len(query),
+                contexts_count=len(contexts),
+            )
             return None
 
     async def evaluate_relevance(
@@ -109,7 +148,7 @@ class TruLensEmbeddingEvaluator:
             answer: The AI's answer
 
         Returns:
-            Score between 0 and 1 (higher is better)
+            Score between 0 and 1 (higher is better), or None if evaluation fails
         """
         if not answer:
             return 0.0
@@ -128,7 +167,13 @@ class TruLensEmbeddingEvaluator:
             return max(0.0, min(1.0, normalized_score))
 
         except Exception as e:
-            logger.exception("Failed to evaluate TruLens relevance (embedding)", error=str(e))
+            logger.error(
+                "Failed to evaluate TruLens relevance (embedding)",
+                error_type=type(e).__name__,
+                error=str(e),
+                query_length=len(query),
+                answer_length=len(answer),
+            )
             return None
 
     async def evaluate_all(
@@ -148,16 +193,54 @@ class TruLensEmbeddingEvaluator:
         Returns:
             Dictionary containing all metric scores
         """
+        # Log start of evaluation with configuration info
+        logger.info(
+            "Starting TruLens embedding metrics evaluation",
+            query_length=len(query),
+            contexts_count=len(contexts),
+            answer_length=len(answer) if answer else 0,
+            embedding_model=settings.RAGAS_EMBEDDING_MODEL,
+            embedding_base_url=settings.RAGAS_EMBEDDING_BASE_URL,
+            api_key_configured=bool(settings.RAGAS_EMBEDDING_API_KEY and settings.RAGAS_EMBEDDING_API_KEY != "your_openai_api_key"),
+        )
+
         results = await asyncio.gather(
             self.evaluate_context_relevance(query, contexts),
             self.evaluate_relevance(query, answer),
             return_exceptions=True,
         )
 
-        return {
-            "context_relevance": results[0] if not isinstance(results[0], Exception) else None,
-            "relevance_embedding": results[1] if not isinstance(results[1], Exception) else None,
-        }
+        # Process results and log any exceptions
+        processed_results = {}
+        metric_names = ["context_relevance", "relevance_embedding"]
+
+        for name, result in zip(metric_names, results):
+            if isinstance(result, Exception):
+                logger.error(
+                    f"TruLens embedding metric {name} raised exception",
+                    metric=name,
+                    error_type=type(result).__name__,
+                    error=str(result),
+                )
+                processed_results[name] = None
+            else:
+                processed_results[name] = result
+
+        # Log summary of results
+        null_metrics = [name for name, val in processed_results.items() if val is None]
+        if null_metrics:
+            logger.warning(
+                "TruLens embedding evaluation completed with null metrics",
+                null_metrics=null_metrics,
+                successful_metrics=[name for name, val in processed_results.items() if val is not None],
+            )
+        else:
+            logger.info(
+                "TruLens embedding evaluation completed successfully",
+                results=processed_results,
+            )
+
+        return processed_results
 
 
 # Global evaluator instance
