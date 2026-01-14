@@ -1,0 +1,32 @@
+{
+  "open": "Open Canvas",
+  "close": "Close Canvas",
+  "toolbar": {
+    "export": "Export",
+    "history": "History",
+    "undo": "Undo",
+    "redo": "Redo"
+  },
+  "export": {
+    "title": "Export Document",
+    "format_md": "Markdown (.md)",
+    "format_txt": "Plain Text (.txt)"
+  },
+  "history": {
+    "title": "Version History",
+    "version": "Version {{version}}",
+    "source_ai": "AI Edit",
+    "source_user": "User Edit",
+    "rollback": "Rollback"
+  },
+  "diff": {
+    "accept": "Accept Changes",
+    "reject": "Reject Changes"
+  },
+  "errors": {
+    "create_failed": "Failed to create canvas",
+    "load_failed": "Failed to load canvas",
+    "update_failed": "Failed to update canvas",
+    "rollback_failed": "Failed to rollback"
+  }
+}

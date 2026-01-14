@@ -1,0 +1,32 @@
+{
+  "open": "开启画布",
+  "close": "关闭画布",
+  "toolbar": {
+    "export": "导出",
+    "history": "版本历史",
+    "undo": "撤销",
+    "redo": "重做"
+  },
+  "export": {
+    "title": "导出文档",
+    "format_md": "Markdown (.md)",
+    "format_txt": "纯文本 (.txt)"
+  },
+  "history": {
+    "title": "版本历史",
+    "version": "版本 {{version}}",
+    "source_ai": "AI 修改",
+    "source_user": "用户编辑",
+    "rollback": "回滚到此版本"
+  },
+  "diff": {
+    "accept": "确认修改",
+    "reject": "撤销修改"
+  },
+  "errors": {
+    "create_failed": "创建画布失败",
+    "load_failed": "加载画布失败",
+    "update_failed": "更新画布失败",
+    "rollback_failed": "回滚失败"
+  }
+}

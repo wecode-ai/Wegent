@@ -16,6 +16,7 @@ async function loadTranslations() {
   const namespaces = [
     'common',
     'chat',
+    'canvas',
     'settings',
     'history',
     'prompts',
@@ -65,6 +66,7 @@ export async function initI18n() {
     ns: [
       'common',
       'chat',
+      'canvas',
       'settings',
       'history',
       'prompts',

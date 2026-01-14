@@ -54,6 +54,11 @@ class ServerEvents:
     CHAT_BOT_COMPLETE = "chat:bot_complete"
     CHAT_SYSTEM = "chat:system"
 
+    # Canvas events (to task room)
+    CANVAS_CREATE = "canvas:create"
+    CANVAS_UPDATE = "canvas:update"
+    CANVAS_ROLLBACK = "canvas:rollback"
+
     # Correction events (to task room)
     CORRECTION_START = "correction:start"
     CORRECTION_PROGRESS = "correction:progress"
@@ -451,6 +456,44 @@ class CorrectionErrorPayload(BaseModel):
     task_id: int
     subtask_id: int
     error: str
+
+
+# ============================================================
+# Canvas Event Payloads
+# ============================================================
+
+
+class CanvasCreatePayload(BaseModel):
+    """Payload for canvas:create event."""
+
+    task_id: int
+    subtask_id: int
+    canvas_id: int
+    filename: str
+    content: str
+
+
+class CanvasUpdatePayload(BaseModel):
+    """Payload for canvas:update event."""
+
+    task_id: int
+    subtask_id: int
+    canvas_id: int
+    new_content: str
+    version: int
+    diff_info: Dict[str, str] = Field(
+        default_factory=dict, description="Diff information (old_str, new_str)"
+    )
+
+
+class CanvasRollbackPayload(BaseModel):
+    """Payload for canvas:rollback event."""
+
+    task_id: int
+    subtask_id: int
+    canvas_id: int
+    version: int
+    content: str
 
 
 # ============================================================
