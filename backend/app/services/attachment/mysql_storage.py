@@ -54,10 +54,13 @@ class MySQLStorageBackend(StorageBackend):
         context record. The context record should already exist with
         the ID extracted from the key.
 
+        Note: Encryption is handled at the context_service layer, not here.
+        Storage backends are responsible only for raw data storage.
+
         Args:
             key: Storage key (format: attachments/{context_id})
-            data: File binary data
-            metadata: Additional metadata (not used for MySQL backend)
+            data: File binary data (already encrypted if encryption is enabled)
+            metadata: Additional metadata including is_encrypted flag
 
         Returns:
             The storage key
@@ -77,6 +80,7 @@ class MySQLStorageBackend(StorageBackend):
                 raise StorageError(f"Context not found: {context_id}", key)
 
             context.binary_data = data
+
             # Update storage_backend and storage_key in type_data
             if context.type_data and isinstance(context.type_data, dict):
                 context.type_data = {
@@ -101,11 +105,14 @@ class MySQLStorageBackend(StorageBackend):
         """
         Get file data from MySQL.
 
+        Note: Decryption is handled at the context_service layer, not here.
+        This method returns raw binary data as stored in the database.
+
         Args:
             key: Storage key (format: attachments/{context_id})
 
         Returns:
-            File binary data, or None if not found
+            File binary data (raw, may be encrypted), or None if not found
         """
         try:
             context_id = self._extract_attachment_id(key)

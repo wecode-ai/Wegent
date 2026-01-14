@@ -14,108 +14,52 @@ import pytest
 
 
 class TestChatResponseModeRouting:
-    """Test that chat_response routes to HTTP or Package mode correctly."""
+    """Test that chat_response routes to HTTP mode correctly."""
 
     @pytest.mark.asyncio
     async def test_streaming_routes_to_http_mode(self):
-        """Test create_streaming_response routes to HTTP mode when CHAT_SHELL_MODE=http."""
-        with patch("app.core.config.settings") as mock_settings:
-            mock_settings.CHAT_SHELL_MODE = "http"
+        """Test create_streaming_response routes to HTTP mode."""
+        with patch(
+            "app.services.openapi.chat_response._create_streaming_response_http"
+        ) as mock_http:
+            mock_http.return_value = MagicMock()
 
-            with patch(
-                "app.services.openapi.chat_response._create_streaming_response_http"
-            ) as mock_http:
-                mock_http.return_value = MagicMock()
+            from app.services.openapi.chat_response import create_streaming_response
 
-                from app.services.openapi.chat_response import create_streaming_response
+            # Call the function - it should route to HTTP handler
+            await create_streaming_response(
+                db=MagicMock(),
+                user=MagicMock(),
+                team=MagicMock(),
+                model_info={},
+                request_body=MagicMock(),
+                input_text="test",
+                tool_settings={},
+            )
 
-                # Call the function - it should route to HTTP handler
-                await create_streaming_response(
-                    db=MagicMock(),
-                    user=MagicMock(),
-                    team=MagicMock(),
-                    model_info={},
-                    request_body=MagicMock(),
-                    input_text="test",
-                    tool_settings={},
-                )
-
-                mock_http.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_streaming_routes_to_package_mode(self):
-        """Test create_streaming_response routes to Package mode when CHAT_SHELL_MODE=package."""
-        with patch("app.core.config.settings") as mock_settings:
-            mock_settings.CHAT_SHELL_MODE = "package"
-
-            with patch(
-                "app.services.openapi.chat_response._create_streaming_response_package"
-            ) as mock_package:
-                mock_package.return_value = MagicMock()
-
-                from app.services.openapi.chat_response import create_streaming_response
-
-                await create_streaming_response(
-                    db=MagicMock(),
-                    user=MagicMock(),
-                    team=MagicMock(),
-                    model_info={},
-                    request_body=MagicMock(),
-                    input_text="test",
-                    tool_settings={},
-                )
-
-                mock_package.assert_called_once()
+            mock_http.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_sync_routes_to_http_mode(self):
-        """Test create_sync_response routes to HTTP mode when CHAT_SHELL_MODE=http."""
-        with patch("app.core.config.settings") as mock_settings:
-            mock_settings.CHAT_SHELL_MODE = "http"
+        """Test create_sync_response routes to HTTP mode."""
+        with patch(
+            "app.services.openapi.chat_response._create_sync_response_http"
+        ) as mock_http:
+            mock_http.return_value = MagicMock()
 
-            with patch(
-                "app.services.openapi.chat_response._create_sync_response_http"
-            ) as mock_http:
-                mock_http.return_value = MagicMock()
+            from app.services.openapi.chat_response import create_sync_response
 
-                from app.services.openapi.chat_response import create_sync_response
+            await create_sync_response(
+                db=MagicMock(),
+                user=MagicMock(),
+                team=MagicMock(),
+                model_info={},
+                request_body=MagicMock(),
+                input_text="test",
+                tool_settings={},
+            )
 
-                await create_sync_response(
-                    db=MagicMock(),
-                    user=MagicMock(),
-                    team=MagicMock(),
-                    model_info={},
-                    request_body=MagicMock(),
-                    input_text="test",
-                    tool_settings={},
-                )
-
-                mock_http.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_sync_routes_to_package_mode(self):
-        """Test create_sync_response routes to Package mode when CHAT_SHELL_MODE=package."""
-        with patch("app.core.config.settings") as mock_settings:
-            mock_settings.CHAT_SHELL_MODE = "package"
-
-            with patch(
-                "app.services.openapi.chat_response._create_sync_response_package"
-            ) as mock_package:
-                mock_package.return_value = MagicMock()
-
-                from app.services.openapi.chat_response import create_sync_response
-
-                await create_sync_response(
-                    db=MagicMock(),
-                    user=MagicMock(),
-                    team=MagicMock(),
-                    model_info={},
-                    request_body=MagicMock(),
-                    input_text="test",
-                    tool_settings={},
-                )
-
-                mock_package.assert_called_once()
+            mock_http.assert_called_once()
 
 
 class TestHTTPAdapterIntegration:
