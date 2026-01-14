@@ -1650,7 +1650,11 @@ class ClaudeCodeAgent(Agent):
         """
         # Normalize bot name for filename (lowercase, replace spaces/underscores with hyphens)
         raw_name = bot.get("name", "unnamed")
+        bot_id = bot.get("id", "")
         name = raw_name.lower().replace("_", "-").replace(" ", "-")
+        # Append bot ID to prevent filename collisions (e.g., "My Bot" vs "my_bot")
+        if bot_id:
+            name = f"{name}-{bot_id}"
 
         # Get system prompt from bot config
         system_prompt = bot.get("system_prompt", "")
