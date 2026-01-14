@@ -18,7 +18,7 @@ interface SimpleThinkingViewProps {
 interface ToolEntry {
   toolName: string
   query: string
-  status: 'running' | 'completed'
+  status: 'running' | 'completed' | 'failed'
   resultCount?: number
   startIndex: number
   endIndex?: number
@@ -26,6 +26,8 @@ interface ToolEntry {
   displayTitle?: string
   // Completed display title from backend (e.g., "渲染图表完成", "搜索网页完成")
   completedTitle?: string
+  // Error message for failed status
+  errorMessage?: string
 }
 
 /**
@@ -79,8 +81,17 @@ const SimpleThinkingView = memo(function SimpleThinkingView({
             displayTitle,
           })
         }
-        // Match tool_result with tool_use
-        else if (details.type === 'tool_result' && details.status === 'completed') {
+        // Match tool_result with tool_use (completed or failed)
+        else if (
+          details.type === 'tool_result' &&
+          (details.status === 'completed' || details.status === 'failed')
+        ) {
+          console.log('[SimpleThinkingView] Processing tool_result:', {
+            status: details.status,
+            tool_name: details.tool_name,
+            error: details.error,
+            title: step.title,
+          })
           const toolName: string =
             (typeof details.tool_name === 'string' ? details.tool_name : '') ||
             (typeof details.name === 'string' ? details.name : '') ||
@@ -106,14 +117,18 @@ const SimpleThinkingView = memo(function SimpleThinkingView({
             }
           }
 
-          // Get completed title from backend (e.g., "渲染图表完成")
+          // Get completed title from backend (e.g., "渲染图表完成" or "任务失败: xxx")
           const completedTitle = typeof step.title === 'string' ? step.title : undefined
+          // Get error message if failed
+          const errorMessage =
+            details.status === 'failed' ? (details.error as string | undefined) : undefined
 
           if (startIdx !== undefined && entries[startIdx]) {
-            entries[startIdx].status = 'completed'
+            entries[startIdx].status = details.status as 'completed' | 'failed'
             entries[startIdx].resultCount = resultCount
             entries[startIdx].endIndex = index
             entries[startIdx].completedTitle = completedTitle
+            entries[startIdx].errorMessage = errorMessage
           }
         }
       })
@@ -178,7 +193,9 @@ const SimpleThinkingView = memo(function SimpleThinkingView({
                   className={`absolute -left-[19px] top-0.5 w-3 h-3 rounded-full border-2 bg-surface ${
                     entry.status === 'running'
                       ? 'border-blue-500 animate-pulse'
-                      : 'border-green-500/60'
+                      : entry.status === 'failed'
+                        ? 'border-red-500/60'
+                        : 'border-green-500/60'
                   }`}
                 />
                 <div className="text-xs">
@@ -186,7 +203,9 @@ const SimpleThinkingView = memo(function SimpleThinkingView({
                     className={`font-medium ${
                       entry.status === 'running'
                         ? 'text-blue-600 dark:text-blue-400'
-                        : 'text-green-600 dark:text-green-400'
+                        : entry.status === 'failed'
+                          ? 'text-red-600 dark:text-red-400'
+                          : 'text-green-600 dark:text-green-400'
                     }`}
                   >
                     {entry.status === 'running'

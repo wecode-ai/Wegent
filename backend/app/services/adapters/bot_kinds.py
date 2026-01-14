@@ -288,7 +288,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
 
         # Validate skills if provided
         if obj_in.skills:
-            self._validate_skills(db, obj_in.skills, user_id)
+            self._validate_skills(db, obj_in.skills, user_id, namespace)
 
         # Encrypt sensitive data in agent_config before storing
         encrypted_agent_config = self._encrypt_agent_config(obj_in.agent_config)
@@ -300,6 +300,8 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         }
         if obj_in.skills:
             ghost_spec["skills"] = obj_in.skills
+        if obj_in.preload_skills:
+            ghost_spec["preload_skills"] = obj_in.preload_skills
 
         ghost_json = {
             "kind": "Ghost",
@@ -937,9 +939,18 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             # Validate that all referenced skills exist for this user
             skills = update_data["skills"] or []
             if skills:
-                self._validate_skills(db, skills, user_id)
+                self._validate_skills(db, skills, user_id, bot.namespace or "default")
             ghost_crd = Ghost.model_validate(ghost.json)
             ghost_crd.spec.skills = skills
+            ghost.json = ghost_crd.model_dump()
+            flag_modified(ghost, "json")
+            db.add(ghost)
+
+        if "preload_skills" in update_data and ghost:
+            # Update preload_skills in Ghost CRD
+            preload_skills = update_data["preload_skills"] or []
+            ghost_crd = Ghost.model_validate(ghost.json)
+            ghost_crd.spec.preload_skills = preload_skills
             ghost.json = ghost_crd.model_dump()
             flag_modified(ghost, "json")
             db.add(ghost)
@@ -1585,11 +1596,13 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                     f"[DEBUG] _convert_to_bot_dict: Dedicated model without isCustomConfig, returning bind_model format: {agent_config}"
                 )
 
-        # Extract skills from ghost
+        # Extract skills and preload_skills from ghost
         skills = []
+        preload_skills = []
         if ghost:
             ghost_crd = Ghost.model_validate(ghost.json)
             skills = ghost_crd.spec.skills or []
+            preload_skills = ghost_crd.spec.preload_skills or []
 
         return {
             "id": bot.id,
@@ -1602,21 +1615,32 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             "system_prompt": system_prompt,
             "mcp_servers": mcp_servers,
             "skills": skills,
+            "preload_skills": preload_skills,
             "is_active": bot.is_active,
             "created_at": bot.created_at,
             "updated_at": bot.updated_at,
         }
 
     def _validate_skills(
-        self, db: Session, skill_names: List[str], user_id: int
+        self,
+        db: Session,
+        skill_names: List[str],
+        user_id: int,
+        namespace: str = "default",
     ) -> None:
         """
         Validate that all skill names exist for the user or as system skills.
+
+        Search order (consistent with /api/v1/kinds/skills/unified):
+        1. User's personal skills (user_id=user_id, namespace='default')
+        2. Group skills in namespace (any user, if namespace != 'default')
+        3. Public/system skills (user_id=0, namespace='default')
 
         Args:
             db: Database session
             skill_names: List of skill names to validate
             user_id: User ID
+            namespace: Bot's namespace (for group skills lookup)
 
         Raises:
             HTTPException: If any skill does not exist
@@ -1624,12 +1648,13 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         if not skill_names:
             return
 
-        # Query all skills at once for efficiency
-        # Include both user's skills (user_id == user_id) and system skills (user_id == 0)
-        existing_skills = (
+        existing_skill_names = set()
+
+        # 1. Query user's personal skills (user_id=user_id, namespace='default')
+        personal_skills = (
             db.query(Kind)
             .filter(
-                or_(Kind.user_id == user_id, Kind.user_id == 0),
+                Kind.user_id == user_id,
                 Kind.kind == "Skill",
                 Kind.name.in_(skill_names),
                 Kind.namespace == "default",
@@ -1637,8 +1662,45 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             )
             .all()
         )
+        existing_skill_names.update(skill.name for skill in personal_skills)
 
-        existing_skill_names = {skill.name for skill in existing_skills}
+        # 2. Query group skills if namespace is not 'default'
+        # Group skills can be from any user in that namespace
+        if namespace != "default":
+            remaining_names = [
+                name for name in skill_names if name not in existing_skill_names
+            ]
+            if remaining_names:
+                group_skills = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.kind == "Skill",
+                        Kind.name.in_(remaining_names),
+                        Kind.namespace == namespace,
+                        Kind.is_active == True,
+                    )
+                    .all()
+                )
+                existing_skill_names.update(skill.name for skill in group_skills)
+
+        # 3. Query public/system skills (user_id=0)
+        remaining_names = [
+            name for name in skill_names if name not in existing_skill_names
+        ]
+        if remaining_names:
+            public_skills = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == 0,
+                    Kind.kind == "Skill",
+                    Kind.name.in_(remaining_names),
+                    Kind.namespace == "default",
+                    Kind.is_active == True,
+                )
+                .all()
+            )
+            existing_skill_names.update(skill.name for skill in public_skills)
+
         missing_skills = [
             name for name in skill_names if name not in existing_skill_names
         ]

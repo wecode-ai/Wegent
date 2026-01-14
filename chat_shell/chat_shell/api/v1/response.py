@@ -43,6 +43,34 @@ def _format_sse_event(event_type: str, data: dict) -> str:
     return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+def _extract_stream_attributes(
+    request: "ResponseRequest",
+    cancel_event: asyncio.Event,
+    request_id: str,
+) -> dict:
+    """Extract attributes from stream request for tracing."""
+    attrs = {"request.id": request_id}
+    if request.metadata:
+        if request.metadata.task_id:
+            attrs["task.id"] = request.metadata.task_id
+        if request.metadata.subtask_id:
+            attrs["subtask.id"] = request.metadata.subtask_id
+        if request.metadata.user_id:
+            attrs["user.id"] = str(request.metadata.user_id)
+    if request.model_config_data:
+        attrs["model.id"] = request.model_config_data.model_id or ""
+        attrs["model.provider"] = request.model_config_data.model or ""
+    return attrs
+
+
+from shared.telemetry.decorators import trace_async_generator
+
+
+@trace_async_generator(
+    span_name="chat_shell.stream_response",
+    tracer_name="chat_shell",
+    extract_attributes=_extract_stream_attributes,
+)
 async def _stream_response(
     request: ResponseRequest,
     cancel_event: asyncio.Event,
@@ -153,6 +181,7 @@ async def _stream_response(
                     {
                         "name": server.name,
                         "url": server.url,
+                        "type": server.type,
                         "auth": server.auth,
                     }
                 )
@@ -182,6 +211,7 @@ async def _stream_response(
         bot_namespace = ""
         skill_names = []
         skill_configs_from_meta = []
+        preload_skills = []
         knowledge_base_ids = None
         document_ids = None
         table_contexts = []
@@ -202,6 +232,7 @@ async def _stream_response(
             skill_configs_from_meta = (
                 getattr(request.metadata, "skill_configs", None) or []
             )
+            preload_skills = getattr(request.metadata, "preload_skills", None) or []
             knowledge_base_ids = getattr(request.metadata, "knowledge_base_ids", None)
             document_ids = getattr(request.metadata, "document_ids", None)
             table_contexts = getattr(request.metadata, "table_contexts", None) or []
@@ -239,6 +270,7 @@ async def _stream_response(
             skills=all_skill_configs,
             skill_names=skill_names,
             skill_configs=all_skill_configs,
+            preload_skills=preload_skills,
             knowledge_base_ids=knowledge_base_ids,
             document_ids=document_ids,
             table_contexts=table_contexts,
@@ -249,7 +281,7 @@ async def _stream_response(
         logger.info(
             "[RESPONSE] Processing request: task_id=%d, subtask_id=%d, "
             "enable_web_search=%s, mcp_servers=%d, skills=%d, "
-            "skill_names=%s, knowledge_base_ids=%s, document_ids=%s, "
+            "skill_names=%s, preload_skills=%s, knowledge_base_ids=%s, document_ids=%s, "
             "table_contexts_count=%d, table_contexts=%s",
             task_id,
             subtask_id,
@@ -257,10 +289,41 @@ async def _stream_response(
             len(mcp_servers),
             len(all_skill_configs),
             skill_names,
+            preload_skills,
             knowledge_base_ids,
             document_ids,
             len(table_contexts),
             table_contexts,  # Log the actual content
+        )
+
+        # Record request details to trace
+        from shared.telemetry.context import SpanAttributes, set_span_attributes
+
+        set_span_attributes(
+            {
+                SpanAttributes.TASK_ID: task_id,
+                SpanAttributes.SUBTASK_ID: subtask_id,
+                SpanAttributes.MCP_SERVERS_COUNT: len(mcp_servers),
+                SpanAttributes.MCP_SERVER_NAMES: (
+                    ",".join(s["name"] for s in mcp_servers) if mcp_servers else ""
+                ),
+                SpanAttributes.SKILL_NAMES: (
+                    ",".join(skill_names) if skill_names else ""
+                ),
+                SpanAttributes.SKILL_COUNT: len(all_skill_configs),
+                SpanAttributes.KB_IDS: (
+                    ",".join(map(str, knowledge_base_ids)) if knowledge_base_ids else ""
+                ),
+                SpanAttributes.KB_DOCUMENT_IDS: (
+                    ",".join(map(str, document_ids)) if document_ids else ""
+                ),
+                SpanAttributes.KB_TABLE_CONTEXTS_COUNT: len(table_contexts),
+                SpanAttributes.CHAT_WEB_SEARCH: enable_web_search,
+                SpanAttributes.CHAT_DEEP_THINKING: (
+                    request.features.deep_thinking if request.features else False
+                ),
+                SpanAttributes.CHAT_TYPE: "group" if is_group_chat else "single",
+            }
         )
 
         # Stream from ChatService
@@ -312,12 +375,21 @@ async def _stream_response(
                         status = details.get("status")
                         tool_name = details.get("tool_name", details.get("name", ""))
                         run_id = step.get("run_id", "")
+                        title = step.get("title", "")
 
                         # Create unique key for this tool event
                         event_key = f"{run_id}:{status}"
                         if event_key in emitted_tool_run_ids:
                             continue  # Skip already emitted events
                         emitted_tool_run_ids.add(event_key)
+
+                        logger.info(
+                            "[RESPONSE] Processing thinking step: run_id=%s, status=%s, tool=%s, title=%s",
+                            run_id[:20] if run_id else "N/A",
+                            status,
+                            tool_name,
+                            title[:30] if title else "N/A",
+                        )
 
                         if status == "started":
                             yield _format_sse_event(
@@ -329,7 +401,17 @@ async def _stream_response(
                                     display_name=step.get("title", tool_name),
                                 ).model_dump(),
                             )
-                        elif status == "completed":
+                        elif status in ("completed", "failed"):
+                            logger.info(
+                                "[RESPONSE] Emitting TOOL_DONE: run_id=%s, status=%s, error=%s",
+                                run_id[:20] if run_id else "N/A",
+                                status,
+                                (
+                                    details.get("error", "none")[:50]
+                                    if details.get("error")
+                                    else "none"
+                                ),
+                            )
                             yield _format_sse_event(
                                 ResponseEventType.TOOL_DONE.value,
                                 ToolDone(
@@ -338,8 +420,13 @@ async def _stream_response(
                                         "output", details.get("content")
                                     ),
                                     duration_ms=None,
-                                    error=None,
+                                    error=(
+                                        details.get("error")
+                                        if status == "failed"
+                                        else None
+                                    ),
                                     sources=None,
+                                    display_name=title if status == "failed" else None,
                                 ).model_dump(),
                             )
 
@@ -460,12 +547,19 @@ async def create_response(request: ResponseRequest, req: Request):
     This is the main endpoint for generating AI responses.
     Returns an SSE stream of events.
     """
-    # Generate request ID if not provided
-    request_id = (
-        request.metadata.request_id
-        if request.metadata and request.metadata.request_id
-        else f"req-{uuid.uuid4().hex[:12]}"
-    )
+    from shared.telemetry.context import set_request_context
+
+    # Extract request ID from header or generate new one
+    request_id = req.headers.get("X-Request-ID")
+    if not request_id:
+        request_id = (
+            request.metadata.request_id
+            if request.metadata and request.metadata.request_id
+            else f"req-{uuid.uuid4().hex[:12]}"
+        )
+
+    # Set request context for log correlation
+    set_request_context(request_id)
 
     # Create cancel event for this request
     cancel_event = asyncio.Event()

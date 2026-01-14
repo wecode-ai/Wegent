@@ -29,6 +29,62 @@
   box-sizing: border-box;
 }
 
+/* Fix markdown table overflow on mobile - wrap tables in scrollable container */
+.wmde-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 1em;
+  display: table; /* Keep native table layout */
+}
+
+.wmde-markdown table th,
+.wmde-markdown table td {
+  padding: 0.5rem;
+  border: 1px solid rgb(var(--color-border));
+  word-break: break-word;
+  overflow-wrap: break-word;
+  white-space: normal; /* Allow text wrapping in cells */
+}
+
+.wmde-markdown table th {
+  background-color: rgb(var(--color-bg-surface));
+  font-weight: 600;
+  text-align: left;
+}
+
+/* Responsive table wrapper for mobile - create scrollable container for each table */
+@media (max-width: 767px) {
+  /* Wrap each table in a scrollable container */
+  .wmde-markdown table {
+    font-size: 0.75rem; /* Smaller text on mobile */
+    width: max-content; /* Allow table to expand based on content */
+    display: block; /* Allow overflow */
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Restore table layout for internal elements */
+  .wmde-markdown table thead,
+  .wmde-markdown table tbody {
+    display: table-header-group;
+  }
+
+  .wmde-markdown table tbody {
+    display: table-row-group;
+  }
+
+  .wmde-markdown table tr {
+    display: table-row;
+  }
+
+  .wmde-markdown table th,
+  .wmde-markdown table td {
+    display: table-cell;
+    padding: 0.375rem 0.5rem;
+    white-space: nowrap; /* Prevent text wrapping on mobile for better readability */
+  }
+}
+
 /* Unify markdown text size with thinking process */
 .wmde-markdown {
   font-size: 0.875rem; /* text-sm = 14px */

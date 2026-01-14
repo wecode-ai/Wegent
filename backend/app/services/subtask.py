@@ -3,12 +3,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import logging
-from typing import List, Optional
+from datetime import datetime
+from typing import List, Optional, Tuple
 
 from fastapi import HTTPException
+from shared.models.db.subtask_context import SubtaskContext
 from sqlalchemy.orm import Session, load_only, subqueryload, undefer
 
-from app.models.subtask import Subtask, SubtaskStatus
+from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.schemas.subtask import SubtaskCreate, SubtaskUpdate
 from app.services.base import BaseService
 
@@ -367,6 +369,208 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
             messages.append(message_dict)
 
         return messages
+
+    def delete_subtasks_from(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        from_message_id: int,
+        user_id: int,
+    ) -> int:
+        """
+        Delete all subtasks from the specified message_id onwards (inclusive, hard delete).
+
+        This is used for message editing - when a user edits a message,
+        the edited message and all subsequent messages are deleted,
+        then the user can resend.
+
+        Args:
+            db: Database session
+            task_id: Task ID
+            from_message_id: Message ID threshold (messages with message_id >= this are deleted)
+            user_id: User ID (for ownership verification)
+
+        Returns:
+            Number of deleted subtasks
+        """
+        # Get all subtasks to delete (message_id >= from_message_id)
+        subtasks_to_delete = (
+            db.query(Subtask)
+            .filter(
+                Subtask.task_id == task_id,
+                Subtask.message_id >= from_message_id,
+            )
+            .all()
+        )
+
+        if not subtasks_to_delete:
+            return 0
+
+        deleted_count = len(subtasks_to_delete)
+        subtask_ids_to_delete = [s.id for s in subtasks_to_delete]
+
+        # Delete associated SubtaskContexts first
+        db.query(SubtaskContext).filter(
+            SubtaskContext.subtask_id.in_(subtask_ids_to_delete)
+        ).delete(synchronize_session="fetch")
+
+        # Delete the subtasks
+        for subtask in subtasks_to_delete:
+            db.delete(subtask)
+
+        db.commit()
+
+        logger.info(
+            f"Deleted {deleted_count} subtasks from message_id {from_message_id} for task {task_id}"
+        )
+
+        return deleted_count
+
+    def delete_subtasks_after(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        after_message_id: int,
+        user_id: int,
+    ) -> int:
+        """
+        Delete all subtasks after the specified message_id (hard delete).
+
+        This is used for message editing - when a user edits a message,
+        all subsequent messages (both user and AI) are deleted.
+
+        Args:
+            db: Database session
+            task_id: Task ID
+            after_message_id: Message ID threshold (messages with message_id > this are deleted)
+            user_id: User ID (for ownership verification)
+
+        Returns:
+            Number of deleted subtasks
+        """
+        # Get all subtasks to delete (message_id > after_message_id)
+        subtasks_to_delete = (
+            db.query(Subtask)
+            .filter(
+                Subtask.task_id == task_id,
+                Subtask.message_id > after_message_id,
+            )
+            .all()
+        )
+
+        if not subtasks_to_delete:
+            return 0
+
+        deleted_count = len(subtasks_to_delete)
+        subtask_ids_to_delete = [s.id for s in subtasks_to_delete]
+
+        # Delete associated SubtaskContexts first
+        db.query(SubtaskContext).filter(
+            SubtaskContext.subtask_id.in_(subtask_ids_to_delete)
+        ).delete(synchronize_session="fetch")
+
+        # Delete the subtasks
+        for subtask in subtasks_to_delete:
+            db.delete(subtask)
+
+        db.commit()
+
+        logger.info(
+            f"Deleted {deleted_count} subtasks after message_id {after_message_id} for task {task_id}"
+        )
+
+        return deleted_count
+
+    def edit_user_message(
+        self,
+        db: Session,
+        *,
+        subtask_id: int,
+        new_content: str,
+        user_id: int,
+    ) -> Tuple[int, int, int]:
+        """
+        Edit a user message by deleting it and all subsequent messages.
+
+        This implements the ChatGPT-style edit functionality. The edited message
+        and all messages after it are deleted. The frontend should then send
+        a new message with the edited content to trigger AI response.
+
+        Args:
+            db: Database session
+            subtask_id: The subtask ID of the message to edit
+            new_content: New message content (used by frontend to resend)
+            user_id: User ID (for ownership verification)
+
+        Returns:
+            Tuple of (subtask_id, message_id, deleted_count)
+
+        Raises:
+            HTTPException: If validation fails
+        """
+        from app.models.task import TaskResource as Task
+        from app.services.task_member_service import task_member_service
+
+        # Get the subtask
+        subtask = (
+            db.query(Subtask)
+            .filter(Subtask.id == subtask_id, Subtask.user_id == user_id)
+            .first()
+        )
+
+        if not subtask:
+            raise HTTPException(status_code=404, detail="Message not found")
+
+        # Verify it's a user message (role == USER)
+        if subtask.role != SubtaskRole.USER:
+            raise HTTPException(
+                status_code=400, detail="Only user messages can be edited"
+            )
+
+        # Check if task is a group chat (edit not supported in group chat)
+        task = db.query(Task).filter(Task.id == subtask.task_id).first()
+        if task and task.json:
+            task_spec = task.json.get("spec", {})
+            if task_spec.get("is_group_chat", False):
+                raise HTTPException(
+                    status_code=400, detail="Edit not supported in group chat"
+                )
+
+        # Check if there's an AI response currently being generated
+        running_assistant = (
+            db.query(Subtask)
+            .filter(
+                Subtask.task_id == subtask.task_id,
+                Subtask.role == SubtaskRole.ASSISTANT,
+                Subtask.status.in_([SubtaskStatus.PENDING, SubtaskStatus.RUNNING]),
+            )
+            .first()
+        )
+        if running_assistant:
+            raise HTTPException(
+                status_code=400, detail="Cannot edit while AI is generating a response"
+            )
+
+        # Store message_id before deletion
+        message_id = subtask.message_id
+        task_id = subtask.task_id
+
+        # Delete the edited message AND all subsequent messages
+        # This allows frontend to send a fresh new message without duplicates
+        deleted_count = self.delete_subtasks_from(
+            db,
+            task_id=task_id,
+            from_message_id=message_id,
+            user_id=user_id,
+        )
+
+        logger.info(
+            f"User {user_id} deleted message {subtask_id} for editing, deleted {deleted_count} messages total"
+        )
+
+        return subtask_id, message_id, deleted_count
 
 
 subtask_service = SubtaskService(Subtask)
