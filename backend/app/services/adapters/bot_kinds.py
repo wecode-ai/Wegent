@@ -300,6 +300,8 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         }
         if obj_in.skills:
             ghost_spec["skills"] = obj_in.skills
+        if obj_in.preload_skills:
+            ghost_spec["preload_skills"] = obj_in.preload_skills
 
         ghost_json = {
             "kind": "Ghost",
@@ -940,6 +942,15 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 self._validate_skills(db, skills, user_id, bot.namespace or "default")
             ghost_crd = Ghost.model_validate(ghost.json)
             ghost_crd.spec.skills = skills
+            ghost.json = ghost_crd.model_dump()
+            flag_modified(ghost, "json")
+            db.add(ghost)
+
+        if "preload_skills" in update_data and ghost:
+            # Update preload_skills in Ghost CRD
+            preload_skills = update_data["preload_skills"] or []
+            ghost_crd = Ghost.model_validate(ghost.json)
+            ghost_crd.spec.preload_skills = preload_skills
             ghost.json = ghost_crd.model_dump()
             flag_modified(ghost, "json")
             db.add(ghost)
@@ -1585,11 +1596,13 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                     f"[DEBUG] _convert_to_bot_dict: Dedicated model without isCustomConfig, returning bind_model format: {agent_config}"
                 )
 
-        # Extract skills from ghost
+        # Extract skills and preload_skills from ghost
         skills = []
+        preload_skills = []
         if ghost:
             ghost_crd = Ghost.model_validate(ghost.json)
             skills = ghost_crd.spec.skills or []
+            preload_skills = ghost_crd.spec.preload_skills or []
 
         return {
             "id": bot.id,
@@ -1602,6 +1615,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             "system_prompt": system_prompt,
             "mcp_servers": mcp_servers,
             "skills": skills,
+            "preload_skills": preload_skills,
             "is_active": bot.is_active,
             "created_at": bot.created_at,
             "updated_at": bot.updated_at,

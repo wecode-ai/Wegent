@@ -234,6 +234,9 @@ async def _create_streaming_response_http(
                 bot_name=setup.bot_name,
                 bot_namespace=setup.bot_namespace,
                 mcp_servers=mcp_servers_to_pass,
+                skill_names=setup.skill_names,
+                skill_configs=setup.skill_configs,
+                preload_skills=setup.preload_skills,
             )
 
             # Stream from HTTP adapter
@@ -850,6 +853,9 @@ async def _create_sync_response_http(
             bot_name=setup.bot_name,
             bot_namespace=setup.bot_namespace,
             mcp_servers=mcp_servers_to_pass,
+            skill_names=setup.skill_names,
+            skill_configs=setup.skill_configs,
+            preload_skills=setup.preload_skills,
         )
 
         # Stream from HTTP adapter and accumulate

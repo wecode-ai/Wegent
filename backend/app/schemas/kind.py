@@ -113,6 +113,12 @@ class GhostSpec(BaseModel):
     systemPrompt: str
     mcpServers: Optional[Dict[str, Any]] = None
     skills: Optional[List[str]] = None  # Skill names list
+    preload_skills: Optional[List[str]] = Field(
+        None,
+        description="List of skill names to preload into system prompt. "
+        "Must be a subset of skills. When specified, these skills' prompts "
+        "will be automatically injected into the system message.",
+    )
 
 
 class GhostStatus(Status):

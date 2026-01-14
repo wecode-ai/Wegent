@@ -11,15 +11,14 @@ This service handles:
 - Integration with LangGraph-based ChatAgent
 """
 
-import asyncio
 import logging
-from typing import Any, AsyncIterator, Optional
+from typing import AsyncIterator
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from shared.telemetry.decorators import add_span_event, trace_async_generator
 
 from chat_shell.core.config import settings
-from chat_shell.core.database import get_db
 from chat_shell.interface import ChatEvent, ChatEventType, ChatInterface, ChatRequest
+from chat_shell.services.context import ChatContext
 from chat_shell.services.storage.session import session_manager
 from chat_shell.services.streaming.core import (
     StreamingConfig,
@@ -43,6 +42,17 @@ class ChatService(ChatInterface):
         """Initialize chat service."""
         self._storage = session_manager
 
+    @trace_async_generator(
+        span_name="chat_service.chat",
+        tracer_name="chat_shell.services",
+        extract_attributes=lambda self, request, *args, **kwargs: {
+            "chat.task_id": request.task_id,
+            "chat.subtask_id": request.subtask_id,
+            "chat.user_id": request.user_id,
+            "chat.user_name": request.user_name or "",
+            "chat.is_group_chat": request.is_group_chat,
+        },
+    )
     async def chat(self, request: ChatRequest) -> AsyncIterator[ChatEvent]:
         """Process a chat request and stream events.
 
@@ -52,6 +62,8 @@ class ChatService(ChatInterface):
         Yields:
             ChatEvent: Events during chat processing
         """
+        add_span_event("chat_started", {"task_id": request.task_id})
+
         emitter = SSEEmitter()
         state = StreamingState(
             task_id=request.task_id,
@@ -72,33 +84,53 @@ class ChatService(ChatInterface):
 
         try:
             # Acquire resources
+            add_span_event("acquiring_resources")
             logger.debug("[CHAT_SERVICE] Acquiring resources...")
             if not await core.acquire_resources():
                 # Emit error event if resources couldn't be acquired
+                add_span_event("resources_acquisition_failed")
                 logger.warning("[CHAT_SERVICE] Failed to acquire resources!")
                 async for event in self._emit_pending_events(emitter):
                     yield event
                 return
 
+            add_span_event("resources_acquired")
             logger.debug("[CHAT_SERVICE] Resources acquired, emitting start event...")
             # Emit start event
             async for event in self._emit_pending_events(emitter):
                 yield event
 
             # Process chat with the agent
+            add_span_event("processing_chat_started")
             logger.debug("[CHAT_SERVICE] Starting _process_chat...")
             async for event in self._process_chat(request, core, state, emitter):
                 yield event
 
+            add_span_event("processing_chat_completed")
+
         except Exception as e:
+            add_span_event("chat_error", {"error": str(e)})
             logger.exception("[CHAT_SERVICE] Exception in chat(): %s", e)
             await core.handle_error(e)
             async for event in self._emit_pending_events(emitter):
                 yield event
         finally:
+            add_span_event("releasing_resources")
             logger.debug("[CHAT_SERVICE] Releasing resources...")
             await core.release_resources()
+            add_span_event("resources_released")
 
+    @trace_async_generator(
+        span_name="chat_service.process_chat",
+        tracer_name="chat_shell.services",
+        extract_attributes=lambda self, request, core, state, emitter, *args, **kwargs: {
+            "process.task_id": request.task_id,
+            "process.subtask_id": request.subtask_id,
+            "process.model": (
+                request.model_config.get("model") if request.model_config else "gpt-4"
+            ),
+        },
+    )
     async def _process_chat(
         self,
         request: ChatRequest,
@@ -107,14 +139,14 @@ class ChatService(ChatInterface):
         emitter: SSEEmitter,
     ) -> AsyncIterator[ChatEvent]:
         """Process chat request with agent streaming."""
+        import time
+
         from chat_shell import AgentConfig, create_chat_agent
-        from chat_shell.history import get_chat_history
-        from chat_shell.tools.knowledge_factory import prepare_knowledge_base_tools
-        from chat_shell.tools.mcp.loader import load_mcp_tools
-        from chat_shell.tools.skill_factory import (
-            prepare_load_skill_tool,
-            prepare_skill_tools,
-        )
+
+        add_span_event("process_chat_started", {"task_id": request.task_id})
+
+        # Create chat context for resource management
+        context = ChatContext(request)
 
         try:
             logger.debug(
@@ -123,281 +155,137 @@ class ChatService(ChatInterface):
                 request.subtask_id,
             )
 
-            # Load chat history (automatically uses remote API in HTTP mode)
+            # Prepare all context resources in parallel
+            add_span_event("preparing_context")
+            t0 = time.perf_counter()
+            ctx_result = await context.prepare()
+            logger.info(
+                "[CHAT_SERVICE_PERF] context.prepare: %.2fms",
+                (time.perf_counter() - t0) * 1000,
+            )
+
+            # Create chat agent (agent creation belongs to service layer, not context)
+            add_span_event("creating_chat_agent")
+            agent = create_chat_agent(
+                workspace_root=settings.WORKSPACE_ROOT,
+                enable_skills=settings.ENABLE_SKILLS,
+                enable_web_search=False,
+                enable_checkpointing=settings.ENABLE_CHECKPOINTING,
+            )
+
+            add_span_event(
+                "context_prepared",
+                {
+                    "history_count": len(ctx_result.history),
+                    "extra_tools_count": len(ctx_result.extra_tools),
+                },
+            )
             logger.debug(
-                "[CHAT_SERVICE] >>> Loading history: task_id=%d, message_id=%s",
-                request.task_id,
-                request.message_id,
+                "[CHAT_SERVICE] Context prepared: history=%d, extra_tools=%d",
+                len(ctx_result.history),
+                len(ctx_result.extra_tools),
             )
-            history = await get_chat_history(
-                task_id=request.task_id,
-                is_group_chat=request.is_group_chat,
-                exclude_after_message_id=request.message_id,
+
+            # Build agent configuration
+            if ctx_result.extra_tools:
+                logger.debug(
+                    "[CHAT_SERVICE] Extra tools: %s",
+                    [t.name for t in ctx_result.extra_tools],
+                )
+
+            add_span_event("building_agent_config")
+            agent_config = AgentConfig(
+                model_config=request.model_config or {"model": "gpt-4"},
+                system_prompt=ctx_result.system_prompt,
+                max_iterations=settings.CHAT_TOOL_MAX_REQUESTS,
+                extra_tools=ctx_result.extra_tools if ctx_result.extra_tools else None,
+                streaming=True,
+                enable_clarification=request.enable_clarification,
+                enable_deep_thinking=request.enable_deep_thinking,
+                skills=request.skills,
             )
+
+            # Build messages for the agent
+            add_span_event("building_messages")
+            model_id = (
+                request.model_config.get("model") if request.model_config else None
+            )
+            t1 = time.perf_counter()
+            messages = agent.build_messages(
+                history=ctx_result.history,
+                current_message=request.message,
+                system_prompt=ctx_result.system_prompt,
+                username=request.user_name if request.is_group_chat else None,
+                config=agent_config,
+                model_id=model_id,
+            )
+            logger.info(
+                "[CHAT_SERVICE_PERF] build_messages: %.2fms",
+                (time.perf_counter() - t1) * 1000,
+            )
+            add_span_event("messages_built", {"message_count": len(messages)})
+
+            # Create tool event handler using the agent builder
+            add_span_event("creating_tool_event_handler")
+            t2 = time.perf_counter()
+            agent_builder = agent.create_agent_builder(agent_config)
+
+            on_tool_event = create_tool_event_handler(state, emitter, agent_builder)
             logger.debug(
-                "[CHAT_SERVICE] <<< History loaded: %d messages",
-                len(history),
+                "[CHAT_SERVICE] Created tool event handler, agent_builder=%s",
+                type(agent_builder).__name__,
+            )
+            logger.info(
+                "[CHAT_SERVICE_PERF] create_agent_builder: %.2fms",
+                (time.perf_counter() - t2) * 1000,
             )
 
-            # Get database session for other operations (tools, skills, etc.)
-            async for db in get_db():
-                try:
-                    # Create the agent (note: web search is handled separately below)
-                    agent = create_chat_agent(
-                        workspace_root=settings.WORKSPACE_ROOT,
-                        enable_skills=settings.ENABLE_SKILLS,
-                        enable_web_search=False,  # We'll add it manually if needed
-                        enable_checkpointing=settings.ENABLE_CHECKPOINTING,
+            # Stream tokens from agent
+            add_span_event("streaming_started")
+            token_count = 0
+            async for token in agent.stream(
+                messages=messages,
+                config=agent_config,
+                cancel_event=core.cancel_event,
+                on_tool_event=on_tool_event,
+            ):
+                if core.is_cancelled():
+                    add_span_event(
+                        "streaming_cancelled", {"tokens_processed": token_count}
                     )
+                    break
 
-                    # Prepare extra tools
-                    extra_tools = (
-                        list(request.extra_tools) if request.extra_tools else []
+                if not await core.process_token(token):
+                    add_span_event(
+                        "token_processing_stopped", {"tokens_processed": token_count}
                     )
+                    break
 
-                    # Add web search tool if enabled by request
-                    if request.enable_web_search:
-                        from chat_shell.tools.builtin import WebSearchTool
+                token_count += 1
+                # Yield any pending events
+                async for event in self._emit_pending_events(emitter):
+                    yield event
 
-                        default_max_results = getattr(
-                            settings, "WEB_SEARCH_DEFAULT_MAX_RESULTS", 5
-                        )
-                        search_engine = request.search_engine
-                        extra_tools.append(
-                            WebSearchTool(
-                                engine_name=search_engine,
-                                default_max_results=default_max_results,
-                            )
-                        )
-                        logger.debug(
-                            "[CHAT_SERVICE] Added WebSearchTool: engine=%s, max_results=%d",
-                            search_engine,
-                            default_max_results,
-                        )
+            # Finalize if not cancelled
+            if not core.is_cancelled():
+                add_span_event("finalizing", {"total_tokens": token_count})
+                await core.finalize()
 
-                    # Prepare knowledge base tools if knowledge_base_ids provided
-                    system_prompt = request.system_prompt or ""
-                    if request.knowledge_base_ids:
-                        # Get context_window from model_config (extracted from Model CRD)
-                        context_window = (
-                            request.model_config.get("context_window")
-                            if request.model_config
-                            else None
-                        )
-                        kb_tools, system_prompt = await prepare_knowledge_base_tools(
-                            knowledge_base_ids=request.knowledge_base_ids,
-                            user_id=request.user_id,
-                            db=db,
-                            base_system_prompt=system_prompt,
-                            task_id=request.task_id,
-                            user_subtask_id=request.subtask_id,
-                            document_ids=request.document_ids,
-                            context_window=context_window,
-                        )
-                        extra_tools.extend(kb_tools)
+            add_span_event("streaming_completed", {"total_tokens": token_count})
 
-                    # Prepare table tools if table_contexts provided
-                    logger.debug(
-                        "[CHAT_SERVICE] Checking table_contexts: has_table_contexts=%s, count=%d, content=%s",
-                        bool(request.table_contexts),
-                        len(request.table_contexts) if request.table_contexts else 0,
-                        request.table_contexts,
-                    )
-                    if request.table_contexts:
-                        from chat_shell.tools.builtin import DataTableTool
-
-                        data_table_tool = DataTableTool(
-                            table_contexts=request.table_contexts,
-                            user_id=request.user_id,
-                            user_name=request.user_name,
-                            db_session=db,
-                        )
-                        extra_tools.append(data_table_tool)
-                        logger.info(
-                            "[CHAT_SERVICE] Added DataTableTool with %d table context(s)",
-                            len(request.table_contexts),
-                        )
-
-                    # Prepare load_skill_tool if skills are configured
-                    load_skill_tool = None
-                    if request.skill_names:
-                        load_skill_tool = prepare_load_skill_tool(
-                            skill_names=request.skill_names,
-                            user_id=request.user_id,
-                            skill_configs=request.skill_configs,
-                        )
-
-                    # Prepare skill tools from skill_configs
-                    if request.skill_configs:
-                        skill_tools = await prepare_skill_tools(
-                            task_id=request.task_id,
-                            subtask_id=request.subtask_id,
-                            user_id=request.user_id,
-                            skill_configs=request.skill_configs,
-                            load_skill_tool=load_skill_tool,
-                            user_name=request.user_name,
-                        )
-                        extra_tools.extend(skill_tools)
-
-                    # Load MCP tools - prefer request-provided servers, fallback to settings
-                    mcp_client = None
-                    mcp_summary = []  # Collect MCP connection summaries
-                    if request.mcp_servers:
-                        # Use MCP servers from request (HTTP mode)
-                        from chat_shell.tools.mcp import MCPClient
-
-                        logger.debug(
-                            "[CHAT_SERVICE] Loading %d MCP servers from request for task %d",
-                            len(request.mcp_servers),
-                            request.task_id,
-                        )
-                        for server in request.mcp_servers:
-                            try:
-                                server_name = server.get("name", "server")
-                                # Support transport type from server config, default to streamable-http
-                                transport_type = server.get("type", "streamable-http")
-                                server_url = server.get("url", "")
-                                server_config = {
-                                    server_name: {
-                                        "type": transport_type,
-                                        "url": server_url,
-                                    }
-                                }
-                                auth = server.get("auth")
-                                if auth:
-                                    server_config[server_name]["headers"] = auth
-
-                                client = MCPClient(server_config)
-                                await client.connect()
-                                if client.is_connected:
-                                    tools = client.get_tools()
-                                    extra_tools.extend(tools)
-                                    mcp_summary.append(f"{server_name}({len(tools)})")
-                                else:
-                                    logger.warning(
-                                        "[CHAT_SERVICE] MCP server %s connected but not ready",
-                                        server_name,
-                                    )
-                            except Exception as e:
-                                error_msg = str(e)
-                                if hasattr(e, "exceptions"):
-                                    for exc in e.exceptions:
-                                        if hasattr(exc, "exceptions"):
-                                            for sub_exc in exc.exceptions:
-                                                error_msg = str(sub_exc)
-                                                break
-                                        else:
-                                            error_msg = str(exc)
-                                        break
-                                logger.warning(
-                                    "[CHAT_SERVICE] Failed to load MCP server %s: %s",
-                                    server.get("name"),
-                                    error_msg,
-                                )
-
-                        # Log MCP summary
-                        if mcp_summary:
-                            logger.info(
-                                "[CHAT_SERVICE] Connected %d MCP servers: %s",
-                                len(mcp_summary),
-                                ", ".join(mcp_summary),
-                            )
-                    else:
-                        # No MCP servers in request - chat_shell does NOT auto-load tools
-                        # All tools must be explicitly passed by the caller
-                        logger.debug(
-                            "[CHAT_SERVICE] No MCP servers in request, skipping MCP loading"
-                        )
-
-                    # Build agent configuration
-                    logger.debug(
-                        "[CHAT_SERVICE] Building agent config: extra_tools=%d, enable_web_search=%s",
-                        len(extra_tools),
-                        request.enable_web_search,
-                    )
-                    if extra_tools:
-                        logger.debug(
-                            "[CHAT_SERVICE] Extra tools: %s",
-                            [t.name for t in extra_tools],
-                        )
-                    agent_config = AgentConfig(
-                        model_config=request.model_config or {"model": "gpt-4"},
-                        system_prompt=system_prompt,
-                        max_iterations=settings.CHAT_TOOL_MAX_REQUESTS,
-                        extra_tools=extra_tools if extra_tools else None,
-                        load_skill_tool=load_skill_tool,
-                        streaming=True,
-                        enable_clarification=request.enable_clarification,
-                        enable_deep_thinking=request.enable_deep_thinking,
-                        skills=request.skills,
-                    )
-
-                    # Build messages for the agent
-                    model_id = (
-                        request.model_config.get("model")
-                        if request.model_config
-                        else None
-                    )
-                    messages = agent.build_messages(
-                        history=history,
-                        current_message=request.message,
-                        system_prompt=system_prompt,
-                        username=request.user_name if request.is_group_chat else None,
-                        config=agent_config,
-                        model_id=model_id,
-                    )
-
-                    # Create tool event handler using the agent builder
-                    agent_builder = agent.create_agent_builder(agent_config)
-                    on_tool_event = create_tool_event_handler(
-                        state, emitter, agent_builder
-                    )
-                    logger.debug(
-                        "[CHAT_SERVICE] Created tool event handler, agent_builder=%s",
-                        type(agent_builder).__name__,
-                    )
-
-                    # Stream tokens from agent
-                    async for token in agent.stream(
-                        messages=messages,
-                        config=agent_config,
-                        cancel_event=core.cancel_event,
-                        on_tool_event=on_tool_event,
-                    ):
-                        if core.is_cancelled():
-                            break
-
-                        if not await core.process_token(token):
-                            break
-
-                        # Yield any pending events
-                        async for event in self._emit_pending_events(emitter):
-                            yield event
-
-                    # Finalize if not cancelled
-                    if not core.is_cancelled():
-                        await core.finalize()
-
-                    # Yield remaining events
-                    async for event in self._emit_pending_events(emitter):
-                        yield event
-
-                    # Cleanup MCP client if used
-                    if mcp_client:
-                        try:
-                            await mcp_client.close()
-                        except Exception as e:
-                            logger.warning(
-                                "[CHAT_SERVICE] Failed to close MCP client: %s", e
-                            )
-
-                finally:
-                    # Database session is managed by context manager
-                    pass
+            # Yield remaining events
+            async for event in self._emit_pending_events(emitter):
+                yield event
 
         except Exception as e:
+            add_span_event("process_chat_error", {"error": str(e)})
             logger.exception("[CHAT_SERVICE] Error processing chat: %s", e)
             raise
+        finally:
+            # Clean up context resources
+            add_span_event("cleaning_up_context")
+            await context.cleanup()
+            add_span_event("context_cleaned_up")
 
     async def _emit_pending_events(
         self, emitter: SSEEmitter
@@ -418,8 +306,6 @@ class ChatService(ChatInterface):
                     try:
                         data = json.loads(json_str)
                         event_type = data.pop("type", "chunk")
-                        # Log if this event has result.thinking
-                        result = data.get("result")
                         yield ChatEvent(
                             type=ChatEventType(event_type),
                             data=data,
