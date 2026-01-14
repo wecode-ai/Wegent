@@ -1,20 +1,20 @@
 /**
  * API client for sync endpoints
  */
+import type { SyncTriggerRequest } from '@/types'
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:18000'
 
-export async function triggerSync(params: {
-  start_time: string
-  end_time: string
-  user_id?: number
-}) {
+export async function triggerSync(params: SyncTriggerRequest) {
   const response = await fetch(`${API_BASE_URL}/api/sync/trigger`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params),
   })
-  if (!response.ok) throw new Error('Failed to trigger sync')
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}))
+    throw new Error(error.detail || 'Failed to trigger sync')
+  }
   return response.json()
 }
 

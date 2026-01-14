@@ -3,6 +3,7 @@
 import { Bell, User, Globe } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useLanguage } from '@/contexts/LanguageContext'
+import { VersionSelector } from '@/components/common/version-selector'
 
 export function Header() {
   const { t } = useTranslation()
@@ -20,6 +21,7 @@ export function Header() {
         </span>
       </div>
       <div className="flex items-center gap-3">
+        <VersionSelector />
         <button
           onClick={toggleLanguage}
           className="flex items-center gap-1 rounded-full px-3 py-1.5 text-sm hover:bg-secondary"

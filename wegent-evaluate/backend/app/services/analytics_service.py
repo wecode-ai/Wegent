@@ -10,6 +10,7 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import ConversationRecord, EvaluationResult
+from app.services.filter_utils import apply_user_filter
 
 logger = structlog.get_logger(__name__)
 
@@ -28,6 +29,7 @@ class AnalyticsService:
         group_by: str = "day",
         retriever_name: Optional[str] = None,
         embedding_model: Optional[str] = None,
+        version_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """Get trend data for a specific metric over time."""
         # Determine date truncation based on group_by
@@ -50,6 +52,19 @@ class AnalyticsService:
 
         metric_column = metric_map.get(metric, EvaluationResult.overall_score)
 
+        # Build base conditions
+        conditions = [
+            ConversationRecord.original_created_at >= start_date,
+            ConversationRecord.original_created_at <= end_date,
+        ]
+
+        if retriever_name:
+            conditions.append(ConversationRecord.retriever_name == retriever_name)
+        if embedding_model:
+            conditions.append(ConversationRecord.embedding_model == embedding_model)
+        if version_id is not None:
+            conditions.append(ConversationRecord.version_id == version_id)
+
         # Build query
         query = (
             select(
@@ -61,20 +76,13 @@ class AnalyticsService:
                 ConversationRecord,
                 ConversationRecord.id == EvaluationResult.conversation_record_id,
             )
-            .where(
-                and_(
-                    ConversationRecord.original_created_at >= start_date,
-                    ConversationRecord.original_created_at <= end_date,
-                )
-            )
+            .where(and_(*conditions))
             .group_by(date_trunc)
             .order_by(date_trunc)
         )
 
-        if retriever_name:
-            query = query.where(ConversationRecord.retriever_name == retriever_name)
-        if embedding_model:
-            query = query.where(ConversationRecord.embedding_model == embedding_model)
+        # Apply user ID exclusion filter
+        query = apply_user_filter(query)
 
         result = await self.db.execute(query)
         rows = result.all()
@@ -92,8 +100,18 @@ class AnalyticsService:
         self,
         start_date: datetime,
         end_date: datetime,
+        version_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """Compare evaluation metrics across different retrievers."""
+        conditions = [
+            ConversationRecord.original_created_at >= start_date,
+            ConversationRecord.original_created_at <= end_date,
+            ConversationRecord.retriever_name.isnot(None),
+        ]
+
+        if version_id is not None:
+            conditions.append(ConversationRecord.version_id == version_id)
+
         query = (
             select(
                 ConversationRecord.retriever_name,
@@ -111,15 +129,12 @@ class AnalyticsService:
                 ConversationRecord,
                 ConversationRecord.id == EvaluationResult.conversation_record_id,
             )
-            .where(
-                and_(
-                    ConversationRecord.original_created_at >= start_date,
-                    ConversationRecord.original_created_at <= end_date,
-                    ConversationRecord.retriever_name.isnot(None),
-                )
-            )
+            .where(and_(*conditions))
             .group_by(ConversationRecord.retriever_name)
         )
+
+        # Apply user ID exclusion filter
+        query = apply_user_filter(query)
 
         result = await self.db.execute(query)
         rows = result.all()
@@ -140,8 +155,18 @@ class AnalyticsService:
         self,
         start_date: datetime,
         end_date: datetime,
+        version_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """Compare evaluation metrics across different embedding models."""
+        conditions = [
+            ConversationRecord.original_created_at >= start_date,
+            ConversationRecord.original_created_at <= end_date,
+            ConversationRecord.embedding_model.isnot(None),
+        ]
+
+        if version_id is not None:
+            conditions.append(ConversationRecord.version_id == version_id)
+
         query = (
             select(
                 ConversationRecord.embedding_model,
@@ -159,15 +184,12 @@ class AnalyticsService:
                 ConversationRecord,
                 ConversationRecord.id == EvaluationResult.conversation_record_id,
             )
-            .where(
-                and_(
-                    ConversationRecord.original_created_at >= start_date,
-                    ConversationRecord.original_created_at <= end_date,
-                    ConversationRecord.embedding_model.isnot(None),
-                )
-            )
+            .where(and_(*conditions))
             .group_by(ConversationRecord.embedding_model)
         )
+
+        # Apply user ID exclusion filter
+        query = apply_user_filter(query)
 
         result = await self.db.execute(query)
         rows = result.all()
@@ -226,22 +248,29 @@ class AnalyticsService:
         self,
         start_date: datetime,
         end_date: datetime,
+        version_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Get analytics on issue types."""
+        conditions = [
+            ConversationRecord.original_created_at >= start_date,
+            ConversationRecord.original_created_at <= end_date,
+            EvaluationResult.has_issue == True,  # noqa: E712
+        ]
+
+        if version_id is not None:
+            conditions.append(ConversationRecord.version_id == version_id)
+
         query = (
             select(EvaluationResult.issue_types)
             .join(
                 ConversationRecord,
                 ConversationRecord.id == EvaluationResult.conversation_record_id,
             )
-            .where(
-                and_(
-                    ConversationRecord.original_created_at >= start_date,
-                    ConversationRecord.original_created_at <= end_date,
-                    EvaluationResult.has_issue == True,
-                )
-            )
+            .where(and_(*conditions))
         )
+
+        # Apply user ID exclusion filter
+        query = apply_user_filter(query)
 
         result = await self.db.execute(query)
         rows = result.scalars().all()

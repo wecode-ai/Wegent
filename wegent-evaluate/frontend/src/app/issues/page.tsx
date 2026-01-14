@@ -8,6 +8,7 @@ import { getIssuesAnalytics } from '@/apis/analytics'
 import { getEvaluationResults } from '@/apis/evaluation'
 import { Loader2, X } from 'lucide-react'
 import { EvaluationResultItem } from '@/types'
+import { useVersion } from '@/contexts/VersionContext'
 
 interface IssueData {
   name: string
@@ -18,6 +19,7 @@ interface IssueData {
 
 export default function IssuesPage() {
   const { t } = useTranslation()
+  const { currentVersion } = useVersion()
   const [issueData, setIssueData] = useState<IssueData[]>([])
   const [issueRecords, setIssueRecords] = useState<EvaluationResultItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -66,6 +68,7 @@ export default function IssuesPage() {
           has_issue: true,
           page_size: 20,
           issue_type: issueType || undefined,
+          version_id: currentVersion?.id,
         })
         setIssueRecords(recordsResult.items || [])
       } catch (err) {
@@ -74,7 +77,7 @@ export default function IssuesPage() {
         setRecordsLoading(false)
       }
     },
-    [startDate, endDate]
+    [startDate, endDate, currentVersion]
   )
 
   const fetchIssues = useCallback(async () => {
@@ -84,12 +87,13 @@ export default function IssuesPage() {
     setSelectedIssueName(null)
     try {
       const [analyticsResult, recordsResult] = await Promise.all([
-        getIssuesAnalytics({ start_date: startDate, end_date: endDate }),
+        getIssuesAnalytics({ start_date: startDate, end_date: endDate, version_id: currentVersion?.id }),
         getEvaluationResults({
           start_date: startDate,
           end_date: endDate,
           has_issue: true,
           page_size: 20,
+          version_id: currentVersion?.id,
         }),
       ])
 
@@ -112,11 +116,11 @@ export default function IssuesPage() {
     } finally {
       setLoading(false)
     }
-  }, [startDate, endDate])
+  }, [startDate, endDate, currentVersion])
 
   useEffect(() => {
     fetchIssues()
-  }, [])
+  }, [currentVersion])
 
   const handleApply = () => {
     fetchIssues()

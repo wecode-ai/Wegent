@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { TrendChart } from '@/components/charts/trend-chart'
 import { getTrends } from '@/apis/analytics'
 import { Loader2 } from 'lucide-react'
+import { useVersion } from '@/contexts/VersionContext'
 
 interface TrendDataPoint {
   date: string
@@ -14,6 +15,7 @@ interface TrendDataPoint {
 
 export default function TrendsPage() {
   const { t } = useTranslation()
+  const { currentVersion } = useVersion()
   const [trendData, setTrendData] = useState<TrendDataPoint[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -44,6 +46,7 @@ export default function TrendsPage() {
         end_date: endDate,
         metric,
         group_by: groupBy,
+        version_id: currentVersion?.id,
       })
       setTrendData(data.data || [])
     } catch (err) {
@@ -52,11 +55,11 @@ export default function TrendsPage() {
     } finally {
       setLoading(false)
     }
-  }, [startDate, endDate, metric, groupBy])
+  }, [startDate, endDate, metric, groupBy, currentVersion])
 
   useEffect(() => {
     fetchTrends()
-  }, [])
+  }, [currentVersion])
 
   const handleApply = () => {
     fetchTrends()

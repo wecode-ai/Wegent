@@ -37,6 +37,7 @@ export async function getEvaluationResults(params: {
   knowledge_id?: number
   evaluation_status?: string
   issue_type?: string
+  version_id?: number
 }) {
   const searchParams = new URLSearchParams()
   Object.entries(params).forEach(([key, value]) => {
@@ -63,6 +64,7 @@ export async function getEvaluationResultDetail(resultId: number) {
 export async function getEvaluationSummary(params: {
   start_date?: string
   end_date?: string
+  version_id?: number
 }) {
   const searchParams = new URLSearchParams()
   Object.entries(params).forEach(([key, value]) => {

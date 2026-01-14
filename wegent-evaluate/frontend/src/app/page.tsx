@@ -24,9 +24,11 @@ import {
 import { getEvaluationSummary } from '@/apis/evaluation'
 import { getTrends } from '@/apis/analytics'
 import { EvaluationSummary, TrendDataPoint } from '@/types'
+import { useVersion } from '@/contexts/VersionContext'
 
 export default function DashboardPage() {
   const { t } = useTranslation()
+  const { currentVersion } = useVersion()
   const [summary, setSummary] = useState<EvaluationSummary | null>(null)
   const [trendData, setTrendData] = useState<TrendDataPoint[]>([])
   const [loading, setLoading] = useState(true)
@@ -50,11 +52,12 @@ export default function DashboardPage() {
     setError(null)
     try {
       const dateRange = getDateRange()
+      const versionId = currentVersion?.id
 
       // Fetch summary and trends in parallel
       const [summaryData, trendsData] = await Promise.all([
-        getEvaluationSummary(dateRange),
-        getTrends({ ...dateRange, metric: 'overall', group_by: 'day' }),
+        getEvaluationSummary({ ...dateRange, version_id: versionId }),
+        getTrends({ ...dateRange, metric: 'overall', group_by: 'day', version_id: versionId }),
       ])
 
       setSummary(summaryData)
@@ -84,7 +87,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     fetchData()
-  }, [])
+  }, [currentVersion])
 
   if (loading) {
     return (

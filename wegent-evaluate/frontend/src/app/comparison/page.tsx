@@ -14,6 +14,7 @@ import {
 } from 'recharts'
 import { getRetrieverComparison, getEmbeddingComparison, getContextComparison } from '@/apis/analytics'
 import { Loader2, Search } from 'lucide-react'
+import { useVersion } from '@/contexts/VersionContext'
 
 interface ComparisonData {
   name: string
@@ -34,6 +35,7 @@ interface ContextComparisonResult {
 
 export default function ComparisonPage() {
   const { t } = useTranslation()
+  const { currentVersion } = useVersion()
   const [retrieverData, setRetrieverData] = useState<ComparisonData[]>([])
   const [embeddingData, setEmbeddingData] = useState<ComparisonData[]>([])
   const [contextResults, setContextResults] = useState<ContextComparisonResult[]>([])
@@ -63,8 +65,8 @@ export default function ComparisonPage() {
     setError(null)
     try {
       const [retrieverResult, embeddingResult] = await Promise.all([
-        getRetrieverComparison({ start_date: startDate, end_date: endDate }),
-        getEmbeddingComparison({ start_date: startDate, end_date: endDate }),
+        getRetrieverComparison({ start_date: startDate, end_date: endDate, version_id: currentVersion?.id }),
+        getEmbeddingComparison({ start_date: startDate, end_date: endDate, version_id: currentVersion?.id }),
       ])
 
       // Transform retriever data
@@ -103,11 +105,11 @@ export default function ComparisonPage() {
     } finally {
       setLoading(false)
     }
-  }, [startDate, endDate])
+  }, [startDate, endDate, currentVersion])
 
   useEffect(() => {
     fetchComparisons()
-  }, [])
+  }, [currentVersion])
 
   const handleApply = () => {
     fetchComparisons()

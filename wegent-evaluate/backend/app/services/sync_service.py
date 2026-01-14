@@ -3,7 +3,7 @@ Service for synchronizing conversation data from external API.
 """
 import uuid
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 import httpx
 import structlog
@@ -13,8 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.auth_client import auth_client
-from app.models import ConversationRecord, EvaluationStatus, SyncJob, SyncStatus
+from app.models import ConversationRecord, DataVersion, EvaluationStatus, SyncJob, SyncStatus
 from app.schemas.external_api import QAHistoryItem, QAHistoryResponse
+from app.services.version_service import VersionService
 
 logger = structlog.get_logger(__name__)
 
@@ -24,20 +25,68 @@ class SyncService:
 
     def __init__(self, db: AsyncSession):
         self.db = db
+        self.version_service = VersionService(db)
 
     async def trigger_sync(
         self,
         start_time: datetime,
         end_time: datetime,
         user_id: Optional[int] = None,
-    ) -> str:
+        version_mode: Literal["new", "existing"] = "new",
+        version_id: Optional[int] = None,
+        write_mode: Optional[Literal["append", "replace"]] = None,
+        version_description: Optional[str] = None,
+    ) -> tuple[str, int]:
         """
         Trigger a new sync job.
 
+        Args:
+            start_time: Start time for sync range
+            end_time: End time for sync range
+            user_id: Optional user ID filter
+            version_mode: "new" to create new version, "existing" to use existing
+            version_id: Version ID for existing mode
+            write_mode: "append" or "replace" for existing mode
+            version_description: Description for new version
+
         Returns:
-            sync_id: UUID of the created sync job
+            (sync_id, version_id)
+
+        Raises:
+            ValueError: If version_mode is "existing" and version has running evaluations
         """
         sync_id = str(uuid.uuid4())
+        target_version_id: int
+
+        if version_mode == "new":
+            # Create new version
+            version = await self.version_service.create_version(
+                description=version_description
+            )
+            target_version_id = version.id
+            logger.info("Created new version for sync", version_id=target_version_id)
+        else:
+            # Use existing version
+            target_version_id = version_id  # type: ignore
+
+            # Verify version exists
+            version = await self.version_service.get_version(target_version_id)
+            if not version:
+                raise ValueError(f"Version {target_version_id} not found")
+
+            # Check for running evaluations
+            has_running = await self.version_service.check_version_has_running_evaluation(
+                target_version_id
+            )
+            if has_running:
+                raise ValueError(
+                    "该版本下有正在进行的评估任务，请等待完成后再操作"
+                )
+
+            # Handle replace mode
+            if write_mode == "replace":
+                logger.info("Replacing version data", version_id=target_version_id)
+                await self.version_service.delete_version_data(target_version_id)
 
         # Create sync job record
         sync_job = SyncJob(
@@ -45,12 +94,13 @@ class SyncService:
             start_time=start_time,
             end_time=end_time,
             user_id=user_id,
+            version_id=target_version_id,
             status=SyncStatus.STARTED,
         )
         self.db.add(sync_job)
         await self.db.commit()
 
-        return sync_id
+        return sync_id, target_version_id
 
     async def execute_sync(self, sync_id: str) -> None:
         """
@@ -90,8 +140,10 @@ class SyncService:
 
                 total_fetched += len(items)
 
-                # Process items
-                inserted, skipped = await self._process_items(items)
+                # Process items with version_id
+                inserted, skipped = await self._process_items(
+                    items, version_id=sync_job.version_id
+                )
                 total_inserted += inserted
                 total_skipped += skipped
 
@@ -108,9 +160,14 @@ class SyncService:
             sync_job.total_skipped = total_skipped
             await self.db.commit()
 
+            # Update version sync stats
+            if sync_job.version_id:
+                await self.version_service.update_version_sync_stats(sync_job.version_id)
+
             logger.info(
                 "Sync completed",
                 sync_id=sync_id,
+                version_id=sync_job.version_id,
                 fetched=total_fetched,
                 inserted=total_inserted,
                 skipped=total_skipped,
@@ -155,10 +212,14 @@ class SyncService:
             await client.aclose()
 
     async def _process_items(
-        self, items: List[QAHistoryItem]
+        self, items: List[QAHistoryItem], version_id: Optional[int] = None
     ) -> tuple[int, int]:
         """
         Process QA history items and insert into database.
+
+        Args:
+            items: List of QA history items
+            version_id: Version ID for the records
 
         Returns:
             (inserted_count, skipped_count)
@@ -215,13 +276,14 @@ class SyncService:
                     if item.knowledge_base_config.retrieval_config.embedding_config:
                         embedding_model = item.knowledge_base_config.retrieval_config.embedding_config.model_name
 
-            # Create record
+            # Create record with version_id
             # Use empty string for assistant_answer if None to satisfy NOT NULL constraint
             record = ConversationRecord(
                 task_id=item.task_id,
                 user_id=item.user_id,
                 subtask_id=item.subtask_id,
                 subtask_context_id=item.subtask_context_id,
+                version_id=version_id,
                 user_prompt=item.user_prompt,
                 assistant_answer=item.assistant_answer or "",
                 extracted_text=extracted_text,

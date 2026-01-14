@@ -43,6 +43,7 @@ export function SyncModal({ open, onClose, onSuccess }: SyncModalProps) {
       const result = await triggerSync({
         start_time: formatDateTime(startDate),
         end_time: formatDateTime(endDate),
+        version_mode: 'new',  // Default to create new version for simple modal
       })
 
       setStatus(`Sync started: ${result.sync_id}`)

@@ -11,6 +11,7 @@ export async function getTrends(params: {
   group_by?: 'day' | 'week' | 'month'
   retriever_name?: string
   embedding_model?: string
+  version_id?: number
 }) {
   const searchParams = new URLSearchParams()
   Object.entries(params).forEach(([key, value]) => {
@@ -29,10 +30,14 @@ export async function getTrends(params: {
 export async function getRetrieverComparison(params: {
   start_date: string
   end_date: string
+  version_id?: number
 }) {
   const searchParams = new URLSearchParams()
-  searchParams.append('start_date', params.start_date)
-  searchParams.append('end_date', params.end_date)
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null) {
+      searchParams.append(key, String(value))
+    }
+  })
 
   const response = await fetch(
     `${API_BASE_URL}/api/analytics/comparison/retriever?${searchParams.toString()}`
@@ -44,10 +49,14 @@ export async function getRetrieverComparison(params: {
 export async function getEmbeddingComparison(params: {
   start_date: string
   end_date: string
+  version_id?: number
 }) {
   const searchParams = new URLSearchParams()
-  searchParams.append('start_date', params.start_date)
-  searchParams.append('end_date', params.end_date)
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null) {
+      searchParams.append(key, String(value))
+    }
+  })
 
   const response = await fetch(
     `${API_BASE_URL}/api/analytics/comparison/embedding?${searchParams.toString()}`
@@ -67,10 +76,14 @@ export async function getContextComparison(subtaskContextId: number) {
 export async function getIssuesAnalytics(params: {
   start_date: string
   end_date: string
+  version_id?: number
 }) {
   const searchParams = new URLSearchParams()
-  searchParams.append('start_date', params.start_date)
-  searchParams.append('end_date', params.end_date)
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null) {
+      searchParams.append(key, String(value))
+    }
+  })
 
   const response = await fetch(
     `${API_BASE_URL}/api/analytics/issues?${searchParams.toString()}`

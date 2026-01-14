@@ -120,6 +120,7 @@ async def get_evaluation_results(
     knowledge_id: Optional[int] = None,
     evaluation_status: Optional[str] = None,
     issue_type: Optional[str] = Query(None, description="Filter by issue type"),
+    version_id: Optional[int] = Query(None, description="Filter by version ID"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get evaluation results with filtering and pagination."""
@@ -138,6 +139,7 @@ async def get_evaluation_results(
         evaluation_status=evaluation_status,
         has_cv_alert=has_cv_alert,
         issue_type=issue_type,
+        version_id=version_id,
     )
 
     total_pages = (total + page_size - 1) // page_size
@@ -170,11 +172,16 @@ async def get_evaluation_result_detail(
 async def get_evaluation_summary(
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
+    version_id: Optional[int] = Query(None, description="Filter by version ID"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get summary statistics for evaluation results."""
     service = EvaluationService(db)
-    summary = await service.get_summary(start_date=start_date, end_date=end_date)
+    summary = await service.get_summary(
+        start_date=start_date,
+        end_date=end_date,
+        version_id=version_id,
+    )
 
     return EvaluationSummaryResponse(**summary)
 
@@ -184,6 +191,7 @@ async def get_evaluation_alerts(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     threshold: Optional[float] = Query(None, ge=0, le=1),
+    version_id: Optional[int] = Query(None, description="Filter by version ID"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get cross-validation alerts with pagination."""
@@ -192,6 +200,7 @@ async def get_evaluation_alerts(
         page=page,
         page_size=page_size,
         threshold=threshold,
+        version_id=version_id,
     )
 
     total_pages = (total + page_size - 1) // page_size

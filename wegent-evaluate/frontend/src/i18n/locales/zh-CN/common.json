@@ -237,5 +237,38 @@
     "scoreTooLow": "分数过低",
     "showLess": "收起",
     "showMore": "展开"
+  },
+  "version": {
+    "title": "版本选择",
+    "loading": "加载中...",
+    "no_versions": "暂无版本",
+    "create_new": "创建新版本",
+    "use_existing": "使用现有版本",
+    "description_placeholder": "版本描述（可选）",
+    "write_mode": "写入模式",
+    "append": "追加",
+    "append_desc": "保留现有数据，追加新同步数据",
+    "replace": "替换",
+    "replace_desc": "清除现有数据，写入新同步数据",
+    "replace_warning": "替换模式将删除该版本的所有现有数据和评估结果",
+    "error_select_dates": "请选择开始和结束日期",
+    "error_select_version": "请选择一个版本",
+    "sync_completed": "同步完成！",
+    "records_synced": "条记录已同步。",
+    "sync_failed": "同步失败：",
+    "error_check_status": "检查同步状态失败",
+    "error_trigger_sync": "触发同步失败",
+    "sync_count_unit": "条"
+  },
+  "report": {
+    "title": "周报生成",
+    "description": "为选定版本生成周度评估报告。",
+    "select_version": "选择版本",
+    "generate": "生成报告",
+    "preview": "报告预览",
+    "copy_to_clipboard": "复制到剪贴板",
+    "copied": "已复制！",
+    "error_select_version": "请选择一个版本",
+    "error_generate": "生成报告失败"
   }
 }

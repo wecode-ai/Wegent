@@ -5,7 +5,10 @@ import { useTranslation } from 'react-i18next'
 import { triggerSync, getSyncStatus } from '@/apis/sync'
 import { triggerEvaluation, getEvaluationStatus } from '@/apis/evaluation'
 import { getSettingsConfig, SettingsConfig } from '@/apis/settings'
-import { Loader2 } from 'lucide-react'
+import { generateWeeklyReport } from '@/apis/report'
+import { useVersion } from '@/contexts/VersionContext'
+import { Loader2, FileText, AlertTriangle, Copy, Check } from 'lucide-react'
+import type { SyncTriggerRequest, WeeklyReportResponse, DataVersion } from '@/types'
 
 // Format date to YYYY-MM-DD HH:mm:ss
 function formatDateTime(dateStr: string): string {
@@ -33,6 +36,7 @@ function parseCronHour(cronExpr: string): string {
 
 export default function SettingsPage() {
   const { t } = useTranslation()
+  const { versions, currentVersion, refreshVersions } = useVersion()
 
   // Settings config state
   const [config, setConfig] = useState<SettingsConfig | null>(null)
@@ -44,12 +48,25 @@ export default function SettingsPage() {
   const [syncing, setSyncing] = useState(false)
   const [syncMessage, setSyncMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
+  // Version selection for sync
+  const [versionMode, setVersionMode] = useState<'new' | 'existing'>('new')
+  const [selectedVersionId, setSelectedVersionId] = useState<number | null>(null)
+  const [writeMode, setWriteMode] = useState<'append' | 'replace'>('append')
+  const [versionDescription, setVersionDescription] = useState('')
+
   // Evaluation state
   const [evalStartId, setEvalStartId] = useState('')
   const [evalEndId, setEvalEndId] = useState('')
   const [forceEval, setForceEval] = useState(false)
   const [evaluating, setEvaluating] = useState(false)
   const [evalMessage, setEvalMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+
+  // Report state
+  const [reportVersionId, setReportVersionId] = useState<number | null>(null)
+  const [generating, setGenerating] = useState(false)
+  const [reportResult, setReportResult] = useState<WeeklyReportResponse | null>(null)
+  const [reportError, setReportError] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
 
   // Fetch settings config on mount
   useEffect(() => {
@@ -66,10 +83,25 @@ export default function SettingsPage() {
     fetchConfig()
   }, [])
 
+  // Set default version selection
+  useEffect(() => {
+    if (versions.length > 0 && selectedVersionId === null) {
+      setSelectedVersionId(versions[0].id)
+    }
+    if (versions.length > 0 && reportVersionId === null) {
+      setReportVersionId(versions[0].id)
+    }
+  }, [versions, selectedVersionId, reportVersionId])
+
   // Handle sync trigger
   const handleTriggerSync = async () => {
     if (!syncStartDate || !syncEndDate) {
-      setSyncMessage({ type: 'error', text: 'Please select both start and end dates' })
+      setSyncMessage({ type: 'error', text: t('version.error_select_dates', 'Please select both start and end dates') })
+      return
+    }
+
+    if (versionMode === 'existing' && !selectedVersionId) {
+      setSyncMessage({ type: 'error', text: t('version.error_select_version', 'Please select a version') })
       return
     }
 
@@ -77,10 +109,22 @@ export default function SettingsPage() {
     setSyncMessage(null)
 
     try {
-      const result = await triggerSync({
+      const params: SyncTriggerRequest = {
         start_time: formatDateTime(syncStartDate),
         end_time: formatDateTime(syncEndDate),
-      })
+        version_mode: versionMode,
+      }
+
+      if (versionMode === 'new') {
+        if (versionDescription) {
+          params.version_description = versionDescription
+        }
+      } else {
+        params.version_id = selectedVersionId!
+        params.write_mode = writeMode
+      }
+
+      const result = await triggerSync(params)
 
       // Poll for completion
       const pollStatus = async () => {
@@ -90,20 +134,22 @@ export default function SettingsPage() {
             setSyncing(false)
             setSyncMessage({
               type: 'success',
-              text: `Sync completed! ${statusResult.records_synced || 0} records synced.`,
+              text: `${t('version.sync_completed', 'Sync completed!')} ${statusResult.total_inserted || 0} ${t('version.records_synced', 'records synced.')}`,
             })
+            // Refresh versions to update sync counts
+            refreshVersions()
           } else if (statusResult.status === 'failed') {
             setSyncing(false)
             setSyncMessage({
               type: 'error',
-              text: `Sync failed: ${statusResult.error || 'Unknown error'}`,
+              text: `${t('version.sync_failed', 'Sync failed:')} ${statusResult.error_message || 'Unknown error'}`,
             })
           } else {
             setTimeout(pollStatus, 2000)
           }
         } catch {
           setSyncing(false)
-          setSyncMessage({ type: 'error', text: 'Failed to check sync status' })
+          setSyncMessage({ type: 'error', text: t('version.error_check_status', 'Failed to check sync status') })
         }
       }
       pollStatus()
@@ -111,7 +157,7 @@ export default function SettingsPage() {
       setSyncing(false)
       setSyncMessage({
         type: 'error',
-        text: err instanceof Error ? err.message : 'Failed to trigger sync',
+        text: err instanceof Error ? err.message : t('version.error_trigger_sync', 'Failed to trigger sync'),
       })
     }
   }
@@ -119,7 +165,7 @@ export default function SettingsPage() {
   // Handle evaluation trigger
   const handleTriggerEvaluation = async () => {
     if (!evalStartId || !evalEndId) {
-      setEvalMessage({ type: 'error', text: 'Please enter both start and end IDs' })
+      setEvalMessage({ type: 'error', text: t('settings.error_enter_ids', 'Please enter both start and end IDs') })
       return
     }
 
@@ -127,12 +173,12 @@ export default function SettingsPage() {
     const endId = parseInt(evalEndId)
 
     if (isNaN(startId) || isNaN(endId)) {
-      setEvalMessage({ type: 'error', text: 'Invalid ID format' })
+      setEvalMessage({ type: 'error', text: t('settings.error_invalid_id', 'Invalid ID format') })
       return
     }
 
     if (startId > endId) {
-      setEvalMessage({ type: 'error', text: 'Start ID must be less than or equal to End ID' })
+      setEvalMessage({ type: 'error', text: t('settings.error_id_order', 'Start ID must be less than or equal to End ID') })
       return
     }
 
@@ -154,20 +200,20 @@ export default function SettingsPage() {
             setEvaluating(false)
             setEvalMessage({
               type: 'success',
-              text: `Evaluation completed! ${statusResult.processed || 0} records evaluated.`,
+              text: `${t('settings.eval_completed', 'Evaluation completed!')} ${statusResult.completed || 0} ${t('settings.records_evaluated', 'records evaluated.')}`,
             })
           } else if (statusResult.status === 'failed') {
             setEvaluating(false)
             setEvalMessage({
               type: 'error',
-              text: `Evaluation failed: ${statusResult.error || 'Unknown error'}`,
+              text: `${t('settings.eval_failed', 'Evaluation failed:')} ${statusResult.error || 'Unknown error'}`,
             })
           } else {
             setTimeout(pollStatus, 2000)
           }
         } catch {
           setEvaluating(false)
-          setEvalMessage({ type: 'error', text: 'Failed to check evaluation status' })
+          setEvalMessage({ type: 'error', text: t('settings.error_check_eval_status', 'Failed to check evaluation status') })
         }
       }
       pollStatus()
@@ -175,8 +221,42 @@ export default function SettingsPage() {
       setEvaluating(false)
       setEvalMessage({
         type: 'error',
-        text: err instanceof Error ? err.message : 'Failed to trigger evaluation',
+        text: err instanceof Error ? err.message : t('settings.error_trigger_eval', 'Failed to trigger evaluation'),
       })
+    }
+  }
+
+  // Handle report generation
+  const handleGenerateReport = async () => {
+    if (!reportVersionId) {
+      setReportError(t('report.error_select_version', 'Please select a version'))
+      return
+    }
+
+    setGenerating(true)
+    setReportError(null)
+    setReportResult(null)
+
+    try {
+      const result = await generateWeeklyReport({ version_id: reportVersionId })
+      setReportResult(result)
+    } catch (err) {
+      setReportError(err instanceof Error ? err.message : t('report.error_generate', 'Failed to generate report'))
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  // Handle copy to clipboard
+  const handleCopyReport = async () => {
+    if (!reportResult) return
+
+    try {
+      await navigator.clipboard.writeText(reportResult.markdown)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch (err) {
+      console.error('Failed to copy:', err)
     }
   }
 
@@ -190,7 +270,9 @@ export default function SettingsPage() {
         <p className="mb-4 text-sm text-muted-foreground">
           {t('settings.syncDescription')}
         </p>
-        <div className="flex flex-wrap gap-4">
+
+        {/* Time range */}
+        <div className="flex flex-wrap gap-4 mb-4">
           <div className="flex items-center gap-2">
             <label className="text-sm">{t('common.start')}:</label>
             <input
@@ -209,6 +291,110 @@ export default function SettingsPage() {
               className="rounded-md border bg-background px-3 py-2 text-sm"
             />
           </div>
+        </div>
+
+        {/* Version selection */}
+        <div className="border-t pt-4 mt-4">
+          <h3 className="text-sm font-medium mb-3">{t('version.title', 'Version Selection')}</h3>
+
+          <div className="space-y-3">
+            {/* New version option */}
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="versionMode"
+                value="new"
+                checked={versionMode === 'new'}
+                onChange={() => setVersionMode('new')}
+                className="mt-1"
+              />
+              <div className="flex-1">
+                <span className="text-sm font-medium">{t('version.create_new', 'Create New Version')}</span>
+                {versionMode === 'new' && (
+                  <div className="mt-2">
+                    <input
+                      type="text"
+                      value={versionDescription}
+                      onChange={(e) => setVersionDescription(e.target.value)}
+                      placeholder={t('version.description_placeholder', 'Version description (optional)')}
+                      className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                    />
+                  </div>
+                )}
+              </div>
+            </label>
+
+            {/* Existing version option */}
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="versionMode"
+                value="existing"
+                checked={versionMode === 'existing'}
+                onChange={() => setVersionMode('existing')}
+                className="mt-1"
+              />
+              <div className="flex-1">
+                <span className="text-sm font-medium">{t('version.use_existing', 'Use Existing Version')}</span>
+                {versionMode === 'existing' && (
+                  <div className="mt-2 space-y-3">
+                    <select
+                      value={selectedVersionId || ''}
+                      onChange={(e) => setSelectedVersionId(Number(e.target.value))}
+                      className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                    >
+                      {versions.map((v) => (
+                        <option key={v.id} value={v.id}>
+                          {v.name} - {new Date(v.created_at).toLocaleDateString()} ({v.sync_count}{t('version.sync_count_unit', '条')})
+                        </option>
+                      ))}
+                    </select>
+
+                    <div className="space-y-2">
+                      <span className="text-sm text-muted-foreground">{t('version.write_mode', 'Write Mode')}:</span>
+                      <div className="flex gap-4">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="writeMode"
+                            value="append"
+                            checked={writeMode === 'append'}
+                            onChange={() => setWriteMode('append')}
+                          />
+                          <div>
+                            <span className="text-sm">{t('version.append', 'Append')}</span>
+                            <p className="text-xs text-muted-foreground">{t('version.append_desc', 'Keep existing data, add new sync data')}</p>
+                          </div>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="writeMode"
+                            value="replace"
+                            checked={writeMode === 'replace'}
+                            onChange={() => setWriteMode('replace')}
+                          />
+                          <div>
+                            <span className="text-sm">{t('version.replace', 'Replace')}</span>
+                            <p className="text-xs text-muted-foreground">{t('version.replace_desc', 'Clear existing data, write new sync data')}</p>
+                          </div>
+                        </label>
+                      </div>
+                      {writeMode === 'replace' && (
+                        <div className="flex items-start gap-2 p-2 bg-yellow-50 border border-yellow-200 rounded-md text-xs text-yellow-800">
+                          <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                          <span>{t('version.replace_warning', 'Replace will delete all existing data and evaluation results for this version')}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <div className="mt-4">
           <button
             onClick={handleTriggerSync}
             disabled={syncing}
@@ -218,6 +404,7 @@ export default function SettingsPage() {
             {t('dashboard.triggerSync')}
           </button>
         </div>
+
         {syncMessage && (
           <div
             className={`mt-4 rounded-md p-3 text-sm ${
@@ -227,6 +414,75 @@ export default function SettingsPage() {
             }`}
           >
             {syncMessage.text}
+          </div>
+        )}
+      </div>
+
+      {/* Weekly Report */}
+      <div className="rounded-lg border bg-card p-6">
+        <h2 className="mb-4 text-lg font-semibold">{t('report.title', 'Weekly Report')}</h2>
+        <p className="mb-4 text-sm text-muted-foreground">
+          {t('report.description', 'Generate a weekly evaluation report for the selected version.')}
+        </p>
+
+        <div className="flex items-center gap-4 mb-4">
+          <div className="flex items-center gap-2">
+            <label className="text-sm">{t('report.select_version', 'Select Version')}:</label>
+            <select
+              value={reportVersionId || ''}
+              onChange={(e) => setReportVersionId(Number(e.target.value))}
+              className="rounded-md border bg-background px-3 py-2 text-sm"
+            >
+              {versions.map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.name} - {new Date(v.created_at).toLocaleDateString()} ({v.sync_count}{t('version.sync_count_unit', '条')})
+                </option>
+              ))}
+            </select>
+          </div>
+          <button
+            onClick={handleGenerateReport}
+            disabled={generating}
+            className="flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          >
+            {generating && <Loader2 className="h-4 w-4 animate-spin" />}
+            <FileText className="h-4 w-4" />
+            {t('report.generate', 'Generate Report')}
+          </button>
+        </div>
+
+        {reportError && (
+          <div className="rounded-md p-3 text-sm bg-red-50 text-red-700 border border-red-200 mb-4">
+            {reportError}
+          </div>
+        )}
+
+        {reportResult && (
+          <div className="border rounded-lg p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-medium">
+                {t('report.preview', 'Report Preview')} - {reportResult.version_name}
+              </h3>
+              <button
+                onClick={handleCopyReport}
+                className="flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm hover:bg-secondary"
+              >
+                {copied ? (
+                  <>
+                    <Check className="h-4 w-4 text-green-600" />
+                    {t('report.copied', 'Copied!')}
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-4 w-4" />
+                    {t('report.copy_to_clipboard', 'Copy to Clipboard')}
+                  </>
+                )}
+              </button>
+            </div>
+            <div className="max-h-96 overflow-y-auto bg-secondary/50 rounded-md p-4">
+              <pre className="text-xs whitespace-pre-wrap font-mono">{reportResult.markdown}</pre>
+            </div>
           </div>
         )}
       </div>

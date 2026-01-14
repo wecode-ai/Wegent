@@ -3,7 +3,7 @@ API router configuration.
 """
 from fastapi import APIRouter
 
-from app.api.endpoints import analytics, config, evaluation, health, sync
+from app.api.endpoints import analytics, config, evaluation, health, reports, sync, version
 
 api_router = APIRouter()
 
@@ -21,3 +21,9 @@ api_router.include_router(analytics.router, prefix="/analytics", tags=["analytic
 
 # Config endpoints
 api_router.include_router(config.router, prefix="/settings", tags=["settings"])
+
+# Version endpoints
+api_router.include_router(version.router, prefix="/versions", tags=["versions"])
+
+# Report endpoints
+api_router.include_router(reports.router, prefix="/reports", tags=["reports"])

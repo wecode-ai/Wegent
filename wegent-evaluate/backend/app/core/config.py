@@ -61,6 +61,23 @@ class Settings(BaseSettings):
     # Frontend URL for CORS
     FRONTEND_URL: str = "http://localhost:13000"
 
+    # Excluded User IDs for filtering (comma-separated list)
+    EXCLUDED_USER_IDS: str = ""
+
+    @property
+    def excluded_user_ids_list(self) -> list:
+        """Parse EXCLUDED_USER_IDS into a list of integers."""
+        if not self.EXCLUDED_USER_IDS or not self.EXCLUDED_USER_IDS.strip():
+            return []
+        try:
+            return [
+                int(uid.strip())
+                for uid in self.EXCLUDED_USER_IDS.split(",")
+                if uid.strip()
+            ]
+        except ValueError:
+            return []
+
     model_config = SettingsConfigDict(
         env_file=str(_ENV_FILE) if _ENV_FILE.exists() else ".env",
         env_file_encoding="utf-8",

@@ -30,6 +30,7 @@ async def get_trends(
     group_by: Literal["day", "week", "month"] = "day",
     retriever_name: Optional[str] = None,
     embedding_model: Optional[str] = None,
+    version_id: Optional[int] = Query(None, description="Filter by version ID"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get trend data for a specific metric over time."""
@@ -41,6 +42,7 @@ async def get_trends(
         group_by=group_by,
         retriever_name=retriever_name,
         embedding_model=embedding_model,
+        version_id=version_id,
     )
 
     return TrendsResponse(
@@ -54,6 +56,7 @@ async def get_trends(
 async def get_retriever_comparison(
     start_date: datetime,
     end_date: datetime,
+    version_id: Optional[int] = Query(None, description="Filter by version ID"),
     db: AsyncSession = Depends(get_db),
 ):
     """Compare evaluation metrics across different retrievers."""
@@ -61,6 +64,7 @@ async def get_retriever_comparison(
     data = await service.get_retriever_comparison(
         start_date=start_date,
         end_date=end_date,
+        version_id=version_id,
     )
 
     return RetrieverComparisonResponse(data=data)
@@ -70,6 +74,7 @@ async def get_retriever_comparison(
 async def get_embedding_comparison(
     start_date: datetime,
     end_date: datetime,
+    version_id: Optional[int] = Query(None, description="Filter by version ID"),
     db: AsyncSession = Depends(get_db),
 ):
     """Compare evaluation metrics across different embedding models."""
@@ -77,6 +82,7 @@ async def get_embedding_comparison(
     data = await service.get_embedding_comparison(
         start_date=start_date,
         end_date=end_date,
+        version_id=version_id,
     )
 
     return EmbeddingComparisonResponse(data=data)
@@ -98,6 +104,7 @@ async def get_context_comparison(
 async def get_issues_analytics(
     start_date: datetime,
     end_date: datetime,
+    version_id: Optional[int] = Query(None, description="Filter by version ID"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get analytics on issue types."""
@@ -105,6 +112,7 @@ async def get_issues_analytics(
     data = await service.get_issues_analytics(
         start_date=start_date,
         end_date=end_date,
+        version_id=version_id,
     )
 
     return IssuesAnalyticsResponse(**data)

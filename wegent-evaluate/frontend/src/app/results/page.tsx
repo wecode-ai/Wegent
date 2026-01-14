@@ -6,6 +6,7 @@ import { ResultsTable } from '@/components/tables/results-table'
 import { EvaluationResultItem, PaginatedResponse } from '@/types'
 import { Search, Filter, Loader2, ChevronLeft, ChevronRight } from 'lucide-react'
 import { getEvaluationResults } from '@/apis/evaluation'
+import { useVersion } from '@/contexts/VersionContext'
 
 interface Filters {
   start_date: string
@@ -16,6 +17,7 @@ interface Filters {
 
 export default function ResultsPage() {
   const { t } = useTranslation()
+  const { currentVersion } = useVersion()
   const [results, setResults] = useState<EvaluationResultItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -52,6 +54,9 @@ export default function ResultsPage() {
       if (filters.has_issue) {
         params.has_issue = filters.has_issue === 'true'
       }
+      if (currentVersion?.id) {
+        params.version_id = currentVersion.id
+      }
 
       const data: PaginatedResponse<EvaluationResultItem> =
         await getEvaluationResults(params)
@@ -64,7 +69,7 @@ export default function ResultsPage() {
     } finally {
       setLoading(false)
     }
-  }, [page, filters])
+  }, [page, filters, currentVersion])
 
   useEffect(() => {
     fetchResults()

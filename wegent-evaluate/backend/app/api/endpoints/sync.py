@@ -28,11 +28,18 @@ async def trigger_sync(
 ):
     """Trigger a new data sync job."""
     service = SyncService(db)
-    sync_id = await service.trigger_sync(
-        start_time=request.start_time,
-        end_time=request.end_time,
-        user_id=request.user_id,
-    )
+    try:
+        sync_id, version_id = await service.trigger_sync(
+            start_time=request.start_time,
+            end_time=request.end_time,
+            user_id=request.user_id,
+            version_mode=request.version_mode,
+            version_id=request.version_id,
+            write_mode=request.write_mode,
+            version_description=request.version_description,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     # Execute sync in background
     background_tasks.add_task(_run_sync, sync_id)
@@ -41,6 +48,7 @@ async def trigger_sync(
         sync_id=sync_id,
         status="started",
         message="Sync job started",
+        version_id=version_id,
     )
 
 
@@ -72,6 +80,7 @@ async def get_sync_status(
         total_inserted=sync_job.total_inserted,
         total_skipped=sync_job.total_skipped,
         error_message=sync_job.error_message,
+        version_id=sync_job.version_id,
     )
 
 
@@ -94,6 +103,7 @@ async def get_sync_history(
                 start_time=item.start_time,
                 end_time=item.end_time,
                 user_id=item.user_id,
+                version_id=item.version_id,
                 status=item.status.value,
                 total_fetched=item.total_fetched,
                 total_inserted=item.total_inserted,

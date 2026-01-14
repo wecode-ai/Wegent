@@ -690,15 +690,25 @@ class EvaluationService:
         evaluation_status: Optional[str] = None,
         has_cv_alert: Optional[bool] = None,
         issue_type: Optional[str] = None,
+        version_id: Optional[int] = None,
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get evaluation results with filtering and pagination."""
+        from app.services.filter_utils import apply_user_filter
+
         # Build query
         query = select(ConversationRecord, EvaluationResult).outerjoin(
             EvaluationResult,
             ConversationRecord.id == EvaluationResult.conversation_record_id,
         )
 
+        # Apply user ID exclusion filter
+        query = apply_user_filter(query)
+
         conditions = []
+
+        # Version filter
+        if version_id is not None:
+            conditions.append(ConversationRecord.version_id == version_id)
 
         if start_date:
             conditions.append(ConversationRecord.original_created_at >= start_date)
@@ -889,9 +899,16 @@ class EvaluationService:
         self,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
+        version_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Get summary statistics for evaluation results."""
+        from app.services.filter_utils import apply_user_filter
+
         conditions = []
+
+        # Version filter
+        if version_id is not None:
+            conditions.append(ConversationRecord.version_id == version_id)
 
         if start_date:
             conditions.append(ConversationRecord.original_created_at >= start_date)
@@ -903,6 +920,9 @@ class EvaluationService:
             ConversationRecord,
             ConversationRecord.id == EvaluationResult.conversation_record_id,
         )
+
+        # Apply user ID exclusion filter
+        base_query = apply_user_filter(base_query)
 
         if conditions:
             base_query = base_query.where(and_(*conditions))
@@ -938,6 +958,8 @@ class EvaluationService:
             ConversationRecord,
             ConversationRecord.id == EvaluationResult.conversation_record_id,
         )
+        # Apply user ID exclusion filter
+        avg_query = apply_user_filter(avg_query)
         if conditions:
             avg_query = avg_query.where(and_(*conditions))
 
@@ -978,12 +1000,37 @@ class EvaluationService:
         page: int = 1,
         page_size: int = 20,
         threshold: Optional[float] = None,
+        version_id: Optional[int] = None,
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get cross-validation alerts with pagination."""
-        query = select(EvaluationAlert)
+        from app.services.filter_utils import apply_user_filter
+
+        # Build query with joins to filter by version and user
+        query = (
+            select(EvaluationAlert)
+            .join(
+                EvaluationResult,
+                EvaluationAlert.evaluation_id == EvaluationResult.id,
+            )
+            .join(
+                ConversationRecord,
+                ConversationRecord.id == EvaluationResult.conversation_record_id,
+            )
+        )
+
+        # Apply user ID exclusion filter
+        query = apply_user_filter(query)
+
+        conditions = []
 
         if threshold is not None:
-            query = query.where(EvaluationAlert.difference > threshold)
+            conditions.append(EvaluationAlert.difference > threshold)
+
+        if version_id is not None:
+            conditions.append(EvaluationResult.version_id == version_id)
+
+        if conditions:
+            query = query.where(and_(*conditions))
 
         # Count total
         count_query = select(func.count()).select_from(query.subquery())

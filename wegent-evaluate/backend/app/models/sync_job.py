@@ -10,6 +10,7 @@ from sqlalchemy import (
     Column,
     DateTime,
     Enum,
+    ForeignKey,
     Index,
     Integer,
     String,
@@ -41,6 +42,14 @@ class SyncJob(Base):
     end_time = Column(DateTime, nullable=False)
     user_id = Column(BigInteger, nullable=True)
 
+    # Version ID for data versioning
+    version_id = Column(
+        BigInteger,
+        ForeignKey("data_versions.id"),
+        nullable=True,
+        index=True,
+    )
+
     # Status tracking
     status = Column(
         Enum(SyncStatus, values_callable=lambda x: [e.value for e in x]),
@@ -62,6 +71,7 @@ class SyncJob(Base):
         Index("idx_sync_id", "sync_id", unique=True),
         Index("idx_status", "status"),
         Index("idx_created_at", "created_at"),
+        Index("idx_sj_version_id", "version_id"),
     )
 
     def __repr__(self) -> str:

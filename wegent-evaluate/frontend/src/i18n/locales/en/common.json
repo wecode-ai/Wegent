@@ -237,5 +237,38 @@
     "scoreTooLow": "Score too low",
     "showLess": "Show Less",
     "showMore": "Show More"
+  },
+  "version": {
+    "title": "Version Selection",
+    "loading": "Loading...",
+    "no_versions": "No versions",
+    "create_new": "Create New Version",
+    "use_existing": "Use Existing Version",
+    "description_placeholder": "Version description (optional)",
+    "write_mode": "Write Mode",
+    "append": "Append",
+    "append_desc": "Keep existing data, add new sync data",
+    "replace": "Replace",
+    "replace_desc": "Clear existing data, write new sync data",
+    "replace_warning": "Replace will delete all existing data and evaluation results for this version",
+    "error_select_dates": "Please select both start and end dates",
+    "error_select_version": "Please select a version",
+    "sync_completed": "Sync completed!",
+    "records_synced": "records synced.",
+    "sync_failed": "Sync failed:",
+    "error_check_status": "Failed to check sync status",
+    "error_trigger_sync": "Failed to trigger sync",
+    "sync_count_unit": " records"
+  },
+  "report": {
+    "title": "Weekly Report",
+    "description": "Generate a weekly evaluation report for the selected version.",
+    "select_version": "Select Version",
+    "generate": "Generate Report",
+    "preview": "Report Preview",
+    "copy_to_clipboard": "Copy to Clipboard",
+    "copied": "Copied!",
+    "error_select_version": "Please select a version",
+    "error_generate": "Failed to generate report"
   }
 }

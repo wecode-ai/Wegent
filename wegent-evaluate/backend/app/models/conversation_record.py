@@ -11,6 +11,7 @@ from sqlalchemy import (
     Column,
     DateTime,
     Enum,
+    ForeignKey,
     Index,
     Integer,
     String,
@@ -41,6 +42,14 @@ class ConversationRecord(Base):
     user_id = Column(BigInteger, nullable=False, index=True)
     subtask_id = Column(BigInteger, nullable=False, index=True)
     subtask_context_id = Column(BigInteger, unique=True, nullable=False)
+
+    # Version ID for data versioning
+    version_id = Column(
+        BigInteger,
+        ForeignKey("data_versions.id"),
+        nullable=False,
+        index=True,
+    )
 
     # Conversation content
     user_prompt = Column(Text, nullable=False)
@@ -89,6 +98,7 @@ class ConversationRecord(Base):
         Index("idx_retriever_name", "retriever_name"),
         Index("idx_embedding_model", "embedding_model"),
         Index("idx_knowledge_id", "knowledge_id"),
+        Index("idx_cr_version_id", "version_id"),
     )
 
     def __repr__(self) -> str:

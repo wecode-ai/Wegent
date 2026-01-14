@@ -19,6 +19,7 @@ export interface SyncJob {
   start_time: string
   end_time: string
   user_id?: number
+  version_id?: number
   status: SyncStatus
   total_fetched: number
   total_inserted: number
@@ -26,6 +27,40 @@ export interface SyncJob {
   error_message?: string
   created_at: string
   updated_at: string
+}
+
+// Data Version
+export interface DataVersion {
+  id: number
+  name: string
+  description?: string
+  created_at: string
+  last_sync_time?: string
+  sync_count: number
+}
+
+// Sync Trigger Request
+export interface SyncTriggerRequest {
+  start_time: string
+  end_time: string
+  user_id?: number
+  version_mode: 'new' | 'existing'
+  version_id?: number
+  write_mode?: 'append' | 'replace'
+  version_description?: string
+}
+
+// Weekly Report Request
+export interface WeeklyReportRequest {
+  version_id: number
+}
+
+// Weekly Report Response
+export interface WeeklyReportResponse {
+  markdown: string
+  generated_at: string
+  version_id: number
+  version_name: string
 }
 
 // ========== Metrics Tiered System ==========

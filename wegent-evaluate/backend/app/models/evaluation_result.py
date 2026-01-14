@@ -35,6 +35,14 @@ class EvaluationResult(Base):
         unique=True,
     )
 
+    # Version ID for data versioning
+    version_id = Column(
+        BigInteger,
+        ForeignKey("data_versions.id"),
+        nullable=False,
+        index=True,
+    )
+
     # Legacy RAGAS scores (0-1) - kept for backward compatibility
     faithfulness_score = Column(Float, nullable=True)
     answer_relevancy_score = Column(Float, nullable=True)
@@ -112,6 +120,7 @@ class EvaluationResult(Base):
         Index("idx_er_has_cv_alert", "has_cross_validation_alert"),
         Index("idx_total_score", "total_score"),
         Index("idx_is_failed", "is_failed"),
+        Index("idx_er_version_id", "version_id"),
     )
 
     def calculate_tiered_scores(self) -> None:
