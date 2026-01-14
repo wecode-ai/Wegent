@@ -375,7 +375,13 @@ class ChatContext:
         },
     )
     async def _connect_mcp_servers(self) -> tuple[list, list]:
-        """Connect to all MCP servers in parallel."""
+        """Connect to all MCP servers using a single MultiServerMCPClient.
+
+        This approach leverages the SDK's internal parallelization via asyncio.gather
+        for optimal performance.
+        """
+        from chat_shell.tools.mcp import MCPClient
+
         if not self._request.mcp_servers:
             add_span_event("no_mcp_servers_skipped")
             return [], []
@@ -390,39 +396,81 @@ class ChatContext:
             self._request.task_id,
         )
 
-        # Connect to all MCP servers in parallel
-        results = await asyncio.gather(
-            *[self._connect_single_mcp_server(s) for s in self._request.mcp_servers],
-            return_exceptions=True,
+        # Build unified config for all MCP servers
+        add_span_event("building_unified_mcp_config")
+        unified_config: dict = {}
+        for server in self._request.mcp_servers:
+            server_name = server.get("name", "server")
+            transport_type = server.get("type", "streamable-http")
+            server_url = server.get("url", "")
+            unified_config[server_name] = {
+                "type": transport_type,
+                "url": server_url,
+            }
+            auth = server.get("auth")
+            if auth:
+                unified_config[server_name]["headers"] = auth
+
+        add_span_event(
+            "unified_config_built",
+            {"server_names": list(unified_config.keys())},
         )
 
+        # Use single MCPClient with all servers - SDK handles parallel internally
         mcp_tools = []
         mcp_clients = []
         mcp_summary = []
 
-        for result in results:
-            if isinstance(result, Exception):
-                logger.warning("[CHAT_CONTEXT] MCP connection exception: %s", result)
-                continue
-            if result.get("success"):
-                mcp_tools.extend(result["tools"])
-                mcp_clients.append(result["client"])
-                mcp_summary.append(result["summary"])
-            elif result.get("client"):
-                mcp_clients.append(result["client"])
+        try:
+            client = MCPClient(unified_config)
+            add_span_event("mcp_client_created")
 
-        add_span_event(
-            "mcp_servers_connected",
-            {
-                "connected_count": len(mcp_summary),
-                "total_tools": len(mcp_tools),
-            },
-        )
+            await client.connect()
+
+            if client.is_connected:
+                tools = client.get_tools()
+                mcp_tools.extend(tools)
+                mcp_clients.append(client)
+                mcp_summary = [f"{name}(*)" for name in unified_config.keys()]
+                add_span_event(
+                    "mcp_servers_connected",
+                    {
+                        "connected_count": len(unified_config),
+                        "total_tools": len(tools),
+                    },
+                )
+            else:
+                add_span_event("mcp_client_not_ready")
+                logger.warning(
+                    "[CHAT_CONTEXT] MCP client connected but not ready",
+                )
+                mcp_clients.append(client)
+        except Exception as e:
+            error_msg = str(e)
+            if hasattr(e, "exceptions"):
+                for exc in e.exceptions:
+                    if hasattr(exc, "exceptions"):
+                        for sub_exc in exc.exceptions:
+                            error_msg = str(sub_exc)
+                            break
+                    else:
+                        error_msg = str(exc)
+                    break
+            add_span_event(
+                "mcp_connection_failed",
+                {"error": error_msg},
+            )
+            logger.warning(
+                "[CHAT_CONTEXT] Failed to load MCP servers: %s",
+                error_msg,
+            )
+
         if mcp_summary:
             logger.info(
-                "[CHAT_CONTEXT] Connected %d MCP servers: %s",
+                "[CHAT_CONTEXT] Connected %d MCP servers: %s (total %d tools)",
                 len(mcp_summary),
                 ", ".join(mcp_summary),
+                len(mcp_tools),
             )
 
         return mcp_tools, mcp_clients

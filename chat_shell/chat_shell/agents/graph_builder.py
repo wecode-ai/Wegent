@@ -23,6 +23,7 @@ from langchain_core.tools.base import BaseTool
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.errors import GraphRecursionError
 from langgraph.prebuilt import create_react_agent
+from shared.telemetry.decorators import add_span_event, trace_sync
 
 from ..tools.base import ToolRegistry
 
@@ -151,16 +152,35 @@ class LangGraphAgentBuilder:
 
         return prompt_modifier
 
+    @trace_sync(
+        span_name="agent_builder.build_agent",
+        tracer_name="chat_shell.agents",
+        extract_attributes=lambda self, *args, **kwargs: {
+            "agent.tools_count": len(self.tools),
+            "agent.max_iterations": self.max_iterations,
+            "agent.enable_checkpointing": self.enable_checkpointing,
+        },
+    )
     def _build_agent(self):
         """Build the LangGraph ReAct agent lazily."""
         if self._agent is not None:
+            add_span_event("agent_already_built")
             return self._agent
+
+        add_span_event("building_new_agent")
 
         # Use LangGraph's prebuilt create_react_agent
         checkpointer = MemorySaver() if self.enable_checkpointing else None
+        add_span_event(
+            "checkpointer_created", {"has_checkpointer": checkpointer is not None}
+        )
 
         # Create prompt modifier for dynamic skill prompt injection
         prompt_modifier = self._create_prompt_modifier()
+        add_span_event(
+            "prompt_modifier_created",
+            {"has_modifier": prompt_modifier is not None},
+        )
 
         # Build agent with optional prompt modifier for dynamic system prompt updates
         self._agent = create_react_agent(
@@ -169,6 +189,7 @@ class LangGraphAgentBuilder:
             checkpointer=checkpointer,
             prompt=prompt_modifier,
         )
+        add_span_event("react_agent_created")
 
         return self._agent
 
@@ -262,8 +283,17 @@ class LangGraphAgentBuilder:
         Yields:
             Content tokens as they are generated
         """
+        add_span_event("stream_tokens_started", {"message_count": len(messages)})
+
+        add_span_event("building_agent_started")
         agent = self._build_agent()
+        add_span_event("building_agent_completed")
+
+        add_span_event("convert_to_messages_started", {"message_count": len(messages)})
         lc_messages = convert_to_messages(messages)
+        add_span_event(
+            "convert_to_messages_completed", {"lc_message_count": len(lc_messages)}
+        )
 
         exec_config = {"configurable": config} if config else None
 
@@ -271,6 +301,7 @@ class LangGraphAgentBuilder:
         streamed_content = False  # Track if we've streamed any content
         final_content = ""  # Store final content for non-streaming fallback
 
+        add_span_event("astream_events_starting")
         try:
             async for event in agent.astream_events(
                 {"messages": lc_messages},
