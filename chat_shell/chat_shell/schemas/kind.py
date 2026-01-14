@@ -154,6 +154,7 @@ class SkillSpec(BaseModel):
     bindShells: Optional[List[str]] = None
     tools: Optional[List[SkillToolDeclaration]] = None
     provider: Optional[SkillProviderConfig] = None
+    mcpServers: Optional[List[str]] = None
 
 
 class SkillStatus(Status):

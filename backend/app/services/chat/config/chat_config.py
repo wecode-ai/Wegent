@@ -514,6 +514,9 @@ class ChatConfigBuilder:
                         skill_data["binary_download_url"] = (
                             f"{base_url}/api/internal/skills/{skill.id}/binary"
                         )
+                # Include MCP servers if declared in skill
+                if skill_crd.spec.mcpServers:
+                    skill_data["mcpServers"] = skill_crd.spec.mcpServers
                 skills.append(skill_data)
 
         logger.info(
