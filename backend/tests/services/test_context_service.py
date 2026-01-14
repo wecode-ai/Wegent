@@ -64,7 +64,7 @@ class TestContextServiceStorage:
             ContextType,
             SubtaskContext,
         )
-        from app.services.context import context_service
+        from app.services.context.context_service import context_service as cs_instance
 
         # Arrange
         mock_db = Mock()
@@ -85,7 +85,7 @@ class TestContextServiceStorage:
         context.id = 100
 
         # Mock the storage backend to return the binary data
-        # Patch where the function is used (in context_service module)
+        # Patch the function where it's imported (in context_service.py module)
         with patch(
             "app.services.context.context_service.get_storage_backend"
         ) as mock_get_backend:
@@ -94,7 +94,7 @@ class TestContextServiceStorage:
             mock_get_backend.return_value = mock_backend
 
             # Act
-            binary_data = context_service.get_attachment_binary_data(mock_db, context)
+            binary_data = cs_instance.get_attachment_binary_data(mock_db, context)
 
         # Assert
         assert binary_data == b"stored data"
@@ -109,7 +109,7 @@ class TestContextServiceStorage:
             ContextType,
             SubtaskContext,
         )
-        from app.services.context import context_service
+        from app.services.context.context_service import context_service as cs_instance
 
         # Arrange
         mock_db = Mock()
@@ -133,7 +133,7 @@ class TestContextServiceStorage:
         context.id = 100
 
         # Mock the storage backend to return encrypted data
-        # Patch where the function is used (in context_service module)
+        # Patch the function where it's imported (in context_service.py module)
         with patch(
             "app.services.context.context_service.get_storage_backend"
         ) as mock_get_backend:
@@ -142,7 +142,7 @@ class TestContextServiceStorage:
             mock_get_backend.return_value = mock_backend
 
             # Act
-            binary_data = context_service.get_attachment_binary_data(mock_db, context)
+            binary_data = cs_instance.get_attachment_binary_data(mock_db, context)
 
         # Assert - should return decrypted data
         assert binary_data == original_data
