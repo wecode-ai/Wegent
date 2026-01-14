@@ -5,8 +5,8 @@
 'use client'
 
 import React, { useMemo } from 'react'
-import { ExternalLink, Globe, Loader2, Play, ImageIcon } from 'lucide-react'
-import { useLinkPreview, type LinkPreviewType } from '@/hooks/useLinkPreview'
+import { ExternalLink, Globe, Loader2 } from 'lucide-react'
+import { useLinkPreview } from '@/hooks/useLinkPreview'
 
 interface LinkPreviewCardProps {
   /** The URL to display as a preview card */
@@ -32,41 +32,21 @@ function getDomain(url: string): string {
 }
 
 /**
- * Get icon for content type
- */
-function TypeIcon({ type }: { type: LinkPreviewType }) {
-  switch (type) {
-    case 'video':
-      return (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/40 rounded-l-lg">
-          <div className="w-10 h-10 rounded-full bg-white/90 flex items-center justify-center">
-            <Play className="w-5 h-5 text-text-primary fill-current ml-0.5" />
-          </div>
-        </div>
-      )
-    case 'image':
-      return null // Image type shows the full image without overlay
-    default:
-      return null
-  }
-}
-
-/**
- * Skeleton loader for the card
+ * Skeleton loader for the card - vertical layout
  */
 function CardSkeleton() {
   return (
-    <span className="block my-2 rounded-lg border border-border bg-surface animate-pulse w-full max-w-md overflow-hidden">
-      <span className="flex">
-        {/* Thumbnail skeleton */}
-        <span className="w-[120px] h-[90px] bg-muted flex-shrink-0" />
-        {/* Content skeleton */}
-        <span className="flex-1 p-3 space-y-2">
-          <span className="block h-4 bg-muted rounded w-3/4" />
-          <span className="block h-3 bg-muted rounded w-full" />
-          <span className="block h-3 bg-muted rounded w-1/3" />
+    <span className="block my-3 rounded-xl border border-border bg-surface animate-pulse w-full max-w-lg overflow-hidden shadow-sm">
+      {/* Header skeleton */}
+      <span className="flex items-center gap-2 p-3 border-b border-border">
+        <span className="w-5 h-5 bg-muted rounded" />
+        <span className="flex-1 space-y-1">
+          <span className="block h-4 bg-muted rounded w-1/3" />
+          <span className="block h-3 bg-muted rounded w-2/3" />
         </span>
       </span>
+      {/* Screenshot skeleton */}
+      <span className="block h-[240px] bg-muted" />
     </span>
   )
 }
@@ -90,12 +70,11 @@ function SimpleLinkFallback({ url, children }: { url: string; children?: React.R
 }
 
 /**
- * LinkPreviewCard component for rendering URLs as rich horizontal preview cards.
+ * LinkPreviewCard component for rendering URLs as rich preview cards.
  *
  * Features:
- * - Horizontal layout with thumbnail on left
- * - Supports website, image, and video URL types
- * - Video URLs show play button overlay on thumbnail
+ * - Vertical layout with header and large screenshot
+ * - Header shows favicon, title, and domain
  * - Loading skeleton state
  * - Graceful fallback to simple link on error
  *
@@ -121,119 +100,80 @@ export default function LinkPreviewCard({ url, disabled = false }: LinkPreviewCa
     return <SimpleLinkFallback url={url} />
   }
 
-  // Image type - render full image preview
-  if (data.type === 'image') {
-    return (
-      <a
-        href={url}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="block my-2 rounded-lg border border-border bg-surface hover:border-primary/50 transition-all overflow-hidden w-full max-w-md group"
-      >
-        <span className="block relative">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={data.image || url}
-            alt=""
-            className="w-full h-auto max-h-[300px] object-contain bg-muted"
-            onError={e => {
-              const img = e.target as HTMLImageElement
-              img.style.display = 'none'
-            }}
-          />
-          <span className="absolute bottom-2 right-2 flex items-center gap-1 px-2 py-1 rounded bg-black/60 text-white text-xs">
-            <ImageIcon className="w-3 h-3" />
-            <span>{domain}</span>
-          </span>
-        </span>
-      </a>
-    )
-  }
-
-  // Website or video type - render horizontal card
-  const hasThumbnail = !!data.image
+  // Website card - render vertical card with header and screenshot
+  const hasScreenshot = !!data.image
   const displayTitle = data.title || domain
-  const displaySiteName = data.site_name || domain
 
   return (
     <a
       href={url}
       target="_blank"
       rel="noopener noreferrer"
-      className="block my-2 rounded-lg border border-border bg-surface hover:bg-muted/50 hover:border-primary/50 hover:!no-underline transition-all overflow-hidden w-full max-w-md group"
+      className="block my-3 rounded-xl border border-border bg-surface hover:border-primary/50 hover:shadow-md hover:!no-underline transition-all overflow-hidden w-full max-w-lg group shadow-sm"
     >
-      <span className="flex">
-        {/* Thumbnail area */}
-        {hasThumbnail ? (
-          <span className="relative flex-shrink-0 w-[120px] h-[90px] bg-muted overflow-hidden">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
+      {/* Header section */}
+      <span className="flex items-center gap-2.5 px-3 py-2.5 border-b border-border bg-surface">
+        {/* Favicon */}
+        <span className="flex-shrink-0 w-5 h-5 flex items-center justify-center">
+          {data.favicon ? (
+            // eslint-disable-next-line @next/next/no-img-element
             <img
-              src={data.image!}
+              src={data.favicon}
               alt=""
-              className="w-full h-full object-cover"
+              className="w-5 h-5 rounded object-contain"
               onError={e => {
                 const img = e.target as HTMLImageElement
                 img.style.display = 'none'
+                const parent = img.parentElement
+                if (parent) {
+                  parent.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="text-text-muted"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>`
+                }
               }}
             />
-            <TypeIcon type={data.type} />
-          </span>
-        ) : (
-          <span className="relative flex-shrink-0 w-[120px] h-[90px] bg-muted flex items-center justify-center">
-            {data.favicon ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={data.favicon}
-                alt=""
-                className="w-10 h-10 object-contain"
-                onError={e => {
-                  const img = e.target as HTMLImageElement
-                  img.style.display = 'none'
-                  const parent = img.parentElement
-                  if (parent) {
-                    const fallback = document.createElement('span')
-                    fallback.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="text-text-muted"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>`
-                    parent.appendChild(fallback)
-                  }
-                }}
-              />
-            ) : (
-              <Globe className="w-8 h-8 text-text-muted" />
-            )}
-            {data.type === 'video' && <TypeIcon type={data.type} />}
-          </span>
-        )}
+          ) : (
+            <Globe className="w-[18px] h-[18px] text-text-muted" />
+          )}
+        </span>
 
-        {/* Content area */}
-        <span className="flex-1 min-w-0 p-3 flex flex-col justify-center space-y-1">
-          {/* Title - single line with truncation */}
+        {/* Title and domain */}
+        <span className="flex-1 min-w-0">
           <span className="block text-sm font-medium text-text-primary truncate group-hover:text-primary transition-colors">
             {displayTitle}
           </span>
-
-          {/* Description - max 2 lines */}
-          {data.description && (
-            <span className="block text-xs text-text-muted line-clamp-2">{data.description}</span>
-          )}
-
-          {/* Site name / domain */}
           <span className="flex items-center gap-1 text-xs text-text-muted">
-            {data.favicon && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={data.favicon}
-                alt=""
-                className="w-3 h-3 rounded-sm"
-                onError={e => {
-                  ;(e.target as HTMLImageElement).style.display = 'none'
-                }}
-              />
-            )}
-            <span className="truncate">{displaySiteName}</span>
+            <span className="truncate">{domain}</span>
             <ExternalLink className="h-3 w-3 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
           </span>
         </span>
       </span>
+
+      {/* Screenshot area */}
+      {hasScreenshot ? (
+        <span className="block relative bg-muted">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={data.image!}
+            alt=""
+            className="w-full h-auto max-h-[300px] object-cover object-top"
+            onError={e => {
+              const img = e.target as HTMLImageElement
+              img.style.display = 'none'
+            }}
+          />
+        </span>
+      ) : (
+        // No screenshot - show placeholder
+        <span className="block h-[120px] bg-muted/50 flex items-center justify-center">
+          <Globe className="w-10 h-10 text-text-muted/50" />
+        </span>
+      )}
+
+      {/* Description section (if available) */}
+      {data.description && (
+        <span className="block px-3 py-2 border-t border-border">
+          <span className="block text-xs text-text-muted line-clamp-2">{data.description}</span>
+        </span>
+      )}
     </a>
   )
 }

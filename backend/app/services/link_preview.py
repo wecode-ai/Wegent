@@ -4,21 +4,19 @@
 
 """
 Link preview service for fetching Open Graph metadata including images.
-Supports detection of image URLs, video platforms (YouTube, Bilibili, Vimeo),
-and standard web pages with og:image support.
+Supports standard web pages with og:image support.
 
 This service extends the basic url_metadata service with:
 - og:image extraction for rich preview cards
-- URL type detection (website, image, video)
-- Video platform thumbnail extraction
 - Site name extraction
+- Browserless screenshot fallback when og:image is not available
 """
 
+import base64
 import hashlib
 import logging
-import re
-from typing import Literal, Optional
-from urllib.parse import parse_qs, urljoin, urlparse
+from typing import Optional
+from urllib.parse import urljoin, urlparse
 
 import httpx
 import redis
@@ -41,28 +39,9 @@ logger = logging.getLogger(__name__)
 # Cache TTL for link preview (24 hours as per requirements)
 LINK_PREVIEW_CACHE_TTL = 86400
 
-# Image file extensions
-IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp", ".ico"}
-
-# Video platform patterns
-VIDEO_PLATFORMS = {
-    "youtube": {
-        "domains": ["youtube.com", "www.youtube.com", "youtu.be", "m.youtube.com"],
-        "thumbnail_pattern": "https://img.youtube.com/vi/{video_id}/maxresdefault.jpg",
-    },
-    "bilibili": {
-        "domains": ["bilibili.com", "www.bilibili.com", "b23.tv"],
-        "thumbnail_pattern": None,  # Bilibili requires API call or og:image
-    },
-    "vimeo": {
-        "domains": ["vimeo.com", "www.vimeo.com", "player.vimeo.com"],
-        "thumbnail_pattern": None,  # Vimeo requires oEmbed API
-    },
-}
-
 
 class LinkPreviewResult(BaseModel):
-    """Link preview result schema with extended metadata"""
+    """Link preview result schema"""
 
     url: str
     title: Optional[str] = None
@@ -70,7 +49,6 @@ class LinkPreviewResult(BaseModel):
     image: Optional[str] = None
     favicon: Optional[str] = None
     site_name: Optional[str] = None
-    type: Literal["website", "image", "video"] = "website"
     success: bool = True
 
 
@@ -87,97 +65,6 @@ def _get_redis_client():
     except Exception as e:
         logger.warning(f"Failed to connect to Redis: {e}")
         return None
-
-
-def _is_image_url(url: str) -> bool:
-    """Check if URL points to an image based on extension"""
-    try:
-        parsed = urlparse(url)
-        path = parsed.path.lower()
-        return any(path.endswith(ext) for ext in IMAGE_EXTENSIONS)
-    except Exception:
-        return False
-
-
-def _detect_video_platform(url: str) -> Optional[tuple[str, Optional[str]]]:
-    """
-    Detect if URL is from a video platform and extract video ID.
-
-    Returns:
-        Tuple of (platform_name, video_id) or None if not a video platform
-    """
-    try:
-        parsed = urlparse(url)
-        hostname = parsed.hostname or ""
-        hostname = hostname.lower()
-
-        # YouTube
-        if any(domain in hostname for domain in VIDEO_PLATFORMS["youtube"]["domains"]):
-            video_id = None
-
-            # youtu.be/VIDEO_ID
-            if "youtu.be" in hostname:
-                video_id = parsed.path.strip("/").split("/")[0] if parsed.path else None
-
-            # youtube.com/watch?v=VIDEO_ID
-            elif "v" in parse_qs(parsed.query):
-                video_id = parse_qs(parsed.query)["v"][0]
-
-            # youtube.com/embed/VIDEO_ID or youtube.com/v/VIDEO_ID
-            elif "/embed/" in parsed.path or "/v/" in parsed.path:
-                parts = parsed.path.split("/")
-                for i, part in enumerate(parts):
-                    if part in ("embed", "v") and i + 1 < len(parts):
-                        video_id = parts[i + 1]
-                        break
-
-            # youtube.com/shorts/VIDEO_ID
-            elif "/shorts/" in parsed.path:
-                parts = parsed.path.split("/shorts/")
-                if len(parts) > 1:
-                    video_id = parts[1].split("/")[0].split("?")[0]
-
-            return ("youtube", video_id)
-
-        # Bilibili
-        if any(domain in hostname for domain in VIDEO_PLATFORMS["bilibili"]["domains"]):
-            video_id = None
-
-            # bilibili.com/video/BV... or bilibili.com/video/av...
-            match = re.search(r"/video/(BV[\w]+|av\d+)", parsed.path)
-            if match:
-                video_id = match.group(1)
-
-            # b23.tv/xxx (short URL - need to follow redirect)
-            elif "b23.tv" in hostname:
-                video_id = parsed.path.strip("/")
-
-            return ("bilibili", video_id)
-
-        # Vimeo
-        if any(domain in hostname for domain in VIDEO_PLATFORMS["vimeo"]["domains"]):
-            video_id = None
-
-            # vimeo.com/VIDEO_ID
-            match = re.search(r"vimeo\.com/(\d+)", url)
-            if match:
-                video_id = match.group(1)
-
-            # player.vimeo.com/video/VIDEO_ID
-            match = re.search(r"player\.vimeo\.com/video/(\d+)", url)
-            if match:
-                video_id = match.group(1)
-
-            return ("vimeo", video_id)
-
-        return None
-    except Exception:
-        return None
-
-
-def _get_youtube_thumbnail(video_id: str) -> str:
-    """Get YouTube video thumbnail URL"""
-    return f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
 
 
 def _extract_og_image(html: str, base_url: str) -> Optional[str]:
@@ -228,6 +115,21 @@ def _extract_site_name(html: str) -> Optional[str]:
     return None
 
 
+def _extract_title_from_url(url: str) -> Optional[str]:
+    """Extract a readable title from URL when page cannot be fetched"""
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname or ""
+        # Remove common prefixes
+        hostname = hostname.replace("www.", "")
+        # Capitalize first letter
+        if hostname:
+            return hostname.split(".")[0].capitalize()
+        return None
+    except Exception:
+        return None
+
+
 def _cache_result(redis_client, url: str, result: LinkPreviewResult):
     """Cache the link preview result in Redis"""
     if not redis_client:
@@ -252,19 +154,14 @@ async def fetch_link_preview(url: str) -> LinkPreviewResult:
 
     Supports:
     - Standard web pages with Open Graph metadata
-    - Direct image URLs
-    - Video platform URLs (YouTube, Bilibili, Vimeo)
+    - Internal URLs via Browserless screenshot (when SSRF protection blocks direct access)
 
     Args:
         url: The URL to fetch preview for
 
     Returns:
-        LinkPreviewResult with title, description, image, type, etc.
+        LinkPreviewResult with title, description, image, etc.
     """
-    # Validate URL for SSRF protection
-    if not _validate_url_for_ssrf(url):
-        return LinkPreviewResult(url=url, success=False)
-
     # Check cache first
     redis_client = _get_redis_client()
     if redis_client:
@@ -275,70 +172,56 @@ async def fetch_link_preview(url: str) -> LinkPreviewResult:
                 import json
 
                 data = json.loads(cached)
-                return LinkPreviewResult(**data)
+                cached_result = LinkPreviewResult(**data)
+                # Only use cache if it was successful
+                # Failed results might succeed after config changes (e.g., Browserless enabled)
+                if cached_result.success:
+                    logger.debug(f"Returning cached link preview for: {url}")
+                    return cached_result
+                else:
+                    logger.info(f"Skipping failed cache entry, retrying: {url}")
+                    # Delete the failed cache entry
+                    redis_client.delete(cache_key)
         except Exception as e:
             logger.warning(f"Failed to read from cache: {e}")
 
-    # Handle direct image URLs
-    if _is_image_url(url):
+    # Validate URL for SSRF protection
+    is_internal_url = not _validate_url_for_ssrf(url)
+    if is_internal_url:
+        # For internal URLs, skip metadata fetch and use screenshot directly
+        logger.info(f"Internal URL detected, using screenshot fallback: {url}")
+        screenshot = await _capture_screenshot(url)
         result = LinkPreviewResult(
             url=url,
-            image=url,
-            type="image",
-            success=True,
-        )
-        _cache_result(redis_client, url, result)
-        return result
-
-    # Detect video platforms
-    video_info = _detect_video_platform(url)
-    if video_info:
-        platform, video_id = video_info
-
-        # For YouTube, we can directly generate thumbnail URL
-        if platform == "youtube" and video_id:
-            thumbnail = _get_youtube_thumbnail(video_id)
-            # Still fetch the page to get title and description
-            page_result = await _fetch_page_metadata(url)
-            result = LinkPreviewResult(
-                url=url,
-                title=page_result.get("title"),
-                description=page_result.get("description"),
-                image=thumbnail,
-                favicon=page_result.get("favicon"),
-                site_name=page_result.get("site_name") or "YouTube",
-                type="video",
-                success=True,
-            )
-            _cache_result(redis_client, url, result)
-            return result
-
-        # For other video platforms, fetch og:image from page
-        page_result = await _fetch_page_metadata(url)
-        result = LinkPreviewResult(
-            url=url,
-            title=page_result.get("title"),
-            description=page_result.get("description"),
-            image=page_result.get("image"),
-            favicon=page_result.get("favicon"),
-            site_name=page_result.get("site_name") or platform.capitalize(),
-            type="video",
-            success=page_result.get("success", False),
+            title=_extract_title_from_url(url),
+            image=screenshot,
+            success=screenshot is not None,
         )
         _cache_result(redis_client, url, result)
         return result
 
     # Standard web page - fetch metadata
     page_result = await _fetch_page_metadata(url)
+
+    # If no og:image found, try to capture screenshot as fallback
+    image = page_result.get("image")
+    if not image and page_result.get("success"):
+        logger.info(f"No og:image found, attempting screenshot for: {url}")
+        screenshot = await _capture_screenshot(url)
+        if screenshot:
+            image = screenshot
+
+    # Only mark as success if we have an image (for card rendering)
+    # Without image, frontend will show simple link instead
+    has_image = image is not None
     result = LinkPreviewResult(
         url=url,
         title=page_result.get("title"),
         description=page_result.get("description"),
-        image=page_result.get("image"),
+        image=image,
         favicon=page_result.get("favicon"),
         site_name=page_result.get("site_name"),
-        type="website",
-        success=page_result.get("success", False),
+        success=page_result.get("success", False) and has_image,
     )
     _cache_result(redis_client, url, result)
     return result
@@ -355,10 +238,12 @@ async def _fetch_page_metadata(url: str) -> dict:
         logger.warning(f"SSL verification disabled for link preview fetch: {url}")
 
     try:
+        # Disable proxy for direct URL fetching (trust_env=False bypasses HTTP_PROXY)
         async with httpx.AsyncClient(
             timeout=URL_FETCH_TIMEOUT,
             follow_redirects=True,
             verify=URL_METADATA_SSL_VERIFY,
+            trust_env=False,
         ) as client:
             async with client.stream(
                 "GET",
@@ -423,3 +308,65 @@ async def _fetch_page_metadata(url: str) -> dict:
     except Exception as e:
         logger.error(f"Unexpected error fetching link preview: {url} - {e}")
         return {"success": False}
+
+
+async def _capture_screenshot(url: str) -> Optional[str]:
+    """
+    Capture a screenshot of the URL using Browserless service.
+
+    Returns:
+        Base64 encoded data URL of the screenshot, or None if failed
+    """
+    logger.info(
+        f"_capture_screenshot called: url={url}, "
+        f"BROWSERLESS_ENABLED={settings.BROWSERLESS_ENABLED}, "
+        f"BROWSERLESS_URL={settings.BROWSERLESS_URL}"
+    )
+
+    if not settings.BROWSERLESS_ENABLED:
+        logger.warning("Browserless screenshot is disabled via BROWSERLESS_ENABLED=False")
+        return None
+
+    browserless_url = settings.BROWSERLESS_URL.rstrip("/")
+    screenshot_endpoint = f"{browserless_url}/screenshot"
+
+    try:
+        logger.info(f"Calling Browserless at: {screenshot_endpoint}")
+        # Disable proxy for local Browserless service (trust_env=False bypasses HTTP_PROXY)
+        async with httpx.AsyncClient(
+            timeout=float(settings.BROWSERLESS_TIMEOUT),
+            trust_env=False,
+        ) as client:
+            # Browserless /screenshot endpoint
+            response = await client.post(
+                screenshot_endpoint,
+                json={
+                    "url": url,
+                    "viewport": {
+                        "width": 1200,
+                        "height": 630,  # Standard OG image aspect ratio
+                    },
+                },
+            )
+
+            if response.status_code == 200:
+                # Convert to base64 data URL
+                screenshot_base64 = base64.b64encode(response.content).decode("utf-8")
+                data_url = f"data:image/png;base64,{screenshot_base64}"
+                logger.info(f"Successfully captured screenshot for: {url}")
+                return data_url
+            else:
+                logger.warning(
+                    f"Browserless screenshot failed with status {response.status_code}: {url}, response: {response.text[:200]}"
+                )
+                return None
+
+    except httpx.TimeoutException:
+        logger.warning(f"Timeout capturing screenshot: {url}")
+        return None
+    except httpx.RequestError as e:
+        logger.warning(f"Error capturing screenshot: {url} - {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Unexpected error capturing screenshot: {url} - {e}")
+        return None

@@ -7,8 +7,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { apiClient } from '@/apis/client'
 
-export type LinkPreviewType = 'website' | 'image' | 'video'
-
 export interface LinkPreviewData {
   url: string
   title: string | null
@@ -16,7 +14,6 @@ export interface LinkPreviewData {
   image: string | null
   favicon: string | null
   site_name: string | null
-  type: LinkPreviewType
   success: boolean
 }
 
@@ -130,7 +127,6 @@ export function useLinkPreview(url: string): UseLinkPreviewResult {
           image: null,
           favicon: null,
           site_name: null,
-          type: 'website',
           success: false,
         }
         previewCache.set(url, failedResult)
