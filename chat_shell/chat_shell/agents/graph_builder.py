@@ -162,10 +162,17 @@ class LangGraphAgentBuilder:
         # Create prompt modifier for dynamic skill prompt injection
         prompt_modifier = self._create_prompt_modifier()
 
-        # Build agent with optional prompt modifier for dynamic system prompt updates
+        # IMPORTANT: Use a callable to get tools dynamically
+        # This allows tools to be added to the registry after agent creation
+        # and have them available for subsequent tool calls
+        def get_tools():
+            """Get current tools from registry dynamically."""
+            return self.tool_registry.get_all()
+
+        # Build agent with callable tools for dynamic tool registration
         self._agent = create_react_agent(
             model=self.llm,
-            tools=self.tools,
+            tools=get_tools,  # Pass callable instead of static list
             checkpointer=checkpointer,
             prompt=prompt_modifier,
         )
