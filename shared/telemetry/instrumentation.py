@@ -319,12 +319,20 @@ def _setup_sqlalchemy_instrumentation(
 
 
 def _setup_redis_instrumentation(logger: logging.Logger) -> None:
-    """Setup Redis instrumentation for tracing cache operations."""
+    """Setup Redis instrumentation for tracing cache operations.
+
+    Note: This may be a no-op if instrumentation was already set up early
+    (before redis module import). We check is_instrumented() to avoid errors.
+    """
     try:
         from opentelemetry.instrumentation.redis import RedisInstrumentor
 
-        RedisInstrumentor().instrument()
-        logger.info("✓ Redis instrumentation enabled")
+        instrumentor = RedisInstrumentor()
+        if instrumentor.is_instrumented_by_opentelemetry:
+            logger.info("✓ Redis instrumentation already enabled (early setup)")
+        else:
+            instrumentor.instrument()
+            logger.info("✓ Redis instrumentation enabled")
     except ImportError:
         logger.debug("Redis instrumentation not available (package not installed)")
     except Exception as e:
