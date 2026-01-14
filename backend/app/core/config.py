@@ -259,6 +259,12 @@ class Settings(BaseSettings):
     # See backend/app/services/tables/DATA_TABLE_CONFIG_EXAMPLE.md for details
     DATA_TABLE_CONFIG: str = ""
 
+    # Browserless screenshot service configuration
+    # Used for generating website screenshots when og:image is not available
+    BROWSERLESS_URL: str = "http://localhost:8910"
+    BROWSERLESS_ENABLED: bool = True
+    BROWSERLESS_TIMEOUT: int = 30  # Screenshot timeout in seconds
+
     # OpenTelemetry configuration is centralized in shared/telemetry/config.py
     # Use: from shared.telemetry.config import get_otel_config
     # All OTEL_* environment variables are read from there

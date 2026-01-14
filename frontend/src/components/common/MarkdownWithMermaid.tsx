@@ -83,7 +83,9 @@ function parseContentParts(source: string): ContentPart[] {
 
   // Combined regex to match both mermaid blocks and card syntax
   // Card syntax: [card:url] where url is an http(s) URL
-  const specialBlockRegex = /```mermaid\s*\n([\s\S]*?)```|\[card:(https?:\/\/[^\]\s]+)\]/g
+  // - Case insensitive for "card" keyword (Card, CARD, card all work)
+  // - Allows optional whitespace after the colon
+  const specialBlockRegex = /```mermaid\s*\n([\s\S]*?)```|\[[cC][aA][rR][dD]:\s*(https?:\/\/[^\]\s]+)\]/g
 
   let lastIndex = 0
   let match
