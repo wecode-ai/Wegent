@@ -59,6 +59,8 @@ class TestContextServiceStorage:
 
     def test_get_binary_data_from_mysql(self):
         """Test retrieving binary data from MySQL storage"""
+        # Import the actual module for patching
+        import app.services.context.context_service as cs_module
         from app.models.subtask_context import (
             ContextStatus,
             ContextType,
@@ -85,9 +87,7 @@ class TestContextServiceStorage:
         context.id = 100
 
         # Mock the storage backend to return the binary data
-        with patch(
-            "app.services.context.context_service.get_storage_backend"
-        ) as mock_get_backend:
+        with patch.object(cs_module, "get_storage_backend") as mock_get_backend:
             mock_backend = Mock()
             mock_backend.get.return_value = b"stored data"
             mock_get_backend.return_value = mock_backend
@@ -103,6 +103,8 @@ class TestContextServiceStorage:
         """Test retrieving and decrypting encrypted binary data"""
         from shared.utils.crypto import encrypt_attachment
 
+        # Import the actual module for patching
+        import app.services.context.context_service as cs_module
         from app.models.subtask_context import (
             ContextStatus,
             ContextType,
@@ -132,9 +134,7 @@ class TestContextServiceStorage:
         context.id = 100
 
         # Mock the storage backend to return encrypted data
-        with patch(
-            "app.services.context.context_service.get_storage_backend"
-        ) as mock_get_backend:
+        with patch.object(cs_module, "get_storage_backend") as mock_get_backend:
             mock_backend = Mock()
             mock_backend.get.return_value = encrypted_data
             mock_get_backend.return_value = mock_backend
