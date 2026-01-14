@@ -2,42 +2,14 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from pathlib import Path
-from typing import Any, Mapping, Tuple, Type
+from typing import Tuple, Type
 
-from dotenv import dotenv_values
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
     SettingsConfigDict,
 )
-from pydantic_settings.sources import DotEnvSettingsSource
-from pydantic_settings.sources.utils import parse_env_vars
-
-
-class NoInterpolationDotEnvSettingsSource(DotEnvSettingsSource):
-    """
-    Custom DotEnvSettingsSource that disables variable interpolation.
-
-    This fixes an issue where dotenv's default interpolation behavior
-    incorrectly parses template variables like ${{user.name}} in JSON strings,
-    turning them into "}".
-    """
-
-    @staticmethod
-    def _static_read_env_file(
-        file_path: Path,
-        *,
-        encoding: str | None = None,
-        case_sensitive: bool = False,
-        ignore_empty: bool = False,
-        parse_none_str: str | None = None,
-    ) -> Mapping[str, str | None]:
-        # Disable interpolation to preserve template variables like ${{user.name}}
-        file_vars: dict[str, str | None] = dotenv_values(
-            file_path, encoding=encoding or "utf8", interpolate=False
-        )
-        return parse_env_vars(file_vars, case_sensitive, ignore_empty, parse_none_str)
+from shared.utils.settings import NoInterpolationDotEnvSettingsSource
 
 
 class Settings(BaseSettings):
@@ -286,11 +258,12 @@ class Settings(BaseSettings):
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> Tuple[PydanticBaseSettingsSource, ...]:
-        """
-        Customize settings sources to use NoInterpolationDotEnvSettingsSource.
+        """Customize settings sources to use NoInterpolationDotEnvSettingsSource.
 
         This ensures that template variables like ${{user.name}} in .env files
         are preserved and not incorrectly parsed by dotenv's interpolation.
+
+        See: shared/utils/settings.py for implementation details.
         """
         return (
             init_settings,

@@ -120,6 +120,69 @@ black . && isort .
 - Descriptive names, docstrings for public functions/classes
 - Extract magic numbers to constants
 
+### Configuration Management (Pydantic Settings)
+
+⚠️ **All services using pydantic-settings MUST use `NoInterpolationDotEnvSettingsSource`**
+
+**Problem:** By default, python-dotenv performs variable interpolation on .env files, which breaks template variables like `${{user.name}}` used in JSON configuration strings.
+
+**Solution:** Use the shared `NoInterpolationDotEnvSettingsSource` class from `shared/utils/settings.py`
+
+**Implementation:**
+```python
+from typing import Tuple, Type
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
+from shared.utils.settings import NoInterpolationDotEnvSettingsSource
+
+class Settings(BaseSettings):
+    # Your settings fields here
+    CHAT_MCP_SERVERS: str = "{}"
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: Type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> Tuple[PydanticBaseSettingsSource, ...]:
+        """Customize settings sources to use NoInterpolationDotEnvSettingsSource.
+
+        This ensures that template variables like ${{user.name}} in .env files
+        are preserved and not incorrectly parsed by dotenv's interpolation.
+
+        See: shared/utils/settings.py for implementation details.
+        """
+        return (
+            init_settings,
+            env_settings,
+            NoInterpolationDotEnvSettingsSource(settings_cls),
+            file_secret_settings,
+        )
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+```
+
+**Services using this pattern:**
+- `backend/app/core/config.py`
+- `chat_shell/chat_shell/core/config.py`
+
+**Why this matters:**
+Without this customization, .env files like:
+```bash
+CHAT_MCP_SERVERS='{"mcpServers": {"tool": {"headers": {"X-User": "${{user.name}}"}}}}'
+```
+Would have `${{user.name}}` incorrectly parsed, breaking the JSON structure.
+
 ### TypeScript/React (Frontend)
 
 **Standards:** TypeScript strict mode, functional components, Prettier, ESLint, single quotes, no semicolons
