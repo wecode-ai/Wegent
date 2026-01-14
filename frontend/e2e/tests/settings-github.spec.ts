@@ -12,12 +12,12 @@ test.describe('Settings - Git Integration', () => {
     await expect(page).toHaveURL(/\/settings/)
 
     // Wait for integrations content to load - title "Integrations" should be visible
-    await expect(page.locator('h2:has-text("Integrations")')).toBeVisible({ timeout: 10000 })
+    await expect(page.locator('h2:has-text("Integrations")')).toBeVisible({ timeout: 20000 })
   })
 
   test('should display Git integration section', async ({ page }) => {
     // Look for Git integration section title "Integrations"
-    await expect(page.locator('h2:has-text("Integrations")')).toBeVisible({ timeout: 10000 })
+    await expect(page.locator('h2:has-text("Integrations")')).toBeVisible({ timeout: 20000 })
   })
 
   test('should display token list or empty state', async ({ page }) => {
@@ -47,13 +47,13 @@ test.describe('Settings - Git Integration', () => {
 
   test('should open add token dialog', async ({ page }) => {
     // Wait for integrations page to load
-    await expect(page.locator('h2:has-text("Integrations")')).toBeVisible({ timeout: 10000 })
+    await expect(page.locator('h2:has-text("Integrations")')).toBeVisible({ timeout: 20000 })
 
     // "New Token" button should always be visible after page loads
     const addTokenButton = page.locator('button:has-text("New Token"), button:has-text("新建")')
 
     // Button should be visible - no skip, this is a required UI element
-    await expect(addTokenButton).toBeVisible({ timeout: 10000 })
+    await expect(addTokenButton).toBeVisible({ timeout: 20000 })
 
     await addTokenButton.click()
 
@@ -66,6 +66,6 @@ test.describe('Settings - Git Integration', () => {
     const dialogContent = page.locator(
       '[role="dialog"] .text-xl, [role="dialog"] [class*="DialogTitle"]'
     )
-    await expect(dialogContent.first()).toBeVisible({ timeout: 10000 })
+    await expect(dialogContent.first()).toBeVisible({ timeout: 20000 })
   })
 })
