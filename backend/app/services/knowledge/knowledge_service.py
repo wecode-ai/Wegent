@@ -142,6 +142,16 @@ class KnowledgeService:
                 )
 
         # Build CRD structure
+        spec_kwargs = {
+            "name": data.name,
+            "description": data.description or "",
+            "retrievalConfig": data.retrieval_config,
+            "summaryEnabled": data.summary_enabled,
+        }
+        # Add summaryModelRef if provided
+        if data.summary_model_ref:
+            spec_kwargs["summaryModelRef"] = data.summary_model_ref
+
         kb_crd = KnowledgeBaseCRD(
             apiVersion="agent.wecode.io/v1",
             kind="KnowledgeBase",
@@ -149,12 +159,7 @@ class KnowledgeService:
                 name=kb_name,
                 namespace=data.namespace,
             ),
-            spec=KnowledgeBaseSpec(
-                name=data.name,
-                description=data.description or "",
-                retrievalConfig=data.retrieval_config,
-                summaryEnabled=data.summary_enabled,
-            ),
+            spec=KnowledgeBaseSpec(**spec_kwargs),
         )
 
         # Build resource data
@@ -391,6 +396,11 @@ class KnowledgeService:
         # Update summary_enabled if provided
         if data.summary_enabled is not None:
             spec["summaryEnabled"] = data.summary_enabled
+
+        # Update summary_model_ref if explicitly provided (including null to clear)
+        # Use model_fields_set to detect if the field was explicitly passed
+        if "summary_model_ref" in data.model_fields_set:
+            spec["summaryModelRef"] = data.summary_model_ref
 
         kb_json["spec"] = spec
         kb.json = kb_json

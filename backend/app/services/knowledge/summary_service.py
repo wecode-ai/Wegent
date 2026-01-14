@@ -15,7 +15,7 @@ Responsible for:
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
@@ -102,6 +102,117 @@ class SummaryService:
     def __init__(self, db: Session):
         self.db = db
 
+    # ==================== Model Configuration ====================
+
+    def _get_model_config_from_kb(
+        self, kb: Kind, user_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get model configuration from knowledge base spec.
+
+        This method extracts and processes the model configuration, including:
+        - Decrypting API keys
+        - Resolving environment variable placeholders
+        - Processing DEFAULT_HEADERS
+
+        Args:
+            kb: Knowledge base Kind object
+            user_id: User ID (for user model lookup)
+
+        Returns:
+            Processed model config dict or None if not configured
+        """
+        from app.services.chat.config.model_resolver import _extract_model_config
+
+        kb_json = kb.json or {}
+        spec = kb_json.get("spec", {})
+        summary_model_ref = spec.get("summaryModelRef")
+
+        if not summary_model_ref:
+            logger.info(
+                f"[SummaryService] No summaryModelRef configured for KB: {kb.id}"
+            )
+            return None
+
+        model_name = summary_model_ref.get("name")
+        model_namespace = summary_model_ref.get("namespace", "default")
+        model_type = summary_model_ref.get("type", "public")
+
+        if not model_name:
+            logger.warning(
+                f"[SummaryService] Invalid summaryModelRef (missing name) for KB: {kb.id}"
+            )
+            return None
+
+        logger.info(
+            f"[SummaryService] Looking up model: name={model_name}, "
+            f"namespace={model_namespace}, type={model_type}"
+        )
+
+        # Lookup model based on type
+        model_spec = None
+        if model_type == "public":
+            # Query public model from Kind table (user_id=0)
+            public_model = (
+                self.db.query(Kind)
+                .filter(
+                    Kind.user_id == 0,
+                    Kind.kind == "Model",
+                    Kind.name == model_name,
+                    Kind.namespace == "default",
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+            if public_model:
+                model_json = public_model.json or {}
+                model_spec = model_json.get("spec", {})
+            else:
+                logger.warning(f"[SummaryService] Public model not found: {model_name}")
+                return None
+        else:
+            # Query user or group model from Kind table
+            query = self.db.query(Kind).filter(
+                Kind.kind == "Model",
+                Kind.name == model_name,
+                Kind.namespace == model_namespace,
+                Kind.is_active == True,
+            )
+
+            if model_type == "user":
+                query = query.filter(Kind.user_id == user_id)
+
+            model = query.first()
+            if model:
+                model_json = model.json or {}
+                model_spec = model_json.get("spec", {})
+            else:
+                logger.warning(
+                    f"[SummaryService] Model not found: name={model_name}, "
+                    f"namespace={model_namespace}, type={model_type}"
+                )
+                return None
+
+        # Extract and process model config (decrypt API key, resolve placeholders, etc.)
+        if model_spec:
+            try:
+                processed_config = _extract_model_config(model_spec)
+                logger.info(
+                    f"[SummaryService] Model config processed successfully: "
+                    f"model_id={processed_config.get('model_id')}, "
+                    f"model={processed_config.get('model')}, "
+                    f"has_api_key={bool(processed_config.get('api_key'))}"
+                )
+                return processed_config
+            except Exception as e:
+                logger.error(
+                    f"[SummaryService] Failed to process model config: {e}",
+                    exc_info=True,
+                )
+                return None
+
+        return None
+
     # ==================== Document Summary ====================
 
     async def trigger_document_summary(
@@ -149,6 +260,30 @@ class SummaryService:
             )
             return None
 
+        # 4. Get knowledge base to retrieve model configuration
+        kb = (
+            self.db.query(Kind)
+            .filter(
+                Kind.id == document.kind_id,
+                Kind.kind == "KnowledgeBase",
+            )
+            .first()
+        )
+
+        if not kb:
+            logger.warning(
+                f"[SummaryService] Knowledge base not found for document: {document_id}"
+            )
+            return None
+
+        # 5. Get model configuration from knowledge base
+        model_config = self._get_model_config_from_kb(kb, user_id)
+        if not model_config:
+            logger.warning(
+                f"[SummaryService] No model configured for summary generation in KB: {kb.id}"
+            )
+            return None
+
         logger.info(
             f"[SummaryService] Document validation passed: "
             f"document_id={document_id}, name={document.name}, "
@@ -156,7 +291,7 @@ class SummaryService:
         )
 
         try:
-            # 4. Update status to generating
+            # 6. Update status to generating
             summary_data = document.summary or {}
             summary_data["status"] = "generating"
             summary_data["updated_at"] = datetime.now().isoformat()
@@ -169,7 +304,7 @@ class SummaryService:
                 f"document_id={document_id}"
             )
 
-            # 5. Get document content
+            # 7. Get document content
             content = await self._get_document_content(document)
             if not content:
                 raise Exception("Failed to get document content")
@@ -179,7 +314,7 @@ class SummaryService:
                 f"document_id={document_id}, content_length={len(content)}"
             )
 
-            # 6. Execute summary generation
+            # 8. Execute summary generation
             logger.info(
                 f"[SummaryService] Starting summary generation: document_id={document_id}"
             )
@@ -192,11 +327,12 @@ class SummaryService:
                     summary_type="document",
                     document_id=document_id,
                     knowledge_base_id=document.kind_id,
+                    model_config=model_config,
                 ),
                 parse_json=True,
             )
 
-            # 7. Update document summary
+            # 9. Update document summary
             if result.success and result.parsed_content:
                 summary_data = {
                     **result.parsed_content,
@@ -224,7 +360,7 @@ class SummaryService:
             flag_modified(document, "summary")
             self.db.commit()
 
-            # 8. Check if knowledge base summary needs to be triggered
+            # 10. Check if knowledge base summary needs to be triggered
             if result.success:
                 logger.info(
                     f"[SummaryService] Checking KB summary trigger: kb_id={document.kind_id}"
@@ -326,10 +462,12 @@ class SummaryService:
             return None
 
         # 3. Aggregate completed document summaries (single query for both text and count)
+        # This is done BEFORE model config check to handle clear_if_empty case
         logger.info(f"[SummaryService] Aggregating document summaries: kb_id={kb_id}")
         aggregation = self._get_document_aggregation(kb_id)
         if not aggregation.aggregated_text:
             # No completed document summaries - handle empty state
+            # This works even without model config (for clear_if_empty scenario)
             self._handle_empty_kb_summary(
                 kb, kb_id, clear_if_empty, aggregation.completed_count
             )
@@ -340,8 +478,17 @@ class SummaryService:
             f"kb_id={kb_id}, completed_count={aggregation.completed_count}"
         )
 
+        # 4. Get model configuration from knowledge base
+        # Only needed if we have documents to summarize
+        model_config = self._get_model_config_from_kb(kb, user_id)
+        if not model_config:
+            logger.warning(
+                f"[SummaryService] No model configured for summary generation in KB: {kb_id}"
+            )
+            return None
+
         try:
-            # 4. Update status to generating (atomic with the lock)
+            # 5. Update status to generating (atomic with the lock)
             kb_json = kb.json or {}
             spec = kb_json.get("spec", {})
             spec["summary"] = {
@@ -358,7 +505,7 @@ class SummaryService:
                 f"[SummaryService] KB summary status set to generating: kb_id={kb_id}"
             )
 
-            # 5. Execute summary generation
+            # 6. Execute summary generation
             logger.info(
                 f"[SummaryService] Starting KB summary generation: kb_id={kb_id}"
             )
@@ -370,11 +517,12 @@ class SummaryService:
                     task_type="summary",
                     summary_type="knowledge_base",
                     knowledge_base_id=kb_id,
+                    model_config=model_config,
                 ),
                 parse_json=True,
             )
 
-            # 6. Update knowledge base summary (reuse completed_count from aggregation)
+            # 7. Update knowledge base summary (reuse completed_count from aggregation)
             if result.success and result.parsed_content:
                 summary_data = {
                     **result.parsed_content,

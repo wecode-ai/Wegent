@@ -40,8 +40,11 @@ from app.schemas.knowledge import (
 from app.schemas.knowledge_qa_history import QAHistoryResponse
 from app.schemas.rag import SplitterConfig
 from app.services.adapters.retriever_kinds import retriever_kinds_service
-from app.services.knowledge_base_qa_service import knowledge_base_qa_service
-from app.services.knowledge_service import KnowledgeService
+from app.services.knowledge import (
+    KnowledgeBaseQAService,
+    KnowledgeService,
+    knowledge_base_qa_service,
+)
 from app.services.rag.document_service import DocumentService
 from app.services.rag.storage.factory import create_storage_backend
 
@@ -528,12 +531,23 @@ def _trigger_document_summary_if_enabled(
         kb_info: Knowledge base index information
     """
     try:
-        global_summary_enabled = getattr(settings, "SUMMARY_ENABLED", True)
+        global_summary_enabled = getattr(settings, "SUMMARY_ENABLED", False)
         if global_summary_enabled and kb_info.summary_enabled:
-            from app.services.summary_service import get_summary_service
+            from app.services.knowledge import get_summary_service
 
             summary_service = get_summary_service(db)
-            asyncio.run(summary_service.trigger_document_summary(document_id, user_id))
+            # Use a dedicated event loop and ensure proper cleanup
+            # to avoid "no running event loop" errors during garbage collection
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(
+                    summary_service.trigger_document_summary(document_id, user_id)
+                )
+            finally:
+                # Properly shutdown async generators and close the loop
+                loop.run_until_complete(loop.shutdown_asyncgens())
+                loop.close()
             logger.info(
                 f"Triggered document summary generation for document {document_id}"
             )
@@ -623,19 +637,27 @@ def _index_document_background(
 
         # Use index_owner_user_id for per_user index strategy to ensure
         # all group members access the same index created by the KB owner
-        result = asyncio.run(
-            doc_service.index_document(
-                knowledge_id=knowledge_base_id,
-                embedding_model_name=embedding_model_name,
-                embedding_model_namespace=embedding_model_namespace,
-                user_id=kb_info.index_owner_user_id,
-                db=db,
-                attachment_id=attachment_id,
-                splitter_config=splitter_config,
-                document_id=document_id,
+        # Use a dedicated event loop and ensure proper cleanup
+        # to avoid "no running event loop" errors during garbage collection
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            result = loop.run_until_complete(
+                doc_service.index_document(
+                    knowledge_id=knowledge_base_id,
+                    embedding_model_name=embedding_model_name,
+                    embedding_model_namespace=embedding_model_namespace,
+                    user_id=kb_info.index_owner_user_id,
+                    db=db,
+                    attachment_id=attachment_id,
+                    splitter_config=splitter_config,
+                    document_id=document_id,
+                )
             )
-        )
-
+        finally:
+            # Properly shutdown async generators and close the loop
+            loop.run_until_complete(loop.shutdown_asyncgens())
+            loop.close()
         logger.info(
             f"Successfully indexed document for knowledge base {knowledge_base_id}: {result}"
         )
@@ -951,7 +973,7 @@ async def get_kb_summary(
     - status: Summary generation status
     """
     from app.schemas.summary import KnowledgeBaseSummaryResponse
-    from app.services.summary_service import get_summary_service
+    from app.services.knowledge import get_summary_service
 
     # Validate KB access permission
     kb = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
@@ -1029,7 +1051,7 @@ async def get_document_detail(
     """
     from app.models.knowledge import KnowledgeDocument
     from app.models.subtask_context import SubtaskContext
-    from app.services.summary_service import get_summary_service
+    from app.services.knowledge import get_summary_service
 
     # Validate KB access permission first
     kb = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
@@ -1122,7 +1144,7 @@ async def get_document_summary(
     """
     from app.models.knowledge import KnowledgeDocument
     from app.schemas.summary import DocumentSummaryResponse
-    from app.services.summary_service import get_summary_service
+    from app.services.knowledge import get_summary_service
 
     # Validate KB access permission first
     kb = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
@@ -1203,7 +1225,7 @@ async def refresh_document_summary(
 async def _run_kb_summary_refresh(kb_id: int, user_id: int):
     """Background task wrapper for KB summary refresh."""
     from app.db.session import SessionLocal
-    from app.services.summary_service import get_summary_service
+    from app.services.knowledge import get_summary_service
 
     # Create new session for background task
     new_db = SessionLocal()
@@ -1219,7 +1241,7 @@ async def _run_kb_summary_refresh(kb_id: int, user_id: int):
 async def _run_document_summary_refresh(doc_id: int, user_id: int):
     """Background task wrapper for document summary refresh."""
     from app.db.session import SessionLocal
-    from app.services.summary_service import get_summary_service
+    from app.services.knowledge import get_summary_service
 
     # Create new session for background task
     new_db = SessionLocal()
@@ -1249,7 +1271,7 @@ def _update_kb_summary_after_deletion(kb_id: int, user_id: int):
         kb_id: Knowledge base ID
         user_id: User who triggered the deletion
     """
-    from app.services.summary_service import get_summary_service
+    from app.services.knowledge import get_summary_service
 
     logger.info(
         f"[KnowledgeAPI] Starting KB summary update after deletion: kb_id={kb_id}"
@@ -1265,11 +1287,20 @@ def _update_kb_summary_after_deletion(kb_id: int, user_id: int):
         # - Clear summary if no active documents remain
         # - Regenerate summary if active documents exist with completed summaries
         # - Skip if currently generating (debounce)
-        asyncio.run(
-            summary_service.trigger_kb_summary(
-                kb_id, user_id, force=False, clear_if_empty=True
+        # Use a dedicated event loop and ensure proper cleanup
+        # to avoid "no running event loop" errors during garbage collection
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(
+                summary_service.trigger_kb_summary(
+                    kb_id, user_id, force=False, clear_if_empty=True
+                )
             )
-        )
+        finally:
+            # Properly shutdown async generators and close the loop
+            loop.run_until_complete(loop.shutdown_asyncgens())
+            loop.close()
 
     except Exception as e:
         # Log error but don't re-raise - deletion should succeed regardless

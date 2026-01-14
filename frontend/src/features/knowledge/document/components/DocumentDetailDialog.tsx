@@ -34,7 +34,7 @@ export function DocumentDetailDialog({
   document,
   knowledgeBaseId,
 }: DocumentDetailDialogProps) {
-  const { t } = useTranslation('knowledge')
+  const { t, getCurrentLanguage } = useTranslation('knowledge')
   const [copiedContent, setCopiedContent] = useState(false)
 
   const { detail, loading, error, refresh } = useDocumentDetail({
@@ -78,7 +78,7 @@ export function DocumentDetailDialog({
                 <span>{document.file_extension.toUpperCase()}</span>
                 <span>•</span>
                 <span>
-                  {new Date(document.created_at).toLocaleDateString('zh-CN', {
+                  {new Date(document.created_at).toLocaleDateString(getCurrentLanguage(), {
                     year: 'numeric',
                     month: '2-digit',
                     day: '2-digit',

@@ -55,6 +55,10 @@ export function DocumentItem({
     onSelect?.(document, checked)
   }
 
+  const handleCheckboxClick = (e: React.MouseEvent) => {
+    e.stopPropagation()
+  }
+
   const handleEdit = (e: React.MouseEvent) => {
     e.stopPropagation()
     onEdit?.(document)
@@ -90,7 +94,7 @@ export function DocumentItem({
     >
       {/* Checkbox for batch selection */}
       {canManage && (
-        <div className="flex-shrink-0">
+        <div className="flex-shrink-0" onClick={handleCheckboxClick}>
           <Checkbox
             checked={selected}
             onCheckedChange={handleCheckboxChange}

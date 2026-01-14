@@ -239,7 +239,11 @@
     },
     "summary": {
       "enableLabel": "Auto-generate Summary",
-      "enableDescription": "Automatically generate summaries for documents when uploaded"
+      "enableDescription": "Generate summaries on upload to improve search and retrieval quality",
+      "selectModel": "Select summary model",
+      "modelRequired": "Please select a model for summary generation",
+      "modelPlaceholder": "Search models...",
+      "noModel": "No model selected"
     },
     "retrievalTest": {
       "button": "Retrieval Test",
