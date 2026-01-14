@@ -169,23 +169,6 @@ export function CreateKnowledgeBaseDialog({
               />
             </div>
 
-            {/* Summary Settings */}
-            <div className="flex items-center justify-between py-2">
-              <div className="space-y-0.5">
-                <Label htmlFor="summary-enabled">
-                  {t('knowledge:document.summary.enableLabel')}
-                </Label>
-                <p className="text-xs text-text-muted">
-                  {t('knowledge:document.summary.enableDescription')}
-                </p>
-              </div>
-              <Switch
-                id="summary-enabled"
-                checked={summaryEnabled}
-                onCheckedChange={setSummaryEnabled}
-              />
-            </div>
-
             {/* Advanced Settings */}
             <Accordion
               type="single"
@@ -206,6 +189,24 @@ export function CreateKnowledgeBaseDialog({
                     <p className="text-xs text-text-muted">
                       {t('knowledge:document.advancedSettings.collapsed')}
                     </p>
+
+                    {/* Summary Settings */}
+                    <div className="flex items-center justify-between py-2 border-b border-border pb-4">
+                      <div className="space-y-0.5">
+                        <Label htmlFor="summary-enabled">
+                          {t('knowledge:document.summary.enableLabel')}
+                        </Label>
+                        <p className="text-xs text-text-muted">
+                          {t('knowledge:document.summary.enableDescription')}
+                        </p>
+                      </div>
+                      <Switch
+                        id="summary-enabled"
+                        checked={summaryEnabled}
+                        onCheckedChange={setSummaryEnabled}
+                      />
+                    </div>
+
                     <RetrievalSettingsSection
                       config={retrievalConfig}
                       onChange={setRetrievalConfig}

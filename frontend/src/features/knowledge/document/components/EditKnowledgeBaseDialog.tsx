@@ -153,23 +153,6 @@ export function EditKnowledgeBaseDialog({
               />
             </div>
 
-            {/* Summary Settings */}
-            <div className="flex items-center justify-between py-2">
-              <div className="space-y-0.5">
-                <Label htmlFor="edit-summary-enabled">
-                  {t('knowledge:document.summary.enableLabel')}
-                </Label>
-                <p className="text-xs text-text-muted">
-                  {t('knowledge:document.summary.enableDescription')}
-                </p>
-              </div>
-              <Switch
-                id="edit-summary-enabled"
-                checked={summaryEnabled}
-                onCheckedChange={setSummaryEnabled}
-              />
-            </div>
-
             {/* Advanced Settings (Partially Editable) */}
             {knowledgeBase?.retrieval_config && (
               <div className="border-t border-border pt-4">
@@ -187,7 +170,24 @@ export function EditKnowledgeBaseDialog({
                 </button>
 
                 {showAdvanced && (
-                  <div className="mt-4 p-4 bg-bg-muted rounded-lg border border-border">
+                  <div className="mt-4 p-4 bg-bg-muted rounded-lg border border-border space-y-4">
+                    {/* Summary Settings */}
+                    <div className="flex items-center justify-between py-2 border-b border-border pb-4">
+                      <div className="space-y-0.5">
+                        <Label htmlFor="edit-summary-enabled">
+                          {t('knowledge:document.summary.enableLabel')}
+                        </Label>
+                        <p className="text-xs text-text-muted">
+                          {t('knowledge:document.summary.enableDescription')}
+                        </p>
+                      </div>
+                      <Switch
+                        id="edit-summary-enabled"
+                        checked={summaryEnabled}
+                        onCheckedChange={setSummaryEnabled}
+                      />
+                    </div>
+
                     <RetrievalSettingsSection
                       config={retrievalConfig}
                       onChange={handleRetrievalConfigChange}
